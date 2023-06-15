@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 from typing import *  # noqa: F401 pylint: disable=wildcard-import,unused-wildcard-import
 
 import time
+import numba
 import numbers
 import inspect
 from datetime import datetime, date, timezone
@@ -261,6 +262,17 @@ def batch(iterable, n=1):
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
+# Dicts
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+def python_dict_2_numba_dict(python_dict: dict, numba_dict: numba.typed.Dict()) -> None:
+    """THe only way for now is just to copy ke-values: https://github.com/numba/numba/issues/4728"""
+    for k, v in python_dict.items():
+        numba_dict[k] = v
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
 # Sorting
 # ----------------------------------------------------------------------------------------------------------------------------
 
@@ -275,12 +287,12 @@ def list_is_non_decreasing(l: Iterable) -> bool:
     return all(l[i] <= l[i + 1] for i in range(len(l) - 1))
 
 
-def sort_dict_by_value(dct: dict,reverse:bool=False) -> dict:
-    return {k: v for k, v in sorted(dct.items(), key=lambda item: item[1],reverse=reverse)}
+def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:
+    return {k: v for k, v in sorted(dct.items(), key=lambda item: item[1], reverse=reverse)}
 
 
-def sort_dict_by_key(dct: dict,reverse:bool=False) -> dict:
-    return dict(sorted(dct.items()),reverse=reverse)
+def sort_dict_by_key(dct: dict, reverse: bool = False) -> dict:
+    return dict(sorted(dct.items()), reverse=reverse)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
