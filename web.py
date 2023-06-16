@@ -527,8 +527,8 @@ def is_rotating_proxy(proxy_server: dict) -> bool:
                 return True
 
 
-def download_to_file(url:str,filename:str,rewrite_existing:bool=True,timeout:int=10,chunk_size:int=1024):
-    """Dropin replacement for urllib.request.urlretrieve(url, filename,)
+def download_to_file(url:str,filename:str,rewrite_existing:bool=True,timeout:int=100,chunk_size:int=1024):
+    """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long.
     """
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
     request = requests.get(url, timeout=10, stream=True)
