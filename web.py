@@ -525,3 +525,18 @@ def is_rotating_proxy(proxy_server: dict) -> bool:
         if proxy_server.get("PROXY_MIN_PORT") == 20000:
             if proxy_server.get("PROXY_MAX_PORT") == 20000:
                 return True
+
+
+def download_to_file(url:str,filename:str,rewrite_existing:bool=True,timeout:int=10,chunk_size:int):
+    """Dropin replacement for urllib.request.urlretrieve(url, filename,)
+    """
+    # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
+    request = requests.get(url, timeout=10, stream=True)
+
+    # Open the output file and make sure we write in binary mode
+    with open(filename, 'wb') as fh:
+        # Walk through the request response in chunks of chunk_size * 1024 bytes
+        for chunk in request.iter_content(chunk_size * 1024):
+            # Write the chunk to the file
+            fh.write(chunk)
+            # Optionally we can check here if the download is taking too long    
