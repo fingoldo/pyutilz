@@ -89,6 +89,7 @@ def optimize_dtypes(
     use_uint: bool = True,  # might want to turn this off when using sqlalchemy (Unsigned 64 bit integer datatype is not supported)
     verbose: bool = False,
     inplace: bool = True,
+    skip_halffloat: bool = True,
 ) -> pd.DataFrame:
     """Compress datatypes in a pandas dataframe to save space while keeping precision.
     Optionally attempts converting floats to ints where feasible.
@@ -187,7 +188,7 @@ def optimize_dtypes(
                     powers = [8, 16, 32, 64]
                     topvals = [np.iinfo(type_name + str(p)) for p in powers]
                 elif type_name == "float":
-                    powers = [16, 32, 64]  # no float8
+                    powers = [32, 64] if skip_halffloat else [16, 32, 64]  # no float8
                     topvals = [np.finfo(type_name + str(p)) for p in powers]
 
                 min_max = pd.concat([min_vals, max_vals], axis=1)
