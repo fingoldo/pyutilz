@@ -20,6 +20,7 @@ ensure_installed("psutil pandas")
 
 from typing import *
 
+import heapq
 import psutil
 import pandas as pd
 from multiprocessing.pool import ThreadPool
@@ -104,6 +105,20 @@ def split_array(arr: object, step: int) -> list:
             break
         a = b
     return res
+
+
+def distribute_work(lst: Sequence, nworkers: int) -> tuple:
+    """Distribute array lst into nworkers chunks of approximately same total size."""
+    lists = [[] for _ in range(nworkers)]
+    lists_indices = [[] for _ in range(nworkers)]
+    totals = [(0, i) for i in range(nworkers)]
+    heapq.heapify(totals)
+    for i, value in enumerate(lst):
+        total, index = heapq.heappop(totals)
+        lists[index].append(value)
+        lists_indices[index].append(i)
+        heapq.heappush(totals, (total + value, index))
+    return lists, lists_indices
 
 
 def parallel_run(
