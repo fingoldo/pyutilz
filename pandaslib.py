@@ -90,6 +90,7 @@ def optimize_dtypes(
     verbose: bool = False,
     inplace: bool = True,
     skip_halffloat: bool = True,
+    ensure_float64_precision:bool=True
 ) -> pd.DataFrame:
     """Compress datatypes in a pandas dataframe to save space while keeping precision.
     Optionally attempts converting floats to ints where feasible.
@@ -202,7 +203,7 @@ def optimize_dtypes(
                             if not (col in float_fields and type_name != "float"):
                                 break
                         if r.max <= topvals[j].max and r.min >= topvals[j].min:
-                            if type_name == "float":
+                            if ensure_float64_precision and type_name == "float":
                                 # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float64) must not pass here, for example.
                                 if col not in mantissas:
                                     values = df[col].values
