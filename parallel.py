@@ -107,18 +107,18 @@ def split_array(arr: object, step: int) -> list:
     return res
 
 
-def distribute_work(lst: Sequence, nworkers: int) -> tuple:
-    """Distribute array lst into nworkers chunks of approximately same total size."""
-    lists = [[] for _ in range(nworkers)]
-    lists_indices = [[] for _ in range(nworkers)]
+def distribute_work(workload: Sequence, nworkers: int) -> tuple:
+    """Distribute array workload into nworkers chunks of approximately same total size."""
+    planned_work_per_worker = [[] for _ in range(nworkers)]
+    workload_indices_per_worker = [[] for _ in range(nworkers)]
     totals = [(0, i) for i in range(nworkers)]
     heapq.heapify(totals)
-    for i, value in enumerate(lst):
+    for i, value in enumerate(workload):
         total, index = heapq.heappop(totals)
-        lists[index].append(value)
-        lists_indices[index].append(i)
+        planned_work_per_worker[index].append(value)
+        workload_indices_per_worker[index].append(i)
         heapq.heappush(totals, (total + value, index))
-    return lists, lists_indices
+    return planned_work_per_worker, workload_indices_per_worker
 
 
 def parallel_run(
