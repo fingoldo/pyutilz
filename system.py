@@ -33,6 +33,8 @@ from datetime import timezone, datetime, timedelta
 
 from .strings import remove_json_defaults
 
+import winsound
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # IPython
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -490,11 +492,9 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object
             except Exception as e:
                 logger.exception(e)
 
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Locales, Date/Time, etc.
 # ----------------------------------------------------------------------------------------------------------------------------
-
 
 def get_utc_unix_timestamp():
     from datetime import timezone, datetime, timedelta
@@ -518,3 +518,12 @@ def get_locale_settings(locale_name: str = "", only_fields: tuple = None) -> dic
         if only_fields:
             settings = {field: value for field, value in settings.items() if field in only_fields}
     return settings
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Sounds
+# ----------------------------------------------------------------------------------------------------------------------------
+
+def beep():
+    frequency = 2500  # Set Frequency To 2500 Hertz
+    duration = 1000  # Set Duration To 1000 ms == 1 second
+    winsound.Beep(frequency, duration)
