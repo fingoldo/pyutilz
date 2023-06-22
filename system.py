@@ -67,6 +67,7 @@ def get_system_info(
     return_hardware_details: bool = False,
     return_usage_stats: bool = False,
     return_network_info: bool = False,
+    only_stats: bool = False,
 ) -> dict:
 
     ensure_installed("x86cpu py-cpuinfo")
@@ -402,7 +403,6 @@ def list_linux_devices() -> dict:
     except Exception as e:
         logger.exception(e)
         pass
-    return res
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -492,9 +492,11 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object
             except Exception as e:
                 logger.exception(e)
 
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Locales, Date/Time, etc.
 # ----------------------------------------------------------------------------------------------------------------------------
+
 
 def get_utc_unix_timestamp():
     from datetime import timezone, datetime, timedelta
@@ -519,9 +521,11 @@ def get_locale_settings(locale_name: str = "", only_fields: tuple = None) -> dic
             settings = {field: value for field, value in settings.items() if field in only_fields}
     return settings
 
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Sounds
 # ----------------------------------------------------------------------------------------------------------------------------
+
 
 def beep():
     frequency = 2500  # Set Frequency To 2500 Hertz
