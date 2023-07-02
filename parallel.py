@@ -43,7 +43,8 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
         r = l + chunk_size
         if r > t:
             r = t
-        yield the_list[l:r]
+        if r>l:
+            yield the_list[l:r]
 
 
 def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> list:

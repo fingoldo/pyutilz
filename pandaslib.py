@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pandas numpy")
+ensure_installed("pandas numpy pyarrow")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
@@ -24,7 +24,9 @@ import gc
 import os
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 from collections import defaultdict
+from pyarrow.dataset import dataset
 
 import ctypes
 from multiprocessing import Array
@@ -473,3 +475,12 @@ def classify_column_types(df: pd.DataFrame = None, col: str = None, dtype: objec
     col_is_numeric = not (col_is_boolean or col_is_object or col_is_datetime or col_is_categorical)
 
     return col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric
+
+def read_parquet_with_pyarrow(path:str,nrows:int)->pd.DataFrame:
+
+    if nrows:
+        df = dataset(path).scanner().head(nrows).to_pandas()
+    else:
+        df = dataset(path).scanner().to_pandas()
+
+    return df
