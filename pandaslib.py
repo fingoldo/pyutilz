@@ -21,6 +21,7 @@ ensure_installed("pandas numpy pyarrow")
 from typing import *
 
 import gc
+import io
 import os
 import numpy as np
 import pandas as pd
@@ -484,3 +485,15 @@ def read_parquet_with_pyarrow(path:str,nrows:int)->pd.DataFrame:
         df = dataset(path).scanner().to_pandas()
 
     return df
+
+def get_df_memory_consumption(df:pd.DataFrame,max_cols:int=0)->str:
+    """Example output:
+        <class 'pandas.core.frame.DataFrame'>
+        RangeIndex: 11546660 entries, 0 to 11546659
+        Columns: 4 entries, basic>ticker to basic>ts_minute
+        dtypes: category(1), int8(3)
+        memory usage: 44.0 MB
+    """
+    mem_consumption = io.StringIO()
+    df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
+    return mem_consumption.getvalue()
