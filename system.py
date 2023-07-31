@@ -33,8 +33,6 @@ from datetime import timezone, datetime, timedelta
 
 from .strings import remove_json_defaults
 
-import winsound
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # IPython
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -530,4 +528,9 @@ def get_locale_settings(locale_name: str = "", only_fields: tuple = None) -> dic
 def beep():
     frequency = 2500  # Set Frequency To 2500 Hertz
     duration = 1000  # Set Duration To 1000 ms == 1 second
-    winsound.Beep(frequency, duration)
+    try:
+        import winsound
+
+        winsound.Beep(frequency, duration)
+    except Exception as e:
+        pass
