@@ -296,7 +296,7 @@ def get_new_smartproxy(
 
 
 def report_params(url, proxies, params, data, json, headers_to_use, timeout):
-    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s" % (url, proxies, params, data, json, headers_to_use, timeout))
+    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s" % (url, str(proxies), params, data, json, headers_to_use, timeout))
 
 
 def get_url(
@@ -499,7 +499,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
                 proxy_port=proxy_port,
                 proxy_type=proxy_type,
             )
-            # print("proxies=", proxies, "proxy_server=", proxy_server)
+            logger.info(f"proxy_server={proxy_server}")
 
 
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
