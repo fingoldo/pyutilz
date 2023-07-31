@@ -126,13 +126,15 @@ def parallel_run(
     jobslist: Sequence,
     n_jobs: int = -1,
     backend: str = None,
+    max_nbytes:int=50_000, 
     verbose: int = 0,
+    **parallel_kwargs
 ):
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
 
     ctx_mgr = parallel_backend(backend) if (backend and "dask" in backend) else contextlib.nullcontext()
     with ctx_mgr:
-        return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend, verbose=verbose)(jobslist)
+        return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend,max_nbytes=max_nbytes, verbose=verbose,**parallel_kwargs)(jobslist)
 
 
 def applyfunc_parallel(

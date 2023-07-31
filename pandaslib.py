@@ -26,8 +26,10 @@ import os
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from .strings import find_between
 from collections import defaultdict
 from pyarrow.dataset import dataset
+from pyutilz.pythonlib import to_float
 
 import ctypes
 from multiprocessing import Array
@@ -486,7 +488,7 @@ def read_parquet_with_pyarrow(path:str,nrows:int)->pd.DataFrame:
 
     return df
 
-def get_df_memory_consumption(df:pd.DataFrame,max_cols:int=0)->str:
+def get_df_memory_consumption(df:pd.DataFrame,max_cols:int=0)->float:
     """Example output:
         <class 'pandas.core.frame.DataFrame'>
         RangeIndex: 11546660 entries, 0 to 11546659
@@ -496,4 +498,10 @@ def get_df_memory_consumption(df:pd.DataFrame,max_cols:int=0)->str:
     """
     mem_consumption = io.StringIO()
     df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
-    return mem_consumption.getvalue()
+    res=mem_consumption.getvalue()
+    res=find_between(res,"memory usage: ","\n")
+    for symbol,size in [("KB",1e3),("MB",1e6),("GB",1e9),("TB",1e12),("B",1),]:
+        if res.endswith(symbol):
+            res=to_float(res.strip(symbol).strip())*size
+            break
+    return res

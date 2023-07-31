@@ -72,7 +72,7 @@ def get_system_info(
 
     import numba
     from numba import cuda
-    from . import web, string
+    from . import web, strings
 
     import x86cpu, cpuinfo
 
@@ -114,10 +114,11 @@ def get_system_info(
 
         if return_hardware_info:
             # CPU
-            info["cpu_features"] = string.jsonize_atrtributes(x86cpu.info, exclude="reg0,reg1,reg7,report,report_template".split(","))
+            info["cpu_features"] = strings.jsonize_atrtributes(x86cpu.info, exclude="reg0,reg1,reg7,report,report_template".split(","))
             info["cpu_additional_features"] = cpuinfo.get_cpu_info()
 
-            info["cpu_num_sockets"] = get_nix_cpu_sockets_number()
+            if current_system != "Windows":
+                info["cpu_num_sockets"] = get_nix_cpu_sockets_number()
             info["cpu_num_cores"] = psutil.cpu_count(logical=False)
             info["cpu_num_threads"] = psutil.cpu_count(logical=True)
 
@@ -266,7 +267,11 @@ def get_own_memory_usage() -> float:
 def get_gpuinfo_gpu_info():
     ensure_installed("gpuinfo")
 
-    from gpuinfo.nvidia import get_gpus
+    try:
+        from gpuinfo.nvidia import get_gpus
+    except Exception as e:
+        logger.warning("Can't import get_gpus from gpuinfo.nvidia.")
+        return None,None,None
 
     devices = dict()
     gpus_ram_total_gb = 0

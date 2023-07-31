@@ -691,3 +691,7 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
         if set_size >= 10**power:
             return str(round(set_size / 10**power, rounding)) + letter
     return str(round(set_size, rounding))
+
+class hashabledict(dict):
+    def __hash__(self):
+        return hash(tuple(sorted(self.items())))
