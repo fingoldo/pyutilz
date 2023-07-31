@@ -295,6 +295,10 @@ def get_new_smartproxy(
                 n = 0
 
 
+def report_params(url, proxies, params, data, json, headers_to_use, timeout):
+    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s" % (url, str(proxies), params, data, json, headers_to_use, timeout))
+
+
 def get_url(
     url: str,
     target: str = "",
@@ -318,6 +322,7 @@ def get_url(
     lowercase_headers: bool = True,
     ratelimited_sleep_interval: int = 30,
     ratelimiting_statuses: Sequence = (429,),
+    session_expired_statuses: Sequence = (),
 ) -> object:
     global proxies
     global was_blocked
@@ -354,13 +359,7 @@ def get_url(
                     headers_to_use = {key.lower(): value for key, value in headers_to_use.items()}
 
             if verbose:
-                logger.info("url=%s" % url)
-                logger.info("proxies=%s" % proxies)
-                logger.info("params=%s" % params)
-                logger.info("data=%s" % data)
-                logger.info("json=%s" % json)
-                logger.info("headers=%s" % headers_to_use)
-                logger.info("timeout=%s" % timeout)
+                report_params(url, proxies, params, data, json, headers_to_use, timeout)
 
             if b_use_session:
                 obj = sess
@@ -400,19 +399,14 @@ def get_url(
             if res.status_code not in (http.HTTPStatus.OK, http.HTTPStatus.PARTIAL_CONTENT):
                 if res.status_code in blocking_statuses:
                     logger.info("Error %s while getting %s" % (res.status_code, url))
-
-                    logger.info("url=%s" % url)
-                    logger.info("proxies=%s" % proxies)
-                    logger.info("params=%s" % params)
-                    logger.info("data=%s" % data)
-                    logger.info("json=%s" % json)
-                    logger.info("headers=%s" % headers_to_use)
-                    logger.info("timeout=%s" % timeout)
-
+                    report_params(url, proxies, params, data, json, headers_to_use, timeout)
                     handle_blocking(target, b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                     was_blocked = True
                     if quit_on_blocking:
                         break
+                elif res.status_code in session_expired_statuses:
+                    logger.warning("Session expired while getting %s", url)
+                    break
                 elif res.status_code in exit_statuses:
                     if verbose:
                         logger.info("status_code %s" % res.status_code)
@@ -505,7 +499,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
                 proxy_port=proxy_port,
                 proxy_type=proxy_type,
             )
-            # print("proxies=", proxies, "proxy_server=", proxy_server)
+            logger.info(f"proxy_server={proxy_server}")
 
 
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
@@ -527,25 +521,24 @@ def is_rotating_proxy(proxy_server: dict) -> bool:
                 return True
 
 
-def download_to_file(url:str,filename:str,rewrite_existing:bool=True,timeout:int=100,chunk_size:int=1024,max_attempts:int=5):
-    """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long.
-    """
+def download_to_file(url: str, filename: str, rewrite_existing: bool = True, timeout: int = 100, chunk_size: int = 1024, max_attempts: int = 5):
+    """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long."""
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
     request = requests.get(url, timeout=timeout, stream=True)
 
-    nattempts=0    
-    while nattempts<max_attempts:        
+    nattempts = 0
+    while nattempts < max_attempts:
         try:
             # Open the output file and make sure we write in binary mode
-            with open(filename, 'wb') as fh:
+            with open(filename, "wb") as fh:
                 # Walk through the request response in chunks of chunk_size * 1024 bytes
                 for chunk in request.iter_content(chunk_size * 1024):
                     # Write the chunk to the file
                     fh.write(chunk)
-                    # Optionally we can check here if the download is taking too long    
+                    # Optionally we can check here if the download is taking too long
         except Exception as e:
             logger.exception(e)
             logger.info("Making another attempt")
-            nattempts+=1
+            nattempts += 1
         else:
             break
