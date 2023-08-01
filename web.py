@@ -259,6 +259,7 @@ def get_new_smartproxy(
     delay: int = 5,
     proxy_port: Optional[int] = None,
     proxy_type: str = "http",
+    verbose=False,
 ) -> dict:
     n = 0
     now_time = datetime.utcnow()
@@ -280,17 +281,20 @@ def get_new_smartproxy(
             if dict_to_check is not None:
                 if proxy_key in dict_to_check:
                     if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_idle_interval_minutes:
-                        logger.info("Skipping proxy %s:%s, touched recently" % (proxy_server, proxy_port))
+                        if verbose:
+                            logger.info("Skipping proxy %s:%s, touched recently" % (proxy_server, proxy_port))
                         b_time_to_check_now = False
                         break
 
         if b_time_to_check_now:
-            logger.info("Got new proxy: %s:%s" % (proxy_server, proxy_port))
+            if verbose:
+                logger.info("Got new proxy: %s:%s" % (proxy_server, proxy_port))
             return proxies
         else:
             n = n + 1
             if n > warn_after_n_failures:
-                logger.info("Could not get an untouched proxy%s, sleeping %s sec." % ("" if job_desc == "" else " for " + job_desc, delay))
+                if verbose:
+                    logger.info("Could not get an untouched proxy%s, sleeping %s sec." % ("" if job_desc == "" else " for " + job_desc, delay))
                 sleep(delay)
                 n = 0
 
@@ -321,6 +325,7 @@ def get_url(
     sort_headers: bool = True,
     lowercase_headers: bool = True,
     ratelimited_sleep_interval: int = 30,
+    ratelimited_proxy_sleep_interval: int = 1,
     ratelimiting_statuses: Sequence = (429,),
     session_expired_statuses: Sequence = (),
 ) -> object:
@@ -372,16 +377,16 @@ def get_url(
 
             num_ip_queries = num_ip_queries + 1
 
-            # logger.info('sess.cookies=%s' % sess.cookies)
         except Exception as e:
             se = str(e)
-            logger.exception(e)
+            if verbose:
+                logger.exception(e)
             se = se.lower()
             if "proxy" in se or "timed out" in se or "bad handshake" in se or "connection broken" in se or "sslerror" in se:
                 if b_use_proxy:
                     if proxy_server:
-                        logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
-                        sleep(5 * random())
+                        if verbose:
+                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
                         proxies = get_new_smartproxy(
                             proxy_user,
                             proxy_pass,
@@ -405,17 +410,20 @@ def get_url(
                     if quit_on_blocking:
                         break
                 elif res.status_code in session_expired_statuses:
-                    logger.warning("Session expired while getting %s", url)
+                    logger.warning("Session expired while getting url=%s, code=%s, response=%s", url, res.status_code, res.text)
                     break
                 elif res.status_code in exit_statuses:
                     if verbose:
                         logger.info("status_code %s" % res.status_code)
                     break
                 elif res.status_code in ratelimiting_statuses:
-                    logger.warning("Ratelimited [%s] while getting url %s: %s" % (res.status_code, url, res.text))
+                    if verbose:
+                        logger.warning("Ratelimited [%s] while getting url %s: %s" % (res.status_code, url, res.text))
                     if proxy_server:
-                        logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
-                        sleep(5 * random())
+                        if verbose:
+                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
+                        if ratelimited_proxy_sleep_interval:
+                            sleep(ratelimited_proxy_sleep_interval * random())
                         proxies = get_new_smartproxy(
                             proxy_user,
                             proxy_pass,
@@ -458,6 +466,8 @@ def get_url(
     if delay:
         sleep(delay * random())
 
+    if res is None:
+        logger.warning(f"Could not get url {url}")
     return res
 
 
