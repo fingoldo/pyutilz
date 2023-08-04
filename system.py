@@ -1,4 +1,4 @@
-#!$ pip install pympler psutil x86cpu gpuinfo pylspci gputil py-cpuinfo
+#!$ pip install pympler psutil x86cpu gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -265,7 +265,7 @@ def get_own_memory_usage() -> float:
 
 
 def get_gpuinfo_gpu_info():
-    ensure_installed("gpuinfo")
+    ensure_installed("gpu-info")
 
     try:
         from gpuinfo.nvidia import get_gpus
