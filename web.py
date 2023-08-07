@@ -325,7 +325,7 @@ def get_url(
     sort_headers: bool = True,
     lowercase_headers: bool = True,
     ratelimited_sleep_interval: int = 30,
-    ratelimited_proxy_sleep_interval: int = 1,
+    ratelimited_proxy_sleep_interval: int = 0,
     ratelimiting_statuses: Sequence = (429,),
     session_expired_statuses: Sequence = (),
 ) -> object:
