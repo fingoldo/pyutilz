@@ -20,6 +20,8 @@ ensure_installed("psutil pandas")
 
 from typing import *
 
+import numpy as np
+
 import heapq
 import psutil
 import pandas as pd
@@ -27,6 +29,10 @@ from multiprocessing.pool import ThreadPool
 from multiprocessing import Pool, set_start_method
 from joblib import Parallel, delayed, parallel_backend
 import contextlib
+
+import os
+import tempfile
+from joblib import load, dump
 
 from .system import tqdmu
 
@@ -43,7 +49,7 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
         r = l + chunk_size
         if r > t:
             r = t
-        if r>l:
+        if r > l:
             yield the_list[l:r]
 
 
@@ -122,19 +128,14 @@ def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     return planned_work_per_worker, workload_indices_per_worker
 
 
-def parallel_run(
-    jobslist: Sequence,
-    n_jobs: int = -1,
-    backend: str = None,
-    max_nbytes:int=50_000, 
-    verbose: int = 0,
-    **parallel_kwargs
-):
+def parallel_run(jobslist: Sequence, n_jobs: int = -1, backend: str = None, max_nbytes: int = 50_000, verbose: int = 0, **parallel_kwargs):
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
 
     ctx_mgr = parallel_backend(backend) if (backend and "dask" in backend) else contextlib.nullcontext()
     with ctx_mgr:
-        return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend,max_nbytes=max_nbytes, verbose=verbose,**parallel_kwargs)(jobslist)
+        return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend, max_nbytes=max_nbytes, verbose=verbose, **parallel_kwargs)(
+            jobslist
+        )
 
 
 def applyfunc_parallel(
@@ -196,3 +197,14 @@ def set_tf_gpu(gpu: int):
         except RuntimeError as e:
             # Visible devices must be set before GPUs have been initialized
             print(e)
+
+
+def mem_map_array(obj: np.ndarray, file_name: str, mmap_mode: str = "r") -> object:
+    """Maps a numpy array to memory"""
+    temp_folder = tempfile.mkdtemp()
+    filename = os.path.join(temp_folder, f"{file_name}.mmap")
+    if os.path.exists(filename):
+        os.unlink(filename)
+    _ = dump(obj, filename)
+    memmaped = load(filename, mmap_mode=mmap_mode)
+    return memmaped
