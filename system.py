@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pympler psutil numba tqdm")
+ensure_installed("pympler psutil numba tqdm gpu-info")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
@@ -265,7 +265,6 @@ def get_own_memory_usage() -> float:
 
 
 def get_gpuinfo_gpu_info():
-    ensure_installed("gpu-info")
 
     try:
         from gpuinfo.nvidia import get_gpus
