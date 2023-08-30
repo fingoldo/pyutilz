@@ -75,6 +75,13 @@ ensure_installed("joblib")
 def show_methods(obj, uppercased=False):
     return [a for a in dir(obj) if "__" not in a and (uppercased is False or a[0].isupper())]
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# Operations on dicts
+# ----------------------------------------------------------------------------------------------------------------------------
+
+def prefix_dict_elems(obj:dict,prefix:str)->dict:
+    """Keys of dict assumed to be string"""
+    return {(prefix+key):value for key,value in obj.items()}
 
 def populate_object_from_dict(obj, dct):
     """Populates a class/object with properties from a dictionary."""
@@ -141,17 +148,6 @@ def flatten_keys_to_set(
     return res
 
 
-def unpack_counter(cntr: list) -> list:
-    """
-    Makes plain list of tokens out of Counter() result (which is a list of tuples:
-    [('surgery', 252),('operating_room', 251),('operating_theatre', 251),)...
-    """
-    res = []
-    for item in cntr:
-        res.append(item[0])
-    return res
-
-
 def ensure_dict_elem(obj: dict, name: str, value) -> None:
     """
     Make sure certain key exists in the dict
@@ -209,6 +205,16 @@ def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 1
 # ----------------------------------------------------------------------------------------------------------------------------
 # Operations on sequences
 # ----------------------------------------------------------------------------------------------------------------------------
+
+def unpack_counter(cntr: list) -> list:
+    """
+    Makes plain list of tokens out of Counter() result (which is a list of tuples:
+    [('surgery', 252),('operating_room', 251),('operating_theatre', 251),)...
+    """
+    res = []
+    for item in cntr:
+        res.append(item[0])
+    return res
 
 
 def ensure_list_set_tuple(obj):
