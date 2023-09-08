@@ -36,7 +36,7 @@ import errno
 import os
 
 import re
-
+import inspect
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Packages
@@ -75,13 +75,16 @@ ensure_installed("joblib")
 def show_methods(obj, uppercased=False):
     return [a for a in dir(obj) if "__" not in a and (uppercased is False or a[0].isupper())]
 
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Operations on dicts
 # ----------------------------------------------------------------------------------------------------------------------------
 
-def prefix_dict_elems(obj:dict,prefix:str)->dict:
+
+def prefix_dict_elems(obj: dict, prefix: str) -> dict:
     """Keys of dict assumed to be string"""
-    return {(prefix+key):value for key,value in obj.items()}
+    return {(prefix + key): value for key, value in obj.items()}
+
 
 def populate_object_from_dict(obj, dct):
     """Populates a class/object with properties from a dictionary."""
@@ -206,6 +209,7 @@ def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 1
 # Operations on sequences
 # ----------------------------------------------------------------------------------------------------------------------------
 
+
 def unpack_counter(cntr: list) -> list:
     """
     Makes plain list of tokens out of Counter() result (which is a list of tuples:
@@ -265,6 +269,7 @@ def batch(iterable, n=1):
     l = len(iterable)
     for ndx in range(0, l, n):
         yield iterable[ndx : min(ndx + n, l)]
+
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Sorting
@@ -473,7 +478,6 @@ cSTRUCTURED_FORMAT_PARSING_ERROR = 100
 
 
 def lookup_in_stack(variable):
-    import inspect
 
     st = inspect.stack()
     for i in range(len(st)):
@@ -482,6 +486,35 @@ def lookup_in_stack(variable):
         res = caller_globals.get(variable)
         if res:
             return res
+
+
+def get_parent_func_args(skip_args: Sequence = ("self",)) -> dict:
+    """Get arg-values of a caller func as a dict."""
+
+    previous_frame = inspect.currentframe().f_back
+    args_info = inspect.getargvalues(previous_frame)
+
+    # Collecting args-values of my_func in a dictionary
+    argvals = {arg: args_info.locals.get(arg) for arg in args_info.args if arg not in skip_args}
+    return argvals
+
+
+def store_params_in_object(obj: object, params: dict, postfix: str = ""):
+    """Useful for persisting __init__ params in the class instance."""
+    if obj is None:
+        return
+    for param_name, param_value in params.items():
+        setattr(obj, param_name + postfix, param_value)
+
+
+def load_object_params_into_func(obj: object, locals: dict, postfix: str = "_param_"):
+    """Contrary action to store_params_in_object, but does not work with locals (())."""
+    if obj is None:
+        return
+    for attr in dir(obj):
+        if attr.endswith(postfix):
+            key, value = attr[: -len(postfix)], getattr(obj, attr)
+            locals[key] = value
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -685,6 +718,7 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
         if set_size >= 10**power:
             return str(round(set_size / 10**power, rounding)) + letter
     return str(round(set_size, rounding))
+
 
 class hashabledict(dict):
     def __hash__(self):
