@@ -4,7 +4,7 @@
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pywin32 concurrent-log-handler")
+# ensure_installed("pywin32 concurrent-log-handler")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
@@ -18,7 +18,6 @@ from random import random
 import numbers, inspect
 import functools
 
-import pdb
 import logging
 from logging import Handler, Logger
 from logging.handlers import RotatingFileHandler  # QueueHandler, TimedRotatingFileHandler
@@ -318,6 +317,7 @@ def debugged():
         @functools.wraps(func)
         def wrapper_debugged(*args, **kwargs):
             done = False
+            import pdb
             while not done:
                 try:
                     value = func(*args, **kwargs)

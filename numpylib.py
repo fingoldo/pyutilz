@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("numpy")
+# ensure_installed("numpy")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports

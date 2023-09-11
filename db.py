@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("sqlalchemy psycopg2 pandas pymysql")
+# ensure_installed("sqlalchemy psycopg2 pandas pymysql")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports

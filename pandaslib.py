@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pandas numpy pyarrow")
+# ensure_installed("pandas numpy pyarrow")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
