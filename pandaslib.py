@@ -95,7 +95,7 @@ def optimize_dtypes(
     verbose: bool = False,
     inplace: bool = True,
     skip_halffloat: bool = True,
-    ensure_float64_precision:bool=True
+    ensure_float64_precision: bool = True,
 ) -> pd.DataFrame:
     """Compress datatypes in a pandas dataframe to save space while keeping precision.
     Optionally attempts converting floats to ints where feasible.
@@ -292,7 +292,8 @@ def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [],
         cols = df.columns
     for var in cols:
         if var not in excluded_cols:
-            display(Markdown(f"**{var}** {df[var].dtype}"))
+            # display(Markdown(f"**{var}** {df[var].dtype}"))
+            print(f"**{var}** {df[var].dtype}")
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
                 assert max_vars >= 0
@@ -479,7 +480,8 @@ def classify_column_types(df: pd.DataFrame = None, col: str = None, dtype: objec
 
     return col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric
 
-def read_parquet_with_pyarrow(path:str,nrows:int)->pd.DataFrame:
+
+def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
 
     if nrows:
         df = dataset(path).scanner().head(nrows).to_pandas()
@@ -488,20 +490,27 @@ def read_parquet_with_pyarrow(path:str,nrows:int)->pd.DataFrame:
 
     return df
 
-def get_df_memory_consumption(df:pd.DataFrame,max_cols:int=0)->float:
+
+def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
     """Example output:
-        <class 'pandas.core.frame.DataFrame'>
-        RangeIndex: 11546660 entries, 0 to 11546659
-        Columns: 4 entries, basic>ticker to basic>ts_minute
-        dtypes: category(1), int8(3)
-        memory usage: 44.0 MB
+    <class 'pandas.core.frame.DataFrame'>
+    RangeIndex: 11546660 entries, 0 to 11546659
+    Columns: 4 entries, basic>ticker to basic>ts_minute
+    dtypes: category(1), int8(3)
+    memory usage: 44.0 MB
     """
     mem_consumption = io.StringIO()
     df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
-    res=mem_consumption.getvalue()
-    res=find_between(res,"memory usage: ","\n")
-    for symbol,size in [("KB",1e3),("MB",1e6),("GB",1e9),("TB",1e12),("B",1),]:
+    res = mem_consumption.getvalue()
+    res = find_between(res, "memory usage: ", "\n")
+    for symbol, size in [
+        ("KB", 1e3),
+        ("MB", 1e6),
+        ("GB", 1e9),
+        ("TB", 1e12),
+        ("B", 1),
+    ]:
         if res.endswith(symbol):
-            res=to_float(res.strip(symbol).strip())*size
+            res = to_float(res.strip(symbol).strip()) * size
             break
     return res
