@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 from typing import *  # noqa: F401 pylint: disable=wildcard-import,unused-wildcard-import
 
 import time
-import numba
 import numbers
 import inspect
+from numba import njit
 from datetime import datetime, date, timezone
 
 from os.path import abspath, exists, join
@@ -65,7 +65,7 @@ def ensure_installed(packages, sep: str = " ") -> None:
 
 # from .pythonlib import ensure_installed  # lint: disable=ungrouped-imports,disable=wrong-import-order
 
-ensure_installed("joblib")
+# ensure_installed("joblib")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Operations on objects
@@ -310,6 +310,67 @@ def is_float(string):
 def to_float(string):
     return float(str(string).replace(",", ""))
 
+@njit()
+def integer_digits(n:int)->set:
+    # Function to count digits in an integer
+    digits = set()
+    ntotal=0
+    while n > 0:
+        ntotal+=1
+        digit = n % 10
+        digits.add(digit)
+        n //= 10
+    return ntotal,digits
+
+
+#@njit()
+def float_distinct_digits_percent(number:float,precision:int=5)->float:
+    """
+    >>>float_distinct_digits_percent(11.882, precision=3)
+    0.6
+    """
+    # Extract the integer and fractional parts of the float
+    int_part = int(number)
+    frac_part = round(abs(number - int_part),precision) # rounding needed for cases like 11.882
+
+    # Initialize a set to store unique digits
+    unique_digits = set()
+    ntotal=0
+
+    # Count digits in the integer part
+    nsubtotal,digits=integer_digits(int_part)
+    unique_digits.update(digits)
+    ntotal+=nsubtotal
+
+    # Count digits in the fractional part (up to a certain precision)
+    if precision:
+        frac_digits = int(frac_part * (10 ** precision)) # Adjust precision as needed
+        nsubtotal,digits=integer_digits(frac_digits)    
+        unique_digits.update(digits)
+        ntotal+=nsubtotal
+
+    # Count the number of unique digits
+    return len(unique_digits)/ntotal if ntotal>0 else 1.0
+
+def count_trailing_zeros(number:float,precision:int=5):
+    """
+    >>>count_trailing_zeros(1.30e-6, precision=8)
+    1
+    """
+    # Convert the float to a string
+    num_str = format(number, f'.{precision}f')
+    nseps=0
+    nzeros=0
+    for char in num_str[::-1]:
+        if char in ',.e+-':
+            nseps+=1
+        else:
+            if char=='0':
+                nzeros+=1
+            else:
+                break
+    
+    return nzeros
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Time & dates
@@ -723,3 +784,5 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
 class hashabledict(dict):
     def __hash__(self):
         return hash(tuple(sorted(self.items())))
+
+

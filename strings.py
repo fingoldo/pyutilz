@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("inflect psycopg2-binary pandas numpy emoji_data_python beautifulsoup4")
+# ensure_installed("inflect psycopg2-binary pandas numpy emoji_data_python beautifulsoup4")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports

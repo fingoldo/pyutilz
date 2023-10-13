@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pandas numpy pyarrow")
+# ensure_installed("pandas numpy pyarrow")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
@@ -134,22 +134,25 @@ def optimize_dtypes(
                     df[col] = df[col].astype(np.int64)
                     old_dtypes[col] = "int64"
                     int_fields.append(col)
-                except Exception as e:
+                except Exception as e1:
                     try:
                         df[col] = df[col].astype(np.float64)
                         old_dtypes[col] = "float64"
                         float_fields.append(col)
-                    except Exception as e:
+                    except Exception as e2:
                         try:
                             n = df[col].nunique()
                             if n <= max_categories:
                                 if verbose:
                                     logger.info("%s %s->category", col, the_type)
+                                
+                                new_dtypes[col] = "category"
                                 if inplace:
                                     df[col] = df[col].astype(new_dtypes[col])
-                                else:
-                                    new_dtypes[col] = "category"
-                        except:
+                                    
+                        except Exception as e3:
+                            if verbose:
+                                logger.warning(f"Could not convert to category column {col}: {str(e3)}")
                             pass  # to avoid stumbling on lists like [1]
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Finds minimal size suitable to hold each variable of interest without loss of coverage

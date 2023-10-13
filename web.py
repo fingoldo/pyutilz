@@ -534,7 +534,18 @@ def is_rotating_proxy(proxy_server: dict) -> bool:
 def download_to_file(url: str, filename: str, rewrite_existing: bool = True, timeout: int = 100, chunk_size: int = 1024, max_attempts: int = 5):
     """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long."""
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
-    request = requests.get(url, timeout=timeout, stream=True)
+
+    nattempts = 0
+    while nattempts < max_attempts:    
+        try:
+            request = requests.get(url, timeout=timeout, stream=True)
+        except Exception as e:
+            logger.exception(e)
+            sleep(10*random())
+            logger.info("Making another attempt")
+            nattempts += 1
+        else:
+            break            
 
     nattempts = 0
     while nattempts < max_attempts:
@@ -548,6 +559,7 @@ def download_to_file(url: str, filename: str, rewrite_existing: bool = True, tim
                     # Optionally we can check here if the download is taking too long
         except Exception as e:
             logger.exception(e)
+            sleep(10*random())
             logger.info("Making another attempt")
             nattempts += 1
         else:

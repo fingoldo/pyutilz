@@ -10,7 +10,7 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from .pythonlib import ensure_installed
-ensure_installed("dash dash_bootstrap_components flask flask_login dash_html_components")
+# ensure_installed("dash dash_bootstrap_components flask flask_login dash_html_components")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports

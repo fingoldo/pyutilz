@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 from .pythonlib import ensure_installed
 
-ensure_installed("pympler psutil numba tqdm gpu-info")
+# ensure_installed("pympler psutil numba tqdm gpu-info")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
