@@ -46,13 +46,14 @@ import importlib, subprocess
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
+    known_abbreviations={'scikit-learn':'sklearn'}
     if packages:
         if type(packages) == str:
             if sep in packages:
                 packages = packages.split(sep)
             else:
                 packages = [packages]
-        missing_packages = [pkg for pkg in packages if not importlib.util.find_spec(pkg)]
+        missing_packages = [pkg for pkg in packages if not importlib.util.find_spec(known_abbreviations.get(pkg,pkg))]
         if missing_packages:
             mes = f"Installing missing packages: {missing_packages}"
             logger.info(mes)
