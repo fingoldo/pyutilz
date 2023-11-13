@@ -148,7 +148,7 @@ def optimize_dtypes(
                                 
                                 new_dtypes[col] = "category"
                                 if inplace:
-                                    df[col] = df[col].astype(new_dtypes[col])
+                                    df.loc[:,col] = df[col].astype(new_dtypes[col])
                                     
                         except Exception as e3:
                             if verbose:
@@ -235,7 +235,7 @@ def optimize_dtypes(
                                 logger.info("%s [%s]->[%s%s]", col, old_dtypes[col], type_name, p)
                             new_dtypes[col] = type_name + str(p)
                             if inplace:
-                                df[col] = df[col].astype(new_dtypes[col])
+                                df.loc[:,col] = df[col].astype(new_dtypes[col])
                             break
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
