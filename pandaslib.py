@@ -286,7 +286,7 @@ def prefixize_columns(df: object, prefix: str, special_prefixes: dict = {}, sep=
         return df.rename(columns={col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}, inplace=False)
 
 
-def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [], max_vars: int = None, dropna: bool = False):
+def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [], max_vars: int = None, dropna: bool = False,use_markdown:bool=True,use_print:bool=True):
     """
     Show distribution of values for each dataframe column
     """
@@ -295,8 +295,8 @@ def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [],
         cols = df.columns
     for var in cols:
         if var not in excluded_cols:
-            # display(Markdown(f"**{var}** {df[var].dtype}"))
-            print(f"**{var}** {df[var].dtype}")
+            if use_markdown: display(Markdown(f"**{var}** {df[var].dtype}"))
+            if use_print:print(f"{var.upper()} {df[var].dtype}")
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
                 assert max_vars >= 0
