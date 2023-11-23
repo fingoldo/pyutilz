@@ -517,3 +517,9 @@ def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
             res = to_float(res.strip(symbol).strip()) * size
             break
     return res
+
+
+def remove_constant_columns(df:pd.DataFrame,verbose:bool=False)->None:
+    for var in df.columns[df.nunique() <= 1].tolist():
+        if verbose: logger.warning(f"Removing constant columns {var}")
+        del df[var]
