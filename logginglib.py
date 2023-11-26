@@ -85,6 +85,8 @@ def init_logging(
         logger = logging.getLogger(caller_name)
     else:
         logger = custom_logger
+
+    logger.setLevel(level)
     return logger
 
 
