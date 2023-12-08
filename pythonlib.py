@@ -787,3 +787,20 @@ class hashabledict(dict):
         return hash(tuple(sorted(self.items())))
 
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# Shelve
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+import shelve
+import contextlib
+import portalocker
+
+@contextlib.contextmanager
+def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False,timeout:int=60):
+    
+    with portalocker.Lock(f"{db_path}.lock", 'wb', timeout=timeout) as fh:
+        yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)
+        # flush and sync to filesystem
+        fh.flush()
+        os.fsync(fh.fileno())
