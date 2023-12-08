@@ -40,6 +40,13 @@ from .system import tqdmu
 from os.path import join, sep
 import glob
 
+from os.path import basename, dirname, splitext, join, exists, getsize
+from pyutilz.system import ensure_dir_exists
+from timeit import default_timer as timer
+from itertools import chain
+import tempfile
+import shutil
+
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
     logger.info(f"Загружаем данные из файла {fpath}...")
@@ -124,7 +131,7 @@ def optimize_dtypes(
 
     if max_categories is not None:
         for col, the_type in old_dtypes.items():
-            if "object" in the_type:
+            if "object" in the_type:                
                 if field in skip_columns:
                     continue
 
@@ -148,7 +155,7 @@ def optimize_dtypes(
                                 
                                 new_dtypes[col] = "category"
                                 if inplace:
-                                    df.loc[:,col] = df[col].astype(new_dtypes[col])
+                                    df[col] = df[col].astype(new_dtypes[col])
                                     
                         except Exception as e3:
                             if verbose:
@@ -235,7 +242,7 @@ def optimize_dtypes(
                                 logger.info("%s [%s]->[%s%s]", col, old_dtypes[col], type_name, p)
                             new_dtypes[col] = type_name + str(p)
                             if inplace:
-                                df.loc[:,col] = df[col].astype(new_dtypes[col])
+                                df[col] = df[col].astype(new_dtypes[col])
                             break
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
@@ -523,3 +530,193 @@ def remove_constant_columns(df:pd.DataFrame,verbose:bool=False)->None:
     for var in df.columns[df.nunique() <= 1].tolist():
         if verbose: logger.warning(f"Removing constant columns {var}")
         del df[var]
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Dataframe compression benchmarks
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+
+def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: str, read_params: dict, write_method: str, write_params: dict, nrepeats: int):
+    read_times, write_times, read_sizes, write_sizes = [], [], [], []
+    for _ in range(nrepeats):
+        # write
+        start_time = timer()
+        getattr(df, write_method)(fname, **write_params)
+        duration = timer() - start_time
+        size = getsize(fname) / (1024 ** 2)
+        write_times.append(duration)
+        write_sizes.append(size)
+
+        # read
+        gc.collect()
+        start_time = timer()
+        tmp = getattr(pd, read_method)(fname, **read_params)
+        duration = timer() - start_time
+        size = get_df_memory_consumption(tmp) / (1024 ** 2)
+        del tmp
+        read_times.append(duration)
+        read_sizes.append(size)
+        gc.collect()
+    return [np.array(arr) for arr in (read_times, write_times, read_sizes, write_sizes)]
+
+
+def pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes):
+    res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
+
+
+def benchmark_dataframe_parquet_compression(res, temp_folder, df, nrepeats, skip_configs=('parquet-fastparquet-brotli',)):
+    file_format = "parquet"
+    for engine in tqdmu(("fastparquet", "pyarrow"), desc=f"{file_format} engine", leave=False):
+        for compr in tqdmu("snappy gzip brotli lz4 zstd".split(), desc=f"{file_format} compression method", leave=False):
+            config = f"{file_format}-{engine}-{compr}"            
+            if config in skip_configs: continue
+
+            fname = join(temp_folder, fr"{config}.{file_format}")
+            read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+                df=df,
+                fname=fname,
+                read_method="read_parquet",
+                read_params=dict(engine=engine),
+                write_method="to_parquet",
+                write_params=dict(engine=engine, compression=compr),
+                nrepeats=nrepeats,
+            )
+
+            pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
+    file_format = "pickle"
+
+    # for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
+    for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
+        config = f"{file_format}-{compr}"  # -{level}
+
+        fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+        read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+            df=df,
+            fname=fname,
+            read_method="read_pickle",
+            read_params=dict(compression={"method": compr}),
+            write_method="to_pickle",
+            write_params=dict(compression={"method": compr}, protocol=-1),  # "compresslevel": level
+            nrepeats=nrepeats,
+        )
+
+        pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
+    file_format = "hdf"
+
+    for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
+        for compr in tqdmu("zlib lzo bzip2 blosc".split(), desc=f"{file_format} compression method", leave=False):
+            config = f"{file_format}-{compr}"  # -{level}
+
+            fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+            read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+                df=df,
+                fname=fname,
+                read_method="read_hdf",
+                read_params=dict(complib=compr),
+                write_method="to_hdf",
+                write_params=dict(complib=compr, complevel=level, key="test"),
+                nrepeats=nrepeats,
+            )
+
+            pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
+    file_format = "csv"
+
+    for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
+        config = f"{file_format}-{compr}"
+
+        fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+        read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+            df=df,
+            fname=fname,
+            read_method="read_csv",
+            read_params=dict(compression={"method": compr}),
+            write_method="to_csv",
+            write_params=dict(compression={"method": compr}),
+            nrepeats=nrepeats,
+        )
+
+        pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
+    file_format = "orc"
+
+    config = f"{file_format}"
+
+    fname = join(temp_folder, fr"{config}.{file_format}")
+    read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+        df=df, fname=fname, read_method="read_orc", read_params=dict(), write_method="to_orc", write_params=dict(), nrepeats=nrepeats,
+    )
+
+    pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
+    file_format = "feather"
+
+    config = f"{file_format}"
+
+    fname = join(temp_folder, fr"{config}.{file_format}")
+    read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+        df=df, fname=fname, read_method="read_feather", read_params=dict(), write_method="to_feather", write_params=dict(), nrepeats=nrepeats,
+    )
+
+    pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_compression(
+    df: pd.DataFrame,
+    head: int = 100_000,
+    benchmark_dir_path=None,
+    nrepeats: int = 10,
+    sort_by="mean_write_size",
+    return_styled: bool = True,
+    should_clean_temp_folder: bool = True,
+    verbose: bool = True,
+):
+    """Tries various formats & compressiom methods on a part of your dataframe, reports write, read data size & durations.
+    """
+    if head:
+        df = df.head(head).reset_index(drop=True)
+
+    df_size = get_df_memory_consumption(df) / (1024 ** 2)
+    if verbose:
+        logger.info(f"Pandas: {pd.__version__}, DF size: {df_size:_.2f}Mb, Dtypes: {df.dtypes.value_counts().to_dict()}")
+
+    if benchmark_dir_path:
+        ensure_dir_exists(benchmark_dir_path)
+    temp_folder = tempfile.mkdtemp(dir=benchmark_dir_path)
+
+    res = []
+
+    for func in (benchmark_dataframe_feather_compression,benchmark_dataframe_orc_compression,benchmark_dataframe_hdf_compression,
+                 benchmark_dataframe_parquet_compression,benchmark_dataframe_pickle_compression,benchmark_dataframe_csv_compression):
+        try:
+            func(res, temp_folder, df, nrepeats)
+        except Exception as e:
+            logger.error(e)
+    
+    if should_clean_temp_folder:
+        shutil.rmtree(temp_folder)
+
+    res = (
+        pd.DataFrame(res, columns=["config"] + list(chain(*[("mean_" + arr, "std_" + arr) for arr in "read_time write_time read_size write_size".split()])))
+        .set_index("config")
+        .sort_values(sort_by, ascending=True)
+    )
+
+    remove_constant_columns(res)
+    if return_styled:
+        res= res.style.background_gradient(axis=None, subset=["mean_write_size", "mean_write_time", "mean_read_time"])
+    
+    return res
