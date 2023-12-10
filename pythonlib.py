@@ -797,7 +797,7 @@ import contextlib
 import portalocker
 
 @contextlib.contextmanager
-def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False,timeout:int=60):
+def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False,timeout:int=10):
     
     with portalocker.Lock(f"{db_path}.lock", 'wb', timeout=timeout) as fh:
         yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)
