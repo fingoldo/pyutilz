@@ -24,7 +24,7 @@ from numba import njit
 
 
 @njit
-def set_random_seed(random_seed: int):
+def set_numba_random_seed(random_seed: int):
     if random_seed is not None:
         np.random.seed(random_seed)
 
