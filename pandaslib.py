@@ -185,7 +185,7 @@ def optimize_dtypes(
 
             possibly_integer = []
             for col in tqdmu(float_fields, desc="checking float2int", leave=False):
-                if not (df[col].isna().any()):  # NAs can't be converted to int
+                if not (df[col].isna().any().any()):  # NAs can't be converted to int
                     fract_part, _ = np.modf(df[col])
                     if (fract_part == 0.0).all():
                         possibly_integer.append(col)
@@ -717,6 +717,9 @@ def benchmark_dataframe_compression(
 
     remove_constant_columns(res)
     if return_styled:
-        res= res.style.background_gradient(axis=None, subset=["mean_write_size", "mean_write_time", "mean_read_time"])
+        try:
+            res= res.style.background_gradient(axis=None, subset=["mean_write_size", "mean_write_time", "mean_read_time"])
+        except Exception as e:
+            logger.exception(e)
     
     return res
