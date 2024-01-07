@@ -19,8 +19,6 @@ from .pythonlib import ensure_installed
 from typing import *
 from flask import session
 
-from flask_login import current_user
-
 from dash import html
 import dash_bootstrap_components as dbc
 
@@ -319,11 +317,16 @@ def create_tabs(
     Expected tabs fomat: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)
     """
     # print('In create_tabs of %s' % tabsName)
-    user = current_user
-    if not user.is_authenticated:
-        return
+    try:
+        from flask_login import current_user
+        user = current_user
+        if not user.is_authenticated:
+            return
+    except Exception as e:
+        pass
 
     varName = get_active_tab_var_name(tabsName, prefix=prefix)
+    
     if varName not in session:
         session[varName] = prefix + tabsList[0][0]
 
@@ -336,6 +339,7 @@ def create_tabs(
         tabClassName, labelClassName, tabTooltip = None, None, None
         tabUsers = None
         tabLabel, tabId, tabUsers, *tabClassNames = tab
+        
         if tabClassNames:
             if len(tabClassNames) > 0:
                 tabClassName = tabClassNames[0]
@@ -353,6 +357,9 @@ def create_tabs(
         # if tabTooltip: tooltips.append(dbc.Tooltip(tabTooltip,target=(prefix+tabId)))
 
         if (tabUsers is None) or (user.role in tabUsers):
+
+            print(f"tabLabel={tabLabel}, tabId={tabId}, tabUsers={tabUsers}")
+            
             tabs.append(
                 dbc.Tab(
                     content,
