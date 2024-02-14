@@ -23,6 +23,7 @@ from typing import *
 import gc
 import io
 import os
+import warnings
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -686,6 +687,8 @@ def benchmark_dataframe_compression(
 ):
     """Tries various formats & compressiom methods on a part of your dataframe, reports write, read data size & durations.
     """
+    warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+
     if head:
         df = df.head(head).reset_index(drop=True)
 
