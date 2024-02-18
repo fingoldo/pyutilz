@@ -42,6 +42,8 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
     >>>list(split_list_into_chunks(list(range(10)),3))
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
     """
+    if chunk_size==0:
+        chunk_size=1
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
