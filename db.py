@@ -884,21 +884,24 @@ def build_upsert_query(
         hist_query = f"""
         ,changed_data as (insert into {history_table_name}({','.join(history_fields_final)}) select {','.join(['u.'+field for field in history_fields])} from fresh_data u
         """
+        if len(timestamp_update_fields) > 0:
+            the_list = conflict_fields + timestamp_check_fields
+        else:
+            the_list = conflict_fields
+
+        f_ = [field for field in the_list if field not in history_fields_aliases]
+        if len(timestamp_update_fields) > 0:
+            for field in timestamp_check_fields:
+                new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
+                if new_field not in f_:
+                    f_ = f_ + [
+                        new_field,
+                    ]
+
         if hash_fields:
             join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
-            if len(timestamp_update_fields) > 0:
-                the_list = conflict_fields + timestamp_check_fields
-            else:
-                the_list = conflict_fields
+   
 
-            f_ = [field for field in the_list if field not in history_fields_aliases]
-            if len(timestamp_update_fields) > 0:
-                for field in timestamp_check_fields:
-                    new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
-                    if new_field not in f_:
-                        f_ = f_ + [
-                            new_field,
-                        ]
             hash_changing_cond = []
             for hash_field in hash_fields:
                 hash_changing_cond.append(
@@ -907,6 +910,9 @@ def build_upsert_query(
             hash_changing_cond = " OR ".join(hash_changing_cond)
 
             hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
+        else:
+            join_condtion=None
+            hist_query +=f" returning {','.join(f_)}"
 
         hist_query += ")"
         query += hist_query
@@ -921,7 +927,12 @@ def build_upsert_query(
             # need to figure out name of update field
 
             if True:
-                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c where {join_condtion}) select count(*) from changed_data;"
+                if join_condtion:
+                    the_join_condtion="where {join_condtion}"
+                else:
+                    the_join_condtion=""
+
+                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"
             else:
                 # query += " select * from changed_data c left join test_agencies t on c.rid=t.rid"
                 # query += " update test_agencies as t set info_upd_ts='2021-07-01 00:00:00' from changed_data as c where c.rid=t.rid"
