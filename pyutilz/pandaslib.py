@@ -132,7 +132,7 @@ def optimize_dtypes(
 
     if max_categories is not None:
         for col, the_type in old_dtypes.items():
-            if "object" in the_type:                
+            if "object" in the_type:
                 if field in skip_columns:
                     continue
 
@@ -153,11 +153,11 @@ def optimize_dtypes(
                             if n <= max_categories:
                                 if verbose:
                                     logger.info("%s %s->category", col, the_type)
-                                
+
                                 new_dtypes[col] = "category"
                                 if inplace:
                                     df[col] = df[col].astype(new_dtypes[col])
-                                    
+
                         except Exception as e3:
                             if verbose:
                                 logger.warning(f"Could not convert to category column {col}: {str(e3)}")
@@ -294,7 +294,9 @@ def prefixize_columns(df: object, prefix: str, special_prefixes: dict = {}, sep=
         return df.rename(columns={col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}, inplace=False)
 
 
-def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [], max_vars: int = None, dropna: bool = False,use_markdown:bool=True,use_print:bool=True):
+def showcase_df_columns(
+    df: object, cols: list = None, excluded_cols: list = [], max_vars: int = None, dropna: bool = False, use_markdown: bool = True, use_print: bool = True
+):
     """
     Show distribution of values for each dataframe column
     """
@@ -303,8 +305,10 @@ def showcase_df_columns(df: object, cols: list = None, excluded_cols: list = [],
         cols = df.columns
     for var in cols:
         if var not in excluded_cols:
-            if use_markdown: display(Markdown(f"**{var}** {df[var].dtype}"))
-            if use_print:print(f"{var.upper()} {df[var].dtype}")
+            if use_markdown:
+                display(Markdown(f"**{var}** {df[var].dtype}"))
+            if use_print:
+                print(f"{var.upper()} {df[var].dtype}")
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
                 assert max_vars >= 0
@@ -527,15 +531,25 @@ def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
     return res
 
 
-def remove_constant_columns(df:pd.DataFrame,verbose:bool=False)->None:
-    for var in df.columns[df.nunique() <= 1].tolist():
-        if verbose: logger.warning(f"Removing constant columns {var}")
+def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_size: int = 10_000) -> None:
+
+    if len(df) <= prewarm_size:
+        susp_columns = df.columns[df.nunique() <= 1].tolist()
+    else:
+        susp_columns = df.columns[df.head(prewarm_size).nunique() <= 1].tolist()
+        for col in tqdmu(susp_columns.copy(), desc="cnst col", leave=False):
+            if df[col].nunique() > 1:
+                susp_columns.remove(col)
+
+    for var in susp_columns:
+        if verbose:
+            logger.warning(f"Removing constant columns {var}")
         del df[var]
+
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Dataframe compression benchmarks
 # ----------------------------------------------------------------------------------------------------------------------------
-
 
 
 def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: str, read_params: dict, write_method: str, write_params: dict, nrepeats: int):
@@ -545,7 +559,7 @@ def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: st
         start_time = timer()
         getattr(df, write_method)(fname, **write_params)
         duration = timer() - start_time
-        size = getsize(fname) / (1024 ** 2)
+        size = getsize(fname) / (1024**2)
         write_times.append(duration)
         write_sizes.append(size)
 
@@ -554,7 +568,7 @@ def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: st
         start_time = timer()
         tmp = getattr(pd, read_method)(fname, **read_params)
         duration = timer() - start_time
-        size = get_df_memory_consumption(tmp) / (1024 ** 2)
+        size = get_df_memory_consumption(tmp) / (1024**2)
         del tmp
         read_times.append(duration)
         read_sizes.append(size)
@@ -566,14 +580,15 @@ def pack_benchmark_results(res, config, read_times, write_times, read_sizes, wri
     res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
 
 
-def benchmark_dataframe_parquet_compression(res, temp_folder, df, nrepeats, skip_configs=('parquet-fastparquet-brotli',)):
+def benchmark_dataframe_parquet_compression(res, temp_folder, df, nrepeats, skip_configs=("parquet-fastparquet-brotli",)):
     file_format = "parquet"
     for engine in tqdmu(("fastparquet", "pyarrow"), desc=f"{file_format} engine", leave=False):
         for compr in tqdmu("snappy gzip brotli lz4 zstd".split(), desc=f"{file_format} compression method", leave=False):
-            config = f"{file_format}-{engine}-{compr}"            
-            if config in skip_configs: continue
+            config = f"{file_format}-{engine}-{compr}"
+            if config in skip_configs:
+                continue
 
-            fname = join(temp_folder, fr"{config}.{file_format}")
+            fname = join(temp_folder, rf"{config}.{file_format}")
             read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
                 df=df,
                 fname=fname,
@@ -594,7 +609,7 @@ def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
     for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
         config = f"{file_format}-{compr}"  # -{level}
 
-        fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+        fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
         read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
             df=df,
             fname=fname,
@@ -615,7 +630,7 @@ def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
         for compr in tqdmu("zlib lzo bzip2 blosc".split(), desc=f"{file_format} compression method", leave=False):
             config = f"{file_format}-{compr}"  # -{level}
 
-            fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+            fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
             read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
                 df=df,
                 fname=fname,
@@ -635,7 +650,7 @@ def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
     for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
         config = f"{file_format}-{compr}"
 
-        fname = join(temp_folder, fr"{config}.{file_format}.{compr}")
+        fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
         read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
             df=df,
             fname=fname,
@@ -654,9 +669,15 @@ def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
 
     config = f"{file_format}"
 
-    fname = join(temp_folder, fr"{config}.{file_format}")
+    fname = join(temp_folder, rf"{config}.{file_format}")
     read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
-        df=df, fname=fname, read_method="read_orc", read_params=dict(), write_method="to_orc", write_params=dict(), nrepeats=nrepeats,
+        df=df,
+        fname=fname,
+        read_method="read_orc",
+        read_params=dict(),
+        write_method="to_orc",
+        write_params=dict(),
+        nrepeats=nrepeats,
     )
 
     pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
@@ -667,9 +688,15 @@ def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
 
     config = f"{file_format}"
 
-    fname = join(temp_folder, fr"{config}.{file_format}")
+    fname = join(temp_folder, rf"{config}.{file_format}")
     read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
-        df=df, fname=fname, read_method="read_feather", read_params=dict(), write_method="to_feather", write_params=dict(), nrepeats=nrepeats,
+        df=df,
+        fname=fname,
+        read_method="read_feather",
+        read_params=dict(),
+        write_method="to_feather",
+        write_params=dict(),
+        nrepeats=nrepeats,
     )
 
     pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
@@ -685,14 +712,13 @@ def benchmark_dataframe_compression(
     should_clean_temp_folder: bool = True,
     verbose: bool = True,
 ):
-    """Tries various formats & compressiom methods on a part of your dataframe, reports write, read data size & durations.
-    """
-    warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+    """Tries various formats & compressiom methods on a part of your dataframe, reports write, read data size & durations."""
+    warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
     if head:
         df = df.head(head).reset_index(drop=True)
 
-    df_size = get_df_memory_consumption(df) / (1024 ** 2)
+    df_size = get_df_memory_consumption(df) / (1024**2)
     if verbose:
         logger.info(f"Pandas: {pd.__version__}, DF size: {df_size:_.2f}Mb, Dtypes: {df.dtypes.value_counts().to_dict()}")
 
@@ -702,13 +728,19 @@ def benchmark_dataframe_compression(
 
     res = []
 
-    for func in (benchmark_dataframe_feather_compression,benchmark_dataframe_orc_compression,benchmark_dataframe_hdf_compression,
-                 benchmark_dataframe_parquet_compression,benchmark_dataframe_pickle_compression,benchmark_dataframe_csv_compression):
+    for func in (
+        benchmark_dataframe_feather_compression,
+        benchmark_dataframe_orc_compression,
+        benchmark_dataframe_hdf_compression,
+        benchmark_dataframe_parquet_compression,
+        benchmark_dataframe_pickle_compression,
+        benchmark_dataframe_csv_compression,
+    ):
         try:
             func(res, temp_folder, df, nrepeats)
         except Exception as e:
             logger.error(e)
-    
+
     if should_clean_temp_folder:
         shutil.rmtree(temp_folder)
 
@@ -721,8 +753,19 @@ def benchmark_dataframe_compression(
     remove_constant_columns(res)
     if return_styled:
         try:
-            res= res.style.background_gradient(axis=None, subset=["mean_write_size", "mean_write_time", "mean_read_time"])
+            res = res.style.background_gradient(axis=None, subset=["mean_write_size", "mean_write_time", "mean_read_time"])
         except Exception as e:
             logger.exception(e)
-    
+
     return res
+
+
+def ensure_dataframe_float32_convertability(df: pd.DataFrame) -> None:
+    """Lightgbm uses np.result_type(*df_dtypes) to detect array dtype when converting from Pandas input,
+    which results in float64 for int32 and above. For the rational mem usage, it makes sense to convert cols to float32 directly before training lightgbm."""
+    for precise_dtype in "uint32 int32 int64 uint64 float64".split():
+
+        tmp = df.select_dtypes(precise_dtype)
+        if tmp.shape[1] > 0:
+            logger.info(f"Converting {tmp.shape[1]:_} {precise_dtype} columns to float32")
+            df[tmp.columns] = tmp.astype(np.float32)
