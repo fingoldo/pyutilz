@@ -98,6 +98,7 @@ def optimize_dtypes(
     max_categories: Optional[int] = 100,
     reduce_size: bool = True,
     float_to_int: bool = True,
+    float_to_float: bool = True,
     skip_columns: Sequence = (),
     use_uint: bool = True,  # might want to turn this off when using sqlalchemy (Unsigned 64 bit integer datatype is not supported)
     verbose: bool = False,
@@ -194,7 +195,8 @@ def optimize_dtypes(
                 if use_uint:
                     conversions.append((possibly_integer, "uint"))
                 conversions.append((possibly_integer, "int"))
-        conversions.append((float_fields, "float"))
+        if float_to_float:
+            conversions.append((float_fields, "float"))
         for fields, type_name in tqdmu(conversions, desc="size reduction", leave=False):
             fields = [el for el in fields if el not in uint_fields]
             if len(fields) > 0:
@@ -220,7 +222,7 @@ def optimize_dtypes(
                                 break
                         if r.max <= topvals[j].max and r.min >= topvals[j].min:
                             if ensure_float64_precision and type_name == "float":
-                                # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float64) must not pass here, for example.
+                                # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float32) must not pass here, for example.
                                 if col not in mantissas:
                                     values = df[col].values
                                     with np.errstate(divide="ignore"):

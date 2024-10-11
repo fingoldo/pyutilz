@@ -69,7 +69,7 @@ def jsonize_atrtributes(
     max_recursion_level: Optional[int] = None,
 ) -> dict:
     """
-        Puts all of the object's properties (ecxept starting with an underscore) into a dictionary
+    Puts all of the object's properties (ecxept starting with an underscore) into a dictionary
     """
     import numbers
     from collections.abc import Sequence, Iterable
@@ -155,34 +155,34 @@ def leave_json_attributes(json_obj: dict, attributes: Sequence) -> None:
 
 def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Union[str, list]) -> dict:
     """
-        Extracts (if possible) ONE attribute from a dict of dicts and lists
-        
-        >>>extract_json_attribute( {'category': {'uid': '531770282580668418', 'prefLabel': 'Web, Mobile & Software Dev'}, 'subcategories': [{'uid': '531770282589057031', 'prefLabel': 'QA & Testing'}], 'oservice': {'uid': '1313512633755545600', 'prefLabel': 'Manual Testing'}},'prefLabel')
-        {'category': 'Web, Mobile & Software Dev','subcategories': ['QA & Testing'],'oservice': 'Manual Testing'}
-        
-        >>>extract_json_attribute({'category': {'uid': '531770282580668422', 'prefLabel': 'Sales & Marketing'}, 'subcategories': [{'uid': '531770282597445634', 'prefLabel': 'Lead Generation'}], 'oservice': {'uid': '1017484851352698936', 'prefLabel': 'Lead Generation'}},'prefLabel')
-        {'category': 'Sales & Marketing','subcategories': ['Lead Generation'],'oservice': 'Lead Generation'}
-        
-        >>>extract_json_attribute([{'parentSkillUid': None,
-              'freeText': None,
-              'skillType': 3,
-              'uid': '1052162208894341126',
-              'highlighted': False,
-              'prettyName': 'Music Video'},
-             {'parentSkillUid': None,
-              'freeText': None,
-              'skillType': 3,
-              'uid': '1031626793248342016',
-              'highlighted': False,
-              'prettyName': 'Videography'},
-             {'parentSkillUid': None,
-              'freeText': None,
-              'skillType': 3,
-              'uid': '1031626793223176192',
-              'highlighted': False,
-              'prettyName': 'Video Editing'}],'prettyName')     
-        ['Music Video', 'Videography', 'Video Editing']
-        
+    Extracts (if possible) ONE attribute from a dict of dicts and lists
+
+    >>>extract_json_attribute( {'category': {'uid': '531770282580668418', 'prefLabel': 'Web, Mobile & Software Dev'}, 'subcategories': [{'uid': '531770282589057031', 'prefLabel': 'QA & Testing'}], 'oservice': {'uid': '1313512633755545600', 'prefLabel': 'Manual Testing'}},'prefLabel')
+    {'category': 'Web, Mobile & Software Dev','subcategories': ['QA & Testing'],'oservice': 'Manual Testing'}
+
+    >>>extract_json_attribute({'category': {'uid': '531770282580668422', 'prefLabel': 'Sales & Marketing'}, 'subcategories': [{'uid': '531770282597445634', 'prefLabel': 'Lead Generation'}], 'oservice': {'uid': '1017484851352698936', 'prefLabel': 'Lead Generation'}},'prefLabel')
+    {'category': 'Sales & Marketing','subcategories': ['Lead Generation'],'oservice': 'Lead Generation'}
+
+    >>>extract_json_attribute([{'parentSkillUid': None,
+          'freeText': None,
+          'skillType': 3,
+          'uid': '1052162208894341126',
+          'highlighted': False,
+          'prettyName': 'Music Video'},
+         {'parentSkillUid': None,
+          'freeText': None,
+          'skillType': 3,
+          'uid': '1031626793248342016',
+          'highlighted': False,
+          'prettyName': 'Videography'},
+         {'parentSkillUid': None,
+          'freeText': None,
+          'skillType': 3,
+          'uid': '1031626793223176192',
+          'highlighted': False,
+          'prettyName': 'Video Editing'}],'prettyName')
+    ['Music Video', 'Videography', 'Video Editing']
+
     """
     if type(attribute) == str:
         attribute = [attribute]
@@ -230,7 +230,9 @@ def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
                 pass
 
 
-def remove_json_defaults(json_obj: dict, attr_values: Optional[List[dict]] = None, warn_if_not_default: Optional[bool] = False, obj_id: Optional[str] = "") -> None:
+def remove_json_defaults(
+    json_obj: dict, attr_values: Optional[List[dict]] = None, warn_if_not_default: Optional[bool] = False, obj_id: Optional[str] = ""
+) -> None:
     if json_obj is None or attr_values is None:
         return
     for attr, default_value in attr_values.items():
@@ -254,8 +256,8 @@ def get_jsonlist_property(data: Iterable, property_name: str, return_indices: Op
     """
     res = []
     indices = []
-    
-    if isinstance(data,dict):
+
+    if isinstance(data, dict):
         return data.get(property_name)
 
     for i, elem in enumerate(data):
@@ -399,29 +401,33 @@ def write_config_file(
 
 
 def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Optional[int] = None) -> Optional[str]:
-    if s is not None:
-        if idx2 is None:
-            idx2 = len(s)
-        if len(start) == 0:
-            p1 = 0
+    """Finds a substring located in a text between the start and end strings, optionally from indices idx1 till idx2."""
+
+    if not s:
+        return
+
+    if not idx2:
+        idx2 = len(s)
+    if len(start) == 0:
+        p1 = 0
+    else:
+        p1 = s.find(start, idx1, idx2)
+    if p1 >= 0:
+        p1 = p1 + len(start)
+        if len(end) == 0:
+            p2 = len(s)
         else:
-            p1 = s.find(start, idx1, idx2)
-        if p1 >= 0:
-            p1 = p1 + len(start)
-            if len(end) == 0:
-                p2 = len(s)
-            else:
-                p2 = s.find(end, p1, idx2)
-            if p2 >= 0:
-                return s[p1:p2]
+            p2 = s.find(end, p1, idx2)
+        if p2 >= 0:
+            return s[p1:p2]
 
 
 def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token: Optional[str] = "]") -> list:
     """
-    
+
     >>> parse_tokens('1. Nf3 { [%clk 0:03:00] } g6 { [%clk 0:03:00] } 2. c4 { [%clk 0:03:00] } Bg7 { [%clk 0:03:01] } 3. Nc3 { [%clk 0:03:01] } Nf6 { [%clk 0:03:02] } ',start_token='[%clk ',end_token=']')
     ['0:03:00', '0:03:00', '0:03:00', '0:03:01', '0:03:01', '0:03:02']
-    
+
     """
     p1, p2 = 0, 0
     tokens = []
@@ -509,8 +515,8 @@ def strip_doubled_characters(text: str, char_list: Sequence) -> str:
 
 def rpad(txt: str, n: int = 0, symbol: str = ".") -> str:
     """
-        >>>rpad("abc",5,".")
-        'abc..'
+    >>>rpad("abc",5,".")
+    'abc..'
     """
     return txt.ljust(n, symbol)
 
@@ -587,7 +593,7 @@ def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
 
 def fix_spaces(text: str, tokens: Optional[list] = [",", "."]) -> str:
     """
-        Fixes whitespaces between commas
+    Fixes whitespaces between commas
     """
     if text:
         for token in tokens:
@@ -605,7 +611,9 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
         punctuation, eos = string.punctuation, ("!", ".", "?")
         whitespaces = list(string.whitespace)
         whitespaces.remove(" ")
-        whitespaces = ["\r\n",] + whitespaces
+        whitespaces = [
+            "\r\n",
+        ] + whitespaces
         for token in whitespaces:
             l = len(text)
             new_text = ""
@@ -738,10 +746,10 @@ def ensure_space_after_comma(text: str) -> str:
     """
     >>>ensure_space_after_comma('Awesome. In love with this,really great coverage and stays on perfectly.')
     'Awesome. In love with this, really great coverage and stays on perfectly.'
-    
+
     >>>ensure_space_after_comma("They are just a tiny bit fatter than standard but will fit in most devices,."
     'They are just a tiny bit fatter than standard but will fit in most devices.'
-    
+
     also eliminates comma if after it goes not a space not a letter/a number
     """
     for comb in ",.|, .".split("|"):
@@ -876,10 +884,10 @@ def suffixize(noun: str, qty: int) -> str:
 def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", default: str = "", default_replacement: str = None) -> str:
     """
     Shortens out default values/parts prefixing string
-    
+
     >>> shorten_path('https://i.ebayimg.com/thumbs/images/g/AgQAAOSwIZ5fC-Dp/s-l225.jpg',prefix='https://i.ebayimg.com/thumbs/images/g/',default='https://ir.ebaystatic.com/pictures/aw/pics/stockimage1.jpg')
     'AgQAAOSwIZ5fC-Dp/s-l225.jpg'
-    
+
     """
     if pd.notnull(path):
         if path == default:
@@ -895,7 +903,7 @@ def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
     dashes to single dashes. Remove characters that aren't alphanumerics,
     underscores, or hyphens. Convert to lowercase. Also strip leading and
     trailing whitespace, dashes, and underscores.
-    
+
     DOES NOT PRESERVE A DOT BEFORE FILE EXTENSION!
     """
     value = str(value)
@@ -910,21 +918,23 @@ def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
 
     return value
 
-def camel_case_split(str:str)->list:
+
+def camel_case_split(str: str) -> list:
     """Splits camelcased sentence into individual words.
 
     >>>camel_case_split("ThisIsInCamelCase")
     ['This', 'Is', 'In', 'Camel', 'Case']
     """
     words = [[str[0]]]
- 
+
     for c in str[1:]:
         if words[-1][-1].islower() and c.isupper():
             words.append(list(c))
         else:
             words[-1].append(c)
- 
-    return [''.join(word) for word in words]
+
+    return ["".join(word) for word in words]
+
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Textual entropy
@@ -946,7 +956,7 @@ def tokenize_text(source: str, tokenizer: object, lowercase: bool = True, strip:
 
 def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lowercase: bool = True, strip: bool = True) -> str:
     """
-        source can be a filename or a string, depending on is_file flag
+    source can be a filename or a string, depending on is_file flag
     """
     if is_file:
         with open(source, mode="r", encoding="utf-8") as file:

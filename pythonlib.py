@@ -46,14 +46,14 @@ import importlib, subprocess
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
-    known_abbreviations={'scikit-learn':'sklearn'}
+    known_abbreviations = {"scikit-learn": "sklearn"}
     if packages:
         if type(packages) == str:
             if sep in packages:
                 packages = packages.split(sep)
             else:
                 packages = [packages]
-        missing_packages = [pkg for pkg in packages if not importlib.util.find_spec(known_abbreviations.get(pkg,pkg))]
+        missing_packages = [pkg for pkg in packages if not importlib.util.find_spec(known_abbreviations.get(pkg, pkg))]
         if missing_packages:
             mes = f"Installing missing packages: {missing_packages}"
             logger.info(mes)
@@ -292,7 +292,7 @@ def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:
 
 
 def sort_dict_by_key(dct: dict, reverse: bool = False) -> dict:
-    return dict(sorted(dct.items()), reverse=reverse)
+    return dict(sorted(dct.items(), reverse=reverse))
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -311,67 +311,70 @@ def is_float(string):
 def to_float(string):
     return float(str(string).replace(",", ""))
 
+
 @njit()
-def integer_digits(n:int)->set:
+def integer_digits(n: int) -> set:
     # Function to count digits in an integer
     digits = set()
-    ntotal=0
+    ntotal = 0
     while n > 0:
-        ntotal+=1
+        ntotal += 1
         digit = n % 10
         digits.add(digit)
         n //= 10
-    return ntotal,digits
+    return ntotal, digits
 
 
-#@njit()
-def float_distinct_digits_percent(number:float,precision:int=5)->float:
+# @njit()
+def float_distinct_digits_percent(number: float, precision: int = 5) -> float:
     """
     >>>float_distinct_digits_percent(11.882, precision=3)
     0.6
     """
     # Extract the integer and fractional parts of the float
     int_part = int(number)
-    frac_part = round(abs(number - int_part),precision) # rounding needed for cases like 11.882
+    frac_part = round(abs(number - int_part), precision)  # rounding needed for cases like 11.882
 
     # Initialize a set to store unique digits
     unique_digits = set()
-    ntotal=0
+    ntotal = 0
 
     # Count digits in the integer part
-    nsubtotal,digits=integer_digits(int_part)
+    nsubtotal, digits = integer_digits(int_part)
     unique_digits.update(digits)
-    ntotal+=nsubtotal
+    ntotal += nsubtotal
 
     # Count digits in the fractional part (up to a certain precision)
     if precision:
-        frac_digits = int(frac_part * (10 ** precision)) # Adjust precision as needed
-        nsubtotal,digits=integer_digits(frac_digits)    
+        frac_digits = int(frac_part * (10**precision))  # Adjust precision as needed
+        nsubtotal, digits = integer_digits(frac_digits)
         unique_digits.update(digits)
-        ntotal+=nsubtotal
+        ntotal += nsubtotal
 
     # Count the number of unique digits
-    return len(unique_digits)/ntotal if ntotal>0 else 1.0
+    return len(unique_digits) / ntotal if ntotal > 0 else 1.0
 
-def count_trailing_zeros(number:float,precision:int=5):
+
+def count_trailing_zeros(number: float, precision: int = 5):
     """
     >>>count_trailing_zeros(1.30e-6, precision=8)
     1
     """
     # Convert the float to a string
-    num_str = format(number, f'.{precision}f')
-    nseps=0
-    nzeros=0
+    num_str = format(number, f".{precision}f")
+    nseps = 0
+    nzeros = 0
     for char in num_str[::-1]:
-        if char in ',.e+-':
-            nseps+=1
+        if char in ",.e+-":
+            nseps += 1
         else:
-            if char=='0':
-                nzeros+=1
+            if char == "0":
+                nzeros += 1
             else:
                 break
-    
+
     return nzeros
+
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Time & dates
@@ -796,10 +799,11 @@ import shelve
 import contextlib
 import portalocker
 
+
 @contextlib.contextmanager
-def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False,timeout:int=10):
-    
-    with portalocker.Lock(f"{db_path}.lock", 'wb', timeout=timeout) as fh:
+def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False, timeout: int = 10):
+
+    with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
         yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)
         # flush and sync to filesystem
         fh.flush()

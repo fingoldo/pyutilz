@@ -1,4 +1,4 @@
-#!$ pip install pympler psutil x86cpu gpu-info pylspci gputil py-cpuinfo
+#!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -27,6 +27,8 @@ import uuid
 import locale
 import re, json, tqdm
 import socket, psutil
+from pympler import asizeof
+import platform, sys, importlib
 import os, platform, subprocess
 from datetime import timezone, datetime, timedelta
 
@@ -52,61 +54,78 @@ def run_from_ipython():
 
 
 def tqdmu(*args, **kwargs):
+
     if run_from_ipython():
-        return tqdm.tqdm_notebook(*args, **kwargs)
+        try:
+            res = tqdm.tqdm_notebook(*args, **kwargs)
+        except Exception as e:
+            res = tqdm.tqdm(*args, **kwargs)
+        return res
     else:
         return tqdm.tqdm(*args, **kwargs)
 
 
 def get_system_info(
+    return_hdd_info: bool = False,
     return_os_info: bool = False,
-    return_software_info: bool = False,
+    return_sensitive_info: bool = False,
     return_hardware_info: bool = False,
     return_hardware_details: bool = False,
     return_usage_stats: bool = False,
     return_network_info: bool = False,
     only_stats: bool = False,
 ) -> dict:
-
-    ensure_installed("x86cpu py-cpuinfo")
+    """
+    return_sensitive_info=True also returns machine GUID and host name.
+    """
+    # ensure_installed("x86cpu py-cpuinfo")
 
     import numba
     from numba import cuda
     from . import web, strings
 
-    import x86cpu, cpuinfo
+    try:
+        import x86cpu
+    except Exception as e:
+        pass
+    try:
+        import cpuinfo
+    except Exception as e:
+        pass
 
     info = dict()
     try:
         current_system = platform.system()
         if return_os_info:
-            # (Almost) Constant features
-            info["os_machine_guid"] = str(uuid.UUID(int=uuid.getnode()))
             # Os
             info["os_system"] = current_system
-            os_serial = None
-            if current_system == "Windows":
-                os_serial = None
-                try:
-                    os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()
-                    info["os_machine_guid"] = os_serial
-                except:
-                    logger.warning(f"Could not extract Windows serial!")
-
-            elif current_system == "Linux":
-                info["os_machine_guid"] = subprocess.check_output("cat /var/lib/dbus/machine-id")
-            elif current_system == "Android":
-                info["os_machine_guid"] = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1]
-            elif current_system == "Mac":
-                info["os_machine_guid"] = subprocess.check_output("ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'", shell=True).split('"')[-2]
-
-        if return_software_info:
-            info["os_platform"] = platform.platform()
             info["os_version"] = platform.version()
+            info["os_platform"] = platform.platform()
+            if current_system == "Windows":
+                info["os_edition"] = platform.win32_edition()
 
-        if return_network_info:
-            info["host_name"] = socket.gethostname()
-            info["ip"] = web.get_external_ip()
+            if return_sensitive_info:
+
+                # (Almost) Constant features
+                info["os_machine_guid"] = str(uuid.UUID(int=uuid.getnode()))
+                if current_system == "Windows":
+                    os_serial = None
+                    try:
+                        os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()
+                        info["os_machine_guid"] = os_serial
+                    except:
+                        logger.warning(f"Could not extract Windows serial!")
+
+                elif current_system == "Linux":
+                    info["os_machine_guid"] = subprocess.check_output("cat /var/lib/dbus/machine-id")
+                elif current_system == "Android":
+                    info["os_machine_guid"] = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1]
+                elif current_system == "Mac":
+                    info["os_machine_guid"] = subprocess.check_output("ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'", shell=True).split('"')[-2]
+
+                if return_network_info:
+                    info["host_name"] = socket.gethostname()
+                    info["host_external_ip"] = web.get_external_ip()
 
         if return_hardware_info or return_usage_stats:
             cpu_freq = psutil.cpu_freq()
@@ -114,8 +133,13 @@ def get_system_info(
 
         if return_hardware_info:
             # CPU
-            info["cpu_features"] = strings.jsonize_atrtributes(x86cpu.info, exclude="reg0,reg1,reg7,report,report_template".split(","))
-            info["cpu_additional_features"] = cpuinfo.get_cpu_info()
+
+            cpu_info = cpuinfo.get_cpu_info()
+
+            for key in "python_version cpuinfo_version cpuinfo_version_string hz_advertised_friendly hz_actual_friendly".split():
+                if key in cpu_info:
+                    del cpu_info[key]
+            info["cpu"] = cpu_info
 
             if current_system != "Windows":
                 info["cpu_num_sockets"] = get_nix_cpu_sockets_number()
@@ -138,6 +162,7 @@ def get_system_info(
             info["cpu_current_threads_load_percents"] = psutil.cpu_percent(percpu=True)
 
             info["ram_free_gb"] = ram.free / 2**30
+
         # Soft+GPU
         info["python_version"] = platform.python_implementation() + " " + platform.python_version()
         if "cuda" in dir(numba):
@@ -160,26 +185,29 @@ def get_system_info(
                         info["gpu_num_devices"] = len(info["gpu_features"])
                     except:
                         pass
+                    """
                     try:
                         info["gpu_additional_features"] = get_pycuda_gpu_info()
                     except:
                         pass
+                    """
                 try:
                     info["gpu_current_stats"] = get_gpu_util_stats()
                 except:
                     pass
 
-        (
-            max_singledisk_free_space,
-            singledisk_usage_percent,
-            best_disk,
-            cumulative_disks_usage_total,
-            cumulative_disks_usage_free,
-        ) = get_max_singledisk_free_space_gb()
+        if return_hdd_info:
+            (
+                max_singledisk_free_space,
+                singledisk_usage_percent,
+                best_disk,
+                cumulative_disks_usage_total,
+                cumulative_disks_usage_free,
+            ) = get_max_singledisk_free_space_gb()
 
-        info["hdd_total_space_gb"] = cumulative_disks_usage_total
-        info["hdd_free_space_gb"] = cumulative_disks_usage_free
-        info["hdd_max_singledisk_free_space_gb"] = max_singledisk_free_space
+            info["hdd_free_space_gb"] = cumulative_disks_usage_free
+            info["hdd_total_space_gb"] = cumulative_disks_usage_total
+            info["hdd_max_singledisk_free_space_gb"] = max_singledisk_free_space
 
         # psutil.boot_time() #1564925068.0
         # psutil.users() #[suser(name='TheLocalCommander', terminal=None, host='0.0.0.0', started=1564925062.0, pid=None)]
@@ -188,7 +216,7 @@ def get_system_info(
             if current_system == "Windows":
                 wmi = None
                 try:
-                    ensure_installed("pypiwin32")
+                    # ensure_installed("pypiwin32")
 
                     import wmi
                 except:
@@ -270,7 +298,7 @@ def get_gpuinfo_gpu_info():
         from gpuinfo.nvidia import get_gpus
     except Exception as e:
         logger.warning("Can't import get_gpus from gpuinfo.nvidia.")
-        return None,None,None
+        return None, None, None
 
     devices = dict()
     gpus_ram_total_gb = 0
@@ -295,7 +323,7 @@ def get_gpuinfo_gpu_info():
 
 
 def get_gpu_util_stats():
-    ensure_installed("gputil")
+    # ensure_installed("gputil")
 
     import GPUtil as GPU
 
@@ -317,7 +345,7 @@ def get_gpu_util_stats():
 
 
 def get_pycuda_gpu_info():
-    ensure_installed("pycuda")
+    # ensure_installed("pycuda")
 
     import pycuda.autoinit
     import pycuda.driver as cuda
@@ -334,7 +362,7 @@ def get_pycuda_gpu_info():
             cur_device["total_memory"] = device.total_memory()
             attrs = device.get_attributes()
             features = dict()
-            for (key, value) in attrs.items():
+            for key, value in attrs.items():
                 features[str(key)] = value
             cur_device["features"] = features
             devices[device.name()] = cur_device
@@ -391,10 +419,10 @@ def get_max_singledisk_free_space_gb(disk_partitions: object = None, required_fi
 
 
 def list_linux_devices() -> dict:
-    ensure_installed("pylspci")
+    # ensure_installed("pylspci")
 
     try:
-        devices = json.loads(check_output(["pylspci", "-nn"]).decode("utf-8"))
+        devices = json.loads(subprocess.check_output(["pylspci", "-nn"]).decode("utf-8"))
         for device in devices:
             remove_json_defaults(
                 device,
@@ -412,28 +440,21 @@ def list_linux_devices() -> dict:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_system_fingerprint(force_ml_stack=False):
-    import platform, sys, importlib
+def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: str = " ") -> dict:
 
-    libs = "sklearn,keras,numpy,pandas,numba".split(",")
-    vals = [sys.version, platform.machine(), platform.platform()]
+    if isinstance(libs, str):
+        libs = libs.split(sep)
 
-    if force_ml_stack:
-        for modulename in libs:
+    res = {}
+
+    for modulename in libs:
+        try:
             tmp = importlib.import_module(modulename)
-
-    text = "Python version: %s\nplatform: %s\nsystem: %s"
-    for modulename in sys.modules:
-        if modulename in libs:
-            version = ""
-            try:
-                version = sys.modules[modulename].__version__
-            except:
-                pass
-            if len(version) > 0:
-                vals.append(version)
-                text = text + "\n" + modulename + ": %s"
-    return text % tuple(vals)
+            version = sys.modules[modulename].__version__
+            res[modulename] = version
+        except Exception as e:
+            pass
+    return res
 
 
 def get_max_affordable_workers_count(reservedCores=1):
@@ -471,7 +492,6 @@ def get_script_file(file: Optional[str] = __file__) -> str:
 
 
 def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object = None):
-    from pympler import asizeof
 
     report = "Large objects in RAM:"
     nbig = 0
