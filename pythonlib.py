@@ -46,7 +46,7 @@ import importlib, subprocess
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
-    known_abbreviations = {"scikit-learn": "sklearn"}
+    known_abbreviations = {"scikit-learn": "sklearn", "imbalanced-learn": "imblearn"}
     if packages:
         if type(packages) == str:
             if sep in packages:
