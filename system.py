@@ -316,23 +316,18 @@ def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.Data
     tracemalloc.start()
 
     # Retrieve all objects from the current Python session
-    all_objects = []
+    res = []
     for obj in globals().values():
         try:
-            if sys.getsizeof(obj) >= min_size_bytes:
-                all_objects.append(obj)
+            size = sys.getsizeof(obj)
+            if size >= min_size_bytes:
+                res.append(dict(type=type(obj), size_gb=size / 1024**3))
         except Exception as e:
             # print(f"stumbled on object of type {type(obj)}")
             pass
 
-    # Sort the objects by size
-    top_n_objects = sorted(all_objects, key=lambda obj: sys.getsizeof(obj), reverse=True)[:N]
-
-    # Display the top N objects with their sizes
-    res = []
-    for idx, obj in enumerate(top_n_objects, 1):
-        res.append(dict(type=type(obj), size_gb=sys.getsizeof(obj) / 1024**3))
-    return pd.DataFrame(res)
+    res = pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N)
+    return res
 
 
 def show_tracemalloc_snapshot(N: int = 10):
