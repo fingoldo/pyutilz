@@ -292,13 +292,28 @@ def get_own_memory_usage() -> float:
         return memory_usage
 
 
+def trim_memory():
+    try:
+        ctypes.windll.kernel32.SetProcessWorkingSetSize(
+            ctypes.windll.kernel32.GetCurrentProcess(), -1, -1  # Minimum size; use -1 to let OS decide  # Maximum size; use -1 to let OS decide
+        )
+    except Exception as e:
+        logger.warning("SetProcessWorkingSetSize attempt failed")
+
+
 def clean_ram() -> None:
     """
     Forces python garbage collection.
     Most importantly, calls malloc_trim, which fixes pandas memory leak."""
 
     gc.collect()
-    ctypes.CDLL("libc.so.6").malloc_trim(0)
+    if platform.system() == "Windows":
+        trim_memory()
+    else:
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception as e:
+            logger.warning("malloc_trim attempt failed")
 
 
 def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
@@ -313,7 +328,7 @@ def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.Data
     print(f"Own process RAM usage: {get_own_memory_usage():.2f} GB")
 
     # Start tracing memory allocations
-    tracemalloc.start()
+    # tracemalloc.start()
 
     # Retrieve all objects from the current Python session
     res = []
