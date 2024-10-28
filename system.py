@@ -25,6 +25,7 @@ from typing import *
 
 import uuid
 import locale
+import pandas as pd
 import re, json, tqdm
 import socket, psutil
 from pympler import asizeof
@@ -32,6 +33,10 @@ import platform, sys, importlib
 import os, platform, subprocess
 from datetime import timezone, datetime, timedelta
 
+import gc
+import sys
+import ctypes
+import tracemalloc
 
 from .strings import remove_json_defaults
 
@@ -280,11 +285,67 @@ def get_own_memory_usage() -> float:
     try:
         pid = os.getpid()
         py = psutil.Process(pid)
-        memory_usage = py.memory_info()[0] / 2.0**30  # memory usage in GB
+        memory_usage = py.memory_info().rss / 2.0**30  # memory usage in GB
     except Exception as e:
         logger.exception(e)
     else:
         return memory_usage
+
+
+def clean_ram() -> None:
+    """
+    Forces python garbage collection.
+    Most importantly, calls malloc_trim, which fixes pandas memory leak."""
+
+    gc.collect()
+    ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+
+def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
+    """
+
+    Then reports own process RAM usage & the mnost RAM consuming objects.
+    """
+
+    clean_ram()
+
+    p = psutil.Process()
+    print(f"Own process RAM usage: {get_own_memory_usage():.2f} GB")
+
+    # Start tracing memory allocations
+    tracemalloc.start()
+
+    # Retrieve all objects from the current Python session
+    all_objects = []
+    for obj in globals().values():
+        try:
+            if sys.getsizeof(obj) >= min_size_bytes:
+                all_objects.append(obj)
+        except Exception as e:
+            # print(f"stumbled on object of type {type(obj)}")
+            pass
+
+    # Sort the objects by size
+    top_n_objects = sorted(all_objects, key=lambda obj: sys.getsizeof(obj), reverse=True)[:N]
+
+    # Display the top N objects with their sizes
+    res = []
+    for idx, obj in enumerate(top_n_objects, 1):
+        res.append(dict(type=type(obj), size_gb=sys.getsizeof(obj) / 1024**3))
+    return pd.DataFrame(res)
+
+
+def show_tracemalloc_snapshot(N: int = 10):
+
+    tracemalloc.start()
+
+    # Take a snapshot of memory usage
+    snapshot = tracemalloc.take_snapshot()
+    top_stats = snapshot.statistics("lineno")
+
+    print(f"Top {N} memory-consuming lines:")
+    for stat in top_stats[:N]:
+        print(stat)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
