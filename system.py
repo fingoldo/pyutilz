@@ -316,7 +316,7 @@ def clean_ram() -> None:
             logger.warning("malloc_trim attempt failed")
 
 
-def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
+def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
     """
 
     Then reports own process RAM usage & the mnost RAM consuming objects.
@@ -324,7 +324,6 @@ def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.Data
 
     clean_ram()
 
-    p = psutil.Process()
     print(f"Own process RAM usage: {get_own_memory_usage():.2f} GB")
 
     # Start tracing memory allocations
@@ -332,16 +331,17 @@ def show_biggest_session_objects(N: int = 5, min_size_bytes: int = 1) -> pd.Data
 
     # Retrieve all objects from the current Python session
     res = []
-    for obj in globals().values():
+    for obj in session.values():
         try:
             size = sys.getsizeof(obj)
+        except Exception as e:
+            print(f"stumbled on object of type {type(obj)}")
+            pass
+        else:
             if size >= min_size_bytes:
                 res.append(dict(type=type(obj), size_gb=size / 1024**3))
-        except Exception as e:
-            # print(f"stumbled on object of type {type(obj)}")
-            pass
-
-    res = pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N)
+    if res:
+        res = pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N)
     return res
 
 
