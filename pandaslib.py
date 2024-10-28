@@ -543,9 +543,10 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
             if df[col].nunique() > 1:
                 susp_columns.remove(col)
 
+    if verbose and susp_columns:
+        logger.warning(f"Removing constant columns {susp_columns}")
+
     for var in susp_columns:
-        if verbose:
-            logger.warning(f"Removing constant columns {var}")
         del df[var]
 
 
