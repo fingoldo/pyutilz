@@ -192,7 +192,7 @@ def get_system_info(
                         pass
                     """
                 try:
-                    info["gpu_current_stats"] = get_gpu_util_stats()
+                    info["gpu_current_stats"] = get_gpuutil_gpu_info()
                 except:
                     pass
 
@@ -292,17 +292,43 @@ def get_own_memory_usage() -> float:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_gpuinfo_gpu_info():
+def compute_total_gpus_ram(gpus: Sequence) -> dict:
+    """Returns GPUs VRAM, total all devices & max, in GBs
+    >>>compute_total_gpus_ram(get_gpuinfo_gpu_info())
+    {'gpus_ram_total': 7.841796875,
+    'gpus_ram_free': 7.1611328125,
+    'gpu_max_ram_free': 7.1611328125,
+    'gpu_max_ram_total': 7.841796875}
+    """
+
+    gpus_ram_total = 0.0
+    gpus_ram_free = 0.0
+    gpu_max_ram_free = 0.0
+    gpu_max_ram_total = 0.0
+
+    for gpu in gpus:
+        free_mem = gpu.get("free_memory", 0) / 1024
+        total_mem = gpu.get("used_memory", 0) / 1024 + free_mem
+        gpus_ram_total += total_mem
+        gpus_ram_free += free_mem
+        if total_mem > gpu_max_ram_total:
+            gpu_max_ram_total = total_mem
+        if free_mem > gpu_max_ram_free:
+            gpu_max_ram_free = free_mem
+
+    return dict(gpus_ram_total=gpus_ram_total, gpus_ram_free=gpus_ram_free, gpu_max_ram_free=gpu_max_ram_free, gpu_max_ram_total=gpu_max_ram_total)
+
+
+def get_gpuinfo_gpu_info() -> list:
+
+    devices = []
 
     try:
         from gpuinfo.nvidia import get_gpus
     except Exception as e:
         logger.warning("Can't import get_gpus from gpuinfo.nvidia.")
-        return None, None, None
+        return devices
 
-    devices = dict()
-    gpus_ram_total_gb = 0
-    gpus_ram_free_gb = 0
     try:
         gpus = get_gpus()
     except Exception as e:
@@ -310,50 +336,61 @@ def get_gpuinfo_gpu_info():
     else:
         for gpu in gpus:
             cur_device = gpu.__dict__
-            gpu_name = cur_device["name"]
-            del cur_device["name"]
             cur_device.update(gpu.get_max_clock_speeds())
             cur_device.update(gpu.get_clock_speeds())
             mem = gpu.get_memory_details()
-            gpus_ram_total_gb = gpus_ram_total_gb + mem["used_memory"] / 1024 + mem["free_memory"] / 1024
-            gpus_ram_free_gb = gpus_ram_free_gb + mem["free_memory"] / 1024
             cur_device.update(mem)
-            devices[gpu_name] = cur_device
-    return gpus_ram_total_gb, gpus_ram_free_gb, devices
+            devices.append(cur_device)
+
+    return devices
 
 
-def get_gpu_util_stats():
+def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,id,temperature,uuid") -> list:
     # ensure_installed("gputil")
+    if isinstance(attrs, str):
+        attrs = attrs.split(",")
+    assert "id" in attrs
 
-    import GPUtil as GPU
+    devices = []
 
-    devices = dict()
+    try:
+        import GPUtil as GPU
+    except Exception as e:
+        logger.warning("Can't import GPUtil.")
+        return devices
+
     try:
         for gpu in GPU.getGPUs():
             cur_device = dict()
-            for attr in "memoryTotal,memoryFree,load,driver,id,temperature,uuid".split(","):
+            for attr in attrs:
                 val = getattr(gpu, attr)
                 if "memory" in attr:
                     val = val / 1024
                 elif attr == "load":
                     val = val * 100
                 cur_device[attr] = val
-            devices[gpu.name] = cur_device
+            devices.append(cur_device)
     except Exception as e:
         logger.exception(e)
+
     return devices
 
 
-def get_pycuda_gpu_info():
+def get_pycuda_gpu_info() -> list:
     # ensure_installed("pycuda")
 
-    import pycuda.autoinit
-    import pycuda.driver as cuda
+    devices = []
+
+    try:
+        import pycuda.autoinit
+        import pycuda.driver as cuda
+    except Exception as e:
+        logger.warning("Can't import pycuda.")
+        return devices
 
     # free,total=cuda.mem_get_info()
     # print(free,total,"Global memory occupancy: %f%% free"%(free*100/total))
 
-    devices = dict()
     try:
         for devicenum in range(cuda.Device.count()):
             device = cuda.Device(devicenum)
@@ -365,9 +402,10 @@ def get_pycuda_gpu_info():
             for key, value in attrs.items():
                 features[str(key)] = value
             cur_device["features"] = features
-            devices[device.name()] = cur_device
+            devices.append(cur_device)
     except Exception as e:
         logger.exception(e)
+
     return devices
 
 
