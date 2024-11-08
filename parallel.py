@@ -118,6 +118,8 @@ def split_array(arr: object, step: int) -> list:
 
 def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     """Distribute array workload into nworkers chunks of approximately same total size."""
+    if nworkers <= 0:
+        nworkers = psutil.cpu_count(logical=False)
     planned_work_per_worker = [[] for _ in range(nworkers)]
     workload_indices_per_worker = [[] for _ in range(nworkers)]
     totals = [(0, i) for i in range(nworkers)]
@@ -130,9 +132,12 @@ def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     return planned_work_per_worker, workload_indices_per_worker
 
 
-def parallel_run(jobslist: Sequence, n_jobs: int = -1, backend: str = None, max_nbytes: int = 50_000, verbose: int = 0, **parallel_kwargs):
+def parallel_run(
+    jobslist: Sequence, n_jobs: int = -1, backend: str = None, max_nbytes: int = 50_000, prefer_real_cores: bool = True, verbose: int = 0, **parallel_kwargs
+):
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
-
+    if n_jobs <= 0 and prefer_real_cores:
+        n_jobs = psutil.cpu_count(logical=False)
     ctx_mgr = parallel_backend(backend) if (backend and "dask" in backend) else contextlib.nullcontext()
     with ctx_mgr:
         return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend, max_nbytes=max_nbytes, verbose=verbose, **parallel_kwargs)(

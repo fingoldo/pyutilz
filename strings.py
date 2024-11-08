@@ -1024,6 +1024,8 @@ def naive_entropy_rate(a: str) -> float:
 
     return -np.sum(p * np.log2(p))
 
+def stringify_dict(the_dict:dict,sep:str=",")->str:
+    return sep.join([f"{key}={value}" for key,value in the_dict.items()])
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # MAIN

@@ -37,6 +37,7 @@ import gc
 import sys
 import ctypes
 import tracemalloc
+import ctypes.wintypes
 
 from .strings import remove_json_defaults
 
@@ -292,28 +293,55 @@ def get_own_memory_usage() -> float:
         return memory_usage
 
 
-def trim_memory():
-    try:
-        ctypes.windll.kernel32.SetProcessWorkingSetSize(
-            ctypes.windll.kernel32.GetCurrentProcess(), -1, -1  # Minimum size; use -1 to let OS decide  # Maximum size; use -1 to let OS decide
-        )
-    except Exception as e:
-        logger.warning("SetProcessWorkingSetSize attempt failed")
+def trim_windows_process_memory(pid: int = None) -> bool:
+    """Causes effect similar to malloc_trim on -nix."""
+
+    # Define SIZE_T based on the platform (32-bit or 64-bit)
+    if ctypes.sizeof(ctypes.c_void_p) == 4:
+        SIZE_T = ctypes.c_uint32
+    else:
+        SIZE_T = ctypes.c_uint64
+
+    # Get a handle to the current process
+    if not pid:
+        pid = ctypes.windll.kernel32.GetCurrentProcess()
+
+    # Define argument and return types for SetProcessWorkingSetSizeEx
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.argtypes = [
+        ctypes.wintypes.HANDLE,  # Process handle
+        SIZE_T,  # Minimum working set size
+        SIZE_T,  # Maximum working set size
+        ctypes.wintypes.DWORD,  # Flags
+    ]
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.restype = ctypes.wintypes.BOOL
+
+    # Define constants for SetProcessWorkingSetSizeEx
+    QUOTA_LIMITS_HARDWS_MIN_DISABLE = 0x00000002
+
+    # Attempt to set the working set size
+    result = ctypes.windll.kernel32.SetProcessWorkingSetSizeEx(pid, SIZE_T(-1), SIZE_T(-1), QUOTA_LIMITS_HARDWS_MIN_DISABLE)
+
+    if result == 0:
+        # Retrieve the error code
+        error_code = ctypes.windll.kernel32.GetLastError()
+        logger.error(f"SetProcessWorkingSetSizeEx failed with error code: {error_code}")
+        return False
+    else:
+        return True
 
 
 def clean_ram() -> None:
-    """
-    Forces python garbage collection.
-    Most importantly, calls malloc_trim, which fixes pandas memory leak."""
+    """Forces python garbage collection.
+    Most importantly, calls malloc_trim/SetProcessWorkingSetSizeEx, which fixes pandas/libc (?) memory leak."""
 
     gc.collect()
     if platform.system() == "Windows":
-        trim_memory()
+        trim_windows_process_memory()
     else:
         try:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception as e:
-            logger.warning("malloc_trim attempt failed")
+            logger.error("malloc_trim attempt failed")
 
 
 def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
