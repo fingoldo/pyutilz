@@ -509,7 +509,8 @@ def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
 
 
 def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
-    """Example output:
+    """Returns RAM occupied by a pandas dataframe in bytes.
+    Example df.info() output:
     <class 'pandas.core.frame.DataFrame'>
     RangeIndex: 11546660 entries, 0 to 11546659
     Columns: 4 entries, basic>ticker to basic>ts_minute
