@@ -773,3 +773,8 @@ def ensure_dataframe_float32_convertability(df: pd.DataFrame) -> None:
         if tmp.shape[1] > 0:
             logger.info(f"Converting {tmp.shape[1]:_} {precise_dtype} columns to float32")
             df[tmp.columns] = tmp.astype(np.float32)
+
+
+def convert_float64_to_float32(df: pd.DataFrame) -> None:
+    for col in df.head().select_dtypes("float64"):
+        df[col] = df[col].astype(np.flaot32)
