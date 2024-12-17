@@ -777,4 +777,4 @@ def ensure_dataframe_float32_convertability(df: pd.DataFrame) -> None:
 
 def convert_float64_to_float32(df: pd.DataFrame) -> None:
     for col in df.head().select_dtypes("float64"):
-        df[col] = df[col].astype(np.flaot32)
+        df[col] = df[col].astype(np.float32)
