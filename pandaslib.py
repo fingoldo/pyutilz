@@ -545,10 +545,14 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
                 susp_columns.remove(col)
 
     if verbose and susp_columns:
-        logger.warning(f"Removing constant columns {susp_columns}")
+        if len(susp_columns) > 20:
+            logger.warning(f"Removing {len(susp_columns):_} constant columns")
+            df.drop(columns=susp_columns, inplace=True)
+        else:
+            logger.warning(f"Removing constant columns {susp_columns}")
 
-    for var in susp_columns:
-        del df[var]
+            for var in susp_columns:
+                del df[var]
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
