@@ -38,8 +38,14 @@ def job_completed(job_id: str, status: int = 0, data: str = None, provider: str 
             endpoint = f"https://hc-ping.com/{job_id}/{status}"
     elif provider == "cronitor.io":
         endpoint = f"https://cronitor.link/p/{api_key}/{job_id}"
+        if status == 0:
+            state = "complete"
+        else:
+            state = status
+
+        params = dict(state=state)
         if data:
-            params = dict(msg=str(data))
+            params["msg"] = str(data)
 
     if endpoint:
         try:
