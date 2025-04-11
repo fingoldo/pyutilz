@@ -534,12 +534,27 @@ def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
     return res
 
 
+def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
+    try:
+        susp_columns = df.columns[df.nunique() <= 1].tolist()
+    except Exception as e:
+        susp_columns = []
+        for col in ref_df.columns:
+            try:
+                if ref_df[col].nunique() <= 1:
+                    susp_columns.append(col)
+            except TypeError:
+                # Skip the column if a TypeError (e.g. unhashable type) occurs.
+                continue
+    return susp_columns
+
+
 def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_size: int = 10_000) -> None:
 
     if len(df) <= prewarm_size:
-        susp_columns = df.columns[df.nunique() <= 1].tolist()
+        susp_columns = get_suspiciously_constant_columns(df)
     else:
-        susp_columns = df.columns[df.head(prewarm_size).nunique() <= 1].tolist()
+        susp_columns = get_suspiciously_constant_columns(df.head(prewarm_size))
         for col in tqdmu(susp_columns.copy(), desc="cnst col", leave=False):
             if df[col].nunique() > 1:
                 susp_columns.remove(col)
