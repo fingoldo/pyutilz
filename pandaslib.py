@@ -536,7 +536,7 @@ def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
 
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
     try:
-        susp_columns = df.columns[df.nunique() <= 1].tolist()
+        susp_columns = ref_df.columns[ref_df.nunique() <= 1].tolist()
     except Exception as e:
         susp_columns = []
         for col in ref_df.columns:
