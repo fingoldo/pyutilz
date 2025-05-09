@@ -51,26 +51,24 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
     return mi
 
 
-def drop_unrelated_features(
+# ----------------------------------------------------------------------------------------------------------------------------
+# Polars
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+def find_unrelated_features(
     df: pl.DataFrame,
-    entropies: dict = None,
-    noise_mutual_informations: dict = None,
-    binned_targets: pl.DataFrame = None,
     target_columns_prefix: str = "target_",
+    binned_targets: pl.DataFrame = None,
     clean_targets: bool = False,
     num_bins: int = 10,
-    num_reps: int = 1,
-    min_mi_prevalence: float = 10,
     exclude_columns: list = [],
     min_nuniques_to_clip: int = 50,
     tukey_fences_multiplier: float = 3.0,
-    entropy_computing_workers: int = None,
-    mi_computing_workers: int = None,
     max_log_text_width: int = 300,
     verbose: int = 1,
-    leave_progressbar: bool = False,
 ) -> pl.DataFrame:
-    """Drop features that have no direct relationship to at least one of the targets.
+    """DropFinds features that have no direct relationship to at least one of the targets.
     Mutual Information (MI) is used to estimate presence of a relationship.
 
     Columns from exclude_columns are exempt of this check, so put here what you arelady have checked is relevant.
@@ -100,42 +98,77 @@ def drop_unrelated_features(
         Columns not relevant to any of the targets are reported & dropped.
 
     """
+    return
+
+
+def bin_numerical_columns(
+    df: pl.DataFrame,
+    target_columns_prefix: str = "target_",
+    binned_targets: pl.DataFrame = None,
+    clean_features: bool = False,
+    clean_targets: bool = False,
+    num_bins: int = 10,
+    bin_dtype: object = pl.Int8,
+    exclude_columns: list = [],
+    min_nuniques_to_clip: int = 20,
+    tukey_fences_multiplier: float = 3.0,
+    fill_nulls: bool = True,
+    fill_nans: bool = True,
+    max_log_text_width: int = 300,
+    verbose: int = 1,
+) -> pl.DataFrame:
+    """Computes min, max, and quantiles of all numerical columns in one go.
+    Decides which are outliers and adds clipping.
+    Converts values into integer uniform bin ids.
+    Suggest for dropping columns that do not change.
+    """
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
     # ----------------------------------------------------------------------------------------------------------------------------
-
-    if not entropy_computing_workers or not mi_computing_workers:
-        nthreads = psutil.cpu_count(logical=True)
-        if not entropy_computing_workers:
-            entropy_computing_workers = max(1, nthreads // 4)
-        if not mi_computing_workers:
-            mi_computing_workers = max(1, nthreads // 8)
 
     columns_to_drop = []
 
     all_num_cols = cs.numeric()
     if exclude_columns:
         all_num_cols = all_num_cols - cs.by_name(exclude_columns)
+    if binned_targets is not None:
+        all_num_cols = all_num_cols - cs.starts_with(target_columns_prefix)
 
     clean_ram()
 
-    if verbose > 1:
-        logger.info(f"Start using entropy_computing_workers={entropy_computing_workers:_}, mi_computing_workers={mi_computing_workers:_}...")
-
     # ----------------------------------------------------------------------------------------------------------------------------
-    # MinMax computed. Features with no change (min==max) are reported & dropped.
+    # Compute stats for every column
     # ----------------------------------------------------------------------------------------------------------------------------
 
     if verbose > 1:
-        logger.info("Computing MinMax...")
+        logger.info("Computing Min/Max/Quantiles...")
 
-    min_max_dict = df.select(all_num_cols.min().name.suffix("_min"), all_num_cols.max().name.suffix("_max")).row(0, named=True)
-    orig_min_max_dict = min_max_dict.copy()
+    stats_expr = [
+        all_num_cols.min().name.suffix("_min"),
+        all_num_cols.max().name.suffix("_max"),
+    ]
+    if clean_features or (clean_targets and binned_targets is None):
+        if clean_features:
+            quantile_cols = all_num_cols
+        else:
+            quantile_cols = cs.starts_with(target_columns_prefix)
+        stats_expr.extend(
+            [
+                quantile_cols.quantile(0.25).name.suffix("_q1"),
+                quantile_cols.quantile(0.75).name.suffix("_q3"),
+            ]
+        )
+    stats = df.select(stats_expr).collect().row(0, named=True)
+    orig_stats = stats.copy()
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Features with no change (min==max) are reported & dropped.
+    # ----------------------------------------------------------------------------------------------------------------------------
 
     dead_columns = []
     for col in cs.expand_selector(df, all_num_cols):
-        min_val, max_val = min_max_dict.get(f"{col}_min"), min_max_dict.get(f"{col}_max")
+        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
         if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
             dead_columns.append(col)
     if dead_columns:
@@ -145,56 +178,56 @@ def drop_unrelated_features(
         columns_to_drop.extend(dead_columns)
 
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Quantiles computed. Outliers are clipped & reported.
+    # Outliers are clipped & reported.
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if verbose > 1:
-        logger.info("Computing Quantiles & Outliers...")
-
-    quantiles_dict = df.select(all_num_cols.quantile(0.25).name.suffix("_q1"), all_num_cols.quantile(0.75).name.suffix("_q3")).row(0, named=True)
-
-    dead_columns = []
     public_clips = {}
     clips = {}
-    for col in cs.expand_selector(df, all_num_cols):
-        if not clean_targets:
-            if col.startswith(target_columns_prefix):
-                continue
-        q1, q3 = quantiles_dict.get(f"{col}_q1"), quantiles_dict.get(f"{col}_q3")
-        min_val, max_val = min_max_dict.get(f"{col}_min"), min_max_dict.get(f"{col}_max")
+    if clean_features or clean_targets:
+        for col in cs.expand_selector(df, all_num_cols):
+            if not clean_targets:
+                if col.startswith(target_columns_prefix):
+                    continue
+            if not clean_features:
+                if clean_targets and not col.startswith(target_columns_prefix):
+                    continue
 
-        iqr = q3 - q1
+            q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
+            min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
 
-        lower_fence = q1 - tukey_fences_multiplier * iqr
-        upper_fence = q3 + tukey_fences_multiplier * iqr
+            iqr = q3 - q1
 
-        # to avoid InvalidOperationError: conversion from `f64` to `u32` failed in column 'literal' for 1 out of 1 values: [-18.0000000] later
-        # lower_fence = type(min_val)(lower_fence)
-        # upper_fence = type(min_val)(upper_fence)
+            lower_fence = q1 - tukey_fences_multiplier * iqr
+            upper_fence = q3 + tukey_fences_multiplier * iqr
 
-        if upper_fence > lower_fence:
-            is_outlier = False
-            if max_val > upper_fence:
-                min_max_dict[f"{col}_max"] = upper_fence
-                is_outlier = True
-            if min_val < lower_fence:
-                min_max_dict[f"{col}_min"] = lower_fence
-                is_outlier = True
-            if is_outlier:
-                public_clips[col] = dict(lower_bound=lower_fence, upper_bound=upper_fence)
-                clips[col] = pl.col(col).clip(lower_bound=lower_fence, upper_bound=upper_fence)
+            if upper_fence > lower_fence:
+                is_outlier = False
+                lower_bound = min_val
+                upper_bound = max_val
+                if max_val > upper_fence:
+                    stats[f"{col}_max"] = upper_fence
+                    upper_bound = upper_fence
+                    is_outlier = True
+                if min_val < lower_fence:
+                    stats[f"{col}_min"] = lower_fence
+                    lower_bound = lower_fence
+                    is_outlier = True
+                if is_outlier:
+                    public_clips[col] = dict(lower_bound=lower_bound, upper_bound=upper_bound)
+                    clips[col] = pl.col(col).clip(lower_bound=lower_bound, upper_bound=upper_bound)
 
     if clips:
-        # do not apply clipping if # of unique values is too low (under 10)
-        n_uniques_dict = df.select(pl.col(clips.keys()).n_unique()).row(0, named=True)
         skipped_clips = []
-        for col, nuniques in n_uniques_dict.items():
-            if nuniques < min_nuniques_to_clip:
-                for field in "min max".split():
-                    min_max_dict[f"{col}_{field}"] = orig_min_max_dict[f"{col}_{field}"]
-                skipped_clips.append(col)
-                del public_clips[col]
-                del clips[col]
+        if min_nuniques_to_clip:
+            # do not apply clipping if # of unique values is too low (under 10)
+            n_uniques_dict = df.select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
+            for col, nuniques in n_uniques_dict.items():
+                if nuniques < min_nuniques_to_clip:
+                    for field in "min max".split():
+                        stats[f"{col}_{field}"] = orig_stats[f"{col}_{field}"]
+                    skipped_clips.append(col)
+                    del public_clips[col]
+                    del clips[col]
         if verbose:
             if clips:
                 logger.warning(f"Clipping {len(clips):_} columns with outliers: {textwrap.shorten(', '.join(clips.keys()), width=max_log_text_width)}")
@@ -210,27 +243,37 @@ def drop_unrelated_features(
     if verbose > 1:
         logger.info("Binning columns...")
 
-    bin_labels = list(map(str, np.arange(num_bins + 2, dtype=np.int32)))  # Create labels for the bins
+    dead_columns = []
     bin_expressions = []
+
+    if fill_nulls:
+        cols_with_nulls = [key for key, value in df.select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
+    if fill_nans:
+        cols_with_floats = cs.expand_selector(df, all_num_cols & cs.float())
 
     for col in cs.expand_selector(df, all_num_cols):
         if binned_targets is not None:
             if col.startswith(target_columns_prefix):
                 continue
+
         # Calculate bin edges based on min and max values
-        min_val = min_max_dict.get(f"{col}_min")
-        max_val = min_max_dict.get(f"{col}_max")
+        min_val = stats.get(f"{col}_min")
+        max_val = stats.get(f"{col}_max")
 
         if min_val == max_val:
             dead_columns.append(col)
         else:
-            bin_edges = np.linspace(min_val, max_val, num_bins + 1)
-
-            if len(set(bin_edges)) != len(bin_edges):
-                raise ValueError
 
             # Define the binning expression
-            binned_col = clips.get(col, pl.col(col)).cut(breaks=bin_edges, labels=bin_labels)
+            bin_width = (max_val - min_val) / num_bins
+            col_expr = clips.get(col, pl.col(col))
+            if fill_nulls and (col in cols_with_nulls):
+                col_expr = col_expr.fill_null(min_val)
+            if fill_nans and (col in cols_with_floats):
+                col_expr = clean_numeric(col_expr, nans_filler=min_val)
+
+            binned_col = ((col_expr - min_val) / bin_width).floor().clip(0, num_bins - 1).cast(bin_dtype)
+
             bin_expressions.append(binned_col)
 
     if dead_columns:
@@ -240,39 +283,33 @@ def drop_unrelated_features(
         columns_to_drop.extend(dead_columns)
 
     # Apply all binning expressions in parallel
-    bins = df.select(bin_expressions)  # .select(pl.all().value_counts())
+    bins = df.select(bin_expressions).collect()
 
     if binned_targets is not None:
-        bins = pl.concat([bins, binned_targets], how="horizontal")
+        bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
     else:
         binned_targets = bins.select(cs.starts_with(target_columns_prefix)).clone()
 
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Compute original marginal freqs for each column:
-    # ----------------------------------------------------------------------------------------------------------------------------
+    return bins, binned_targets, public_clips, columns_to_drop, stats
 
-    if verbose > 1:
-        logger.info("Computing entropies...")
+
+def compute_columns_mi_polars(
+    bins: pl.DataFrame,
+    target_columns_prefix: str = "target_",
+    entropies: dict = None,
+    noise_mutual_informations: dict = None,
+    num_reps: int = 1,
+    min_mi_prevalence: float = 10,
+    entropy_computing_workers: int = None,
+    mi_computing_workers: int = None,
+    leave_progressbar: bool = False,
+    max_log_text_width: int = 300,
+    verbose: int = 1,
+):
+    columns_to_drop = []
 
     if entropies is None:
         entropies = {}
-
-    tasks = cs.expand_selector(bins, cs.all())
-    w = partial(tqdmu, desc="computing entropies", leave=leave_progressbar)
-    if entropy_computing_workers <= 1:
-        for col in w(tasks):
-            entropies[col] = entropy_for_column(bins, col)
-    else:
-
-        # Use ThreadPoolExecutor to run tasks in parallel
-        with ThreadPoolExecutor(max_workers=entropy_computing_workers) as executor:
-            # Submit tasks for each column
-            futures = {executor.submit(entropy_for_column, bins, col): col for col in tasks}
-
-            # Collect results as they complete
-            for future in w(futures):
-                col = futures[future]
-                entropies[col] = future.result()
 
     target_cols = cs.expand_selector(bins, cs.starts_with(target_columns_prefix))
 
@@ -333,6 +370,7 @@ def drop_unrelated_features(
             tasks = cols_to_compute_mis
             if mi_computing_workers <= 1:
                 for col in w(tasks):
+                    # print(col)
                     mi_results[col] = mi_for_column(bins, entropies, col, target_col)
             else:
 
@@ -390,11 +428,11 @@ def drop_unrelated_features(
     del bins
     clean_ram()
 
-    return binned_targets, public_clips, columns_to_drop, entropies, noise_mutual_informations, mutual_informations
+    return columns_to_drop, entropies, noise_mutual_informations, mutual_informations
 
 
 def run_efs(df, exclude_columns, entropies, noise_mutual_informations, binned_targets, efs_params) -> tuple:
-    binned_targets, public_clips, columns_to_drop, entropies, noise_mutual_informations, mutual_informations = drop_unrelated_features(
+    binned_targets, public_clips, columns_to_drop, entropies, noise_mutual_informations, mutual_informations = find_unrelated_features(
         df, entropies=entropies, noise_mutual_informations=noise_mutual_informations, binned_targets=binned_targets, **efs_params
     )
 
@@ -403,6 +441,11 @@ def run_efs(df, exclude_columns, entropies, noise_mutual_informations, binned_ta
     features_mis = pd.Series(mutual_informations).sort_values(ascending=False)
 
     return df, exclude_columns, entropies, noise_mutual_informations, binned_targets, features_mis
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# PySR
+# ----------------------------------------------------------------------------------------------------------------------------
 
 
 def ru_pysr_fe(df: pl.DataFrame, nsamples: int = 100_000, target_columns_prefix: str = "target_", timeout_mins: int = 5, fill_nans: bool = True):
@@ -437,7 +480,7 @@ def ru_pysr_fe(df: pl.DataFrame, nsamples: int = 100_000, target_columns_prefix:
     tmp_df = df.sample(nsamples) if nsamples else df
     expr = cs.numeric() - cs.starts_with(target_columns_prefix)
     if fill_nans:
-        expr = expr.fill_nan(0)
+        expr = expr.fill_null(0).fill_nan(0)
 
     model.fit(tmp_df.select(expr).rename(rename_map), tmp_df.select(cs.starts_with(target_columns_prefix)))
 
@@ -445,3 +488,267 @@ def ru_pysr_fe(df: pl.DataFrame, nsamples: int = 100_000, target_columns_prefix:
     clean_ram()
 
     return model
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Numba
+# ----------------------------------------------------------------------------------------------------------------------------
+
+import numpy as np
+from numba import njit, prange
+
+USE_FASTMATH: bool = True
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# GROK
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+@njit(fastmath=USE_FASTMATH)
+def grok_compute_joint_hist(a: np.ndarray, b: np.ndarray, n_bins: int, dtype: object = np.int64):
+    hist = np.zeros((n_bins, n_bins), dtype=dtype)
+    for i in range(len(a)):
+        hist[a[i], b[i]] += 1
+    return hist
+
+
+@njit(fastmath=USE_FASTMATH)
+def grok_mutual_information_old(a: np.ndarray, b: np.ndarray, n_bins: int = 15, hist_dtype: object = np.int64):
+    joint_hist = grok_compute_joint_hist(a=a, b=b, n_bins=n_bins, dtype=hist_dtype)
+    a_hist = np.sum(joint_hist, axis=1)
+    b_hist = np.sum(joint_hist, axis=0)
+    n_samples = len(a)
+    mi = 0.0
+    for x in range(n_bins):
+        for y in range(n_bins):
+            if joint_hist[x, y] > 0:
+                p_joint = joint_hist[x, y] / n_samples
+                p_a = a_hist[x] / n_samples
+                p_b = b_hist[y] / n_samples
+                mi += p_joint * np.log(p_joint / (p_a * p_b))
+    return mi
+
+
+@njit(fastmath=USE_FASTMATH)
+def grok_mutual_information(a: np.ndarray, b: np.ndarray, inv_n_samples: float, log_n_samples: float, n_bins: int = 15, hist_dtype: object = np.int64):
+    joint_hist = grok_compute_joint_hist(a=a, b=b, n_bins=n_bins, dtype=hist_dtype)
+    a_hist = np.sum(joint_hist, axis=1)
+    b_hist = np.sum(joint_hist, axis=0)
+    mi = 0.0
+    for x in range(n_bins):
+        for y in range(n_bins):
+            if joint_hist[x, y] > 0:
+                joint_count = joint_hist[x, y]
+                p_joint = joint_count * inv_n_samples
+                log_term = np.log(joint_count) - np.log(a_hist[x]) - np.log(b_hist[y]) + log_n_samples
+                mi += p_joint * log_term
+    return mi
+
+
+@njit(parallel=True)
+def grok_compute_mutual_information(
+    data: np.ndarray, target_indices: np.ndarray | list[int], n_bins: int = 15, hist_dtype=np.int64, out_dtype=np.float64
+) -> np.ndarray:
+    """
+    MI of every specified target column against every column in `data`.
+
+    Parameters
+    ----------
+    data            : int8 ndarray, shape (n_samples, n_cols), already binned 0-14
+    target_indices  : iterable of int column indices
+    n_bins          : number of discrete bins (default 15)
+
+    Returns
+    -------
+    mi_matrix       : float64 ndarray, shape (n_targets, n_cols)
+                      Row k = MI(target_indices[k], all columns)
+    """
+
+    n_samples, n_columns = data.shape
+    K = len(target_indices)
+    mi_results = np.zeros((K, n_columns), dtype=out_dtype)
+
+    inv_n_samples = 1.0 / n_samples
+    log_n_samples = np.log(n_samples)
+
+    for t in range(K):
+        target = target_indices[t]
+        target_col = data[:, target]
+        for j in prange(n_columns):
+            if j != target:
+                mi_results[t, j] = grok_mutual_information(
+                    target_col, data[:, j], n_bins=n_bins, inv_n_samples=inv_n_samples, log_n_samples=log_n_samples, hist_dtype=hist_dtype
+                )
+            else:
+                mi_results[t, j] = np.nan
+    return mi_results
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# ChatGPT
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+# Single-pair MI (15 discrete bins, natural-log base)
+@njit(fastmath=USE_FASTMATH)
+def _chatgpt_mi_pair(x: np.ndarray, y: np.ndarray, n_bins: int = 15, hist_dtype=np.int64) -> float:
+    """Mutual information between two 1-D int8 vectors already binned to 0..n_bins-1."""
+
+    # 1) joint counts
+
+    joint = np.zeros((n_bins, n_bins), dtype=hist_dtype)
+    for k in range(x.size):
+        joint[x[k], y[k]] += 1
+
+    # 2) marginals
+
+    row = np.zeros(n_bins, dtype=hist_dtype)  # P(x)
+    col = np.zeros(n_bins, dtype=hist_dtype)  # P(y)
+    for i in range(n_bins):
+        for j in range(n_bins):
+            c = joint[i, j]
+            row[i] += c
+            col[j] += c
+
+    # 3) MI
+
+    N = x.size
+    mi = 0.0
+    for i in range(n_bins):
+        if row[i] == 0:
+            continue
+        p_i = row[i] / N
+        for j in range(n_bins):
+            c = joint[i, j]
+            if c == 0 or col[j] == 0:
+                continue
+            p_ij = c / N
+            p_j = col[j] / N
+            mi += p_ij * np.log(p_ij / (p_i * p_j))
+    return mi
+
+
+# All features vs. one target (parallel over the wide axis)
+@njit(parallel=True, fastmath=USE_FASTMATH)
+def _chatgpt_mi_one_target(
+    data: np.ndarray, target_idx: int, n_bins: int = 15, hist_dtype=np.int64, out_dtype=np.float64
+) -> np.ndarray:  # shape (n_samples, n_cols), int8
+    """Vector of MI(target, every feature)."""
+    n_rows, n_cols = data.shape
+    y = data[:, target_idx]
+    out = np.empty(n_cols, dtype=out_dtype)
+
+    # Parallel loop across *features* – this is the expensive axis.
+    for c in prange(n_cols):
+        out[c] = _chatgpt_mi_pair(data[:, c], y, n_bins, hist_dtype=hist_dtype)
+
+    return out
+
+
+# Public API: many targets vs. all features
+def chatgpt_compute_mutual_information(
+    data: np.ndarray, target_indices: np.ndarray | list[int], n_bins: int = 15, hist_dtype=np.int64, out_dtype=np.float64
+) -> np.ndarray:
+    """
+    MI of every specified target column against every column in `data`.
+
+    Parameters
+    ----------
+    data            : int8 ndarray, shape (n_samples, n_cols), already binned 0-14
+    target_indices  : iterable of int column indices
+    n_bins          : number of discrete bins (default 15)
+
+    Returns
+    -------
+    mi_matrix       : float64 ndarray, shape (n_targets, n_cols)
+                      Row k = MI(target_indices[k], all columns)
+    """
+    # Safety – make sure the array is C-contiguous int8 for maximum speed.
+    if data.dtype != np.int8 or not data.flags.c_contiguous:
+        data = np.ascontiguousarray(data, dtype=np.int8)
+
+    targets = np.asarray(target_indices, dtype=np.int64)
+    out = np.empty((targets.size, data.shape[1]), dtype=out_dtype)
+
+    # Few targets, many features ⇒ parallel inside _mi_one_target
+    for k, t in enumerate(targets):
+        out[k, :] = _chatgpt_mi_one_target(data=data, target_idx=int(t), n_bins=n_bins, hist_dtype=hist_dtype, out_dtype=out_dtype)
+
+    return out
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# DeepSeek
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+@njit(parallel=True, fastmath=USE_FASTMATH)
+def deepseek_compute_mutual_information(
+    data: np.ndarray, target_indices: np.ndarray | list[int], n_bins: int = 15, hist_dtype=np.int64, out_dtype=np.float64
+) -> np.ndarray:
+    """
+    MI of every specified target column against every column in `data`.
+
+    Parameters
+    ----------
+    data            : int8 ndarray, shape (n_samples, n_cols), already binned 0-14
+    target_indices  : iterable of int column indices
+    n_bins          : number of discrete bins (default 15)
+
+    Returns
+    -------
+    mi_matrix       : float64 ndarray, shape (n_targets, n_cols)
+                      Row k = MI(target_indices[k], all columns)
+    """
+
+    n_samples, n_columns = data.shape
+    n_targets = len(target_indices)
+
+    # Precompute marginals and sum_N_log_N for each column
+    marginals = np.zeros((n_columns, n_bins), dtype=hist_dtype)
+    sum_N_log_N = np.zeros(n_columns, dtype=out_dtype)
+
+    for col in prange(n_columns):
+        counts = np.zeros(n_bins, dtype=hist_dtype)
+        for i in range(n_samples):
+            val = data[i, col]
+            counts[val] += 1
+        marginals[col] = counts
+        s = 0.0
+        for b in range(n_bins):
+            c = counts[b]
+            if c > 0:
+                s += c * np.log(c)
+        sum_N_log_N[col] = s
+
+    N = n_samples
+    N_log_N = N * np.log(N) if N > 0 else 0.0
+
+    mi_results = np.zeros((n_targets, n_columns), dtype=out_dtype)
+    n_total_pairs = n_targets * n_columns
+
+    for pair_idx in prange(n_total_pairs):
+        t_idx = pair_idx // n_columns
+        feature_col = pair_idx % n_columns
+        target_col = target_indices[t_idx]
+
+        joint = np.zeros((n_bins, n_bins), dtype=hist_dtype)
+        for i in range(n_samples):
+            y_val = data[i, target_col]
+            x_val = data[i, feature_col]
+            joint[y_val, x_val] += 1
+
+        sum_Nxy_log_Nxy = 0.0
+        for y_bin in range(n_bins):
+            for x_bin in range(n_bins):
+                n = joint[y_bin, x_bin]
+                if n > 0:
+                    sum_Nxy_log_Nxy += n * np.log(n)
+
+        sum_Ny_log_Ny = sum_N_log_N[target_col]
+        sum_Nx_log_Nx = sum_N_log_N[feature_col]
+
+        mi = (sum_Nxy_log_Nxy - sum_Ny_log_Ny - sum_Nx_log_Nx + N_log_N) / N
+        mi_results[t_idx, feature_col] = mi
+
+    return mi_results
