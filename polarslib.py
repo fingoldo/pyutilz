@@ -24,7 +24,9 @@ import textwrap
 from pyutilz.system import tqdmu
 from collections import defaultdict
 from pyutilz.system import clean_ram
-from concurrent.futures import ThreadPoolExecutor
+from pyutilz.benchmarking import benchmark_algos_by_runtime
+
+from timeit import default_timer as timer
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Core
@@ -293,19 +295,49 @@ def bin_numerical_columns(
     return bins, binned_targets, public_clips, columns_to_drop, stats
 
 
-def compute_columns_mi_polars(
+def estimate_features_relevancy(
+    # data
     bins: pl.DataFrame,
     target_columns_prefix: str = "target_",
     entropies: dict = None,
-    noise_mutual_informations: dict = None,
-    num_reps: int = 1,
+    # precomputed info
+    mi_algorithms_rankng: list = None,  # ltr
+    benchmark_mi_algorithms: bool = True,
+    permuted_mutual_informations: dict = None,
+    # working params
     min_mi_prevalence: float = 10,
-    entropy_computing_workers: int = None,
-    mi_computing_workers: int = None,
+    permuted_max_mi_quantile: float = None,
+    min_permuted_mi_evaluations: int = 1000,
+    min_randomized_permutations: int = 1,
+    max_permuted_prevalence_percent: float = 0.0,
+    # stopping criteria
+    max_runtime_mins: float = None,
+    # style
     leave_progressbar: bool = False,
     max_log_text_width: int = 300,
     verbose: int = 1,
 ):
+    """Computes relevancy of all features to the targets,
+    using the bins computed at previous step.
+    Suggest for droppping columns that have no firm impact on any of the targets.
+
+    We think that a feature has impact on target if:
+        it's MI with original target is higher than MI with permuted target in (1-max_permuted_prevalence_percent)
+            (default ALL) permutations we tried;
+        it's MI with original target is at least min_mi_prevalence times higher than permuted_max_mi_quantile
+            (default MAXIMUM) MI with that target (permuted) across all features and permutaions we tried.
+
+        MAXIMUM can be replaced with some high quantile, like 0.99.
+
+    Either min_randomized_permutations or max_runtime_mins should be specified.
+
+    Reports:
+
+    """
+
+    start_time = timer()
+    ran_out_of_time = False
+
     columns_to_drop = []
 
     if entropies is None:
@@ -314,39 +346,62 @@ def compute_columns_mi_polars(
     target_cols = cs.expand_selector(bins, cs.starts_with(target_columns_prefix))
 
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Compute MIs of random noise, per target, for reference.
+    # What MI implementation is the fastest for current machine?
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if noise_mutual_informations is None:
+    if not mi_algorithms_rankng:
+        base_mi_algos = [chatgpt_compute_mutual_information, grok_compute_mutual_information, deepseek_compute_mutual_information]
+        if benchmark_mi_algorithms:
+            target_indices = np.array([0, 10, 20], dtype=np.int64)
 
-        if verbose > 1:
-            logger.info("Computing MIs of random noise...")
+            # prewarm
+            arr = np.random.randint(0, 15, size=(10, 200), dtype=np.int8)
+            for func in base_mi_algos:
+                _ = func(data=arr, target_indices=target_indices)
 
-        random_col_name = "random_col"
-        bin_edges = np.linspace(0.0, 1.0, num_bins + 1)
-        noise_bins = bins.select(cs.starts_with(target_columns_prefix))
-        noise_bins = noise_bins.insert_column(
-            0, pl.Series(name=random_col_name, values=np.random.rand(len(noise_bins))).cut(breaks=bin_edges, labels=bin_labels)
-        )
+            arr = np.random.randint(0, 15, size=(1_000_000, 200), dtype=np.int8)
+            base_mi_algos, durations = benchmark_algos_by_runtime(
+                implementations=base_mi_algos, algo_name="MI", n_reps=2, verbose=verbose, data=arr, target_indices=target_indices
+            )
 
-        noise_mutual_informations = {}
-        noise_entropies = {}
-        noise_entropies[random_col_name] = entropy_for_column(noise_bins, random_col_name)
-        for target_col in tqdmu(target_cols, desc="noise MIs with targets", leave=leave_progressbar):
-            noise_entropies[target_col] = entropies[target_col]
-            noise_mutual_informations[target_col] = mi_for_column(noise_bins, noise_entropies, random_col_name, target_col)
+        else:
+            benchmark_mi_algorithms = base_mi_algos
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # For each of the targets, compute joint freqs and then MI for each of the "normal" columns:
     # ----------------------------------------------------------------------------------------------------------------------------
 
     if verbose > 1:
-        logger.info("Computing MIs of candidate features...")
+        logger.info("Computing original MIs...")
+
+    arr = bins.to_numpy(allow_copy=True)
+    original_mi_results = base_mi_algos[0](arr, target_indices)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Start randomly shuffling targets, and computing Mis of original features with such shuffled targets.
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    if verbose > 1:
+        logger.info("Permutation testing...")
 
     mutual_informations = {}
 
+    # How many times should we evaluate permuted MIs to have a baseline?
+
+    permuted_mutual_informations: dict = None
+    min_permuted_mi_evaluations: int = 1000
+
+    for permutation_id in range(min_randomized_permutations):
+
+        for idx in target_indices:
+            np.random.shuffle(arr[:, idx])
+
+        permuted_mi_results = grok_compute_mutual_information(arr, target_indices)
+
+    mi_results = chatgpt_compute_mutual_information(bins, target_indices)
+
     for target_id, target_col in enumerate(tqdmu(target_cols, desc="features MIs with targets", leave=leave_progressbar)):
-        for i in tqdmu(range(num_reps), desc="bootstrap", leave=leave_progressbar):
+        for i in tqdmu(range(min_randomized_permutations), desc="bootstrap", leave=leave_progressbar):
 
             # Shuffle target, if it's time to
             if i > 0:
@@ -361,28 +416,9 @@ def compute_columns_mi_polars(
                 if col.startswith(target_columns_prefix):
                     continue
                 if (
-                    i == 0 or mutual_informations[(col, target_col)] > noise_mutual_informations[target_col] * min_mi_prevalence
+                    i == 0 or mutual_informations[(col, target_col)] > permuted_mutual_informations[target_col] * min_mi_prevalence
                 ):  # only compute when it makes sense
                     cols_to_compute_mis.append(col)
-
-            # Computing part
-            w = partial(tqdmu, desc="computing MIs", leave=leave_progressbar)
-            tasks = cols_to_compute_mis
-            if mi_computing_workers <= 1:
-                for col in w(tasks):
-                    # print(col)
-                    mi_results[col] = mi_for_column(bins, entropies, col, target_col)
-            else:
-
-                # Use ThreadPoolExecutor to run tasks in parallel
-                with ThreadPoolExecutor(max_workers=mi_computing_workers) as executor:
-                    # Submit tasks for each column
-                    futures = {executor.submit(mi_for_column, bins, entropies, col, target_col): col for col in tasks}
-
-                    # Collect results as they complete
-                    for future in w(futures):
-                        col = futures[future]
-                        mi_results[col] = future.result()
 
             # Decision making part
 
@@ -397,6 +433,14 @@ def compute_columns_mi_polars(
                         if verbose > 1:
                             logger.warning(f"After permutation, MI of var={col} with target {target_col} remained high: {mi}")
 
+            if max_runtime_mins and not ran_out_of_time:
+                delta = timer() - start_time
+                ran_out_of_time = delta > max_runtime_mins * 60
+                if ran_out_of_time:
+                    if verbose:
+                        logger.info(f"max_runtime_mins={max_runtime_mins:_.1f} reached.")
+                    break
+
     # ----------------------------------------------------------------------------------------------------------------------------
     # Sum up MIs per column (over targets), decide what features have no influence, report & drop them.
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -404,7 +448,7 @@ def compute_columns_mi_polars(
     cols_total_mis = defaultdict(int)
 
     for (col, target_col), mi in mutual_informations.items():
-        if mi > noise_mutual_informations[target_col] * min_mi_prevalence:
+        if mi > permuted_mutual_informations[target_col] * min_mi_prevalence:
             cols_total_mis[col] += 1
         else:
             cols_total_mis[col] += 0
@@ -428,19 +472,19 @@ def compute_columns_mi_polars(
     del bins
     clean_ram()
 
-    return columns_to_drop, entropies, noise_mutual_informations, mutual_informations
+    return columns_to_drop, entropies, permuted_mutual_informations, mutual_informations
 
 
-def run_efs(df, exclude_columns, entropies, noise_mutual_informations, binned_targets, efs_params) -> tuple:
-    binned_targets, public_clips, columns_to_drop, entropies, noise_mutual_informations, mutual_informations = find_unrelated_features(
-        df, entropies=entropies, noise_mutual_informations=noise_mutual_informations, binned_targets=binned_targets, **efs_params
+def run_efs(df, exclude_columns, entropies, permuted_mutual_informations, binned_targets, efs_params) -> tuple:
+    binned_targets, public_clips, columns_to_drop, entropies, permuted_mutual_informations, mutual_informations = find_unrelated_features(
+        df, entropies=entropies, permuted_mutual_informations=permuted_mutual_informations, binned_targets=binned_targets, **efs_params
     )
 
     df = df.drop(columns_to_drop)
     exclude_columns.update(set(df.columns))
     features_mis = pd.Series(mutual_informations).sort_values(ascending=False)
 
-    return df, exclude_columns, entropies, noise_mutual_informations, binned_targets, features_mis
+    return df, exclude_columns, entropies, permuted_mutual_informations, binned_targets, features_mis
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
