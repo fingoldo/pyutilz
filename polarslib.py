@@ -56,14 +56,14 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
 
 def bin_numerical_columns(
     df: pl.DataFrame,
-    target_columns_prefix: str = "target_",
+    target_columns: list,
     binned_targets: pl.DataFrame = None,
-    clean_features: bool = False,
-    clean_targets: bool = False,
+    clean_features: bool = True,
+    clean_targets: bool = True,
     num_bins: int = 10,
     bin_dtype: object = pl.Int8,
     exclude_columns: list = [],
-    min_nuniques_to_clip: int = 20,
+    min_nuniques_to_clip: int = 10,
     tukey_fences_multiplier: float = 3.0,
     fill_nulls: bool = True,
     fill_nans: bool = True,
@@ -86,7 +86,7 @@ def bin_numerical_columns(
     if exclude_columns:
         all_num_cols = all_num_cols - cs.by_name(exclude_columns)
     if binned_targets is not None:
-        all_num_cols = all_num_cols - cs.starts_with(target_columns_prefix)
+        all_num_cols = all_num_cols - cs.by_name(target_columns)
 
     clean_ram()
 
@@ -105,7 +105,7 @@ def bin_numerical_columns(
         if clean_features:
             quantile_cols = all_num_cols
         else:
-            quantile_cols = cs.starts_with(target_columns_prefix)
+            quantile_cols = cs.by_name(target_columns)
         stats_expr.extend(
             [
                 quantile_cols.quantile(0.25).name.suffix("_q1"),
@@ -139,10 +139,10 @@ def bin_numerical_columns(
     if clean_features or clean_targets:
         for col in cs.expand_selector(df, all_num_cols):
             if not clean_targets:
-                if col.startswith(target_columns_prefix):
+                if col in target_columns:
                     continue
             if not clean_features:
-                if clean_targets and not col.startswith(target_columns_prefix):
+                if clean_targets and not (col in target_columns):
                     continue
 
             q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
@@ -206,7 +206,7 @@ def bin_numerical_columns(
 
     for col in cs.expand_selector(df, all_num_cols):
         if binned_targets is not None:
-            if col.startswith(target_columns_prefix):
+            if col in target_columns:
                 continue
 
         # Calculate bin edges based on min and max values
@@ -241,6 +241,6 @@ def bin_numerical_columns(
     if binned_targets is not None:
         bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
     else:
-        binned_targets = bins.select(cs.starts_with(target_columns_prefix)).clone()
+        binned_targets = bins.select(cs.by_name(target_columns)).clone()
 
     return bins, binned_targets, public_clips, columns_to_drop, stats

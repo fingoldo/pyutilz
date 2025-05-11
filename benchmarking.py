@@ -46,7 +46,7 @@ def benchmark_algos_by_runtime(implementations: list, algo_name: str = "", n_rep
             mes_parts.append(f"{algo.__name__}: {duration:.3f} sec.")
 
     if verbose > 1:
-        logger.info("Benchmark timings: " + ",".join(mes_parts))
+        logger.info("Benchmark timings: " + ", ".join(mes_parts))
 
     durations = np.array(durations)
     indices = np.argsort(durations)
