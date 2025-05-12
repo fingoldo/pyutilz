@@ -115,6 +115,8 @@ def bin_numerical_columns(
     stats = df.select(stats_expr).collect().row(0, named=True)
     orig_stats = stats.copy()
 
+    clean_ram()
+
     # ----------------------------------------------------------------------------------------------------------------------------
     # Features with no change (min==max) are reported & dropped.
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -129,6 +131,8 @@ def bin_numerical_columns(
             logger.warning(f"Dropping {len(dead_columns):_} columns with no change: {textwrap.shorten(', '.join(dead_columns), width=max_log_text_width)}")
         df = df.drop(dead_columns)
         columns_to_drop.extend(dead_columns)
+
+        clean_ram()
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Outliers are clipped & reported.
@@ -237,6 +241,7 @@ def bin_numerical_columns(
 
     # Apply all binning expressions in parallel
     bins = df.select(bin_expressions).collect()
+    clean_ram()
 
     if binned_targets is not None:
         bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
@@ -244,3 +249,38 @@ def bin_numerical_columns(
         binned_targets = bins.select(cs.by_name(target_columns)).clone()
 
     return bins, binned_targets, public_clips, columns_to_drop, stats
+
+
+def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: int = 1) -> pl.DataFrame:
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Inits
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    all_num_cols = cs.numeric()
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Stats
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    stats_expr = [
+        all_num_cols.min().name.suffix("_min"),
+        all_num_cols.max().name.suffix("_max"),
+    ]
+
+    stats = df.select(stats_expr).collect().row(0, named=True)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Deciding
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    dead_columns = []
+    for col in cs.expand_selector(df, all_num_cols):
+        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
+        if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
+            dead_columns.append(col)
+    if dead_columns:
+        if verbose:
+            logger.warning(f"Dropping {len(dead_columns):_} columns with no change: {textwrap.shorten(', '.join(dead_columns), width=max_log_text_width)}")
+        df = df.drop(dead_columns)
+
+    return df
