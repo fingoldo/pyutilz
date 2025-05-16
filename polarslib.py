@@ -23,6 +23,16 @@ import psutil
 import textwrap
 from collections import defaultdict
 from pyutilz.system import clean_ram
+from mlframe.utils import is_cuda_available, check_cpu_flag
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------------
+
+POLARS_DEFAULT_NUMAGGS: list = (
+    "first last min max mean std arg_max arg_min skew kurtosis entropy n_unique".split()
+)  # replace by approx_n_unique? # median excluded
+POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Core
@@ -37,6 +47,276 @@ def cast_f64_to_f32(df: pl.DataFrame) -> pl.Expr:
     return df.with_columns(pl.col(pl.Float64).cast(pl.Float32))
 
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# FE in polars
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable) -> list:
+    """Computes weighted aggregates."""
+    wcols = []
+    if wcols:
+        for wcol in weighting_columns:
+            all_other_num_cols = columns_selector - pl.col(wcol)
+            weighted_mean = ((all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()).name.suffix(f"_wmeanby_{wcol}")
+            wcols.append(weighted_mean)
+            # !TODO causes error for now
+            # weighted_std = ((pl.col(wcol) * (all_other_num_cols - weighted_mean) ** 2).sum() / pl.col(wcol).sum()).sqrt().name.suffix(f"_wstdby_{wcol}")
+            # wcols.append(weighted_std)
+    return wcols
+
+
+def build_aggregate_features_polars(
+    df: pl.DataFrame,
+    boolean_fields: list = None,
+    numerical_fields: list = None,
+    categorical_fields: list = None,
+    total_fields: list = None,
+    ts_diff_fields: list = None,
+    exclude_fields: list = None,
+    subgroups: dict = None,
+    numaggs: list = None,
+    quantiles: list = None,
+    ewm_spans: list = None,
+    ewm_time_half_lifes: list = None,
+    dtype: object = pl.Float32,
+    engine: str = "cpu",
+    TR_FIELDS_REMAP: dict = None,
+    nans_filler: float = 0.0,
+    concentration_top_n: int = 3,
+) -> tuple:
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Checks
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    assert engine in ("cpu", "gpu")
+
+    if engine == "gpu" and not is_cuda_available():
+        logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailble on this system!")
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Inits
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    # Params
+
+    if TR_FIELDS_REMAP is None:
+        TR_FIELDS_REMAP = {}
+
+    if not numaggs:
+        numaggs = POLARS_DEFAULT_NUMAGGS
+
+    if quantiles is None:
+        quantiles = POLARS_DEFAULT_QUANTILES
+
+    if not ewm_spans:
+        ewm_spans: list = []
+    if not ewm_time_half_lifes:
+        ewm_time_half_lifes: list = []
+
+    # Fields
+
+    if boolean_fields is None:
+        boolean_fields = cs.by_dtype(pl.Boolean)
+
+    if ts_diff_fields is None:
+        ts_diff_fields = cs.by_dtype(pl.Datetime())
+
+    if numerical_fields is None:
+        numerical_fields = cs.numeric()
+
+    if categorical_fields is None:
+        categorical_fields = cs.by_dtype(pl.Categorical, pl.Utf8)
+
+    if exclude_fields:
+        if numerical_fields:
+            numerical_fields = numerical_fields - cs.by_name(exclude_fields)
+        if categorical_fields:
+            categorical_fields = categorical_fields - cs.by_name(exclude_fields)
+
+    if isinstance(boolean_fields, pl.selectors._selector_proxy_):
+        boolean_fields = cs.expand_selector(df, boolean_fields)
+    if isinstance(ts_diff_fields, pl.selectors._selector_proxy_):
+        ts_diff_fields = cs.expand_selector(df, ts_diff_fields)
+    if isinstance(numerical_fields, pl.selectors._selector_proxy_):
+        numerical_fields = cs.expand_selector(df, numerical_fields)
+    if isinstance(categorical_fields, pl.selectors._selector_proxy_):
+        categorical_fields = cs.expand_selector(df, categorical_fields)
+
+    if not subgroups:
+        subgroups = {"": [""]}  # {"action": ["buy", "sell"]}
+
+    # Counters
+
+    feature_expressions, columns_to_unnest, unnest_rules = [], [], []
+
+    ts_numaggs = [el for el in numaggs if el not in ("first",)]
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Actual building
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    num_no_filter: int = 0
+    for filter_field, filter_values in subgroups.items():
+
+        assert isinstance(filter_values, list)
+
+        if not filter_field:
+            num_no_filter += 1
+            assert num_no_filter <= 1
+
+        for filter_value in filter_values:
+
+            def af(expr) -> pl.expr:
+                return expr if not filter_field else expr.filter(pl.col(filter_field) == filter_value)
+
+            fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
+
+            # Means for boolean columns
+            feature_expressions.extend(
+                [getattr(af(pl.col(field)), func)().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}") for field in boolean_fields for func in ["mean"]]
+            )
+
+            # Numaggs over numerical columns
+            feature_expressions.extend(
+                [
+                    clean_numeric(getattr(af(pl.col(field)), func)(), nans_filler=nans_filler).alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}")
+                    for field in numerical_fields
+                    for func in numaggs
+                ]
+            )
+
+            # Quantiles
+            feature_expressions.extend(
+                [
+                    af(pl.col(field)).quantile(q).alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_quantile={q}")
+                    for field in numerical_fields
+                    for q in quantiles
+                ]
+            )
+
+            # Exponentially weighted mean/std
+            feature_expressions.extend(
+                [
+                    getattr(af(pl.col(field)), func)(span=span).mean().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}_span={span}")
+                    for field in numerical_fields
+                    for func in "ewm_mean ewm_std".split()
+                    for span in ewm_spans
+                ]
+                + [
+                    af(pl.col(field))
+                    .ewm_mean_by(by="timestamp", half_life=half_life)
+                    .mean()
+                    .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_ewm_ts_hl={half_life}")
+                    for field in numerical_fields
+                    for half_life in ewm_time_half_lifes
+                ]
+            )
+
+            # Categorical stats. For gpu mode, categoricals need to be converted to String upfront.
+            feature_expressions.extend(
+                [af(pl.col(field)).n_unique().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_nunique") for field in categorical_fields]
+            )
+
+            if engine != "gpu":
+                # Modes require special treatment
+                feature_expressions.extend(
+                    [
+                        getattr(af(pl.col(field)).mode(), func)().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_mode_{func}")
+                        for field in numerical_fields
+                        for func in ["min", "max", "mean"]
+                    ]
+                )
+
+                if concentration_top_n > 0:
+                    feature_expressions.extend(
+                        [
+                            af(pl.col(field))
+                            .value_counts(sort=True, normalize=True)
+                            .head(concentration_top_n)
+                            .struct.field("proportion")
+                            .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{concentration_top_n}")
+                            for field in categorical_fields
+                        ]
+                    )
+                    for field in categorical_fields:
+                        columns_to_unnest.extend(
+                            [
+                                pl.col(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{concentration_top_n}")
+                                .list.mean()
+                                .cast(dtype)
+                                .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{concentration_top_n}_avg_conc"),
+                                pl.col(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{concentration_top_n}").list.to_struct(
+                                    n_field_strategy="max_width",
+                                    upper_bound=concentration_top_n,
+                                    fields=[f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{i+1}_conc" for i in range(concentration_top_n)],
+                                ),  # Convert list to struct
+                            ]
+                        )
+                        unnest_rules.append(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_top{concentration_top_n}")
+
+                # Time diffs: numaggs
+                feature_expressions.extend(
+                    [
+                        getattr(af(pl.col(field)).diff().dt.total_seconds() / 60, func)()
+                        .cast(dtype)
+                        .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_tsd_{func}")
+                        for field in ts_diff_fields
+                        for func in ts_numaggs
+                    ]
+                )
+                # Time diffs: Quantiles
+                feature_expressions.extend(
+                    [
+                        (af(pl.col(field)).diff().dt.total_seconds() / 60).quantile(q).alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_tsd_quantile={q}")
+                        for field in ts_diff_fields
+                        for q in quantiles
+                    ]
+                )
+
+    return feature_expressions, columns_to_unnest, unnest_rules
+
+
+def create_ts_features_polars(
+    df: pl.DataFrame,
+    period: str = "24h",
+    every: str = "5m",
+    index_column="timestamp",
+    group_by="tokenAddress",
+    rolling: bool = False,
+    **kwargs,
+) -> pl.DataFrame:
+    """
+    Recipe for integer window rolling:
+        create_rolling_features(df.with_columns(row_idx=pl.col("tokenAddress").cum_count().over("tokenAddress")),period="24i",index_column="row_idx",...).drop("row_idx")
+    """
+
+    expressions, columns_to_unnest, unnest_rules = build_aggregate_features_polars(df, **kwargs)
+
+    if rolling:
+        res = df.rolling(index_column=index_column, period=period, group_by=group_by).agg(expressions)
+    else:
+        res = df.group_by_dynamic(index_column=index_column, every=every, period=period, group_by=group_by).agg(expressions)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Unnest remaining arrays in one go
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    if columns_to_unnest:
+        res = res.with_columns(columns_to_unnest).unnest(unnest_rules)
+
+    if cast_f64_to_f32:
+        res = cast_f64_to_f32(res)
+
+    return res
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# FS in polars
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
 def entropy_for_column(bins: pl.DataFrame, col: str) -> float:
     marginal_freqs = bins.group_by(col).agg(pl.len())["len"].to_numpy() / len(bins)
     return -np.sum(marginal_freqs * np.log(marginal_freqs))
@@ -47,11 +327,6 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
     joint_entropy = -np.sum(joint_freqs * np.log(joint_freqs))
     mi = entropies[target_col] + entropies[col] - joint_entropy
     return mi
-
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# FS in polars
-# ----------------------------------------------------------------------------------------------------------------------------
 
 
 def bin_numerical_columns(
