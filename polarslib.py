@@ -47,6 +47,13 @@ def cast_f64_to_f32(df: pl.DataFrame) -> pl.Expr:
     return df.with_columns(pl.col(pl.Float64).cast(pl.Float32))
 
 
+def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0) -> pl.Expr:
+    if func_name in ["skew", "kurtosis"]:
+        return clean_numeric(expr, nans_filler=nans_filler)
+    else:
+        return expr
+
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # FE in polars
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -79,11 +86,15 @@ def build_aggregate_features_polars(
     quantiles: list = None,
     ewm_spans: list = None,
     ewm_time_half_lifes: list = None,
+    ewm_basic_funcs: list = None,
+    ewm_aggs: list = None,
+    ewm_timestamp: str = None,
     dtype: object = pl.Float32,
     engine: str = "cpu",
     TR_FIELDS_REMAP: dict = None,
     nans_filler: float = 0.0,
     concentration_top_n: int = 3,
+    othersvals_at_extremums: bool = False,
 ) -> tuple:
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -114,35 +125,34 @@ def build_aggregate_features_polars(
         ewm_spans: list = []
     if not ewm_time_half_lifes:
         ewm_time_half_lifes: list = []
+    if not ewm_basic_funcs:
+        ewm_basic_funcs = "ewm_mean ewm_std".split()
+    if not ewm_aggs:
+        ewm_aggs = "mean".split()
 
     # Fields
 
     if boolean_fields is None:
-        boolean_fields = cs.by_dtype(pl.Boolean)
+        boolean_fields = cs.expand_selector(df, cs.by_dtype(pl.Boolean))
 
     if ts_diff_fields is None:
-        ts_diff_fields = cs.by_dtype(pl.Datetime())
+        ts_diff_fields = cs.expand_selector(df, cs.by_dtype(pl.Datetime()))
 
     if numerical_fields is None:
-        numerical_fields = cs.numeric()
+        numerical_fields = cs.expand_selector(df, cs.numeric())
 
     if categorical_fields is None:
-        categorical_fields = cs.by_dtype(pl.Categorical, pl.Utf8)
+        categorical_fields = cs.expand_selector(df, cs.by_dtype(pl.Categorical, pl.Utf8))
 
     if exclude_fields:
         if numerical_fields:
-            numerical_fields = numerical_fields - cs.by_name(exclude_fields)
+            numerical_fields = set(numerical_fields) - set(exclude_fields)
         if categorical_fields:
-            categorical_fields = categorical_fields - cs.by_name(exclude_fields)
-
-    if isinstance(boolean_fields, pl.selectors._selector_proxy_):
-        boolean_fields = cs.expand_selector(df, boolean_fields)
-    if isinstance(ts_diff_fields, pl.selectors._selector_proxy_):
-        ts_diff_fields = cs.expand_selector(df, ts_diff_fields)
-    if isinstance(numerical_fields, pl.selectors._selector_proxy_):
-        numerical_fields = cs.expand_selector(df, numerical_fields)
-    if isinstance(categorical_fields, pl.selectors._selector_proxy_):
-        categorical_fields = cs.expand_selector(df, categorical_fields)
+            categorical_fields = set(categorical_fields) - set(exclude_fields)
+        if boolean_fields:
+            boolean_fields = set(boolean_fields) - set(exclude_fields)
+        if ts_diff_fields:
+            ts_diff_fields = set(ts_diff_fields) - set(exclude_fields)
 
     if not subgroups:
         subgroups = {"": [""]}  # {"action": ["buy", "sell"]}
@@ -173,6 +183,8 @@ def build_aggregate_features_polars(
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
 
+            feature_expressions.append(af(cs.first()).len().alias(f"{fpref}nrecs"))
+
             # Means for boolean columns
             feature_expressions.extend(
                 [getattr(af(pl.col(field)), func)().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}") for field in boolean_fields for func in ["mean"]]
@@ -181,7 +193,9 @@ def build_aggregate_features_polars(
             # Numaggs over numerical columns
             feature_expressions.extend(
                 [
-                    clean_numeric(getattr(af(pl.col(field)), func)(), nans_filler=nans_filler).alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}")
+                    apply_agg_func_safe(getattr(af(pl.col(field)), func)(), func_name=func, nans_filler=nans_filler).alias(
+                        f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}"
+                    )
                     for field in numerical_fields
                     for func in numaggs
                 ]
@@ -196,23 +210,41 @@ def build_aggregate_features_polars(
                 ]
             )
 
+            if othersvals_at_extremums:
+                for col in numerical_fields:
+                    if not othersvals_basic_columns or col in othersvals_basic_columns:
+                        if othersvals_other_columns:
+                            other_columns = cs.by_name(othersvals_other_columns) - cs.by_name(exclude_fields)
+                        else:
+                            other_columns = cs.all() - cs.by_name(col) - cs.by_name(exclude_fields)
+
+                        feature_expressions.append(other_columns.get(pl.col(col).arg_max()).name.suffix(f"_at_{col}_max"))
+                        feature_expressions.append(other_columns.get(pl.col(col).arg_min()).name.suffix(f"_at_{col}_min"))
+
             # Exponentially weighted mean/std
             feature_expressions.extend(
                 [
-                    getattr(af(pl.col(field)), func)(span=span).mean().alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}_span={span}")
+                    getattr(getattr(af(pl.col(field)), func)(span=span), agg_func)().alias(
+                        f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_{func}_span={span}_{agg_func}"
+                    )
                     for field in numerical_fields
-                    for func in "ewm_mean ewm_std".split()
+                    for func in ewm_basic_funcs
                     for span in ewm_spans
-                ]
-                + [
-                    af(pl.col(field))
-                    .ewm_mean_by(by="timestamp", half_life=half_life)
-                    .mean()
-                    .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_ewm_ts_hl={half_life}")
-                    for field in numerical_fields
-                    for half_life in ewm_time_half_lifes
+                    for agg_func in ewm_aggs
                 ]
             )
+
+            if ewm_timestamp and ewm_time_half_lifes:
+                feature_expressions.extend(
+                    [
+                        getattr(af(pl.col(field)).ewm_mean_by(by=ewm_timestamp, half_life=half_life), agg_func)().alias(
+                            f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_ewm_ts_hl={half_life}_{agg_func}"
+                        )
+                        for field in numerical_fields
+                        for half_life in ewm_time_half_lifes
+                        for agg_func in ewm_aggs
+                    ]
+                )
 
             # Categorical stats. For gpu mode, categoricals need to be converted to String upfront.
             feature_expressions.extend(
@@ -259,7 +291,7 @@ def build_aggregate_features_polars(
                 # Time diffs: numaggs
                 feature_expressions.extend(
                     [
-                        getattr(af(pl.col(field)).diff().dt.total_seconds() / 60, func)()
+                        apply_agg_func_safe(getattr(af(pl.col(field)).diff().dt.total_seconds() / 60, func)(), func_name=func, nans_filler=nans_filler)
                         .cast(dtype)
                         .alias(f"{fpref}{TR_FIELDS_REMAP.get(field,field)}_tsd_{func}")
                         for field in ts_diff_fields
@@ -285,6 +317,8 @@ def create_ts_features_polars(
     index_column="timestamp",
     group_by="tokenAddress",
     rolling: bool = False,
+    include_boundaries: bool = False,
+    clean_memory: bool = True,
     **kwargs,
 ) -> pl.DataFrame:
     """
@@ -292,12 +326,24 @@ def create_ts_features_polars(
         create_rolling_features(df.with_columns(row_idx=pl.col("tokenAddress").cum_count().over("tokenAddress")),period="24i",index_column="row_idx",...).drop("row_idx")
     """
 
+    if clean_memory:
+        clean_ram()
+
+    if group_by:
+        additional_exclude = [group_by] if isinstance(group_by, str) else group_by
+        if kwargs.get("exclude_fields"):
+            kwargs["exclude_fields"] = list(kwargs.get("exclude_fields")) + additional_exclude
+        else:
+            kwargs["exclude_fields"] = additional_exclude
+
     expressions, columns_to_unnest, unnest_rules = build_aggregate_features_polars(df, **kwargs)
 
     if rolling:
-        res = df.rolling(index_column=index_column, period=period, group_by=group_by).agg(expressions)
+        res = df.rolling(index_column=index_column, period=period, group_by=group_by, include_boundaries=include_boundaries).agg(expressions)
     else:
-        res = df.group_by_dynamic(index_column=index_column, every=every, period=period, group_by=group_by).agg(expressions)
+        res = df.group_by_dynamic(index_column=index_column, every=every, period=period, group_by=group_by, include_boundaries=include_boundaries).agg(
+            expressions
+        )
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Unnest remaining arrays in one go
@@ -309,7 +355,10 @@ def create_ts_features_polars(
     if cast_f64_to_f32:
         res = cast_f64_to_f32(res)
 
-    return res
+    if clean_memory:
+        clean_ram()
+
+    return res.collect()
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
