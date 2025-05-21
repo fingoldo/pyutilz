@@ -65,6 +65,7 @@ def compute_concentrations(
     return_ids: bool = True,
     return_values: bool = True,
     sort_by_concentration: bool = True,
+    add_mean_concentration: bool = True,
     dtype: object = pl.Float32,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
@@ -95,16 +96,17 @@ def compute_concentrations(
     if return_values:
         exprs.append(pl.col("rel_total_by").alias(f"{label}_r{by}"))
 
-        columns_to_unnest.extend(
-            [
-                pl.col(f"{label}_r{by}").list.mean().cast(dtype).alias(f"{label}_top{top_n}_avg_conc"),
-                pl.col(f"{label}_r{by}").list.to_struct(
-                    n_field_strategy="max_width",
-                    upper_bound=top_n,
-                    fields=[f"{label}_top{i+1}_conc" for i in range(top_n)],
-                ),  # Convert list to struct
-            ]
+        if add_mean_concentration:
+            columns_to_unnest.append(pl.col(f"{label}_r{by}").list.mean().cast(dtype).alias(f"{label}_top{top_n}_avg_conc"))
+
+        columns_to_unnest.append(
+            pl.col(f"{label}_r{by}").list.to_struct(
+                n_field_strategy="max_width",
+                upper_bound=top_n,
+                fields=[f"{label}_top{i+1}_conc" for i in range(top_n)],
+            )
         )
+
         unnest_rules.append(f"{label}_r{by}")
 
     df = (
