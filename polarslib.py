@@ -79,6 +79,7 @@ def compute_concentrations(
     sort_by_concentration: bool = True,
     add_mean_concentration: bool = True,
     dtype: object = pl.Float32,
+    fields_remap: dict = None,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
     groupby_columns must include both group_byand index_column arguments pased to group_by_dynamic.
@@ -87,7 +88,10 @@ def compute_concentrations(
 
     assert return_ids or return_values
 
-    label = f"{entity_name}-by-{by}"
+    if not fields_remap:
+        fields_remap = {}
+
+    label = f"{entity_name}-by-{fields_remap.get(by,by)}"
 
     columns_to_unnest = []
     unnest_rules = []
@@ -106,20 +110,20 @@ def compute_concentrations(
         )
         unnest_rules.append(f"{label}")
     if return_values:
-        exprs.append(pl.col("rel_total_by").alias(f"{label}_r{by}"))
+        exprs.append(pl.col("rel_total_by").alias(f"{label}_r{fields_remap.get(by,by)}"))
 
         if add_mean_concentration:
-            columns_to_unnest.append(pl.col(f"{label}_r{by}").list.mean().cast(dtype).alias(f"{label}_top{top_n}_avg_conc"))
+            columns_to_unnest.append(pl.col(f"{label}_r{fields_remap.get(by,by)}").list.mean().cast(dtype).alias(f"{label}_top{top_n}_avg_conc"))
 
         columns_to_unnest.append(
-            pl.col(f"{label}_r{by}").list.to_struct(
+            pl.col(f"{label}_r{fields_remap.get(by,by)}").list.to_struct(
                 n_field_strategy="max_width",
                 upper_bound=top_n,
                 fields=[f"{label}_top{i+1}_conc" for i in range(top_n)],
             )
         )
 
-        unnest_rules.append(f"{label}_r{by}")
+        unnest_rules.append(f"{label}_r{fields_remap.get(by,by)}")
 
     df = (
         groupby_object.agg(entity, by)
@@ -261,7 +265,7 @@ def build_aggregate_features_polars(
     if numerical_fields is None:
         numerical_fields = cs.expand_selector(df, cs.numeric())
     if categorical_fields is None:
-        categorical_fields = cs.expand_selector(df, cs.by_dtype(pl.Categorical, pl.Utf8))
+        categorical_fields = list(cs.expand_selector(df, cs.by_dtype(pl.Categorical, pl.Utf8)))
 
     if exclude_fields:
         if boolean_fields:
@@ -271,7 +275,7 @@ def build_aggregate_features_polars(
         if numerical_fields:
             numerical_fields = set(numerical_fields) - set(exclude_fields)
         if categorical_fields:
-            categorical_fields = set(categorical_fields) - set(exclude_fields)
+            categorical_fields = list(set(categorical_fields) - set(exclude_fields))
 
     if pds_fields is None:
         pds_fields = numerical_fields
@@ -379,7 +383,9 @@ def build_aggregate_features_polars(
                         if othersvals_other_columns:
                             other_columns = cs.by_name(othersvals_other_columns) - cs.by_name(exclude_fields)
                         else:
-                            other_columns = cs.all() - cs.by_name(col) - cs.by_name(exclude_fields)
+                            other_columns = cs.all() - cs.by_name(col)
+                            if exclude_fields:
+                                other_columns = other_columns - cs.by_name(exclude_fields)
 
                         feature_expressions.append(other_columns.get(pl.col(col).arg_max()).name.suffix(f"_at_{col}_max{fpref}"))
                         feature_expressions.append(other_columns.get(pl.col(col).arg_min()).name.suffix(f"_at_{col}_min{fpref}"))
@@ -437,7 +443,7 @@ def build_aggregate_features_polars(
                                     n_field_strategy="max_width",
                                     upper_bound=field_concentration_top_n,
                                     fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(field_concentration_top_n)],
-                                ),  # Convert list to struct
+                                ),
                             ]
                         )
                         unnest_rules.append(alias)
