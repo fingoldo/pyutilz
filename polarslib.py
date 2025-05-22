@@ -146,13 +146,15 @@ def compute_concentrations(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str) -> list:
+def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str, fields_remap: dict = None) -> list:
     """Computes weighted aggregates."""
+    if not fields_remap:
+        fields_remap = {}
     wcols = []
     if weighting_columns:
         for wcol in weighting_columns:
             all_other_num_cols = columns_selector - cs.by_name(wcol)
-            weighted_mean = ((all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()).name.suffix(f"_{fpref}wmeanby_{wcol}")
+            weighted_mean = ((all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
             # !TODO causes error for now
             # weighted_std = ((pl.col(wcol) * (all_other_num_cols - weighted_mean) ** 2).sum() / pl.col(wcol).sum()).sqrt().name.suffix(f"_wstdby_{wcol}")
@@ -179,6 +181,7 @@ def build_aggregate_features_polars(
     fields_remap: dict = None,
     nans_filler: float = 0,
     concentration_top_n: int = 3,
+    concentrations_params: dict = None,
     add_peaks_stats: bool = True,
     custom_expressions: list = None,
     #
@@ -223,6 +226,9 @@ def build_aggregate_features_polars(
     if fields_remap is None:
         fields_remap = {}
 
+    if not concentrations_params:
+        concentrations_params = {}
+
     if not numaggs:
         numaggs = POLARS_DEFAULT_NUMAGGS
 
@@ -244,7 +250,7 @@ def build_aggregate_features_polars(
         corr_methods = ["pearson", "spearman", "xi", "kendall", "bicor"]
 
     if pds_params is None:
-        pds_params = dict()
+        pds_params = dict(lag=1, n_maxima=1, n_lags=1)
 
     # Fields
 
@@ -351,7 +357,6 @@ def build_aggregate_features_polars(
                     )
 
             # Numaggs over numerical columns
-            # getattr(apply_agg_func_safe(af(pl.col(field)), func_name=func, nans_filler=nans_filler), func)().alias(
             feature_expressions.extend(
                 [getattr(af(pl.col(field)), func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}") for field in numerical_fields for func in numaggs]
             )
@@ -363,7 +368,9 @@ def build_aggregate_features_polars(
 
             # Weighting
             if weighting_fields:
-                wcols = add_weighted_aggregates(columns_selector=(cs.numeric() - cs.by_name(exclude_fields)), weighting_columns=weighting_fields, fpref=fpref)
+                wcols = add_weighted_aggregates(
+                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields)), weighting_columns=weighting_fields, fpref=fpref, fields_remap=fields_remap
+                )
                 feature_expressions.extend(wcols)
 
             if othersvals_at_extremums:
@@ -390,7 +397,7 @@ def build_aggregate_features_polars(
                 ]
             )
 
-            if ewm_timestamp and ewm_time_half_lifes:  # careful: causes sometimes
+            if ewm_timestamp and ewm_time_half_lifes:  # careful: causes a bug sometimes (lengths mismatch)
                 feature_expressions.extend(
                     [
                         getattr(af(pl.col(field)).ewm_mean_by(by=ewm_timestamp, half_life=half_life), agg_func)().alias(
@@ -416,25 +423,20 @@ def build_aggregate_features_polars(
                 )
 
                 if concentration_top_n > 0:
-                    feature_expressions.extend(
-                        [
-                            af(pl.col(field))
-                            .value_counts(sort=True, normalize=True)
-                            .head(concentration_top_n)
-                            .struct.field("proportion")
-                            .alias(f"{fpref}{fields_remap.get(field,field)}_top{concentration_top_n}")
-                            for field in categorical_fields
-                        ]
-                    )
                     for field in categorical_fields:
-                        alias = f"{fpref}{fields_remap.get(field,field)}_top{concentration_top_n}"
+                        field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
+                        alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
+                        feature_expressions.append(
+                            af(pl.col(field)).value_counts(sort=True, normalize=True).head(field_concentration_top_n).struct.field("proportion").alias(alias)
+                        )
+
                         columns_to_unnest.extend(
                             [
                                 pl.col(alias).list.mean().cast(dtype).alias(f"{alias}_avg_conc"),
                                 pl.col(alias).list.to_struct(
                                     n_field_strategy="max_width",
-                                    upper_bound=concentration_top_n,
-                                    fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(concentration_top_n)],
+                                    upper_bound=field_concentration_top_n,
+                                    fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(field_concentration_top_n)],
                                 ),  # Convert list to struct
                             ]
                         )
@@ -479,7 +481,6 @@ def build_aggregate_features_polars(
                             )
                             unnest_rules.append(alias)
 
-                    pds_params = dict(lag=1, n_maxima=1, n_lags=1)
                     # stats with params
                     lag, n_maxima, n_lags = pds_params.get("lag", 1), pds_params.get("n_maxima", 1), pds_params.get("n_lags", 1)
                     for field in pds_fields:
