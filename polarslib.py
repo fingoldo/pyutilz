@@ -39,6 +39,18 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
+    meta = df.select(cs.numeric().is_nan().any())
+    true_cols = meta.row(0)
+    df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+
+
+def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
+    meta = df.select(cs.numeric().is_infinite().any())
+    true_cols = meta.row(0)
+    df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+
+
 def clean_numeric(expr: pl.Expr, nans_filler: float = 0) -> pl.Expr:
     return expr.replace([float("inf"), -float("inf"), float("nan")], nans_filler)
     # return pl.when(expr.is_infinite()).then(expr).otherwise(pl.lit(nans_filler))
