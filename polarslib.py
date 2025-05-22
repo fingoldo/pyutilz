@@ -190,8 +190,9 @@ def build_aggregate_features_polars(
     custom_expressions: list = None,
     #
     othersvals_at_extremums: bool = False,
-    othersvals_basic_columns: list = None,
-    othersvals_other_columns: list = None,
+    othersvals_basic_fields: list = None,
+    othersvals_other_fields: list = None,
+    othersvals_excluded_fields: list = None,
     #
     ewm_spans: list = None,
     ewm_timestamp: str = None,
@@ -334,7 +335,7 @@ def build_aggregate_features_polars(
                 if check_cpu_flag("avx2"):
                     feature_expressions.extend(
                         [
-                            pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lempel_ziv")
+                            pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lziv")
                             for field in boolean_fields
                         ]
                     )
@@ -352,9 +353,7 @@ def build_aggregate_features_polars(
                 if check_cpu_flag("avx2"):
                     feature_expressions.extend(
                         [
-                            pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(
-                                f"{fpref}{fields_remap.get(field,field)}_{func}_lempel_ziv"
-                            )
+                            pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
                             for field in numerical_fields
                             for func in ["peak_min", "peak_max"]
                         ]
@@ -367,7 +366,7 @@ def build_aggregate_features_polars(
 
             # Quantiles
             feature_expressions.extend(
-                [af(pl.col(field)).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_quantile={q}") for field in numerical_fields for q in quantiles]
+                [af(pl.col(field)).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_quantile_{q}") for field in numerical_fields for q in quantiles]
             )
 
             # Weighting
@@ -379,16 +378,27 @@ def build_aggregate_features_polars(
 
             if othersvals_at_extremums:
                 for col in numerical_fields:
-                    if not othersvals_basic_columns or col in othersvals_basic_columns:
-                        if othersvals_other_columns:
-                            other_columns = cs.by_name(othersvals_other_columns) - cs.by_name(exclude_fields)
+                    if not othersvals_basic_fields or col in othersvals_basic_fields:
+                        if othersvals_other_fields:
+                            other_columns = cs.by_name(othersvals_other_fields) - cs.by_name(col)
                         else:
                             other_columns = cs.all() - cs.by_name(col)
-                            if exclude_fields:
-                                other_columns = other_columns - cs.by_name(exclude_fields)
 
-                        feature_expressions.append(other_columns.get(pl.col(col).arg_max()).name.suffix(f"_at_{col}_max{fpref}"))
-                        feature_expressions.append(other_columns.get(pl.col(col).arg_min()).name.suffix(f"_at_{col}_min{fpref}"))
+                        if exclude_fields:
+                            other_columns = other_columns - cs.by_name(exclude_fields)
+
+                        if othersvals_excluded_fields:
+                            other_columns = other_columns - cs.by_name(othersvals_excluded_fields)
+
+                        if filter_field:
+                            other_columns = other_columns - cs.by_name(filter_field)
+
+                        feature_expressions.append(
+                            other_columns.get(pl.col(col).arg_max().alias("arg_max")).name.map(lambda name: f"{fpref}{name}_at_{col}_max")
+                        )
+                        feature_expressions.append(
+                            other_columns.get(pl.col(col).arg_min().alias("arg_min")).name.map(lambda name: f"{fpref}{name}_at_{col}_min")
+                        )
 
             # Exponentially weighted mean/std
             feature_expressions.extend(
