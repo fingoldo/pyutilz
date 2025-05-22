@@ -250,7 +250,7 @@ def build_aggregate_features_polars(
         ewm_final_funcs = "mean".split()
 
     if pds_numaggs is None:
-        pds_numaggs = "hmean query_abs_energy query_cid_ce query_first_digit_cnt query_mean_abs_change".split()  # query_permute_entropy
+        pds_numaggs = "hmean query_abs_energy query_cid_ce query_mean_abs_change".split()  # query_permute_entropy # query_first_digit_cnt
     if corr_methods is None:
         corr_methods = ["pearson", "spearman", "xi", "kendall", "bicor"]
 
@@ -393,12 +393,8 @@ def build_aggregate_features_polars(
                         if filter_field:
                             other_columns = other_columns - cs.by_name(filter_field)
 
-                        feature_expressions.append(
-                            other_columns.get(pl.col(col).arg_max().alias("arg_max")).name.map(lambda name: f"{fpref}{name}_at_{col}_max")
-                        )
-                        feature_expressions.append(
-                            other_columns.get(pl.col(col).arg_min().alias("arg_min")).name.map(lambda name: f"{fpref}{name}_at_{col}_min")
-                        )
+                        feature_expressions.append(other_columns.get(pl.col(col).arg_max().alias("arg_max")).name.suffix(f"_{fpref}at_{col}_max"))
+                        feature_expressions.append(other_columns.get(pl.col(col).arg_min().alias("arg_min")).name.suffix(f"_{fpref}at_{col}_min"))
 
             # Exponentially weighted mean/std
             feature_expressions.extend(
