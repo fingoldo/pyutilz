@@ -610,7 +610,7 @@ def create_ts_features_polars(
     )
     res = res.with_columns(
         clean_numeric(
-            fragile_cols,
+            fragile_cols.cast(dtype=dtype),
         )
     )
 
