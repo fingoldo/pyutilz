@@ -207,6 +207,7 @@ def build_aggregate_features_polars(
     pds_fields: list = None,
     linreg_fields: list = None,
     linreg_timestamp_field: str = None,
+    use_parametrized_pds_features: bool = True,
 ) -> tuple:
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -494,19 +495,20 @@ def build_aggregate_features_polars(
                             unnest_rules.append(alias)
 
                     # stats with params
-                    lag, n_maxima, n_lags = pds_params.get("lag", 1), pds_params.get("n_maxima", 1), pds_params.get("n_lags", 1)
-                    for field in pds_fields:
-                        feature_expressions.extend(
-                            [
-                                pds.query_c3_stats(af(pl.col(field)), lag=lag).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_c3_stats-{lag}"),
-                                pds.query_mean_n_abs_max(af(pl.col(field)), n_maxima=n_maxima).alias(
-                                    f"{fpref}{fields_remap.get(field,field)}_mean_n_abs_max-{n_maxima}"
-                                ),
-                                pds.query_time_reversal_asymmetry_stats(af(pl.col(field)), n_lags=n_lags).alias(
-                                    f"{fpref}{fields_remap.get(field,field)}_tras-{n_lags}"
-                                ),
-                            ]
-                        )
+                    if use_parametrized_pds_features:
+                        lag, n_maxima, n_lags = pds_params.get("lag", 1), pds_params.get("n_maxima", 1), pds_params.get("n_lags", 1)
+                        for field in pds_fields:
+                            feature_expressions.extend(
+                                [
+                                    pds.query_c3_stats(af(pl.col(field)), lag=lag).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_c3_stats-{lag}"),
+                                    pds.query_mean_n_abs_max(af(pl.col(field)), n_maxima=n_maxima).alias(
+                                        f"{fpref}{fields_remap.get(field,field)}_mean_n_abs_max-{n_maxima}"
+                                    ),
+                                    pds.query_time_reversal_asymmetry_stats(af(pl.col(field)), n_lags=n_lags).alias(
+                                        f"{fpref}{fields_remap.get(field,field)}_tras-{n_lags}"
+                                    ),
+                                ]
+                            )
 
                     # Corrs
                     if corr_fields:
