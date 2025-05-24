@@ -23,7 +23,6 @@ import psutil
 import textwrap
 from collections import defaultdict
 from pyutilz.system import clean_ram
-from mlframe.feature_selection.general import run_efs
 from mlframe.utils import is_cuda_available, check_cpu_flag
 
 # ----------------------------------------------------------------------------------------------------------------------------
