@@ -519,7 +519,7 @@ def build_aggregate_features_polars(
                     # Linregs
                     for field in linreg_fields:
                         alias = f"{fpref}{fields_remap.get(field,field)}_linreg"
-                        feature_expressions.append(pds.simple_lin_reg(pl.int_range(pl.len()), target=field, add_bias=True).alias(alias))
+                        feature_expressions.append(pds.simple_lin_reg(pl.int_range(pl.len()), target=pl.col(field), add_bias=True).alias(alias))
                         columns_to_unnest.extend(
                             [
                                 pl.col(alias).list.to_struct(
@@ -534,7 +534,9 @@ def build_aggregate_features_polars(
                             alias = f"{fpref}{fields_remap.get(field,field)}_linregby_{linreg_timestamp_field}"
                             feature_expressions.append(
                                 pds.simple_lin_reg(
-                                    (pl.col(linreg_timestamp_field) - pl.col(linreg_timestamp_field).min()).dt.total_seconds(), target=field, add_bias=True
+                                    (pl.col(linreg_timestamp_field) - pl.col(linreg_timestamp_field).min()).dt.total_seconds(),
+                                    target=pl.col(field),
+                                    add_bias=True,
                                 ).alias(alias)
                             )
                             columns_to_unnest.extend(
