@@ -235,7 +235,7 @@ def build_aggregate_features_polars(
     if not concentrations_params:
         concentrations_params = {}
 
-    if not numaggs:
+    if numaggs is None:
         numaggs = POLARS_DEFAULT_NUMAGGS
 
     if quantiles is None:
