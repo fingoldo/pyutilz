@@ -564,7 +564,7 @@ def create_ts_features_polars(
     rolling: bool = False,
     include_boundaries: bool = False,
     clean_memory: bool = True,
-    dtype: object = pl.Float32,
+    dtype: object = pl.Float64,
     **kwargs,
 ) -> pl.DataFrame:
     """
