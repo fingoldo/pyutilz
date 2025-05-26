@@ -78,7 +78,7 @@ def compute_concentrations(
     return_values: bool = True,
     sort_by_concentration: bool = True,
     add_mean_concentration: bool = True,
-    dtype: object = pl.Float32,
+    dtype: object = pl.Float64,
     fields_remap: dict = None,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
@@ -181,7 +181,7 @@ def build_aggregate_features_polars(
     quantiles: list = None,
     #
     engine: str = "cpu",
-    dtype: object = pl.Float32,
+    dtype: object = pl.Float64,
     fields_remap: dict = None,
     nans_filler: float = 0,
     concentration_top_n: int = 3,
