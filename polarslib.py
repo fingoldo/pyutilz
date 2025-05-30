@@ -698,7 +698,12 @@ def bin_numerical_columns(
                 quantile_cols.quantile(0.75).name.suffix("_q3"),
             ]
         )
-    stats = df.select(stats_expr).collect().row(0, named=True)
+    stats = df.select(stats_expr).collect()
+
+    if len(stats) > 0:
+        stats = stats.row(0, named=True)
+    else:
+        stats = {}
     orig_stats = stats.copy()
 
     clean_ram()
