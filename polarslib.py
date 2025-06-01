@@ -438,6 +438,10 @@ def build_aggregate_features_polars(
                 if concentration_top_n > 0:
                     for field in categorical_fields:
                         field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
+                        # Validate field_concentration_top_n
+                        if not isinstance(field_concentration_top_n, int) or field_concentration_top_n <= 0:
+                            print(f"Skipping field {field}: invalid top_n={field_concentration_top_n}")
+                            continue
                         alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
                         feature_expressions.append(
                             af(pl.col(field)).value_counts(sort=True, normalize=True).head(field_concentration_top_n).struct.field("proportion").alias(alias)
