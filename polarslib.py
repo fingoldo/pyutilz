@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+# Set jemalloc config early
 import os
 
-# Set jemalloc config early
-os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"
+os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 
 
 from typing import *
