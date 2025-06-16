@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import os
+
+# Set jemalloc config early
+os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"
+
+
 from typing import *
 import numpy as np, pandas as pd
 import polars as pl, polars.selectors as cs
