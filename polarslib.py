@@ -156,7 +156,7 @@ def compute_concentrations(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str, fields_remap: dict = None) -> list:
+def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: dict = None) -> list:
     """Computes weighted aggregates."""
     if not fields_remap:
         fields_remap = {}
