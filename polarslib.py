@@ -17,11 +17,10 @@ logger = logging.getLogger(__name__)
 import os
 
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
-
+import polars as pl, polars.selectors as cs
 
 from typing import *
 import numpy as np, pandas as pd
-import polars as pl, polars.selectors as cs
 
 from functools import partial
 
