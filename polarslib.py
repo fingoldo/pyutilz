@@ -829,7 +829,7 @@ def bin_numerical_columns(
             if fill_nans and (col in cols_with_floats):
                 col_expr = clean_numeric(col_expr, nans_filler=min_val)
 
-            binned_col = ((col_expr - min_val) / bin_width).floor().fill_na(0).clip(0, num_bins - 1).cast(bin_dtype)
+            binned_col = ((col_expr - min_val) / bin_width).floor().fill_nan(0).clip(0, num_bins - 1).cast(bin_dtype)
 
             bin_expressions.append(binned_col)
 
