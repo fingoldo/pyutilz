@@ -757,7 +757,7 @@ def bin_numerical_columns(
             lower_fence = q1 - tukey_fences_multiplier * iqr
             upper_fence = q3 + tukey_fences_multiplier * iqr
 
-            if upper_fence > lower_fence:
+            if upper_fence > lower_fence or (np.isneginf(min_val) or np.isinf(max_val)):
                 is_outlier = False
                 lower_bound = min_val
                 upper_bound = max_val
@@ -829,7 +829,7 @@ def bin_numerical_columns(
             if fill_nans and (col in cols_with_floats):
                 col_expr = clean_numeric(col_expr, nans_filler=min_val)
 
-            binned_col = ((col_expr - min_val) / bin_width).floor().clip(0, num_bins - 1).cast(bin_dtype)
+            binned_col = ((col_expr - min_val) / bin_width).floor().fill_na(0).clip(0, num_bins - 1).cast(bin_dtype)
 
             bin_expressions.append(binned_col)
 
