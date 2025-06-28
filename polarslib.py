@@ -184,6 +184,7 @@ def build_aggregate_features_polars(
     subgroups: dict = None,
     numaggs: list = None,
     quantiles: list = None,
+    tds_quantiles: list = None,
     #
     engine: str = "cpu",
     dtype: object = pl.Float64,
@@ -245,6 +246,9 @@ def build_aggregate_features_polars(
 
     if quantiles is None:
         quantiles = POLARS_DEFAULT_QUANTILES
+
+    if tds_quantiles is None:
+        tds_quantiles = POLARS_DEFAULT_QUANTILES
 
     if not ewm_spans:
         ewm_spans: list = []
@@ -474,14 +478,15 @@ def build_aggregate_features_polars(
                         for func in ts_numaggs
                     ]
                 )
-                # Time diffs: Quantiles
-                feature_expressions.extend(
-                    [
-                        (af(pl.col(field)).diff().dt.total_seconds() / 60).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_tsd_quantile={q}")
-                        for field in ts_diff_fields
-                        for q in quantiles
-                    ]
-                )
+                if tds_quantiles:
+                    # Time diffs: Quantiles
+                    feature_expressions.extend(
+                        [
+                            (af(pl.col(field)).diff().dt.total_seconds() / 60).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_tsd_quantile={q}")
+                            for field in ts_diff_fields
+                            for q in tds_quantiles
+                        ]
+                    )
 
                 if check_cpu_flag("avx2"):
 
