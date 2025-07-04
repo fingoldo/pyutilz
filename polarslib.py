@@ -575,8 +575,8 @@ def create_ts_features_polars(
     period: str,
     every: str = None,
     offset: str = None,
-    closed: str = "both",
-    label: str = "right",
+    closed: str = None,
+    label: str = "left",
     group_by: str = None,
     rolling: bool = False,
     include_boundaries: bool = False,
@@ -588,6 +588,8 @@ def create_ts_features_polars(
     Recipe for integer window rolling:
         create_rolling_features(df.with_columns(row_idx=pl.col("tokenAddress").cum_count().over("tokenAddress")),period="24i",index_column="row_idx",...).drop("row_idx")
     """
+    if not closed:
+        closed = "left" if not rolling else "right"
 
     if clean_memory:
         clean_ram()
