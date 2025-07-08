@@ -270,13 +270,13 @@ def build_aggregate_features_polars(
     # Fields
 
     if boolean_fields is None:
-        boolean_fields = cs.expand_selector(df, cs.by_dtype(pl.Boolean))
+        boolean_fields = cs.expand_selector(df.head(), cs.by_dtype(pl.Boolean))
     if ts_diff_fields is None:
-        ts_diff_fields = cs.expand_selector(df, cs.by_dtype(pl.Datetime))
+        ts_diff_fields = cs.expand_selector(df.head(), cs.by_dtype(pl.Datetime))
     if numerical_fields is None:
-        numerical_fields = cs.expand_selector(df, cs.numeric())
+        numerical_fields = cs.expand_selector(df.head(), cs.numeric())
     if categorical_fields is None:
-        categorical_fields = list(cs.expand_selector(df, cs.by_dtype(pl.Categorical, pl.Utf8)))
+        categorical_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Categorical, pl.Utf8)))
 
     if exclude_fields:
         if boolean_fields:
@@ -739,7 +739,7 @@ def bin_numerical_columns(
     # ----------------------------------------------------------------------------------------------------------------------------
 
     dead_columns = []
-    for col in cs.expand_selector(df, all_num_cols):
+    for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
         if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
             dead_columns.append(col)
@@ -758,7 +758,7 @@ def bin_numerical_columns(
     public_clips = {}
     clips = {}
     if clean_features or clean_targets:
-        for col in cs.expand_selector(df, all_num_cols):
+        for col in cs.expand_selector(df.head(), all_num_cols):
             if not clean_targets:
                 if col in target_columns:
                     continue
@@ -823,9 +823,9 @@ def bin_numerical_columns(
     if fill_nulls:
         cols_with_nulls = [key for key, value in df.select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
     if fill_nans:
-        cols_with_floats = cs.expand_selector(df, all_num_cols & cs.float())
+        cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
 
-    for col in cs.expand_selector(df, all_num_cols):
+    for col in cs.expand_selector(df.head(), all_num_cols):
         if binned_targets is not None:
             if col in target_columns:
                 continue
@@ -891,7 +891,7 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
     # ----------------------------------------------------------------------------------------------------------------------------
 
     dead_columns = []
-    for col in cs.expand_selector(df, all_num_cols):
+    for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
         if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
             dead_columns.append(col)
