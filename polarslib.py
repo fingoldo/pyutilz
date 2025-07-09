@@ -582,6 +582,7 @@ def create_ts_features_polars(
     include_boundaries: bool = False,
     clean_memory: bool = True,
     dtype: object = pl.Float64,
+    engine: str = "cpu",
     **kwargs,
 ) -> pl.DataFrame:
     """
@@ -646,7 +647,7 @@ def create_ts_features_polars(
     if clean_memory:
         clean_ram()
 
-    return res.collect()
+    return res.collect(engine=engine)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
