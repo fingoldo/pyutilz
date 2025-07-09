@@ -648,7 +648,7 @@ def create_ts_features_polars(
     if clean_memory:
         clean_ram()
 
-    logger.info(f"create_ts_features_polars using {engine} engine...")
+    logger.info(f"create_ts_features_polars using {engine} engine, {pl.thread_pool_size():_} threads...")
     res = res.collect(engine=engine)
     logger.info(f"Done.")
 
