@@ -604,7 +604,6 @@ def create_ts_features_polars(
 
     expressions, columns_to_unnest, unnest_rules = build_aggregate_features_polars(df, dtype=dtype, **kwargs)
 
-    logging.info("before rolling or group_by_dynamic")
     if rolling:
         res = df.rolling(index_column=index_column, period=period, offset=offset, closed=closed, group_by=group_by).agg(expressions)
     else:
@@ -618,7 +617,7 @@ def create_ts_features_polars(
             group_by=group_by,
             include_boundaries=include_boundaries,
         ).agg(expressions)
-    logging.info("after rolling or group_by_dynamic")
+
     # ----------------------------------------------------------------------------------------------------------------------------
     # Unnest remaining arrays in one go
     # ----------------------------------------------------------------------------------------------------------------------------
