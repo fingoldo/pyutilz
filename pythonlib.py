@@ -31,9 +31,10 @@ from numba import njit
 from datetime import datetime, date, timezone
 
 from os.path import abspath, exists, join
+from contextlib import contextmanager
+import os, sys
 import joblib
 import errno
-import os
 
 import re
 import inspect
@@ -808,3 +809,17 @@ def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", prot
         # flush and sync to filesystem
         fh.flush()
         os.fsync(fh.fileno())
+
+
+@contextmanager
+def suppress_stdout_stderr():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = devnull
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
