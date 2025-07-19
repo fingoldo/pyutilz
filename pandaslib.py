@@ -603,9 +603,18 @@ def pack_benchmark_results(res, config, read_times, write_times, read_sizes, wri
     res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
 
 
-def benchmark_dataframe_parquet_compression(res, temp_folder, df, nrepeats, skip_configs=("parquet-fastparquet-brotli",)):
+def benchmark_dataframe_parquet_compression( df:pd.DataFrame, temp_folder:str, nrepeats:int=3,engines:tuple=("fastparquet", "pyarrow"),skip_configs:tuple=("parquet-fastparquet-brotli",),write_method:str="to_parquet")->list:
+    res=[]
     file_format = "parquet"
-    for engine in tqdmu(("fastparquet", "pyarrow"), desc=f"{file_format} engine", leave=False):
+    if write_method=="write_parquet":
+        engines=('main',)
+    for engine in tqdmu(engines, desc=f"{file_format} engine", leave=False):
+
+        if write_method=="write_parquet":
+            engine_params={}
+        else:
+            engine_params=dict(engine=engine)
+
         for compr in tqdmu("snappy gzip brotli lz4 zstd".split(), desc=f"{file_format} compression method", leave=False):
             config = f"{file_format}-{engine}-{compr}"
             if config in skip_configs:
@@ -616,14 +625,15 @@ def benchmark_dataframe_parquet_compression(res, temp_folder, df, nrepeats, skip
                 df=df,
                 fname=fname,
                 read_method="read_parquet",
-                read_params=dict(engine=engine),
-                write_method="to_parquet",
-                write_params=dict(engine=engine, compression=compr),
+                read_params=dict(**engine_params),
+                write_method=write_method,
+                write_params=dict(**engine_params, compression=compr),
                 nrepeats=nrepeats,
             )
 
             pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
-
+    
+    return pd.DataFrame(res,columns=['config',]+"mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","))
 
 def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
     file_format = "pickle"
