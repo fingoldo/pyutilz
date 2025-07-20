@@ -50,7 +50,7 @@ def job_completed(job_id: str, status: int = 0, data: str = None, provider: str 
     if endpoint:
         try:
             res = requests.post(endpoint, data=data, params=params)
-            print(res)
+
             if res.status_code not in (200, 403, 429):
                 # 403=blocked in your country
                 # 429=rate limit exceeded

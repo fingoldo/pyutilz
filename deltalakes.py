@@ -8,10 +8,18 @@ logger = logging.getLogger(__name__)
 
 def is_local_path(path: str) -> bool:
     parsed = urlparse(path)
-    return parsed.scheme in ("", "file") and not path.startswith("s3://") and not path.startswith("azure://")
+    # If there's no scheme or it's explicitly "file"
+    if parsed.scheme in ("", "file"):
+        return not path.startswith(("s3://", "azure://"))
+
+    # Special case: Windows drive letter (e.g., "R:\...")
+    if os.name == "nt" and len(parsed.scheme) == 1 and parsed.scheme.isalpha():
+        return True
+
+    return False
 
 
-def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 60, lock_suffix=".lock"):
+def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 120, lock_suffix=".lock"):
     """
     Wraps any Delta Lake operation (write_deltalake, merge+execute) with local file locking.
 
@@ -60,6 +68,7 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 60, lock_s
             logger.warning(f"Timeout while waiting for lock on {path}. Skipping operation.")
         except Exception as e:
             logger.exception(f"Delta operation failed on {path}: {e}")
+            raise (e)
     else:
         logger.warning(f"Delta operation on non-local path: {path}. Proceeding without lock.")
         try:
