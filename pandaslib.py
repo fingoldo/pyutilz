@@ -603,23 +603,32 @@ def pack_benchmark_results(res, config, read_times, write_times, read_sizes, wri
     res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
 
 
-def benchmark_dataframe_parquet_compression( df:pd.DataFrame, temp_folder:str, nrepeats:int=3,engines:tuple=("fastparquet", "pyarrow"),skip_configs:tuple=("parquet-fastparquet-brotli",),write_method:str="to_parquet")->list:
-    res=[]
+def benchmark_dataframe_parquet_compression(
+    df: pd.DataFrame,
+    temp_folder: str,
+    nrepeats: int = 3,
+    engines: tuple = ("fastparquet", "pyarrow"),
+    max_compression_level: int = 22,
+    skip_configs: tuple = ("parquet-fastparquet-brotli",),
+    write_method: str = "to_parquet",
+) -> list:
+    res = []
     file_format = "parquet"
-    if write_method=="write_parquet":
-        engines=('main',)
+    if write_method == "write_parquet":
+        engines = ("main",)
     for engine in tqdmu(engines, desc=f"{file_format} engine", leave=False):
 
-        if write_method=="write_parquet":
-            engine_params={}
+        if write_method == "write_parquet":
+            engine_params = {}
         else:
-            engine_params=dict(engine=engine)
+            engine_params = dict(engine=engine)
 
         for compr in tqdmu("snappy gzip brotli lz4 zstd".split(), desc=f"{file_format} compression method", leave=False):
-            config = f"{file_format}-{engine}-{compr}"
-            if config in skip_configs:
+
+            if f"{file_format}-{engine}-{compr}" in skip_configs:
                 continue
 
+            config = f"{file_format}-{engine}-{compr}"
             fname = join(temp_folder, rf"{config}.{file_format}")
             read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
                 df=df,
@@ -632,8 +641,34 @@ def benchmark_dataframe_parquet_compression( df:pd.DataFrame, temp_folder:str, n
             )
 
             pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
-    
-    return pd.DataFrame(res,columns=['config',]+"mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","))
+
+            for compression_level in range(1, max_compression_level + 1):
+                config = f"{file_format}-{engine}-{compr}-{compression_level}"
+
+                fname = join(temp_folder, rf"{config}.{file_format}")
+                try:
+                    read_times, write_times, read_sizes, write_sizes = measure_read_write_performance(
+                        df=df,
+                        fname=fname,
+                        read_method="read_parquet",
+                        read_params=dict(**engine_params),
+                        write_method=write_method,
+                        write_params=dict(**engine_params, compression=compr, compression_level=compression_level),
+                        nrepeats=nrepeats,
+                    )
+
+                    pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+                except Exception as e:
+                    logger.warning(f"Skipping config {config}")
+
+    return pd.DataFrame(
+        res,
+        columns=[
+            "config",
+        ]
+        + "mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","),
+    )
+
 
 def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
     file_format = "pickle"
