@@ -59,7 +59,7 @@ def job_completed(job_id: str, status: int = 0, data: str = None, provider: str 
         except Exception as e:
             logger.warning(f"Error while sending hearbeat to {provider} on monitor {job_id}: {e}")
     else:
-        logger.info(f"Job {job_id} completed with result {e}")
+        logger.info(f"No endpoint established for job {job_id}. Check if monitoring credentials are properly configured.")
 
 
 def monitored(
