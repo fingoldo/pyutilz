@@ -19,7 +19,7 @@ def is_local_path(path: str) -> bool:
     return False
 
 
-def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 120, lock_suffix=".lock"):
+def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock_suffix=".lock"):
     """
     Wraps any Delta Lake operation (write_deltalake, merge+execute) with local file locking.
 
