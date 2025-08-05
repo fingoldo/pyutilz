@@ -56,7 +56,7 @@ def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
     df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
 
-def clean_numeric(expr: pl.Expr, nans_filler: float = 0) -> pl.Expr:
+def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
     return expr.replace([float("inf"), -float("inf"), float("nan")], nans_filler)
     # return pl.when(expr.is_infinite()).then(expr).otherwise(pl.lit(nans_filler))
 
@@ -65,7 +65,7 @@ def cast_f64_to_f32(df: pl.DataFrame) -> pl.Expr:
     return df.with_columns(pl.col(pl.Float64).cast(pl.Float32))
 
 
-def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0) -> pl.Expr:
+def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0) -> pl.Expr:
     if func_name in ["skew", "kurtosis"]:
         return clean_numeric(expr, nans_filler=nans_filler)
     else:
@@ -189,7 +189,7 @@ def build_aggregate_features_polars(
     engine: str = "cpu",
     dtype: object = pl.Float64,
     fields_remap: dict = None,
-    nans_filler: float = 0,
+    nans_filler: float = 0.0,
     concentration_top_n: int = 3,
     concentrations_params: dict = None,
     add_peaks_stats: bool = True,
