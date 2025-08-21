@@ -823,3 +823,17 @@ def suppress_stdout_stderr():
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+
+
+def is_jupyter_notebook():
+    try:
+        from IPython import get_ipython
+
+        ipython = get_ipython()
+        if ipython is None:
+            return False
+        if "IPKernelApp" in ipython.config:  # Jupyter notebook or JupyterLab
+            return True
+        return False
+    except (ImportError, NameError):
+        return False
