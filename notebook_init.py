@@ -1,16 +1,24 @@
-"""Repeatable code to init almost all my Jupyter notebooks ;-)"""
-
-# =============================================================================
-# FIXED VERSION: pyutilz/notebook_init.py
-# =============================================================================
-
 """
 Jupyter notebook initialization utilities
 """
 import os
 import psutil
-from IPython.display import display, HTML
 from IPython import get_ipython
+
+# Correct imports for display and HTML
+try:
+    from IPython.display import display, HTML
+except ImportError:
+    # Fallback for older IPython versions or when not in notebook
+    try:
+        from IPython.core.display import HTML
+        from IPython.display import display
+    except ImportError:
+        # Create dummy functions if IPython not available
+        def display(*args, **kwargs):
+            pass
+        def HTML(data):
+            return data
 
 def setup_polars_config():
     """Setup Polars threading and memory configuration"""
@@ -99,13 +107,29 @@ def import_common_packages():
     
     return packages
 
-def init_notebook(include_imports=True, inject_globals=False):
+def load_jupyter_extensions_minimal():
+    """Load only built-in IPython extensions"""
+    ipython = get_ipython()
+    if not ipython:
+        print("⚠️  Not running in IPython environment")
+        return
+    
+    # Only load built-in extensions that should always be available
+    try:
+        ipython.magic('load_ext autoreload')
+        ipython.magic('autoreload 2')
+        print("✅ Loaded autoreload extension")
+    except Exception as e:
+        print(f"⚠️  Failed to load autoreload: {e}")
+
+def init_notebook(include_imports=True, inject_globals=False, use_simple_extensions=True):
     """
     Complete notebook initialization
     
     Args:
         include_imports (bool): Whether to import common packages
-        inject_globals (bool): Whether to inject packages into global namespace
+        inject_globals (bool): Whether to inject packages into global namespace  
+        use_simple_extensions (bool): Use simple extension loading method
     
     Returns:
         dict: Dictionary of imported packages if include_imports=True
@@ -114,15 +138,18 @@ def init_notebook(include_imports=True, inject_globals=False):
     
     setup_polars_config()
     setup_jupyter_display()
-    load_jupyter_extensions()
+    
+    # Choose extension loading method
+    if use_simple_extensions:
+        load_jupyter_extensions_simple()
+    else:
+        load_jupyter_extensions()
     
     if include_imports:
         packages = import_common_packages()
         
-        # Inject into global namespace if requested
         if inject_globals:
             try:
-                # Get the calling frame's globals
                 import inspect
                 frame = inspect.currentframe().f_back
                 frame.f_globals.update(packages)
