@@ -9,7 +9,7 @@ Jupyter notebook initialization utilities
 """
 import os
 import psutil
-from IPython.core.display import display, HTML
+from IPython.display import display, HTML
 from IPython import get_ipython
 
 def setup_polars_config():
