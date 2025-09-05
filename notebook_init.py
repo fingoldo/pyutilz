@@ -141,7 +141,7 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
     
     # Choose extension loading method
     if use_simple_extensions:
-        load_jupyter_extensions_simple()
+        load_jupyter_extensions_minimal()
     else:
         load_jupyter_extensions()
     
