@@ -1053,3 +1053,50 @@ def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_job
         ).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},
     )
+
+
+
+def ensure_db_tables_created() -> bool:
+
+    schema_fpath = join("database", "schema.sql")
+    if not exists(schema_fpath):
+        logger.error(f"DB Schema file not found.")
+        return False
+    with open(schema_fpath, "r") as f:
+        schema_string = f.read()
+
+    if len(schema_string) > 0:
+        cursor.executescript(schema_string)
+        conn.commit()
+
+        return True
+    else:
+        logger.error(f"DB Schema empty.")
+        return False
+    
+def insert_sqllite_data(table_name:str,data: Iterable[Dict[str, Any]],columns:Iterable,cursor:object,conn:object,verbose:int=1):
+    """Самый быстрый способ для массовых вставок"""
+    
+    # Создаем SQL запрос
+    placeholders = ', '.join(['?' for _ in columns])
+    columns_str = ', '.join([f'"{col}"' if col == 'GROUP' else col for col in columns])
+    sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
+    
+    # Преобразуем словари в кортежи в правильном порядке
+    values_list = []
+    for row in data:
+        values = tuple(row.get(col) for col in columns)
+        values_list.append(values)
+    
+    # Вставляем данные
+    try:
+        cursor.executemany(sql, values_list)
+        conn.commit()
+        n=len(values_list)
+        if verbose: 
+            logger.info(f"Inserted {n:_} row(s) into {table_name} table.")
+            return n
+    except Exception as e:
+        logger.error(f"Could not insert data into {table_name} table: {e}.")
+        return 0
+
