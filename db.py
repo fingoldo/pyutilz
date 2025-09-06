@@ -1107,4 +1107,5 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
             return n
     except Exception as e:
         logger.error(f"Could not insert data into {table_name} table: {e}.")
+        logger.error(f"Data sample: {data[-10:]}")
         return 0
