@@ -25,7 +25,7 @@ import json
 from time import sleep
 from enum import Enum
 
-from os.path import join,exists
+from os.path import join, exists
 
 from .pythonlib import weekofmonth, datetime_to_utc_timestamp, lookup_in_stack
 
@@ -386,7 +386,7 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
         if settings_names_contains:
             sql += " where strpos(name,'%s')>0" % settings_names_contains
 
-        for (setting_name, val, typename) in safe_execute(sql):
+        for setting_name, val, typename in safe_execute(sql):
             if typename is None:
                 typename = "string"
             ltypename = typename.lower()
@@ -902,7 +902,6 @@ def build_upsert_query(
 
         if hash_fields:
             join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
-   
 
             hash_changing_cond = []
             for hash_field in hash_fields:
@@ -913,8 +912,8 @@ def build_upsert_query(
 
             hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
         else:
-            join_condtion=None
-            hist_query +=f" returning {','.join(f_)}"
+            join_condtion = None
+            hist_query += f" returning {','.join(f_)}"
 
         hist_query += ")"
         query += hist_query
@@ -930,9 +929,9 @@ def build_upsert_query(
 
             if True:
                 if join_condtion:
-                    the_join_condtion="where {join_condtion}"
+                    the_join_condtion = "where {join_condtion}"
                 else:
-                    the_join_condtion=""
+                    the_join_condtion = ""
 
                 query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"
             else:
@@ -1056,16 +1055,21 @@ def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_job
         {"job_name": job_name, "result": result},
     )
 
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # SQLLITE
 # ----------------------------------------------------------------------------------------------------------------------------
 
-def ensure_db_tables_created(cursor:object) -> bool:
 
-    schema_fpath = join("database", "schema.sql")
+def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = None) -> bool:
+
+    if not schema_fpath:
+        schema_fpath = join("database", "schema.sql")
+
     if not exists(schema_fpath):
         logger.error(f"DB Schema file not found.")
         return False
+
     with open(schema_fpath, "r") as f:
         schema_string = f.read()
 
@@ -1077,30 +1081,30 @@ def ensure_db_tables_created(cursor:object) -> bool:
     else:
         logger.error(f"DB Schema empty.")
         return False
-    
-def insert_sqllite_data(table_name:str,data: Iterable[Dict[str, Any]],columns:Iterable,cursor:object,conn:object,verbose:int=1):
+
+
+def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: object, conn: object, verbose: int = 1):
     """Самый быстрый способ для массовых вставок"""
-    
+
     # Создаем SQL запрос
-    placeholders = ', '.join(['?' for _ in columns])
-    columns_str = ', '.join([f'"{col}"' if col == 'GROUP' else col for col in columns])
+    placeholders = ", ".join(["?" for _ in columns])
+    columns_str = ", ".join([f'"{col}"' if col == "GROUP" else col for col in columns])
     sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
-    
+
     # Преобразуем словари в кортежи в правильном порядке
     values_list = []
     for row in data:
         values = tuple(row.get(col) for col in columns)
         values_list.append(values)
-    
+
     # Вставляем данные
     try:
         cursor.executemany(sql, values_list)
         conn.commit()
-        n=len(values_list)
-        if verbose: 
+        n = len(values_list)
+        if verbose:
             logger.info(f"Inserted {n:_} row(s) into {table_name} table.")
             return n
     except Exception as e:
         logger.error(f"Could not insert data into {table_name} table: {e}.")
         return 0
-
