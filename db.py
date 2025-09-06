@@ -25,6 +25,8 @@ import json
 from time import sleep
 from enum import Enum
 
+from os.path import join,exists
+
 from .pythonlib import weekofmonth, datetime_to_utc_timestamp, lookup_in_stack
 
 import sqlalchemy
@@ -1054,9 +1056,11 @@ def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_job
         {"job_name": job_name, "result": result},
     )
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# SQLLITE
+# ----------------------------------------------------------------------------------------------------------------------------
 
-
-def ensure_db_tables_created() -> bool:
+def ensure_db_tables_created(cursor:object) -> bool:
 
     schema_fpath = join("database", "schema.sql")
     if not exists(schema_fpath):
