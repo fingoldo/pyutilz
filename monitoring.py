@@ -115,7 +115,7 @@ def monitored(
 # TIMEOUTS & DURATIONS LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
-def timeout_wrapper(timeout=API_TIMEOUT_SEC):
+def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -124,7 +124,8 @@ def timeout_wrapper(timeout=API_TIMEOUT_SEC):
                 future = executor.submit(func, *args, **kwargs)
                 try:
                     result = future.result(timeout=timeout)
-                    logger.info(f"{func.__name__} completed in {(time.time() - start_ts):.1f}s")
+                    if report_actual_duration:
+                        logger.info(f"{func.__name__} completed in {(time.time() - start_ts):.2f}s")
                     return result
                 except concurrent.futures.TimeoutError:
                     logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
@@ -169,7 +170,7 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
                 kwargs_str = ', '.join(f"{k}={safe_repr(v)}" for k, v in kwargs.items()) if kwargs else ''
                 args_kwargs = f"({args_str}{', ' if args and kwargs else ''}{kwargs_str})"
                 
-                logger_msg.info(f"{func.__name__}{args_kwargs} took {dur:.4f} s.")
+                logger_msg.info(f"{func.__name__}{args_kwargs} took {dur:.2f} s.")
             return result
         return wrapper
     return decorator
