@@ -25,8 +25,8 @@ import io
 import os
 import warnings
 import numpy as np
-import pandas as pd
 import pyarrow as pa
+import pandas as pd, polars as pl
 from .strings import find_between
 from collections import defaultdict
 from pyarrow.dataset import dataset
