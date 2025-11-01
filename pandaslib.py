@@ -507,31 +507,48 @@ def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
 
     return df
 
-
-def get_df_memory_consumption(df: pd.DataFrame, max_cols: int = 0) -> float:
-    """Returns RAM occupied by a pandas dataframe in bytes.
-    Example df.info() output:
-    <class 'pandas.core.frame.DataFrame'>
-    RangeIndex: 11546660 entries, 0 to 11546659
-    Columns: 4 entries, basic>ticker to basic>ts_minute
-    dtypes: category(1), int8(3)
-    memory usage: 44.0 MB
+def get_df_memory_consumption(df, max_cols: int = 0) -> float:
     """
-    mem_consumption = io.StringIO()
-    df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
-    res = mem_consumption.getvalue()
-    res = find_between(res, "memory usage: ", "\n")
-    for symbol, size in [
-        ("KB", 1e3),
-        ("MB", 1e6),
-        ("GB", 1e9),
-        ("TB", 1e12),
-        ("B", 1),
-    ]:
-        if res.endswith(symbol):
-            res = to_float(res.strip(symbol).strip()) * size
-            break
-    return res
+    Returns RAM occupied by a pandas or polars dataframe in bytes.
+
+    Works for:
+      - pandas.DataFrame: via df.info(memory_usage='deep')
+      - polars.DataFrame: via estimated_size()
+
+    Parameters
+    ----------
+    df : pandas.DataFrame | polars.DataFrame
+        DataFrame to measure.
+    max_cols : int, optional
+        Passed to pandas.DataFrame.info for column truncation (ignored for polars).
+
+    Returns
+    -------
+    float
+        Memory consumption in bytes.
+    """
+    if isinstance(df, pl.DataFrame):
+        # polars provides direct method
+        return float(df.estimated_size())
+
+    elif isinstance(df, pd.DataFrame):
+        mem_consumption = io.StringIO()
+        df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
+        res = mem_consumption.getvalue()
+        res = find_between(res, "memory usage: ", "\n")
+        for symbol, size in [
+            ("KB", 1e3),
+            ("MB", 1e6),
+            ("GB", 1e9),
+            ("TB", 1e12),
+            ("B", 1),
+        ]:
+            if res.endswith(symbol):
+                return to_float(res.strip(symbol).strip()) * size
+        return float("nan")
+
+    else:
+        raise TypeError(f"Unsupported dataframe type: {type(df)}")
 
 
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
