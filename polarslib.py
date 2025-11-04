@@ -907,9 +907,10 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
 
     return df
 
+
 def polars_df_info(df: pl.DataFrame) -> str:
     lines = []
-    lines.append(f"<class '{type(df)}'>")
+    lines.append(f"{type(df)}")
     lines.append(f"RangeIndex: {df.height} entries, 0 to {df.height - 1 if df.height > 0 else 0}")
     if df.width > 0:
         first_col = df.columns[0]
