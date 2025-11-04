@@ -26,7 +26,7 @@ from functools import partial
 
 import psutil
 import textwrap
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pyutilz.system import clean_ram
 from mlframe.utils import is_cuda_available, check_cpu_flag
 
@@ -906,3 +906,20 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
         df = df.drop(dead_columns)
 
     return df
+
+def polars_df_info(df: pl.DataFrame) -> str:
+    lines = []
+    lines.append(f"<class '{type(df)}'>")
+    lines.append(f"RangeIndex: {df.height} entries, 0 to {df.height - 1 if df.height > 0 else 0}")
+    if df.width > 0:
+        first_col = df.columns[0]
+        last_col = df.columns[-1]
+        lines.append(f"Columns: {df.width} entries, {first_col} to {last_col}")
+    else:
+        lines.append("Columns: 0 entries")
+    dtype_counts = Counter(str(dtype) for dtype in df.dtypes)
+    dtype_str = ", ".join(f"{dtype}({count})" for dtype, count in sorted(dtype_counts.items()))
+    lines.append(f"dtypes: {dtype_str}")
+    size_kb = df.estimated_size(unit="gb")
+    lines.append(f"memory usage: {size_kb:.1f}+ GB")
+    return "\n".join(lines)
