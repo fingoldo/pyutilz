@@ -845,16 +845,53 @@ def benchmark_dataframe_compression(
     return res
 
 
-def ensure_dataframe_float32_convertability(df: pd.DataFrame) -> None:
-    """Lightgbm uses np.result_type(*df_dtypes) to detect array dtype when converting from Pandas input,
-    which results in float64 for int32 and above. For the rational mem usage, it makes sense to convert cols to float32 directly before training lightgbm."""
-    for precise_dtype in "uint32 int32 int64 uint64 float64".split():
+def ensure_dataframe_float32_convertability(
+    df: Union[pd.DataFrame, pl.DataFrame],
+    verbose: int = 0,
+) -> Union[pd.DataFrame, pl.DataFrame]:
+    """
+    Ensures numeric columns are convertible to float32 for compatibility with LightGBM and 
+    rational memory usage.
 
-        tmp = df.select_dtypes(precise_dtype)
-        if tmp.shape[1] > 0:
-            logger.info(f"Converting {tmp.shape[1]:_} {precise_dtype} columns to float32")
-            df[tmp.columns] = tmp.astype(np.float32)
+    LightGBM uses np.result_type(*df_dtypes) when inferring array dtype from Pandas input,
+    which often upcasts int32/int64/float64 to float64. To prevent this and save memory,
+    convert numeric columns to float32 beforehand.
 
+    Supports both Pandas (NumPy or PyArrow backend) and Polars DataFrames.
+    """
+
+    if isinstance(df, pl.DataFrame):
+        # Convert integer and float64-like types to float32
+        df = df.with_columns(
+            pl.col([
+                pl.UInt32, pl.Int32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64
+            ]).cast(pl.Float32)
+        )
+
+    elif isinstance(df, pd.DataFrame):
+        arrow_backed = df.dtypes.apply(lambda dt: "pyarrow" in str(dt))
+
+        # --- Regular (NumPy-backed) dtypes ---
+        for precise_dtype in ["uint32", "int32", "int64", "uint64", "float64"]:
+            tmp = df.select_dtypes(include=[precise_dtype])
+            if not tmp.empty:
+                if verbose:
+                    logger.info(f"Converting {tmp.shape[1]:_} {precise_dtype} columns to float32")
+                df[tmp.columns] = tmp.astype(np.float32)
+
+        # --- PyArrow-backed dtypes ---
+        if arrow_backed.any():
+            from pandas.api.types import is_integer_dtype, is_float_dtype
+
+            for col in df.columns[arrow_backed]:
+                pa_dtype = df[col].dtype
+                # Infer numeric Arrow types
+                if is_integer_dtype(pa_dtype) or is_float_dtype(pa_dtype):
+                    if verbose:
+                        logger.info(f"Converting PyArrow column '{col}' ({pa_dtype}) → float32[pyarrow]")
+                    df[col] = df[col].astype("float32[pyarrow]")
+
+    return df
 
 def convert_float64_to_float32(df: pd.DataFrame) -> None:
     for col in df.head().select_dtypes("float64"):
