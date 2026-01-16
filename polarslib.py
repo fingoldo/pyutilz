@@ -699,11 +699,23 @@ def bin_numerical_columns(
 
     columns_to_drop = []
 
+    # Get existing columns from dataframe schema (works for both DataFrame and LazyFrame)
+    df_columns = set(df.collect_schema().names()) if hasattr(df, 'collect_schema') else set(df.columns)
+
+    # Filter target_columns to only include columns that exist in the dataframe
+    existing_target_columns = [col for col in target_columns if col in df_columns]
+    if len(existing_target_columns) < len(target_columns):
+        missing = set(target_columns) - set(existing_target_columns)
+        if verbose:
+            logger.warning(f"Ignoring {len(missing)} target columns not found in dataframe: {missing}")
+
     all_num_cols = cs.numeric()
     if exclude_columns:
-        all_num_cols = all_num_cols - cs.by_name(exclude_columns)
-    if binned_targets is not None:
-        all_num_cols = all_num_cols - cs.by_name(target_columns)
+        existing_exclude = [col for col in exclude_columns if col in df_columns]
+        if existing_exclude:
+            all_num_cols = all_num_cols - cs.by_name(existing_exclude)
+    if binned_targets is not None and existing_target_columns:
+        all_num_cols = all_num_cols - cs.by_name(existing_target_columns)
 
     clean_ram()
 
@@ -718,11 +730,11 @@ def bin_numerical_columns(
         all_num_cols.min().name.suffix("_min"),
         all_num_cols.max().name.suffix("_max"),
     ]
-    if clean_features or (clean_targets and binned_targets is None):
+    if clean_features or (clean_targets and binned_targets is None and existing_target_columns):
         if clean_features:
             quantile_cols = all_num_cols
         else:
-            quantile_cols = cs.by_name(target_columns)
+            quantile_cols = cs.by_name(existing_target_columns)
         stats_expr.extend(
             [
                 quantile_cols.quantile(0.25).name.suffix("_q1"),
@@ -765,10 +777,10 @@ def bin_numerical_columns(
     if clean_features or clean_targets:
         for col in cs.expand_selector(df.head(), all_num_cols):
             if not clean_targets:
-                if col in target_columns:
+                if col in existing_target_columns:
                     continue
             if not clean_features:
-                if clean_targets and not (col in target_columns):
+                if clean_targets and not (col in existing_target_columns):
                     continue
 
             q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
@@ -832,7 +844,7 @@ def bin_numerical_columns(
 
     for col in cs.expand_selector(df.head(), all_num_cols):
         if binned_targets is not None:
-            if col in target_columns:
+            if col in existing_target_columns:
                 continue
 
         # Calculate bin edges based on min and max values
@@ -867,8 +879,8 @@ def bin_numerical_columns(
 
     if binned_targets is not None:
         bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
-    else:
-        binned_targets = bins.select(cs.by_name(target_columns)).clone()
+    elif existing_target_columns:
+        binned_targets = bins.select(cs.by_name(existing_target_columns)).clone()
 
     return bins, binned_targets, public_clips, columns_to_drop, stats
 
