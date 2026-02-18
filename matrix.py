@@ -25,11 +25,11 @@ from scipy.sparse import csr_matrix,coo_matrix,save_npz,load_npz
 class CsrIndPtrConstructor:
     """
         Class for consecutive building of Csr matrices
-    """    
+    """
     def __init__(self):
         self.indptr = [0]
         self.indices = []
-        self.data = []    
+        self.data = []
     def add_element(self, element, index: int):
         self.indices.append(index)
         self.data.append(element)
@@ -49,11 +49,11 @@ class CsrIndPtrConstructor:
 class CsrRowColConstructor:
     """
         Class for consecutive building of Csr matrices
-    """    
+    """
     def __init__(self):
         self.rows = []
         self.cols = []
-        self.data = []    
+        self.data = []
     def add_element(self, element, row: int, col: int):
         self.rows.append(row)
         self.cols.append(col)
@@ -62,13 +62,13 @@ class CsrRowColConstructor:
     def build_matrix(self, dtype, clear_source:bool=True):
         try:
             matrix = csr_matrix((self.data, (self.rows, self.cols)), dtype=dtype)
-            if clear_source: 
+            if clear_source:
                 del self.data, self.rows, self.cols
 
             return matrix
         except Exception as e:
             raise (e)
-            
+
 def get_sparse_memory_usage(mat:object)->int:
     """
         Return mem usage of a csr or csc matrix

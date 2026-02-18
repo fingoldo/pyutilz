@@ -134,10 +134,10 @@ def query_schema()->dict:
           }
         }
     """)
-    
+
 def text_to_graphql(text: str) -> str:
     return text.replace(r"\n", "\\" + "n")
-    
+
 def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:
     """
         Get rid of comments in a graphql query

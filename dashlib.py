@@ -304,7 +304,7 @@ def create_tabs(
         user = current_user
         if not user.is_authenticated:
             return
-    except Exception as e:
+    except Exception:
         pass
 
     varName = get_active_tab_var_name(tabsName, prefix=prefix)

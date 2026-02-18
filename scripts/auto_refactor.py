@@ -24,7 +24,7 @@ def fix_typing_wildcard_imports(file_path: Path) -> Tuple[bool, List[str]]:
 
     Analyzes the file to find which typing imports are actually used.
     """
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8') as f:
         content = f.read()
 
     if 'from typing import *' not in content:
@@ -69,7 +69,7 @@ def fix_mutable_defaults(file_path: Path) -> Tuple[bool, List[str]]:
         def func(arg=[]) -> def func(arg=None) with guard
         def func(arg={}) -> def func(arg=None) with guard
     """
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8') as f:
         content = f.read()
 
     fixed_functions = []

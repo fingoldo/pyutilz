@@ -71,25 +71,25 @@ def find_element_by_xpath(browser:object,query:str)->object:
         res=browser.find_element(By.XPATH, query)
     except:
         res=browser.find_element_by_xpath(query)
-    
+
     return res
-    
+
 def find_element_by_name(browser:object,query:str)->object:
     try:
         res=browser.find_element(By.NAME, query)
     except:
         res=browser.find_element_by_name(query)
-    
+
     return res
-    
+
 def find_element_by_tag_name(browser:object,query:str)->object:
     try:
         res=browser.find_element(By.TAG_NAME, query)
     except:
         res=browser.find_element_by_tag_name(query)
-    
+
     return res
-    
+
 def init(**params) -> None:
 
     globals().update(params)
@@ -98,7 +98,7 @@ def close_browser():
     global browser
     try:
         browser.close()
-    except Exception as e: pass
+    except Exception: pass
     browser=None
 
 def browser_get(path:str)->None:
@@ -128,15 +128,15 @@ def find_chrome_executable():
         if os.path.exists(candidate) and os.access(candidate, os.X_OK):
             return os.path.normpath(candidate)
     return None
-    
+
 def start_selenium() -> object:
-    import zipfile    
+    import zipfile
     import os
-    
+
     global browser
 
     #if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
-    
+
     logger.info(f"Starting Selenium for {target}")
     kwargs={}
     if undetectable:
@@ -149,7 +149,7 @@ def start_selenium() -> object:
             options = webdriver.ChromeOptions()
             kwargs["version_main"]=version_main
             kwargs["use_subprocess"]=use_subprocess
-            
+
             if find_executable:
                 try:
                     webdriver.find_chrome_executable = find_chrome_executable
@@ -166,10 +166,10 @@ def start_selenium() -> object:
 
     if user_agent:
         options.add_argument(f"--user-agent={user_agent}")
-        
+
     if data_dir:
         options.add_argument(f"--user-data-dir={data_dir}")
-        
+
     if proxy_server:
         if len(proxy_server.get('PROXY_PASS',''))>0:
             manifest_json = """
@@ -222,7 +222,7 @@ def start_selenium() -> object:
                         {urls: ["<all_urls>"]},
                         ['blocking']
             );
-            """ % (proxy_server['PROXY_HOST'], proxy_server['PROXY_PORT'], proxy_server['PROXY_USER'], proxy_server['PROXY_PASS'])    
+            """ % (proxy_server['PROXY_HOST'], proxy_server['PROXY_PORT'], proxy_server['PROXY_USER'], proxy_server['PROXY_PASS'])
             pluginfile = 'proxy_auth_plugin.zip'
 
             with zipfile.ZipFile(pluginfile, 'w') as zp:
@@ -236,13 +236,13 @@ def start_selenium() -> object:
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--remote-debugging-port=9222")
-    
+
     kwargs["options"]=options
-    #if not data_dir:       
+    #if not data_dir:
     #    path = os.path.dirname(os.path.curdir)
     #    path=os.path.join(path, 'chromedriver')
     #    kwargs["path"]=path
-    
+
     browser = webdriver.Chrome(**kwargs)
     return browser
 
@@ -274,7 +274,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
             break
         else:
             try:
-                browser.refresh()        
+                browser.refresh()
                 browser.execute_cdp_cmd(
                     "Page.addScriptToEvaluateOnNewDocument",
                     {
@@ -295,7 +295,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
     while True:
         try:
             browser_get(home_page)
-            python.imitate_delay(min_delay_seconds=5, max_delay_seconds=10, b_force=True)
+            pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=10, b_force=True)
         except Exception as e:
             ste = str(e)
             if "not reachable" in ste or "no such window" in ste:
@@ -313,18 +313,18 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
 
     Ret = Keys.RETURN
 
-    if python.anyof_elements_in_string(("Cloudflare",), browser.title):
+    if pythonlib.anyof_elements_in_string(("Cloudflare",), browser.title):
         logger.warning(f"Ddos or captcha protection on {target}. Waiting for operator to solve it...")
         sleep(120)
 
-    if python.anyof_elements_in_string(logout_signs, browser.title):
-        python.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+    if pythonlib.anyof_elements_in_string(logout_signs, browser.title):
+        pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
         elem_login = None
         try:
-            elem_login = find_element_by_name(browser, login_input_name)            
+            elem_login = find_element_by_name(browser, login_input_name)
             elem_login.send_keys(Keys.CONTROL, 'a');elem_login.send_keys(Keys.DELETE)
             elem_login.send_keys(login)
-            python.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+            pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
             elem_login.send_keys(Ret)
         except:
             pass
@@ -337,7 +337,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
             logger.error(f"Could not login to {target}: elem_login {login_input_name} not located.")
             return
 
-        python.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+        pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
         elem_pwd = None
         try:
             elem_pwd = find_element_by_name(browser, password_input_name)
@@ -349,19 +349,19 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
             logger.error(f"Could not login to {target}: elem_pwd {password_input_name} not located.")
             return
 
-        python.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
+        pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
         elem_pwd.send_keys(Ret)
 
-        python.imitate_delay(min_delay_seconds=5, max_delay_seconds=15, b_force=True)
+        pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=15, b_force=True)
 
         title = browser.title
-        if not python.anyof_elements_in_string(successful_login_signs, title):
+        if not pythonlib.anyof_elements_in_string(successful_login_signs, title):
             logger.critical(f"Can't login to {target},got page {title}")
         else:
             logger.info(f"Logged in to {target}")
             res = True
     else:
-        if python.anyof_elements_in_string(successful_login_signs, browser.title):
+        if pythonlib.anyof_elements_in_string(successful_login_signs, browser.title):
             res = True
 
     if res:

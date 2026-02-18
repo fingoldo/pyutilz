@@ -45,7 +45,7 @@ from .system import tqdmu
 from os.path import join, sep
 import glob
 
-from os.path import basename, dirname, splitext, join, exists, getsize
+from os.path import basename, dirname, splitext, exists, getsize
 from pyutilz.system import ensure_dir_exists
 from timeit import default_timer as timer
 from itertools import chain
@@ -135,7 +135,7 @@ def optimize_dtypes(
 
     if max_categories is not None:
         for col, the_type in old_dtypes.items():
-            if "object" in the_type:
+            if "object" in the_type or "str" in the_type or "string" in the_type:
                 if col in skip_columns:
                     continue
 
@@ -145,12 +145,12 @@ def optimize_dtypes(
                     df[col] = df[col].astype(np.int64)
                     old_dtypes[col] = "int64"
                     int_fields.append(col)
-                except Exception as e1:
+                except Exception:
                     try:
                         df[col] = df[col].astype(np.float64)
                         old_dtypes[col] = "float64"
                         float_fields.append(col)
-                    except Exception as e2:
+                    except Exception:
                         try:
                             n = df[col].nunique()
                             if n <= max_categories:
@@ -555,7 +555,7 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
     try:
         susp_columns = ref_df.columns[ref_df.nunique() <= 1].tolist()
-    except Exception as e:
+    except Exception:
         susp_columns = []
         for col in ref_df.columns:
             try:
@@ -679,7 +679,7 @@ def benchmark_dataframe_parquet_compression(
                     )
 
                     pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
-                except Exception as e:
+                except Exception:
                     logger.warning(f"Skipping config {config}")
 
     return pd.DataFrame(

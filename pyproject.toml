@@ -198,6 +198,7 @@ ignore = [
     "E501",  # line too long (handled by black)
     "E401",  # multiple imports on one line (legacy code style)
     "E402",  # module level import not at top of file (our style uses comment blocks)
+    "E701",  # multiple statements on one line (colon) - legacy code style
     "I001",  # import block is un-sorted or un-formatted (not enforcing import sorting)
     "N802",  # function name should be lowercase (legacy code, fixing separately)
     "N803",  # argument name should be lowercase (camelCase, Hungarian notation in legacy code)

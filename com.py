@@ -18,7 +18,7 @@ logger=logging.getLogger(__name__)
 
 from typing import Any
 
-def scripting_dict_2_dict(scripting_dict:object)->dict:    
+def scripting_dict_2_dict(scripting_dict:object)->dict:
     python_dict={}
     if scripting_dict is not None:
         for key in scripting_dict.Keys():

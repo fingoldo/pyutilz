@@ -43,7 +43,7 @@ def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name
 
     blob.upload_from_filename(source_file_name)
 
-    print("File {} uploaded to {}.".format(source_file_name, destination_blob_name))
+    print(f"File {source_file_name} uploaded to {destination_blob_name}.")
 
 
 def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_name, acc_file):
@@ -65,7 +65,7 @@ def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_na
     blob = bucket.blob(source_blob_name)
     blob.download_to_filename(destination_file_name)
 
-    print("Blob {} downloaded to {}.".format(source_blob_name, destination_file_name))
+    print(f"Blob {source_blob_name} downloaded to {destination_file_name}.")
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -90,7 +90,7 @@ def s3_file_exists(key: str, bucket: str) -> bool:
         return False
     else:
         return True
-        
+
 def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
     """
         Gets an object from s3 or local filesystem (including zipped version).
@@ -102,16 +102,16 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
             if exists(local_object_path+'.zip'):
                 logger.info(f'Zipped version of {s3_object_path} found in local FS')
                 bDownload=False
-        
+
         if bDownload:
-            # If file exists in our s3        
+            # If file exists in our s3
             if cloud.s3_file_exists(s3_object_path,S3_BUCKET_NAME):
                 #Load model from our s3
                 try:
                     if s3_object_path.endswith('.zip'):
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path+'.zip')                
+                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path+'.zip')
                     else:
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path)                                    
+                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path)
                 except Exception as e:
                     logger.error(f"Error while downloading model {s3_object_path} from bucket {S3_BUCKET_NAME}: {e}")
                 else:
@@ -121,7 +121,7 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                 sleep(10)
         else:
             if s3_object_path.endswith('.zip'):
-                if exists(local_object_path+'.zip'):        
+                if exists(local_object_path+'.zip'):
                     # unpack it
                     import shutil
                     try:

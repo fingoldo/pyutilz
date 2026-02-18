@@ -30,11 +30,10 @@ import re, json, tqdm
 import socket, psutil
 from pympler import asizeof
 import platform, sys, importlib
-import os, platform, subprocess
+import os, subprocess
 from datetime import timezone, datetime, timedelta
 
 import gc
-import sys
 import ctypes
 import tracemalloc
 import ctypes.wintypes
@@ -64,7 +63,7 @@ def tqdmu(*args, **kwargs):
     if run_from_ipython():
         try:
             res = tqdm.tqdm_notebook(*args, **kwargs)
-        except Exception as e:
+        except Exception:
             res = tqdm.tqdm(*args, **kwargs)
         return res
     else:
@@ -92,11 +91,11 @@ def get_system_info(
 
     try:
         import x86cpu
-    except Exception as e:
+    except Exception:
         pass
     try:
         import cpuinfo
-    except Exception as e:
+    except Exception:
         pass
 
     info = dict()
@@ -281,7 +280,7 @@ def get_nix_cpu_sockets_number():
     num_sockets = 1
     try:
         res = subprocess.check_output("lscpu").decode()
-        num_sockets = re.findall("Socket\(s\):(.+)\n", res)
+        num_sockets = re.findall("Socket\\(s\\):(.+)\n", res)
         if len(num_sockets) > 0:
             num_sockets = int(str(num_sockets[0]).strip())
     except Exception as e:
@@ -353,7 +352,7 @@ def clean_ram() -> None:
     else:
         try:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
-        except Exception as e:
+        except Exception:
             logger.error("malloc_trim attempt failed")
 
 
@@ -375,7 +374,7 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
     for obj in session.values():
         try:
             size = sys.getsizeof(obj)
-        except Exception as e:
+        except Exception:
             print(f"stumbled on object of type {type(obj)}")
             pass
         else:
@@ -445,13 +444,13 @@ def get_gpuinfo_gpu_info() -> list:
 
     try:
         from gpuinfo.nvidia import get_gpus
-    except Exception as e:
+    except Exception:
         logger.warning("Can't import get_gpus from gpuinfo.nvidia.")
         return devices
 
     try:
         gpus = get_gpus()
-    except Exception as e:
+    except Exception:
         logger.warning("Nvidia GPUs not detected")
     else:
         for gpu in gpus:
@@ -475,7 +474,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
 
     try:
         import GPUtil as GPU
-    except Exception as e:
+    except Exception:
         logger.warning("Can't import GPUtil.")
         return devices
 
@@ -504,7 +503,7 @@ def get_pycuda_gpu_info() -> list:
     try:
         import pycuda.autoinit
         import pycuda.driver as cuda
-    except Exception as e:
+    except Exception:
         logger.warning("Can't import pycuda.")
         return devices
 
@@ -610,7 +609,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
             tmp = importlib.import_module(modulename)
             version = sys.modules[modulename].__version__
             res[modulename] = version
-        except Exception as e:
+        except Exception:
             pass
     return res
 
@@ -658,7 +657,7 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object
             size_mb = round(asizeof.asizeof(obj) / 1024 / 1024, 1)
             if size_mb > min_size_mb:
                 nbig += 1
-                report = report + "\n" + "{}: {:,} MB".format(name, size_mb).replace(",", "_")
+                report = report + "\n" + f"{name}: {size_mb:,} MB".replace(",", "_")
     if nbig > 0:
         logger.info(report)
         if initial_memory_snapshot:
@@ -679,7 +678,6 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object
 
 
 def get_utc_unix_timestamp():
-    from datetime import timezone, datetime, timedelta
 
     return int(datetime.now(tz=timezone.utc).timestamp())
 
@@ -714,5 +712,5 @@ def beep():
         import winsound
 
         winsound.Beep(frequency, duration)
-    except Exception as e:
+    except Exception:
         pass

@@ -123,7 +123,7 @@ def download_in_parallel(
             final_status_code = resp.history[-1].status_code
         else:
             final_status_code = resp.status_code
-        if not (resp is None):
+        if resp is not None:
             if resp.status_code == http.HTTPStatus.OK:
                 try:
                     func(resp, sub_url)

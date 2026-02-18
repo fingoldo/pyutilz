@@ -62,7 +62,7 @@ def init_logging(
     if log_to_file:
         try:
             from concurrent_log_handler import ConcurrentRotatingFileHandler
-        except Exception as e:
+        except Exception:
             handlers.append(RotatingFileHandler(filename=caller_name.replace(".py", ".log"), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes))
         else:
             handlers.append(

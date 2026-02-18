@@ -40,17 +40,17 @@ def load_jupyter_extensions():
     if not ipython:
         print("⚠️  Not running in IPython environment")
         return
-    
+
     extensions_to_load = [
         'line_profiler',
-        'autoreload', 
+        'autoreload',
         'autotime',
         # 'nb_black'  # uncomment if needed
     ]
-    
+
     loaded = []
     failed = []
-    
+
     for ext in extensions_to_load:
         try:
             # Use magic() method instead of % syntax
@@ -58,14 +58,14 @@ def load_jupyter_extensions():
             loaded.append(ext)
         except Exception as e:
             failed.append((ext, str(e)))
-    
+
     # Set autoreload
     try:
         ipython.magic('autoreload 2')
         loaded.append('autoreload 2')
     except Exception as e:
         failed.append(('autoreload 2', str(e)))
-    
+
     if loaded:
         print(f"✅ Loaded extensions: {', '.join(loaded)}")
     if failed:
@@ -74,7 +74,7 @@ def load_jupyter_extensions():
 def import_common_packages():
     """Import common packages and return them"""
     packages = {}
-    
+
     try:
         import pandas as pd
         packages['pd'] = pd
@@ -83,28 +83,28 @@ def import_common_packages():
         pd.set_option('display.width', None)
     except ImportError:
         print("⚠️  pandas not available")
-    
+
     try:
         import numpy as np
         packages['np'] = np
     except ImportError:
         print("⚠️  numpy not available")
-    
+
     try:
         import matplotlib.pyplot as plt
         packages['plt'] = plt
     except ImportError:
         print("⚠️  matplotlib not available")
-    
+
     try:
         import seaborn as sns
         packages['sns'] = sns
     except ImportError:
         print("⚠️  seaborn not available")
-    
+
     if packages:
         print(f"📦 Imported packages: {', '.join(packages.keys())}")
-    
+
     return packages
 
 def load_jupyter_extensions_minimal():
@@ -113,7 +113,7 @@ def load_jupyter_extensions_minimal():
     if not ipython:
         print("⚠️  Not running in IPython environment")
         return
-    
+
     # Only load built-in extensions that should always be available
     try:
         ipython.magic('load_ext autoreload')
@@ -135,19 +135,19 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
         dict: Dictionary of imported packages if include_imports=True
     """
     print("🚀 Initializing notebook environment...")
-    
+
     setup_polars_config()
     setup_jupyter_display()
-    
+
     # Choose extension loading method
     if use_simple_extensions:
         load_jupyter_extensions_minimal()
     else:
         load_jupyter_extensions()
-    
+
     if include_imports:
         packages = import_common_packages()
-        
+
         if inject_globals:
             try:
                 import inspect
@@ -156,7 +156,7 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
                 print("📌 Packages injected into global namespace")
             except:
                 print("⚠️  Could not inject into global namespace")
-        
+
         print("✅ Notebook initialization complete!")
         return packages
     else:

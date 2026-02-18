@@ -162,7 +162,7 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
             dur = timer() - start
             if dur > threshold:
                 logger_msg = logger if logger_name is None else logging.getLogger(logger_name)
-                
+
                 def safe_repr(obj, max_size=max_arg_size):
                     """Safely repr large objects, truncating if needed."""
                     repr_str = repr(obj)
@@ -171,12 +171,12 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
                         half = max_size // 2
                         return f"{repr_str[:half]}...[truncated {len(repr_str) - max_size} chars]...{repr_str[-half:]}"
                     return repr_str
-                
+
                 # Format args and kwargs safely with truncation
                 args_str = ', '.join(safe_repr(arg) for arg in args) if args else ''
                 kwargs_str = ', '.join(f"{k}={safe_repr(v)}" for k, v in kwargs.items()) if kwargs else ''
                 args_kwargs = f"({args_str}{', ' if args and kwargs else ''}{kwargs_str})"
-                
+
                 logger_msg.info(f"{func.__name__}{args_kwargs} took {dur:.2f} s.")
             return result
         return wrapper

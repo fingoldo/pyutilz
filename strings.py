@@ -117,7 +117,7 @@ def jsonize_atrtributes(
             attribslist = dir(obj)
             res = dict()
             for attr in attribslist:
-                if not (attr in exclude):
+                if attr not in exclude:
                     if not attr.startswith("_"):
                         val = getattr(obj, attr)
                         if skip_functions:
@@ -149,7 +149,7 @@ def leave_json_attributes(json_obj: dict, attributes: Sequence) -> None:
     if json_obj is None:
         return
     for attr in list(json_obj.keys()):
-        if not (attr in attributes):
+        if attr not in attributes:
             del json_obj[attr]
 
 
@@ -372,7 +372,7 @@ def write_config_file(
             if os.path.exists(file):
                 config.read(file)
 
-        if not (section in config):
+        if section not in config:
             config[section] = {}
 
         for var in variables:
@@ -942,7 +942,6 @@ def camel_case_split(str: str) -> list:
 # Textual entropy
 # ----------------------------------------------------------------------------------------------------------------------------
 
-import re
 import math
 from collections import defaultdict, deque, Counter
 
@@ -961,7 +960,7 @@ def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lower
     source can be a filename or a string, depending on is_file flag
     """
     if is_file:
-        with open(source, mode="r", encoding="utf-8") as file:
+        with open(source, encoding="utf-8") as file:
             for line in file:
                 yield from tokenize_text(source=line, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
     else:

@@ -49,14 +49,14 @@ def serialize(obj, fname: str = None, compression: int = 9):
         If fname is passed, data will be persisted onto disk and success code will be returned
         Otherwise, serialized representation of the obj in memory will be returned.
     """
-    if not (compression is None):
+    if compression is not None:
         assert isinstance(compression, int)
         assert compression >= -1 and compression <= 9
     try:
         data = pickle.dumps(obj)
-        if not (compression is None):
+        if compression is not None:
             data = zlib.compress(data, compression)
-        if not (fname is None):
+        if fname is not None:
             if type(fname) == str:
                 systemutils.ensure_dir_exists(fname)
                 with open(fname, "wb") as f:
@@ -76,7 +76,7 @@ def unserialize(obj, compression: int = 9):
         Otherwise, obj will be read from memory directl.
         Unpacked data will be returned.
     """
-    if not (compression is None):
+    if compression is not None:
         assert isinstance(compression, int)
         assert compression >= -1 and compression <= 9
     try:
@@ -92,7 +92,7 @@ def unserialize(obj, compression: int = 9):
             obj = f.read()
 
         if type(obj) == bytes:
-            if not (compression is None):
+            if compression is not None:
                 try:
                     data = zlib.decompress(obj)
                 except Exception as e:

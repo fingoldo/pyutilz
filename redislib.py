@@ -28,16 +28,16 @@ rc=None
 def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:str, decode_responses:bool=True):
     global rc
     rc = redis.Redis(host=redis_host, port=redis_port, db=redis_db_name, password=redis_db_pwd, decode_responses=decode_responses)
-    
+
     return rc
-    
+
 def rexecute (method_name:str,*args,**kwargs):
     """
         Safely execute any Redis command, not worrying about temporarily network/server issues
         
     """
     res=None
-    
+
     while True:
         try:
             method=getattr(rc,method_name)
@@ -46,7 +46,7 @@ def rexecute (method_name:str,*args,**kwargs):
             sleep(1*random())
         else:
             break
-            
+
     while True:
         try:
             res=method(*args,**kwargs)
@@ -54,7 +54,7 @@ def rexecute (method_name:str,*args,**kwargs):
             logger.exception(e)
             sleep(1*random())
         except Exception as e:
-            logger.exception(e)            
+            logger.exception(e)
         else:
-            break    
+            break
     return res

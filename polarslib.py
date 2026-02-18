@@ -780,7 +780,7 @@ def bin_numerical_columns(
                 if col in existing_target_columns:
                     continue
             if not clean_features:
-                if clean_targets and not (col in existing_target_columns):
+                if clean_targets and col not in existing_target_columns:
                     continue
 
             q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")

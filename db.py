@@ -94,8 +94,8 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
     validate_sql_identifier(table)
     cur.execute("select * from " + table + " where 0=1")
     cur.fetchall()
-    if not (cur.description is None):
-        return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in cur.description if not (col.name in excluding)])
+    if cur.description is not None:
+        return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in cur.description if col.name not in excluding])
 
 
 def connect_to_db(
@@ -269,7 +269,7 @@ def basic_db_execute(
             else:
                 raise
         else:
-            if not (cur.description is None):
+            if cur.description is not None:
                 # cols_names = [desc[0] for desc in cur.description]
                 if return_cursor:
                     return cur
@@ -296,7 +296,7 @@ def safe_execute_values(
 def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
     if type(fields) == str:
         fields = fields.split(",")
-    if not (elements is None):
+    if elements is not None:
         if fields == ["*"]:
             fields = [col.name for col in cur.description]
         if indices is None:
@@ -384,7 +384,7 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
             sql += " returning " + returning
 
     res = safe_execute(sql, sql_fields_values)
-    if not (fetch_into is None):
+    if fetch_into is not None:
         if prefix == "":
             if table_name.endswith("s"):
                 prefix = table_name[:-1] + "_"
@@ -427,7 +427,7 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
             if typename is None:
                 typename = "string"
             ltypename = typename.lower()
-            if not (val is None):
+            if val is not None:
                 if ltypename == "int":
                     val = int(val)
                 elif ltypename in ["float", "real", "double", "numeric"]:
@@ -1117,7 +1117,7 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = N
         logger.error(f"DB Schema file not found.")
         return False
 
-    with open(schema_fpath, "r") as f:
+    with open(schema_fpath) as f:
         schema_string = f.read()
 
     if len(schema_string) > 0:
