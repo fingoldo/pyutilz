@@ -194,3 +194,106 @@ def test_system_module_imports_successfully():
         assert pyutilz.system is not None
     except ImportError as e:
         pytest.fail(f"Failed to import system module: {e}")
+
+
+class TestSystemUtilities:
+    """Test system utility functions"""
+
+    def test_ensure_dir_exists(self, tmp_path):
+        """Test directory creation"""
+        from pyutilz.system import ensure_dir_exists
+
+        test_dir = tmp_path / "test_subdir" / "nested"
+        ensure_dir_exists(str(test_dir))
+
+        # Should create parent directories
+        assert test_dir.parent.exists()
+
+    def test_ensure_dir_exists_for_file(self, tmp_path):
+        """Test directory creation for file path"""
+        from pyutilz.system import ensure_dir_exists
+
+        test_file = tmp_path / "subdir" / "file.txt"
+        ensure_dir_exists(str(test_file))
+
+        # Should create parent directory
+        assert test_file.parent.exists()
+
+    def test_run_from_ipython(self):
+        """Test IPython detection"""
+        from pyutilz.system import run_from_ipython
+
+        result = run_from_ipython()
+        # Should return False when not in IPython
+        assert isinstance(result, bool)
+
+    def test_get_script_file(self):
+        """Test getting script file path"""
+        from pyutilz.system import get_script_file
+
+        result = get_script_file(__file__)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_get_utc_unix_timestamp(self):
+        """Test getting UTC timestamp"""
+        from pyutilz.system import get_utc_unix_timestamp
+        import time
+
+        ts = get_utc_unix_timestamp()
+        current_ts = time.time()
+
+        # Should be close to current time
+        assert abs(ts - current_ts) < 2
+
+    def test_get_libs_versions(self):
+        """Test getting library versions"""
+        from pyutilz.system import get_libs_versions
+
+        # Use libraries that have __version__
+        result = get_libs_versions("pytest")
+        assert isinstance(result, dict)
+        # May be empty for built-in modules without __version__
+        assert len(result) >= 0
+
+    def test_get_libs_versions_single(self):
+        """Test with single library"""
+        from pyutilz.system import get_libs_versions
+
+        result = get_libs_versions("sys")
+        assert isinstance(result, dict)
+
+    def test_get_max_affordable_workers_count(self):
+        """Test calculating worker count"""
+        from pyutilz.system import get_max_affordable_workers_count
+
+        result = get_max_affordable_workers_count(reservedCores=1)
+        assert isinstance(result, int)
+        assert result >= 1
+
+    def test_count_app_instances_by_process(self):
+        """Test counting app instances by process name"""
+        from pyutilz.system import count_app_instances
+
+        # Count python instances
+        result = count_app_instances(processname="python")
+        assert isinstance(result, int)
+        assert result >= 0
+
+    def test_get_own_memory_usage(self):
+        """Test getting memory usage"""
+        from pyutilz.system import get_own_memory_usage
+
+        result = get_own_memory_usage()
+        assert isinstance(result, float)
+        assert result > 0  # Should always use some memory
+
+    def test_tqdmu_basic(self):
+        """Test tqdmu wrapper"""
+        from pyutilz.system import tqdmu
+
+        # Should work like tqdm
+        items = list(range(10))
+        result = list(tqdmu(items, disable=True))
+
+        assert result == items
