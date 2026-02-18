@@ -16,7 +16,7 @@ ensure_installed("redis")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 import redis
 from time import sleep

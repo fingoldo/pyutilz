@@ -20,7 +20,7 @@ ensure_installed("psycopg2 nltk spacy")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 import psycopg2
 from . import db

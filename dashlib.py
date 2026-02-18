@@ -18,7 +18,7 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 from flask import session
 
 from dash import html

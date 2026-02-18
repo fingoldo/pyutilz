@@ -10,7 +10,7 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Optional
 
 from datetime import datetime, date
 from os.path import sep, basename

@@ -16,7 +16,7 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 def scripting_dict_2_dict(scripting_dict:object)->dict:    
     python_dict={}

@@ -16,7 +16,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 client=None
 

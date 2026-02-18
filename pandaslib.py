@@ -18,14 +18,13 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Union, Optional, Sequence, Dict, List, Tuple
 
 import gc
 import io
 import os
 import warnings
 import numpy as np
-import pyarrow as pa
 import pandas as pd, polars as pl
 from .strings import find_between
 from collections import defaultdict
@@ -35,7 +34,12 @@ from pyutilz.pythonlib import to_float
 import ctypes
 from multiprocessing import Array
 
-from IPython.display import display, Markdown, Latex
+# Make IPython optional
+try:
+    from IPython.display import display, Markdown, Latex
+    HAS_IPYTHON = True
+except ImportError:
+    HAS_IPYTHON = False
 
 from .system import tqdmu
 from os.path import join, sep
@@ -50,12 +54,12 @@ import shutil
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
-    logger.info(f"Загружаем данные из файла {fpath}...")
+    logger.info(f"Loading data from file {fpath}...")
 
     df = pd.read_pickle(fpath)
     if tail is not None:
         if tail > 0:
-            logger.info(f"Ограничимся работой с последними {tail} откликами")
+            logger.info(f"Limiting to last {tail} responses")
             df = df.tail(tail)
     return df
 
@@ -69,18 +73,16 @@ def set_df_columns_types(df: object, types_dict: dict) -> None:
 
 
 def get_categorical_columns_indices(ds: object) -> tuple:
-    i = 0
     categorical_features_indices = []
     non_categorical_features_indices = []
     unique_categorical_values = dict()
-    for col, thetype in ds.dtypes.iteritems():
-        if type(thetype) == pd.core.dtypes.dtypes.CategoricalDtype:
+    for i, (col, thetype) in enumerate(ds.dtypes.items()):
+        if isinstance(thetype, pd.CategoricalDtype):
             # print(i,col,thetype,type(thetype))
             categorical_features_indices.append(i)
             unique_categorical_values[col] = list(ds[col].cat.categories.values)
         else:
             non_categorical_features_indices.append(i)
-        i = i + 1
     return non_categorical_features_indices, categorical_features_indices, unique_categorical_values
 
 
@@ -134,7 +136,7 @@ def optimize_dtypes(
     if max_categories is not None:
         for col, the_type in old_dtypes.items():
             if "object" in the_type:
-                if field in skip_columns:
+                if col in skip_columns:
                     continue
 
                 # first try to int64, then to float64, then to category
@@ -187,7 +189,7 @@ def optimize_dtypes(
 
             possibly_integer = []
             for col in tqdmu(float_fields, desc="checking float2int", leave=False):
-                if not (df[col].isna().any().any()):  # NAs can't be converted to int
+                if not df[col].isna().any():  # NAs can't be converted to int
                     fract_part, _ = np.modf(df[col])
                     if (fract_part == 0.0).all():
                         possibly_integer.append(col)
@@ -200,8 +202,10 @@ def optimize_dtypes(
         for fields, type_name in tqdmu(conversions, desc="size reduction", leave=False):
             fields = [el for el in fields if el not in uint_fields]
             if len(fields) > 0:
-                max_vals = df[fields].max()
-                min_vals = df[fields].min()
+                # Compute min and max in single pass for efficiency
+                stats = df[fields].agg(['min', 'max'])
+                min_vals = stats.loc['min']
+                max_vals = stats.loc['max']
 
                 if type_name in ("int", "uint"):
                     powers = [8, 16, 32, 64]
@@ -269,47 +273,53 @@ def nullify_standard_values(
     tmp = df[field].value_counts(dropna=False)
     standard_values = tmp[tmp > min_records].index.values
     if persons_field:
-        top_values = set()
-        for val in standard_values:
-            qty = df[df[field] == val][persons_field].nunique()
-            if qty > min_persons:
-                if verbose:
-                    if len(top_values) == 0:
-                        print(f"Field {field}")
-                    print(f"\t: value {val} is not custom, as used by {qty} persons")
-                top_values.add(val)
+        # Use groupby for O(N) instead of O(N × M) performance
+        person_counts = df[df[field].isin(standard_values)].groupby(field)[persons_field].nunique()
+        top_values = person_counts[person_counts > min_persons].index.tolist()
 
+        if verbose and top_values:
+            print(f"Field {field}")
+            for val in top_values:
+                qty = person_counts[val]
+                print(f"\t: value {val} is not custom, as used by {qty} persons")
     else:
         top_values = standard_values
     df.loc[df[field].isin(top_values), field] = placeholder
 
 
-def prefixize_columns(df: object, prefix: str, special_prefixes: dict = {}, sep="_", exclusions: Sequence = set(), inplace: bool = True):
+def prefixize_columns(df: object, prefix: str, special_prefixes: dict = None, sep="_", exclusions: Sequence = None, inplace: bool = True):
     """
     Prefix every column of a pandas dataframe (except clearly formulated exclusions) with some arbitrary prefix string - to identify variable's source
     """
+    if special_prefixes is None:
+        special_prefixes = {}
+    if exclusions is None:
+        exclusions = set()
+    # Build column mapping once instead of duplicating 3 times
     columns = {col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}
     if inplace:
-        df.rename(columns={col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}, inplace=True)
+        df.rename(columns=columns, inplace=True)
         return columns
     else:
-        return df.rename(columns={col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}, inplace=False)
+        return df.rename(columns=columns, inplace=False)
 
 
 def showcase_df_columns(
-    df: object, cols: list = None, excluded_cols: list = [], max_vars: int = None, dropna: bool = False, use_markdown: bool = True, use_print: bool = True
+    df: object, cols: list = None, excluded_cols: list = None, max_vars: int = None, dropna: bool = False, use_markdown: bool = True, use_print: bool = True
 ):
     """
     Show distribution of values for each dataframe column
     """
+    if excluded_cols is None:
+        excluded_cols = []
 
     if cols is None or len(cols) == 0:
         cols = df.columns
     for var in cols:
         if var not in excluded_cols:
-            if use_markdown:
+            if use_markdown and HAS_IPYTHON:
                 display(Markdown(f"**{var}** {df[var].dtype}"))
-            if use_print:
+            if use_print or not HAS_IPYTHON:
                 print(f"{var.upper()} {df[var].dtype}")
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
@@ -328,10 +338,12 @@ class FeatureNamer:
     (0, 'abc')
     """
 
-    def __init__(self, initial_values: Sequence = []):
+    def __init__(self, initial_values: Optional[Sequence] = None):
         self.fnames_index = 0
         self.fnames = {}
         self.revfnames = {}
+        if initial_values is None:
+            initial_values = []
         for name in initial_values:
             self(name)
 
@@ -375,7 +387,8 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
         logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns == True].index.values.tolist())}")
         X = X.loc[:, stale_columns[stale_columns == False].index.values]
         all_features_names = X.columns.tolist()
-    return all_features_names
+        return all_features_names
+    return X.columns.tolist()
 
 
 def concat_and_flush_df_list(
@@ -385,14 +398,13 @@ def concat_and_flush_df_list(
     if len(lst) > 0:
         joined_df = pd.concat(lst, axis=0, ignore_index=True)
         lst.clear()
-        del lst
         gc.collect()
         if to_csv:
-            if cols is None:
-                cols = joined_df.columns.values
+            if csv_cols is None:
                 joined_df.to_csv(f"{file_name}.csv", mode="w", header=True)
             else:
-                joined_df[cols].to_csv(f"{file_name}.csv", mode="a", header=False)
+                joined_df[csv_cols].to_csv(f"{file_name}.csv", mode="a", header=False)
+            return joined_df
         else:
             if set_index:
                 joined_df.set_index(set_index, inplace=True)
@@ -444,23 +456,24 @@ def read_stats_from_multiple_files(
                     getattr(tmp_df, write_fcn)(f"{'.'.join(filename.split('.')[:-1])}.{write_extension}")
 
         if sentinel_field:
-
-            while sentinel_field in tmp_df:
-                logger.warning(f"Sentinel field {sentinel_field} was already in the frame {filename}")
-                sentinel_field += "1"
+            # Use local copy to avoid mutation persisting across files
+            current_sentinel = sentinel_field
+            while current_sentinel in tmp_df:
+                logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")
+                current_sentinel += "1"
 
             fname_part = filename.split(sep)[-1]
             if sentinel_fcn:
-                tmp_df[sentinel_field] = sentinel_fcn(fname_part)
+                tmp_df[current_sentinel] = sentinel_fcn(fname_part)
             else:
-                tmp_df[sentinel_field] = fname_part
+                tmp_df[current_sentinel] = fname_part
 
         lst.append(tmp_df)
         if max_files is not None:
             if len(lst) >= max_files:
                 break
         del tmp_df
-    if len(lst) >= 0:
+    if len(lst) > 0:
         try:
             res = concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
             logger.info(f"Final df size ({len(res):_} rows)")
@@ -477,7 +490,7 @@ def read_stats_from_multiple_files(
 
 def group_columns_by_dtype(df: pd.DataFrame) -> dict:
     groups = defaultdict(set)
-    for var_name, var_type in df.dtypes.iteritems():
+    for var_name, var_type in df.dtypes.items():
         groups[var_type.name].add(var_name)
 
     return groups
@@ -512,7 +525,7 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
     Returns RAM occupied by a pandas or polars dataframe in bytes.
 
     Works for:
-      - pandas.DataFrame: via df.info(memory_usage='deep')
+      - pandas.DataFrame: via df.memory_usage(deep=True).sum()
       - polars.DataFrame: via estimated_size()
 
     Parameters
@@ -520,7 +533,7 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
     df : pandas.DataFrame | polars.DataFrame
         DataFrame to measure.
     max_cols : int, optional
-        Passed to pandas.DataFrame.info for column truncation (ignored for polars).
+        Deprecated parameter, kept for backward compatibility (ignored).
 
     Returns
     -------
@@ -532,20 +545,8 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
         return float(df.estimated_size())
 
     elif isinstance(df, pd.DataFrame):
-        mem_consumption = io.StringIO()
-        df.info(memory_usage="deep", buf=mem_consumption, max_cols=max_cols)
-        res = mem_consumption.getvalue()
-        res = find_between(res, "memory usage: ", "\n")
-        for symbol, size in [
-            ("KB", 1e3),
-            ("MB", 1e6),
-            ("GB", 1e9),
-            ("TB", 1e12),
-            ("B", 1),
-        ]:
-            if res.endswith(symbol):
-                return to_float(res.strip(symbol).strip()) * size
-        return float("nan")
+        # Use direct API instead of text parsing for better performance and reliability
+        return float(df.memory_usage(deep=True).sum())
 
     else:
         raise TypeError(f"Unsupported dataframe type: {type(df)}")
@@ -576,13 +577,16 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
             if df[col].nunique() > 1:
                 susp_columns.remove(col)
 
-    if verbose and susp_columns:
+    if susp_columns:
+        if verbose:
+            if len(susp_columns) > 20:
+                logger.warning(f"Removing {len(susp_columns):_} constant columns")
+            else:
+                logger.warning(f"Removing constant columns {susp_columns}")
+
         if len(susp_columns) > 20:
-            logger.warning(f"Removing {len(susp_columns):_} constant columns")
             df.drop(columns=susp_columns, inplace=True)
         else:
-            logger.warning(f"Removing constant columns {susp_columns}")
-
             for var in susp_columns:
                 del df[var]
 
@@ -817,7 +821,6 @@ def benchmark_dataframe_compression(
         benchmark_dataframe_feather_compression,
         benchmark_dataframe_orc_compression,
         benchmark_dataframe_hdf_compression,
-        benchmark_dataframe_parquet_compression,
         benchmark_dataframe_pickle_compression,
         benchmark_dataframe_csv_compression,
     ):
@@ -825,6 +828,13 @@ def benchmark_dataframe_compression(
             func(res, temp_folder, df, nrepeats)
         except Exception as e:
             logger.error(e)
+
+    # Parquet has different signature, handle separately
+    try:
+        parquet_results = benchmark_dataframe_parquet_compression(df, temp_folder, nrepeats)
+        res.extend(parquet_results.to_dict('records'))
+    except Exception as e:
+        logger.error(e)
 
     if should_clean_temp_folder:
         shutil.rmtree(temp_folder)
@@ -872,12 +882,12 @@ def ensure_dataframe_float32_convertability(
         arrow_backed = df.dtypes.apply(lambda dt: "pyarrow" in str(dt))
 
         # --- Regular (NumPy-backed) dtypes ---
-        for precise_dtype in ["uint32", "int32", "int64", "uint64", "float64"]:
-            tmp = df.select_dtypes(include=[precise_dtype])
-            if not tmp.empty:
-                if verbose:
-                    logger.info(f"Converting {tmp.shape[1]:_} {precise_dtype} columns to float32")
-                df[tmp.columns] = tmp.astype(np.float32)
+        # Consolidate into single select_dtypes call for efficiency
+        numeric_cols = df.select_dtypes(include=["uint32", "int32", "int64", "uint64", "float64"]).columns
+        if len(numeric_cols) > 0:
+            if verbose:
+                logger.info(f"Converting {len(numeric_cols):_} numeric columns to float32")
+            df[numeric_cols] = df[numeric_cols].astype(np.float32)
 
         # --- PyArrow-backed dtypes ---
         if arrow_backed.any():
@@ -893,6 +903,14 @@ def ensure_dataframe_float32_convertability(
 
     return df
 
-def convert_float64_to_float32(df: pd.DataFrame) -> None:
-    for col in df.head().select_dtypes("float64"):
+def convert_float64_to_float32(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert float64 columns to float32.
+
+    Note: Consider using ensure_dataframe_float32_convertability() instead,
+    which handles more numeric types comprehensively.
+    """
+    float64_cols = df.select_dtypes(include=["float64"]).columns
+    for col in float64_cols:
         df[col] = df[col].astype(np.float32)
+    return df

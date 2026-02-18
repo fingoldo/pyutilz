@@ -18,16 +18,31 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Sequence
 
 import numpy as np
 
 import heapq
 import psutil
 import pandas as pd
+import atexit
+import shutil
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Pool, set_start_method
 from joblib import Parallel, delayed, parallel_backend
+
+# Module-level tracking of temporary directories for cleanup
+_TEMP_DIRS = []
+
+@atexit.register
+def _cleanup_temp_dirs():
+    """Clean up temporary directories created by mem_map_array on program exit."""
+    for temp_dir in _TEMP_DIRS:
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
 import contextlib
 
 import os
@@ -207,8 +222,14 @@ def set_tf_gpu(gpu: int):
 
 
 def mem_map_array(obj: np.ndarray, file_name: str, mmap_mode: str = "r") -> object:
-    """Maps a numpy array to memory"""
+    """Maps a numpy array to memory.
+
+    Note: Temporary directories are tracked and cleaned up on program exit via atexit handler.
+    """
     temp_folder = tempfile.mkdtemp()
+    # Track temp directory for cleanup on exit
+    _TEMP_DIRS.append(temp_folder)
+
     filename = os.path.join(temp_folder, f"{file_name}.mmap")
     if os.path.exists(filename):
         os.unlink(filename)

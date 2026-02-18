@@ -18,7 +18,7 @@ ensure_installed("jellyfish numpy")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 from jellyfish import levenshtein_distance
 from .strings import strip_doubled_characters

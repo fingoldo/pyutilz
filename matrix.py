@@ -16,7 +16,7 @@ ensure_installed("numba scipy")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 from numba import njit
 from numba.experimental import jitclass

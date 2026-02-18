@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import *
+from typing import Iterable, Set
 import numpy as np, pandas as pd
 
 from functools import partial
@@ -47,13 +47,13 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
     meta = df.select(cs.numeric().is_nan().any())
     true_cols = meta.row(0)
-    df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
 
 def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
     meta = df.select(cs.numeric().is_infinite().any())
     true_cols = meta.row(0)
-    df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
 
 def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
@@ -61,7 +61,7 @@ def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
     # return pl.when(expr.is_infinite()).then(expr).otherwise(pl.lit(nans_filler))
 
 
-def cast_f64_to_f32(df: pl.DataFrame) -> pl.Expr:
+def cast_f64_to_f32(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.col(pl.Int32, pl.UInt32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64).cast(pl.Float32))
 
 

@@ -16,7 +16,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 from . import db, system, python, web
 
@@ -87,25 +87,34 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
 
 
 def get_heartbeat_sql(status="ok", ip=None):
+    """Generate parameterized heartbeat SQL query.
+
+    Returns: tuple of (sql_query, parameters) for safe execution
+    """
     if self.node_id:
-        return (
-            "insert into scrapers(node,pid,last_ping_at,version,name,status,ip,application) values ("
-            + ",".join(
-                [
-                    str(self.node_id),
-                    str(pid),
-                    "(now() at time zone 'utc')",
-                    db.nu(m_version),
-                    db.nu(m_scraper_name),
-                    db.nu(status),
-                    db.nu((ip if ip else m_ip)),
-                    db.nu(m_app_name),
-                ]
-            )
-            + ") on conflict(node,pid) do update set last_ping_at=excluded.last_ping_at,version=excluded.version,name=excluded.name,status=excluded.status,ip=excluded.ip,application=excluded.application"
+        sql = """
+            INSERT INTO scrapers(node, pid, last_ping_at, version, name, status, ip, application)
+            VALUES (%s, %s, (now() at time zone 'utc'), %s, %s, %s, %s, %s)
+            ON CONFLICT(node, pid) DO UPDATE SET
+                last_ping_at=excluded.last_ping_at,
+                version=excluded.version,
+                name=excluded.name,
+                status=excluded.status,
+                ip=excluded.ip,
+                application=excluded.application
+        """
+        params = (
+            self.node_id,
+            pid,
+            m_version,
+            m_scraper_name,
+            status,
+            ip if ip else m_ip,
+            m_app_name
         )
+        return (sql, params)
     else:
-        return ""
+        return ("", None)
 
 
 def heartbeat_scraper(status="ok", ip=None):

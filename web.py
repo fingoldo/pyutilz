@@ -18,7 +18,7 @@ ensure_installed("joblib grequests fake_useragent")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Callable, List, Optional, Sequence
 
 import requests
 import urllib.request

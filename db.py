@@ -18,7 +18,7 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any, Dict, Iterable, Optional
 import pandas as pd
 import json
 
@@ -43,6 +43,25 @@ from psycopg2 import OperationalError, InternalError, InterfaceError
 
 # psycopg2.InterfaceError: cursor already closed
 # psycopg2.InternalError: current transaction is aborted, commands ignored until end of transaction block
+# ----------------------------------------------------------------------------------------------------------------------------
+# SQL Injection Protection
+# ----------------------------------------------------------------------------------------------------------------------------
+
+import re
+
+def validate_sql_identifier(identifier: str) -> str:
+    """Validate that an identifier (table name, column name) is safe to use in SQL.
+
+    Raises ValueError if the identifier contains potentially malicious characters.
+    Valid identifiers must match: alphanumeric, underscore, start with letter/underscore.
+    """
+    if not isinstance(identifier, str):
+        raise ValueError(f"SQL identifier must be a string, got {type(identifier)}")
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', identifier):
+        raise ValueError(f"Invalid SQL identifier: {identifier!r}. Must contain only alphanumeric and underscore, start with letter or underscore.")
+    return identifier
+
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Global variables
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -71,6 +90,8 @@ def prefix_inserts(insert, compiler, **kw):
 def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
     if type(excluding) == str:
         excluding = excluding.split(",")
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table)
     cur.execute("select * from " + table + " where 0=1")
     cur.fetchall()
     if not (cur.description is None):
@@ -191,12 +212,15 @@ def basic_db_execute(
     return_cursor=False,
     itersize: int = None,
     page_size: int = cPAGE_SIZE,
+    max_retries: int = 5,
 ):
     global cur, cursors
 
     cursor_type = get_cursor_type(cursor_factory, cursor_name)
 
-    while True:
+    # Add circuit breaker to prevent infinite retry loops
+    retry_count = 0
+    while retry_count < max_retries:
         try:
             cur = get_cursor(cursor_type=cursor_type, cursor_factory=cursor_factory, cursor_name=cursor_name, itersize=itersize)
 
@@ -209,7 +233,12 @@ def basic_db_execute(
             # if auto_commit: conn.commit()
 
         except (OperationalError, InterfaceError) as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logger.error(f"Max retries ({max_retries}) exceeded for database operation")
+                raise
             logger.exception(e)
+            logger.info(f"Retrying database operation ({retry_count}/{max_retries})...")
             sleep(1)
             connect_to_db(
                 m_db_name=db_name,
@@ -222,6 +251,7 @@ def basic_db_execute(
                 m_db_schema=db_schema,
                 m_db_sslmode=db_sslmode,
             )
+            continue  # Retry the operation
         except DuplicateTable as e:
             logger.warning(e)
             # conn.commit()
@@ -335,6 +365,9 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     # Carrying out exact sql text
     # ----------------------------------------------------------------------------------------------------------------------------
 
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
+
     if mode == "select":
         sql = "select " + returning + " from  " + table_name + " where " + " and ".join(sql_where_templates)
         sql_fields_values = where_values
@@ -342,7 +375,8 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
         sql = "insert into " + table_name + " (" + ",".join(set_fields) + ") values (" + ",".join(sql_set_templates) + ")"
         sql_fields_values = set_values
     elif mode == "update":
-        sql = "update  " + table_name + " set " + " and ".join(sql_set_templates) + " where " + " and ".join(sql_where_templates)
+        # Fixed: SET clause must use comma separator, not "and"
+        sql = "update  " + table_name + " set " + ", ".join(sql_set_templates) + " where " + " and ".join(sql_where_templates)
         sql_fields_values = set_values + where_values
 
     if mode in ["insert", "update"]:
@@ -383,10 +417,13 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
             do_update = True
     if do_update:
         sql = "select name,value,type from settings"
+        sql_params = None
         if settings_names_contains:
-            sql += " where strpos(name,'%s')>0" % settings_names_contains
+            # Use parameterized query to prevent SQL injection
+            sql += " where strpos(name,%s)>0"
+            sql_params = (settings_names_contains,)
 
-        for setting_name, val, typename in safe_execute(sql):
+        for setting_name, val, typename in safe_execute(sql, sql_params):
             if typename is None:
                 typename = "string"
             ltypename = typename.lower()
@@ -640,8 +677,18 @@ def explain_table(table_name: str) -> object:
 
 
 def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> object:
-    """Read a sample from a DB table, return as Pandas dataframe"""
-    return pd.read_sql(f"SELECT * FROM {table_name}  {condition} limit {limit}", con=connAlchemy)
+    """Read a sample from a DB table, return as Pandas dataframe.
+
+    WARNING: The 'condition' parameter should be a safe WHERE clause expression.
+    For user input, use parameterized queries instead of passing raw SQL conditions.
+    """
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
+    # Note: condition parameter should ideally be deprecated in favor of parameterized queries
+    # but kept for backward compatibility with warning
+    if condition and not condition.strip().lower().startswith('where'):
+        condition = 'WHERE ' + condition
+    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=connAlchemy)
 
 
 def select(sql: str) -> object:

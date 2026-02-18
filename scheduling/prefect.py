@@ -16,7 +16,7 @@ ensure_installed("prefect")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 from .. import graphql,string
 from time import sleep

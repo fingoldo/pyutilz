@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Optional
 
 import time
 import requests
@@ -25,6 +25,9 @@ from timeit import default_timer as timer
 # ----------------------------------------------------------------------------------------------------------------------------
 
 API_TIMEOUT_SEC = 15
+
+# Module-level ThreadPoolExecutor for timeout_wrapper to avoid creating new executors for each call
+_TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix="timeout_wrapper")
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # 3RD PARTIES MONITORING
@@ -116,24 +119,28 @@ def monitored(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
+    """Decorator to enforce timeout on function execution.
+
+    Uses module-level ThreadPoolExecutor to avoid creating new executor for each call.
+    """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             start_ts = time.time()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(func, *args, **kwargs)
-                try:
-                    result = future.result(timeout=timeout)
-                    if report_actual_duration:
-                        logger.info(f"{func.__name__} completed in {(time.time() - start_ts):.2f}s")
-                    return result
-                except concurrent.futures.TimeoutError:
-                    logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
-                    future.cancel()  # Попытка прервать thread
-                    return None  # Или raise, в зависимости от функции
-                except Exception as e:
-                    logger.exception(f"Error in {func.__name__}: {e}")
-                    return None
+            # Use module-level executor instead of creating new one each call (performance)
+            future = _TIMEOUT_EXECUTOR.submit(func, *args, **kwargs)
+            try:
+                result = future.result(timeout=timeout)
+                if report_actual_duration:
+                    logger.info(f"{func.__name__} completed in {(time.time() - start_ts):.2f}s")
+                return result
+            except concurrent.futures.TimeoutError:
+                logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
+                future.cancel()  # Attempt to cancel thread
+                return None  # Or raise, depending on use case
+            except Exception as e:
+                logger.exception(f"Error in {func.__name__}: {e}")
+                return None
         return wrapper
     return decorator
 

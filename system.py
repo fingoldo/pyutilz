@@ -21,7 +21,7 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Optional, Sequence, Set, Union
 
 import uuid
 import locale
@@ -127,7 +127,20 @@ def get_system_info(
                 elif current_system == "Android":
                     info["os_machine_guid"] = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1]
                 elif current_system == "Mac":
-                    info["os_machine_guid"] = subprocess.check_output("ioreg -rd1 -c IOPlatformExpertDevice | grep -E '(UUID)'", shell=True).split('"')[-2]
+                    # Fixed: Avoid shell=True by using subprocess.PIPE for chaining commands
+                    import shlex
+                    ioreg_proc = subprocess.Popen(
+                        ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                        stdout=subprocess.PIPE
+                    )
+                    grep_proc = subprocess.Popen(
+                        ["grep", "-E", "(UUID)"],
+                        stdin=ioreg_proc.stdout,
+                        stdout=subprocess.PIPE
+                    )
+                    ioreg_proc.stdout.close()  # Allow ioreg to receive SIGPIPE if grep exits
+                    output = grep_proc.communicate()[0]
+                    info["os_machine_guid"] = output.decode().split('"')[-2]
 
                 if return_network_info:
                     info["host_name"] = socket.gethostname()
@@ -374,16 +387,24 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
 
 
 def show_tracemalloc_snapshot(N: int = 10):
+    """Take a snapshot of memory usage and display top N lines.
 
+    Note: This function properly starts and stops tracemalloc to avoid resource leaks.
+    """
     tracemalloc.start()
+    try:
+        # Take a snapshot of memory usage
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics("lineno")
 
-    # Take a snapshot of memory usage
-    snapshot = tracemalloc.take_snapshot()
-    top_stats = snapshot.statistics("lineno")
+        print(f"Top {N} memory-consuming lines:")
+        for stat in top_stats[:N]:
+            print(stat)
 
-    print(f"Top {N} memory-consuming lines:")
-    for stat in top_stats[:N]:
-        print(stat)
+        return snapshot
+    finally:
+        # Always stop tracemalloc to prevent resource leak
+        tracemalloc.stop()
 
 
 # ----------------------------------------------------------------------------------------------------------------------------

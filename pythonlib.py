@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
-from typing import *  # noqa: F401 pylint: disable=wildcard-import,unused-wildcard-import
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Union
 
 import time
 import numbers
@@ -161,11 +161,13 @@ def ensure_dict_elem(obj: dict, name: str, value) -> None:
         obj[name] = value
 
 
-def get_attr(obj: dict, attr_name: str, default_value: object = [], unwanted_value=None) -> object:
+def get_attr(obj: dict, attr_name: str, default_value: object = None, unwanted_value=None) -> object:
     """
     if attr is None, return default
     To prevent TypeError: 'NoneType' object is not iterable
     """
+    if default_value is None:
+        default_value = []
     if obj == unwanted_value:
         return default_value
     res = obj.get(attr_name, default_value)
@@ -224,7 +226,7 @@ def unpack_counter(cntr: list) -> list:
 
 
 def ensure_list_set_tuple(obj):
-    if type(obj).__name__ in ("list", "set", "frozenset", "tuple`"):
+    if type(obj).__name__ in ("list", "set", "frozenset", "tuple"):
         return obj
     else:
         return [obj]
@@ -768,9 +770,9 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
             else:
                 proceed = True
 
-                if proceed:
-                    container[obj_name] = self.process_fcn(file_name, **self.process_kwargs)
-                    return True
+            if proceed:
+                container[obj_name] = self.process_fcn(file_name, **self.process_kwargs)
+                return True
 
 
 def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:

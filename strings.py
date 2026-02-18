@@ -18,7 +18,7 @@ from .pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any, Iterable, List, Optional, Sequence, Union
 
 import pandas as pd, numpy as np
 import string
@@ -591,10 +591,12 @@ def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
         return text
 
 
-def fix_spaces(text: str, tokens: Optional[list] = [",", "."]) -> str:
+def fix_spaces(text: str, tokens: Optional[list] = None) -> str:
     """
     Fixes whitespaces between commas
     """
+    if tokens is None:
+        tokens = [",", "."]
     if text:
         for token in tokens:
             find_token = " " + token
@@ -961,9 +963,9 @@ def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lower
     if is_file:
         with open(source, mode="r", encoding="utf-8") as file:
             for line in file:
-                return tokenize_text(source=line, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
+                yield from tokenize_text(source=line, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
     else:
-        return tokenize_text(source=source, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
+        yield from tokenize_text(source=source, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
 
 
 def tokenize_to_chars(source: str, is_file: bool = False) -> str:

@@ -20,7 +20,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import *
+from typing import Any
 
 import sys
 import pickle, zlib, os
