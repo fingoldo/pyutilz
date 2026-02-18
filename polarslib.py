@@ -28,7 +28,7 @@ import psutil
 import textwrap
 from collections import defaultdict, Counter
 from pyutilz.system import clean_ram
-from mlframe.utils import is_cuda_available, check_cpu_flag
+from pyutilz.pythonlib import is_cuda_available, check_cpu_flag
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Constants

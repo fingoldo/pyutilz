@@ -839,3 +839,33 @@ def is_jupyter_notebook():
         return False
     except (ImportError, NameError):
         return False
+
+
+def is_cuda_available() -> bool:
+    """Check if CUDA is available via numba.
+
+    Returns:
+        bool: True if CUDA is available, False otherwise
+    """
+    try:
+        from numba import cuda
+        return cuda.is_available()
+    except (ImportError, Exception):
+        return False
+
+
+def check_cpu_flag(flag: str = "avx2") -> bool:
+    """Check if CPU supports a specific instruction set flag.
+
+    Args:
+        flag: CPU flag to check (e.g., "avx2", "sse4_2", "avx512f")
+
+    Returns:
+        bool: True if flag is supported, False otherwise
+    """
+    try:
+        import cpuinfo
+        info = cpuinfo.get_cpu_info()
+        return flag in info["flags"]
+    except (ImportError, Exception):
+        return False
