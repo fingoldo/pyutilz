@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyutilz"
-version = "0.90"
+version = "1.0.0"
 description = "Comprehensive Python utilities for data science, databases, and system operations"
 authors = [{name = "Anatoly Alexeev"}]
 license = {text = "MIT"}
@@ -118,7 +118,7 @@ Issues = "https://github.com/fingoldo/pyutilz/issues"
 Changelog = "https://github.com/fingoldo/pyutilz/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["pyutilz*"]
 exclude = ["tests*", "scripts*", "docs*"]
 

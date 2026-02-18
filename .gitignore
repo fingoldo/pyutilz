@@ -136,3 +136,12 @@ app/cloud_translation_key.json
 
 # Pickle file
 app/all_data.pkl
+
+# Linter caches
+.ruff_cache/
+
+# Benchmark results
+.benchmarks/
+
+# Temporary files
+cleanup_plan.md
