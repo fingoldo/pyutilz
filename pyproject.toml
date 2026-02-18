@@ -22,6 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering",
     "Topic :: Database",
@@ -76,7 +78,8 @@ system = [
     "tqdm>=4.65",
     "numba>=0.56",
     "pympler>=1.0",
-    "joblib>=1.2"
+    "joblib>=1.2",
+    "portalocker>=2.0"
 ]
 
 # All optional dependencies
@@ -94,7 +97,7 @@ all = [
     # nlp
     "spacy>=3.0", "nltk>=3.8", "jellyfish>=0.9", "tiktoken>=0.5",
     # system
-    "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0", "joblib>=1.2"
+    "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0", "joblib>=1.2", "portalocker>=2.0"
 ]
 
 # Development dependencies
@@ -163,7 +166,7 @@ show_missing = true
 # Black code formatter
 [tool.black]
 line-length = 160
-target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313', 'py314']
 exclude = '''
 /(
     \.git
