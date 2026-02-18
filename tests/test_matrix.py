@@ -5,7 +5,11 @@ Tests cover sparse matrix utilities and CSR matrix constructors.
 
 import pytest
 import numpy as np
-from scipy.sparse import csr_matrix, coo_matrix, csc_matrix
+
+scipy_sparse = pytest.importorskip("scipy.sparse")
+csr_matrix = scipy_sparse.csr_matrix
+coo_matrix = scipy_sparse.coo_matrix
+csc_matrix = scipy_sparse.csc_matrix
 
 from pyutilz.matrix import (
     CsrIndPtrConstructor,
