@@ -409,6 +409,7 @@ class TestHTMLProcessing:
 
     def test_parse_html(self):
         """Test HTML parsing"""
+        pytest.importorskip("bs4")
         from pyutilz.strings import parse_html
 
         html = "<div>Hello</div><div>World</div>"
