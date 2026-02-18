@@ -28,13 +28,13 @@ class Container:
 
 pid = None
 node_id = None
-self = Container()
+_container = Container()
 m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
 
 
 def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
     global pid
-    global self, node_id, pid, m_app_name, m_scraper_name, m_version, m_ip
+    global _container, node_id, pid, m_app_name, m_scraper_name, m_version, m_ip
 
     import os
     import inspect
@@ -44,21 +44,24 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
 
     frame = None
     if version is None:
-        # get modification date of the calling file
+        # get content-based version of the calling file (hash)
+        import hashlib
         frame = inspect.stack()[1]
         module = inspect.getmodule(frame[0])
-        version = datetime.fromtimestamp(os.path.getmtime((module.__file__))).strftime("%Y.%m.%d")
+        with open(module.__file__, 'rb') as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()[:8]
+        version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"
     if app_name is None:
-        app_name = python.lookup_in_stack("app_name")
+        app_name = pythonlib.lookup_in_stack("app_name")
 
     if ip is None:
-        ip = python.lookup_in_stack("ip")
+        ip = pythonlib.lookup_in_stack("ip")
     if ip is None:
         ip = web.get_external_ip()
 
     m_app_name, m_scraper_name, m_version, m_ip = app_name, scraper_name, version, ip
 
-    if self.node_id is None:
+    if _container.node_id is None:
         try:
             info = system.get_system_info(only_stats=False)
         except Exception as e:
@@ -66,24 +69,24 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
         else:
             fields = "host_name,os_machine_guid,os_serial"
 
-            nodes = db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=self)
-            if self.node_id is None:
-                nodes = db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=self)
-            if self.node_id is None:
+            nodes = db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
+            if _container.node_id is None:
+                nodes = db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
+            if _container.node_id is None:
                 return
 
             db.db_command(
                 "insert",
                 "nodes_info",
                 set_fields=((set(info.keys()) - set(["host_name", "os_machine_guid", "os_serial"])) | set(["node"])),
-                replace_values={"node": self.node_id},
+                replace_values={"node": _container.node_id},
                 returning="",
                 source=info,
                 jsonize=True,
             )
-            logger.info("Registered as %s with node_id %s" % (m_scraper_name, self.node_id))
+            logger.info("Registered as %s with node_id %s" % (m_scraper_name, _container.node_id))
             heartbeat_scraper(status="starting", ip=None)
-            return self.node_id
+            return _container.node_id
 
 
 def get_heartbeat_sql(status="ok", ip=None):
@@ -91,7 +94,7 @@ def get_heartbeat_sql(status="ok", ip=None):
 
     Returns: tuple of (sql_query, parameters) for safe execution
     """
-    if self.node_id:
+    if _container.node_id:
         sql = """
             INSERT INTO scrapers(node, pid, last_ping_at, version, name, status, ip, application)
             VALUES (%s, %s, (now() at time zone 'utc'), %s, %s, %s, %s, %s)
@@ -104,7 +107,7 @@ def get_heartbeat_sql(status="ok", ip=None):
                 application=excluded.application
         """
         params = (
-            self.node_id,
+            _container.node_id,
             pid,
             m_version,
             m_scraper_name,
