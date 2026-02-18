@@ -480,10 +480,10 @@ def read_stats_from_multiple_files(
                 for _i, filename in enumerate(fnames):
                     try:
                         os.remove(filename)
-                    except:
+                    except Exception:
                         pass
             return res
-        except:
+        except Exception:
             pass
 
 

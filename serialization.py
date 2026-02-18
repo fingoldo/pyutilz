@@ -58,7 +58,7 @@ def serialize(obj, fname: str = None, compression: int = 9):
             data = zlib.compress(data, compression)
         if fname is not None:
             if isinstance(fname, str):
-                systemutils.ensure_dir_exists(fname)
+                system.ensure_dir_exists(fname)
                 with open(fname, "wb") as f:
                     f.write(data)
             elif type(fname).__name__ == "_io.BufferedWriter":

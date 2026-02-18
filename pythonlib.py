@@ -60,7 +60,7 @@ def ensure_installed(packages, sep: str = " ") -> None:
             for pkg in missing_packages:
                 try:
                     subprocess.check_call(["pip", "install", pkg])
-                except:
+                except Exception:
                     pass
 
 
@@ -269,9 +269,9 @@ def batch(iterable, n=1):
     [6, 7, 8]
     [9]
     """
-    l = len(iterable)
-    for ndx in range(0, l, n):
-        yield iterable[ndx : min(ndx + n, l)]
+    length = len(iterable)
+    for ndx in range(0, length, n):
+        yield iterable[ndx : min(ndx + n, length)]
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -279,14 +279,14 @@ def batch(iterable, n=1):
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def list_is_non_increasing(l: Iterable) -> bool:
+def list_is_non_increasing(lst: Iterable) -> bool:
     """Checks if a list is sorted."""
-    return all(l[i] >= l[i + 1] for i in range(len(l) - 1))
+    return all(lst[i] >= lst[i + 1] for i in range(len(lst) - 1))
 
 
-def list_is_non_decreasing(l: Iterable) -> bool:
+def list_is_non_decreasing(lst: Iterable) -> bool:
     """Checks if a list is sorted."""
-    return all(l[i] <= l[i + 1] for i in range(len(l) - 1))
+    return all(lst[i] <= lst[i + 1] for i in range(len(lst) - 1))
 
 
 def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:
@@ -527,7 +527,7 @@ def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
     return desired
 
 
-class CustomException(Exception):
+class CustomError(Exception):
     def __init__(self, code, message):
         self.code = code
         self.message = message
@@ -536,7 +536,7 @@ class CustomException(Exception):
         return repr("Error #" + str(self.code) + ": " + self.message)
 
 
-cSTRUCTURED_FORMAT_PARSING_ERROR = 100
+STRUCTURED_FORMAT_PARSING_ERROR = 100
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -640,7 +640,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     fpath = abspath(fpath)
     try:
         is_here = exists(fpath)
-    except:
+    except Exception:
         pass
     if not is_here:
         logger.warning(f"File {fpath} not found!")
@@ -787,7 +787,7 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
     return str(round(set_size, rounding))
 
 
-class hashabledict(dict):
+class HashableDict(dict):
     def __hash__(self):
         return hash(tuple(sorted(self.items())))
 

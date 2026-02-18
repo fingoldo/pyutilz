@@ -66,8 +66,8 @@ def validate_sql_identifier(identifier: str) -> str:
 # Global variables
 # ----------------------------------------------------------------------------------------------------------------------------
 last_db_settings_read_at = None
-connAlchemy = None
-cPAGE_SIZE: int = 1_000_000
+conn_alchemy = None
+PAGE_SIZE: int = 1_000_000
 # ----------------------------------------------------------------------------------------------------------------------------
 # sqlalchemy tricks
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -109,7 +109,7 @@ def connect_to_db(
     m_db_schema: str = None,
     m_db_sslmode: str = None,
 ):
-    global db_flavor, conn, cur, cursors, connAlchemy
+    global db_flavor, conn, cur, cursors, conn_alchemy
     global db_name, db_host, db_port, db_schema, username, pwd, init_params_fn, db_sslmode
     db_flavor = m_db_flavor
     db_name = m_db_name
@@ -146,7 +146,7 @@ def connect_to_db(
                 if db_schema:
                     conn_string += f"&options=--search_path%3D{db_schema},public"
 
-                connAlchemy = sqlalchemy.create_engine(conn_string, paramstyle="format")
+                conn_alchemy = sqlalchemy.create_engine(conn_string, paramstyle="format")
                 # https://stackoverflow.com/questions/25917741/sqlalchemy-with-postgres-insert-into-a-table-whose-columns-have-parentheses
 
                 if "cursors" in globals():
@@ -162,7 +162,7 @@ def connect_to_db(
                 #!pip install pymysql
                 import pymysql
 
-                connAlchemy = sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
+                conn_alchemy = sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
 
             if init_params_fn is not None:
                 init_params_fn()
@@ -211,7 +211,7 @@ def basic_db_execute(
     cursor_name=None,
     return_cursor=False,
     itersize: int = None,
-    page_size: int = cPAGE_SIZE,
+    page_size: int = PAGE_SIZE,
     max_retries: int = 5,
 ):
     global cur, cursors
@@ -287,7 +287,7 @@ def safe_execute(statement, data=None, auto_commit=True, cursor_factory=None, cu
 
 
 def safe_execute_values(
-    statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: int = None, page_size: int = cPAGE_SIZE
+    statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: int = None, page_size: int = PAGE_SIZE
 ):
     return basic_db_execute("execute_values", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize, page_size=page_size)
 
@@ -672,7 +672,7 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
 def explain_table(table_name: str) -> object:
     """Read table names along with comments from a DB table, return as Pandas dataframe"""
     if db_flavor == "mysql":
-        return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=connAlchemy)["Field Type Comment".split()]
+        return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=conn_alchemy)["Field Type Comment".split()]
 
 
 def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> object:
@@ -687,12 +687,12 @@ def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> obje
     # but kept for backward compatibility with warning
     if condition and not condition.strip().lower().startswith('where'):
         condition = 'WHERE ' + condition
-    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=connAlchemy)
+    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=conn_alchemy)
 
 
 def select(sql: str) -> object:
     """Execute arbitrary SQL against DB table, return results as Pandas dataframe"""
-    return pd.read_sql(sql, con=connAlchemy)
+    return pd.read_sql(sql, con=conn_alchemy)
 
 
 def execute_alchemy(sql: str, max_retries: int = 3) -> object:
@@ -701,7 +701,7 @@ def execute_alchemy(sql: str, max_retries: int = 3) -> object:
     while n < max_retries:
         try:
             n += 1
-            connAlchemy.execute(sql)
+            conn_alchemy.execute(sql)
             break
         except Exception as e:
             logger.exception(e)
@@ -851,8 +851,8 @@ def build_upsert_query(
 
     rev_on_conflict_update_values = {}
     if len(on_conflict_update_values) > 0:
-        for field in on_conflict_update_values.keys():
-            # assert field in fields_names
+        for _field in on_conflict_update_values.keys():
+            # assert _field in fields_names
             pass
         for field, value in on_conflict_update_values.items():
             rev_on_conflict_update_values[field] = value.replace("excluded.", "")

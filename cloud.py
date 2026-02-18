@@ -16,6 +16,9 @@ ensure_installed("google-cloud boto3")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import os
+from os.path import exists
+from time import sleep
 from typing import Any
 
 # --------------------------------------------------------------------------------------------------------------
@@ -23,6 +26,7 @@ from typing import Any
 # --------------------------------------------------------------------------------------------------------------
 
 s3 = None
+S3_BUCKET_NAME = None  # To be configured by user
 
 # --------------------------------------------------------------------------------------------------------------
 # Google cloud storage
@@ -77,6 +81,8 @@ def connect_to_s3(file: str = "settings.ini"):
     import boto3
     from .string import read_config_file
 
+    aws_access_key_id = None
+    aws_secret_access_key = None
     if read_config_file(file=file, object=globals(), section="S3", variables="aws_access_key_id,aws_secret_access_key"):
         boto_session = boto3.Session(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
         s3 = boto_session.resource("s3")
@@ -86,7 +92,7 @@ def connect_to_s3(file: str = "settings.ini"):
 def s3_file_exists(key: str, bucket: str) -> bool:
     try:
         s3.meta.client.head_object(Bucket=bucket, Key=key)
-    except:
+    except Exception:
         return False
     else:
         return True
@@ -105,7 +111,7 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
 
         if bDownload:
             # If file exists in our s3
-            if cloud.s3_file_exists(s3_object_path,S3_BUCKET_NAME):
+            if s3_file_exists(s3_object_path,S3_BUCKET_NAME):
                 #Load model from our s3
                 try:
                     if s3_object_path.endswith('.zip'):

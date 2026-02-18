@@ -24,7 +24,17 @@ from typing import Any
 
 import psycopg2
 from . import db
-from .strings import *
+from .strings import (
+    merge_punctuation_signs,
+    fix_broken_sentences,
+    remove_videos,
+    fix_quotations,
+    fix_spaces,
+    fix_duplicate_tokens,
+    fix_html,
+    sentencize_text,
+    ensure_space_after_comma,
+)
 from collections import defaultdict
 
 import nltk
@@ -37,7 +47,7 @@ vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAP
 
 try:
     from tqdm.notebook import tqdm
-except:
+except Exception:
     from tqdm import tqdm
 
 
@@ -88,9 +98,9 @@ class AdvancedTokenizer:
             k = len(words)
             last_word = None
             for w, word in enumerate(words):
-                l = len(word)
-                for i in range(l):
-                    for j in range(1, l - i + 1):
+                word_len = len(word)
+                for i in range(word_len):
+                    for j in range(1, word_len - i + 1):
                         morpheme = word[i : i + j]
                         # if len(morpheme)>0:
                         if j == 1:
@@ -121,7 +131,7 @@ class AdvancedTokenizer:
                             self.NUM_ALLLETTERS_CAPITAL[base_morpheme] += 1
 
                         self.INWORD_ABSOLUTE_POSITION[base_morpheme] += i + 1
-                        self.INWORD_RELATIVE_POSITION[base_morpheme] += (i + 1) / l
+                        self.INWORD_RELATIVE_POSITION[base_morpheme] += (i + 1) / word_len
 
                         self.INSENTENCE_ABSOLUTE_POSITION[base_morpheme] += w + 1
                         self.INSENTENCE_RELATIVE_POSITION[base_morpheme] += (w + 1) / k
@@ -129,7 +139,7 @@ class AdvancedTokenizer:
                         self.NUM_OCCS[base_morpheme] += 1
 
                         if i == 0:
-                            if j == l:
+                            if j == word_len:
                                 self.NUM_AS_SEPARATE_WORD[base_morpheme] += 1
                                 if last_word:
                                     if base_morpheme not in self.NUM_PREV_WORDS:

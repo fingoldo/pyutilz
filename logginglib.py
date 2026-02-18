@@ -310,7 +310,7 @@ class RedisHandler(Handler):
             if random() < 0.1:
                 self.rc.ltrim(self.LOG_DEST, 0, self.LOG_SIZE)
                 print("logging list trimmed!")
-        except:
+        except Exception:
             pass
 
 

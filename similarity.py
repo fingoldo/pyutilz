@@ -251,13 +251,13 @@ def normalize_sentence(
 
         for term in abbreviations:
             if term in sentence:
-                l = len(term)
+                term_len = len(term)
                 sentence = sentence.replace(" " + term + " ", " ")
                 if sentence.startswith(term + " "):
-                    # print(sentence ,'->', sentence[l + 1:])
-                    sentence = sentence[l + 1 :]
+                    # print(sentence ,'->', sentence[term_len + 1:])
+                    sentence = sentence[term_len + 1 :]
                 elif sentence.endswith(" " + term):
-                    # print(sentence ,'->', sentence[:-(l + 1)])
-                    sentence = sentence[: -(l + 1)]
+                    # print(sentence ,'->', sentence[:-(term_len + 1)])
+                    sentence = sentence[: -(term_len + 1)]
 
     return list(set(sentence.split(placeholder)))

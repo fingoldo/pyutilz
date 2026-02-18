@@ -55,6 +55,7 @@ login, pwd = None, None
 browser, headers, proxy_server, target, home_page, user_agent = None, None, None, None, None, None
 data_dir = None#"chrome-data"
 logout_signs = "Sign-In"
+successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
 password_input_name = "password"
 use_real_useragent = True
@@ -69,7 +70,7 @@ headers = basic_headers
 def find_element_by_xpath(browser:object,query:str)->object:
     try:
         res=browser.find_element(By.XPATH, query)
-    except:
+    except Exception:
         res=browser.find_element_by_xpath(query)
 
     return res
@@ -77,7 +78,7 @@ def find_element_by_xpath(browser:object,query:str)->object:
 def find_element_by_name(browser:object,query:str)->object:
     try:
         res=browser.find_element(By.NAME, query)
-    except:
+    except Exception:
         res=browser.find_element_by_name(query)
 
     return res
@@ -85,7 +86,7 @@ def find_element_by_name(browser:object,query:str)->object:
 def find_element_by_tag_name(browser:object,query:str)->object:
     try:
         res=browser.find_element(By.TAG_NAME, query)
-    except:
+    except Exception:
         res=browser.find_element_by_tag_name(query)
 
     return res
@@ -145,7 +146,8 @@ def start_selenium() -> object:
             import undetected_chromedriver as webdriver
             try:
                 webdriver.install()
-            except: pass
+            except Exception:
+                pass
             options = webdriver.ChromeOptions()
             kwargs["version_main"]=version_main
             kwargs["use_subprocess"]=use_subprocess
@@ -153,7 +155,8 @@ def start_selenium() -> object:
             if find_executable:
                 try:
                     webdriver.find_chrome_executable = find_chrome_executable
-                except: pass
+                except Exception:
+                    pass
         except Exception as e:
             logger.exception(e)
             from selenium import webdriver
@@ -322,16 +325,17 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
         elem_login = None
         try:
             elem_login = find_element_by_name(browser, login_input_name)
-            elem_login.send_keys(Keys.CONTROL, 'a');elem_login.send_keys(Keys.DELETE)
+            elem_login.send_keys(Keys.CONTROL, 'a')
+            elem_login.send_keys(Keys.DELETE)
             elem_login.send_keys(login)
             pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
             elem_login.send_keys(Ret)
-        except:
+        except Exception:
             pass
         if elem_login is None:
             try:
                 elem_login = find_element_by_xpath(browser,"//div[text()='" + login.lower() + "']")
-            except:
+            except Exception:
                 pass
         if elem_login is None:
             logger.error(f"Could not login to {target}: elem_login {login_input_name} not located.")
@@ -341,9 +345,10 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
         elem_pwd = None
         try:
             elem_pwd = find_element_by_name(browser, password_input_name)
-            elem_pwd.send_keys(Keys.CONTROL, 'a');elem_pwd.send_keys(Keys.DELETE)
+            elem_pwd.send_keys(Keys.CONTROL, 'a')
+            elem_pwd.send_keys(Keys.DELETE)
             elem_pwd.send_keys(pwd)
-        except:
+        except Exception:
             pass
         if elem_pwd is None:
             logger.error(f"Could not login to {target}: elem_pwd {password_input_name} not located.")
@@ -376,7 +381,8 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
                         logger.warning(f"Trying to restart Selenium...")
                         try:
                             browser.close()
-                        except: pass
+                        except Exception:
+                            pass
                         browser = None
                     return LoginAndGetCookies(default_headers=default_headers)
                 else:

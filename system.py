@@ -47,8 +47,7 @@ from .strings import remove_json_defaults
 
 def run_from_ipython():
     try:
-        __IPYTHON__
-        return True
+        return bool(__IPYTHON__)  # Check if running in IPython/Jupyter
     except NameError:
         return False
 
@@ -118,7 +117,7 @@ def get_system_info(
                     try:
                         os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()
                         info["os_machine_guid"] = os_serial
-                    except:
+                    except Exception:
                         logger.warning(f"Could not extract Windows serial!")
 
                 elif current_system == "Linux":
@@ -187,7 +186,7 @@ def get_system_info(
             if numba.cuda.is_available():
                 try:
                     cuda_version = re.findall(", V(.+)\r\n", subprocess.check_output("nvcc --version").decode())
-                except:
+                except Exception:
                     cuda_version = [""]
 
                 if len(cuda_version) > 0:
@@ -197,21 +196,21 @@ def get_system_info(
                 if not only_stats:
                     try:
                         info["gpus_ram_total_gb"], info["gpus_ram_free_gb"], info["gpu_features"] = get_gpuinfo_gpu_info()
-                    except:
+                    except Exception:
                         pass
                     try:
                         info["gpu_num_devices"] = len(info["gpu_features"])
-                    except:
+                    except Exception:
                         pass
                     """
                     try:
                         info["gpu_additional_features"] = get_pycuda_gpu_info()
-                    except:
+                    except Exception:
                         pass
                     """
                 try:
                     info["gpu_current_stats"] = get_gpuutil_gpu_info()
-                except:
+                except Exception:
                     pass
 
         if return_hdd_info:
@@ -237,7 +236,7 @@ def get_system_info(
                     # ensure_installed("pypiwin32")
 
                     import wmi
-                except:
+                except Exception:
                     pass
                 if wmi is not None:
                     # WMI
@@ -264,7 +263,7 @@ def get_system_info(
                 else:
                     try:
                         info["devices_list"] = list_linux_devices()
-                    except:
+                    except Exception:
                         pass
         return info
     except Exception as e:
@@ -473,13 +472,13 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
     devices = []
 
     try:
-        import GPUtil as GPU
+        import GPUtil
     except Exception:
         logger.warning("Can't import GPUtil.")
         return devices
 
     try:
-        for gpu in GPU.getGPUs():
+        for gpu in GPUtil.getGPUs():
             cur_device = dict()
             for attr in attrs:
                 val = getattr(gpu, attr)
@@ -636,7 +635,7 @@ def count_app_instances(processname=None, cmdline=None):
             try:
                 if cmdline not in proc.cmdline():
                     continue
-            except:
+            except Exception:
                 continue
         n = n + 1
     return n

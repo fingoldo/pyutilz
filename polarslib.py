@@ -329,8 +329,8 @@ def build_aggregate_features_polars(
 
         for filter_value in filter_values:
 
-            def af(expr) -> pl.expr:
-                return expr if not filter_field else expr.filter(pl.col(filter_field) == filter_value)
+            def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.expr:
+                return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
 

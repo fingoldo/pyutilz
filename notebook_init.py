@@ -154,7 +154,7 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
                 frame = inspect.currentframe().f_back
                 frame.f_globals.update(packages)
                 print("📌 Packages injected into global namespace")
-            except:
+            except Exception:
                 print("⚠️  Could not inject into global namespace")
 
         print("✅ Notebook initialization complete!")

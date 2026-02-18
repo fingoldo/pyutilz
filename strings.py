@@ -33,6 +33,7 @@ import re
 from .pythonlib import is_float
 
 inflect_engine = None
+nlp = None  # Spacy language model, loaded lazily
 ascii_emojies, unicode_emojies = None, None
 
 
@@ -226,7 +227,7 @@ def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
             try:
                 if len(json_obj[attr]) == 0:
                     del json_obj[attr]
-            except:
+            except Exception:
                 pass
 
 
@@ -333,17 +334,17 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                                 # Fallback
                                 try:
                                     val = b64decode(val).decode("utf-8")
-                                except:
+                                except Exception:
                                     pass
                     try:
                         val = ast.literal_eval(val)
-                    except:
+                    except Exception:
                         pass
                     if prepend_section_names:
                         object[next_section.lower() + "_" + var] = val
                     else:
                         object[var] = val
-                except:
+                except Exception:
                     object[var] = None
     except Exception as e:
         logger.exception(e)
@@ -453,22 +454,22 @@ def make_text_from_inner_html_elements(elem: object) -> str:
 def underscorize_variable(var: Sequence) -> str:
     new = ""
     p = None
-    for l in var:
-        if l.isupper():
+    for char in var:
+        if char.isupper():
             if len(new) > 0:
                 if p:
                     if p.islower():
                         new += "_"
-                        new += l.lower()
+                        new += char.lower()
                     else:
-                        new += l.lower()
+                        new += char.lower()
                 else:
-                    new += l.lower()
+                    new += char.lower()
             else:
-                new += l.lower()
+                new += char.lower()
         else:
-            new += l
-        p = l
+            new += char
+        p = char
     return new
 
 
@@ -529,6 +530,10 @@ punctuation, eos = string.punctuation, ("!", ".", "?")
 
 
 def spacy_sent_tokenize(text: str) -> list:
+    global nlp
+    if nlp is None:
+        import spacy
+        nlp = spacy.load("en_core_web_sm")
     return list(nlp(text).sents)
 
 
@@ -617,7 +622,7 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
             "\r\n",
         ] + whitespaces
         for token in whitespaces:
-            l = len(text)
+            text_len = len(text)
             new_text = ""
             s = 0
             # if token==' ': token='\r\n'
@@ -632,12 +637,12 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
                         # print(ord(token),p)
                         # there is a newline in text,
                         j = p + len(token)
-                        if j < l:
+                        if j < text_len:
                             next_symbol = text[j]
                             # print('next_symbol %d=%s' % (j,next_symbol))
                             # next symbol is space
                             if next_symbol == " ":
-                                if j + 1 <= l:
+                                if j + 1 <= text_len:
                                     next_next_symbol = text[j + 1]
                                     # followed by a capital or number
                                     if next_next_symbol.isnumeric() or next_next_symbol.isupper():
@@ -700,8 +705,8 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
 
                         p = j
             if s > 0:
-                if s < l:
-                    new_text = new_text + text[s:l]
+                if s < text_len:
+                    new_text = new_text + text[s:text_len]
                 text = new_text
             # also if last symbol is not eos mark but letter, add a dot.
             if len(text) > 0:
@@ -714,12 +719,12 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
 def fix_missed_space_between_sentences(text: str) -> str:
     for token in eos:
         p = 0
-        l = len(text)
+        text_len = len(text)
         while p >= 0:
             p = text.find(token, p)
             if p > 0:
                 j = p + len(token)
-                if j <= l:
+                if j <= text_len:
                     next_symbol = text[j]
                     if next_symbol != " ":
                         if next_symbol.isalpha() or next_symbol.isnumeric():

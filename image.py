@@ -40,7 +40,7 @@ def ensure_bytes_converted(obj: dict) -> dict:
         if isinstance(value, bytes):
             try:
                 obj[field] = value.decode("UTF-8")
-            except:
+            except Exception:
                 del obj[field]
         elif isinstance(value, dict):
             ensure_bytes_converted(value)
@@ -90,7 +90,7 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: int = None
             if isinstance(tag_value, bytes):
                 try:
                     tag_value = tag_value.decode("UTF-8")
-                except:
+                except Exception:
                     logger.warning(f"Error when decoding byte property {tag}: {tag_value} in image {orig_img if isinstance(orig_img, str) else ''}")
                     continue
 

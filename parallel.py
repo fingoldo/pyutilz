@@ -62,12 +62,12 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
-        l = i * chunk_size
-        r = l + chunk_size
+        left = i * chunk_size
+        r = left + chunk_size
         if r > t:
             r = t
-        if r > l:
-            yield the_list[l:r]
+        if r > left:
+            yield the_list[left:r]
 
 
 def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> list:
@@ -78,11 +78,11 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> list:
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
-        l = i * chunk_size
-        r = l + chunk_size
+        left = i * chunk_size
+        r = left + chunk_size
         if r > t:
             r = t
-        yield l, r
+        yield left, r
 
 
 def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> list:
@@ -94,10 +94,10 @@ def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> list:
     step = total_length // nchunks
     for chunk in range(nchunks):
         if chunk == nchunks - 1:
-            l = step * chunk
+            left = step * chunk
             r = total_length
 
-            yield l, r
+            yield left, r
         else:
             yield step * chunk, (chunk + 1) * step
 
@@ -114,18 +114,18 @@ def split_array(arr: object, step: int) -> list:
      (5000, 5477)]
     """
 
-    l = len(arr)
+    length = len(arr)
     a = 0
     b = a
     res = []
     assert step > 0
     while True:
         b = a + step
-        if b >= l:
-            b = l
+        if b >= length:
+            b = length
         if b > 0:
             res.append((a, b))
-        if b == l:
+        if b == length:
             break
         a = b
     return res
@@ -175,7 +175,7 @@ def applyfunc_parallel(
         n_cores = min(psutil.cpu_count(logical=logical), len(iterable))
     try:
         fname = func.__name__
-    except:
+    except Exception:
         fname = "function"
 
     logger.info(f"Applying of {fname} started, ncores={n_cores}, nchunks={len(iterable):,}...")
