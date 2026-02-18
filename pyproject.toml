@@ -1,0 +1,212 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyutilz"
+version = "0.90"
+description = "Comprehensive Python utilities for data science, databases, and system operations"
+authors = [{name = "Anatoly Alexeev"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["utilities", "pandas", "database", "web-scraping", "data-science", "polars", "numpy", "numba"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Database",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: System :: Monitoring",
+]
+
+dependencies = []  # Core has no hard requirements (fully modular design)
+
+[project.optional-dependencies]
+# Data science packages
+pandas = [
+    "pandas>=1.5",
+    "numpy>=1.20",
+    "pyarrow>=10.0"
+]
+polars = ["polars>=0.18"]
+
+# Database packages
+database = [
+    "sqlalchemy>=1.4",
+    "psycopg2-binary>=2.9",
+    "pymysql>=1.0"
+]
+
+# Web scraping packages
+web = [
+    "selenium>=4.0",
+    "undetected-chromedriver>=3.0",
+    "requests>=2.28",
+    "grequests>=0.7",
+    "fake-useragent>=1.0"
+]
+
+# Cloud storage packages
+cloud = [
+    "google-cloud-storage>=2.0",
+    "boto3>=1.26"
+]
+
+# NLP packages
+nlp = [
+    "spacy>=3.0",
+    "nltk>=3.8",
+    "jellyfish>=0.9",
+    "tiktoken>=0.5"
+]
+
+# System utilities
+system = [
+    "psutil>=5.9",
+    "tqdm>=4.65",
+    "numba>=0.56",
+    "pympler>=1.0"
+]
+
+# All optional dependencies
+all = [
+    # pandas
+    "pandas>=1.5", "numpy>=1.20", "pyarrow>=10.0",
+    # polars
+    "polars>=0.18",
+    # database
+    "sqlalchemy>=1.4", "psycopg2-binary>=2.9", "pymysql>=1.0",
+    # web
+    "selenium>=4.0", "undetected-chromedriver>=3.0", "requests>=2.28", "grequests>=0.7", "fake-useragent>=1.0",
+    # cloud
+    "google-cloud-storage>=2.0", "boto3>=1.26",
+    # nlp
+    "spacy>=3.0", "nltk>=3.8", "jellyfish>=0.9", "tiktoken>=0.5",
+    # system
+    "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0"
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-benchmark>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "bandit>=1.7"
+]
+
+[project.urls]
+Homepage = "https://github.com/fingoldo/pyutilz"
+Repository = "https://github.com/fingoldo/pyutilz.git"
+Issues = "https://github.com/fingoldo/pyutilz/issues"
+Changelog = "https://github.com/fingoldo/pyutilz/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyutilz*"]
+exclude = ["tests*", "scripts*", "docs*"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers -ra"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "gpu: marks tests requiring GPU"
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "setup.py",
+    "*/scheduling/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    ".venv/*"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "except:",
+    "if 0:",
+    "if False:"
+]
+precision = 2
+show_missing = true
+
+# Black code formatter
+[tool.black]
+line-length = 160
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | \.pytest_cache
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+# Ruff linter
+[tool.ruff]
+line-length = 160
+target-version = "py38"
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "N802",  # function name should be lowercase (fixing separately)
+    "N806",  # variable name should be lowercase
+    "B006",  # mutable default (fixing separately)
+]
+exclude = ["tests", "scripts", ".git", "__pycache__", "build", "dist"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports OK in __init__
+
+# MyPy type checker
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Too strict for now, enable gradually
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true

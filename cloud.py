@@ -9,7 +9,7 @@ logger=logging.getLogger(__name__)
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from .python import ensure_installed
+from .pythonlib import ensure_installed
 ensure_installed("google-cloud boto3")
 
 # ----------------------------------------------------------------------------------------------------------------------------
