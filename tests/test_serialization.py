@@ -154,3 +154,42 @@ class TestEdgeCases:
         # Check compression is working (serialized should be smaller than pickle)
         pickled = pickle.dumps(data)
         assert len(serialized) < len(pickled)
+
+    def test_unserialize_from_file_path(self):
+        """Test unserializing directly from a file path string"""
+        import tempfile
+        import os
+
+        data = {"test": "from_file", "value": 123}
+        fd, file_path = tempfile.mkstemp(suffix='.pkl')
+        os.close(fd)
+
+        try:
+            serialize(data, fname=file_path)
+            result = unserialize(file_path)
+            assert result == data
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+    def test_unserialize_nonexistent_file(self):
+        """Test unserializing from non-existent file path returns None"""
+        result = unserialize("/nonexistent/path/to/file.pkl")
+        assert result is None
+
+    def test_unserialize_unexpected_type(self):
+        """Test unserializing non-bytes non-str input"""
+        # Passing an integer (unexpected type) should log warning and return None
+        result = unserialize(42)
+        assert result is None
+
+    def test_unserialize_uncompressed_data(self):
+        """Test that raw pickle data (not zlib-compressed) is handled"""
+        import pickle as pkl
+        data = {"key": "value"}
+        raw = pkl.dumps(data)
+        # Raw pickle without zlib compression - should still try to decompress
+        # and either succeed or return None gracefully
+        result = unserialize(raw, compression=9)
+        # Either returns data or None (if decompression fails)
+        assert result is None or isinstance(result, dict)

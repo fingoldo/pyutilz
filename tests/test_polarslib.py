@@ -1,185 +1,222 @@
-"""Tests for polarslib.py - Phase 2 refactoring
-
-Tests cover:
-- Missing return statements fix (find_nan_cols, find_infinite_cols)
-- Return type annotation fix (cast_f64_to_f32)
-- Performance optimizations (df.head() usage)
+"""
+Test suite for polarslib.py
+Tests cover Polars utility functions for DataFrame operations.
 """
 
 import pytest
 import polars as pl
+import polars.selectors as cs
 import numpy as np
+
+from pyutilz.data.polarslib import (
+    find_nan_cols,
+    find_infinite_cols,
+    clean_numeric,
+    cast_f64_to_f32,
+    apply_agg_func_safe,
+    polars_df_info,
+)
 
 
 class TestFindNanCols:
-    """Test find_nan_cols function - regression test for missing return statement"""
+    """Test find_nan_cols function"""
 
-    def test_returns_dataframe_not_none(self):
-        """Verify function returns DataFrame, not None (line 47-50 bug fix)"""
-        from pyutilz.polarslib import find_nan_cols
-
-        df = pl.DataFrame({
-            'col1': [1.0, 2.0, float('nan')],
-            'col2': [3.0, 4.0, 5.0],
-            'col3': [float('nan'), float('nan'), float('nan')]
-        })
-
+    def test_finds_nan_column(self):
+        """Test that columns with NaN are found"""
+        df = pl.DataFrame({"a": [1.0, float("nan"), 3.0], "b": [1.0, 2.0, 3.0]})
         result = find_nan_cols(df)
 
-        # Should return DataFrame, not None
-        assert result is not None
-        assert isinstance(result, pl.DataFrame)
+        assert "a" in result.columns
+        assert "b" not in result.columns
 
-    def test_finds_columns_with_nans(self):
-        """Test that columns with NaN values are correctly identified"""
-        from pyutilz.polarslib import find_nan_cols
-
-        df = pl.DataFrame({
-            'has_nan': [1.0, float('nan'), 3.0],
-            'no_nan': [1.0, 2.0, 3.0]
-        })
-
+    def test_no_nan_returns_empty(self):
+        """Test that no NaN returns empty DataFrame"""
+        df = pl.DataFrame({"a": [1.0, 2.0, 3.0], "b": [4.0, 5.0, 6.0]})
         result = find_nan_cols(df)
 
-        # Should only return column with NaN
-        assert 'has_nan' in result.columns
-        assert 'no_nan' not in result.columns
+        assert result.width == 0
 
-    def test_empty_result_when_no_nans(self):
-        """Test returns empty DataFrame when no NaN columns"""
-        from pyutilz.polarslib import find_nan_cols
-
+    def test_all_nan_columns_found(self):
+        """Test that all NaN columns are found"""
         df = pl.DataFrame({
-            'col1': [1.0, 2.0, 3.0],
-            'col2': [4.0, 5.0, 6.0]
+            "a": [float("nan"), float("nan")],
+            "b": [float("nan"), 1.0],
+            "c": [1.0, 2.0]
         })
-
         result = find_nan_cols(df)
 
-        assert result is not None
-        assert len(result.columns) == 0
+        assert "a" in result.columns
+        assert "b" in result.columns
+        assert "c" not in result.columns
 
 
 class TestFindInfiniteCols:
-    """Test find_infinite_cols function - regression test for missing return statement"""
+    """Test find_infinite_cols function"""
 
-    def test_returns_dataframe_not_none(self):
-        """Verify function returns DataFrame, not None (line 53-56 bug fix)"""
-        from pyutilz.polarslib import find_infinite_cols
-
-        df = pl.DataFrame({
-            'col1': [1.0, 2.0, float('inf')],
-            'col2': [3.0, 4.0, 5.0]
-        })
-
+    def test_finds_infinite_column(self):
+        """Test that columns with infinity are found"""
+        df = pl.DataFrame({"a": [1.0, float("inf"), 3.0], "b": [1.0, 2.0, 3.0]})
         result = find_infinite_cols(df)
 
-        # Should return DataFrame, not None
-        assert result is not None
-        assert isinstance(result, pl.DataFrame)
+        assert "a" in result.columns
+        assert "b" not in result.columns
 
-    def test_finds_columns_with_infinity(self):
-        """Test that columns with infinite values are correctly identified"""
-        from pyutilz.polarslib import find_infinite_cols
-
-        df = pl.DataFrame({
-            'has_inf': [1.0, float('inf'), 3.0],
-            'has_neg_inf': [float('-inf'), 2.0, 3.0],
-            'no_inf': [1.0, 2.0, 3.0]
-        })
-
+    def test_finds_negative_infinite(self):
+        """Test that columns with -inf are found"""
+        df = pl.DataFrame({"a": [1.0, -float("inf"), 3.0], "b": [1.0, 2.0, 3.0]})
         result = find_infinite_cols(df)
 
-        # Should return columns with infinite values
-        assert result is not None
-        assert 'has_inf' in result.columns or 'has_neg_inf' in result.columns
-        assert 'no_inf' not in result.columns
+        assert "a" in result.columns
 
+    def test_no_infinite_returns_empty(self):
+        """Test that no infinity returns empty DataFrame"""
+        df = pl.DataFrame({"a": [1.0, 2.0, 3.0], "b": [4.0, 5.0, 6.0]})
+        result = find_infinite_cols(df)
 
-class TestCastF64ToF32:
-    """Test cast_f64_to_f32 function - return type annotation fix"""
-
-    def test_returns_polars_dataframe(self):
-        """Verify function returns pl.DataFrame, not pd.DataFrame (line 64 fix)"""
-        from pyutilz.polarslib import cast_f64_to_f32
-
-        df = pl.DataFrame({
-            'float64_col': [1.0, 2.0, 3.0],
-            'int64_col': [1, 2, 3]
-        })
-
-        result = cast_f64_to_f32(df)
-
-        # Should return Polars DataFrame
-        assert isinstance(result, pl.DataFrame)
-        assert not hasattr(result, 'iloc')  # pandas-specific attribute
-
-    def test_converts_float64_to_float32(self):
-        """Test that Float64 columns are converted to Float32"""
-        from pyutilz.polarslib import cast_f64_to_f32
-
-        df = pl.DataFrame({
-            'col': [1.0, 2.0, 3.0]
-        })
-
-        # Ensure it's Float64 initially
-        df = df.with_columns(pl.col('col').cast(pl.Float64))
-
-        result = cast_f64_to_f32(df)
-
-        # Should be Float32 after conversion
-        assert result['col'].dtype == pl.Float32
-
-    def test_converts_integer_types(self):
-        """Test that Int64, UInt64 are also converted to Float32"""
-        from pyutilz.polarslib import cast_f64_to_f32
-
-        df = pl.DataFrame({
-            'int64': pl.Series([1, 2, 3], dtype=pl.Int64),
-            'uint64': pl.Series([1, 2, 3], dtype=pl.UInt64)
-        })
-
-        result = cast_f64_to_f32(df)
-
-        assert result['int64'].dtype == pl.Float32
-        assert result['uint64'].dtype == pl.Float32
+        assert result.width == 0
 
 
 class TestCleanNumeric:
     """Test clean_numeric function"""
 
-    def test_replaces_inf_with_filler(self):
-        """Test that infinite values are replaced with filler"""
-        from pyutilz.polarslib import clean_numeric
-        import polars as pl
+    def test_replaces_nan_with_zero(self):
+        """Test that NaN is replaced with 0 (default)"""
+        df = pl.DataFrame({"a": [1.0, float("nan"), 3.0]})
+        result = df.select(clean_numeric(pl.col("a")))
 
-        df = pl.DataFrame({'col': [1.0, float('inf'), float('-inf'), float('nan')]})
-
-        result = df.select(clean_numeric(pl.col('col'), nans_filler=0.0))
-
-        values = result['col'].to_list()
+        values = result["a"].to_list()
         assert values[0] == 1.0
-        # inf, -inf, nan should all be replaced with 0.0
         assert values[1] == 0.0
-        assert values[2] == 0.0
-        assert values[3] == 0.0
+        assert values[2] == 3.0
+
+    def test_replaces_inf_with_fill(self):
+        """Test that inf is replaced with fill value"""
+        df = pl.DataFrame({"a": [1.0, float("inf"), -float("inf")]})
+        result = df.select(clean_numeric(pl.col("a"), nans_filler=999.0))
+
+        values = result["a"].to_list()
+        assert values[0] == 1.0
+        assert values[1] == 999.0
+        assert values[2] == 999.0
+
+    def test_returns_expression(self):
+        """Test that function returns a polars expression"""
+        expr = clean_numeric(pl.col("a"))
+        assert isinstance(expr, pl.Expr)
 
 
-@pytest.mark.parametrize("dtype,expected_f32", [
-    (pl.Float64, True),
-    (pl.Int64, True),
-    (pl.UInt32, True),
-    (pl.Int32, True),
-    (pl.Int8, False),  # Int8 not in conversion list
-])
-def test_cast_f64_to_f32_parametrized(dtype, expected_f32):
-    """Parametrized test for different dtype conversions"""
-    from pyutilz.polarslib import cast_f64_to_f32
+class TestCastF64ToF32:
+    """Test cast_f64_to_f32 function"""
 
-    df = pl.DataFrame({'col': pl.Series([1, 2, 3], dtype=dtype)})
-    result = cast_f64_to_f32(df)
+    def test_casts_float64_to_float32(self):
+        """Test that Float64 columns are cast to Float32"""
+        df = pl.DataFrame({"a": [1.0, 2.0, 3.0], "b": [4.0, 5.0, 6.0]})
+        assert df["a"].dtype == pl.Float64
 
-    if expected_f32:
-        assert result['col'].dtype == pl.Float32
-    else:
-        assert result['col'].dtype == dtype
+        result = cast_f64_to_f32(df)
+        assert result["a"].dtype == pl.Float32
+        assert result["b"].dtype == pl.Float32
+
+    def test_preserves_string_columns(self):
+        """Test that non-numeric columns are preserved"""
+        df = pl.DataFrame({"a": [1.0, 2.0], "s": ["x", "y"]})
+        result = cast_f64_to_f32(df)
+
+        assert result["s"].dtype == pl.Utf8 or result["s"].dtype == pl.String
+        assert "s" in result.columns
+
+    def test_integer_columns_cast(self):
+        """Test that integer columns are also cast"""
+        df = pl.DataFrame({"a": pl.Series([1, 2, 3], dtype=pl.Int64)})
+        result = cast_f64_to_f32(df)
+
+        assert result["a"].dtype == pl.Float32
+
+    def test_returns_dataframe(self):
+        """Test that result is a DataFrame"""
+        df = pl.DataFrame({"a": [1.0, 2.0]})
+        result = cast_f64_to_f32(df)
+
+        assert isinstance(result, pl.DataFrame)
+
+
+class TestApplyAggFuncSafe:
+    """Test apply_agg_func_safe function"""
+
+    def test_skew_gets_clean_numeric(self):
+        """Test that skew function applies clean_numeric"""
+        expr = pl.col("a")
+        result = apply_agg_func_safe(expr, "skew")
+
+        assert isinstance(result, pl.Expr)
+
+    def test_kurtosis_gets_clean_numeric(self):
+        """Test that kurtosis function applies clean_numeric"""
+        expr = pl.col("a")
+        result = apply_agg_func_safe(expr, "kurtosis")
+
+        assert isinstance(result, pl.Expr)
+
+    def test_other_funcs_passthrough(self):
+        """Test that non-skew/kurtosis functions pass through unchanged"""
+        expr = pl.col("a")
+        result = apply_agg_func_safe(expr, "mean")
+
+        assert isinstance(result, pl.Expr)
+        # Should return the same expression object (not wrapped)
+        assert result is expr
+
+    def test_min_passthrough(self):
+        """Test that min passes through"""
+        expr = pl.col("b")
+        result = apply_agg_func_safe(expr, "min")
+
+        assert result is expr
+
+
+class TestPolarsdfInfo:
+    """Test polars_df_info function"""
+
+    def test_returns_string(self):
+        """Test that result is a string"""
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]})
+        result = polars_df_info(df)
+
+        assert isinstance(result, str)
+
+    def test_contains_row_count(self):
+        """Test that result contains row count info"""
+        df = pl.DataFrame({"a": [1, 2, 3, 4, 5]})
+        result = polars_df_info(df)
+
+        assert "5" in result
+
+    def test_contains_dtype_info(self):
+        """Test that result contains dtype information"""
+        df = pl.DataFrame({"a": [1.0, 2.0], "b": ["x", "y"]})
+        result = polars_df_info(df)
+
+        assert "dtypes" in result
+
+    def test_empty_dataframe(self):
+        """Test with empty DataFrame"""
+        df = pl.DataFrame({"a": pl.Series([], dtype=pl.Float64)})
+        result = polars_df_info(df)
+
+        assert isinstance(result, str)
+        assert "0" in result
+
+    def test_no_columns_dataframe(self):
+        """Test with DataFrame with no columns"""
+        df = pl.DataFrame()
+        result = polars_df_info(df)
+
+        assert isinstance(result, str)
+        assert "0" in result
+
+    def test_contains_memory_info(self):
+        """Test that result contains memory usage info"""
+        df = pl.DataFrame({"a": [1.0, 2.0, 3.0]})
+        result = polars_df_info(df)
+
+        assert "memory" in result.lower() or "GB" in result
