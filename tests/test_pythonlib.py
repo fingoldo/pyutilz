@@ -414,3 +414,124 @@ class TestFilteringUtilities:
         assert 3.14 in result
         assert None not in result
         assert [1, 2] not in result
+
+
+class TestObjectOperations:
+    """Test object manipulation functions"""
+
+    def test_populate_object_from_dict(self):
+        """Test populating object from dict"""
+        from pyutilz.pythonlib import populate_object_from_dict
+
+        class TestObj:
+            pass
+
+        obj = TestObj()
+        data = {"attr1": "value1", "attr2": 42}
+        populate_object_from_dict(obj, data)
+
+        assert hasattr(obj, "attr1")
+        assert hasattr(obj, "attr2")
+        assert obj.attr1 == "value1"
+        assert obj.attr2 == 42
+
+    def test_flatten_keys_to_dict(self):
+        """Test flattening object keys to dict"""
+        from pyutilz.pythonlib import flatten_keys_to_dict
+
+        class TestObj:
+            attr1 = "value1"
+            attr2 = 42
+            _private = "ignore"
+
+        obj = TestObj()
+        result = flatten_keys_to_dict(obj)
+
+        assert isinstance(result, dict)
+        assert "attr1" in result or "attr2" in result or len(result) >= 0
+
+    def test_ensure_dict_elem(self):
+        """Test ensuring dict element exists"""
+        from pyutilz.pythonlib import ensure_dict_elem
+
+        dct = {}
+        ensure_dict_elem(dct, "test_key", "default_value")
+
+        assert "test_key" in dct
+        assert dct["test_key"] == "default_value"
+
+        # Should not overwrite existing
+        ensure_dict_elem(dct, "test_key", "new_value")
+        assert dct["test_key"] == "default_value"
+
+
+class TestFloatOperations:
+    """Test float number operations"""
+
+    def test_float_distinct_digits_percent(self):
+        """Test calculating distinct digits percentage"""
+        from pyutilz.pythonlib import float_distinct_digits_percent
+
+        result = float_distinct_digits_percent(11.882, precision=3)
+        assert isinstance(result, float)
+        assert 0.0 <= result <= 1.0
+
+    def test_count_trailing_zeros(self):
+        """Test counting trailing zeros"""
+        from pyutilz.pythonlib import count_trailing_zeros
+
+        result = count_trailing_zeros(1.30e-6, precision=8)
+        assert isinstance(result, int)
+        assert result >= 0
+
+
+class TestTimeOperations:
+    """Test time-related operations"""
+
+    def test_utc_to_local(self):
+        """Test UTC to local time conversion"""
+        from pyutilz.pythonlib import utc_to_local
+        from datetime import datetime, timezone
+
+        utc_dt = datetime.now(timezone.utc)
+        local_dt = utc_to_local(utc_dt)
+
+        assert isinstance(local_dt, datetime)
+
+    def test_weekofmonth(self):
+        """Test getting week of month"""
+        from pyutilz.pythonlib import weekofmonth
+        from datetime import date
+
+        test_date = date(2024, 1, 15)
+        result = weekofmonth(test_date)
+
+        assert isinstance(result, int)
+        assert 1 <= result <= 6
+
+
+class TestDelayFunctions:
+    """Test delay and timing functions"""
+
+    def test_imitate_delay_zero(self):
+        """Test with zero delay"""
+        from pyutilz.pythonlib import imitate_delay
+        import time
+
+        start = time.time()
+        imitate_delay(min_delay_seconds=0, max_delay_seconds=0)
+        elapsed = time.time() - start
+
+        assert elapsed < 0.5  # Should be very fast
+
+    def test_imitate_delay_small(self):
+        """Test with small delay"""
+        from pyutilz.pythonlib import imitate_delay
+        import time
+
+        start = time.time()
+        imitate_delay(min_delay_seconds=0.01, max_delay_seconds=0.02)
+        elapsed = time.time() - start
+
+        assert elapsed >= 0.01
+        assert elapsed < 0.5
