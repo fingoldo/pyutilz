@@ -182,6 +182,9 @@ exclude = '''
 [tool.ruff]
 line-length = 160
 target-version = "py38"
+exclude = ["tests", "scripts", ".git", "__pycache__", "build", "dist"]
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -193,13 +196,16 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by black)
-    "N802",  # function name should be lowercase (fixing separately)
-    "N806",  # variable name should be lowercase
+    "E402",  # module level import not at top of file (our style uses comment blocks)
+    "I001",  # import block is un-sorted or un-formatted (not enforcing import sorting)
+    "N802",  # function name should be lowercase (legacy code, fixing separately)
+    "N806",  # variable name should be lowercase (legacy code)
     "B006",  # mutable default (fixing separately)
+    "F541",  # f-string without placeholders (sometimes used for consistency)
+    "UP031", # use format specifiers instead of percent format (legacy code, not urgent)
 ]
-exclude = ["tests", "scripts", ".git", "__pycache__", "build", "dist"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports OK in __init__
 
 # MyPy type checker
