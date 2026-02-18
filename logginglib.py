@@ -176,7 +176,7 @@ def finalize_function_log(results_log: dict, db_path: str = None, verbose: bool 
         db_fields = "module,function,parameters,results,node,session"
         safe_execute_values(
             f"insert into {db_path} ({db_fields}) values %s",
-            [[field if type(field) != dict else json_pg_dumps(field) for field in [results_log.get(field) for field in db_fields.split(",")]]],
+            [[field if not isinstance(field, dict) else json_pg_dumps(field) for field in [results_log.get(field) for field in db_fields.split(",")]]],
         )
     else:
         if verbose:

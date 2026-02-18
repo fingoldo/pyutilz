@@ -148,7 +148,7 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
     """
     Decorator to measure function execution time and log if it exceeds the threshold.
     Also logs the arguments passed to the function, truncating large ones for readability.
-    
+
     Args:
         threshold (float): Time in seconds above which to log (default: 1.0).
         logger_name (str): Optional logger name; if None, uses the caller's module logger.

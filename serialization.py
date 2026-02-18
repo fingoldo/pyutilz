@@ -57,7 +57,7 @@ def serialize(obj, fname: str = None, compression: int = 9):
         if compression is not None:
             data = zlib.compress(data, compression)
         if fname is not None:
-            if type(fname) == str:
+            if isinstance(fname, str):
                 systemutils.ensure_dir_exists(fname)
                 with open(fname, "wb") as f:
                     f.write(data)
@@ -91,7 +91,7 @@ def unserialize(obj, compression: int = 9):
         elif to == "_io.BufferedReader":
             obj = f.read()
 
-        if type(obj) == bytes:
+        if isinstance(obj, bytes):
             if compression is not None:
                 try:
                     data = zlib.decompress(obj)

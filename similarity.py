@@ -28,10 +28,10 @@ import numpy as np
 def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
         simple string percent similarity
-        
+
         >>>levenshtein_strings_similarity("MeasureOIS21", "MeasureOIS18")
         0.8333333333333334
-        
+
     """
     return 1 - levenshtein_distance(a, b) / max(len(a), len(b))
 
@@ -40,10 +40,10 @@ def contigous_strings_similarity(a: str, b: str) -> tuple:
     """
         similarity of 2 strings measured in contigous blocks either from the left, from the right, or both (non-symmetrically).
         it's more strong than just levenshtein_distance.
-        
+
         >>>contigous_strings_similarity("MeosureOIS21qwe", "MeasureOIS18qwe")
         (0.3333333333333333, 'Meqwe')
-        
+
         >>>contigous_strings_similarity("MeosureOIS21qwe", "MeosureOIS21qwe")
         (1.0, 'MeosureOIS21qwe')
     """
@@ -164,7 +164,7 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
                                             best_gliding_perf = t_sim
 
                                 else:
-                                    c = a[:cur_b_len]
+                                    a[:cur_b_len]
 
                                     for k in range(cur_a_len - cur_b_len):
                                         t_sim = levenshtein_distance(b, a[k : k + cur_b_len])
@@ -229,7 +229,7 @@ def normalize_sentence(
         удаляем служебные символы (,;!.) и пробелы по краям
         заменяем все двойные пробелы одиночными.Исключаем точки и запятые
         результат в виде списка токенов
-        
+
         >normalize_sentence("", abbreviations = ["WOMEN", "(W)", "W", _
                                         "AMATEUER", "(AM)", "AM", _
                                             "RES", "(R)", "R", "B", _

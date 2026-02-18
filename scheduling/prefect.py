@@ -52,7 +52,7 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
                             flow {
                                 FLOW_FIELDS,
                                 flow_runs(
-                                    order_by: {start_time: desc}, 
+                                    order_by: {start_time: desc},
                                     where: {state: {_eq: $status}}
                                 ) {RUN_FIELDS}
                             }

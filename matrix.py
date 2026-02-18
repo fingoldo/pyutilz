@@ -74,9 +74,9 @@ def get_sparse_memory_usage(mat:object)->int:
         Return mem usage of a csr or csc matrix
     """
     try:
-        if type(mat) == csr_matrix:
+        if isinstance(mat, csr_matrix):
             return mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes
-        elif type(mat) == coo_matrix:
+        elif isinstance(mat, coo_matrix):
             return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes
         else:
             return -1

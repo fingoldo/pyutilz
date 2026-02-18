@@ -316,9 +316,8 @@ def create_tabs(
     # print('active_tab=%s' % active_tab)
 
     tabs = []
-    tooltips = []
     for tab in tabsList:
-        tabClassName, labelClassName, tabTooltip = None, None, None
+        tabClassName, labelClassName, _tabTooltip = None, None, None
         tabUsers = None
         tabLabel, tabId, tabUsers, *tabClassNames = tab
 
@@ -328,13 +327,13 @@ def create_tabs(
             if len(tabClassNames) > 1:
                 labelClassName = tabClassNames[1]
             if len(tabClassNames) > 2:
-                tabTooltip = tabClassNames[2]
+                tabClassNames[2]
                 # print('tabTooltip=%s' % tabTooltip)
         if tabId is None:
             tabId = tabLabel
         if tabLabel is None:
             tabLabel = tabId
-        if type(tabUsers) == str:
+        if isinstance(tabUsers, str):
             tabUsers = tabUsers.split(roles_separator)
         # if tabTooltip: tooltips.append(dbc.Tooltip(tabTooltip,target=(prefix+tabId)))
 

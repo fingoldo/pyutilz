@@ -184,10 +184,10 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
     ['Music Video', 'Videography', 'Video Editing']
 
     """
-    if type(attribute) == str:
+    if isinstance(attribute, str):
         attribute = [attribute]
     elems = {}
-    if type(json_obj) == list:
+    if isinstance(json_obj, list):
 
         elems = []
         for elem in json_obj:
@@ -201,10 +201,10 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
             if not found:
                 elems.append(elem)
 
-    elif type(json_obj) == dict:
+    elif isinstance(json_obj, dict):
         elems = {}
         for key, item in json_obj.items():
-            if type(item) == dict:
+            if isinstance(item, dict):
                 found = False
                 for next_attribute in attribute:
                     if next_attribute in item and item.get(next_attribute) is not None:
@@ -213,9 +213,9 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
                         break
                 if not found:
                     elems[key] = item
-            elif type(item) == str:
+            elif isinstance(item, str):
                 elems[key] = item
-            elif type(item) == list:
+            elif isinstance(item, list):
                 elems[key] = extract_json_attribute(item, attribute)
     return elems
 
@@ -306,13 +306,13 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
     from base64 import b64encode, b64decode
 
     try:
-        if type(variables) == str:
+        if isinstance(variables, str):
             variables = variables.split(",")
 
         config = configparser.ConfigParser(interpolation=None)
         config.read(file)
 
-        if type(section) == str:
+        if isinstance(section, str):
             sections = [section]
             prepend_section_names = False
         elif section is None:
@@ -327,7 +327,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
             for var in cur_variables:
                 try:
                     val = config[next_section][var]
-                    if type(val) == str:
+                    if isinstance(val, str):
                         if not is_float(val):
                             if encryption == "xor":
                                 # Fallback
@@ -360,11 +360,11 @@ def write_config_file(
 
     try:
 
-        if type(variables) == str:
+        if isinstance(variables, str):
             variables = variables.split(",")
         elif variables is None or variables == []:
             variables = list(object.keys())
-        assert type(variables) == list
+        assert isinstance(variables, list)
 
         config = configparser.ConfigParser()
 
@@ -479,7 +479,7 @@ def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, r
     import hashlib, base64
 
     hash = hashlib.new(algo)
-    if type(data) == str:
+    if isinstance(data, str):
         hash.update(data.encode("utf-8"))
     elif hasattr(data, "getquoted"):
         hash.update(data.getquoted())
@@ -715,7 +715,6 @@ def fix_missed_space_between_sentences(text: str) -> str:
     for token in eos:
         p = 0
         l = len(text)
-        s = 0
         while p >= 0:
             p = text.find(token, p)
             if p > 0:
@@ -951,8 +950,7 @@ def tokenize_text(source: str, tokenizer: object, lowercase: bool = True, strip:
         source = source.strip()
     if lowercase:
         source = source.lower()
-    for token in tokenizer(source):
-        yield token
+    yield from tokenizer(source)
 
 
 def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lowercase: bool = True, strip: bool = True) -> str:

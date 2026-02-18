@@ -140,7 +140,6 @@ def optimize_dtypes(
                     continue
 
                 # first try to int64, then to float64, then to category
-                new_dtype = None
                 try:
                     df[col] = df[col].astype(np.int64)
                     old_dtypes[col] = "int64"
@@ -384,8 +383,8 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
 
     num_stale = stale_columns.sum()
     if num_stale > 0:
-        logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns == True].index.values.tolist())}")
-        X = X.loc[:, stale_columns[stale_columns == False].index.values]
+        logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns].index.values.tolist())}")
+        X = X.loc[:, stale_columns[~stale_columns].index.values]
         all_features_names = X.columns.tolist()
         return all_features_names
     return X.columns.tolist()
@@ -433,7 +432,7 @@ def read_stats_from_multiple_files(
 
     lst = []
     fnames = []
-    for i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
+    for _i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
         if exclude:
             if exclude in filename:
                 continue
@@ -478,7 +477,7 @@ def read_stats_from_multiple_files(
             res = concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
             logger.info(f"Final df size ({len(res):_} rows)")
             if delete_after:
-                for i, filename in enumerate(fnames):
+                for _i, filename in enumerate(fnames):
                     try:
                         os.remove(filename)
                     except:
@@ -860,7 +859,7 @@ def ensure_dataframe_float32_convertability(
     verbose: int = 0,
 ) -> Union[pd.DataFrame, pl.DataFrame]:
     """
-    Ensures numeric columns are convertible to float32 for compatibility with LightGBM and 
+    Ensures numeric columns are convertible to float32 for compatibility with LightGBM and
     rational memory usage.
 
     LightGBM uses np.result_type(*df_dtypes) when inferring array dtype from Pandas input,

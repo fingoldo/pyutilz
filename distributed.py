@@ -69,9 +69,9 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
         else:
             fields = "host_name,os_machine_guid,os_serial"
 
-            nodes = db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
+            db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
             if _container.node_id is None:
-                nodes = db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
+                db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
             if _container.node_id is None:
                 return
 

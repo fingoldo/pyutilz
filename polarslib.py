@@ -62,7 +62,11 @@ def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
 
 
 def cast_f64_to_f32(df: pl.DataFrame) -> pl.DataFrame:
-    return df.with_columns(pl.col(pl.Int32, pl.UInt32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64).cast(pl.Float32))
+    # Int128 was added in polars 0.19.0, make it optional for older versions
+    int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
+    if hasattr(pl, 'Int128'):
+        int_types.append(pl.Int128)
+    return df.with_columns(pl.col(*int_types, pl.Float64).cast(pl.Float32))
 
 
 def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0) -> pl.Expr:

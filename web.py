@@ -231,7 +231,7 @@ def set_params(
 
 
 def set_proxy_last_use_time(last_used_dict: dict, proxies: dict) -> None:
-    if type(last_used_dict) == dict:
+    if isinstance(last_used_dict, dict):
         last_used_dict[hash(proxies)] = datetime.utcnow()
 
 

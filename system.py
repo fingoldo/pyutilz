@@ -606,7 +606,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
 
     for modulename in libs:
         try:
-            tmp = importlib.import_module(modulename)
+            importlib.import_module(modulename)
             version = sys.modules[modulename].__version__
             res[modulename] = version
         except Exception:

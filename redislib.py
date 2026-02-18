@@ -34,7 +34,7 @@ def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:st
 def rexecute (method_name:str,*args,**kwargs):
     """
         Safely execute any Redis command, not worrying about temporarily network/server issues
-        
+
     """
     res=None
 

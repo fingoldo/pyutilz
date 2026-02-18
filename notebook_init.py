@@ -125,12 +125,12 @@ def load_jupyter_extensions_minimal():
 def init_notebook(include_imports=True, inject_globals=False, use_simple_extensions=True):
     """
     Complete notebook initialization
-    
+
     Args:
         include_imports (bool): Whether to import common packages
-        inject_globals (bool): Whether to inject packages into global namespace  
+        inject_globals (bool): Whether to inject packages into global namespace
         use_simple_extensions (bool): Use simple extension loading method
-    
+
     Returns:
         dict: Dictionary of imported packages if include_imports=True
     """

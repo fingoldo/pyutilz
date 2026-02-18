@@ -48,7 +48,7 @@ import importlib, subprocess
 def ensure_installed(packages, sep: str = " ") -> None:
     known_abbreviations = {"scikit-learn": "sklearn", "imbalanced-learn": "imblearn"}
     if packages:
-        if type(packages) == str:
+        if isinstance(packages, str):
             if sep in packages:
                 packages = packages.split(sep)
             else:
@@ -96,10 +96,10 @@ def populate_object_from_dict(obj, dct):
 def flatten_keys_to_dict(obj: object) -> dict:
     """Recursively walks content of the object, bringing all the key-value keys to the top level dict."""
     res = dict()
-    if type(obj) == list:
+    if isinstance(obj, list):
         for subobj in obj:
             res.update(flatten_keys_to_dict(subobj))
-    elif type(obj) == dict:
+    elif isinstance(obj, dict):
         for key, value in obj.items():
             if type(value) in (list, dict):
                 res.update(flatten_keys_to_dict(value))
@@ -253,7 +253,7 @@ def filter_elements_by_type(obj: Union[dict, Sequence], allowed_types: tuple = (
     >>>filter_elems_by_type(obj={"a", 1, "test"}, allowed_types=(str,))
     ['test', 'a']
     """
-    if type(obj) == dict:
+    if isinstance(obj, dict):
         return {key: value for key, value in obj.items() if isinstance(value, allowed_types)}
     else:
         return [value for value in obj if isinstance(value, allowed_types)]
@@ -414,7 +414,7 @@ def utc_ts_2_locstr(
     res = f"{utc_to_local(utc_dt).strftime(output_date_format)}"
 
     if dst:
-        if type(dst) == int:
+        if isinstance(dst, int):
             if dst > 0:
                 if dst in dst_names:
                     utc_now = datetime.utcnow()

@@ -37,12 +37,12 @@ from .strings import remove_json_attributes, leave_json_attributes, json_pg_dump
 def ensure_bytes_converted(obj: dict) -> dict:
     """Ensure image information (as per Pillow) is converted from bytes to strings."""
     for field, value in obj.copy().items():
-        if type(value) == bytes:
+        if isinstance(value, bytes):
             try:
                 obj[field] = value.decode("UTF-8")
             except:
                 del obj[field]
-        elif type(value) == dict:
+        elif isinstance(value, dict):
             ensure_bytes_converted(value)
         elif type(value) in (tuple, IFDRational):
             obj[field] = str(value)
@@ -60,7 +60,7 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: int = None
 
     # filesize
 
-    if type(img) == str:
+    if isinstance(img, str):
         filesize = getsize(img)
         try:
             img = PIL.Image.open(img)
@@ -85,13 +85,13 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: int = None
         # get the tag name, instead of human unreadable tag id
         tag = TAGS.get(tag_id)
         if tag:
-            data = exifdata.get(tag_id)
+            exifdata.get(tag_id)
             # decode bytes
             if isinstance(tag_value, bytes):
                 try:
                     tag_value = tag_value.decode("UTF-8")
                 except:
-                    logger.warning(f"Error when decoding byte property {tag}: {tag_value} in image {orig_img if type(orig_img)==str else ''}")
+                    logger.warning(f"Error when decoding byte property {tag}: {tag_value} in image {orig_img if isinstance(orig_img, str) else ''}")
                     continue
 
             decoded_exif[tag] = tag_value

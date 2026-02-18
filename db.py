@@ -88,7 +88,7 @@ def prefix_inserts(insert, compiler, **kw):
 
 
 def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
-    if type(excluding) == str:
+    if isinstance(excluding, str):
         excluding = excluding.split(",")
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
@@ -225,9 +225,9 @@ def basic_db_execute(
             cur = get_cursor(cursor_type=cursor_type, cursor_factory=cursor_factory, cursor_name=cursor_name, itersize=itersize)
 
             if ex_type == "execute":
-                res = cur.execute(statement, data)
+                cur.execute(statement, data)
             elif ex_type == "execute_values":
-                res = execute_values(cur, statement, data, page_size=page_size)
+                execute_values(cur, statement, data, page_size=page_size)
 
             # if '_named' not in cursor_type:
             # if auto_commit: conn.commit()
@@ -276,7 +276,6 @@ def basic_db_execute(
                 else:
                     return cur.fetchall()
             else:
-                cols_names = []
                 if return_cursor:
                     return cur
                 else:
@@ -294,7 +293,7 @@ def safe_execute_values(
 
 
 def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
-    if type(fields) == str:
+    if isinstance(fields, str):
         fields = fields.split(",")
     if elements is not None:
         if fields == ["*"]:
@@ -351,9 +350,9 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     # Smart params parsing
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if type(where_fields) == str:
+    if isinstance(where_fields, str):
         where_fields = where_fields.split(",")
-    if type(set_fields) == str:
+    if isinstance(set_fields, str):
         set_fields = set_fields.split(",")
 
     if mode in ["select", "update"]:
@@ -491,7 +490,7 @@ def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "publ
     res = safe_execute(
         f"""
     SELECT EXISTS (
-       SELECT FROM information_schema.tables 
+       SELECT FROM information_schema.tables
        WHERE  table_schema = {u(schema_name)} AND table_name={u(table_name)}
    )"""
     )
@@ -725,7 +724,7 @@ def enable_tables_sizes_approximation():
         """
 
 CREATE or replace FUNCTION get_approximate_tables_sizes(tables_names text[])
-RETURNS  TABLE (table_name text,nrows bigint)  AS 
+RETURNS  TABLE (table_name text,nrows bigint)  AS
 $func$
 
 	SELECT relname::text,reltuples::bigint AS estimate FROM pg_class WHERE  oid in (select unnest($1)::regclass)
@@ -882,8 +881,8 @@ def build_upsert_query(
         else:
             values.append(field)
     fresh_query = f"""
-    insert into {table_name} ({','.join(actual_fields_names)}) 
-    select {','.join(values)} 
+    insert into {table_name} ({','.join(actual_fields_names)})
+    select {','.join(values)}
     from data """
 
     # ------------------------------
@@ -926,8 +925,8 @@ def build_upsert_query(
 
     if len(history_table_name) > 0:
         assert len(conflict_fields) > 0
-        upd_conflict_fields = "(" + ",".join([f"u.{field}" for field in conflict_fields]) + ")"
-        upd_changed_fields = "(" + ",".join([f"c.{field}" for field in conflict_fields]) + ")"
+        "(" + ",".join([f"u.{field}" for field in conflict_fields]) + ")"
+        "(" + ",".join([f"c.{field}" for field in conflict_fields]) + ")"
 
         history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
         hist_query = f"""
@@ -1000,8 +999,8 @@ def update_if_now(added_at: str, clause: str) -> str:
     """
     if "now" in added_at.lower():
         onconflict_clause = f"""
-            do update set 
-                {clause}            
+            do update set
+                {clause}
         """
     else:
         onconflict_clause = """do nothing"""
@@ -1021,7 +1020,7 @@ create table {table_name} (
 	ping_timeout_minutes int,
 
 	taken_by text, --node ip
-	
+
 	started_at timestamp without time zone,
 
 	last_ping_at timestamp without time zone,
@@ -1030,7 +1029,7 @@ create table {table_name} (
 	finished_at timestamp without time zone,
 	result jsonb
 
-	)    
+	)
     """
         ).format(table_name=sql.Identifier(table_name))
     )
@@ -1040,37 +1039,37 @@ def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs")
     return safe_execute(
         sql.SQL(
             """
-        with base as (select name from {table_name} where name=%(job_name)s 
-            and 
+        with base as (select name from {table_name} where name=%(job_name)s
+            and
                 (
                     (started_at is null) --never started before
-                        or  
+                        or
                     (
                         (finished_at is null or finished_at <(now() at time zone 'utc'-interval_minutes * interval '1 minute'))
-                            and 
+                            and
                         (finished_at>started_at)
-                            and 
+                            and
                         singleton=true
                     ) -- not finished long enough after successful finishing for a singleton
                         or
                     (
                         (finished_at is null or finished_at <(now() at time zone 'utc'-interval_minutes * interval '1 minute'))
-                            and 
+                            and
                         (finished_at is null or finished_at<started_at)
-                            and 
+                            and
                         (ping_timeout_minutes is not null and (last_ping_at is null or last_ping_at<(now() at time zone 'utc'-ping_timeout_minutes * interval '1 minute')))
-                            and 
+                            and
                         singleton=true
-                    ) -- not finished long enough WITHOUT successful finishing yet AND with a missed ping, for a singleton		
-                            
-                            
+                    ) -- not finished long enough WITHOUT successful finishing yet AND with a missed ping, for a singleton
+
+
                         or
                     (
                         (finished_at is null or finished_at <(now() at time zone 'utc'-interval_minutes * interval '1 minute'))
-                            and 
-                        singleton=false			
+                            and
+                        singleton=false
                     ) -- not finished long enough for NOT a singleton
-                            
+
                 )
                 limit 1 for update skip locked)
 
@@ -1085,7 +1084,7 @@ def regjobs_progress(job_name: str, result: dict, table_name: str = "regular_job
     return safe_execute(
         sql.SQL(
             """
-        update {table_name} set last_ping_at=now() at time zone 'utc',last_result=%(result)s where name=%(job_name)s             
+        update {table_name} set last_ping_at=now() at time zone 'utc',last_result=%(result)s where name=%(job_name)s
     """
         ).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},
@@ -1096,7 +1095,7 @@ def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_job
     return safe_execute(
         sql.SQL(
             """
-        update {table_name} set finished_at=now() at time zone 'utc',result=%(result)s where name=%(job_name)s             
+        update {table_name} set finished_at=now() at time zone 'utc',result=%(result)s where name=%(job_name)s
     """
         ).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},

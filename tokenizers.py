@@ -81,7 +81,7 @@ class AdvancedTokenizer:
 
         cur_sentences = nltk.sent_tokenize(text)
         last_sentence_word = None
-        for s, sent in enumerate(cur_sentences):
+        for _s, sent in enumerate(cur_sentences):
             stext = sent.strip()
             # print(stext)
             words = merge_punctuation_signs(nltk.word_tokenize(stext))
@@ -150,7 +150,7 @@ class AdvancedTokenizer:
         cur = db.safe_execute(sql, cursor_factory=psycopg2.extras.NamedTupleCursor, cursor_name="test", return_cursor=True)
         pbar = tqdm(total=exp_length)
 
-        if type(cur) == list:
+        if isinstance(cur, list):
             print(cur)
         else:
             while True:
