@@ -79,7 +79,12 @@ system = [
     "numba>=0.56",
     "pympler>=1.0",
     "joblib>=1.2",
-    "portalocker>=2.0"
+    "portalocker>=2.0",
+    # Hardware detection (migrated from ml_perf_test)
+    "py-cpuinfo>=9.0",
+    "GPUtil>=1.4",
+    "xmltodict>=0.13",
+    "pypiwin32>=223; platform_system=='Windows'"
 ]
 
 # All optional dependencies
@@ -97,7 +102,8 @@ all = [
     # nlp
     "spacy>=3.0", "nltk>=3.8", "jellyfish>=0.9", "tiktoken>=0.5",
     # system
-    "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0", "joblib>=1.2", "portalocker>=2.0"
+    "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0", "joblib>=1.2", "portalocker>=2.0",
+    "py-cpuinfo>=9.0", "GPUtil>=1.4", "xmltodict>=0.13", "pypiwin32>=223; platform_system=='Windows'"
 ]
 
 # Development dependencies
