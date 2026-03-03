@@ -60,9 +60,20 @@
 
 ## 📦 Installation
 
-### Basic Installation
+### From PyPI
 ```bash
 pip install pyutilz
+```
+
+### From Source (Development / Editable Mode)
+
+For the latest changes or development, install from a local git clone in editable mode.
+This way, `git pull` will automatically pick up code changes without reinstalling:
+
+```bash
+git clone https://github.com/fingoldo/pyutilz.git
+cd pyutilz
+pip install -e ".[system]"
 ```
 
 ### With Optional Dependencies
@@ -83,11 +94,14 @@ pip install pyutilz[cloud]
 # For NLP tasks
 pip install pyutilz[nlp]
 
-# For system utilities
+# For system utilities (hardware detection, monitoring)
 pip install pyutilz[system]
 
 # Install everything
 pip install pyutilz[all]
+
+# Editable mode with extras (combine as needed)
+pip install -e ".[system,pandas]"
 ```
 
 ---

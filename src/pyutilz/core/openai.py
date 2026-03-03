@@ -1,7 +1,15 @@
-import tiktoken
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
+def _require_tiktoken():
+    if tiktoken is None:
+        raise ImportError("tiktoken is required: pip install pyutilz[nlp]")
 
 def num_tokens_from_string(string: str, encoding_name: str) -> int:
     """Returns the number of tokens in a text string."""
+    _require_tiktoken()
     encoding = tiktoken.get_encoding(encoding_name)
     num_tokens = len(encoding.encode(string))
 
@@ -11,6 +19,7 @@ def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613")->int:
     """Returns the number of tokens used by a list of messages.
     Note: assumed model == "gpt-3.5-turbo-0613". future models may deviate from this."""
 
+    _require_tiktoken()
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:

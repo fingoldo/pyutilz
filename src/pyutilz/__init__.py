@@ -41,10 +41,14 @@ _MODULE_ALIASES = {
 def _create_lazy_module(real_module_name):
     """Create a lazy-loading proxy module."""
     def __getattr__(name):
+        # Skip dunder attributes to avoid triggering imports from IPython autoreload,
+        # inspect.getmodule, hasattr(module, '__file__'), etc.
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(name)
         real_mod = import_module(real_module_name)
         sys.modules[proxy_mod.__name__] = real_mod
         return getattr(real_mod, name)
-    
+
     proxy_mod = types.ModuleType(real_module_name.split('.')[-1])
     proxy_mod.__getattr__ = __getattr__
     return proxy_mod
