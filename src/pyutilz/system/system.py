@@ -1443,6 +1443,30 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
     return devices
 
 
+# Backward-compatible alias
+get_gpuinfo_gpu_info = get_gpuutil_gpu_info
+
+
+def compute_total_gpus_ram(gpus: list) -> dict:
+    """Compute aggregate GPU RAM stats from a list of GPU info dicts.
+
+    Args:
+        gpus: List of dicts as returned by get_gpuutil_gpu_info()
+
+    Returns:
+        dict with gpu_max_ram_total, gpus_ram_total, gpus_ram_free
+    """
+    if not gpus:
+        return {"gpu_max_ram_total": 0, "gpus_ram_total": 0, "gpus_ram_free": 0}
+    totals = [g.get("memoryTotal", 0) for g in gpus]
+    frees = [g.get("memoryFree", 0) for g in gpus]
+    return {
+        "gpu_max_ram_total": max(totals) if totals else 0,
+        "gpus_ram_total": sum(totals),
+        "gpus_ram_free": sum(frees),
+    }
+
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # HDD
 # ----------------------------------------------------------------------------------------------------------------------------
