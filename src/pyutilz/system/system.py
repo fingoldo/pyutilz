@@ -440,29 +440,49 @@ def get_system_info(
                         logger.warning(f"Could not extract Windows serial!")
 
                 elif current_system == "Linux":
-                    machine_id = subprocess.check_output("cat /var/lib/dbus/machine-id").decode().strip()
-                    info["os_machine_guid"] = machine_id
-                    info["os_serial"] = machine_id
+                    try:
+                        machine_id = subprocess.check_output(
+                            ["cat", "/var/lib/dbus/machine-id"]
+                        ).decode().strip()
+                        info["os_machine_guid"] = machine_id
+                        info["os_serial"] = machine_id
+                    except Exception:
+                        try:
+                            machine_id = subprocess.check_output(
+                                ["cat", "/etc/machine-id"]
+                            ).decode().strip()
+                            info["os_machine_guid"] = machine_id
+                            info["os_serial"] = machine_id
+                        except Exception:
+                            logger.warning("Could not extract Linux machine-id")
+                            info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Android":
-                    serial = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1].decode().strip()
-                    info["os_machine_guid"] = serial
-                    info["os_serial"] = serial
+                    try:
+                        serial = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1].decode().strip()
+                        info["os_machine_guid"] = serial
+                        info["os_serial"] = serial
+                    except Exception:
+                        logger.warning("Could not extract Android serial")
+                        info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Mac":
-                    # Fixed: Avoid shell=True by using subprocess.PIPE for chaining commands
-                    ioreg_proc = subprocess.Popen(
-                        ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                        stdout=subprocess.PIPE
-                    )
-                    grep_proc = subprocess.Popen(
-                        ["grep", "-E", "(UUID)"],
-                        stdin=ioreg_proc.stdout,
-                        stdout=subprocess.PIPE
-                    )
-                    ioreg_proc.stdout.close()  # Allow ioreg to receive SIGPIPE if grep exits
-                    output = grep_proc.communicate()[0]
-                    guid = output.decode().split('"')[-2]
-                    info["os_machine_guid"] = guid
-                    info["os_serial"] = guid
+                    try:
+                        ioreg_proc = subprocess.Popen(
+                            ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                            stdout=subprocess.PIPE
+                        )
+                        grep_proc = subprocess.Popen(
+                            ["grep", "-E", "(UUID)"],
+                            stdin=ioreg_proc.stdout,
+                            stdout=subprocess.PIPE
+                        )
+                        ioreg_proc.stdout.close()
+                        output = grep_proc.communicate()[0]
+                        guid = output.decode().split('"')[-2]
+                        info["os_machine_guid"] = guid
+                        info["os_serial"] = guid
+                    except Exception:
+                        logger.warning("Could not extract Mac UUID")
+                        info["os_serial"] = info.get("os_machine_guid", "")
 
                 # host_name is also required for distributed.py
                 info["host_name"] = socket.gethostname()
