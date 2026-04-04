@@ -6,7 +6,7 @@ import sys
 import types
 from importlib import import_module
 
-__all__ = ['__version__', 'core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev']
+__all__ = ['__version__', 'core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev', 'llm']
 
 # Module aliases for backward compatibility
 # NOTE: Don't create aliases for names that conflict with subpackages (system, web, cloud)
@@ -64,7 +64,7 @@ for alias, real_name in _MODULE_ALIASES.items():
 
 def __getattr__(name):
     """Lazy import for package-level attributes."""
-    if name in ('core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev'):
+    if name in ('core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev', 'llm'):
         return import_module(f'.{name}', __name__)
     if name in _MODULE_ALIASES:
         return import_module(_MODULE_ALIASES[name])

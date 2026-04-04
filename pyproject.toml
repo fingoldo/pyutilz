@@ -72,6 +72,17 @@ nlp = [
     "tiktoken>=0.5"
 ]
 
+# LLM providers
+llm = [
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+    "httpx>=0.25",
+    "tenacity>=8.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "tiktoken>=0.5",
+]
+
 # System utilities
 system = [
     "psutil>=5.9",
@@ -101,6 +112,9 @@ all = [
     "google-cloud-storage>=2.0", "boto3>=1.26",
     # nlp
     "spacy>=3.0", "nltk>=3.8", "jellyfish>=0.9", "tiktoken>=0.5",
+    # llm
+    "anthropic>=0.40", "google-genai>=1.0", "httpx>=0.25", "tenacity>=8.0",
+    "pydantic>=2.0", "pydantic-settings>=2.0", "tiktoken>=0.5",
     # system
     "psutil>=5.9", "tqdm>=4.65", "numba>=0.56", "pympler>=1.0", "joblib>=1.2", "portalocker>=2.0",
     "py-cpuinfo>=9.0", "GPUtil>=1.4", "xmltodict>=0.13", "pypiwin32>=223; platform_system=='Windows'"
@@ -111,6 +125,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
+    "pytest-asyncio>=0.21",
     "black>=23.0",
     "ruff>=0.1",
     "mypy>=1.0",
