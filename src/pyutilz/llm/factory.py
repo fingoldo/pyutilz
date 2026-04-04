@@ -9,23 +9,19 @@ import threading
 
 from pyutilz.llm.config import LLMSettings, get_llm_settings
 from pyutilz.llm.base import LLMProvider
-from pyutilz.llm.anthropic_provider import AnthropicProvider
-from pyutilz.llm.gemini_provider import GeminiProvider
-from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
-from pyutilz.llm.deepseek_provider import DeepSeekProvider
-from pyutilz.llm.xai_provider import XAIProvider
 
 # Instance cache: (canonical_name, kwargs_key) → LLMProvider
 _provider_cache: dict[tuple, LLMProvider] = {}
 _provider_lock = threading.Lock()
 
-# Canonical provider names → constructor
-_PROVIDER_CONSTRUCTORS = {
-    "anthropic": AnthropicProvider,
-    "gemini": GeminiProvider,
-    "claude-code": ClaudeCodeProvider,
-    "deepseek": DeepSeekProvider,
-    "xai": XAIProvider,
+
+# Canonical provider names → (module_path, class_name) for lazy import
+_PROVIDER_MODULES = {
+    "anthropic": ("pyutilz.llm.anthropic_provider", "AnthropicProvider"),
+    "gemini": ("pyutilz.llm.gemini_provider", "GeminiProvider"),
+    "claude-code": ("pyutilz.llm.claude_code_provider", "ClaudeCodeProvider"),
+    "deepseek": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider"),
+    "xai": ("pyutilz.llm.xai_provider", "XAIProvider"),
 }
 
 # Aliases mapping to canonical names
@@ -67,13 +63,16 @@ def get_llm_provider(
     # Resolve aliases
     canonical = _ALIASES.get(name, name)
 
-    if canonical not in _PROVIDER_CONSTRUCTORS:
-        available = sorted(set(list(_PROVIDER_CONSTRUCTORS.keys()) + list(_ALIASES.keys())))
+    if canonical not in _PROVIDER_MODULES:
+        available = sorted(set(list(_PROVIDER_MODULES.keys()) + list(_ALIASES.keys())))
         raise ValueError(
             f"Unknown provider: {provider_name}. Available: {available}"
         )
 
-    constructor = _PROVIDER_CONSTRUCTORS[canonical]
+    import importlib
+    mod_path, cls_name = _PROVIDER_MODULES[canonical]
+    mod = importlib.import_module(mod_path)
+    constructor = getattr(mod, cls_name)
 
     # Pass API key for providers that need it
     if canonical == "anthropic":
