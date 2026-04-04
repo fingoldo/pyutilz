@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("tenacity")
+
 from pyutilz.llm._retry import (
     log_retry,
     RETRY_WAIT,

@@ -6,7 +6,10 @@ import pytest
 
 from pyutilz.llm.base import LLMProvider
 from pyutilz.llm.exceptions import JSONParsingError
-from pyutilz.llm.factory import get_llm_provider, _PROVIDER_CONSTRUCTORS, _ALIASES
+
+pydantic = pytest.importorskip("pydantic")
+
+from pyutilz.llm.factory import get_llm_provider, _PROVIDER_MODULES, _ALIASES
 
 
 class TestExtractJson:
@@ -50,12 +53,11 @@ class TestExtractJson:
 
 class TestFactory:
     def test_known_providers(self):
-        for name in _PROVIDER_CONSTRUCTORS:
-            assert name in _PROVIDER_CONSTRUCTORS
+        assert len(_PROVIDER_MODULES) >= 5
 
     def test_aliases_resolve(self):
         for alias, canonical in _ALIASES.items():
-            assert canonical in _PROVIDER_CONSTRUCTORS, f"Alias '{alias}' → '{canonical}' not found"
+            assert canonical in _PROVIDER_MODULES, f"Alias '{alias}' → '{canonical}' not found"
 
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
@@ -72,7 +74,7 @@ class TestFactory:
 
     @pytest.mark.parametrize("alias,canonical", list(_ALIASES.items()))
     def test_each_alias(self, alias, canonical):
-        assert canonical in _PROVIDER_CONSTRUCTORS
+        assert canonical in _PROVIDER_MODULES
 
 
 class TestProviderCosts:

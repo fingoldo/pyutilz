@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("httpx")
+
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.deepseek_provider import DeepSeekProvider
 

@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("httpx")
+
 from pyutilz.llm.xai_provider import XAIProvider
 
 

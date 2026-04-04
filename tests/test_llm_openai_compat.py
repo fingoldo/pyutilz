@@ -3,8 +3,9 @@
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
-import httpx
 import pytest
+
+httpx = pytest.importorskip("httpx")
 
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider

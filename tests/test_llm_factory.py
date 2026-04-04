@@ -3,10 +3,12 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+pytest.importorskip("pydantic")
+
 from pyutilz.llm.factory import (
     get_llm_provider,
     _provider_cache,
-    _PROVIDER_CONSTRUCTORS,
+    _PROVIDER_MODULES,
     _ALIASES,
 )
 
@@ -24,18 +26,20 @@ class TestAliases:
 
     def test_all_aliases_point_to_valid_constructors(self):
         for alias, canonical in _ALIASES.items():
-            assert canonical in _PROVIDER_CONSTRUCTORS, (
+            assert canonical in _PROVIDER_MODULES, (
                 f"Alias '{alias}' → '{canonical}' has no constructor"
             )
 
 
-class TestProviderConstructors:
+class TestProviderModules:
     def test_has_at_least_five_providers(self):
-        assert len(_PROVIDER_CONSTRUCTORS) >= 5
+        assert len(_PROVIDER_MODULES) >= 5
 
-    def test_all_constructors_callable(self):
-        for name, ctor in _PROVIDER_CONSTRUCTORS.items():
-            assert callable(ctor), f"Constructor for '{name}' is not callable"
+    def test_all_entries_are_module_class_tuples(self):
+        for name, entry in _PROVIDER_MODULES.items():
+            assert isinstance(entry, tuple) and len(entry) == 2, (
+                f"Entry for '{name}' should be (module_path, class_name)"
+            )
 
 
 class TestGetLlmProvider:
