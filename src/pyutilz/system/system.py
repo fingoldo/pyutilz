@@ -592,6 +592,7 @@ def get_system_info(
         return info
     except Exception as e:
         logger.exception(e)
+        return info
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
