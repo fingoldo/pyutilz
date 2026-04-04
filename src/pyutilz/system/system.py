@@ -388,9 +388,16 @@ def get_system_info(
         return_sensitive_info = True
         return_os_info = True  # Needed to trigger sensitive info collection
 
-    import numba
-    from numba import cuda
-    from pyutilz.web import web
+    try:
+        import numba
+        from numba import cuda
+    except ImportError:
+        numba = None
+        cuda = None
+    try:
+        from pyutilz.web import web
+    except ImportError:
+        web = None
 
     try:
         import x86cpu
@@ -460,7 +467,7 @@ def get_system_info(
                 # host_name is also required for distributed.py
                 info["host_name"] = socket.gethostname()
 
-                if return_network_info:
+                if return_network_info and web is not None:
                     info["host_external_ip"] = web.get_external_ip()
 
         if return_hardware_info or return_usage_stats:
@@ -523,7 +530,7 @@ def get_system_info(
 
         # Soft+GPU
         info["python_version"] = platform.python_implementation() + " " + platform.python_version()
-        if "cuda" in dir(numba):
+        if numba is not None and "cuda" in dir(numba):
             if numba.cuda.is_available():
                 try:
                     cuda_version = re.findall(", V(.+)\r\n", subprocess.check_output("nvcc --version").decode())

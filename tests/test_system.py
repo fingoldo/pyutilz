@@ -145,6 +145,8 @@ class TestGetCpuUsage:
 
         try:
             info = get_system_info()
+            if info is None:
+                pytest.skip("get_system_info returned None (missing dependencies)")
             # Should include CPU info
             if 'cpu_current_load_percent' in info:
                 usage = info['cpu_current_load_percent']
