@@ -11,6 +11,12 @@ import numpy as np
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
+try:
+    import polars_ds  # noqa: F401
+    _has_polars_ds = True
+except ImportError:
+    _has_polars_ds = False
+
 from pyutilz.data.polarslib import (
     compute_concentrations,
     build_aggregate_features_polars,
@@ -189,6 +195,7 @@ class TestComputeConcentrations:
 # ============================================================
 
 
+@pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
 class TestBuildAggregateFeaturesAdvanced:
     """Covers lines 287, 289, 293, 326-328, 388-391, 394-411, 427, 456-457."""
 
@@ -362,6 +369,7 @@ class TestBuildAggregateFeaturesAdvanced:
 # ============================================================
 
 
+@pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
 @patch("pyutilz.data.polarslib.clean_ram")
 class TestCreateTsFeaturesPolars:
     """Covers lines 596-658."""

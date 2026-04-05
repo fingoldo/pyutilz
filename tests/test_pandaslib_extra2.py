@@ -354,6 +354,7 @@ class TestBenchmarkPickleCompression:
 class TestBenchmarkCsvCompression:
     def test_csv_benchmark(self, tmp_path):
         """Lines 736-752."""
+        pytest.importorskip("zstandard")
         from pyutilz.pandaslib import benchmark_dataframe_csv_compression
         df = pd.DataFrame({"a": range(20)})
         res = []

@@ -1,5 +1,6 @@
 """Tests targeting uncovered lines in system.py (extra3)."""
 
+import platform
 import pytest
 from unittest.mock import patch, MagicMock, mock_open
 import types
@@ -466,6 +467,7 @@ class TestShowBiggestSessionObjects:
 
 # ── check_large_pages_windows exception (lines 1072-1074) ──
 
+@pytest.mark.skipif(platform.system() != "Windows", reason="Windows only")
 class TestCheckLargePagesWindows:
     def test_exception_returns_false(self):
         from pyutilz.system.system import check_large_pages_windows

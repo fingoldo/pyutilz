@@ -452,6 +452,14 @@ class TestPolarsdfInfoExtra:
 # ============================================================
 
 
+try:
+    import polars_ds  # noqa: F401
+    _has_polars_ds = True
+except ImportError:
+    _has_polars_ds = False
+
+
+@pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
 class TestBuildAggregateFeatures:
     def test_returns_tuple_of_three(self):
         df = pl.DataFrame({"a": [1.0, 2.0, 3.0]})
