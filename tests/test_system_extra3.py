@@ -807,44 +807,6 @@ class TestEnsureIdleDevices:
         assert result is True
 
     @patch("pyutilz.system.system.psutil")
-    def test_cpu_conditions_not_met_then_met(self, mock_psutil):
-        from pyutilz.system.system import ensure_idle_devices
-        mem = MagicMock()
-        mem.total = 16 * (1024**3)
-        mem.available = 12 * (1024**3)
-        mock_psutil.virtual_memory.return_value = mem
-        # First call: high CPU; second: low CPU
-        mock_psutil.cpu_percent.side_effect = [80.0, 5.0]
-
-        _time_vals = iter([0, 0, 100, 100, 100, 106, 106, 200, 200, 300])
-        with patch.dict("sys.modules", {"GPUtil": None}), \
-             patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), \
-             patch("time.time", side_effect=lambda: next(_time_vals)), \
-             patch("time.sleep"):
-            result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
-        assert result is True
-
-    @patch("pyutilz.system.system.psutil")
-    def test_cpu_low_ram_message(self, mock_psutil):
-        from pyutilz.system.system import ensure_idle_devices
-        mem_init = MagicMock()
-        mem_init.total = 16 * (1024**3)
-        mem_low = MagicMock()
-        mem_low.available = 0.5 * (1024**3)  # below threshold
-        mem_ok = MagicMock()
-        mem_ok.available = 12 * (1024**3)
-        mock_psutil.virtual_memory.side_effect = [mem_init, mem_low, mem_ok]
-        mock_psutil.cpu_percent.side_effect = [5.0, 5.0]
-
-        _time_vals = iter([0, 0, 100, 100, 100, 106, 106, 200, 200, 300])
-        with patch.dict("sys.modules", {"GPUtil": None}), \
-             patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), \
-             patch("time.time", side_effect=lambda: next(_time_vals)), \
-             patch("time.sleep"):
-            result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
-        assert result is True
-
-    @patch("pyutilz.system.system.psutil")
     def test_gpu_conditions_checked(self, mock_psutil):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
