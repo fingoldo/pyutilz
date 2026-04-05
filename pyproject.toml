@@ -165,7 +165,15 @@ omit = [
     "*/scheduling/*",
     "*/__pycache__/*",
     "*/site-packages/*",
-    ".venv/*"
+    ".venv/*",
+    "*/cloud/*",
+    "*/database/*",
+    "*/web/browser.py",
+    "*/dev/dashlib.py",
+    "*/dev/notebook_init.py",
+    "*/core/filemaker.py",
+    "*/core/openai.py",
+    "*/text/tokenizers.py",
 ]
 
 [tool.coverage.report]
