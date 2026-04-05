@@ -816,9 +816,10 @@ class TestEnsureIdleDevices:
         # First call: high CPU; second: low CPU
         mock_psutil.cpu_percent.side_effect = [80.0, 5.0]
 
+        _time_vals = iter([0, 0, 100, 100, 100, 106, 106, 200, 200, 300])
         with patch.dict("sys.modules", {"GPUtil": None}), \
              patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), \
-             patch("time.time", side_effect=[0, 100, 100, 106]), \
+             patch("time.time", side_effect=lambda: next(_time_vals)), \
              patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
         assert result is True
@@ -835,9 +836,10 @@ class TestEnsureIdleDevices:
         mock_psutil.virtual_memory.side_effect = [mem_init, mem_low, mem_ok]
         mock_psutil.cpu_percent.side_effect = [5.0, 5.0]
 
+        _time_vals = iter([0, 0, 100, 100, 100, 106, 106, 200, 200, 300])
         with patch.dict("sys.modules", {"GPUtil": None}), \
              patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), \
-             patch("time.time", side_effect=[0, 100, 100, 106]), \
+             patch("time.time", side_effect=lambda: next(_time_vals)), \
              patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
         assert result is True

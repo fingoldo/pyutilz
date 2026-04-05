@@ -54,9 +54,9 @@ class TestOptimizeDtypesSkipColumns:
     def test_skip_columns_preserved(self):
         df = pd.DataFrame({"a": ["hello", "world"], "b": ["1", "2"]})
         result = optimize_dtypes(df, max_categories=10, skip_columns=["a"], inplace=False)
-        assert result["a"].dtype.name == "object"
+        assert result["a"].dtype.name in ("object", "str", "string")
         # b should be converted to int
-        assert result["b"].dtype.name != "object"
+        assert result["b"].dtype.name not in ("object", "str", "string")
 
     def test_category_conversion_exception(self):
         """Lines 163-166: exception in nunique (e.g. unhashable list values)."""
@@ -343,6 +343,7 @@ class TestBenchmarkParquetCompression:
 class TestBenchmarkPickleCompression:
     def test_pickle_benchmark(self, tmp_path):
         """Lines 694-711."""
+        pytest.importorskip("zstandard")
         from pyutilz.pandaslib import benchmark_dataframe_pickle_compression
         df = pd.DataFrame({"a": range(20)})
         res = []

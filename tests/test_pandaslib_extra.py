@@ -132,7 +132,9 @@ class TestGroupColumnsByDtype:
         groups = group_columns_by_dtype(df)
         assert "a" in groups["int64"]
         assert "b" in groups["float64"]
-        assert "c" in groups["object"]
+        # pandas 2.x may use "str" instead of "object" for string columns
+        str_dtype = str(df["c"].dtype)
+        assert "c" in groups[str_dtype]
 
     def test_empty_df(self):
         df = pd.DataFrame()
@@ -204,15 +206,19 @@ class TestRemoveConstantColumnsPrewarm:
 class TestClassifyColumnTypesDtype:
     @pytest.mark.parametrize("dtype,expected_field", [
         (pd.Series([True]).dtype, "bool"),
-        (pd.Series(["x"]).dtype, "object"),
         (pd.Series(pd.to_datetime(["2020-01-01"])).dtype, "datetime"),
         (pd.Categorical(["a"]).dtype, "category"),
         (pd.Series([1]).dtype, "numeric"),
     ])
     def test_dtype_param(self, dtype, expected_field):
         is_bool, is_obj, is_dt, is_cat, is_num = classify_column_types(dtype=dtype)
-        mapping = {"bool": is_bool, "object": is_obj, "datetime": is_dt, "category": is_cat, "numeric": is_num}
+        mapping = {"bool": is_bool, "datetime": is_dt, "category": is_cat, "numeric": is_num}
         assert mapping[expected_field] is True
+
+    def test_dtype_param_string(self):
+        dtype = pd.Series(["x"]).dtype
+        is_bool, is_obj, is_dt, is_cat, is_num = classify_column_types(dtype=dtype)
+        assert is_obj is True
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +275,7 @@ class TestOptimizeDtypsBranches:
     def test_max_categories_none(self):
         df = pd.DataFrame({"a": ["x", "y"], "b": [1, 2]})
         result = optimize_dtypes(df, max_categories=None, inplace=False)
-        assert result["a"].dtype.name == "object"
+        assert result["a"].dtype.name in ("object", "str", "string")
 
 
 # ---------------------------------------------------------------------------
