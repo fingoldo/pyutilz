@@ -12,6 +12,8 @@ Includes Hypothesis property-based tests and doctest validation.
 
 import doctest
 import pytest
+
+hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
