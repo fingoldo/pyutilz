@@ -133,6 +133,7 @@ def fix_dashes(text: str) -> str:
     """Replace em/en-dashes with `` - `` and smart quotes with ASCII."""
     text = text.replace("\u2014", " - ")   # em-dash
     text = text.replace("\u2013", " - ")   # en-dash
+    text = text.replace(" -- ", " - ")     # double-dash (AI marker)
     text = text.replace("\u201c", '"')     # left double smart quote
     text = text.replace("\u201d", '"')     # right double smart quote
     text = text.replace("\u2018", "'")     # left single smart quote
