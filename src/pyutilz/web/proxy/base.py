@@ -87,6 +87,10 @@ class PortHealthTracker:
         A port is banned when ``port_error_rate >= avg_error_rate * multiplier``.
     ban_duration : float
         How long (seconds) a banned port stays excluded.
+    min_errors : int
+        Minimum number of errors a port must have before it can be banned.
+        Prevents banning ports with a single fluke error even when the rate
+        multiplier triggers.
     """
 
     def __init__(
@@ -95,6 +99,7 @@ class PortHealthTracker:
         min_requests: int = 30,
         ban_rate_multiplier: float = 2.0,
         ban_duration: float = 900.0,
+        min_errors: int = 2,
     ) -> None:
         self._lock = threading.Lock()
         self._ports: Dict[int, _PortStats] = {}
@@ -103,6 +108,7 @@ class PortHealthTracker:
         self.min_requests = min_requests
         self.ban_rate_multiplier = ban_rate_multiplier
         self.ban_duration = ban_duration
+        self.min_errors = min_errors
 
     def _trim_all(self, now: float) -> None:
         """Remove stale outcomes outside the window (caller must hold _lock)."""
@@ -118,7 +124,7 @@ class PortHealthTracker:
     def _maybe_ban(self, port_offset: int, now: float) -> None:
         """Check if *port_offset* should be banned relative to peers (caller holds _lock)."""
         ps = self._ports.get(port_offset)
-        if ps is None or ps.total < self.min_requests:
+        if ps is None or ps.total < self.min_requests or ps.errors < self.min_errors:
             return
 
         # Compute average error rate across all ports with enough data
