@@ -242,7 +242,7 @@ class OpenAICompatibleProvider(LLMProvider):
         prompt: str,
         system: str | None = None,
         temperature: float = 0.3,
-        max_tokens: int = 2048,
+        max_tokens: int = 0,
     ) -> dict[str, Any]:
         """Generate structured JSON output."""
         json_system = (system or "") + "\n\nRespond with valid JSON only."
