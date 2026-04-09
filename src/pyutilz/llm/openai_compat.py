@@ -181,7 +181,11 @@ class OpenAICompatibleProvider(LLMProvider):
             self._handle_special_status(resp)
 
             if resp.status_code in (400, 401, 403):
-                detail = resp.json().get("error", {}).get("message", resp.text)
+                try:
+                    err_body = resp.json()
+                    detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
+                except Exception:
+                    detail = resp.text
                 raise LLMProviderError(
                     f"{self._provider_name} API error {resp.status_code}: {detail}"
                 )
