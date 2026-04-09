@@ -143,27 +143,46 @@ class TomlLiveConfig:
         returns the fallback instead of crashing.
         """
         self._maybe_reload()
-        val = self._data.get(section, {}).get(key)
+        # Avoid allocating a throwaway {} on every section miss — use a
+        # module-level empty sentinel instead.
+        section_data = self._data.get(section)
+        val = section_data.get(key) if section_data is not None else None
         if val is not None:
             if isinstance(val, (list, dict)):
                 return val
-            try:
-                return type_(val)
-            except (TypeError, ValueError) as exc:
-                fallback = (
-                    default
-                    if default is not None
-                    else self._defaults.get(section, {}).get(key, 0)
-                )
-                self._log.warning(
-                    "config [%s].%s: bad value %r (%s), using %s",
-                    section, key, val, exc, fallback,
-                )
-                return fallback
+            # Skip the type cast when the value already has the right type —
+            # TOML parses floats/ints/bools natively so type_() is usually a
+            # no-op coercion that still costs a Python function call.
+            if type_ is not type(val) and not isinstance(val, type_):
+                try:
+                    return type_(val)
+                except (TypeError, ValueError) as exc:
+                    fallback = (
+                        default
+                        if default is not None
+                        else (self._defaults.get(section) or {}).get(key, 0)
+                    )
+                    self._log.warning(
+                        "config [%s].%s: bad value %r (%s), using %s",
+                        section, key, val, exc, fallback,
+                    )
+                    return fallback
+            return val
         if default is not None:
             return default
-        section_defaults = self._defaults.get(section, {})
-        return section_defaults.get(key)
+        section_defaults = self._defaults.get(section)
+        return section_defaults.get(key) if section_defaults is not None else None
+
+    def get_section(self, section: str) -> dict[str, Any]:
+        """Return the entire section dict (triggers reload check once).
+
+        Faster than N individual ``get()`` calls when reading several keys
+        from the same section — ``_maybe_reload()`` is called only once and
+        the section dict is looked up only once.  Returns an empty dict if
+        the section is missing.
+        """
+        self._maybe_reload()
+        return self._data.get(section) or self._defaults.get(section) or {}
 
     @property
     def data(self) -> dict[str, Any]:

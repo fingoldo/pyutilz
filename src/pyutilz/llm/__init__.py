@@ -1,11 +1,11 @@
 """LLM provider implementations."""
 
-from pyutilz.llm.base import LLMProvider
 from pyutilz.llm.exceptions import LLMProviderError, JSONParsingError
-from pyutilz.llm.token_counter import count_tokens
 
 # Lazy-import map: attribute name → (module_path, object_name)
 _LAZY_IMPORTS = {
+    "LLMProvider": ("pyutilz.llm.base", "LLMProvider"),
+    "count_tokens": ("pyutilz.llm.token_counter", "count_tokens"),
     "AnthropicProvider": ("pyutilz.llm.anthropic_provider", "AnthropicProvider"),
     "GeminiProvider": ("pyutilz.llm.gemini_provider", "GeminiProvider"),
     "DeepSeekProvider": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider"),
