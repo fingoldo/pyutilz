@@ -304,10 +304,27 @@ def prefixize_columns(df: object, prefix: str, special_prefixes: dict = None, se
 
 
 def showcase_df_columns(
-    df: object, cols: list = None, excluded_cols: list = None, max_vars: int = None, dropna: bool = False, use_markdown: bool = True, use_print: bool = True
-):
+    df: object,
+    cols: list = None,
+    excluded_cols: list = None,
+    max_vars: int = None,
+    dropna: bool = False,
+    use_markdown: bool = True,
+    use_print: bool = True,
+    max_cat_uniq_qty: int = 50,
+    max_unique_percent: float = 0.001,
+) -> tuple:
     """
     Show distribution of values for each dataframe column. Works with both pandas and polars DataFrames.
+
+    Also detects low-variability features useful for ML feature selection:
+    - rare_categories: for columns with <= max_cat_uniq_qty unique values, any value whose
+      share of total rows is <= max_unique_percent is flagged as rare.
+    - uninformative_features: columns where, after dropping all rare values, only 1 unique
+      value remains. The dict value is the fraction of non-dominant rows (i.e. 1 - dominant_count/total).
+
+    Returns:
+        (rare_categories, uninformative_features) — both dicts keyed by column name.
 
     >>> import pandas as pd
     >>> df = pd.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
@@ -323,16 +340,19 @@ def showcase_df_columns(
     x    3
     y    2
     Name: count, dtype: int64
+    ({}, {})
 
     >>> showcase_df_columns(df, cols=["a"], max_vars=1, use_markdown=False, use_print=True)
     A int64
     a
     1    3
     Name: count, dtype: int64
+    ({}, {})
 
     >>> showcase_df_columns(df, cols=["a"], max_vars=0, use_markdown=False, use_print=True)
     A int64
     <BLANKLINE>
+    ({}, {})
 
     >>> import polars as pl
     >>> dfp = pl.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
@@ -348,16 +368,19 @@ def showcase_df_columns(
     x    3
     y    2
     Name: count, dtype: int64
+    ({}, {})
 
     >>> showcase_df_columns(dfp, cols=["a"], max_vars=1, use_markdown=False, use_print=True)
     A Int64
     a
     1    3
     Name: count, dtype: int64
+    ({}, {})
 
     >>> showcase_df_columns(dfp, cols=["a"], max_vars=0, use_markdown=False, use_print=True)
     A Int64
     <BLANKLINE>
+    ({}, {})
 
     >>> showcase_df_columns(dfp, use_markdown=False, use_print=True, dropna=False)
     A Int64
@@ -372,6 +395,35 @@ def showcase_df_columns(
     y       2
     None    1
     Name: count, dtype: int64
+    ({}, {})
+
+    Rare/uninformative detection (max_unique_percent=0.34 means values with <=34% share are rare):
+
+    >>> df2 = pd.DataFrame({"x": ["a"]*100 + ["b"]*2 + ["c"]*1})
+    >>> r, u = showcase_df_columns(df2, use_markdown=False, use_print=True, max_unique_percent=0.05)
+    X object
+    x
+    a    100
+    b      2
+    c      1
+    Name: count, dtype: int64
+    >>> sorted(r["x"])
+    ['b', 'c']
+    >>> "x" in u and u["x"] == 1 - 100/103
+    True
+
+    >>> dfp2 = pl.DataFrame({"x": ["a"]*100 + ["b"]*2 + ["c"]*1})
+    >>> r, u = showcase_df_columns(dfp2, use_markdown=False, use_print=True, max_unique_percent=0.05)
+    X String
+    x
+    a    100
+    b      2
+    c      1
+    Name: count, dtype: int64
+    >>> sorted(r["x"])
+    ['b', 'c']
+    >>> "x" in u and u["x"] == 1 - 100/103
+    True
     """
     if excluded_cols is None:
         excluded_cols = []
@@ -384,11 +436,17 @@ def showcase_df_columns(
     excluded_set = set(excluded_cols)
     target_cols = [c for c in cols if c not in excluded_set]
 
+    rare_categories = {}
+    uninformative_features = {}
+
     if not target_cols:
-        return
+        return rare_categories, uninformative_features
+
+    height = df.height if _is_polars else len(df)
+    rare_threshold = max_unique_percent * height
 
     if _is_polars:
-        # Build lazy value_counts queries for all columns, then collect in parallel
+        # Build lazy value_counts queries for all columns, collect in parallel
         lazy_queries = []
         for var in target_cols:
             lq = df.lazy().select(pl.col(var))
@@ -399,14 +457,16 @@ def showcase_df_columns(
                 .agg(pl.len().alias("count"))
                 .sort("count", descending=True)
             )
-            if max_vars is not None and max_vars > 0:
-                lq = lq.head(max_vars)
             lazy_queries.append(lq)
 
         # pl.collect_all runs all queries in parallel via the Polars thread pool
         vc_results = pl.collect_all(lazy_queries)
 
-        for var, vc in zip(target_cols, vc_results):
+        # Also collect n_unique in parallel for the rare-category check
+        nuniq_queries = [df.lazy().select(pl.col(var).n_unique().alias("n")) for var in target_cols]
+        nuniq_results = pl.collect_all(nuniq_queries)
+
+        for var, vc, nuniq_df in zip(target_cols, vc_results, nuniq_results):
             dtype = df.schema[var]
             if use_markdown and HAS_IPYTHON:
                 display(Markdown(f"**{var}** {dtype}"))
@@ -420,13 +480,27 @@ def showcase_df_columns(
                 stats.index.name = var
                 print(stats)
             else:
-                stats = pd.Series(
-                    vc.get_column("count").to_list(),
-                    index=vc.get_column(var).to_list(),
-                    name="count",
-                )
+                vals = vc.get_column(var).to_list()
+                counts = vc.get_column("count").to_list()
+                stats = pd.Series(counts, index=vals, name="count")
                 stats.index.name = var
-                print(stats)
+                if max_vars is not None and max_vars > 0:
+                    print(stats.head(max_vars))
+                else:
+                    print(stats)
+
+            # Rare/uninformative analysis
+            n_unique = nuniq_df.item(0, 0)
+            if n_unique <= max_cat_uniq_qty and vc.height > 0:
+                rare_mask = vc.get_column("count").to_list()
+                rare_vals = vc.get_column(var).to_list()
+                col_rare = [v for v, c in zip(rare_vals, rare_mask) if c <= rare_threshold]
+                if col_rare:
+                    rare_categories[var] = col_rare
+                    non_rare_count = sum(c for c in rare_mask if c > rare_threshold)
+                    non_rare_unique = sum(1 for c in rare_mask if c > rare_threshold)
+                    if non_rare_unique <= 1:
+                        uninformative_features[var] = 1 - non_rare_count / height if height > 0 else 0.0
     else:
         for var in target_cols:
             if use_markdown and HAS_IPYTHON:
@@ -437,10 +511,25 @@ def showcase_df_columns(
             if max_vars is not None:
                 assert max_vars >= 0
                 if max_vars > 0:
-                    stats = stats.head(max_vars)
+                    print(stats.head(max_vars))
                 else:
-                    stats = ""
-            print(stats)
+                    print("")
+            else:
+                print(stats)
+
+            # Rare/uninformative analysis
+            n_unique = df[var].nunique(dropna=False)
+            if n_unique <= max_cat_uniq_qty and len(stats) > 0:
+                full_stats = df[var].value_counts(dropna=dropna) if max_vars is not None else stats
+                col_rare = full_stats[full_stats <= rare_threshold].index.tolist()
+                if col_rare:
+                    rare_categories[var] = col_rare
+                    non_rare = full_stats[full_stats > rare_threshold]
+                    if len(non_rare) <= 1:
+                        non_rare_count = int(non_rare.sum()) if len(non_rare) == 1 else 0
+                        uninformative_features[var] = 1 - non_rare_count / height if height > 0 else 0.0
+
+    return rare_categories, uninformative_features
 
 
 class FeatureNamer:
