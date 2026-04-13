@@ -307,15 +307,128 @@ def showcase_df_columns(
     df: object, cols: list = None, excluded_cols: list = None, max_vars: int = None, dropna: bool = False, use_markdown: bool = True, use_print: bool = True
 ):
     """
-    Show distribution of values for each dataframe column
+    Show distribution of values for each dataframe column. Works with both pandas and polars DataFrames.
+
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
+    >>> showcase_df_columns(df, use_markdown=False, use_print=True, dropna=True)
+    A int64
+    a
+    1    3
+    2    2
+    3    1
+    Name: count, dtype: int64
+    B object
+    b
+    x    3
+    y    2
+    Name: count, dtype: int64
+
+    >>> showcase_df_columns(df, cols=["a"], max_vars=1, use_markdown=False, use_print=True)
+    A int64
+    a
+    1    3
+    Name: count, dtype: int64
+
+    >>> showcase_df_columns(df, cols=["a"], max_vars=0, use_markdown=False, use_print=True)
+    A int64
+    <BLANKLINE>
+
+    >>> import polars as pl
+    >>> dfp = pl.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
+    >>> showcase_df_columns(dfp, use_markdown=False, use_print=True, dropna=True)
+    A Int64
+    a
+    1    3
+    2    2
+    3    1
+    Name: count, dtype: int64
+    B String
+    b
+    x    3
+    y    2
+    Name: count, dtype: int64
+
+    >>> showcase_df_columns(dfp, cols=["a"], max_vars=1, use_markdown=False, use_print=True)
+    A Int64
+    a
+    1    3
+    Name: count, dtype: int64
+
+    >>> showcase_df_columns(dfp, cols=["a"], max_vars=0, use_markdown=False, use_print=True)
+    A Int64
+    <BLANKLINE>
+
+    >>> showcase_df_columns(dfp, use_markdown=False, use_print=True, dropna=False)
+    A Int64
+    a
+    1    3
+    2    2
+    3    1
+    Name: count, dtype: int64
+    B String
+    b
+    x       3
+    y       2
+    None    1
+    Name: count, dtype: int64
     """
     if excluded_cols is None:
         excluded_cols = []
 
+    _is_polars = isinstance(df, pl.DataFrame)
+
     if cols is None or len(cols) == 0:
         cols = df.columns
-    for var in cols:
-        if var not in excluded_cols:
+
+    excluded_set = set(excluded_cols)
+    target_cols = [c for c in cols if c not in excluded_set]
+
+    if not target_cols:
+        return
+
+    if _is_polars:
+        # Build lazy value_counts queries for all columns, then collect in parallel
+        lazy_queries = []
+        for var in target_cols:
+            lq = df.lazy().select(pl.col(var))
+            if dropna:
+                lq = lq.drop_nulls()
+            lq = (
+                lq.group_by(var)
+                .agg(pl.len().alias("count"))
+                .sort("count", descending=True)
+            )
+            if max_vars is not None and max_vars > 0:
+                lq = lq.head(max_vars)
+            lazy_queries.append(lq)
+
+        # pl.collect_all runs all queries in parallel via the Polars thread pool
+        vc_results = pl.collect_all(lazy_queries)
+
+        for var, vc in zip(target_cols, vc_results):
+            dtype = df.schema[var]
+            if use_markdown and HAS_IPYTHON:
+                display(Markdown(f"**{var}** {dtype}"))
+            if use_print or not HAS_IPYTHON:
+                print(f"{var.upper()} {dtype}")
+
+            if max_vars is not None and max_vars == 0:
+                print("")
+            elif vc.height == 0:
+                stats = pd.Series([], name="count", dtype="int64")
+                stats.index.name = var
+                print(stats)
+            else:
+                stats = pd.Series(
+                    vc.get_column("count").to_list(),
+                    index=vc.get_column(var).to_list(),
+                    name="count",
+                )
+                stats.index.name = var
+                print(stats)
+    else:
+        for var in target_cols:
             if use_markdown and HAS_IPYTHON:
                 display(Markdown(f"**{var}** {df[var].dtype}"))
             if use_print or not HAS_IPYTHON:
