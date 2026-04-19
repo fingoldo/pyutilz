@@ -91,6 +91,12 @@ class PortHealthTracker:
         Minimum number of errors a port must have before it can be banned.
         Prevents banning ports with a single fluke error even when the rate
         multiplier triggers.
+    absolute_ban_rate : float
+        Absolute error-rate threshold (0..1) that triggers a ban even when
+        there are fewer than 2 qualified peers. The peer-comparison path
+        cannot fire at startup or after a ban wipe — every port is fresh or
+        unqualified — so a lone port with 100% errors would otherwise spin
+        forever. Set to 0.0 to disable the absolute fallback.
     """
 
     def __init__(
@@ -100,6 +106,7 @@ class PortHealthTracker:
         ban_rate_multiplier: float = 2.0,
         ban_duration: float = 900.0,
         min_errors: int = 2,
+        absolute_ban_rate: float = 0.5,
     ) -> None:
         self._lock = threading.Lock()
         self._ports: Dict[int, _PortStats] = {}
@@ -109,6 +116,7 @@ class PortHealthTracker:
         self.ban_rate_multiplier = ban_rate_multiplier
         self.ban_duration = ban_duration
         self.min_errors = min_errors
+        self.absolute_ban_rate = absolute_ban_rate
 
     def _trim_all(self, now: float) -> None:
         """Remove stale outcomes outside the window (caller must hold _lock)."""
@@ -130,7 +138,20 @@ class PortHealthTracker:
         # Compute average error rate across all ports with enough data
         qualified: List[_PortStats] = [p for p in self._ports.values() if p.total >= self.min_requests]
         if len(qualified) < 2:
-            # Need at least 2 ports to compare; with only 1 port there's no peer baseline
+            # Peer-baseline path needs ≥2 qualified ports. Without a fallback,
+            # a lone bad port at 100% error rate would never ban — common at
+            # startup (only one port seen requests) or after ban churn (peers
+            # wiped). Absolute-rate fallback: if this port is clearly broken
+            # on its own merits, ban it.
+            if self.absolute_ban_rate > 0 and ps.error_rate >= self.absolute_ban_rate:
+                self._banned[port_offset] = now + self.ban_duration
+                self._ports.pop(port_offset, None)
+                _log.warning(
+                    "[PROXY] Port %d banned for %.0fs: absolute error rate %.1f%% >= threshold %.1f%% "
+                    "(no peer baseline — only %d qualified port(s))",
+                    port_offset, self.ban_duration,
+                    ps.error_rate * 100, self.absolute_ban_rate * 100, len(qualified),
+                )
             return
 
         total_errors = sum(p.errors for p in qualified)
