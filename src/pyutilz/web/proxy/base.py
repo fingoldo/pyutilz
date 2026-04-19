@@ -96,7 +96,9 @@ class PortHealthTracker:
         there are fewer than 2 qualified peers. The peer-comparison path
         cannot fire at startup or after a ban wipe — every port is fresh or
         unqualified — so a lone port with 100% errors would otherwise spin
-        forever. Set to 0.0 to disable the absolute fallback.
+        forever. **Default is 0.0 (disabled)** — preserves the pre-wave-7
+        behaviour for existing callers. Opt in by passing a positive value
+        (e.g. 0.5 = ban a lone port at ≥50% error rate).
     """
 
     def __init__(
@@ -106,7 +108,7 @@ class PortHealthTracker:
         ban_rate_multiplier: float = 2.0,
         ban_duration: float = 900.0,
         min_errors: int = 2,
-        absolute_ban_rate: float = 0.5,
+        absolute_ban_rate: float = 0.0,
     ) -> None:
         self._lock = threading.Lock()
         self._ports: Dict[int, _PortStats] = {}
