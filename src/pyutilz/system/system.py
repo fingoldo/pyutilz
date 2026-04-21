@@ -961,14 +961,25 @@ def get_nix_cpu_sockets_number():
 _LAST_OWN_MEMORY_USAGE_GB: float = 0.0
 
 
-def get_own_memory_usage() -> float:
-    """Return RAM usage of our own Python process in gigabytes.
+def get_own_memory_usage() -> "Optional[float]":
+    """Return RAM usage of our own Python process in gigabytes, or
+    ``None`` if psutil raises AND we have no prior successful reading
+    to fall back on.
 
     On Windows (and occasionally on Linux under heavy Arrow/Polars frees) psutil has been observed to
     briefly report an implausibly low rss — sometimes effectively 0 — right after a large buffer release.
     When that happens and the previous rss was substantial, return the previously-seen value instead of
     the bogus near-zero reading. Prevents misleading ``RAM usage: 0.0GB`` lines in training logs that
     otherwise hide real usage.
+
+    Contract for exceptional paths (preserved across the 2026-04-21
+    glitch-tolerance refactor):
+      * If ``psutil.Process(...)`` raises AND there is NO prior cached
+        reading (module-level cache still at its init value ``0.0``),
+        return ``None``. This preserves the original sentinel that
+        callers can check for "measurement never succeeded".
+      * If there IS a prior cached reading, return it — a transient
+        failure shouldn't discard a known-good rss and show 0 GB.
     """
     global _LAST_OWN_MEMORY_USAGE_GB
     try:
@@ -977,7 +988,9 @@ def get_own_memory_usage() -> float:
         memory_usage = py.memory_info().rss / 2.0**30  # memory usage in GB
     except Exception as e:
         logger.exception(e)
-        return _LAST_OWN_MEMORY_USAGE_GB
+        if _LAST_OWN_MEMORY_USAGE_GB > 0.0:
+            return _LAST_OWN_MEMORY_USAGE_GB
+        return None
 
     if _LAST_OWN_MEMORY_USAGE_GB > 1.0 and memory_usage < 0.1:
         logger.warning(

@@ -279,10 +279,34 @@ class TestGetNixCpuSocketsNumber:
 class TestGetOwnMemoryUsage:
     @patch("pyutilz.system.system.psutil")
     def test_exception_returns_none(self, mock_psutil):
+        # Reset the module-level ``_LAST_OWN_MEMORY_USAGE_GB`` cache:
+        # other tests earlier in the session may have called
+        # ``get_own_memory_usage()`` successfully, populating the cache.
+        # The 2026-04-21 glitch-tolerance refactor makes
+        # ``get_own_memory_usage`` return the cached value on psutil
+        # exception IF it has one — test contract is "no prior reading
+        # + psutil fails → None", so we explicitly wipe the cache here.
+        import pyutilz.system.system as sys_mod
+        sys_mod._LAST_OWN_MEMORY_USAGE_GB = 0.0
         from pyutilz.system.system import get_own_memory_usage
         mock_psutil.Process.side_effect = Exception("no process")
         result = get_own_memory_usage()
         assert result is None
+
+    @patch("pyutilz.system.system.psutil")
+    def test_exception_after_good_reading_returns_cached(self, mock_psutil):
+        """Symmetric case: when the cache holds a prior good reading and
+        psutil subsequently fails, return the cached value (don't
+        discard real usage information). This is the core of the
+        2026-04-21 glitch-tolerance refactor."""
+        import pyutilz.system.system as sys_mod
+        sys_mod._LAST_OWN_MEMORY_USAGE_GB = 3.5  # simulate a prior good reading
+        from pyutilz.system.system import get_own_memory_usage
+        mock_psutil.Process.side_effect = Exception("transient psutil glitch")
+        result = get_own_memory_usage()
+        assert result == 3.5
+        # Reset for test isolation.
+        sys_mod._LAST_OWN_MEMORY_USAGE_GB = 0.0
 
 
 # ── trim_windows_process_memory (lines 939-969) ──
