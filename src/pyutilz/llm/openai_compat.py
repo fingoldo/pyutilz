@@ -32,6 +32,38 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
     return isinstance(exc, httpx.TransportError)
 
 
+def parse_retry_after(resp: Any) -> float | None:
+    """Parse ``Retry-After`` / ``retry-after-ms`` headers from an HTTP response.
+
+    Providers (Anthropic, OpenAI, Gemini) return ``Retry-After`` on 429 —
+    honouring it is cheaper than blind exponential backoff and avoids
+    re-triggering the rate limit. Returns seconds (float) or None.
+    """
+    if resp is None:
+        return None
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    # Case-insensitive lookup via dict-like; httpx does this natively.
+    for key in ("retry-after-ms", "x-retry-after-ms"):
+        val = headers.get(key)
+        if val:
+            try:
+                return float(val) / 1000.0
+            except (TypeError, ValueError):
+                pass
+    for key in ("retry-after", "x-retry-after"):
+        val = headers.get(key)
+        if val:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                # RFC-7231 also allows HTTP-date; fall back to None and
+                # let the generic backoff kick in.
+                pass
+    return None
+
+
 class OpenAICompatibleProvider(LLMProvider):
     """Base for providers exposing an OpenAI-compatible chat/completions API.
 
@@ -243,15 +275,23 @@ class OpenAICompatibleProvider(LLMProvider):
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 0,
+        force_json_mode: bool = True,
     ) -> dict[str, Any]:
-        """Generate structured JSON output."""
+        """Generate structured JSON output.
+
+        ``force_json_mode=True`` (default) sends ``response_format={"type":
+        "json_object"}`` to the provider — strictest, safest for parsing.
+        Set ``False`` for attention-check / honeypot scenarios where the
+        LLM must be able to emit non-JSON sentinels like ``[REFUSE]``:
+        falls back to prompt-only JSON steering plus ``extract_json``.
+        """
         json_system = (system or "") + "\n\nRespond with valid JSON only."
         text = await self.generate(
             prompt=prompt,
             system=json_system,
             temperature=temperature,
             max_tokens=max_tokens,
-            json_mode=True,
+            json_mode=force_json_mode,
         )
         return self.extract_json(text, self._provider_name)
 

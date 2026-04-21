@@ -353,6 +353,44 @@ def tqdmu(*args, **kwargs):
         return tqdm.tqdm(*args, **kwargs)
 
 
+def tqdmu_lazy_start(iterable, **kwargs):
+    """Drop-in for ``tqdmu(iterable, **kwargs)`` that starts the elapsed
+    timer at the FIRST iteration, not at bar construction.
+
+    Motivation: the plain ``tqdmu(xs, desc=...)`` sets ``start_t`` at
+    construction. If the caller interleaves heavy work (data conversion,
+    I/O, another training phase) between building the iterable and the
+    first pull, the bar displays that idle wall-clock as elapsed — e.g.
+    a ``target_type: 0/1 [6:27:44<?]`` line sitting on the log for hours
+    before the first real tick. The lazy variant defers ``reset()`` until
+    the iterable actually yields its first item, so elapsed tracks real
+    work only.
+
+    Minor trade-off: the bar is created with an empty underlying iterator
+    and driven manually via ``.update(1)`` per yield, so indeterminate
+    iterables lose their auto-total inference; pass ``total=...``
+    explicitly in that case.
+    """
+    # Best-effort extract total so the progress percentage still works.
+    if "total" not in kwargs:
+        try:
+            kwargs["total"] = len(iterable)
+        except TypeError:
+            pass
+
+    bar = tqdmu(iter([]), **kwargs)
+    try:
+        first = True
+        for item in iterable:
+            if first:
+                bar.reset(total=kwargs.get("total"))
+                first = False
+            yield item
+            bar.update(1)
+    finally:
+        bar.close()
+
+
 def get_system_info(
     return_hdd_info: bool = False,
     return_os_info: bool = False,
@@ -920,16 +958,37 @@ def get_nix_cpu_sockets_number():
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+_LAST_OWN_MEMORY_USAGE_GB: float = 0.0
+
+
 def get_own_memory_usage() -> float:
-    """Return RAM usage of our own Python process"""
+    """Return RAM usage of our own Python process in gigabytes.
+
+    On Windows (and occasionally on Linux under heavy Arrow/Polars frees) psutil has been observed to
+    briefly report an implausibly low rss — sometimes effectively 0 — right after a large buffer release.
+    When that happens and the previous rss was substantial, return the previously-seen value instead of
+    the bogus near-zero reading. Prevents misleading ``RAM usage: 0.0GB`` lines in training logs that
+    otherwise hide real usage.
+    """
+    global _LAST_OWN_MEMORY_USAGE_GB
     try:
         pid = os.getpid()
         py = psutil.Process(pid)
         memory_usage = py.memory_info().rss / 2.0**30  # memory usage in GB
     except Exception as e:
         logger.exception(e)
-    else:
-        return memory_usage
+        return _LAST_OWN_MEMORY_USAGE_GB
+
+    if _LAST_OWN_MEMORY_USAGE_GB > 1.0 and memory_usage < 0.1:
+        logger.warning(
+            "psutil reported rss=%.3fGB after previous %.1fGB; likely transient reporting glitch, returning previous value to keep the RAM log honest.",
+            memory_usage,
+            _LAST_OWN_MEMORY_USAGE_GB,
+        )
+        return _LAST_OWN_MEMORY_USAGE_GB
+
+    _LAST_OWN_MEMORY_USAGE_GB = memory_usage
+    return memory_usage
 
 
 def trim_windows_process_memory(pid: int = None) -> bool:

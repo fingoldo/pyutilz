@@ -147,12 +147,24 @@ def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     return planned_work_per_worker, workload_indices_per_worker
 
 
+def cpu_count_physical(fallback: int = 1) -> int:
+    """Return the number of physical (non-logical) CPU cores via psutil.
+
+    Thin wrapper so callers don't hard-code ``psutil.cpu_count(logical=False)`` and can rely on a
+    non-``None`` result (psutil may return ``None`` on platforms without the info — e.g. restricted
+    containers). Prefer this over ``joblib.cpu_count(only_physical_cores=True)``: joblib re-reads
+    ``cpuinfo`` on every call and its physical-core detection is lossy in some hypervisor setups.
+    """
+    count = psutil.cpu_count(logical=False)
+    return count if count and count > 0 else fallback
+
+
 def parallel_run(
     jobslist: Sequence, n_jobs: int = -1, backend: str = None, max_nbytes: int = 50_000, prefer_real_cores: bool = True, verbose: int = 0, **parallel_kwargs
 ):
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
     if n_jobs <= 0 and prefer_real_cores:
-        n_jobs = psutil.cpu_count(logical=False)
+        n_jobs = cpu_count_physical()
     ctx_mgr = parallel_backend(backend) if (backend and "dask" in backend) else contextlib.nullcontext()
     with ctx_mgr:
         return Parallel(n_jobs=n_jobs, backend=None if (backend and "dask" in backend) else backend, max_nbytes=max_nbytes, verbose=verbose, **parallel_kwargs)(

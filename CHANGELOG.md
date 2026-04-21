@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-04-21
+
+### Added
+
+- **`tqdmu_lazy_start(iterable, **kwargs)` in `system.system`**: drop-in
+  for `tqdmu(iterable, **kwargs)` that starts the elapsed timer at the
+  first iteration, not at bar construction. Prevents the stale-timer
+  artefact (e.g. `desc: 0/N [6:27:44<?]`) that occurs when the caller
+  does heavy work between building the iterable and pulling the first
+  item. Underlying bar is still `tqdmu` — same environment-aware
+  selection between ipython-notebook and terminal back-ends.
+- **`deep: bool = True` kwarg on `data.pandaslib.get_df_memory_consumption`**:
+  default preserves existing byte-precise behaviour.
+  `get_df_memory_consumption(df, deep=False)` returns
+  `df.memory_usage(deep=False).sum()` for pandas — O(cols), milliseconds,
+  accounting for object columns at pointer size only. Use when the
+  consumer is a coarse heuristic (e.g. GPU-RAM fit check) on frames
+  with million-unique string columns where `deep=True` is pathological
+  (O(rows * avg_str_len), minutes on multi-GB frames). Polars branch
+  is unchanged (`.estimated_size()` is already O(cols)).
+
 ## [1.0.0] - 2026-02-18
 
 ### Added - Hardware Detection Migration

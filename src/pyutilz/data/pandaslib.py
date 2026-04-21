@@ -721,12 +721,12 @@ def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
 
     return df
 
-def get_df_memory_consumption(df, max_cols: int = 0) -> float:
+def get_df_memory_consumption(df, max_cols: int = 0, deep: bool = True) -> float:
     """
     Returns RAM occupied by a pandas or polars dataframe in bytes.
 
     Works for:
-      - pandas.DataFrame: via df.memory_usage(deep=True).sum()
+      - pandas.DataFrame: via df.memory_usage(deep=deep).sum()
       - polars.DataFrame: via estimated_size()
 
     Parameters
@@ -735,6 +735,16 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
         DataFrame to measure.
     max_cols : int, optional
         Deprecated parameter, kept for backward compatibility (ignored).
+    deep : bool, default True
+        pandas-only. Default True uses ``df.memory_usage(deep=True)`` —
+        byte-precise accounting that recursively sizes every element of
+        object columns. On frames with million-unique strings this is
+        O(rows * avg_str_len) and can take minutes; callers using this
+        only for coarse heuristics (GPU-RAM fit checks, capacity
+        planning) should pass ``deep=False`` explicitly — that yields
+        pointer-size accounting (8 B per object-column cell), O(cols),
+        milliseconds. The polars branch ignores this flag —
+        ``.estimated_size()`` is already O(cols).
 
     Returns
     -------
@@ -747,7 +757,7 @@ def get_df_memory_consumption(df, max_cols: int = 0) -> float:
 
     elif isinstance(df, pd.DataFrame):
         # Use direct API instead of text parsing for better performance and reliability
-        return float(df.memory_usage(deep=True).sum())
+        return float(df.memory_usage(deep=deep).sum())
 
     else:
         raise TypeError(f"Unsupported dataframe type: {type(df)}")

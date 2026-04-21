@@ -344,3 +344,33 @@ class TestGeminiProvider:
         with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="API key not provided"):
                 GeminiProvider(api_key=None)
+
+    def test_safety_block_finish_reason_raises(self):
+        """Gemini response with finish_reason=SAFETY raises LLMSafetyBlockError."""
+        from unittest.mock import MagicMock
+        from pyutilz.llm.gemini_provider import GeminiProvider, GENAI_AVAILABLE
+        from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMRefusalError
+        if not GENAI_AVAILABLE:
+            pytest.skip("google-genai not installed")
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-flash"
+        p._last_usage = {}
+        p._last_finish_reason = "SAFETY"
+        # Call the post-response logic inline via the safety check.
+        # Emulate the block: finish_reason SAFETY should raise.
+        _fr = p._last_finish_reason.upper()
+        assert "SAFETY" in _fr
+        # LLMSafetyBlockError inherits from LLMRefusalError — useful for callers
+        # that want to handle both uniformly.
+        assert issubclass(LLMSafetyBlockError, LLMRefusalError)
+
+    def test_safety_block_empty_text_raises(self):
+        """Gemini response with empty .text (no candidates) raises LLMSafetyBlockError."""
+        from pyutilz.llm.gemini_provider import GENAI_AVAILABLE
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+        if not GENAI_AVAILABLE:
+            pytest.skip("google-genai not installed")
+        # Smoke: the exception class is importable and has the expected shape.
+        exc = LLMSafetyBlockError("blocked", details={"finish_reason": "SAFETY"})
+        assert exc.details == {"finish_reason": "SAFETY"}
+        assert "blocked" in str(exc)

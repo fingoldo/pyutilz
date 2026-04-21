@@ -9,7 +9,9 @@ from typing import Any, AsyncIterator
 from tenacity import retry, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.exceptions import LLMProviderError, JSONParsingError
+from pyutilz.llm.exceptions import (
+    LLMProviderError, JSONParsingError, LLMSafetyBlockError,
+)
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider
 
@@ -145,7 +147,30 @@ class GeminiProvider(LLMProvider):
                     "reasoning_tokens": getattr(um, "thoughts_token_count", 0) or 0,
                 }
 
-            return response.text
+            # Safety-filter detection: Gemini returns finish_reason=SAFETY
+            # when the response is blocked. response.text may be empty or
+            # raise when accessed; handle both.
+            _fr = self._last_finish_reason.upper() if isinstance(self._last_finish_reason, str) else ""
+            if "SAFETY" in _fr or "BLOCK" in _fr:
+                raise LLMSafetyBlockError(
+                    f"Gemini blocked response by safety filter (finish_reason={self._last_finish_reason})",
+                    raw_text=None,
+                    details={"finish_reason": self._last_finish_reason},
+                )
+            try:
+                text_out = response.text
+            except (ValueError, AttributeError) as exc:
+                # Accessing .text on a blocked/empty candidate raises
+                raise LLMSafetyBlockError(
+                    f"Gemini response has no text (likely safety block): {exc}",
+                    details={"finish_reason": self._last_finish_reason},
+                )
+            if not text_out:
+                raise LLMSafetyBlockError(
+                    "Gemini returned empty text (likely safety block)",
+                    details={"finish_reason": self._last_finish_reason},
+                )
+            return text_out
 
     async def generate_json(
         self,

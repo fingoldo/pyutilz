@@ -8,9 +8,37 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
-from pyutilz.llm.exceptions import JSONParsingError  # noqa: F401 — re-export for backward compat
+from pyutilz.llm.exceptions import (  # noqa: F401 — re-export for backward compat
+    JSONParsingError,
+    LLMRefusalError,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ── Refusal detection ─────────────────────────────────────────────────────
+# Patterns for common LLM refusal sentinels across providers (Anthropic,
+# OpenAI, Gemini). Intentionally conservative — we only match phrases that
+# BEGIN a refusal ("I cannot help", "I won't do that"), not content words
+# that might appear inside a normal answer. False positives here silently
+# degrade a valid evaluation to a fallback, so err on the strict side.
+_REFUSAL_PATTERNS = [
+    re.compile(r"\bI (cannot|can't|am unable|am not able) (help|assist|comply)\b", re.I),
+    re.compile(r"\bI (will not|won't) (help|do that|comply)\b", re.I),
+    re.compile(r"\bI'm (not able|unable) to (help|process|assist)\b", re.I),
+    re.compile(r"\bI (cannot|can't) (provide|generate|create|produce) (that|this)\b", re.I),
+]
+
+
+def is_llm_refusal(text: str) -> bool:
+    """Return True if ``text`` contains a recognizable LLM refusal sentinel.
+
+    Used by parsers / retry loops to raise :class:`LLMRefusalError` instead
+    of retrying blindly — the same prompt will refuse again.
+    """
+    if not text or not isinstance(text, str):
+        return False
+    return any(p.search(text) for p in _REFUSAL_PATTERNS)
 
 
 class LLMProvider(ABC):
@@ -40,7 +68,7 @@ class LLMProvider(ABC):
         Raises:
             JSONParsingError: If JSON parsing fails.
         """
-        from pyutilz.llm.exceptions import JSONParsingError
+        from pyutilz.llm.exceptions import JSONParsingError, LLMRefusalError
 
         try:
             text = text.strip()
@@ -66,6 +94,18 @@ class LLMProvider(ABC):
             # Last resort: try parsing the whole text
             return json.loads(text.strip())
         except json.JSONDecodeError as e:
+            # Before reporting as malformed JSON, check whether the model
+            # simply refused to answer — that's a distinct error class with
+            # a distinct retry policy (do NOT retry refusals).
+            if is_llm_refusal(text):
+                logger.warning(
+                    "%s refused to answer (no JSON): %.200s",
+                    provider_name, text,
+                )
+                raise LLMRefusalError(
+                    f"{provider_name} refused to produce JSON",
+                    raw_text=text,
+                )
             logger.error(f"Failed to parse JSON from {provider_name}: {e}\nResponse: {text}")
             raise JSONParsingError(f"Invalid JSON response from {provider_name}: {e}")
 
