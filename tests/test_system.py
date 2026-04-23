@@ -290,6 +290,84 @@ class TestSystemUtilities:
         assert isinstance(result, float)
         assert result > 0  # Should always use some memory
 
+    def test_get_own_memory_usage_stable_across_clean_ram_on_windows(self):
+        """On Windows, ``clean_ram()`` calls ``SetProcessWorkingSetSizeEx(...,
+        QUOTA_LIMITS_HARDWS_MIN_DISABLE)`` which evicts working-set pages
+        to the pagefile — this used to make ``memory_info().rss`` plunge
+        to near-zero right after ``clean_ram()``, triggering a
+        ``"transient reporting glitch"`` WARN on every training iteration.
+
+        The 2026-04-23 fix switched Windows measurement to
+        ``memory_info().private`` (private commit charge), which is
+        **not** affected by working-set trim. This test asserts that the
+        reading stays in the same order of magnitude across ``clean_ram()``
+        on Windows — no more phantom 0.0GB readings.
+
+        Skipped on Linux: the trim call there is ``malloc_trim(0)`` which
+        releases heap to libc without forcing page eviction, so ``rss``
+        stays stable and the historic measurement path is fine.
+        """
+        import platform
+
+        if platform.system() != "Windows":
+            pytest.skip("Windows-specific regression — RSS trim artifact")
+
+        from pyutilz.system import get_own_memory_usage, clean_ram
+
+        # Warm up a working set so the trim has something to evict.
+        _warm = [bytearray(8 * 1024 * 1024) for _ in range(16)]  # ~128 MB
+        before = get_own_memory_usage()
+        assert before is not None and before > 0.05, (
+            "baseline too low to run this regression check"
+        )
+
+        # Drop the reference and invoke the exact clean_ram() path that
+        # used to cause the "rss plunge". With the private-bytes switch
+        # the measurement should remain a plausible fraction of ``before``.
+        del _warm
+        clean_ram()
+
+        after = get_own_memory_usage()
+        assert after is not None
+        # After trim, private should NOT drop below 30 % of the baseline
+        # (real GC may reclaim the bytearrays, so some decrease is
+        # legitimate). The pre-fix ``rss`` path would show < 1 % of
+        # baseline here — the assertion is tight enough to catch a
+        # regression back to ``.rss`` but loose enough for real GC.
+        assert after >= 0.3 * before, (
+            f"Memory reading plunged from {before:.3f}GB to {after:.3f}GB "
+            f"across clean_ram() — looks like ``rss`` path is back. "
+            f"Windows measurement must use ``memory_info().private`` to "
+            f"avoid the working-set-trim artifact."
+        )
+
+    def test_get_own_memory_usage_uses_private_bytes_on_windows(self):
+        """Structural check: on Windows, ``get_own_memory_usage`` must
+        pull from ``memory_info().private``, not ``.rss``.
+
+        Implementation check (rather than end-to-end behavioural)
+        because on a quiet process the rss/private values can be
+        numerically close enough that the behavioural difference is
+        indistinguishable — the structural guard catches refactors
+        that silently revert to ``.rss``.
+        """
+        import platform
+
+        if platform.system() != "Windows":
+            pytest.skip("Windows-specific implementation detail")
+
+        from pyutilz.system import system as _sys_mod
+
+        # Inspect the source — cheaper and more robust than spinning up
+        # a mock psutil.Process.
+        import inspect
+        src = inspect.getsource(_sys_mod.get_own_memory_usage)
+        assert "mi.private" in src or "memory_info().private" in src, (
+            "get_own_memory_usage must use memory_info().private on Windows "
+            "to avoid the working-set-trim RSS glitch triggered by "
+            "clean_ram()'s SetProcessWorkingSetSizeEx call."
+        )
+
     def test_tqdmu_basic(self):
         """Test tqdmu wrapper"""
         from pyutilz.system import tqdmu

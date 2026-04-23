@@ -959,6 +959,7 @@ def get_nix_cpu_sockets_number():
 
 
 _LAST_OWN_MEMORY_USAGE_GB: float = 0.0
+_IS_WINDOWS: bool = platform.system() == "Windows"
 
 
 def get_own_memory_usage() -> "Optional[float]":
@@ -966,35 +967,56 @@ def get_own_memory_usage() -> "Optional[float]":
     ``None`` if psutil raises AND we have no prior successful reading
     to fall back on.
 
-    On Windows (and occasionally on Linux under heavy Arrow/Polars frees) psutil has been observed to
-    briefly report an implausibly low rss — sometimes effectively 0 — right after a large buffer release.
-    When that happens and the previous rss was substantial, return the previously-seen value instead of
-    the bogus near-zero reading. Prevents misleading ``RAM usage: 0.0GB`` lines in training logs that
-    otherwise hide real usage.
+    Windows-specific measurement (2026-04-23 fix): on Windows we use
+    ``memory_info().private`` (private commit charge) instead of ``.rss``.
+    Rationale: ``rss`` on Windows is the *working set* (pages currently
+    resident in physical RAM). ``clean_ram()`` calls
+    ``SetProcessWorkingSetSizeEx(..., QUOTA_LIMITS_HARDWS_MIN_DISABLE)``
+    to release freed pandas / libc pages back to the OS, which
+    deliberately evicts working-set pages to the pagefile — so ``rss``
+    plunges to near-zero right after ``clean_ram()`` even though the
+    process still has the same committed memory. The old mitigation
+    logged ``"psutil reported rss=0.003GB after previous 58.6GB; likely
+    transient reporting glitch"`` on every training run, obscuring real
+    RAM usage in the log. ``private`` (a.k.a. Private Bytes) reflects
+    committed memory, unaffected by working-set trim; verified
+    empirically 2026-04-23 (rss: 27MB→1MB after trim, private:
+    331MB→331MB unchanged).
 
-    Contract for exceptional paths (preserved across the 2026-04-21
-    glitch-tolerance refactor):
+    Linux keeps the historical ``rss`` semantics — there's no
+    SetProcessWorkingSetSizeEx analogue, and ``malloc_trim`` only
+    releases heap back to libc without forcing page eviction.
+
+    Contract for exceptional paths:
       * If ``psutil.Process(...)`` raises AND there is NO prior cached
         reading (module-level cache still at its init value ``0.0``),
-        return ``None``. This preserves the original sentinel that
-        callers can check for "measurement never succeeded".
+        return ``None``. Preserves the original sentinel for "measurement
+        never succeeded".
       * If there IS a prior cached reading, return it — a transient
-        failure shouldn't discard a known-good rss and show 0 GB.
+        failure shouldn't discard a known-good reading and show 0 GB.
     """
     global _LAST_OWN_MEMORY_USAGE_GB
     try:
         pid = os.getpid()
         py = psutil.Process(pid)
-        memory_usage = py.memory_info().rss / 2.0**30  # memory usage in GB
+        mi = py.memory_info()
+        if _IS_WINDOWS and hasattr(mi, "private"):
+            memory_usage = mi.private / 2.0**30  # committed memory, stable across trim
+        else:
+            memory_usage = mi.rss / 2.0**30
     except Exception as e:
         logger.exception(e)
         if _LAST_OWN_MEMORY_USAGE_GB > 0.0:
             return _LAST_OWN_MEMORY_USAGE_GB
         return None
 
+    # Safety net retained for Linux — on rare occasions psutil still
+    # reports implausibly low rss after large Arrow/Polars frees there.
+    # On Windows this branch should now never trigger since ``private``
+    # doesn't exhibit the working-set-trim plunge.
     if _LAST_OWN_MEMORY_USAGE_GB > 1.0 and memory_usage < 0.1:
         logger.warning(
-            "psutil reported rss=%.3fGB after previous %.1fGB; likely transient reporting glitch, returning previous value to keep the RAM log honest.",
+            "psutil reported memory=%.3fGB after previous %.1fGB; likely transient reporting glitch, returning previous value to keep the RAM log honest.",
             memory_usage,
             _LAST_OWN_MEMORY_USAGE_GB,
         )
@@ -1043,7 +1065,35 @@ def trim_windows_process_memory(pid: int = None) -> bool:
 
 def clean_ram() -> None:
     """Forces python garbage collection.
-    Most importantly, calls malloc_trim/SetProcessWorkingSetSizeEx, which fixes pandas/libc (?) memory leak."""
+    Most importantly, calls malloc_trim/SetProcessWorkingSetSizeEx, which fixes pandas/libc (?) memory leak.
+
+    Windows RSS-reporting side-effect (important for RAM-monitoring callers):
+        ``trim_windows_process_memory()`` (called below) invokes
+        ``SetProcessWorkingSetSizeEx(pid, (SIZE_T)-1, (SIZE_T)-1,
+        QUOTA_LIMITS_HARDWS_MIN_DISABLE)``. The `-1, -1` pair sets both min
+        and max working set to the "no limit" sentinel, and
+        ``QUOTA_LIMITS_HARDWS_MIN_DISABLE`` removes the hard minimum so
+        Windows is free to shrink the working set aggressively. The
+        immediate practical effect is that the OS evicts currently-resident
+        pages from the process working set to the pagefile.
+
+        Because ``psutil.Process.memory_info().rss`` on Windows is the
+        *working set size* (resident pages in physical RAM), ``rss``
+        **plunges to near-zero right after this call** — even though the
+        process still holds the same committed memory and will page it
+        back in on next access. ``memory_info().private`` (Private Bytes,
+        committed memory) is **unaffected** by the trim.
+
+        Empirical confirmation (2026-04-23):
+            BEFORE trim:  rss=0.027 GB, private=0.331 GB
+            AFTER  trim:  rss=0.001 GB, private=0.331 GB
+
+        Downstream monitoring code (e.g. ``get_own_memory_usage``) that
+        wants a stable reading across ``clean_ram()`` on Windows must
+        read ``private``, not ``rss``. ``get_own_memory_usage`` in this
+        module does this automatically; if you call ``memory_info()``
+        directly, be aware of the trade-off.
+    """
 
     gc.collect()
     if platform.system() == "Windows":
