@@ -353,7 +353,7 @@ def tqdmu(*args, **kwargs):
         return tqdm.tqdm(*args, **kwargs)
 
 
-def tqdmu_lazy_start(iterable, **kwargs):
+def tqdmu_lazy_start(iterable, *, min_total: int = 2, **kwargs):
     """Drop-in for ``tqdmu(iterable, **kwargs)`` that starts the elapsed
     timer at the FIRST iteration, not at bar construction.
 
@@ -366,6 +366,15 @@ def tqdmu_lazy_start(iterable, **kwargs):
     the iterable actually yields its first item, so elapsed tracks real
     work only.
 
+    Single-item loops (``min_total`` default 2): the bar is suppressed
+    entirely when ``len(iterable) <= 1``. Reason — for an iterable of one,
+    tqdm displays ``0/1 [HH:MM:SS<?]`` for the entire body of the first
+    (and only) iteration, never reaching the post-yield ``update(1)``
+    until the caller exits its outer loop. On long single-item loops
+    this is more confusing than informative (looks like progress is
+    stuck). Pass ``min_total=1`` to restore the old "always show a bar"
+    behaviour.
+
     Minor trade-off: the bar is created with an empty underlying iterator
     and driven manually via ``.update(1)`` per yield, so indeterminate
     iterables lose their auto-total inference; pass ``total=...``
@@ -377,6 +386,15 @@ def tqdmu_lazy_start(iterable, **kwargs):
             kwargs["total"] = len(iterable)
         except TypeError:
             pass
+
+    # Suppress single-item bars when ``min_total>1`` — the caller doesn't
+    # benefit from a 0/1 progress display that never updates until the
+    # outer loop ends.
+    _total = kwargs.get("total")
+    if _total is not None and _total < min_total:
+        for item in iterable:
+            yield item
+        return
 
     bar = tqdmu(iter([]), **kwargs)
     try:
