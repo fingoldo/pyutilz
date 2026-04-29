@@ -1,0 +1,6 @@
+{
+  "test_dead_helpers::_USER_DEFERRED_DEAD_HELPERS": 2,
+  "test_encoding_consistency::_USER_DEFERRED_CALLS": 0,
+  "test_test_source_parity::_USER_DEFERRED_MODULES": 0,
+  "test_todo_hygiene::_GRANDFATHERED": 2
+}

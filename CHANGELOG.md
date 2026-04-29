@@ -5,6 +5,110 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-04-28
+
+### Added (later that day) — `pyutilz.dev.meta_test_utils` + 11 more meta-tests
+
+`pyutilz/src/pyutilz/dev/meta_test_utils.py` — a reusable library of
+helpers for package-level meta-tests, factored out so both pyutilz and
+its dependent (mlframe) import the same plumbing rather than duplicating
+~400 LOC. Public API: `consumer_corpus`, `enumerate_test_files`,
+`public_top_level_symbols`, `strip_lineno`, `capture_signature`,
+`capture_module_surface`, `scan_todo_markers`,
+`count_user_deferred_entries`, `snake_case_variants_of`, `safe_import`.
+
+11 new meta-tests in `tests/test_meta/`:
+
+- `test_deferred_drift.py` (A2) — counts `_USER_DEFERRED_*` /
+  `_GRANDFATHERED` whitelist entries across every meta-test, fails on
+  growth vs `_debt_baseline.json`. Net counter visible per run; refresh
+  via `--refresh-debt-baseline`. Baseline: 4 whitelists, 20 entries.
+- `test_provider_contract.py` (D1) — every concrete LLM provider
+  inherits from `LLMProvider`, overrides every abstract method, and its
+  override signatures stay compatible with the base (no dropped
+  required parameters).
+- `test_encoding_consistency.py` (D2) — every builtin `open(...)` call
+  in production code passes `encoding=` (or uses `"b"` mode). Critical
+  for Windows cp1251/cp1252 where the default codec crashes on non-
+  ASCII files. Defers 8 known offenders in `_USER_DEFERRED_CALLS` for
+  bulk fix later.
+- `test_provider_cache_concurrency.py` (D3) — 20 concurrent
+  `get_llm_provider("anthropic", ...)` callers share the same instance,
+  the constructor runs exactly once, and distinct kwargs produce
+  distinct instances. Catches a future refactor breaking the
+  double-checked-locking pattern in `_provider_cache`.
+- `test_public_docstrings.py` (E1) — snapshot-based check for new
+  public symbols without a docstring. Baseline: 176 undocumented.
+  Refresh: `--refresh-docstring-baseline`.
+- `test_public_annotations.py` (E2) — snapshot-based check for new
+  public functions without complete type annotations (return + every
+  non-self/cls param). Baseline: 157 unannotated. Refresh:
+  `--refresh-annotation-baseline`.
+- `test_version_consistency.py` (E3) — `pyutilz.__version__`,
+  `pyutilz.version.__version__`, and `pyproject.toml::[project].version`
+  must all agree. Both sources currently `1.0.0` — pass.
+- `test_no_import_cycles.py` (E4) — Tarjan's SCC over the AST-built
+  import graph; flags multi-node cycles. pyutilz currently has none
+  (3 single-node `__init__.py` self-references are intentional re-export
+  patterns; not flagged).
+- `test_no_unicode_in_console_output.py` (E5) — snapshot-based check
+  for non-ASCII string literals in `print(...)` / `logger.*(...)` calls.
+  Baseline: 27 existing offenders. Critical for Windows stdout.
+- `test_meta_meta.py` (F1+F2+F3) — actionable failure messages, no
+  private-internals reach-ins (with whitelist citing
+  `_create_lazy_module`, `_PROVIDER_MODULES`, `_provider_cache` as
+  legitimate test surfaces), perf-budget overrides match real test
+  names.
+
+### Existing tests refactored to use `pyutilz.dev.meta_test_utils`
+
+`test_dead_helpers.py`, `test_todo_hygiene.py`, `test_test_source_parity.py`,
+`test_api_stability.py` now import shared building blocks instead of
+re-implementing them inline.
+
+### Total meta-test footprint after this batch: 18 files, 45 tests, ≈ 35 s wall-clock.
+
+## [Unreleased] — 2026-04-28
+
+### Added — meta-test suite (`tests/test_meta/`, 29 tests, ≈ 66 s wall-clock)
+
+A package-level static-check suite that catches whole classes of drift
+without exercising the runtime behaviour. Each test is independently
+runnable, has its own per-test whitelist for "drain over time" debt,
+and is wired into `.pre-commit-config.yaml` so misconfigurations get
+caught at commit time instead of in downstream CI.
+
+- **PT-1 (`test_provider_registration.py`)** — every canonical name in `llm.factory._PROVIDER_MODULES` points to an importable module / class, every alias in `_ALIASES` resolves to a real canonical entry, and aliases never collide with canonical names. Catches "added a new provider, forgot the registry entry" — surfaces the bug *before* the first user request crashes inside `importlib`.
+- **PT-2 (`test_module_alias_integrity.py`)** — every value in `_MODULE_ALIASES` (the 24-entry backward-compat map under `pyutilz/__init__.py`) imports cleanly, the proxy module installed at `pyutilz.<alias>` resolves a real public symbol on attribute access, alias keys never collide with sub-package names, and every alias target lives under the `pyutilz.` namespace. **Surfaced + fixed a real bug:** `pyutilz/web/browser.py:41` was importing `from . import pythonlib` (i.e. `pyutilz.web.pythonlib`), but `pythonlib` lives under `pyutilz.core`. Fixed to `from pyutilz.core import pythonlib`.
+- **PT-3 (`test_test_source_parity.py`)** — every non-trivial production module under `src/pyutilz/` has at least one corresponding `tests/test_<name>.py` (or aliased name); reverse direction also flags test files without a target module. Surfaced 8 modules without test coverage held in `_USER_DEFERRED_MODULES` for later attention.
+- **PT-4 (`test_todo_hygiene.py`)** — every `TODO` / `FIXME` / `XXX` / `HACK` comment in production code carries an attribution (assignee in parens or ISO date or `@assignee`). Currently 0 bare markers — the codebase is clean.
+- **PT-5 (`test_dead_helpers.py`)** — public `def` / `class` symbols inside `pyutilz/llm/` (the only sub-tree where helpers are unambiguously internal) must be referenced ≥ 2× in the production corpus. Surfaced `LLMTruncationError` and `parse_retry_after` — held in `_USER_DEFERRED_DEAD_HELPERS` pending review.
+- **PT-6 (`test_api_stability.py`)** — captures the public surface (top-level `__all__` + alias map + every alias-target's public symbol set with signatures + class MROs) into `tests/test_meta/_api_snapshot.json`. Renames / removals fail the test; additions are silent. Refresh after intentional API changes via `pytest tests/test_meta/test_api_stability.py --refresh-api-snapshot`. Initial snapshot: 27 aliases, 649 symbols.
+- **PT-7 (`test_lazy_import_safety.py`)** — exercises the `_create_lazy_module` proxy infrastructure under realistic access patterns: unknown dunder access raises `AttributeError` (so `hasattr(mod, '__weird__')` works), proxy returns the same object as direct import (no double-wrap), repeated accesses are consistent, alias dict survives `importlib.reload`.
+- **PT-8 (`test_optional_deps_isolation.py`)** — `import pyutilz` succeeds with every optional-dep group masked (pandas / polars / database / web / cloud / nlp / llm). `pyutilz`, `pyutilz.core`, `pyutilz.text` import safely with **all** optional deps masked. Each scenario runs in a sub-process so the masking can't leak between tests.
+- **PT-9 (`test_no_top_level_side_effects.py`)** — importing pyutilz and every probed sub-module performs zero network I/O. Sockets and `urllib.request.urlopen` are blocked in a sub-process; any module attempting a request at module-load time fails the test with the offending call captured.
+- **`.pre-commit-config.yaml`** — runs the meta-test suite on every commit (≈ 30–60 s). A `manual`-stage variant skips PT-8 / PT-9 (the sub-process tests) and runs in ≈ 5 s for tight inner-loop work.
+
+### Fixed
+
+- **`pyutilz/web/browser.py`**: `from . import pythonlib` was unreachable (no such module under `pyutilz/web/`). Now imports `pythonlib` from `pyutilz.core`. Surfaced by PT-2 on its first run.
+
+### Changed
+
+- **`llm.deepseek_provider`**: updated model registry and pricing for the
+  V4 launch (April 2026). Added `deepseek-v4-flash` (1M context, 384K max
+  output, $0.14/$0.0028/$0.28 per 1M input-miss / input-hit / output) and
+  `deepseek-v4-pro` (1M / 384K, $1.74/$0.0145/$3.48). Cache-hit rates now
+  reflect the 2026-04-26 reduction to 1/10 of launch price. Default model
+  switched from `deepseek-reasoner` to `deepseek-v4-flash`. Legacy aliases
+  `deepseek-chat` / `deepseek-reasoner` retained (deprecated 2026-07-24).
+- **`llm.xai_provider`**: refreshed Grok pricing (April 2026). Fixed prior
+  1000x error on grok-4.20 family ($2000/$6000 → correct $2/$6 per 1M
+  tokens). Added `grok-4.20-beta` (general flagship alias) and `grok-4`
+  (alias for `grok-4-0709`). Added per-model context windows for grok-4
+  (256K) and grok-3 family (131K). Confirmed grok-4.20 cache hit at
+  $0.20/M (90% discount on input miss).
+
 ## [Unreleased] — 2026-04-21
 
 ### Added

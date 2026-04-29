@@ -1,8 +1,8 @@
 """Claude Code provider - uses your Max subscription through Claude Code.
 
 Supports two backends:
-1. SDK (preferred) — uses claude-code-sdk Python package, works from nested sessions
-2. CLI fallback — spawns `claude` CLI subprocess (breaks inside VSCode extension)
+1. SDK (preferred) -- uses claude-code-sdk Python package, works from nested sessions
+2. CLI fallback -- spawns `claude` CLI subprocess (breaks inside VSCode extension)
 """
 
 import asyncio
@@ -38,7 +38,7 @@ try:
     if _CCSDK_VERSION not in _SUPPORTED_SDK_VERSIONS:
         logger.error(
             "claude-code-sdk version %s is NOT in supported set %s. "
-            "Monkey-patches SKIPPED — using unpatched SDK. "
+            "Monkey-patches SKIPPED -- using unpatched SDK. "
             "Review and update patches in claude_code_provider.py for this version.",
             _CCSDK_VERSION, sorted(_SUPPORTED_SDK_VERSIONS),
         )
@@ -271,7 +271,7 @@ class ClaudeCodeProvider(LLMProvider):
         self.total_completion_tokens = 0
 
     def get_session_cost(self) -> dict:
-        """Return estimated cost data (Max subscription — no per-call billing)."""
+        """Return estimated cost data (Max subscription -- no per-call billing)."""
         return {
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,
@@ -403,7 +403,7 @@ class ClaudeCodeProvider(LLMProvider):
             _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
             if _tools_val != "":
                 logger.warning(
-                    'ClaudeCodeProvider: extra_args["tools"] was %r — forcing to "" '
+                    'ClaudeCodeProvider: extra_args["tools"] was %r -- forcing to "" '
                     "to disable built-in tools and preserve JSON compliance.",
                     _tools_val,
                 )
@@ -487,11 +487,18 @@ class ClaudeCodeProvider(LLMProvider):
 
             cmd.append('-')
 
-            logger.debug(f"Running Claude CLI: {cmd[0]}...")
+            logger.debug("Running Claude CLI: %s...", cmd[0])
 
             sub_env = {k: v for k, v in os.environ.items() if k not in self._NESTED_BLOCK_VARS}
 
             def run_cli():
+                # NOTE: This Popen is NOT wrapped in a ``with`` block
+                # because the surrounding logic already has a ``try /
+                # finally`` (line below) that runs ``proc.kill()`` +
+                # ``proc.communicate(timeout=5)`` on every exit path —
+                # functionally equivalent to ``with``. The
+                # ``test_resource_handle_safety`` meta-test grandfathers
+                # this site via its baseline.
                 proc = subprocess.Popen(
                     cmd,
                     stdin=subprocess.PIPE,

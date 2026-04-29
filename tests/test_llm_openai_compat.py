@@ -135,6 +135,52 @@ class TestGenerate:
         assert body["response_format"] == {"type": "json_object"}
 
     @pytest.mark.asyncio
+    async def test_thinking_none_omits_field(self):
+        # Default (thinking=None) must not inject any thinking field —
+        # provider/model defaults apply.
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+
+        await p.generate("test")
+        body = p._client.post.call_args.kwargs.get("json") \
+            or p._client.post.call_args[1].get("json")
+        assert "thinking" not in body
+
+    @pytest.mark.asyncio
+    async def test_thinking_ignored_for_unsupported_provider(self):
+        # Base provider has no thinking support; flag must be silently ignored.
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+
+        await p.generate("test", thinking=False)
+        body = p._client.post.call_args.kwargs.get("json") \
+            or p._client.post.call_args[1].get("json")
+        assert "thinking" not in body
+
+    @pytest.mark.asyncio
+    async def test_thinking_disabled_passed_to_supporting_provider(self):
+        # Subclass that emits thinking field for any model
+        class _ThinkingProvider(_TestProvider):
+            def _thinking_request_field(self, enabled):
+                return {"thinking": {"type": "enabled" if enabled else "disabled"}}
+
+        p = _ThinkingProvider(api_key="k", model="test-model")
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+
+        await p.generate("test", thinking=False)
+        body = p._client.post.call_args.kwargs.get("json") \
+            or p._client.post.call_args[1].get("json")
+        assert body["thinking"] == {"type": "disabled"}
+
+        await p.generate("test", thinking=True)
+        body = p._client.post.call_args.kwargs.get("json") \
+            or p._client.post.call_args[1].get("json")
+        assert body["thinking"] == {"type": "enabled"}
+
+    @pytest.mark.asyncio
     async def test_cumulative_token_tracking(self):
         p = _make_provider()
         p._client = AsyncMock()

@@ -52,7 +52,9 @@ def json_serial(obj: Any) -> str:
     raise TypeError("Type %s not serializable" % type(obj))
 
 
-def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optional[dict] = {}) -> object:
+def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optional[dict] = None) -> object:
+    if attribs is None:
+        attribs = {}
     from xml.etree.ElementTree import SubElement
 
     new_elem = SubElement(parent, tag, **attribs)
@@ -63,7 +65,7 @@ def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optiona
 
 def jsonize_atrtributes(
     obj: Any,
-    exclude: Optional[list] = [],
+    exclude: Optional[list] = None,
     strip: Optional[bool] = True,
     skip_functions: Optional[bool] = True,
     recursion_level: Optional[int] = 0,
@@ -72,6 +74,8 @@ def jsonize_atrtributes(
     """
     Puts all of the object's properties (ecxept starting with an underscore) into a dictionary
     """
+    if exclude is None:
+        exclude = []
     import numbers
     from collections.abc import Sequence, Iterable
 
@@ -387,7 +391,7 @@ def write_config_file(
             else:
                 logger.warning("No variable %s" % var)
 
-        with open(file, "w") as configfile:
+        with open(file, "w", encoding="utf-8") as configfile:
             config.write(configfile)
 
     except Exception as e:

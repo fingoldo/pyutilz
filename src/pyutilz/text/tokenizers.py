@@ -203,7 +203,7 @@ class AdvancedTokenizer:
                     pbar.total = nitems * 1.1
                     pbar.refresh()
                 nchunks = nchunks + 1
-                logger.info(f"nchunks={nchunks},nitems={nitems}")
+                logger.info("nchunks=%s,nitems=%s", nchunks, nitems)
             pbar.total = nitems
             pbar.refresh()
             pbar.close()

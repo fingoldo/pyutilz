@@ -106,7 +106,7 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
         bDownload=True
         if s3_object_path.endswith('.zip'):
             if exists(local_object_path+'.zip'):
-                logger.info(f'Zipped version of {s3_object_path} found in local FS')
+                logger.info("Zipped version of %s found in local FS", s3_object_path)
                 bDownload=False
 
         if bDownload:
@@ -121,7 +121,7 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                 except Exception as e:
                     logger.error(f"Error while downloading model {s3_object_path} from bucket {S3_BUCKET_NAME}: {e}")
                 else:
-                    logger.info(f"Downloaded model {s3_object_path} from bucket {S3_BUCKET_NAME}")
+                    logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
             else:
                 logger.warning(f"Model {s3_object_path} not found in bucket {S3_BUCKET_NAME}")
                 sleep(10)

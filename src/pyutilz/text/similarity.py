@@ -177,7 +177,7 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
 
 
 def normalize_sentence(
-    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: list = []
+    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: list = None
 ) -> list:
     """
         Нормализуем предложение:
@@ -192,6 +192,8 @@ def normalize_sentence(
                                             "VC", "BK", "BC", "SC", "SPORTING CLUB", _
                                             "FK", "FC", "FOOTBALL CLUB", "AC", "AFC", "CD", "IF", "JK", "SV", "TSV", "AL", "AL-"])
     """
+    if abbreviations is None:
+        abbreviations = []
 
     for symbol in replace_symbols:
         sentence = sentence.replace(symbol, placeholder)

@@ -105,11 +105,13 @@ def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id
 def wait_for_absense_of_tasks(
     flow_id:str=None,
     except_flowrun_id:str=None,
-    labels: set = set(),
+    labels: set = None,
     sleep_seconds: int = 10,
     max_retries: int = 60,
     logger: object = None,
 ):
+    if labels is None:
+        labels = set()
     n = 0
     while True:
         if get_running_flows(flow_id=flow_id, except_flowrun_id=except_flowrun_id,allof_labels=set(["ml", "gpu"])):

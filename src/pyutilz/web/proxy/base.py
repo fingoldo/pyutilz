@@ -94,9 +94,9 @@ class PortHealthTracker:
     absolute_ban_rate : float
         Absolute error-rate threshold (0..1) that triggers a ban even when
         there are fewer than 2 qualified peers. The peer-comparison path
-        cannot fire at startup or after a ban wipe — every port is fresh or
-        unqualified — so a lone port with 100% errors would otherwise spin
-        forever. **Default is 0.0 (disabled)** — preserves the pre-wave-7
+        cannot fire at startup or after a ban wipe -- every port is fresh or
+        unqualified -- so a lone port with 100% errors would otherwise spin
+        forever. **Default is 0.0 (disabled)** -- preserves the pre-wave-7
         behaviour for existing callers. Opt in by passing a positive value
         (e.g. 0.5 = ban a lone port at ≥50% error rate).
     """
@@ -141,7 +141,7 @@ class PortHealthTracker:
         qualified: List[_PortStats] = [p for p in self._ports.values() if p.total >= self.min_requests]
         if len(qualified) < 2:
             # Peer-baseline path needs ≥2 qualified ports. Without a fallback,
-            # a lone bad port at 100% error rate would never ban — common at
+            # a lone bad port at 100% error rate would never ban -- common at
             # startup (only one port seen requests) or after ban churn (peers
             # wiped). Absolute-rate fallback: if this port is clearly broken
             # on its own merits, ban it.
@@ -150,7 +150,7 @@ class PortHealthTracker:
                 self._ports.pop(port_offset, None)
                 _log.warning(
                     "[PROXY] Port %d banned for %.0fs: absolute error rate %.1f%% >= threshold %.1f%% "
-                    "(no peer baseline — only %d qualified port(s))",
+                    "(no peer baseline -- only %d qualified port(s))",
                     port_offset, self.ban_duration,
                     ps.error_rate * 100, self.absolute_ban_rate * 100, len(qualified),
                 )
@@ -161,7 +161,7 @@ class PortHealthTracker:
         avg_rate = total_errors / total_reqs if total_reqs > 0 else 0.0
 
         if avg_rate <= 0:
-            # No errors anywhere — nothing to ban
+            # No errors anywhere -- nothing to ban
             return
 
         port_rate = ps.error_rate
@@ -227,7 +227,7 @@ class PortHealthTracker:
                 del self._banned[p]
             if len(self._banned) >= port_range * 0.9:
                 _log.warning(
-                    "[PROXY] %d/%d ports banned — using random port anyway",
+                    "[PROXY] %d/%d ports banned -- using random port anyway",
                     len(self._banned), port_range,
                 )
                 return random.randint(1, port_range)

@@ -1,0 +1,41 @@
+# Pre-commit hooks for pyutilz.
+#
+# Install:
+#   pip install pre-commit && pre-commit install
+#
+# The hook runs the meta-test suite under ``tests/test_meta/`` on every
+# commit. This is exactly the set of tests designed to catch package-
+# level drift: lazy-import-proxy breaks, alias-vs-target mismatches,
+# top-level side-effect regressions, optional-dep contamination, and
+# API-snapshot drift. Total runtime: ≈ 30 s (heavy lifting is sub-process
+# isolation in PT-8 / PT-9).
+#
+# To skip in a hurry:
+#   git commit --no-verify
+#
+# A ``manual``-stage variant is also defined for tight inner-loop work
+# — it skips the sub-process tests (PT-8 and PT-9) and runs in ≈ 5 s:
+#   pre-commit run --hook-stage=manual pyutilz-meta-tests-static-only
+
+repos:
+  - repo: local
+    hooks:
+      - id: pyutilz-meta-tests
+        name: "pyutilz meta-tests (alias / API / optional-deps / side effects)"
+        entry: pytest tests/test_meta/ --no-cov -p no:randomly -q -x
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: false
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      - id: pyutilz-meta-tests-static-only
+        name: "pyutilz meta-tests (static checks only — skip subprocess)"
+        entry: pytest tests/test_meta/ --no-cov -p no:randomly -q -x --deselect tests/test_meta/test_optional_deps_isolation.py --deselect tests/test_meta/test_no_top_level_side_effects.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: false
+        stages: [manual]

@@ -87,7 +87,7 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
                 source=info,
                 jsonize=True,
             )
-            logger.info("Registered as %s with node_id %s" % (m_scraper_name, _container.node_id))
+            logger.info("Registered as %s with node_id %s", m_scraper_name, _container.node_id)
             heartbeat_scraper(status="starting", ip=None)
             return _container.node_id
 

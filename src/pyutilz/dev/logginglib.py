@@ -212,7 +212,9 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
     return last_activity_duration
 
 
-def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: dict = {}, lang: str = None, verbose: bool = False):
+def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: dict = None, lang: str = None, verbose: bool = False):
+    if results_log is None:
+        results_log = {}
     assert source_type in ("db_table", "file")
     if lang is None:
         lang = globals().get("reports_language", "en")

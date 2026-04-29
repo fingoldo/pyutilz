@@ -31,7 +31,7 @@ def benchmark_algos_by_runtime(implementations: list, algo_name: str = "", n_rep
     durations = []
     if verbose > 1:
         mes_parts = []
-        logger.info(f"Benchmarking {algo_name} implementations...")
+        logger.info("Benchmarking %s implementations...", algo_name)
 
     for algo in tqdmu(implementations, desc=f"Comparing {algo_name} implementations", leave=False):
         min_duration = 1e20

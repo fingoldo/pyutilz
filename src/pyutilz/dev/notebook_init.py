@@ -30,15 +30,15 @@ def setup_jupyter_display():
     """Setup Jupyter notebook display options"""
     try:
         display(HTML("<style>.container { width:100% !important; }</style>"))
-        print("✅ Jupyter display configured")
+        print("[OK]Jupyter display configured")
     except Exception as e:
-        print(f"⚠️  Display setup failed: {e}")
+        print(f"[!] Display setup failed: {e}")
 
 def load_jupyter_extensions():
     """Load common Jupyter extensions using IPython API"""
     ipython = get_ipython()
     if not ipython:
-        print("⚠️  Not running in IPython environment")
+        print("[!] Not running in IPython environment")
         return
 
     extensions_to_load = [
@@ -67,9 +67,9 @@ def load_jupyter_extensions():
         failed.append(('autoreload 2', str(e)))
 
     if loaded:
-        print(f"✅ Loaded extensions: {', '.join(loaded)}")
+        print(f"[OK]Loaded extensions: {', '.join(loaded)}")
     if failed:
-        print(f"⚠️  Failed to load: {[f[0] for f in failed]}")
+        print(f"[!] Failed to load: {[f[0] for f in failed]}")
 
 def import_common_packages():
     """Import common packages and return them"""
@@ -82,28 +82,28 @@ def import_common_packages():
         pd.set_option('display.max_columns', None)
         pd.set_option('display.width', None)
     except ImportError:
-        print("⚠️  pandas not available")
+        print("[!] pandas not available")
 
     try:
         import numpy as np
         packages['np'] = np
     except ImportError:
-        print("⚠️  numpy not available")
+        print("[!] numpy not available")
 
     try:
         import matplotlib.pyplot as plt
         packages['plt'] = plt
     except ImportError:
-        print("⚠️  matplotlib not available")
+        print("[!] matplotlib not available")
 
     try:
         import seaborn as sns
         packages['sns'] = sns
     except ImportError:
-        print("⚠️  seaborn not available")
+        print("[!] seaborn not available")
 
     if packages:
-        print(f"📦 Imported packages: {', '.join(packages.keys())}")
+        print(f"[pkg] Imported packages: {', '.join(packages.keys())}")
 
     return packages
 
@@ -111,16 +111,16 @@ def load_jupyter_extensions_minimal():
     """Load only built-in IPython extensions"""
     ipython = get_ipython()
     if not ipython:
-        print("⚠️  Not running in IPython environment")
+        print("[!] Not running in IPython environment")
         return
 
     # Only load built-in extensions that should always be available
     try:
         ipython.magic('load_ext autoreload')
         ipython.magic('autoreload 2')
-        print("✅ Loaded autoreload extension")
+        print("[OK]Loaded autoreload extension")
     except Exception as e:
-        print(f"⚠️  Failed to load autoreload: {e}")
+        print(f"[!] Failed to load autoreload: {e}")
 
 def init_notebook(include_imports=True, inject_globals=False, use_simple_extensions=True):
     """
@@ -134,7 +134,7 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
     Returns:
         dict: Dictionary of imported packages if include_imports=True
     """
-    print("🚀 Initializing notebook environment...")
+    print("[*] Initializing notebook environment...")
 
     setup_polars_config()
     setup_jupyter_display()
@@ -153,14 +153,14 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
                 import inspect
                 frame = inspect.currentframe().f_back
                 frame.f_globals.update(packages)
-                print("📌 Packages injected into global namespace")
+                print("[*] Packages injected into global namespace")
             except Exception:
-                print("⚠️  Could not inject into global namespace")
+                print("[!] Could not inject into global namespace")
 
-        print("✅ Notebook initialization complete!")
+        print("[OK]Notebook initialization complete!")
         return packages
     else:
-        print("✅ Notebook initialization complete!")
+        print("[OK]Notebook initialization complete!")
         return {}
 
 # For %run -m compatibility

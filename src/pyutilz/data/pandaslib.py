@@ -54,12 +54,12 @@ import shutil
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
-    logger.info(f"Loading data from file {fpath}...")
+    logger.info("Loading data from file %s...", fpath)
 
     df = pd.read_pickle(fpath)
     if tail is not None:
         if tail > 0:
-            logger.info(f"Limiting to last {tail} responses")
+            logger.info("Limiting to last %s responses", tail)
             df = df.tail(tail)
     return df
 
@@ -257,7 +257,7 @@ def optimize_dtypes(
 
     if len(new_dtypes) > 0 and not inplace:
         if verbose:
-            logger.info(f"Going to use the following new dtypes: {new_dtypes}")
+            logger.info("Going to use the following new dtypes: %s", new_dtypes)
         return df.astype(new_dtypes)
     else:
         return df
@@ -324,7 +324,7 @@ def showcase_df_columns(
       value remains. The dict value is the fraction of non-dominant rows (i.e. 1 - dominant_count/total).
 
     Returns:
-        (rare_categories, uninformative_features) — both dicts keyed by column name.
+        (rare_categories, uninformative_features) -- both dicts keyed by column name.
 
     >>> import pandas as pd
     >>> df = pd.DataFrame({"a": [1, 1, 1, 2, 2, 3], "b": ["x", "x", "x", "y", "y", None]})
@@ -649,11 +649,11 @@ def read_stats_from_multiple_files(
             tmp_df = optimize_dtypes(tmp_df)
             gc.collect()
             new_size = tmp_df.memory_usage(index=True).sum() / 1024**3
-            logger.info(f"After optimization, {filename} got size {new_size:.1f} Gb")
+            logger.info("After optimization, %s got size %.1f Gb", filename, new_size)
 
             if save_on_successful_optimization:
                 if new_size <= old_size * (1 - min_size_improvement_percent) or old_size - new_size >= min_size_improvement:
-                    logger.info(f"Re-saving file {filename} due to lower size")
+                    logger.info("Re-saving file %s due to lower size", filename)
                     getattr(tmp_df, write_fcn)(f"{'.'.join(filename.split('.')[:-1])}.{write_extension}")
 
         if sentinel_field:
@@ -736,14 +736,14 @@ def get_df_memory_consumption(df, max_cols: int = 0, deep: bool = True) -> float
     max_cols : int, optional
         Deprecated parameter, kept for backward compatibility (ignored).
     deep : bool, default True
-        pandas-only. Default True uses ``df.memory_usage(deep=True)`` —
+        pandas-only. Default True uses ``df.memory_usage(deep=True)`` --
         byte-precise accounting that recursively sizes every element of
         object columns. On frames with million-unique strings this is
         O(rows * avg_str_len) and can take minutes; callers using this
         only for coarse heuristics (GPU-RAM fit checks, capacity
-        planning) should pass ``deep=False`` explicitly — that yields
+        planning) should pass ``deep=False`` explicitly -- that yields
         pointer-size accounting (8 B per object-column cell), O(cols),
-        milliseconds. The polars branch ignores this flag —
+        milliseconds. The polars branch ignores this flag --
         ``.estimated_size()`` is already O(cols).
 
     Returns
@@ -1109,7 +1109,7 @@ def ensure_dataframe_float32_convertability(
                 # Infer numeric Arrow types
                 if is_integer_dtype(pa_dtype) or is_float_dtype(pa_dtype):
                     if verbose:
-                        logger.info(f"Converting PyArrow column '{col}' ({pa_dtype}) → float32[pyarrow]")
+                        logger.info("Converting PyArrow column '%s' (%s) -> float32[pyarrow]", col, pa_dtype)
                     df[col] = df[col].astype("float32[pyarrow]")
 
     return df

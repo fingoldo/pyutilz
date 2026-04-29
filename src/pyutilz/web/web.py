@@ -115,7 +115,7 @@ def download_in_parallel(
     n_processed = 0
     errored_urls = []
     rs = (grequests.get(sub_url, verify=True, allow_redirects=True, headers=headers) for sub_url in urls_to_process)
-    logger.info("Started crawling! nlinks=%d" % (len(urls_to_process)))
+    logger.info("Started crawling! nlinks=%d", len(urls_to_process))
     # pbar=tqdmu(urls_to_process)
     for resp, sub_url in zip(grequests.map(rs, size=nparallel_downloads), urls_to_process):
         n_processed = n_processed + 1
@@ -138,8 +138,8 @@ def download_in_parallel(
             logger.error("Response is None for url %s" % sub_url)
         if (n_processed % report_each) == 0:
             # pbar.update(report_each)
-            logger.info("Processed %d urls,n_errored=%d" % (n_processed, len(errored_urls)))
-    logger.info("Finished! n_processed=%d,n_errored=%d" % (n_processed, len(errored_urls)))
+            logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))
+    logger.info("Finished! n_processed=%d,n_errored=%d", n_processed, len(errored_urls))
     # pbar.close()
     return errored_urls
 
@@ -251,9 +251,9 @@ def get_new_smartproxy(
     proxy_min_port: int = 20001,
     proxy_max_port: int = 37960,
     job_desc: str = "",
-    last_used_dict: dict = {},
+    last_used_dict: dict = None,
     min_idle_interval_minutes: float = 0,
-    failed_dict: dict = {},
+    failed_dict: dict = None,
     min_failed_idle_interval_minutes: float = 60 * 24,
     warn_after_n_failures: int = 5,
     delay: int = 5,
@@ -261,6 +261,10 @@ def get_new_smartproxy(
     proxy_type: str = "http",
     verbose=False,
 ) -> dict:
+    if failed_dict is None:
+        failed_dict = {}
+    if last_used_dict is None:
+        last_used_dict = {}
     n = 0
     now_time = datetime.utcnow()
     while True:
@@ -282,25 +286,25 @@ def get_new_smartproxy(
                 if proxy_key in dict_to_check:
                     if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_idle_interval_minutes:
                         if verbose:
-                            logger.info("Skipping proxy %s:%s, touched recently" % (proxy_server, proxy_port))
+                            logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)
                         b_time_to_check_now = False
                         break
 
         if b_time_to_check_now:
             if verbose:
-                logger.info("Got new proxy: %s:%s" % (proxy_server, proxy_port))
+                logger.info("Got new proxy: %s:%s", proxy_server, proxy_port)
             return proxies
         else:
             n = n + 1
             if n > warn_after_n_failures:
                 if verbose:
-                    logger.info("Could not get an untouched proxy%s, sleeping %s sec." % ("" if job_desc == "" else " for " + job_desc, delay))
+                    logger.info("Could not get an untouched proxy%s, sleeping %s sec.", "" if job_desc == "" else " for " + job_desc, delay)
                 sleep(delay)
                 n = 0
 
 
 def report_params(url, proxies, params, data, json, headers_to_use, timeout):
-    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s" % (url, str(proxies), params, data, json, headers_to_use, timeout))
+    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s", url, str(proxies), params, data, json, headers_to_use, timeout)
 
 
 def get_url(
@@ -347,7 +351,7 @@ def get_url(
                 get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                 if max_ip_queries > 0:
                     cur_max_ip_queries = int(max_ip_queries * (0.6 + 0.4 * random()))
-                    logger.info("cur_max_ip_queries set to %d" % cur_max_ip_queries)
+                    logger.info("cur_max_ip_queries set to %d", cur_max_ip_queries)
             headers_to_use = custom_headers if custom_headers else headers
             if inject_headers:
                 if headers_to_use:
@@ -403,7 +407,7 @@ def get_url(
         else:
             if res.status_code not in (http.HTTPStatus.OK, http.HTTPStatus.PARTIAL_CONTENT):
                 if res.status_code in blocking_statuses:
-                    logger.info("Error %s while getting %s" % (res.status_code, url))
+                    logger.info("Error %s while getting %s", res.status_code, url)
                     report_params(url, proxies, params, data, json, headers_to_use, timeout)
                     handle_blocking(target, b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                     was_blocked = True
@@ -414,7 +418,7 @@ def get_url(
                     break
                 elif res.status_code in exit_statuses:
                     if verbose:
-                        logger.info("status_code %s" % res.status_code)
+                        logger.info("status_code %s", res.status_code)
                     break
                 elif res.status_code in ratelimiting_statuses:
                     if verbose:
@@ -509,7 +513,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
                 proxy_port=proxy_port,
                 proxy_type=proxy_type,
             )
-            logger.info(f"proxy_server={proxy_server}")
+            logger.info("proxy_server=%s", proxy_server)
 
 
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
@@ -538,10 +542,12 @@ def download_to_file(
     timeout: int = 100,
     chunk_size: int = 1024,
     max_attempts: int = 5,
-    headers: dict = {},
+    headers: dict = None,
     exit_codes: tuple = (),
 ):
     """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long."""
+    if headers is None:
+        headers = {}
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
 
     nattempts = 0

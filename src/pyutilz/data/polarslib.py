@@ -683,7 +683,7 @@ def bin_numerical_columns(
     clean_targets: bool = True,
     num_bins: int = 10,
     bin_dtype: object = pl.Int8,
-    exclude_columns: list = [],
+    exclude_columns: list = None,
     min_nuniques_to_clip: int = 10,
     tukey_fences_multiplier: float = 3.0,
     fill_nulls: bool = True,
@@ -696,6 +696,8 @@ def bin_numerical_columns(
     Converts values into integer uniform bin ids.
     Suggest for dropping columns that do not change.
     """
+    if exclude_columns is None:
+        exclude_columns = []
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits

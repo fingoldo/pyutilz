@@ -44,7 +44,7 @@ class UtilizationMonitor:
     def __init__(
         self,
         sleep_interval_seconds: float = 1.0,
-        gpu_ids: list = [],
+        gpu_ids: list = None,
     ):
         """Initialize the utilization monitor.
 
@@ -52,6 +52,8 @@ class UtilizationMonitor:
             sleep_interval_seconds: Sampling interval (default 1.0 second)
             gpu_ids: List of GPU IDs to monitor (empty = all GPUs)
         """
+        if gpu_ids is None:
+            gpu_ids = []
         self.cpu_utilizaton = []
         self.cpu_clocks = []
 

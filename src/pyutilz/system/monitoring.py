@@ -69,7 +69,7 @@ def job_completed(job_id: str, status: int = 0, data: str = None, provider: str 
         except Exception as e:
             logger.warning(f"Error while sending hearbeat to {provider} on monitor {job_id}: {e}")
     else:
-        logger.info(f"No endpoint established for job {job_id}. Check if monitoring credentials are properly configured.")
+        logger.info("No endpoint established for job %s. Check if monitoring credentials are properly configured.", job_id)
 
 
 def monitored(
@@ -177,7 +177,7 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
                 kwargs_str = ', '.join(f"{k}={safe_repr(v)}" for k, v in kwargs.items()) if kwargs else ''
                 args_kwargs = f"({args_str}{', ' if args and kwargs else ''}{kwargs_str})"
 
-                logger_msg.info(f"{func.__name__}{args_kwargs} took {dur:.2f} s.")
+                logger_msg.info("%s%s took %.2f s.", func.__name__, args_kwargs, dur)
             return result
         return wrapper
     return decorator

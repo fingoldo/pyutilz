@@ -38,7 +38,7 @@ from selenium.webdriver.common.by import By
 # Utilz
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from . import pythonlib
+from pyutilz.core import pythonlib
 
 from datetime import datetime, timedelta
 from time import sleep
@@ -138,7 +138,7 @@ def start_selenium() -> object:
 
     #if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
 
-    logger.info(f"Starting Selenium for {target}")
+    logger.info("Starting Selenium for %s", target)
     kwargs={}
     if undetectable:
         logger.info(f"Undetectable mode")
@@ -363,7 +363,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
         if not pythonlib.anyof_elements_in_string(successful_login_signs, title):
             logger.critical(f"Can't login to {target},got page {title}")
         else:
-            logger.info(f"Logged in to {target}")
+            logger.info("Logged in to %s", target)
             res = True
     else:
         if pythonlib.anyof_elements_in_string(successful_login_signs, browser.title):

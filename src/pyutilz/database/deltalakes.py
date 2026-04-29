@@ -62,7 +62,7 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
 
         try:
             with lock.acquire(timeout=lock_timeout):
-                logger.debug(f"Acquired lock for local Delta path: {path}")
+                logger.debug("Acquired lock for local Delta path: %s", path)
                 return delta_op_func()
         except Timeout:
             logger.warning(f"Timeout while waiting for lock on {path}. Skipping operation.")

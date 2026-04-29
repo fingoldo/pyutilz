@@ -16,7 +16,7 @@ try:
 except ImportError:
     _ENCODING = None  # type: ignore[assignment]
     _HAS_TIKTOKEN = False
-    logger.debug("tiktoken not installed — using len//4 fallback for token counting")
+    logger.debug("tiktoken not installed -- using len//4 fallback for token counting")
 
 
 def count_tokens(text: str) -> int:

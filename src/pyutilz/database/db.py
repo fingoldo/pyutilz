@@ -125,7 +125,7 @@ def connect_to_db(
 
     while True:
         try:
-            logger.info("Connecting to the DB %s..." % db_name)
+            logger.info("Connecting to the DB %s...", db_name)
 
             if db_flavor == "postgres":
                 #!pip install psycopg2
@@ -170,7 +170,7 @@ def connect_to_db(
             logger.exception(e)
             sleep(5)
         else:
-            logger.info("Connected to the DB %s" % db_name)
+            logger.info("Connected to the DB %s", db_name)
             return
 
 
@@ -238,7 +238,7 @@ def basic_db_execute(
                 logger.error(f"Max retries ({max_retries}) exceeded for database operation")
                 raise
             logger.exception(e)
-            logger.info(f"Retrying database operation ({retry_count}/{max_retries})...")
+            logger.info("Retrying database operation (%s/%s)...", retry_count, max_retries)
             sleep(1)
             connect_to_db(
                 m_db_name=db_name,
@@ -328,12 +328,16 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
     return values, templates
 
 
-def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values={}, returning="*", source={}, jsonize=True, fetch_into=None, prefix=""):
+def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values=None, returning="*", source=None, jsonize=True, fetch_into=None, prefix=""):
     """
     Executes DML commands easily, looking up sql fields in main and replacement dictionaries, optionally fetching returned values into separate class or dictionary instance[prefixed, if needed]
     This procedure is convenient when you have variables in local or global scope which names match exactly SQL table fields names. Using this sub, in your code you only mention fields names once, pass locals()
     and do not worry about duplicated code! Also it allows fetching returned data into some object in one go. ;-)
     """
+    if replace_values is None:
+        replace_values = {}
+    if source is None:
+        source = {}
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Sanity checks
@@ -748,12 +752,14 @@ def create_enum_from_table(enum_name: str, table_name: str, id_field_name: str, 
     return Enum(enum_name, dct)
 
 
-def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: list = [], min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
+def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: list = None, min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
     """
     Aim is to remove lengthy fields that mostly holds a default value from the JSON.
     Absense of some JSON field is interpreted as null in PostGres.
     Result will be an optimization of an existing table.
     """
+    if fields is None:
+        fields = []
 
     # Кандидат должен быть лидером по встречаемости. Также должен покрывать как минимум 90% вариантов. Кандидат не должн быть не-None, если поле имеет None в уже существующих значениях:
     # minHoursWeek [(None, 1244198), ('0', 150675)] - OK
@@ -812,18 +818,18 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
 def build_upsert_query(
     fields_names: list,
     table_name: str,
-    conflict_fields: list = ["id"],
-    fields_types: dict = {},
-    skip_fields: list = [],
-    timestamp_check_fields: list = [],
-    timestamp_update_fields: list = [],
-    on_conflict_update_fields: list = [],
-    on_conflict_update_values: dict = {},
+    conflict_fields: list = None,
+    fields_types: dict = None,
+    skip_fields: list = None,
+    timestamp_check_fields: list = None,
+    timestamp_update_fields: list = None,
+    on_conflict_update_fields: list = None,
+    on_conflict_update_values: dict = None,
     custom_onconflict: str = None,
-    returning_fields: list = [],
+    returning_fields: list = None,
     history_table_name: str = None,
-    history_fields: list = [],
-    history_fields_aliases: dict = {},
+    history_fields: list = None,
+    history_fields_aliases: dict = None,
     hash_fields: str = "",
     default_timestamp: str = "now()",
 ) -> str:
@@ -835,6 +841,26 @@ def build_upsert_query(
     timestamp_check_fields: when element was last checked (queried from source)
     timestamp_update_fields: when element was last updated (queried from source and found changed)
     """
+    if conflict_fields is None:
+        conflict_fields = ["id"]
+    if fields_types is None:
+        fields_types = {}
+    if history_fields is None:
+        history_fields = []
+    if history_fields_aliases is None:
+        history_fields_aliases = {}
+    if on_conflict_update_fields is None:
+        on_conflict_update_fields = []
+    if on_conflict_update_values is None:
+        on_conflict_update_values = {}
+    if returning_fields is None:
+        returning_fields = []
+    if skip_fields is None:
+        skip_fields = []
+    if timestamp_check_fields is None:
+        timestamp_check_fields = []
+    if timestamp_update_fields is None:
+        timestamp_update_fields = []
     # ------------------------------
     # Checks!
     # ------------------------------
@@ -1116,7 +1142,7 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = N
         logger.error(f"DB Schema file not found.")
         return False
 
-    with open(schema_fpath) as f:
+    with open(schema_fpath, encoding="utf-8") as f:
         schema_string = f.read()
 
     if len(schema_string) > 0:

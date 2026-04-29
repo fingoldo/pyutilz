@@ -13,7 +13,7 @@ Usage::
 
 Features:
 - Mtime-based debounced reload (configurable interval, default 5s)
-- Type-casting with fallback chain: TOML value → *default* → *defaults* dict
+- Type-casting with fallback chain: TOML value -> *default* -> *defaults* dict
 - Lists and dicts returned as-is (no casting)
 - Parse errors keep previous config (never crashes a running pipeline)
 - File deletion keeps previous config + logs warning
@@ -81,10 +81,10 @@ class TomlLiveConfig:
         except FileNotFoundError:
             if self._data:
                 self._log.warning(
-                    "Config file %s not found — keeping previous values", self._path,
+                    "Config file %s not found -- keeping previous values", self._path,
                 )
             else:
-                # First load with no file — start with empty config (defaults used).
+                # First load with no file -- start with empty config (defaults used).
                 self._mtime = 0.0
             return
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
@@ -117,7 +117,7 @@ class TomlLiveConfig:
             except FileNotFoundError:
                 if self._data:
                     self._log.warning(
-                        "Config file %s disappeared — keeping previous values",
+                        "Config file %s disappeared -- keeping previous values",
                         self._path,
                     )
                 return
@@ -143,14 +143,14 @@ class TomlLiveConfig:
         returns the fallback instead of crashing.
         """
         self._maybe_reload()
-        # Avoid allocating a throwaway {} on every section miss — use a
+        # Avoid allocating a throwaway {} on every section miss -- use a
         # module-level empty sentinel instead.
         section_data = self._data.get(section)
         val = section_data.get(key) if section_data is not None else None
         if val is not None:
             if isinstance(val, (list, dict)):
                 return val
-            # Skip the type cast when the value already has the right type —
+            # Skip the type cast when the value already has the right type --
             # TOML parses floats/ints/bools natively so type_() is usually a
             # no-op coercion that still costs a Python function call.
             if type_ is not type(val) and not isinstance(val, type_):
@@ -177,7 +177,7 @@ class TomlLiveConfig:
         """Return the entire section dict (triggers reload check once).
 
         Faster than N individual ``get()`` calls when reading several keys
-        from the same section — ``_maybe_reload()`` is called only once and
+        from the same section -- ``_maybe_reload()`` is called only once and
         the section dict is looked up only once.  Returns an empty dict if
         the section is missing.
         """

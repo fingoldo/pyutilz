@@ -390,14 +390,7 @@ def utc_to_local(utc_dt):
 def utc_ts_2_locstr(
     inp_dt: str,
     dst: int = None,
-    dst_names: dict = {
-        1: "сек",
-        60: "мин",
-        60 * 60: "ч",
-        60 * 60 * 24: "дн",
-        60 * 60 * 24 * 30: "мес",
-        60 * 60 * 24 * 365: "гд",
-    },
+    dst_names: dict = None,
     input_date_format="%Y-%m-%dT%H:%M:%S.%f",
     output_date_format="%Y-%m-%d %H:%M:%S",
 ) -> str:
@@ -408,6 +401,15 @@ def utc_ts_2_locstr(
     '2021-09-22 18:14:34 (102 мин. тому назад)'
 
     """
+    if dst_names is None:
+        dst_names = {
+            1: "сек",
+            60: "мин",
+            60 * 60: "ч",
+            60 * 60 * 24: "дн",
+            60 * 60 * 24 * 30: "мес",
+            60 * 60 * 24 * 365: "гд",
+        }
     if inp_dt is None or inp_dt == "":
         return ""
     utc_dt = datetime.strptime(inp_dt, input_date_format)
@@ -487,7 +489,7 @@ def imitate_delay(
         else:
             cur_delay = (datetime.utcnow() - last_call_ts).total_seconds()
         if cur_delay < random_delay:
-            logger.debug("Sleeping %.2f sec." % (random_delay - cur_delay))
+            logger.debug("Sleeping %.2f sec.", random_delay - cur_delay)
             sleep(random_delay - cur_delay)
     return datetime.utcnow()
 
@@ -733,7 +735,9 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
         3
     """
 
-    def __init__(self, process_fcn: Callable = joblib.dump, process_kwargs: dict = {"compress": 9}, rewrite_existing: bool = True):
+    def __init__(self, process_fcn: Callable = joblib.dump, process_kwargs: dict = None, rewrite_existing: bool = True):
+        if process_kwargs is None:
+            process_kwargs = {"compress": 9}
         self.process_fcn = process_fcn
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
@@ -755,7 +759,9 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
         3
     """
 
-    def __init__(self, process_fcn: Callable = joblib.load, process_kwargs: dict = {}, rewrite_existing: bool = False):
+    def __init__(self, process_fcn: Callable = joblib.load, process_kwargs: dict = None, rewrite_existing: bool = False):
+        if process_kwargs is None:
+            process_kwargs = {}
         self.process_fcn = process_fcn
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
@@ -814,7 +820,7 @@ def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", prot
 
 @contextmanager
 def suppress_stdout_stderr():
-    with open(os.devnull, "w") as devnull:
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         sys.stdout = devnull

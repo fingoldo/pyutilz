@@ -186,6 +186,80 @@ class OpenAICompatibleProvider(LLMProvider):
         retry=retry_if_exception(_is_retryable_http_error),
         **INFINITE_RETRY_KWARGS,
     )
+    def _extra_request_body(self, model: str) -> dict[str, Any]:
+        """Return provider-specific extra fields to merge into the request body.
+
+        Subclasses override for things like vendor-specific defaults.
+        Defaults to empty so callers see vanilla OpenAI-compatible behavior.
+        """
+        return {}
+
+    def _thinking_request_field(self, enabled: bool) -> dict[str, Any] | None:
+        """Return the request-body fragment that toggles thinking mode.
+
+        Provider-specific. Default: None (provider doesn't support it).
+        DeepSeek V4 overrides to return ``{"thinking": {"type": ...}}``.
+        """
+        return None
+
+    async def generate_stream(
+        self,
+        prompt: str,
+        system: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 0,
+        json_mode: bool = False,
+        thinking: bool | None = None,
+    ):
+        """Stream the model's response token-by-token via SSE.
+
+        Yields each content delta as a string; the caller concatenates.
+        Token-usage accounting is updated only after the stream completes
+        (the final ``[DONE]`` chunk carries it for OpenAI-compat APIs).
+        """
+        import json as _json
+
+        if max_tokens <= 0:
+            max_tokens = self.max_output_tokens
+        async with self.semaphore:
+            body: dict[str, Any] = {
+                "model": self.model_name,
+                "messages": self._build_messages(prompt, system),
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True,
+            }
+            if json_mode:
+                body["response_format"] = {"type": "json_object"}
+            body.update(self._extra_request_body(self.model_name))
+            if thinking is not None:
+                tf = self._thinking_request_field(thinking)
+                if tf is not None:
+                    body.update(tf)
+
+            async with self._client.stream(
+                "POST", "/chat/completions", json=body,
+            ) as resp:
+                self._handle_special_status(resp)
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_part = line[5:].strip()
+                    if data_part == "[DONE]":
+                        break
+                    try:
+                        chunk = _json.loads(data_part)
+                    except _json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
+
     async def generate(
         self,
         prompt: str,
@@ -193,8 +267,19 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
+        thinking: bool | None = None,
     ) -> str:
-        """Generate text using OpenAI-compatible chat/completions API."""
+        """Generate text using OpenAI-compatible chat/completions API.
+
+        ``thinking``: provider-specific chain-of-thought toggle.
+        - ``None`` (default): use the provider's/model's default behavior.
+        - ``True``: explicitly request thinking mode (DeepSeek V4 supports this).
+        - ``False``: explicitly disable thinking. Useful when a tight
+          ``max_tokens`` budget would otherwise be consumed entirely by
+          reasoning (DeepSeek V4 returns ``finish_reason='length'`` with an
+          empty completion in that case).
+        Providers that don't support a thinking toggle ignore this flag.
+        """
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
         async with self.semaphore:
@@ -206,6 +291,11 @@ class OpenAICompatibleProvider(LLMProvider):
             }
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
+            body.update(self._extra_request_body(self.model_name))
+            if thinking is not None:
+                thinking_field = self._thinking_request_field(thinking)
+                if thinking_field is not None:
+                    body.update(thinking_field)
 
             resp = await self._client.post("/chat/completions", json=body)
 

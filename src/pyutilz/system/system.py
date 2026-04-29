@@ -244,10 +244,10 @@ def dict_to_tuple(d: dict):
 
 def get_wmi_obj_as_dict(
     obj,
-    exclude_pros: set = set(),
-    ensure_float: set = set(),
-    ensure_int: set = set(),
-    decode_dict: dict = {},
+    exclude_pros: set = None,
+    ensure_float: set = None,
+    ensure_int: set = None,
+    decode_dict: dict = None,
 ):
     """Convert WMI object to dictionary with type conversion.
 
@@ -261,6 +261,14 @@ def get_wmi_obj_as_dict(
     Returns:
         Dictionary representation of WMI object
     """
+    if decode_dict is None:
+        decode_dict = {}
+    if ensure_float is None:
+        ensure_float = set()
+    if ensure_int is None:
+        ensure_int = set()
+    if exclude_pros is None:
+        exclude_pros = set()
     obj_dict = {}
     for prop in obj.properties:
         if prop in exclude_pros:
@@ -284,10 +292,10 @@ def get_wmi_obj_as_dict(
 
 def summarize_devices(
     devices,
-    exclude_pros: set = set(),
-    ensure_float: set = set(),
-    ensure_int: set = set(),
-    decode_dict: dict = {},
+    exclude_pros: set = None,
+    ensure_float: set = None,
+    ensure_int: set = None,
+    decode_dict: dict = None,
 ):
     """Aggregate identical hardware devices with counts.
 
@@ -301,6 +309,14 @@ def summarize_devices(
     Returns:
         List of unique devices with "Count" field added
     """
+    if decode_dict is None:
+        decode_dict = {}
+    if ensure_float is None:
+        ensure_float = set()
+    if ensure_int is None:
+        ensure_int = set()
+    if exclude_pros is None:
+        exclude_pros = set()
     from collections import Counter
 
     device_dicts = []
@@ -522,17 +538,21 @@ def get_system_info(
                         info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Mac":
                     try:
-                        ioreg_proc = subprocess.Popen(
+                        # Pipeline ``ioreg | grep`` — both Popen handles
+                        # bound to context managers so they're terminated
+                        # cleanly on exit / exception (was a bare
+                        # subprocess.Popen pair before, leaking processes
+                        # if grep_proc.communicate() raised).
+                        with subprocess.Popen(
                             ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                            stdout=subprocess.PIPE
-                        )
-                        grep_proc = subprocess.Popen(
+                            stdout=subprocess.PIPE,
+                        ) as ioreg_proc, subprocess.Popen(
                             ["grep", "-E", "(UUID)"],
                             stdin=ioreg_proc.stdout,
-                            stdout=subprocess.PIPE
-                        )
-                        ioreg_proc.stdout.close()
-                        output = grep_proc.communicate()[0]
+                            stdout=subprocess.PIPE,
+                        ) as grep_proc:
+                            ioreg_proc.stdout.close()
+                            output = grep_proc.communicate()[0]
                         guid = output.decode().split('"')[-2]
                         info["os_machine_guid"] = guid
                         info["os_serial"] = guid
@@ -772,11 +792,17 @@ def get_linux_board_info():
     """
     board_info = {}
     try:
-        with open("/sys/devices/virtual/dmi/id/board_vendor", "r") as f:
+        # Linux sysfs files are ASCII-only by spec, but explicit encoding
+        # avoids the locale-dependent default that crashes on Windows
+        # (cp1251) if this code path is ever exercised under WSL.
+        with open("/sys/devices/virtual/dmi/id/board_vendor", "r",
+                  encoding="utf-8") as f:
             board_info["Vendor"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_name", "r") as f:
+        with open("/sys/devices/virtual/dmi/id/board_name", "r",
+                  encoding="utf-8") as f:
             board_info["Name"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_version", "r") as f:
+        with open("/sys/devices/virtual/dmi/id/board_version", "r",
+                  encoding="utf-8") as f:
             board_info["Version"] = f.read().strip()
     except FileNotFoundError as e:
         logger.error(f"Error reading board information: {e}")
@@ -784,22 +810,8 @@ def get_linux_board_info():
 
 
 def parse_dmidecode_info(
-    skip_keys: set = set(
-        [
-            "Address",
-            "Asset Tag",
-            "Locator",
-            "Bank Locator",
-            "ID",
-            "UUID",
-            "OEM Information",
-            "Serial Number",
-            "Socket Designation",
-        ],
-    ),
-    skip_values: set = set(
-        ["Not Provided", "Unknown", "Not Specified", "Unspecified", "None", "To Be Filled By O.E.M.", "", None]
-    ),
+    skip_keys: set = None,
+    skip_values: set = None,
 ) -> dict:
     """Parse dmidecode output for hardware information (Linux only).
 
@@ -810,6 +822,16 @@ def parse_dmidecode_info(
     Returns:
         list: List of dicts with hardware info (BIOS, System, Processor, Memory, etc.)
     """
+    if skip_keys is None:
+        skip_keys = {
+            "Address", "Asset Tag", "Locator", "Bank Locator", "ID",
+            "UUID", "OEM Information", "Serial Number", "Socket Designation",
+        }
+    if skip_values is None:
+        skip_values = {
+            "Not Provided", "Unknown", "Not Specified", "Unspecified",
+            "None", "To Be Filled By O.E.M.", "", None,
+        }
     from collections import Counter
     from pyutilz.core.pythonlib import is_float, to_float
 
@@ -1185,7 +1207,7 @@ def check_huge_pages_linux():
         bool: True if huge pages are available
     """
     try:
-        with open("/proc/meminfo", "r") as f:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
             for line in f:
                 if "HugePages_Total" in line:
                     huge_pages_total = int(line.split()[1])
@@ -1266,7 +1288,8 @@ def get_linux_power_plan():
     try:
         for cpu in os.listdir("/sys/devices/system/cpu/"):
             if cpu.startswith("cpu") and cpu[3:].isdigit():
-                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", "r") as f:
+                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", "r",
+                          encoding="utf-8") as f:
                     governors.append(f.read().strip())
         return sorted(list(Counter(governors).keys()))
     except Exception as e:
@@ -1829,7 +1852,7 @@ def ensure_idle_devices(
     min_cpu_free_ram_gb: float = 1.0,
     max_gpu_load_percent: float = 15.0,
     min_gpu_free_ram_gb: float = 1.0,
-    gpu_ids: list = [],
+    gpu_ids: list = None,
 ):
     """Ensure CPU and GPU devices are idle before running benchmarks.
 
@@ -1847,6 +1870,8 @@ def ensure_idle_devices(
     Returns:
         bool: True if conditions met, False if initial validation failed
     """
+    if gpu_ids is None:
+        gpu_ids = []
     import time
 
     if not (0 <= max_cpu_load_percent <= 100):
@@ -1854,7 +1879,7 @@ def ensure_idle_devices(
     if not (0 <= max_gpu_load_percent <= 100):
         raise ValueError("max_gpu_load_percent must be between 0 and 100")
 
-    logger.info(f"Ensuring idle devices for {duration_seconds} seconds with the following conditions:")
+    logger.info("Ensuring idle devices for %s seconds with the following conditions:", duration_seconds)
     logger.info(
         f"  Max CPU load: {max_cpu_load_percent}%, Min CPU free RAM: {min_cpu_free_ram_gb} GB, "
         f"Max GPU load: {max_gpu_load_percent}%, Min GPU free RAM: {min_gpu_free_ram_gb} GB. "

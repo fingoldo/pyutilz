@@ -9,15 +9,33 @@ from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
 logger = logging.getLogger(__name__)
 
-# Pricing per 1M tokens: (input_cache_miss, input_cache_hit, output)
+# Pricing per 1M tokens (USD): (input_cache_miss, input_cache_hit, output)
+# Source: https://api-docs.deepseek.com/quick_start/pricing
+# Updated 2026-04-28:
+#   - V4 models (deepseek-v4-flash, deepseek-v4-pro) launched
+#   - Cache-hit rates reduced to 1/10 of launch price (effective 2026-04-26)
+#   - Legacy aliases deepseek-chat / deepseek-reasoner deprecated 2026-07-24
 _PRICING = {
+    # New V4 family -- recommended
+    "deepseek-v4-flash": (0.14, 0.0028, 0.28),
+    "deepseek-v4-pro": (1.74, 0.0145, 3.48),
+    # Legacy aliases (deprecated 2026-07-24, still functional, V3.2-backed)
     "deepseek-chat": (0.28, 0.028, 0.42),
     "deepseek-reasoner": (0.28, 0.028, 0.42),
 }
 
 _MAX_TOKENS = {
+    "deepseek-v4-flash": 384_000,
+    "deepseek-v4-pro": 384_000,
     "deepseek-chat": 8192,
     "deepseek-reasoner": 65536,
+}
+
+_CONTEXT_WINDOW = {
+    "deepseek-v4-flash": 1_000_000,
+    "deepseek-v4-pro": 1_000_000,
+    "deepseek-reasoner": 128_000,
+    "deepseek-chat": 64_000,
 }
 
 
@@ -28,15 +46,13 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     _provider_name = "DeepSeek"
     _max_tokens_map = _MAX_TOKENS
     _default_max_tokens = 8192
-    _context_window_map = {
-        "deepseek-reasoner": 128_000,
-    }
+    _context_window_map = _CONTEXT_WINDOW
     _default_context_window = 64_000
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "deepseek-reasoner",
+        model: str = "deepseek-v4-flash",
         max_concurrent: int = 10,
     ):
         settings = get_llm_settings()
@@ -53,13 +69,14 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
 
     def _get_timeout(self, model: str) -> float:
-        return 300.0 if "reasoner" in model else 120.0
+        # V4 models support thinking via parameter; reasoner is the legacy thinking alias
+        return 300.0 if "reasoner" in model or "pro" in model else 120.0
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
         if resp.status_code == 402:
             logger.warning(
                 "DeepSeek account has insufficient balance (HTTP 402). "
-                "Top up at https://platform.deepseek.com/top_up — "
+                "Top up at https://platform.deepseek.com/top_up -- "
                 "retrying indefinitely until balance is restored..."
             )
 
@@ -68,11 +85,25 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     ) -> int:
         return completion_tokens
 
+    # NOTE: thinking mode is intentionally LEFT ENABLED by default for V4.
+    # Callers who need non-thinking mode (e.g. tight max_tokens budget on
+    # structured JSON output) should pass ``thinking=False`` to ``generate()``
+    # or use the legacy ``deepseek-chat`` alias which routes to non-thinking
+    # server-side. See DeepSeek docs:
+    # https://api-docs.deepseek.com/api/create-chat-completion
+
+    def _thinking_request_field(self, enabled: bool) -> dict | None:
+        # Only V4 models support this toggle; legacy aliases (chat/reasoner)
+        # are fixed-mode server-side and reject the field.
+        if not self.model_name.startswith("deepseek-v4"):
+            return None
+        return {"thinking": {"type": "enabled" if enabled else "disabled"}}
+
     def _input_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-chat"])[0]
+        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-chat"])[2]
+        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[2]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-chat"])[1]
+        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[1]
