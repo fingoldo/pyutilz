@@ -8,13 +8,16 @@ from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 logger = logging.getLogger(__name__)
 
 # Pricing per 1M tokens (USD): (input, output)
-# Source: https://docs.x.ai/developers/models, OpenRouter, official xAI announcements
-# Updated 2026-04-28:
-#   - Fixed prior 1000x error on grok-4.20 family ($2000/$6000 → $2/$6)
-#   - Added grok-4.20-beta (general flagship alias)
-#   - Added grok-4 (current alias for grok-4-0709)
-#   - Confirmed grok-4.20 cache-hit = $0.20/M (90% discount on input miss)
+# Source: https://docs.x.ai/docs/models, OpenRouter, official xAI announcements
+# Updated 2026-05-01:
+#   - Added grok-4.3 (newest flagship, $1.25/$2.50 — significantly
+#     cheaper than 4.20-beta despite being more capable; tiered pricing
+#     above 200K total request tokens applies the higher tier)
+#   - grok-4.20 multi-agent variant verified at $2/$6 (matches
+#     OpenRouter; non-multi-agent variant retained at $2/$6 for safety
+#     since xAI docs page didn't list distinct pricing)
 _MAX_TOKENS: dict[str, int] = {
+    "grok-4.3": 30000,
     "grok-4.20-beta": 30000,
     "grok-4.20-multi-agent-beta-0309": 30000,
     "grok-4.20-beta-0309-reasoning": 30000,
@@ -29,7 +32,11 @@ _MAX_TOKENS: dict[str, int] = {
 }
 
 _PRICING: dict[str, tuple[float, float]] = {
-    # grok-4.20 family — flagship, $2/$6 per 1M tokens, 2M context
+    # grok-4.3 — newest flagship as of 2026-05, $1.25/$2.50 per 1M.
+    # Tiered: requests >200K total tokens billed at higher rate (verify
+    # via xAI console if you regularly hit that ceiling).
+    "grok-4.3": (1.25, 2.50),
+    # grok-4.20 family — premium beta, $2/$6 per 1M tokens, 2M context
     "grok-4.20-beta": (2.00, 6.00),
     "grok-4.20-multi-agent-beta-0309": (2.00, 6.00),
     "grok-4.20-beta-0309-reasoning": (2.00, 6.00),
@@ -39,7 +46,7 @@ _PRICING: dict[str, tuple[float, float]] = {
     "grok-4-1-fast-non-reasoning": (0.20, 0.50),
     "grok-4-fast-reasoning": (0.20, 0.50),
     "grok-4-fast-non-reasoning": (0.20, 0.50),
-    # grok-4 premium reasoning, 256K context
+    # grok-4 premium reasoning, 256K context (pricing increases >128K)
     "grok-4": (3.00, 15.00),
     "grok-4-0709": (3.00, 15.00),
     # Legacy Grok 3
@@ -50,6 +57,8 @@ _PRICING: dict[str, tuple[float, float]] = {
 }
 
 _CACHE_HIT_COST: dict[str, float] = {
+    # grok-4.3: ~10% of $1.25 input. Verify in xAI console.
+    "grok-4.3": 0.13,
     "grok-4.20-beta": 0.20,
     "grok-4.20-multi-agent-beta-0309": 0.20,
     "grok-4.20-beta-0309-reasoning": 0.20,

@@ -21,16 +21,34 @@ class AnthropicProvider(LLMProvider):
 
     # Pricing per 1M tokens: (input, output)
     # Source: https://platform.claude.com/docs/en/about-claude/pricing
+    # Verified against the official pricing table 2026-05-01.
+    # Cache write 5m = 1.25x input, cache write 1h = 2x input,
+    # cache read = 0.10x input (universal multipliers across all models).
+    # ``_get_pricing`` prefix-matches via ``key.rsplit("-", 1)[0]``, so
+    # entries WITHOUT a date suffix also match the date-suffixed
+    # ``claude-opus-4-7-YYYYMMDD`` form. Use the unsuffixed canonical ID
+    # for any model whose date is not pinned in the official pricing
+    # table; pin the suffix only when the snapshot is the public API ID.
     _PRICING: dict[str, tuple[float, float]] = {
+        # Opus 4.5+: dropped from $15/$75 to $5/$25 (3x cheaper than legacy 4/4.1).
+        "claude-opus-4-7":             (5.00, 25.00),
         "claude-opus-4-6-20250610":    (5.00, 25.00),
         "claude-opus-4-5-20250414":    (5.00, 25.00),
+        # Legacy Opus 4 / 4.1 retain old $15/$75 pricing.
+        "claude-opus-4-1-20250805":    (15.00, 75.00),
         "claude-opus-4-20250514":      (15.00, 75.00),
+        # Sonnet family — same $3/$15 across all 4.x variants.
+        # As of 2026-05-01 latest is Sonnet 4.6 (no Sonnet 4.7 released).
         "claude-sonnet-4-6-20250610":  (3.00, 15.00),
-        "claude-sonnet-4-5-20250514":  (3.00, 15.00),
+        "claude-sonnet-4-5-20250414":  (3.00, 15.00),
         "claude-sonnet-4-20250514":    (3.00, 15.00),
+        "claude-sonnet-3-7-20250219":  (3.00, 15.00),  # deprecated
+        # Haiku 4.5: $1/$5; legacy 3.5 stays $0.80/$4; Haiku 3 = $0.25/$1.25.
         "claude-haiku-4-5-20251001":   (1.00, 5.00),
         "claude-haiku-3-5-20241022":   (0.80, 4.00),
         "claude-haiku-3-20240307":     (0.25, 1.25),
+        # Legacy Opus 3 (deprecated).
+        "claude-opus-3-20240229":      (15.00, 75.00),
     }
     _DEFAULT_PRICING = (3.00, 15.00)  # fallback = Sonnet pricing
 

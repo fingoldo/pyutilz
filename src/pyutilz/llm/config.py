@@ -23,6 +23,7 @@ class LLMSettings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     deepseek_api_key: SecretStr | None = None
     xai_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
 
 
 @lru_cache()

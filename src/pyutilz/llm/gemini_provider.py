@@ -46,13 +46,33 @@ class GeminiProvider(LLMProvider):
     """Google Gemini provider using the new google.genai SDK."""
 
     # Pricing per 1M tokens: (input, output)
+    # Source: https://ai.google.dev/gemini-api/docs/pricing
+    # Verified 2026-05-01.
+    #
+    # NOTE: Gemini Pro models (2.5-pro and 3.1-pro-preview) have TIERED
+    # pricing — prompts ≤200K tokens billed at the lower tier, >200K at
+    # the higher tier. We bill at the lower tier here; callers issuing
+    # >200K prompts should override via ``estimate_cost`` with explicit
+    # rates. Tier-2 prices documented in the comments next to each entry.
     _PRICING: dict[str, tuple[float, float]] = {
+        # Tier-2 (>200K): ($4.00, $18.00) — 2x input, 1.5x output.
         "gemini-3.1-pro-preview":        (2.00, 12.00),
         "gemini-3.1-flash-lite-preview": (0.25, 1.50),
         "gemini-3-flash-preview":        (0.50, 3.00),
+        # Tier-2 (>200K): ($2.50, $15.00).
         "gemini-2.5-pro":               (1.25, 10.00),
         "gemini-2.5-flash":             (0.30, 2.50),
         "gemini-2.5-flash-lite":        (0.10, 0.40),
+    }
+    # Cached input prices per 1M tokens (90% discount on input miss).
+    # Plus storage at $1-4.50/hour depending on model.
+    _CACHE_HIT_COST: dict[str, float] = {
+        "gemini-3.1-pro-preview":        0.20,
+        "gemini-3.1-flash-lite-preview": 0.025,
+        "gemini-3-flash-preview":        0.05,
+        "gemini-2.5-pro":                0.125,
+        "gemini-2.5-flash":              0.03,
+        "gemini-2.5-flash-lite":         0.01,
     }
     _DEFAULT_PRICING = (0.25, 1.50)
 

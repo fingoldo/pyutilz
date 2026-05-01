@@ -22,6 +22,7 @@ _PROVIDER_MODULES = {
     "claude-code": ("pyutilz.llm.claude_code_provider", "ClaudeCodeProvider"),
     "deepseek": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider"),
     "xai": ("pyutilz.llm.xai_provider", "XAIProvider"),
+    "openai": ("pyutilz.llm.openai_provider", "OpenAIProvider"),
 }
 
 # Aliases mapping to canonical names
@@ -31,6 +32,7 @@ _ALIASES = {
     "cc": "claude-code",
     "ds": "deepseek",
     "grok": "xai",
+    "gpt": "openai",
 }
 
 
@@ -48,6 +50,7 @@ def get_llm_provider(
             - "gemini" / "google": Google Gemini API
             - "deepseek" / "ds": DeepSeek API
             - "xai" / "grok": xAI Grok API
+            - "openai" / "gpt": OpenAI API
         settings: Optional settings instance.
         **kwargs: Additional arguments passed to the provider.
 
@@ -101,6 +104,13 @@ def get_llm_provider(
             "api_key",
             settings.xai_api_key.get_secret_value()
             if settings.xai_api_key
+            else None,
+        )
+    elif canonical == "openai":
+        kwargs.setdefault(
+            "api_key",
+            settings.openai_api_key.get_secret_value()
+            if settings.openai_api_key
             else None,
         )
 
