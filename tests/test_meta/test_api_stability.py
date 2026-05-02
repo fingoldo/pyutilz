@@ -51,6 +51,13 @@ def _build_snapshot() -> dict:
         "alias_surfaces": {},
     }
     # For each alias, capture the public surface of the target.
+    # ``importlib.reload`` ensures a CLEAN module state — earlier tests
+    # in the same session may have mutated module-level globals (e.g.
+    # ``test_graphql.py::test_sets_global_client`` patches
+    # ``pyutilz.web.graphql.client``; ``init_logging`` reassigns
+    # ``pyutilz.dev.logginglib.logger`` to a real Logger). Without reload
+    # the snapshot captures the polluted state and CI surfaces phantom
+    # diffs vs the clean-import snapshot committed to git.
     for alias, real_path in sorted(pyutilz._MODULE_ALIASES.items()):
         try:
             mod = importlib.import_module(real_path)
@@ -59,6 +66,12 @@ def _build_snapshot() -> dict:
                 "_import_error": "module fails to import"
             }
             continue
+        try:
+            mod = importlib.reload(mod)
+        except Exception:
+            # If reload fails (rare — modules with side-effecting top
+            # level), fall back to the live module state.
+            pass
         snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
     return snapshot
 
