@@ -200,10 +200,6 @@ class OpenAICompatibleProvider(LLMProvider):
         messages.append({"role": "user", "content": prompt})
         return messages
 
-    @retry(
-        retry=retry_if_exception(_is_retryable_http_error),
-        **INFINITE_RETRY_KWARGS,
-    )
     def _extra_request_body(self, model: str) -> dict[str, Any]:
         """Return provider-specific extra fields to merge into the request body.
 
@@ -220,6 +216,10 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return None
 
+    @retry(
+        retry=retry_if_exception(_is_retryable_http_error),
+        **INFINITE_RETRY_KWARGS,
+    )
     async def generate_stream(
         self,
         prompt: str,
@@ -278,6 +278,10 @@ class OpenAICompatibleProvider(LLMProvider):
                     if content:
                         yield content
 
+    @retry(
+        retry=retry_if_exception(_is_retryable_http_error),
+        **INFINITE_RETRY_KWARGS,
+    )
     async def generate(
         self,
         prompt: str,
