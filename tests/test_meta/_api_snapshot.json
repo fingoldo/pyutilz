@@ -7,7 +7,6 @@
     },
     "browser": {
       "LoginAndGetCookies": "callable(default_headers:any:1, seconds_to_sleep_on_error:any:1, restart_on_no_cookie:any:1)",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "basic_headers": "value:dict",
       "browser": "value:NoneType",
       "browser_get": "callable(path:any:0)",
@@ -51,13 +50,10 @@
       "session": "callable<no-signature>"
     },
     "db": {
-      "Dict": "callable(args:*args:0, kwargs:**kw:0)",
       "EnsurePgTableExists": "callable(sTable:any:0, sKeyFieldName:any:1, sIdFieldName:any:1, sAutocreateIdTypeName:any:1)",
       "GetIdByKeyFieldAndInsertIfNeeded": "callable(dicEnums:any:0, sTable:any:0, sKeyFieldValue:any:0, sKeyFieldName:any:1, bKeyIsNotString:any:1, sAlternateFieldsNames:any:1, sAlternateFieldsValues:any:1, sUniqueConstraintFields:any:1, bUseAlternateFieldsOnly:any:1, sIdFieldName:any:1, bAddUpdatedAtTimestamp:any:1)",
       "ISOLATION_LEVEL_AUTOCOMMIT": "value:int",
-      "Iterable": "callable(args:*args:0, kwargs:**kw:0)",
       "MakeSetExcludedClause": "callable(sFields:any:0, bAddUpdatedAtTimestamp:any:1)",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "PAGE_SIZE": "value:int",
       "ReadTableIntoDic": "callable(dicEnums:any:0, sTable:any:0, sKeyFieldName:any:1, sCondition:any:1, sIdFieldName:any:1, sAutocreateIdTypeName:any:1)",
       "ReadTableIntoDicReversed": "callable(dicEnums:any:0, sTable:any:0, sKeyFieldName:any:1, sCondition:any:1, sIdFieldName:any:1, sAutocreateIdTypeName:any:1)",
@@ -160,7 +156,6 @@
     },
     "logging": {
       "EXTERNAL_IP": "value:NoneType",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "RedisHandler": "class:pyutilz.dev.logginglib.RedisHandler",
       "debugged": "callable()",
       "ensure_dict_elem": "callable(obj:any:0, name:any:0, value:any:0)",
@@ -185,7 +180,6 @@
     },
     "logginglib": {
       "EXTERNAL_IP": "value:NoneType",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "RedisHandler": "class:pyutilz.dev.logginglib.RedisHandler",
       "debugged": "callable()",
       "ensure_dict_elem": "callable(obj:any:0, name:any:0, value:any:0)",
@@ -217,7 +211,6 @@
     },
     "monitoring": {
       "API_TIMEOUT_SEC": "value:int",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "job_completed": "callable(job_id:any:0, status:any:1, data:any:1, provider:any:1, api_key:any:1)",
       "log_duration": "callable(threshold:any:1, logger_name:any:1, max_arg_size:any:1)",
       "logger": "value:Logger",
@@ -234,8 +227,6 @@
       "setup_polars_config": "callable()"
     },
     "numbalib": {
-      "Dict": "callable(args:*args:0, kwargs:**kw:0)",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
       "arr2str": "callable(arr:any:0)",
       "generate_combinations_recursive_njit": "callable(sequence:any:0, r:any:0)",
       "logger": "value:Logger",
@@ -256,14 +247,8 @@
     },
     "pandaslib": {
       "Array": "callable(typecode_or_type:any:0, size_or_initializer:any:0, lock:kw:1)",
-      "Dict": "callable(args:*args:0, kwargs:**kw:0)",
       "FeatureNamer": "class:pyutilz.data.pandaslib.FeatureNamer",
       "HAS_IPYTHON": "value:bool",
-      "List": "callable(args:*args:0, kwargs:**kw:0)",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
-      "Tuple": "callable(args:*args:0, kwargs:**kw:0)",
-      "Union": "callable(args:*args:0, kwds:**kw:0)",
       "benchmark_dataframe_compression": "callable(df:any:0, head:any:1, benchmark_dir_path:any:1, nrepeats:any:1, sort_by:any:1, return_styled:any:1, should_clean_temp_folder:any:1, verbose:any:1)",
       "benchmark_dataframe_csv_compression": "callable(res:any:0, temp_folder:any:0, df:any:0, nrepeats:any:0)",
       "benchmark_dataframe_feather_compression": "callable(res:any:0, temp_folder:any:0, df:any:0, nrepeats:any:0)",
@@ -303,7 +288,6 @@
     },
     "parallel": {
       "Pool": "callable(processes:any:1, initializer:any:1, initargs:any:1, maxtasksperchild:any:1)",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
       "applyfunc_parallel": "callable(iterable:any:0, func:any:0, n_cores:any:1, return_dataframe:any:1, logical:any:1, initializer:any:1, initargs:any:1, use_threads:any:1)",
       "cpu_count_physical": "callable(fallback:any:1)",
       "distribute_work": "callable(workload:any:0, nworkers:any:0)",
@@ -320,10 +304,8 @@
       "tqdmu": "callable(args:*args:0, kwargs:**kw:0)"
     },
     "polarslib": {
-      "Iterable": "callable(args:*args:0, kwargs:**kw:0)",
       "POLARS_DEFAULT_NUMAGGS": "value:list",
       "POLARS_DEFAULT_QUANTILES": "value:list",
-      "Set": "callable(args:*args:0, kwargs:**kw:0)",
       "add_weighted_aggregates": "callable(columns_selector:any:0, weighting_columns:any:0, fpref:any:1, fields_remap:any:1)",
       "apply_agg_func_safe": "callable(expr:any:0, func_name:any:0, nans_filler:any:1)",
       "bin_numerical_columns": "callable(df:any:0, target_columns:any:0, binned_targets:any:1, clean_features:any:1, clean_targets:any:1, num_bins:any:1, bin_dtype:any:1, exclude_columns:any:1, min_nuniques_to_clip:any:1, tukey_fences_multiplier:any:1, fill_nulls:any:1, fill_nans:any:1, max_log_text_width:any:1, verbose:any:1)",
@@ -344,19 +326,12 @@
       "polars_df_info": "callable(df:any:0)"
     },
     "pythonlib": {
-      "Callable": "callable(args:*args:0, kwargs:**kw:0)",
       "CustomError": "class:pyutilz.core.pythonlib.CustomError",
       "HashableDict": "class:pyutilz.core.pythonlib.HashableDict",
-      "Iterable": "callable(args:*args:0, kwargs:**kw:0)",
-      "List": "callable(args:*args:0, kwargs:**kw:0)",
-      "Literal": "callable(args:*args:0, kwds:**kw:0)",
       "ObjectsAndFilesProcessor": "class:pyutilz.core.pythonlib.ObjectsAndFilesProcessor",
       "ObjectsDumper": "class:pyutilz.core.pythonlib.ObjectsDumper",
       "ObjectsLoader": "class:pyutilz.core.pythonlib.ObjectsLoader",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
       "STRUCTURED_FORMAT_PARSING_ERROR": "value:int",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
-      "Union": "callable(args:*args:0, kwds:**kw:0)",
       "age": "callable(dob:any:0)",
       "anyof_elements_in_string": "callable(elems:any:0, target:any:0)",
       "batch": "callable(iterable:any:0, n:any:1)",
@@ -436,11 +411,6 @@
       "strip_doubled_characters": "callable(text:any:0, char_list:any:0)"
     },
     "string": {
-      "Iterable": "callable(args:*args:0, kwargs:**kw:0)",
-      "List": "callable(args:*args:0, kwargs:**kw:0)",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
-      "Union": "callable(args:*args:0, kwds:**kw:0)",
       "ascii_emojies": "value:NoneType",
       "camel_case_split": "callable(str:any:0)",
       "clean_description": "callable(text:any:0, newlines:any:1)",
@@ -503,11 +473,6 @@
       "write_config_file": "callable(file:any:0, object:any:0, section:any:1, variables:any:1, encryption:any:1, mode:any:1)"
     },
     "strings": {
-      "Iterable": "callable(args:*args:0, kwargs:**kw:0)",
-      "List": "callable(args:*args:0, kwargs:**kw:0)",
-      "Optional": "callable(args:*args:0, kwds:**kw:0)",
-      "Sequence": "callable(args:*args:0, kwargs:**kw:0)",
-      "Union": "callable(args:*args:0, kwds:**kw:0)",
       "ascii_emojies": "value:NoneType",
       "camel_case_split": "callable(str:any:0)",
       "clean_description": "callable(text:any:0, newlines:any:1)",

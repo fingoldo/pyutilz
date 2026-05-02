@@ -232,15 +232,20 @@ def capture_module_surface(mod) -> dict[str, str]:
         # instances — we WANT to track ``logger = logging.getLogger(...)``,
         # ``client = SomeClient()``, etc. as part of the surface even
         # though their ``__module__`` is outside pyutilz.
+        owner = getattr(obj, "__module__", None)
         if inspect.isclass(obj):
-            owner = getattr(obj, "__module__", None)
             if owner and not owner.startswith("pyutilz"):
                 continue
+        # Skip ``typing.*`` symbols entirely — typing has flipped
+        # ``Union``/``Optional``/``Any``/``Tuple`` between
+        # ``_SpecialForm`` instances and real classes across Python
+        # 3.10/3.11/3.14, producing phantom diffs.
+        elif owner == "typing":
+            continue
         # Skip callables (functions / methods) imported from stdlib —
         # their parameter names drift across Python versions
         # (``os.path.join(path, *paths)`` -> ``join(a, *p)``).
         elif inspect.isfunction(obj) or inspect.isbuiltin(obj):
-            owner = getattr(obj, "__module__", None)
             if owner and not owner.startswith("pyutilz"):
                 continue
         if inspect.isclass(obj):
