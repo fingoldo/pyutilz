@@ -46,6 +46,16 @@ def _provider(**overrides) -> OpenRouterProvider:
     p.total_actual_cost_usd = 0.0
     p.last_actual_cost_usd = 0.0
     p.total_cache_write_tokens = 0
+    p.last_cache_write_tokens = 0
+    p.last_cache_hit_tokens = 0
+    p.total_audio_tokens = 0
+    p.last_audio_tokens = 0
+    p.total_upstream_inference_cost_usd = 0.0
+    p.last_upstream_inference_cost_usd = None
+    p.last_generation_id = None
+    p.last_upstream_provider = None
+    p.last_upstream_model = None
+    p.last_native_finish_reason = None
     return p
 
 
@@ -505,6 +515,230 @@ class TestIntegrationViaGenerate:
             "sort": "price",
         }
         assert sent["models"] == ["openai/gpt-4o"]
+
+
+class TestExtendedUsageCapture:
+    """Every field OR exposes on every response — track them all."""
+
+    def test_upstream_inference_cost_recorded(self):
+        p = _provider()
+        p._track_provider_specific_usage(
+            {"cost": 0.005, "cost_details": {"upstream_inference_cost": 0.0042}}
+        )
+        assert p.last_upstream_inference_cost_usd == pytest.approx(0.0042)
+        assert p.total_upstream_inference_cost_usd == pytest.approx(0.0042)
+
+    def test_upstream_inference_cost_accumulates(self):
+        p = _provider()
+        p._track_provider_specific_usage(
+            {"cost_details": {"upstream_inference_cost": 0.001}}
+        )
+        p._track_provider_specific_usage(
+            {"cost_details": {"upstream_inference_cost": 0.002}}
+        )
+        assert p.total_upstream_inference_cost_usd == pytest.approx(0.003)
+        assert p.last_upstream_inference_cost_usd == pytest.approx(0.002)
+
+    def test_upstream_inference_cost_none_when_not_byok(self):
+        # Non-BYOK calls don't include cost_details — record explicit None
+        # so callers can distinguish "no upstream cost reported" from "0.00".
+        p = _provider()
+        p._track_provider_specific_usage({"cost": 0.005})
+        assert p.last_upstream_inference_cost_usd is None
+
+    def test_audio_tokens_recorded(self):
+        p = _provider()
+        p._track_provider_specific_usage(
+            {"prompt_tokens_details": {"audio_tokens": 128}}
+        )
+        assert p.last_audio_tokens == 128
+        assert p.total_audio_tokens == 128
+
+    def test_audio_tokens_accumulate(self):
+        p = _provider()
+        p._track_provider_specific_usage({"prompt_tokens_details": {"audio_tokens": 50}})
+        p._track_provider_specific_usage({"prompt_tokens_details": {"audio_tokens": 70}})
+        assert p.total_audio_tokens == 120
+
+    def test_last_cache_hit_tokens_set_each_call(self):
+        # last_cache_hit_tokens is a per-call field — should reflect the
+        # latest call even when the cumulative counter doesn't grow (because
+        # the same value was already counted via prompt_cache_hit_tokens).
+        p = _provider()
+        p._track_provider_specific_usage(
+            {"prompt_tokens_details": {"cached_tokens": 30}}
+        )
+        assert p.last_cache_hit_tokens == 30
+
+
+class TestResponseLevelMetadata:
+    """OR-specific response-level fields outside the usage block."""
+
+    def test_generation_id_captured(self):
+        p = _provider()
+        p._track_provider_specific_response({"id": "gen-abc123"})
+        assert p.last_generation_id == "gen-abc123"
+
+    def test_upstream_provider_captured(self):
+        p = _provider()
+        p._track_provider_specific_response({"provider": "Anthropic"})
+        assert p.last_upstream_provider == "Anthropic"
+
+    def test_upstream_model_captured(self):
+        # Useful when models_fallback kicks in — actual model differs from
+        # what we requested.
+        p = _provider(model="anthropic/claude-sonnet-4.6")
+        p._track_provider_specific_response(
+            {"model": "openai/gpt-4o"}  # fallback fired
+        )
+        assert p.last_upstream_model == "openai/gpt-4o"
+        assert p.model_name == "anthropic/claude-sonnet-4.6"  # requested unchanged
+
+    def test_native_finish_reason_captured(self):
+        p = _provider()
+        p._track_provider_specific_response(
+            {"choices": [{"native_finish_reason": "tool_calls"}]}
+        )
+        assert p.last_native_finish_reason == "tool_calls"
+
+    def test_response_metadata_resilient_to_missing_fields(self):
+        # Tolerate the empty / partial responses some upstreams return on errors.
+        p = _provider()
+        p._track_provider_specific_response({})
+        p._track_provider_specific_response({"choices": []})
+        assert p.last_generation_id is None
+        assert p.last_upstream_provider is None
+        assert p.last_native_finish_reason is None
+
+
+class TestLastCallSummary:
+    @pytest.mark.asyncio
+    async def test_summary_after_generate(self):
+        p = _provider(model="anthropic/claude-sonnet-4.6")
+        body = {
+            "id": "gen-xyz",
+            "provider": "Anthropic",
+            "model": "anthropic/claude-sonnet-4.6",
+            "choices": [{
+                "message": {"content": "ok"},
+                "finish_reason": "stop",
+                "native_finish_reason": "end_turn",
+            }],
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 56,
+                "cost": 0.0042,
+                "cost_details": {"upstream_inference_cost": 0.004},
+                "prompt_tokens_details": {
+                    "cached_tokens": 800,
+                    "cache_write_tokens": 0,
+                    "audio_tokens": 0,
+                },
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            },
+        }
+        resp = httpx.Response(
+            status_code=200,
+            json=body,
+            request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions"),
+        )
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=resp)
+
+        await p.generate("hello")
+        summary = p.last_call_summary()
+
+        assert summary["generation_id"] == "gen-xyz"
+        assert summary["upstream_provider"] == "Anthropic"
+        assert summary["upstream_model"] == "anthropic/claude-sonnet-4.6"
+        assert summary["requested_model"] == "anthropic/claude-sonnet-4.6"
+        assert summary["finish_reason"] == "stop"
+        assert summary["native_finish_reason"] == "end_turn"
+        assert summary["cost_usd"] == pytest.approx(0.0042)
+        assert summary["upstream_inference_cost_usd"] == pytest.approx(0.004)
+        assert summary["input_tokens"] == 1200
+        assert summary["output_tokens"] == 56
+        assert summary["cache_hit_tokens"] == 800
+
+    def test_summary_pre_generate_returns_none_defaults(self):
+        # Calling .last_call_summary() before any generate() should not crash —
+        # it should return a fully-populated dict with sensible defaults.
+        p = _provider()
+        s = p.last_call_summary()
+        assert s["generation_id"] is None
+        assert s["upstream_provider"] is None
+        assert s["cost_usd"] == 0.0
+        assert s["input_tokens"] == 0
+
+
+class TestGenerationLookup:
+    @pytest.mark.asyncio
+    async def test_fetch_uses_last_id_by_default(self):
+        p = _provider()
+        p.last_generation_id = "gen-prev"
+        body = {
+            "data": {
+                "id": "gen-prev",
+                "total_cost": 0.0042,
+                "latency": 1234,
+                "is_byok": False,
+                "finish_reason": "stop",
+            }
+        }
+        resp = httpx.Response(
+            status_code=200,
+            json=body,
+            request=httpx.Request("GET", "https://openrouter.ai/api/v1/generation"),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+
+        out = await p.fetch_generation_stats()
+
+        p._client.get.assert_awaited_once_with("/generation", params={"id": "gen-prev"})
+        assert out["total_cost"] == pytest.approx(0.0042)
+        assert out["latency"] == 1234
+
+    @pytest.mark.asyncio
+    async def test_fetch_explicit_id_overrides_last(self):
+        p = _provider()
+        p.last_generation_id = "gen-prev"
+        body = {"data": {"id": "gen-other", "total_cost": 0.001}}
+        resp = httpx.Response(
+            status_code=200,
+            json=body,
+            request=httpx.Request("GET", "https://openrouter.ai/api/v1/generation"),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+
+        out = await p.fetch_generation_stats("gen-other")
+
+        p._client.get.assert_awaited_once_with("/generation", params={"id": "gen-other"})
+        assert out["id"] == "gen-other"
+
+    @pytest.mark.asyncio
+    async def test_fetch_raises_without_id(self):
+        p = _provider()
+        # last_generation_id is None and no explicit ID given
+        with pytest.raises(ValueError, match="generation_id"):
+            await p.fetch_generation_stats()
+
+
+class TestExtendedSessionCost:
+    def test_session_cost_includes_upstream(self):
+        p = _provider()
+        p.total_actual_cost_usd = 1.0
+        p.total_upstream_inference_cost_usd = 0.85
+        p.last_upstream_inference_cost_usd = 0.05
+        p.total_audio_tokens = 999
+        p.total_cache_write_tokens = 500
+        cost = p.get_session_cost()
+        assert cost["actual_cost_usd"] == 1.0
+        assert cost["upstream_inference_cost_usd"] == 0.85
+        assert cost["last_upstream_inference_cost_usd"] == 0.05
+        assert cost["audio_tokens"] == 999
+        assert cost["cache_write_tokens"] == 500
 
 
 class TestAccountIntrospection:

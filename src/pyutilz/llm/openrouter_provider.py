@@ -264,9 +264,24 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self._provider_allow_fallbacks = provider_allow_fallbacks
         self._models_fallback = models_fallback
 
+        # Per-call usage breakdown — set after every generate(). All
+        # cumulative counters mirror their last_* counterpart.
         self.total_actual_cost_usd = 0.0
         self.last_actual_cost_usd = 0.0
         self.total_cache_write_tokens = 0
+        self.last_cache_write_tokens = 0
+        self.last_cache_hit_tokens = 0
+        self.total_audio_tokens = 0
+        self.last_audio_tokens = 0
+        # cost_details.upstream_inference_cost — populated only on BYOK calls.
+        # Lets you see the bare upstream price separately from any OR markup.
+        self.total_upstream_inference_cost_usd = 0.0
+        self.last_upstream_inference_cost_usd: float | None = None
+        # Response-level metadata (set by _track_provider_specific_response).
+        self.last_generation_id: str | None = None
+        self.last_upstream_provider: str | None = None
+        self.last_upstream_model: str | None = None
+        self.last_native_finish_reason: str | None = None
 
     @property
     def context_window(self) -> int:
@@ -359,24 +374,123 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             )
 
     def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
-        """Capture OpenRouter's ``usage.cost`` (authoritative per-call USD)."""
+        """Capture every OR-specific field in the ``usage`` block.
+
+        Records:
+          * ``usage.cost``                                     → actual_cost_usd
+          * ``usage.cost_details.upstream_inference_cost``     → upstream cost (BYOK)
+          * ``usage.prompt_tokens_details.cache_write_tokens`` → cache_write_tokens
+          * ``usage.prompt_tokens_details.cached_tokens``      → cache_hit_tokens
+                (fallback only — base already records ``prompt_cache_hit_tokens``
+                if upstream uses the legacy field)
+          * ``usage.prompt_tokens_details.audio_tokens``       → audio_tokens
+        """
         cost = usage.get("cost")
         if isinstance(cost, (int, float)):
             self.last_actual_cost_usd = float(cost)
             self.total_actual_cost_usd += float(cost)
+        else:
+            self.last_actual_cost_usd = 0.0
+
+        cost_details = usage.get("cost_details") or {}
+        upstream_cost = cost_details.get("upstream_inference_cost")
+        if isinstance(upstream_cost, (int, float)):
+            self.last_upstream_inference_cost_usd = float(upstream_cost)
+            self.total_upstream_inference_cost_usd += float(upstream_cost)
+        else:
+            self.last_upstream_inference_cost_usd = None
+
         prompt_details = usage.get("prompt_tokens_details") or {}
-        cache_write = prompt_details.get("cache_write_tokens", 0) or 0
+        cache_write = int(prompt_details.get("cache_write_tokens", 0) or 0)
+        self.last_cache_write_tokens = cache_write
         if cache_write:
-            self.total_cache_write_tokens += int(cache_write)
-        cached = prompt_details.get("cached_tokens", 0) or 0
+            self.total_cache_write_tokens += cache_write
+
+        cached = int(prompt_details.get("cached_tokens", 0) or 0)
+        # Fall back to "cached_tokens" only when upstream didn't use the legacy
+        # "prompt_cache_hit_tokens" field (which the base class already tracks).
         if cached and not usage.get("prompt_cache_hit_tokens"):
-            self.total_cache_hit_tokens += int(cached)
+            self.total_cache_hit_tokens += cached
+        self.last_cache_hit_tokens = cached or int(usage.get("prompt_cache_hit_tokens") or 0)
+
+        audio = int(prompt_details.get("audio_tokens", 0) or 0)
+        self.last_audio_tokens = audio
+        if audio:
+            self.total_audio_tokens += audio
+
+    def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
+        """Capture response-level metadata outside the ``usage`` block.
+
+        Records:
+          * ``id``       → generation ID, usable with /api/v1/generation
+          * ``provider`` → upstream that actually served the request
+                           (e.g. "Anthropic", "DeepInfra"); critical when
+                           debugging routing or auditing where requests went
+          * ``model``    → resolved model — differs from ``self.model_name``
+                           when ``models_fallback`` kicked in
+          * ``choices[0].native_finish_reason`` → upstream's native code
+                           (e.g. "tool_calls", "max_tokens", "content_filter")
+        """
+        gen_id = data.get("id")
+        if isinstance(gen_id, str):
+            self.last_generation_id = gen_id
+
+        provider = data.get("provider")
+        if isinstance(provider, str):
+            self.last_upstream_provider = provider
+
+        resolved = data.get("model")
+        if isinstance(resolved, str):
+            self.last_upstream_model = resolved
+
+        choices = data.get("choices") or []
+        if choices:
+            native = choices[0].get("native_finish_reason")
+            if isinstance(native, str):
+                self.last_native_finish_reason = native
 
     def _input_cost_per_1m(self, model: str) -> float:
         return _per_token_cost_pair(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
         return _per_token_cost_pair(model)[1]
+
+    async def fetch_generation_stats(
+        self,
+        generation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Look up post-hoc stats for a single generation by ID.
+
+        Calls ``GET /api/v1/generation?id=<id>``. Useful when:
+          * you streamed a response and want authoritative usage / cost
+            (the streaming usage chunk can lag or be missing on early errors)
+          * you need fields not in the inline ``usage`` block —
+            ``latency``, ``generation_time``, ``moderation_latency``,
+            ``provider_responses`` (the per-attempt log if a fallback chain
+            was traversed), ``cache_discount``, ``response_cache_source_id``
+            (was this served from a CDN-level response cache?), ``is_byok``
+          * you're auditing spend after the fact
+
+        Args:
+            generation_id: Defaults to ``self.last_generation_id``. Pass
+                explicitly when reconciling historical IDs.
+
+        Returns:
+            The raw ``data`` payload (see OR docs for the full ~30 field schema).
+            See ``OpenRouterProvider.fetch_generation_stats.__doc__`` and
+            https://openrouter.ai/docs/api/api-reference/generations/get-generation
+            for fields.
+        """
+        gid = generation_id or self.last_generation_id
+        if not gid:
+            raise ValueError(
+                "No generation_id passed and self.last_generation_id is unset — "
+                "call generate() first or pass a known ID."
+            )
+        resp = await self._client.get("/generation", params={"id": gid})
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload.get("data", payload) if isinstance(payload, dict) else {}
 
     async def check_account_limits(self) -> dict[str, Any]:
         """Query ``/api/v1/key`` for live quota / usage state on the active key.
@@ -432,14 +546,61 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         }
 
     def get_session_cost(self) -> dict[str, Any]:
-        """Return cumulative usage. Adds ``actual_cost_usd`` (OR-billed truth).
+        """Return cumulative usage. Adds OR-specific fields on top of base.
 
-        ``total_cost_usd`` is the per-token *estimate* (from /models pricing),
-        kept for parity with other providers. ``actual_cost_usd`` is what
-        OpenRouter actually billed — preferred when reconciling spend.
+        ``total_cost_usd`` (from base) is the per-token *estimate* via
+        /models pricing. ``actual_cost_usd`` is what OR actually billed —
+        preferred when reconciling spend.
+        ``upstream_inference_cost_usd`` populates only on BYOK calls and
+        gives you the bare upstream price, separate from any OR markup.
         """
         base = super().get_session_cost()
         base["actual_cost_usd"] = self.total_actual_cost_usd
         base["last_actual_cost_usd"] = self.last_actual_cost_usd
+        base["upstream_inference_cost_usd"] = self.total_upstream_inference_cost_usd
+        base["last_upstream_inference_cost_usd"] = self.last_upstream_inference_cost_usd
         base["cache_write_tokens"] = self.total_cache_write_tokens
+        base["audio_tokens"] = self.total_audio_tokens
         return base
+
+    def last_call_summary(self) -> dict[str, Any]:
+        """Snapshot of every metric captured for the most recent ``generate()``.
+
+        Convenience for ad-hoc inspection / logging — pulls every ``last_*``
+        attribute into one dict so you don't fish for them individually:
+
+            >>> await p.generate("hello")
+            >>> p.last_call_summary()
+            {
+                'generation_id': 'gen-abc123',
+                'upstream_provider': 'Anthropic',
+                'upstream_model': 'anthropic/claude-sonnet-4.6',
+                'requested_model': 'anthropic/claude-sonnet-4.6',
+                'finish_reason': 'stop',
+                'native_finish_reason': 'end_turn',
+                'cost_usd': 0.0042,
+                'upstream_inference_cost_usd': None,
+                'input_tokens': 1200,
+                'output_tokens': 56,
+                'reasoning_tokens': 0,
+                'cache_hit_tokens': 800,
+                'cache_write_tokens': 0,
+                'audio_tokens': 0,
+            }
+        """
+        return {
+            "generation_id": self.last_generation_id,
+            "upstream_provider": self.last_upstream_provider,
+            "upstream_model": self.last_upstream_model,
+            "requested_model": self.model_name,
+            "finish_reason": getattr(self, "_last_finish_reason", None),
+            "native_finish_reason": self.last_native_finish_reason,
+            "cost_usd": self.last_actual_cost_usd,
+            "upstream_inference_cost_usd": self.last_upstream_inference_cost_usd,
+            "input_tokens": self._last_usage.get("input_tokens", 0),
+            "output_tokens": self._last_usage.get("output_tokens", 0),
+            "reasoning_tokens": self._last_usage.get("reasoning_tokens", 0),
+            "cache_hit_tokens": self.last_cache_hit_tokens,
+            "cache_write_tokens": self.last_cache_write_tokens,
+            "audio_tokens": self.last_audio_tokens,
+        }

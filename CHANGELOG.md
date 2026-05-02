@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-05-02
 
+### Added — Full OpenRouter usage / response capture surface
+
+`OpenRouterProvider` now records every field OR exposes per request:
+
+- **`usage.cost_details.upstream_inference_cost`** → `last_/total_upstream_inference_cost_usd` (BYOK only — bare upstream price separated from any OR markup)
+- **`usage.prompt_tokens_details.audio_tokens`** → `last_/total_audio_tokens` (audio-modal models)
+- **Response-level metadata** → `last_generation_id` (for /generation lookup), `last_upstream_provider` (which backend actually served — critical when debugging routing), `last_upstream_model` (resolved model when `models_fallback` triggered), `last_native_finish_reason` (upstream's raw finish code: `tool_calls`, `end_turn`, `content_filter`, …)
+
+New methods:
+
+- **`fetch_generation_stats(generation_id=None)`** — hits `GET /api/v1/generation?id=…` for the post-hoc audit shape (~30 fields incl. `latency`, `generation_time`, `moderation_latency`, `provider_responses` per-attempt log, `cache_discount`, `response_cache_source_id`, `is_byok`). Defaults to `self.last_generation_id`. Use after a stream where the inline usage chunk was dropped, or for retroactive cost reconciliation.
+- **`last_call_summary()`** — one-shot dict of every `last_*` metric (cost, tokens, cache, audio, generation id, upstream provider/model, finish reasons). Convenience for ad-hoc inspection / structured logging.
+
+Extension to `get_session_cost()`: now also includes `upstream_inference_cost_usd`, `last_upstream_inference_cost_usd`, `audio_tokens`.
+
+Tiny base-class addition: `_track_provider_specific_response(data)` hook on `OpenAICompatibleProvider`, mirror of the existing `_track_provider_specific_usage` but for response-level fields outside the `usage` block. Default no-op; OR uses it.
+
+22 new unit tests; 264 regression tests on touched modules all green.
+
 ### Added — OpenRouter provider (meta-provider, 200+ models behind one API)
 
 New `pyutilz.llm.openrouter_provider.OpenRouterProvider`, factory keys

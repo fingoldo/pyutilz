@@ -154,6 +154,17 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return None
 
+    def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
+        """Hook for response-level metadata outside the ``usage`` block.
+
+        Called once per response with the full decoded JSON. OpenRouter uses
+        this to record the generation ``id`` (for async ``/generation``
+        lookup), the actual upstream ``provider`` that served the request,
+        and the resolved ``model`` (which may differ from the requested one
+        when ``models_fallback`` kicked in). Default: no-op.
+        """
+        return None
+
     @abstractmethod
     def _input_cost_per_1m(self, model: str) -> float: ...
 
@@ -375,6 +386,8 @@ class OpenAICompatibleProvider(LLMProvider):
                     self.total_prompt_tokens,
                     self.total_completion_tokens,
                 )
+
+            self._track_provider_specific_response(data)
 
             choices = data.get("choices", [])
             if not choices:
