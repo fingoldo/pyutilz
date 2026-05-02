@@ -208,3 +208,23 @@ class AnthropicProvider(LLMProvider):
         """Count tokens using tiktoken (accurate) or len//4 fallback."""
         from pyutilz.llm.token_counter import count_tokens
         return count_tokens(text)
+
+    async def get_account_credits(self) -> dict:
+        # Anthropic publishes balance only via the web console — there is no
+        # public API endpoint for regular ``sk-ant-api03-...`` keys. The
+        # Admin API (``/v1/organizations/cost_report``) requires a separate
+        # ``sk-ant-admin-...`` key and reports SPEND, not remaining balance.
+        raise NotImplementedError(
+            "Anthropic does not expose remaining balance via the public API for "
+            "regular keys. Check console.anthropic.com/settings/billing. "
+            "(Admin API reports spend, not balance, and needs sk-ant-admin- keys.)"
+        )
+
+    async def check_account_limits(self) -> dict:
+        # Per-key rate limits surface in 429-response headers; there is no
+        # standalone introspection endpoint.
+        raise NotImplementedError(
+            "Anthropic does not expose per-key rate limits via API. "
+            "Inspect ``anthropic-ratelimit-*`` response headers on a real call, "
+            "or check console.anthropic.com/settings/limits."
+        )

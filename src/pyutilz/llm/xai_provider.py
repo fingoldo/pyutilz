@@ -125,6 +125,21 @@ class XAIProvider(OpenAICompatibleProvider):
     ) -> int:
         return completion_tokens + reasoning_tokens
 
+    async def get_account_credits(self) -> dict:
+        # As of May 2026, the public xAI REST docs (api.x.ai + management-api.x.ai)
+        # don't list any endpoint for remaining credit; the management API
+        # only handles key/ACL CRUD. Balance is dashboard-only.
+        raise NotImplementedError(
+            "xAI has no public API to fetch remaining credit. "
+            "Check console.x.ai for credit balance and usage."
+        )
+
+    async def check_account_limits(self) -> dict:
+        raise NotImplementedError(
+            "xAI does not expose per-key rate limits via API. "
+            "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
+        )
+
     def _input_cost_per_1m(self, model: str) -> float:
         return _PRICING.get(model, (0.20, 0.50))[0]
 

@@ -99,6 +99,48 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             return None
         return {"thinking": {"type": "enabled" if enabled else "disabled"}}
 
+    async def get_account_credits(self) -> dict:
+        """Query DeepSeek's ``/user/balance`` endpoint.
+
+        DeepSeek splits balance into ``granted_balance`` (free credits with
+        expiry — spent first) and ``topped_up_balance`` (paid credits).
+        ``total_balance`` is their sum and is what's actually available.
+
+        Returns a dict with normalized keys plus the raw payload:
+            ``balance_usd``     — total available, in USD (or native currency)
+            ``total_granted``   — granted (promo / free) portion
+            ``total_topped_up`` — paid portion
+            ``currency``        — e.g. ``"USD"`` or ``"CNY"``
+            ``is_available``    — boolean flag from the API
+            ``raw``             — full response (multi-currency-aware)
+        """
+        resp = await self._client.get("/user/balance")
+        resp.raise_for_status()
+        data = resp.json()
+        infos = data.get("balance_infos") or []
+        # Pick the USD entry first; else first non-empty entry; else empty.
+        primary = next(
+            (i for i in infos if str(i.get("currency", "")).upper() == "USD"),
+            infos[0] if infos else {},
+        )
+
+        def _to_float(v) -> float | None:
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        return {
+            "balance_usd": _to_float(primary.get("total_balance")),
+            "total_granted": _to_float(primary.get("granted_balance")),
+            "total_topped_up": _to_float(primary.get("topped_up_balance")),
+            "currency": primary.get("currency"),
+            "is_available": data.get("is_available"),
+            "raw": data,
+        }
+
     def _input_cost_per_1m(self, model: str) -> float:
         return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[0]
 

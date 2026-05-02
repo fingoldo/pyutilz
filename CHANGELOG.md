@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-02
+
+### Added — OpenRouter provider (meta-provider, 200+ models behind one API)
+
+New `pyutilz.llm.openrouter_provider.OpenRouterProvider`, factory keys
+`"openrouter"` / `"or"` / `"router"`, env var `OPENROUTER_API_KEY`.
+Inherits from `OpenAICompatibleProvider` (OpenRouter is OpenAI-compatible
+at the wire level), with three meta-provider-specific touches:
+
+- **Authoritative cost via `usage.cost`** — every OR response carries the
+  USD billed by the upstream provider. We track it as ground truth in
+  `total_actual_cost_usd` / `last_actual_cost_usd`, surfaced under
+  `get_session_cost()["actual_cost_usd"]`. Per-token estimates from
+  the model catalogue would be wrong the moment OR reroutes to a
+  different backend; the upstream-reported field is the only honest
+  source. Captured via a tiny new `_track_provider_specific_usage(usage)`
+  hook on the OpenAI-compat base class (no-op for other providers).
+- **Lazy `/api/v1/models` catalogue** for `estimate_cost()` predictions —
+  fetched once per process, cached process-wide; degrades to zero on
+  network/parse failure (estimate isn't load-bearing). Public helper
+  `pyutilz.llm.list_openrouter_models(name_contains=…, sort_by=…,
+  max_input_per_1m=…, refresh=False)` returns the full catalogue so
+  callers can browse pricing / context windows / supported parameters.
+- **Routing knobs as hashable kwargs** so the factory's
+  `tuple(sorted(kwargs.items()))` cache key keeps working:
+  `provider_order`, `provider_ignore`, `provider_sort` (`"price"` /
+  `"throughput"` / `"latency"`), `provider_allow_fallbacks`,
+  `models_fallback`. `app_name` / `site_url` set `X-Title` and
+  `HTTP-Referer` for the public openrouter.ai/rankings dashboard.
+
+- **Per-model limits respect upstream caps** — `context_window` and
+  `max_output_tokens` resolve from `top_provider.context_length` /
+  `top_provider.max_completion_tokens` in the catalogue, falling back to
+  the model-level `context_length` and class defaults. Matters because
+  OR routes through one specific upstream that may cap shorter than the
+  model's theoretical max (e.g. a 1M-context model served by a provider
+  exposing only 200K). The upstream cap is what triggers `400: prompt
+  too long`; trusting the theoretical max would hand callers a footgun.
+- **Account introspection** — `check_account_limits()` calls
+  `/api/v1/key` (returns `limit_remaining`, `usage_daily/weekly/monthly`,
+  `byok_usage*`, `is_free_tier`, `rate_limit`); `get_account_credits()`
+  calls `/api/v1/credits` for the simpler total-credits view. Both
+  unwrap OR's `{"data": {...}}` envelope.
+
+54 unit tests (`tests/test_llm_openrouter.py`); regression tests on
+touched modules (base, deepseek, xai, factory, meta-tests) all green.
+
+### Added — Unified account-credits / rate-limit interface across all LLM providers
+
+Two new methods on `LLMProvider` ABC:
+- `async get_account_credits() -> dict` — billing snapshot (normalized
+  schema: `balance_usd`, `total_granted`, `total_used`, `currency`,
+  `is_available`, plus provider's `raw` response)
+- `async check_account_limits() -> dict` — quota / rate-limit snapshot
+
+Implementation matrix (researched against current public docs, not
+guessed):
+
+| Provider     | get_account_credits     | check_account_limits |
+|--------------|-------------------------|----------------------|
+| OpenRouter   | ✓ /api/v1/credits       | ✓ /api/v1/key        |
+| DeepSeek     | ✓ /user/balance         | NotImplementedError  |
+| Anthropic    | NotImplementedError     | NotImplementedError  |
+| OpenAI       | NotImplementedError     | NotImplementedError  |
+| xAI          | NotImplementedError     | NotImplementedError  |
+| Gemini       | NotImplementedError     | NotImplementedError  |
+| Claude Code  | NotImplementedError     | NotImplementedError  |
+
+NotImplementedError stubs (rather than the base default) carry
+provider-specific guidance: where to look in the console (URL),
+which response headers to inspect (`x-ratelimit-*`,
+`anthropic-ratelimit-*`), or why the API can't expose this (e.g.
+Gemini routes billing through GCP Cloud Billing API requiring
+separate auth; Claude Code is a Max-subscription product without
+per-token credits). Honest "not supported" beats guessed endpoints
+that 404 in production.
+
+176 regression tests green across base, factory, deepseek, xai,
+openai_compat, providers, retry, and meta-test suites; +18 new
+tests in `tests/test_llm_account_credits.py` covering the base
+default, DeepSeek's real implementation, every stub's error
+message, and the meta-test that every provider exposes both
+methods (polymorphic `await provider.get_account_credits()`).
+
 ## [Unreleased] — 2026-04-28
 
 ### Added (later that day) — `pyutilz.dev.meta_test_utils` + 11 more meta-tests

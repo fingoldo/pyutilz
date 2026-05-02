@@ -651,3 +651,19 @@ class ClaudeCodeProvider(LLMProvider):
         """Count tokens using tiktoken (accurate) or len//4 fallback."""
         from pyutilz.llm.token_counter import count_tokens
         return count_tokens(text)
+
+    async def get_account_credits(self) -> dict:
+        # Claude Code uses the Max subscription rather than per-token credits —
+        # there is no "balance" concept. Usage is rate-limited within the
+        # subscription's session windows (5h / weekly), surfaced by the CLI
+        # itself, not via an API endpoint.
+        raise NotImplementedError(
+            "Claude Code uses a Max subscription — no per-token balance to fetch. "
+            "Subscription usage windows surface in the CLI's own status output."
+        )
+
+    async def check_account_limits(self) -> dict:
+        raise NotImplementedError(
+            "Claude Code rate limits follow Max-subscription session windows, "
+            "not exposed via API. The CLI shows them inline as ``/status``."
+        )

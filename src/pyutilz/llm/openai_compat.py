@@ -144,6 +144,16 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return completion_tokens
 
+    def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
+        """Hook for providers exposing extra usage fields beyond OpenAI's standard.
+
+        Called after standard token tracking, with the raw ``usage`` dict from
+        the response. OpenRouter uses this to capture ``usage.cost`` (USD
+        billed by upstream — authoritative for meta-provider routing where
+        per-token tables don't apply). Default: no-op.
+        """
+        return None
+
     @abstractmethod
     def _input_cost_per_1m(self, model: str) -> float: ...
 
@@ -338,6 +348,8 @@ class OpenAICompatibleProvider(LLMProvider):
                     ),
                     "reasoning_tokens": reasoning_tok,
                 }
+
+                self._track_provider_specific_usage(usage)
 
                 logger.info(
                     "%s [call #%d] %d prompt (%d cached) + %d completion"

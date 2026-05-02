@@ -162,6 +162,26 @@ class OpenAIProvider(OpenAICompatibleProvider):
         # tokens as-is to avoid double-counting.
         return completion_tokens
 
+    async def get_account_credits(self) -> dict:
+        # OpenAI dropped the only "remaining balance" endpoint
+        # (/v1/dashboard/billing/credit_grants) for regular user keys. The
+        # modern Usage API reports SPEND under an admin/org-key, not the
+        # remaining credit. Long-standing community feature request without
+        # an ETA.
+        raise NotImplementedError(
+            "OpenAI has no public API to fetch remaining credit. "
+            "Check platform.openai.com/usage or platform.openai.com/account/billing/overview."
+        )
+
+    async def check_account_limits(self) -> dict:
+        # Per-key rate limits are returned in ``x-ratelimit-*`` response
+        # headers on real calls; no standalone endpoint exists.
+        raise NotImplementedError(
+            "OpenAI does not expose per-key rate limits via API. "
+            "Inspect ``x-ratelimit-*`` headers on any real response, "
+            "or check platform.openai.com/account/limits."
+        )
+
     def _input_cost_per_1m(self, model: str) -> float:
         return _PRICING.get(model, (1.25, 10.00))[0]
 

@@ -23,6 +23,7 @@ _PROVIDER_MODULES = {
     "deepseek": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider"),
     "xai": ("pyutilz.llm.xai_provider", "XAIProvider"),
     "openai": ("pyutilz.llm.openai_provider", "OpenAIProvider"),
+    "openrouter": ("pyutilz.llm.openrouter_provider", "OpenRouterProvider"),
 }
 
 # Aliases mapping to canonical names
@@ -33,6 +34,8 @@ _ALIASES = {
     "ds": "deepseek",
     "grok": "xai",
     "gpt": "openai",
+    "or": "openrouter",
+    "router": "openrouter",
 }
 
 
@@ -51,6 +54,7 @@ def get_llm_provider(
             - "deepseek" / "ds": DeepSeek API
             - "xai" / "grok": xAI Grok API
             - "openai" / "gpt": OpenAI API
+            - "openrouter" / "or" / "router": OpenRouter (meta-provider, 200+ models)
         settings: Optional settings instance.
         **kwargs: Additional arguments passed to the provider.
 
@@ -111,6 +115,13 @@ def get_llm_provider(
             "api_key",
             settings.openai_api_key.get_secret_value()
             if settings.openai_api_key
+            else None,
+        )
+    elif canonical == "openrouter":
+        kwargs.setdefault(
+            "api_key",
+            settings.openrouter_api_key.get_secret_value()
+            if settings.openrouter_api_key
             else None,
         )
 

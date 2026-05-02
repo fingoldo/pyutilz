@@ -183,6 +183,50 @@ class LLMProvider(ABC):
         """
         pass
 
+    async def get_account_credits(self) -> dict[str, Any]:
+        """Return account billing snapshot.
+
+        Common keys (all optional — provider-dependent presence):
+            ``balance_usd``     — remaining credit in USD (None when not exposed)
+            ``total_granted``   — total ever-granted credit in USD
+            ``total_used``      — lifetime spend in USD
+            ``is_available``    — whether the account can issue billable calls
+            ``currency``        — native currency if not USD
+            ``raw``             — provider's full raw response
+
+        Default raises :class:`NotImplementedError` — most upstream APIs
+        don't publish a balance endpoint for regular (non-admin) keys.
+        Concrete providers override when their API exposes it.
+
+        Raises:
+            NotImplementedError: provider doesn't expose balance via API.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not expose account balance via API. "
+            "Check the provider's web console."
+        )
+
+    async def check_account_limits(self) -> dict[str, Any]:
+        """Return account-level rate limit / quota / usage snapshot.
+
+        Default raises :class:`NotImplementedError`. Concrete providers
+        override when they expose this (currently only OpenRouter).
+
+        Common keys (provider-dependent):
+            ``limit_remaining`` — credits left under the cap (USD)
+            ``usage_daily/weekly/monthly``
+            ``rate_limit``      — requests-per-interval shape
+            ``is_free_tier``
+            ``raw``             — provider's full raw response
+
+        Raises:
+            NotImplementedError: provider doesn't expose this via API.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not expose account limits via API. "
+            "Check the provider's web console."
+        )
+
     @abstractmethod
     async def count_tokens(self, text: str) -> int:
         """Count tokens in text.

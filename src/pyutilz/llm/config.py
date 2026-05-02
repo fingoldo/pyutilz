@@ -24,6 +24,7 @@ class LLMSettings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     xai_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+    openrouter_api_key: SecretStr | None = None
 
 
 @lru_cache()

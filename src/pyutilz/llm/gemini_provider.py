@@ -267,3 +267,20 @@ class GeminiProvider(LLMProvider):
             ),
         )
         return result.total_tokens
+
+    async def get_account_credits(self) -> dict:
+        # Gemini billing rides on Google Cloud — credit / spend lives in the
+        # Cloud Billing API, which uses GCP service-account auth, not the
+        # Gemini API key we're holding. Mixing the two would expand scope
+        # significantly and isn't symmetric with what other providers offer.
+        raise NotImplementedError(
+            "Gemini billing is GCP-based — there is no balance endpoint "
+            "reachable with a Gemini API key. Check console.cloud.google.com/billing "
+            "or use the Cloud Billing API with separate GCP credentials."
+        )
+
+    async def check_account_limits(self) -> dict:
+        raise NotImplementedError(
+            "Gemini does not expose per-key rate limits via API. "
+            "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas."
+        )

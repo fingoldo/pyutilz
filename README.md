@@ -44,6 +44,12 @@
 - **tokenizers**: NLP tokenization (NLTK, spaCy, custom)
 - **similarity**: Text similarity metrics (Jaccard, Levenshtein, embeddings)
 
+### LLM Providers (`pyutilz.llm`)
+Unified async interface across **Anthropic / Claude Code / OpenAI / Google
+Gemini / DeepSeek / xAI Grok / OpenRouter** behind one `LLMProvider` ABC.
+OpenRouter is a meta-provider exposing 200+ models via the same API —
+discover them with `list_openrouter_models()`. Factory: `get_llm_provider("or")`.
+
 ### Development Tools
 - **pythonlib**: Core Python utilities, type handling, object loading
 - **logginglib**: Advanced logging configuration
