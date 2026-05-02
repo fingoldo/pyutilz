@@ -51,6 +51,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "claude_code_provider": "covered by test_llm_providers.py",
     "deepseek_provider": "covered by test_llm_deepseek.py + test_llm_providers.py",
     "gemini_provider": "covered by test_llm_providers.py",
+    "openai_provider": "covered by test_llm_providers.py",
+    "openrouter_provider": "covered by test_llm_providers.py + test_llm_account_credits.py",
     "xai_provider": "covered by test_llm_xai.py + test_llm_providers.py",
     "exceptions": "trivial exception class definitions; no logic to test",
     "openai_compat": "covered by test_llm_openai_compat.py",
@@ -105,6 +107,8 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_smoke_untested_modules": "smoke suite — covers 8 untested modules under one parametrize",
     "test_no_bare_except": "meta-test (H3) — bare except / except BaseException without re-raise",
     "test_no_mutable_defaults": "meta-test (H4) — mutable default arguments (Python footgun)",
+    "test_llm_account_credits": "cross-cutting — covers OpenRouter check_account_limits across providers",
+    "test_llm_supports_json_mode": "cross-cutting — pins supports_json_mode() across all providers",
 }
 
 # Source modules surfaced by the forward-direction audit but explicitly

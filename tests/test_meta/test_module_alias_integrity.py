@@ -30,11 +30,23 @@ import pyutilz
 
 def test_every_alias_target_imports():
     """The right-hand side of every alias maps to a module that imports
-    cleanly."""
+    cleanly.
+
+    Distinguishes "pyutilz module missing" (real failure) from "transitive
+    optional third-party dep missing" (skip — CI's default install matrix
+    intentionally omits ``filelock``/``jellyfish``/``flask``/``IPython``;
+    those alias targets only matter when the user opts in).
+    """
     failures: list[str] = []
     for alias, real_path in pyutilz._MODULE_ALIASES.items():
         try:
             importlib.import_module(real_path)
+        except ModuleNotFoundError as e:
+            missing = (e.name or "")
+            if missing.startswith("pyutilz"):
+                # The pyutilz target module itself is gone — real drift.
+                failures.append(f"{alias!r} → {real_path!r}: {e}")
+            # else: transitive optional dep missing — silently skip.
         except ImportError as e:
             failures.append(f"{alias!r} → {real_path!r}: ImportError({e})")
     if failures:

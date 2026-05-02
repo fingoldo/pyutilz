@@ -354,7 +354,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         if resp.status_code == 402:
             logger.warning(
                 "OpenRouter account out of credits (HTTP 402). "
-                "Top up at https://openrouter.ai/credits — "
+                "Top up at https://openrouter.ai/credits - "
                 "retrying indefinitely until balance is restored..."
             )
 

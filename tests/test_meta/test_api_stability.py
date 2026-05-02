@@ -88,11 +88,18 @@ def test_public_api_matches_snapshot():
             diffs.append(f"CHANGED [{key}]:\n      was: {old}\n      now: {new}")
 
     # Per-alias surfaces — only flag REMOVALS / RENAMES (additions silent).
+    # If EITHER side captured ``_import_error`` (e.g. CI lacks an optional
+    # third-party dep like jellyfish/filelock/flask/IPython that the snapshot
+    # author had installed) skip the alias entirely — that's an env mismatch,
+    # not API drift. ``test_module_alias_integrity`` already polices real
+    # pyutilz module presence.
     additions: list[str] = []
     for alias, exp_surface in expected.get("alias_surfaces", {}).items():
         cur_surface = current.get("alias_surfaces", {}).get(alias)
         if cur_surface is None:
             diffs.append(f"REMOVED alias: {alias}")
+            continue
+        if "_import_error" in exp_surface or "_import_error" in cur_surface:
             continue
         for name, exp_kind in exp_surface.items():
             cur_kind = cur_surface.get(name)

@@ -283,8 +283,13 @@ class TestGetSystemInfoMac:
                                mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Mac"
+        # Popen calls are now context-managed (``with subprocess.Popen(...)``);
+        # __enter__ must return the same MagicMock so attribute lookups in the
+        # ``with``-block (.stdout, .communicate) hit the configured fakes.
         ioreg_proc = MagicMock()
+        ioreg_proc.__enter__.return_value = ioreg_proc
         grep_proc = MagicMock()
+        grep_proc.__enter__.return_value = grep_proc
         grep_proc.communicate.return_value = (b'"IOPlatformUUID" = "ABC-DEF-123"', b"")
         ioreg_proc.stdout = MagicMock()
         mock_sub.Popen.side_effect = [ioreg_proc, grep_proc]

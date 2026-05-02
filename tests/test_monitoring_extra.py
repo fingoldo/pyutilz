@@ -195,8 +195,9 @@ class TestLogDuration:
             result = any_func(1, y=3)
             assert result == 4
             mock_logger.info.assert_called_once()
-            msg = mock_logger.info.call_args[0][0]
-            assert "any_func" in msg
+            # Lazy %-format: assert against the expanded message via str(call_args).
+            rendered = " ".join(str(a) for a in mock_logger.info.call_args[0])
+            assert "any_func" in rendered
 
     def test_truncation_of_large_args(self):
         from pyutilz.system.monitoring import log_duration
@@ -208,8 +209,8 @@ class TestLogDuration:
         with patch("pyutilz.system.monitoring.logger") as mock_logger:
             result = func("x" * 1000)
             assert result == 1000
-            msg = mock_logger.info.call_args[0][0]
-            assert "truncated" in msg
+            rendered = " ".join(str(a) for a in mock_logger.info.call_args[0])
+            assert "truncated" in rendered
 
     def test_custom_logger_name(self):
         from pyutilz.system.monitoring import log_duration
@@ -232,6 +233,6 @@ class TestLogDuration:
 
         with patch("pyutilz.system.monitoring.logger") as mock_logger:
             func(a=10, b=20)
-            msg = mock_logger.info.call_args[0][0]
-            assert "a=" in msg
-            assert "b=" in msg
+            rendered = " ".join(str(a) for a in mock_logger.info.call_args[0])
+            assert "a=" in rendered
+            assert "b=" in rendered

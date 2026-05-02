@@ -203,10 +203,18 @@ def capture_module_surface(mod) -> dict[str, str]:
     on a module (skips dunders + private). Used by API-stability
     snapshot tests.
 
+    Filters out symbols imported from outside pyutilz (typing aliases,
+    stdlib helpers like ``os.path.join``) so the snapshot is stable
+    across Python versions. Python 3.11 promoted ``typing.Any`` to a
+    real class while 3.10 keeps it as ``_SpecialForm``; capturing such
+    re-exports makes the snapshot version-sensitive without testing any
+    pyutilz API.
+
     Robust against import-time-bound symbols (Flask LocalProxy etc.)
     — they're reported as ``"<inaccessible-at-import-time>"`` rather
     than crashing the snapshot.
     """
+    mod_name = getattr(mod, "__name__", "")
     out: dict[str, str] = {}
     for name in dir(mod):
         if name.startswith("_"):
@@ -218,6 +226,18 @@ def capture_module_surface(mod) -> dict[str, str]:
             continue
         if inspect.ismodule(obj):
             continue
+        # Skip symbols re-exported from outside pyutilz; their behaviour
+        # (Any class-vs-callable, signature param names) varies across
+        # Python versions and isn't part of our public API.
+        owner = getattr(obj, "__module__", None)
+        if owner and not owner.startswith("pyutilz"):
+            # ``value:`` symbols (None / int / str module-level
+            # constants) have no ``__module__`` attribute on the value
+            # itself; ``getattr(None, '__module__', None)`` is None →
+            # they fall through to the ``else`` branch below. Only
+            # drop class/callable re-exports.
+            if inspect.isclass(obj) or callable(obj):
+                continue
         if inspect.isclass(obj):
             out[name] = f"class:{getattr(obj, '__module__', '?')}.{obj.__name__}"
         elif callable(obj):
