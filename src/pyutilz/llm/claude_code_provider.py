@@ -292,6 +292,18 @@ class ClaudeCodeProvider(LLMProvider):
     def context_window(self) -> int:
         return 200_000
 
+    def supports_json_mode(self) -> bool:
+        """Claude Code SDK has no hard JSON-mode toggle — the
+        ``json_mode=True`` kwarg here only appends a system-prompt hint
+        ("Respond with valid JSON only") and post-strips a Markdown
+        ``\\`\\`\\`json`` fence. That's a SOFT guarantee: helpful but the
+        model can still emit prose around the JSON. Callers wanting a
+        hard guarantee should branch on this and route to a provider
+        that returns True instead. Returning False here lets glossum's
+        retry/parse layer apply more defensive handling for this
+        provider."""
+        return False
+
     async def generate(
         self,
         prompt: str,

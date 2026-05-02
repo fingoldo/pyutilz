@@ -89,6 +89,14 @@ class AnthropicProvider(LLMProvider):
     def context_window(self) -> int:
         return 200_000
 
+    def supports_json_mode(self) -> bool:
+        """Anthropic Messages API has NO native JSON-mode toggle. We
+        get reliable JSON via ``generate_json()`` (assistant prefill
+        with ``{`` + parser-side ``extract_json``), not by passing a
+        kwarg to ``generate()``. Callers should branch: if False, use
+        ``generate_json()`` instead of passing ``json_mode=True``."""
+        return False
+
     @retry(
         retry=retry_if_exception_type((
             anthropic.RateLimitError,

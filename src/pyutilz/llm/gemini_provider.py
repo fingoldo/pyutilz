@@ -114,6 +114,14 @@ class GeminiProvider(LLMProvider):
                 return limit
         return 8192
 
+    def supports_json_mode(self) -> bool:
+        """Gemini 2.0+ accepts ``response_mime_type="application/json"``
+        (mapped from our ``json_mode=True`` kwarg in ``generate``).
+        Earlier 1.x models did not — but pyutilz no longer ships
+        defaults pointing there, so True is safe across the supported
+        catalogue."""
+        return True
+
     @retry(
         retry=retry_if_exception_type((
             ConnectionError, TimeoutError, OSError,

@@ -291,6 +291,34 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         _, max_out = _resolve_model_limits(self.model_name)
         return max_out if max_out is not None else self._default_max_tokens
 
+    def supports_json_mode(self) -> bool:
+        """Per-model JSON-mode support: consult the OR catalogue's
+        ``supported_parameters`` field. Many free-tier models route to
+        upstreams that DON'T accept ``response_format`` even though OR
+        as a router does — sending the param silently no-ops, the
+        model emits prose+JSON, and parsers fail.
+
+        Returns True only when the catalogue explicitly lists
+        ``response_format`` (or its alias ``structured_outputs``) for
+        the active model. Falls back to True on catalogue-fetch failure
+        — it's safer to TRY the kwarg (most upstreams accept it) than
+        to silently skip on transient catalogue outages.
+        """
+        try:
+            catalogue = _fetch_models_catalogue()
+        except Exception:
+            return True
+        entry = catalogue.get(self.model_name)
+        if not entry:
+            # Unknown model — best-effort: assume support, rely on the
+            # upstream to reject if it can't handle it.
+            return True
+        params = entry.get("supported_parameters") or []
+        if isinstance(params, list):
+            params_set = {str(p).lower() for p in params}
+            return "response_format" in params_set or "structured_outputs" in params_set
+        return True
+
     def _get_timeout(self, model: str) -> float:
         # Reasoning-class upstream models may need long timeouts; same heuristic
         # as the per-provider classes — if we route through OR to a known slow

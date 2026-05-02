@@ -54,6 +54,25 @@ class LLMProvider(ABC):
         """Maximum context window (input + output) in tokens."""
         return 200_000  # safe default for most models
 
+    def supports_json_mode(self) -> bool:
+        """Return True if this provider+model accepts a structured
+        JSON-mode parameter (``response_format={"type":"json_object"}``,
+        ``response_mime_type="application/json"``, or equivalent).
+
+        Callers should consult this before sending ``json_mode=True`` as
+        a kwarg to ``generate()`` — passing it to a provider that
+        doesn't support it either silently no-ops or raises (depending
+        on the upstream). For OpenRouter-routed models, support varies
+        per model; the override consults the catalogue's
+        ``supported_parameters``.
+
+        Default: False. Subclasses that support a hard JSON-mode toggle
+        override to True (or model-aware logic). Soft "system-prompt
+        hint" implementations (claude-code) keep False — the hint helps
+        but doesn't guarantee, and callers may want a stronger signal.
+        """
+        return False
+
     @staticmethod
     def extract_json(text: str, provider_name: str = "LLM") -> dict[str, Any]:
         """Extract and parse JSON from LLM response, handling code blocks.

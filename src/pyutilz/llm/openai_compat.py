@@ -178,6 +178,14 @@ class OpenAICompatibleProvider(LLMProvider):
     def context_window(self) -> int:
         return self._context_window_map.get(self.model_name, self._default_context_window)
 
+    def supports_json_mode(self) -> bool:
+        """All OpenAI-compatible Chat Completions endpoints accept
+        ``response_format={"type": "json_object"}`` since 2023-11.
+        Subclasses with model-specific gating (notably OpenRouter, where
+        per-model support varies) override this with a catalogue check.
+        """
+        return True
+
     async def _close(self):
         await self._client.aclose()
 
