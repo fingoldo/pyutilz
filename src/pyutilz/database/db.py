@@ -1175,7 +1175,7 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
         conn.commit()
         n = len(values_list)
         if verbose:
-            logger.info(f"Inserted {n:_} row(s) into {table_name} table.")
+            logger.info("Inserted %s row(s) into %s table.", n, table_name)
             return n
     except Exception as e:
         logger.error(f"Could not insert data into {table_name} table: {e}.")

@@ -190,7 +190,7 @@ def applyfunc_parallel(
     except Exception:
         fname = "function"
 
-    logger.info(f"Applying of {fname} started, ncores={n_cores}, nchunks={len(iterable):,}...")
+    logger.info("Applying of %s started, ncores=%s, nchunks=%s...", fname, n_cores, len(iterable))
 
     if use_threads:
         with ThreadPool(

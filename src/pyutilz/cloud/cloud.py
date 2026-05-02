@@ -135,5 +135,5 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     except Exception as e:
                         logger.error(f"Error while unpacking model from bucket {local_object_path+'.zip'}: {e}")
                     else:
-                        logger.info(f"Unzipped model from archive {local_object_path+'.zip'}")
+                        logger.info("Unzipped model from archive %s", local_object_path+'.zip')
                         os.remove(local_object_path+'.zip')

@@ -643,7 +643,7 @@ def read_stats_from_multiple_files(
         tmp_df = getattr(pd, read_fcn)(filename)
 
         old_size = tmp_df.memory_usage(index=True).sum() / 1024**3
-        logger.info(f"Merging {filename} with {len(tmp_df):_} rows of size {old_size:.1f} Gb")
+        logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
 
         if optimize:
             tmp_df = optimize_dtypes(tmp_df)
@@ -677,7 +677,7 @@ def read_stats_from_multiple_files(
     if len(lst) > 0:
         try:
             res = concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
-            logger.info(f"Final df size ({len(res):_} rows)")
+            logger.info("Final df size (%s rows)", len(res))
             if delete_after:
                 for _i, filename in enumerate(fnames):
                     try:
@@ -1020,7 +1020,7 @@ def benchmark_dataframe_compression(
 
     df_size = get_df_memory_consumption(df) / (1024**2)
     if verbose:
-        logger.info(f"Pandas: {pd.__version__}, DF size: {df_size:_.2f}Mb, Dtypes: {df.dtypes.value_counts().to_dict()}")
+        logger.info("Pandas: %s, DF size: %.2fMb, Dtypes: %s", pd.__version__, df_size, df.dtypes.value_counts().to_dict())
 
     if benchmark_dir_path:
         ensure_dir_exists(benchmark_dir_path)
@@ -1097,7 +1097,7 @@ def ensure_dataframe_float32_convertability(
         numeric_cols = df.select_dtypes(include=["uint32", "int32", "int64", "uint64", "float64"]).columns
         if len(numeric_cols) > 0:
             if verbose:
-                logger.info(f"Converting {len(numeric_cols):_} numeric columns to float32")
+                logger.info("Converting %s numeric columns to float32", len(numeric_cols))
             df[numeric_cols] = df[numeric_cols].astype(np.float32)
 
         # --- PyArrow-backed dtypes ---

@@ -132,7 +132,7 @@ def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
             try:
                 result = future.result(timeout=timeout)
                 if report_actual_duration:
-                    logger.info(f"{func.__name__} completed in {(time.time() - start_ts):.2f}s")
+                    logger.info("%s completed in %.2fs", func.__name__, time.time() - start_ts)
                 return result
             except concurrent.futures.TimeoutError:
                 logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")

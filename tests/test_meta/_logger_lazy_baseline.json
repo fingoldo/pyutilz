@@ -1,16 +1,5 @@
 [
-  "cloud/cloud.py:138",
-  "core/pythonlib.py:146",
-  "core/pythonlib.py:151",
-  "data/pandaslib.py:1023",
-  "data/pandaslib.py:1100",
-  "data/pandaslib.py:646",
-  "data/pandaslib.py:680",
-  "data/polarslib.py:654",
-  "database/db.py:1178",
   "dev/benchmarking.py:49",
   "dev/logginglib.py:153",
-  "system/monitoring.py:135",
-  "system/parallel.py:193",
   "system/system.py:1883"
 ]

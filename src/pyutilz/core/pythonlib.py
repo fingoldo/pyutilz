@@ -143,12 +143,12 @@ def flatten_keys_to_set(
         if stringify:
             if verbose:
                 tmp_str = str(obj)
-                logger.info(f"Processing object of type {type(obj)}, size {len(tmp_str):_} as a string.")
+                logger.info("Processing object of type %s, size %s as a string.", type(obj), len(tmp_str))
             res.add(str(obj))
         else:
             if verbose:
                 tmp_str = str(obj)
-                logger.info(f"Skipping object of type {type(obj)}, size {len(tmp_str):_}: {tmp_str[max_chars:]} .")
+                logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[max_chars:])
     return res
 
 
