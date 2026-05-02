@@ -31,8 +31,8 @@ _GRANDFATHERED: set[str] = {
     # ``meta_test_utils.py`` documents marker keywords in section
     # headers and docstrings — pattern-matching tooling, not actual
     # work-items. Excluded permanently.
-    "dev/meta_test_utils.py:251",
-    "dev/meta_test_utils.py:275",
+    "dev/meta_test_utils.py:256",
+    "dev/meta_test_utils.py:280",
 }
 
 

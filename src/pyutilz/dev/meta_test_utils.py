@@ -226,17 +226,22 @@ def capture_module_surface(mod) -> dict[str, str]:
             continue
         if inspect.ismodule(obj):
             continue
-        # Skip symbols re-exported from outside pyutilz; their behaviour
-        # (Any class-vs-callable, signature param names) varies across
-        # Python versions and isn't part of our public API.
-        owner = getattr(obj, "__module__", None)
-        if owner and not owner.startswith("pyutilz"):
-            # ``value:`` symbols (None / int / str module-level
-            # constants) have no ``__module__`` attribute on the value
-            # itself; ``getattr(None, '__module__', None)`` is None →
-            # they fall through to the ``else`` branch below. Only
-            # drop class/callable re-exports.
-            if inspect.isclass(obj) or callable(obj):
+        # Skip CLASSES re-exported from outside pyutilz; their identity
+        # (typing.Any class-vs-_SpecialForm) flips across Python versions
+        # and isn't part of our public API. Don't filter callables /
+        # instances — we WANT to track ``logger = logging.getLogger(...)``,
+        # ``client = SomeClient()``, etc. as part of the surface even
+        # though their ``__module__`` is outside pyutilz.
+        if inspect.isclass(obj):
+            owner = getattr(obj, "__module__", None)
+            if owner and not owner.startswith("pyutilz"):
+                continue
+        # Skip callables (functions / methods) imported from stdlib —
+        # their parameter names drift across Python versions
+        # (``os.path.join(path, *paths)`` -> ``join(a, *p)``).
+        elif inspect.isfunction(obj) or inspect.isbuiltin(obj):
+            owner = getattr(obj, "__module__", None)
+            if owner and not owner.startswith("pyutilz"):
                 continue
         if inspect.isclass(obj):
             out[name] = f"class:{getattr(obj, '__module__', '?')}.{obj.__name__}"
