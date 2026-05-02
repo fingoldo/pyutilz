@@ -31,6 +31,11 @@ import inspect
 
 import pytest
 
+# llm.factory transitively imports pyutilz.llm.config which requires
+# pydantic. CI's default install matrix is [pandas,polars,database,dev]
+# without [llm] — gate the whole module.
+pytest.importorskip("pydantic")
+
 from pyutilz.llm import factory as factory_module
 from pyutilz.llm.base import LLMProvider
 

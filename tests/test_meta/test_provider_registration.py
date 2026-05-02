@@ -17,6 +17,10 @@ import importlib
 
 import pytest
 
+# llm.factory transitively imports pyutilz.llm.config which requires
+# pydantic. CI's default install matrix omits [llm] — gate the module.
+pytest.importorskip("pydantic")
+
 from pyutilz.llm import factory as factory_module
 
 

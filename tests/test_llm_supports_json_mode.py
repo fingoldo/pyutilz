@@ -12,6 +12,10 @@ from __future__ import annotations
 
 import pytest
 
+# Some pyutilz.llm.* modules transitively import pydantic (config). CI's
+# default install matrix omits [llm] extras — gate this whole module.
+pytest.importorskip("pydantic")
+
 from pyutilz.llm.base import LLMProvider
 
 
