@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-05-02
 
+### Added — Live model-health pre-flight & enriched ``list_openrouter_models``
+
+Two new ``OpenRouterProvider`` methods backed by ``GET /api/v1/models/{slug}/endpoints``
+(auth required, but **not billed** against credits — i.e. a "free ping"):
+
+- ``check_model_health(model=None)`` — per-upstream ``status``,
+  ``uptime_5m`` / ``30m`` / ``1d``, ``latency_p50_ms`` / ``p95``,
+  ``throughput_p50_tps``, ``context_length``, ``max_completion_tokens``,
+  ``pricing``, ``supported_parameters``, ``quantization``,
+  ``supports_implicit_caching``. Plus best-of aggregates across all
+  upstreams: ``best_uptime_30m``, ``best_latency_p50_ms``,
+  ``best_throughput_p50_tps``.
+- ``is_model_healthy(model=None, min_uptime=0.99)`` — boolean guard;
+  returns ``False`` (rather than propagating) on network errors so a
+  failing pre-flight just defers the batch instead of crashing it.
+
+``list_openrouter_models`` becomes a two-stage pipeline:
+
+1. **Stage 1 (offline)** — same /api/v1/models filter as before
+   (``name_contains``, ``max_input_per_1m``).
+2. **Stage 2 (live, opt-in via ``return_only_healthy=True``)** — concurrent
+   ``ThreadPoolExecutor`` fetches /endpoints for each Stage-1 survivor,
+   drops anyone whose ``best_uptime_30m`` < ``min_uptime`` (default 0.95),
+   and attaches the full health block to each surviving row.
+
+New params: ``return_only_healthy=True`` (default), ``min_uptime=0.95``,
+``api_key`` (overrides env), ``max_workers=16``, ``timeout=30.0``.
+``sort_by`` extended with ``"uptime"`` / ``"latency"`` / ``"throughput"``
+(use the best-of aggregate per row).
+
+**Backward compat**: existing callers keep working. With NO API key
+configured, Stage 2 logs a warning and degrades to Stage-1-only output —
+matches the old offline behaviour. Tests using the old shape pass
+``return_only_healthy=False`` to opt out cleanly.
+
+23 new unit tests in this slice; 286 regression tests on touched modules
+green (full LLM suite + provider meta-tests).
+
 ### Added — Full OpenRouter usage / response capture surface
 
 `OpenRouterProvider` now records every field OR exposes per request:

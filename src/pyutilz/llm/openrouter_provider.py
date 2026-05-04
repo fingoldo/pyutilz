@@ -30,7 +30,9 @@ What's distinctive about a meta-provider, and how this class handles it:
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
@@ -79,40 +81,229 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
         return _MODELS_CATALOGUE
 
 
+_ENDPOINTS_URL_TEMPLATE = "https://openrouter.ai/api/v1/models/{model}/endpoints"
+
+
+def _resolve_or_api_key(explicit: str | None) -> str | None:
+    """Resolve an OR API key for free helper endpoints — explicit > env > settings.
+
+    Returns ``None`` if nothing is configured. Helpers should treat ``None``
+    as "skip the optional auth-required step" rather than raise.
+    """
+    if explicit:
+        return explicit
+    env_key = os.environ.get("OPENROUTER_API_KEY")
+    if env_key:
+        return env_key
+    try:
+        from pyutilz.llm.config import get_llm_settings
+        s = get_llm_settings()
+        if s.openrouter_api_key:
+            return s.openrouter_api_key.get_secret_value()
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_endpoints_for_model(
+    model_id: str,
+    api_key: str,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """``GET /api/v1/models/{model}/endpoints`` — per-upstream stats.
+
+    Returns the raw endpoints list (one entry per upstream provider OR
+    routes through). Auth required (Bearer token), but the call itself
+    doesn't bill against credits.
+    """
+    url = _ENDPOINTS_URL_TEMPLATE.format(model=model_id)
+    resp = httpx.get(
+        url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = payload.get("data") or {}
+    return data.get("endpoints") or []
+
+
+def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
+    """Normalize the per-endpoint payload + compute best-of aggregates.
+
+    Endpoint fields renamed to a stable shape so downstream code doesn't
+    chase OR's snake_case-with-suffix conventions: ``uptime_last_30m`` →
+    ``uptime_30m``, ``latency_last_30m.p50`` → ``latency_p50_ms``, etc.
+
+    Best-of aggregates pick the most favourable value across all upstreams
+    for the model — useful as a single sortable metric per row:
+        ``best_uptime_30m``       — max uptime any backend hit in last 30m
+        ``best_latency_p50_ms``   — fastest backend's median latency
+        ``best_throughput_p50_tps`` — fastest backend's median throughput
+    """
+    if not endpoints:
+        return {
+            "endpoints": [],
+            "best_uptime_30m": None,
+            "best_latency_p50_ms": None,
+            "best_throughput_p50_tps": None,
+        }
+
+    norm: list[dict[str, Any]] = []
+    for e in endpoints:
+        latency = e.get("latency_last_30m") or {}
+        throughput = e.get("throughput_last_30m") or {}
+        norm.append({
+            "provider_name": e.get("provider_name"),
+            "name": e.get("name"),
+            "status": e.get("status"),
+            "uptime_5m": e.get("uptime_last_5m"),
+            "uptime_30m": e.get("uptime_last_30m"),
+            "uptime_1d": e.get("uptime_last_1d"),
+            "latency_p50_ms": latency.get("p50"),
+            "latency_p95_ms": latency.get("p95") or latency.get("p90"),
+            "throughput_p50_tps": throughput.get("p50"),
+            "context_length": e.get("context_length"),
+            "max_completion_tokens": e.get("max_completion_tokens"),
+            "max_prompt_tokens": e.get("max_prompt_tokens"),
+            "pricing": e.get("pricing"),
+            "supported_parameters": e.get("supported_parameters"),
+            "quantization": e.get("quantization"),
+            "supports_implicit_caching": e.get("supports_implicit_caching"),
+        })
+
+    def _best(field: str, op):
+        vals = [n[field] for n in norm if isinstance(n[field], (int, float))]
+        return op(vals) if vals else None
+
+    return {
+        "endpoints": norm,
+        "best_uptime_30m": _best("uptime_30m", max),
+        "best_latency_p50_ms": _best("latency_p50_ms", min),
+        "best_throughput_p50_tps": _best("throughput_p50_tps", max),
+    }
+
+
+def _enrich_with_health(
+    rows: list[dict[str, Any]],
+    api_key: str,
+    min_uptime: float,
+    max_workers: int,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    """Concurrently fetch /endpoints for each row, attach ``health``,
+    and drop rows where ``best_uptime_30m`` < ``min_uptime`` or fetch failed.
+
+    Uses a ThreadPoolExecutor (rather than async) so the public function
+    stays sync — old callers don't need to switch to ``await``.
+    """
+    out: list[dict[str, Any]] = []
+    if not rows:
+        return out
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {
+            ex.submit(_fetch_endpoints_for_model, r["id"], api_key, timeout): r
+            for r in rows
+        }
+        for fut in as_completed(futs):
+            row = futs[fut]
+            try:
+                endpoints = fut.result()
+            except Exception as exc:
+                logger.warning(
+                    "Health check failed for %s (%s); excluding from results.",
+                    row.get("id"), exc,
+                )
+                continue
+            health = _summarize_endpoints(endpoints)
+            uptime = health.get("best_uptime_30m")
+            if uptime is None or uptime < min_uptime:
+                continue
+            # Don't mutate the cached catalogue entry — copy first.
+            enriched = dict(row)
+            enriched["health"] = health
+            out.append(enriched)
+    return out
+
+
 def list_openrouter_models(
     refresh: bool = False,
     *,
     sort_by: str | None = None,
     name_contains: str | None = None,
     max_input_per_1m: float | None = None,
+    return_only_healthy: bool = True,
+    min_uptime: float = 0.95,
+    api_key: str | None = None,
+    max_workers: int = 16,
+    timeout: float = 30.0,
 ) -> list[dict[str, Any]]:
-    """Return OpenRouter's full model catalogue with pricing and limits.
+    """Return OpenRouter's model catalogue with pricing, limits and (optionally) live health.
 
-    Each entry contains (at minimum, depending on what OR publishes):
-        ``id``, ``name``, ``description``, ``context_length``,
-        ``pricing.prompt`` / ``pricing.completion`` (USD per token, as str),
-        ``top_provider.context_length`` / ``max_completion_tokens``,
-        ``architecture.modality`` / ``input_modalities`` / ``tokenizer``,
-        ``supported_parameters`` (e.g. ``tools``, ``response_format``).
+    Two-stage pipeline:
+
+    **Stage 1 — offline catalogue filter (always)**: pulls /api/v1/models
+    (no auth, free), applies ``name_contains`` / ``max_input_per_1m``.
+
+    **Stage 2 — live health enrichment (when ``return_only_healthy=True``)**:
+    fetches /api/v1/models/{id}/endpoints in parallel for every row that
+    passed Stage 1, drops rows whose best-upstream uptime over the last
+    30 minutes is below ``min_uptime``, and attaches a ``health`` dict to
+    each survivor:
+
+        row["health"] = {
+            "endpoints": [
+                {"provider_name", "status", "uptime_5m"/"30m"/"1d",
+                 "latency_p50_ms", "latency_p95_ms", "throughput_p50_tps",
+                 "context_length", "max_completion_tokens",
+                 "pricing", "supported_parameters", "quantization",
+                 "supports_implicit_caching"},
+                ...
+            ],
+            "best_uptime_30m": 0.998,
+            "best_latency_p50_ms": 234,
+            "best_throughput_p50_tps": 89.5,
+        }
+
+    Stage 2 needs an OR API key (resolved from ``api_key`` arg, then
+    ``OPENROUTER_API_KEY`` env, then ``LLMSettings``). The endpoints
+    endpoint requires Bearer auth but does NOT bill against credits —
+    "free" in the only sense that matters. With NO key configured, the
+    function logs a warning and degrades gracefully to Stage-1-only
+    output (matches old behaviour for backward compat).
 
     Args:
-        refresh: Drop the in-process cache and re-fetch from /api/v1/models.
-        sort_by: Optional sort key — ``"input_price"``, ``"output_price"``,
-            ``"context"``, or ``"name"``.
-        name_contains: Substring filter on ``id`` (case-insensitive), e.g.
-            ``"claude"`` to list only Anthropic-routed models.
-        max_input_per_1m: Filter to models with input price ≤ this (USD per
-            1M tokens). Useful for budget shopping.
+        refresh: Drop the in-process catalogue cache and re-fetch from /models.
+        sort_by: ``"input_price"`` / ``"output_price"`` / ``"context"`` /
+            ``"name"`` (Stage-1 metrics, always available); or
+            ``"uptime"`` / ``"latency"`` / ``"throughput"`` (Stage-2,
+            requires ``return_only_healthy=True`` — silently falls back
+            to ``"name"`` ordering otherwise).
+        name_contains: Substring filter on ``id`` (case-insensitive).
+        max_input_per_1m: Filter to models with input price ≤ this USD/1M.
+        return_only_healthy: When True, run Stage 2 health enrichment +
+            filter. Default ``True`` because routing through a degraded
+            upstream is the most common silent failure mode of meta-providers.
+            Set ``False`` to skip the per-model HTTP call entirely.
+        min_uptime: Minimum ``best_uptime_30m`` (0.0–1.0) for a row to
+            survive Stage 2. Default 0.95.
+        api_key: Override env-resolved key for the /endpoints calls.
+        max_workers: ThreadPoolExecutor size for Stage 2 concurrent fetch.
+        timeout: Per-request HTTP timeout in seconds for Stage 2.
 
     Returns:
-        List of catalogue entries (list of dicts). Empty list on fetch failure.
+        List of dicts. Empty on catalogue fetch failure.
 
     Example:
-        >>> from pyutilz.llm import list_openrouter_models
-        >>> models = list_openrouter_models(name_contains="claude", sort_by="input_price")
-        >>> for m in models[:3]:
-        ...     pricing = m.get("pricing", {})
-        ...     print(m["id"], pricing.get("prompt"), pricing.get("completion"))
+        >>> # cheapest healthy Claude variant under $1/1M input
+        >>> rows = list_openrouter_models(
+        ...     name_contains="claude",
+        ...     max_input_per_1m=1.0,
+        ...     sort_by="uptime",
+        ... )
+        >>> top = rows[0]
+        >>> print(top["id"], top["health"]["best_uptime_30m"],
+        ...       top["health"]["best_latency_p50_ms"], "ms p50")
     """
     if refresh:
         global _MODELS_CATALOGUE
@@ -133,6 +324,17 @@ def list_openrouter_models(
                 return float("inf")
         rows = [r for r in rows if _input_per_1m(r) <= max_input_per_1m]
 
+    if return_only_healthy and rows:
+        key = _resolve_or_api_key(api_key)
+        if not key:
+            logger.warning(
+                "list_openrouter_models(return_only_healthy=True) needs an "
+                "OpenRouter API key (env OPENROUTER_API_KEY or api_key=); "
+                "skipping health filter — returning Stage-1 results."
+            )
+        else:
+            rows = _enrich_with_health(rows, key, min_uptime, max_workers, timeout)
+
     if sort_by:
         def _key(r: dict):
             pricing = r.get("pricing") or {}
@@ -142,11 +344,16 @@ def list_openrouter_models(
             except (TypeError, ValueError):
                 in_price = out_price = float("inf")
             ctx = r.get("context_length") or 0
+            health = r.get("health") or {}
             return {
                 "input_price": in_price,
                 "output_price": out_price,
-                "context": -int(ctx),  # descending — biggest context first
+                "context": -int(ctx),                          # biggest context first
                 "name": str(r.get("id", "")),
+                # Stage-2 sorts. Missing health → sort to the end.
+                "uptime":     -(health.get("best_uptime_30m") or 0.0),
+                "latency":    health.get("best_latency_p50_ms")    or float("inf"),
+                "throughput": -(health.get("best_throughput_p50_tps") or 0.0),
             }.get(sort_by, str(r.get("id", "")))
         rows.sort(key=_key)
     return rows
@@ -454,6 +661,60 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
     def _output_cost_per_1m(self, model: str) -> float:
         return _per_token_cost_pair(model)[1]
+
+    async def check_model_health(
+        self,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """Pre-flight check: per-upstream uptime / latency / throughput.
+
+        Calls ``GET /api/v1/models/{model}/endpoints`` — this endpoint
+        requires the API key but is NOT charged against credits. Use as
+        a "free ping" before kicking off a long batch:
+
+        >>> health = await p.check_model_health()
+        >>> print(health["best_uptime_30m"], "uptime,",
+        ...       len(health["endpoints"]), "upstreams")
+
+        Args:
+            model: Defaults to ``self.model_name``. Pass explicitly to
+                check a different model without rebuilding the provider.
+
+        Returns:
+            ``{"model", "name", "endpoints": [...], "best_uptime_30m",
+            "best_latency_p50_ms", "best_throughput_p50_tps"}`` —
+            see ``_summarize_endpoints`` for the per-endpoint shape.
+        """
+        target = model or self.model_name
+        resp = await self._client.get(f"/models/{target}/endpoints")
+        resp.raise_for_status()
+        payload = resp.json()
+        data = payload.get("data") or {}
+        return {
+            "model": target,
+            "name": data.get("name"),
+            **_summarize_endpoints(data.get("endpoints") or []),
+        }
+
+    async def is_model_healthy(
+        self,
+        model: str | None = None,
+        min_uptime: float = 0.99,
+    ) -> bool:
+        """One-shot bool guard: any upstream meeting ``min_uptime`` over 30m?
+
+        Defaults to a strict 0.99 threshold — production batches.
+        Lower (0.95 / 0.90) for tolerant pre-flights. Network errors
+        return ``False`` rather than propagate, since a guard that
+        crashes is worse than one that says "no, hold off".
+        """
+        try:
+            h = await self.check_model_health(model)
+        except Exception as exc:
+            logger.warning("is_model_healthy: health check failed (%s)", exc)
+            return False
+        uptime = h.get("best_uptime_30m")
+        return uptime is not None and uptime >= min_uptime
 
     async def fetch_generation_stats(
         self,

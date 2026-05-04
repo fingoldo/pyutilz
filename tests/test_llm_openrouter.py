@@ -13,6 +13,8 @@ from pyutilz.llm.openrouter_provider import (
     _fetch_models_catalogue,
     _per_token_cost_pair,
     _resolve_model_limits,
+    _summarize_endpoints,
+    _resolve_or_api_key,
 )
 import pyutilz.llm.openrouter_provider as openrouter_module
 
@@ -307,26 +309,35 @@ class TestListModels:
         openrouter_module._MODELS_CATALOGUE = None
 
     def test_list_returns_all_models(self):
-        rows = list_openrouter_models()
+        # Stage-1 only — proves the offline catalogue path is intact.
+        rows = list_openrouter_models(return_only_healthy=False)
         assert len(rows) == 3
 
     def test_filter_by_name_substring(self):
-        rows = list_openrouter_models(name_contains="claude")
+        rows = list_openrouter_models(
+            name_contains="claude", return_only_healthy=False,
+        )
         assert len(rows) == 1
         assert rows[0]["id"] == "anthropic/claude-sonnet-4.6"
 
     def test_filter_by_name_case_insensitive(self):
-        rows = list_openrouter_models(name_contains="CLAUDE")
+        rows = list_openrouter_models(
+            name_contains="CLAUDE", return_only_healthy=False,
+        )
         assert len(rows) == 1
 
     def test_filter_by_max_input_price(self):
         # 0.50 USD per 1M tokens — should match only gpt-4o-mini
-        rows = list_openrouter_models(max_input_per_1m=0.50)
+        rows = list_openrouter_models(
+            max_input_per_1m=0.50, return_only_healthy=False,
+        )
         assert len(rows) == 1
         assert rows[0]["id"] == "openai/gpt-4o-mini"
 
     def test_sort_by_input_price_ascending(self):
-        rows = list_openrouter_models(sort_by="input_price")
+        rows = list_openrouter_models(
+            sort_by="input_price", return_only_healthy=False,
+        )
         assert [r["id"] for r in rows] == [
             "openai/gpt-4o-mini",
             "openai/gpt-4o",
@@ -335,15 +346,37 @@ class TestListModels:
 
     def test_sort_by_context_descending(self):
         # context sort should put the BIGGEST window first (most useful default)
-        rows = list_openrouter_models(sort_by="context")
+        rows = list_openrouter_models(
+            sort_by="context", return_only_healthy=False,
+        )
         assert rows[0]["id"] == "anthropic/claude-sonnet-4.6"
 
     def test_combined_filter_and_sort(self):
         rows = list_openrouter_models(
             name_contains="openai",
             sort_by="input_price",
+            return_only_healthy=False,
         )
         assert [r["id"] for r in rows] == ["openai/gpt-4o-mini", "openai/gpt-4o"]
+
+    def test_default_is_return_only_healthy_true(self):
+        # Default has changed to True — document the contract.
+        from inspect import signature
+        sig = signature(list_openrouter_models)
+        assert sig.parameters["return_only_healthy"].default is True
+
+    def test_no_key_falls_back_gracefully(self, monkeypatch, caplog):
+        # With return_only_healthy=True but no API key configured, must not
+        # crash — should warn and return Stage-1 results unfiltered.
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with patch(
+            "pyutilz.llm.openrouter_provider._resolve_or_api_key",
+            return_value=None,
+        ):
+            with caplog.at_level("WARNING"):
+                rows = list_openrouter_models(return_only_healthy=True)
+        assert len(rows) == 3  # Stage-1 unfiltered
+        assert "API key" in caplog.text
 
 
 class TestModelLimitsLookup:
@@ -413,6 +446,337 @@ class TestModelLimitsLookup:
         openrouter_module._MODELS_CATALOGUE = {}
         p = _provider(model="vendor/unknown")
         assert p.max_output_tokens == OpenRouterProvider._default_max_tokens
+
+
+class TestSummarizeEndpoints:
+    def test_empty_list_returns_safe_defaults(self):
+        out = _summarize_endpoints([])
+        assert out["endpoints"] == []
+        assert out["best_uptime_30m"] is None
+        assert out["best_latency_p50_ms"] is None
+        assert out["best_throughput_p50_tps"] is None
+
+    def test_renames_or_field_names(self):
+        out = _summarize_endpoints([{
+            "provider_name": "Anthropic",
+            "status": "operational",
+            "uptime_last_5m": 1.0,
+            "uptime_last_30m": 0.998,
+            "uptime_last_1d": 0.9994,
+            "latency_last_30m": {"p50": 234, "p95": 540},
+            "throughput_last_30m": {"p50": 89.5},
+            "context_length": 200000,
+            "max_completion_tokens": 8192,
+            "pricing": {"prompt": "0.000003"},
+            "supported_parameters": ["temperature", "tools"],
+            "quantization": None,
+            "supports_implicit_caching": False,
+        }])
+        e = out["endpoints"][0]
+        assert e["provider_name"] == "Anthropic"
+        assert e["uptime_30m"] == 0.998
+        assert e["latency_p50_ms"] == 234
+        assert e["latency_p95_ms"] == 540
+        assert e["throughput_p50_tps"] == 89.5
+        assert e["context_length"] == 200000
+        assert e["supported_parameters"] == ["temperature", "tools"]
+        assert e["supports_implicit_caching"] is False
+
+    def test_best_aggregates_across_endpoints(self):
+        out = _summarize_endpoints([
+            {
+                "provider_name": "A",
+                "uptime_last_30m": 0.95,
+                "latency_last_30m": {"p50": 500},
+                "throughput_last_30m": {"p50": 50},
+            },
+            {
+                "provider_name": "B",
+                "uptime_last_30m": 0.999,
+                "latency_last_30m": {"p50": 200},
+                "throughput_last_30m": {"p50": 100},
+            },
+        ])
+        assert out["best_uptime_30m"] == 0.999          # max
+        assert out["best_latency_p50_ms"] == 200        # min
+        assert out["best_throughput_p50_tps"] == 100    # max
+
+    def test_p90_used_when_p95_missing(self):
+        out = _summarize_endpoints([{
+            "provider_name": "A",
+            "latency_last_30m": {"p50": 100, "p90": 400},
+        }])
+        assert out["endpoints"][0]["latency_p95_ms"] == 400
+
+
+class TestResolveApiKey:
+    def test_explicit_wins(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "from-env")
+        assert _resolve_or_api_key("explicit") == "explicit"
+
+    def test_env_used_when_no_explicit(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "from-env")
+        assert _resolve_or_api_key(None) == "from-env"
+
+    def test_returns_none_when_nothing_configured(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        # Settings might still resolve from .env file in dev — patch it out.
+        with patch(
+            "pyutilz.llm.config.get_llm_settings",
+            return_value=MagicMock(openrouter_api_key=None),
+        ):
+            assert _resolve_or_api_key(None) is None
+
+
+class TestHealthEnrichment:
+    """End-to-end: list_openrouter_models with return_only_healthy=True
+    triggers concurrent /endpoints fetches and filters by min_uptime."""
+
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "openai/gpt-4o-mini": {
+                "id": "openai/gpt-4o-mini",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+            },
+            "anthropic/claude-sonnet-4.6": {
+                "id": "anthropic/claude-sonnet-4.6",
+                "context_length": 200000,
+                "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+            },
+            "broken/model": {
+                "id": "broken/model",
+                "context_length": 8000,
+                "pricing": {"prompt": "0.0", "completion": "0.0"},
+            },
+        }
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+
+    def _make_endpoints_response(self, model_id: str) -> list:
+        # gpt-4o-mini → healthy, claude → healthy, broken/model → degraded
+        responses = {
+            "openai/gpt-4o-mini": [{
+                "provider_name": "OpenAI",
+                "status": "operational",
+                "uptime_last_30m": 0.999,
+                "latency_last_30m": {"p50": 180},
+                "throughput_last_30m": {"p50": 120},
+                "context_length": 128000,
+                "pricing": {"prompt": "0.00000015"},
+            }],
+            "anthropic/claude-sonnet-4.6": [{
+                "provider_name": "Anthropic",
+                "status": "operational",
+                "uptime_last_30m": 1.0,
+                "latency_last_30m": {"p50": 250},
+                "throughput_last_30m": {"p50": 80},
+                "context_length": 200000,
+                "pricing": {"prompt": "0.000003"},
+            }],
+            "broken/model": [{
+                "provider_name": "Provider",
+                "status": "degraded",
+                "uptime_last_30m": 0.85,  # below default 0.95 threshold
+                "latency_last_30m": {"p50": 5000},
+                "throughput_last_30m": {"p50": 2},
+            }],
+        }
+        return responses.get(model_id, [])
+
+    def _patch_endpoints_fetch(self):
+        def _fake_get(url, headers=None, timeout=None):
+            # url: https://openrouter.ai/api/v1/models/{author}/{slug}/endpoints
+            prefix = "https://openrouter.ai/api/v1/models/"
+            assert url.startswith(prefix), url
+            assert url.endswith("/endpoints"), url
+            model_id = url[len(prefix):-len("/endpoints")]
+            resp = MagicMock()
+            resp.json.return_value = {
+                "data": {"id": model_id, "endpoints": self._make_endpoints_response(model_id)}
+            }
+            resp.raise_for_status = MagicMock()
+            return resp
+        return patch("pyutilz.llm.openrouter_provider.httpx.get", side_effect=_fake_get)
+
+    def test_filters_unhealthy_models(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(return_only_healthy=True)
+        ids = sorted(r["id"] for r in rows)
+        # broken/model dropped (uptime 0.85 < 0.95); 2 healthy survive
+        assert ids == ["anthropic/claude-sonnet-4.6", "openai/gpt-4o-mini"]
+
+    def test_attaches_health_block_to_each_row(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(return_only_healthy=True)
+        for r in rows:
+            assert "health" in r
+            h = r["health"]
+            assert isinstance(h["endpoints"], list) and len(h["endpoints"]) >= 1
+            assert h["best_uptime_30m"] is not None
+            assert h["best_latency_p50_ms"] is not None
+
+    def test_min_uptime_lower_keeps_more(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(return_only_healthy=True, min_uptime=0.80)
+        ids = sorted(r["id"] for r in rows)
+        # broken/model now passes (uptime 0.85 ≥ 0.80)
+        assert "broken/model" in ids
+        assert len(rows) == 3
+
+    def test_explicit_api_key_used(self):
+        # Even without env var, explicit api_key= should drive the call.
+        with self._patch_endpoints_fetch() as mock_get:
+            list_openrouter_models(return_only_healthy=True, api_key="explicit-key")
+        # Verify Authorization header carried "explicit-key"
+        for call in mock_get.call_args_list:
+            headers = call.kwargs.get("headers") or call[1].get("headers") or {}
+            assert headers.get("Authorization") == "Bearer explicit-key"
+
+    def test_health_fetch_failure_drops_row(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+        def _flaky_get(url, headers=None, timeout=None):
+            if "broken" in url:
+                raise httpx.ConnectError("boom")
+            prefix = "https://openrouter.ai/api/v1/models/"
+            model_id = url[len(prefix):-len("/endpoints")]
+            resp = MagicMock()
+            resp.json.return_value = {
+                "data": {"id": model_id, "endpoints": self._make_endpoints_response(model_id)}
+            }
+            resp.raise_for_status = MagicMock()
+            return resp
+
+        with patch("pyutilz.llm.openrouter_provider.httpx.get", side_effect=_flaky_get):
+            rows = list_openrouter_models(return_only_healthy=True)
+        # broken/model excluded due to fetch failure; 2 healthy remain
+        ids = sorted(r["id"] for r in rows)
+        assert "broken/model" not in ids
+        assert len(rows) == 2
+
+    def test_sort_by_uptime_descending(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(
+                return_only_healthy=True, sort_by="uptime",
+            )
+        # claude (1.0) > gpt-4o-mini (0.999)
+        assert rows[0]["id"] == "anthropic/claude-sonnet-4.6"
+        assert rows[1]["id"] == "openai/gpt-4o-mini"
+
+    def test_sort_by_latency_ascending(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(
+                return_only_healthy=True, sort_by="latency",
+            )
+        # gpt-4o-mini (180ms) < claude (250ms)
+        assert rows[0]["id"] == "openai/gpt-4o-mini"
+
+    def test_sort_by_throughput_descending(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_endpoints_fetch():
+            rows = list_openrouter_models(
+                return_only_healthy=True, sort_by="throughput",
+            )
+        # gpt-4o-mini (120 t/s) > claude (80 t/s)
+        assert rows[0]["id"] == "openai/gpt-4o-mini"
+
+
+class TestProviderHealthMethods:
+    @pytest.mark.asyncio
+    async def test_check_model_health_uses_self_model_by_default(self):
+        p = _provider(model="anthropic/claude-sonnet-4.6")
+        body = {
+            "data": {
+                "id": "anthropic/claude-sonnet-4.6",
+                "name": "Claude Sonnet 4.6",
+                "endpoints": [{
+                    "provider_name": "Anthropic",
+                    "status": "operational",
+                    "uptime_last_30m": 0.999,
+                    "latency_last_30m": {"p50": 234},
+                    "throughput_last_30m": {"p50": 89},
+                }],
+            }
+        }
+        resp = httpx.Response(
+            status_code=200,
+            json=body,
+            request=httpx.Request(
+                "GET",
+                "https://openrouter.ai/api/v1/models/anthropic/claude-sonnet-4.6/endpoints",
+            ),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+
+        out = await p.check_model_health()
+
+        p._client.get.assert_awaited_once_with(
+            "/models/anthropic/claude-sonnet-4.6/endpoints"
+        )
+        assert out["model"] == "anthropic/claude-sonnet-4.6"
+        assert out["name"] == "Claude Sonnet 4.6"
+        assert out["best_uptime_30m"] == 0.999
+        assert out["best_latency_p50_ms"] == 234
+        assert len(out["endpoints"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_check_model_health_explicit_model(self):
+        p = _provider(model="anthropic/claude-sonnet-4.6")
+        body = {"data": {"endpoints": []}}
+        resp = httpx.Response(
+            status_code=200,
+            json=body,
+            request=httpx.Request("GET", "https://openrouter.ai/x"),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+        await p.check_model_health(model="openai/gpt-4o")
+        p._client.get.assert_awaited_once_with("/models/openai/gpt-4o/endpoints")
+
+    @pytest.mark.asyncio
+    async def test_is_model_healthy_true_when_above_threshold(self):
+        p = _provider()
+        body = {
+            "data": {"endpoints": [{
+                "uptime_last_30m": 0.998,
+            }]}
+        }
+        resp = httpx.Response(
+            status_code=200, json=body,
+            request=httpx.Request("GET", "https://openrouter.ai/x"),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+        assert await p.is_model_healthy(min_uptime=0.99) is True
+
+    @pytest.mark.asyncio
+    async def test_is_model_healthy_false_when_below_threshold(self):
+        p = _provider()
+        body = {"data": {"endpoints": [{"uptime_last_30m": 0.85}]}}
+        resp = httpx.Response(
+            status_code=200, json=body,
+            request=httpx.Request("GET", "https://openrouter.ai/x"),
+        )
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(return_value=resp)
+        assert await p.is_model_healthy(min_uptime=0.99) is False
+
+    @pytest.mark.asyncio
+    async def test_is_model_healthy_returns_false_on_network_error(self):
+        # Crashing guards are worse than conservative ones — an error
+        # means "I don't know if it's healthy", which equals "no, hold off".
+        p = _provider()
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(side_effect=httpx.ConnectError("offline"))
+        assert await p.is_model_healthy() is False
 
 
 class TestTimeout:
