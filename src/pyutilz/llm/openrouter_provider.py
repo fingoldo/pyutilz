@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -83,6 +84,33 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
 
 _ENDPOINTS_URL_TEMPLATE = "https://openrouter.ai/api/v1/models/{model}/endpoints"
 
+# TTL cache for /endpoints responses, keyed by model id. The model catalogue
+# is already cached in ``_MODELS_CATALOGUE``; per-model health was the
+# expensive part — 300 fresh TLS handshakes per ``list_openrouter_models()``
+# call when ``return_only_healthy=True`` AND no caller-side filter narrows
+# the rowset. Cache by ``time.monotonic()`` since wall-clock jumps shouldn't
+# expire entries early. Stores ``health`` dicts as produced by
+# ``_summarize_endpoints``.
+_HEALTH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_HEALTH_CACHE_LOCK = threading.Lock()
+
+
+def clear_openrouter_caches(*, models: bool = True, health: bool = True) -> None:
+    """Manually clear in-process caches for the OR catalogue and/or health.
+
+    Useful for tests or long-running services that want to force a refresh
+    on next call. ``list_openrouter_models(refresh=True)`` already drops
+    the catalogue cache; this exists primarily for the health side, which
+    has no other knob besides waiting out the TTL.
+    """
+    if models:
+        global _MODELS_CATALOGUE
+        with _MODELS_LOCK:
+            _MODELS_CATALOGUE = None
+    if health:
+        with _HEALTH_CACHE_LOCK:
+            _HEALTH_CACHE.clear()
+
 
 def _resolve_or_api_key(explicit: str | None) -> str | None:
     """Resolve an OR API key for free helper endpoints — explicit > env > settings.
@@ -107,21 +135,36 @@ def _resolve_or_api_key(explicit: str | None) -> str | None:
 
 def _fetch_endpoints_for_model(
     model_id: str,
-    api_key: str,
+    api_key: str | None = None,
     timeout: float = 30.0,
+    client: httpx.Client | None = None,
 ) -> list[dict[str, Any]]:
     """``GET /api/v1/models/{model}/endpoints`` — per-upstream stats.
 
     Returns the raw endpoints list (one entry per upstream provider OR
     routes through). Auth required (Bearer token), but the call itself
     doesn't bill against credits.
+
+    Pass ``client=`` (a ``httpx.Client`` with auth header preconfigured)
+    when fanning out from a thread pool — the shared connection pool
+    avoids 300 fresh TLS handshakes that would dominate CPU otherwise.
+    Without ``client``, falls back to a one-shot ``httpx.get()`` (used
+    by tests and standalone callers).
     """
     url = _ENDPOINTS_URL_TEMPLATE.format(model=model_id)
-    resp = httpx.get(
-        url,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=timeout,
-    )
+    if client is not None:
+        resp = client.get(url, timeout=timeout)
+    else:
+        if not api_key:
+            raise ValueError(
+                "_fetch_endpoints_for_model: pass either api_key= or a "
+                "preconfigured client= with auth headers."
+            )
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
     resp.raise_for_status()
     payload = resp.json()
     data = payload.get("data") or {}
@@ -215,39 +258,103 @@ def _enrich_with_health(
     min_uptime: float,
     max_workers: int,
     timeout: float,
+    health_ttl_seconds: float,
 ) -> list[dict[str, Any]]:
     """Concurrently fetch /endpoints for each row, attach ``health``,
     and drop rows where ``best_uptime_30m`` < ``min_uptime`` or fetch failed.
 
-    Uses a ThreadPoolExecutor (rather than async) so the public function
-    stays sync — old callers don't need to switch to ``await``.
+    Three perf optimisations vs. the naive "spawn 300 httpx.get calls":
+
+    1. **TTL cache** keyed by model id (``health_ttl_seconds=0`` to bypass).
+       Subsequent calls within the TTL skip HTTP entirely.
+    2. **Shared ``httpx.Client``** with a connection pool — one TLS
+       handshake per host instead of one per call. Was ~95% of the CPU
+       cost on a cold run with 300 models.
+    3. **Bounded concurrency** (default 8). The previous default of 16
+       was triggering ``408 Request Timeout`` from OR's edge — fewer
+       parallel requests = no retries, no wasted TLS.
+
+    Uses ``ThreadPoolExecutor`` (rather than async) so the public function
+    stays sync — callers don't need to switch to ``await``.
     """
     out: list[dict[str, Any]] = []
     if not rows:
         return out
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {
-            ex.submit(_fetch_endpoints_for_model, r["id"], api_key, timeout): r
-            for r in rows
-        }
-        for fut in as_completed(futs):
-            row = futs[fut]
-            try:
-                endpoints = fut.result()
-            except Exception as exc:
-                logger.warning(
-                    "Health check failed for %s (%s); excluding from results.",
-                    row.get("id"), exc,
-                )
-                continue
-            health = _summarize_endpoints(endpoints)
-            uptime = health.get("best_uptime_30m")
-            if uptime is None or uptime < min_uptime:
-                continue
-            # Don't mutate the cached catalogue entry — copy first.
-            enriched = dict(row)
-            enriched["health"] = health
-            out.append(enriched)
+
+    # ── Stage 2a: cache lookup ──────────────────────────────────────
+    now = time.monotonic()
+    cached_health: dict[str, dict[str, Any]] = {}
+    to_fetch: list[dict[str, Any]] = []
+    if health_ttl_seconds > 0:
+        with _HEALTH_CACHE_LOCK:
+            for r in rows:
+                mid = r.get("id", "")
+                entry = _HEALTH_CACHE.get(mid)
+                if entry is not None and (now - entry[0]) < health_ttl_seconds:
+                    cached_health[mid] = entry[1]
+                else:
+                    to_fetch.append(r)
+    else:
+        to_fetch = list(rows)
+
+    if cached_health:
+        logger.debug(
+            "OpenRouter health cache: %d hit, %d to fetch",
+            len(cached_health), len(to_fetch),
+        )
+
+    # ── Stage 2b: parallel fetch with a shared connection pool ──────
+    fresh_health: dict[str, dict[str, Any]] = {}
+    if to_fetch:
+        # max_keepalive_connections >= max_workers so threads don't fight
+        # over a too-small pool and force fresh handshakes.
+        limits = httpx.Limits(
+            max_keepalive_connections=max_workers,
+            max_connections=max_workers,
+        )
+        client_headers = {"Authorization": f"Bearer {api_key}"}
+        with httpx.Client(
+            timeout=timeout, headers=client_headers, limits=limits,
+        ) as client:
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futs = {
+                    ex.submit(
+                        _fetch_endpoints_for_model,
+                        r.get("id", ""), None, timeout, client,
+                    ): r
+                    for r in to_fetch
+                }
+                for fut in as_completed(futs):
+                    row = futs[fut]
+                    mid = row.get("id", "")
+                    try:
+                        endpoints = fut.result()
+                    except Exception as exc:
+                        logger.warning(
+                            "Health check failed for %s (%s); excluding from results.",
+                            mid, exc,
+                        )
+                        continue
+                    fresh_health[mid] = _summarize_endpoints(endpoints)
+
+        if health_ttl_seconds > 0 and fresh_health:
+            with _HEALTH_CACHE_LOCK:
+                for mid, h in fresh_health.items():
+                    _HEALTH_CACHE[mid] = (now, h)
+
+    # ── Stage 2c: combine + filter by min_uptime ────────────────────
+    for r in rows:
+        mid = r.get("id", "")
+        health = cached_health.get(mid) or fresh_health.get(mid)
+        if health is None:
+            continue
+        uptime = health.get("best_uptime_30m")
+        if uptime is None or uptime < min_uptime:
+            continue
+        # Don't mutate the cached catalogue entry — copy first.
+        enriched = dict(r)
+        enriched["health"] = health
+        out.append(enriched)
     return out
 
 
@@ -257,11 +364,13 @@ def list_openrouter_models(
     sort_by: str | None = None,
     name_contains: str | None = None,
     max_input_per_1m: float | None = None,
+    max_output_per_1m: float | None = None,
     return_only_healthy: bool = True,
     min_uptime: float = 0.95,
     api_key: str | None = None,
-    max_workers: int = 16,
+    max_workers: int = 8,
     timeout: float = 30.0,
+    health_ttl_seconds: float = 300.0,
 ) -> list[dict[str, Any]]:
     """Return OpenRouter's model catalogue with pricing, limits and (optionally) live health.
 
@@ -305,16 +414,25 @@ def list_openrouter_models(
             requires ``return_only_healthy=True`` — silently falls back
             to ``"name"`` ordering otherwise).
         name_contains: Substring filter on ``id`` (case-insensitive).
-        max_input_per_1m: Filter to models with input price ≤ this USD/1M.
+        max_input_per_1m: Filter to models with input price <= this USD/1M.
+        max_output_per_1m: Filter to models with output price <= this USD/1M.
+            Set both ``max_input_per_1m`` and ``max_output_per_1m`` to drop
+            expensive models BEFORE Stage 2 fires its per-model HTTP calls
+            -- the most effective way to trim health-check work.
         return_only_healthy: When True, run Stage 2 health enrichment +
             filter. Default ``True`` because routing through a degraded
             upstream is the most common silent failure mode of meta-providers.
             Set ``False`` to skip the per-model HTTP call entirely.
-        min_uptime: Minimum ``best_uptime_30m`` (0.0–1.0) for a row to
+        min_uptime: Minimum ``best_uptime_30m`` (0.0-1.0) for a row to
             survive Stage 2. Default 0.95.
         api_key: Override env-resolved key for the /endpoints calls.
         max_workers: ThreadPoolExecutor size for Stage 2 concurrent fetch.
+            Default 8. Above 16 we observed 408 timeouts from OR's edge.
         timeout: Per-request HTTP timeout in seconds for Stage 2.
+        health_ttl_seconds: TTL for the in-process health cache. Default 300
+            (5 min) -- short enough that "model went down" detection lags
+            by no more than 5 min, long enough that repeated calls in a
+            tight loop reuse cache. Pass 0 to bypass cache entirely.
 
     Returns:
         List of dicts. Empty on catalogue fetch failure.
@@ -349,6 +467,14 @@ def list_openrouter_models(
                 return float("inf")
         rows = [r for r in rows if _input_per_1m(r) <= max_input_per_1m]
 
+    if max_output_per_1m is not None:
+        def _output_per_1m(r: dict) -> float:
+            try:
+                return float((r.get("pricing") or {}).get("completion", "0") or "0") * 1_000_000
+            except (TypeError, ValueError):
+                return float("inf")
+        rows = [r for r in rows if _output_per_1m(r) <= max_output_per_1m]
+
     if return_only_healthy and rows:
         key = _resolve_or_api_key(api_key)
         if not key:
@@ -358,7 +484,9 @@ def list_openrouter_models(
                 "skipping health filter -- returning Stage-1 results."
             )
         else:
-            rows = _enrich_with_health(rows, key, min_uptime, max_workers, timeout)
+            rows = _enrich_with_health(
+                rows, key, min_uptime, max_workers, timeout, health_ttl_seconds,
+            )
 
     if sort_by:
         def _key(r: dict):

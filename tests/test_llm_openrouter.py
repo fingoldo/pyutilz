@@ -64,10 +64,12 @@ def _provider(**overrides) -> OpenRouterProvider:
 
 @pytest.fixture(autouse=True)
 def _reset_models_cache():
-    """Each test starts with a fresh /models cache so prior fixtures don't leak."""
+    """Each test starts with fresh caches so prior fixtures don't leak."""
     openrouter_module._MODELS_CATALOGUE = None
+    openrouter_module._HEALTH_CACHE.clear()
     yield
     openrouter_module._MODELS_CATALOGUE = None
+    openrouter_module._HEALTH_CACHE.clear()
 
 
 class TestConstructor:
@@ -640,19 +642,37 @@ class TestHealthEnrichment:
         return responses.get(model_id, [])
 
     def _patch_endpoints_fetch(self):
-        def _fake_get(url, headers=None, timeout=None):
-            # url: https://openrouter.ai/api/v1/models/{author}/{slug}/endpoints
-            prefix = "https://openrouter.ai/api/v1/models/"
-            assert url.startswith(prefix), url
-            assert url.endswith("/endpoints"), url
-            model_id = url[len(prefix):-len("/endpoints")]
-            resp = MagicMock()
-            resp.json.return_value = {
-                "data": {"id": model_id, "endpoints": self._make_endpoints_response(model_id)}
-            }
-            resp.raise_for_status = MagicMock()
-            return resp
-        return patch("pyutilz.llm.openrouter_provider.httpx.get", side_effect=_fake_get)
+        # _enrich_with_health uses a shared httpx.Client; tests need to
+        # intercept its .get(). We patch the Client class in the module
+        # to return a MagicMock with a .get method that fakes responses.
+        test_self = self
+
+        def _fake_client_factory(*args, **kwargs):
+            client = MagicMock()
+            client.__enter__ = lambda self_: self_
+            client.__exit__ = lambda *a: None
+
+            def _fake_get(url, timeout=None):
+                prefix = "https://openrouter.ai/api/v1/models/"
+                assert url.startswith(prefix), url
+                assert url.endswith("/endpoints"), url
+                model_id = url[len(prefix):-len("/endpoints")]
+                resp = MagicMock()
+                resp.json.return_value = {
+                    "data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}
+                }
+                resp.raise_for_status = MagicMock()
+                return resp
+
+            client.get = MagicMock(side_effect=_fake_get)
+            # Capture for assertions in tests that need it
+            client._captured_kwargs = kwargs
+            return client
+
+        return patch(
+            "pyutilz.llm.openrouter_provider.httpx.Client",
+            side_effect=_fake_client_factory,
+        )
 
     def test_filters_unhealthy_models(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
@@ -684,29 +704,43 @@ class TestHealthEnrichment:
 
     def test_explicit_api_key_used(self):
         # Even without env var, explicit api_key= should drive the call.
-        with self._patch_endpoints_fetch() as mock_get:
+        # Auth now lives on the shared httpx.Client (Authorization header
+        # set at construction time, not per-request) so we inspect the
+        # Client kwargs rather than per-get call args.
+        with self._patch_endpoints_fetch() as mock_client_ctor:
             list_openrouter_models(return_only_healthy=True, api_key="explicit-key")
-        # Verify Authorization header carried "explicit-key"
-        for call in mock_get.call_args_list:
-            headers = call.kwargs.get("headers") or call[1].get("headers") or {}
-            assert headers.get("Authorization") == "Bearer explicit-key"
+        ctor_kwargs = mock_client_ctor.call_args.kwargs
+        headers = ctor_kwargs.get("headers") or {}
+        assert headers.get("Authorization") == "Bearer explicit-key"
 
     def test_health_fetch_failure_drops_row(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        test_self = self
 
-        def _flaky_get(url, headers=None, timeout=None):
-            if "broken" in url:
-                raise httpx.ConnectError("boom")
-            prefix = "https://openrouter.ai/api/v1/models/"
-            model_id = url[len(prefix):-len("/endpoints")]
-            resp = MagicMock()
-            resp.json.return_value = {
-                "data": {"id": model_id, "endpoints": self._make_endpoints_response(model_id)}
-            }
-            resp.raise_for_status = MagicMock()
-            return resp
+        def _flaky_client_factory(*args, **kwargs):
+            client = MagicMock()
+            client.__enter__ = lambda self_: self_
+            client.__exit__ = lambda *a: None
 
-        with patch("pyutilz.llm.openrouter_provider.httpx.get", side_effect=_flaky_get):
+            def _flaky_get(url, timeout=None):
+                if "broken" in url:
+                    raise httpx.ConnectError("boom")
+                prefix = "https://openrouter.ai/api/v1/models/"
+                model_id = url[len(prefix):-len("/endpoints")]
+                resp = MagicMock()
+                resp.json.return_value = {
+                    "data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}
+                }
+                resp.raise_for_status = MagicMock()
+                return resp
+
+            client.get = MagicMock(side_effect=_flaky_get)
+            return client
+
+        with patch(
+            "pyutilz.llm.openrouter_provider.httpx.Client",
+            side_effect=_flaky_client_factory,
+        ):
             rows = list_openrouter_models(return_only_healthy=True)
         # broken/model excluded due to fetch failure; 2 healthy remain
         ids = sorted(r["id"] for r in rows)
@@ -740,6 +774,207 @@ class TestHealthEnrichment:
             )
         # gpt-4o-mini (120 t/s) > claude (80 t/s)
         assert rows[0]["id"] == "openai/gpt-4o-mini"
+
+
+class TestHealthTTLCache:
+    """Stage-2 health enrichment caches per-model results in a process-wide
+    TTL dict so repeated calls in a tight loop don't re-pay the TLS cost."""
+
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "openai/gpt-4o-mini": {
+                "id": "openai/gpt-4o-mini",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+            },
+        }
+        openrouter_module._HEALTH_CACHE.clear()
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+        openrouter_module._HEALTH_CACHE.clear()
+
+    def _patch_one_model_healthy(self):
+        def _fake_client_factory(*args, **kwargs):
+            client = MagicMock()
+            client.__enter__ = lambda self_: self_
+            client.__exit__ = lambda *a: None
+
+            def _fake_get(url, timeout=None):
+                resp = MagicMock()
+                resp.json.return_value = {
+                    "data": {
+                        "id": "openai/gpt-4o-mini",
+                        "endpoints": [{
+                            "provider_name": "OpenAI",
+                            "uptime_last_30m": 0.999,
+                            "latency_last_30m": {"p50": 180},
+                            "throughput_last_30m": {"p50": 120},
+                        }],
+                    }
+                }
+                resp.raise_for_status = MagicMock()
+                return resp
+
+            client.get = MagicMock(side_effect=_fake_get)
+            return client
+
+        return patch(
+            "pyutilz.llm.openrouter_provider.httpx.Client",
+            side_effect=_fake_client_factory,
+        )
+
+    def test_second_call_within_ttl_skips_http(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_one_model_healthy() as ctor1:
+            list_openrouter_models(return_only_healthy=True)
+        first_call_count = ctor1.call_count
+        assert first_call_count == 1
+
+        # Second call should hit the cache and NOT construct a new Client.
+        with self._patch_one_model_healthy() as ctor2:
+            rows = list_openrouter_models(return_only_healthy=True)
+        # Client constructor wasn't even called on the second invocation.
+        assert ctor2.call_count == 0
+        assert len(rows) == 1
+        assert rows[0]["health"]["best_uptime_30m"] == 0.999
+
+    def test_ttl_zero_bypasses_cache(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_one_model_healthy() as ctor1:
+            list_openrouter_models(return_only_healthy=True, health_ttl_seconds=0)
+        with self._patch_one_model_healthy() as ctor2:
+            list_openrouter_models(return_only_healthy=True, health_ttl_seconds=0)
+        assert ctor1.call_count == 1
+        assert ctor2.call_count == 1  # both fetch fresh
+
+    def test_expired_entry_refetches(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_one_model_healthy():
+            list_openrouter_models(return_only_healthy=True, health_ttl_seconds=300)
+
+        # Manually age the cached entry past the TTL.
+        with openrouter_module._HEALTH_CACHE_LOCK:
+            mid, (ts, h) = next(iter(openrouter_module._HEALTH_CACHE.items()))
+            openrouter_module._HEALTH_CACHE[mid] = (ts - 1000.0, h)
+
+        with self._patch_one_model_healthy() as ctor:
+            list_openrouter_models(return_only_healthy=True, health_ttl_seconds=300)
+        assert ctor.call_count == 1  # re-fetched
+
+    def test_clear_openrouter_caches_empties_health(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with self._patch_one_model_healthy():
+            list_openrouter_models(return_only_healthy=True)
+        assert len(openrouter_module._HEALTH_CACHE) == 1
+
+        from pyutilz.llm.openrouter_provider import clear_openrouter_caches
+        clear_openrouter_caches(models=False, health=True)
+        assert len(openrouter_module._HEALTH_CACHE) == 0
+
+    def test_clear_openrouter_caches_default_clears_both(self):
+        openrouter_module._HEALTH_CACHE["x"] = (0.0, {"best_uptime_30m": 1.0})
+        openrouter_module._MODELS_CATALOGUE = {"a": {}}
+
+        from pyutilz.llm.openrouter_provider import clear_openrouter_caches
+        clear_openrouter_caches()
+        assert openrouter_module._HEALTH_CACHE == {}
+        assert openrouter_module._MODELS_CATALOGUE is None
+
+
+class TestSharedClientPerf:
+    """Verify the shared httpx.Client carries the correct headers and
+    pool limits so we don't accidentally regress on TLS overhead."""
+
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "a/b": {"id": "a/b", "pricing": {"prompt": "0", "completion": "0"}},
+            "c/d": {"id": "c/d", "pricing": {"prompt": "0", "completion": "0"}},
+        }
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+
+    def test_one_client_for_n_models(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        captured = []
+
+        def _factory(*args, **kwargs):
+            captured.append(kwargs)
+            client = MagicMock()
+            client.__enter__ = lambda self_: self_
+            client.__exit__ = lambda *a: None
+            client.get = MagicMock(return_value=MagicMock(
+                json=lambda: {"data": {"endpoints": [
+                    {"uptime_last_30m": 1.0, "latency_last_30m": {"p50": 1},
+                     "throughput_last_30m": {"p50": 1}},
+                ]}},
+                raise_for_status=lambda: None,
+            ))
+            return client
+
+        with patch("pyutilz.llm.openrouter_provider.httpx.Client", side_effect=_factory):
+            list_openrouter_models(return_only_healthy=True, max_workers=4)
+
+        # ONE shared client is constructed, regardless of model count.
+        assert len(captured) == 1
+        kwargs = captured[0]
+        # Auth header set on the client itself.
+        assert kwargs["headers"]["Authorization"] == "Bearer test-key"
+        # Limits sized to max_workers (so threads don't fight the pool).
+        assert kwargs["limits"].max_keepalive_connections == 4
+        assert kwargs["limits"].max_connections == 4
+
+
+class TestMaxOutputFilter:
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "cheap/model": {
+                "id": "cheap/model",
+                "pricing": {"prompt": "0.0000001", "completion": "0.0000005"},
+            },
+            "midrange/model": {
+                "id": "midrange/model",
+                "pricing": {"prompt": "0.0000015", "completion": "0.0000050"},
+            },
+            "expensive/model": {
+                "id": "expensive/model",
+                "pricing": {"prompt": "0.0000150", "completion": "0.0000600"},
+            },
+        }
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+
+    def test_max_output_per_1m_drops_expensive(self):
+        # cap at $5/1M output -> midrange & cheap survive (5.0 + 0.5)
+        rows = list_openrouter_models(
+            max_output_per_1m=5.0,
+            return_only_healthy=False,
+        )
+        ids = sorted(r["id"] for r in rows)
+        assert ids == ["cheap/model", "midrange/model"]
+
+    def test_max_input_and_max_output_combined(self):
+        rows = list_openrouter_models(
+            max_input_per_1m=1.0,    # only cheap/model passes
+            max_output_per_1m=10.0,  # cheap & midrange pass
+            return_only_healthy=False,
+        )
+        # Intersection = cheap/model only
+        assert [r["id"] for r in rows] == ["cheap/model"]
+
+    def test_no_output_cap_returns_all(self):
+        rows = list_openrouter_models(return_only_healthy=False)
+        assert len(rows) == 3
+
+
+class TestLoweredMaxWorkersDefault:
+    def test_default_is_eight_not_sixteen(self):
+        # 16 was triggering 408 timeouts from OR's edge under load.
+        from inspect import signature
+        sig = signature(list_openrouter_models)
+        assert sig.parameters["max_workers"].default == 8
 
 
 class TestProviderHealthMethods:

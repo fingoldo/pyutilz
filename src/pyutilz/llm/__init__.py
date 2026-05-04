@@ -12,6 +12,7 @@ _LAZY_IMPORTS = {
     "XAIProvider": ("pyutilz.llm.xai_provider", "XAIProvider"),
     "OpenRouterProvider": ("pyutilz.llm.openrouter_provider", "OpenRouterProvider"),
     "list_openrouter_models": ("pyutilz.llm.openrouter_provider", "list_openrouter_models"),
+    "clear_openrouter_caches": ("pyutilz.llm.openrouter_provider", "clear_openrouter_caches"),
     "ClaudeCodeProvider": ("pyutilz.llm.claude_code_provider", "ClaudeCodeProvider"),
     "get_llm_provider": ("pyutilz.llm.factory", "get_llm_provider"),
 }
@@ -35,6 +36,7 @@ __all__ = [
     "XAIProvider",
     "OpenRouterProvider",
     "list_openrouter_models",
+    "clear_openrouter_caches",
     "ClaudeCodeProvider",
     "get_llm_provider",
     "LLMProviderError",
