@@ -90,6 +90,21 @@ class TestDeepSeekConfig:
             assert p._thinking_request_field(True) is None, legacy
             assert p._thinking_request_field(False) is None, legacy
 
+    def test_thinking_field_string_coerces_to_bool(self):
+        """Bool-flag API: any non-empty effort string -> enabled,
+        empty string -> disabled. Lets callers pass the same
+        ``thinking="high"`` to ALL providers and have each one route
+        to its own schema."""
+        p = DeepSeekProvider.__new__(DeepSeekProvider)
+        p.model_name = "deepseek-v4-flash"
+        for effort in ("low", "medium", "high", "minimal", "anything"):
+            assert p._thinking_request_field(effort) == {
+                "thinking": {"type": "enabled"}
+            }, effort
+        assert p._thinking_request_field("") == {
+            "thinking": {"type": "disabled"}
+        }
+
     def test_timeout_v4_flash_short(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         assert p._get_timeout("deepseek-v4-flash") == 120.0

@@ -219,13 +219,51 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return {}
 
-    def _thinking_request_field(self, enabled: bool) -> dict[str, Any] | None:
+    def _thinking_request_field(
+        self, thinking: bool | str
+    ) -> dict[str, Any] | None:
         """Return the request-body fragment that toggles thinking mode.
 
-        Provider-specific. Default: None (provider doesn't support it).
-        DeepSeek V4 overrides to return ``{"thinking": {"type": ...}}``.
+        ``thinking`` accepts BOTH a plain bool (legacy) AND an effort
+        string (``"low"`` / ``"medium"`` / ``"high"`` / ``"minimal"``).
+        Subclasses normalise to the upstream's actual schema:
+
+          * Effort-string upstreams (OpenRouter's unified ``reasoning``
+            field, OpenAI ``reasoning_effort``) consume the literal
+            string; ``True`` is mapped to a sensible default
+            (``"medium"``).
+          * Boolean-flag upstreams (DeepSeek V4 ``thinking.type``)
+            coerce a non-empty effort string to ``True`` so
+            ``thinking="high"`` still enables on those models.
+
+        Provider-specific. Default returns ``None`` so callers see
+        vanilla OpenAI-compatible behavior (no thinking control).
+        DeepSeek V4 overrides to return ``{"thinking": {"type": ...}}``;
+        OpenRouter overrides to return
+        ``{"reasoning": {"effort": ...}}``.
         """
         return None
+
+    @staticmethod
+    def _normalize_thinking(
+        thinking: bool | str,
+    ) -> tuple[bool, str | None]:
+        """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
+
+        - ``False`` / empty string -> ``(False, None)`` (explicitly off)
+        - ``True`` -> ``(True, None)`` (on, provider picks default effort)
+        - non-empty str -> ``(True, str.lower())`` (on with explicit effort)
+
+        Helper used by upstream-specific overrides so each provider only
+        picks the half of the contract its API requires.
+        """
+        if thinking is False or thinking == "":
+            return (False, None)
+        if thinking is True:
+            return (True, None)
+        if isinstance(thinking, str):
+            return (True, thinking.lower())
+        return (bool(thinking), None)
 
     @retry(
         retry=retry_if_exception(_is_retryable_http_error),
@@ -238,7 +276,7 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
-        thinking: bool | None = None,
+        thinking: bool | str | None = None,
     ):
         """Stream the model's response token-by-token via SSE.
 
@@ -300,17 +338,24 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
-        thinking: bool | None = None,
+        thinking: bool | str | None = None,
     ) -> str:
         """Generate text using OpenAI-compatible chat/completions API.
 
-        ``thinking``: provider-specific chain-of-thought toggle.
+        ``thinking``: provider-specific chain-of-thought toggle. Accepts
+        bool OR effort string for finer control (provider-normalised).
         - ``None`` (default): use the provider's/model's default behavior.
-        - ``True``: explicitly request thinking mode (DeepSeek V4 supports this).
-        - ``False``: explicitly disable thinking. Useful when a tight
-          ``max_tokens`` budget would otherwise be consumed entirely by
-          reasoning (DeepSeek V4 returns ``finish_reason='length'`` with an
-          empty completion in that case).
+        - ``True``: explicitly request thinking mode (effort-string
+          upstreams default to ``"medium"``; bool upstreams enable
+          their flag).
+        - ``False`` / ``""``: explicitly disable thinking. Useful when a
+          tight ``max_tokens`` budget would otherwise be consumed entirely
+          by reasoning (DeepSeek V4 returns ``finish_reason='length'``
+          with an empty completion in that case).
+        - ``"low" | "medium" | "high" | "minimal"``: effort string for
+          providers that route to OpenRouter's unified ``reasoning.effort``
+          or OpenAI's ``reasoning_effort``. Bool-flag upstreams (DeepSeek
+          V4) coerce a non-empty string to ``True``.
         Providers that don't support a thinking toggle ignore this flag.
         """
         if max_tokens <= 0:

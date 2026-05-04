@@ -1084,6 +1084,57 @@ class TestTimeout:
         assert p._get_timeout("openai/gpt-4o-mini") == 240.0
 
 
+class TestThinkingRequestField:
+    """The OR provider routes ``thinking=`` to OR's unified
+    ``reasoning`` field. Mapping: bool ``True`` -> medium effort,
+    ``False`` / empty string -> ``exclude=True``, explicit effort
+    string -> pass through. Bool-flag upstreams (DeepSeek V4) coerce
+    non-empty strings to ``True`` via the shared ``_normalize_thinking``
+    helper."""
+
+    def test_thinking_true_uses_medium_effort(self):
+        p = _provider()
+        assert p._thinking_request_field(True) == {
+            "reasoning": {"effort": "medium"}
+        }
+
+    def test_thinking_false_excludes_reasoning(self):
+        p = _provider()
+        assert p._thinking_request_field(False) == {
+            "reasoning": {"exclude": True}
+        }
+
+    def test_thinking_empty_str_excludes_reasoning(self):
+        """Defensive: empty string is treated as off, matching ``False``."""
+        p = _provider()
+        assert p._thinking_request_field("") == {
+            "reasoning": {"exclude": True}
+        }
+
+    @pytest.mark.parametrize("effort", ["low", "medium", "high", "minimal"])
+    def test_thinking_effort_string_passes_through(self, effort):
+        p = _provider()
+        assert p._thinking_request_field(effort) == {
+            "reasoning": {"effort": effort}
+        }
+
+    def test_thinking_effort_string_lowercased(self):
+        """Helper normalises case so ``"HIGH"`` and ``"high"`` agree."""
+        p = _provider()
+        assert p._thinking_request_field("HIGH") == {
+            "reasoning": {"effort": "high"}
+        }
+
+    def test_thinking_unknown_effort_passes_through(self):
+        """OR may add new effort tiers later; the provider doesn't
+        gate-keep -- forward unknown strings and let OR's edge accept
+        or 400 them."""
+        p = _provider()
+        assert p._thinking_request_field("ultra") == {
+            "reasoning": {"effort": "ultra"}
+        }
+
+
 class TestSpecialStatus:
     def test_402_warns(self):
         p = _provider()

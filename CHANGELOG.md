@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-04
+
+### Added — OpenRouter unified ``reasoning`` field + widened ``thinking=`` parameter (mixed bool|str)
+
+The base OpenAI-compatible provider's ``generate(thinking=...)`` /
+``generate_stream(thinking=...)`` parameter is widened from ``bool | None``
+to ``bool | str | None``. New string values: ``"low"``, ``"medium"``,
+``"high"``, ``"minimal"`` map to the upstream's effort-tier where the
+upstream supports one (OpenRouter's unified ``reasoning.effort`` field;
+OpenAI ``reasoning_effort``). ``True`` is mapped to ``"medium"`` for
+effort-string upstreams; non-empty string is coerced to ``True`` for
+bool-flag upstreams (DeepSeek V4 ``thinking.type``). Empty string ``""``
+is treated as ``False`` defensively.
+
+New static helper ``OpenAICompatibleProvider._normalize_thinking(value)
+-> (enabled, effort)`` lets each provider's ``_thinking_request_field``
+override pick the half of the contract its API requires.
+
+**OpenRouter override (new)**:
+``OpenRouterProvider._thinking_request_field(thinking)`` emits OR's
+unified ``reasoning`` field that auto-routes upstream:
+- ``False`` / ``""`` -> ``{"reasoning": {"exclude": True}}``
+- ``True`` -> ``{"reasoning": {"effort": "medium"}}``
+- ``"low"`` / ``"medium"`` / ``"high"`` / ``"minimal"`` (or any other
+  str) -> ``{"reasoning": {"effort": <str>}}`` (passed through; unknown
+  strings forwarded for OR's edge to accept or 400)
+
+Pre-fix the OR provider inherited the base class default (return
+``None``) so any ``thinking=...`` argument was silently ignored on OR.
+Now it routes via OR's ``reasoning`` field which OR auto-translates to
+the correct upstream-specific shape (Anthropic ``thinking``, OpenAI
+``reasoning_effort``, DeepSeek V4 thinking-toggle, etc.) based on the
+resolved model ID. See https://openrouter.ai/docs/use-cases/reasoning-tokens.
+
+**DeepSeek override updated**:
+``DeepSeekProvider._thinking_request_field`` now goes through
+``_normalize_thinking`` so callers passing ``thinking="high"`` (effort
+string) still get DeepSeek's bool-flag (``{"thinking": {"type":
+"enabled"}}``). Empty string disables.
+
+14 new tests: 9 in ``tests/test_llm_openrouter.py``
+(``TestThinkingRequestField``) + 5 in ``tests/test_llm_deepseek.py``
+covering the bool-flag string-coercion path. 176 LLM regression tests
+green.
+
 ## [Unreleased] — 2026-05-02
 
 ### Added — Live model-health pre-flight & enriched ``list_openrouter_models``

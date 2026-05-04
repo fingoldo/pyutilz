@@ -725,6 +725,36 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             body["models"] = list(self._models_fallback)
         return body
 
+    def _thinking_request_field(
+        self, thinking: bool | str
+    ) -> dict[str, Any] | None:
+        """OpenRouter's unified ``reasoning`` field.
+
+        OR auto-routes the body fragment to the correct upstream-specific
+        shape (Anthropic ``thinking``, OpenAI ``reasoning_effort``,
+        DeepSeek V4 thinking-toggle, etc.) based on the resolved model
+        ID. See https://openrouter.ai/docs/use-cases/reasoning-tokens.
+
+        Mapping:
+          * ``False`` / empty string -> ``{"reasoning": {"exclude": True}}``
+            (explicit no-think; useful for hybrid models that default to
+            thinking when a stage doesn't need it).
+          * ``True`` -> ``{"reasoning": {"effort": "medium"}}``
+            (provider's middle-ground default).
+          * ``"low" | "medium" | "high" | "minimal"`` (or any other str)
+            -> ``{"reasoning": {"effort": <str>}}`` (passed through as-is;
+            unknown strings are accepted by OR and forwarded to upstream
+            which may reject them with a 400).
+
+        Models that don't support reasoning ignore the field server-side,
+        so emitting it on a non-reasoning model is a no-op rather than
+        an error.
+        """
+        enabled, effort = self._normalize_thinking(thinking)
+        if not enabled:
+            return {"reasoning": {"exclude": True}}
+        return {"reasoning": {"effort": effort or "medium"}}
+
     def _handle_special_status(self, resp: httpx.Response) -> None:
         if resp.status_code == 402:
             logger.warning(

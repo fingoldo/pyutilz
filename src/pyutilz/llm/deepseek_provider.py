@@ -92,11 +92,15 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     # server-side. See DeepSeek docs:
     # https://api-docs.deepseek.com/api/create-chat-completion
 
-    def _thinking_request_field(self, enabled: bool) -> dict | None:
+    def _thinking_request_field(self, thinking: bool | str) -> dict | None:
         # Only V4 models support this toggle; legacy aliases (chat/reasoner)
         # are fixed-mode server-side and reject the field.
         if not self.model_name.startswith("deepseek-v4"):
             return None
+        # DeepSeek V4 expects a hard on/off, not an effort string.
+        # Coerce: ``True`` or any non-empty effort string -> enabled;
+        # ``False`` / empty string -> disabled.
+        enabled, _effort = self._normalize_thinking(thinking)
         return {"thinking": {"type": "enabled" if enabled else "disabled"}}
 
     async def get_account_credits(self) -> dict:
