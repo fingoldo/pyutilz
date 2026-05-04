@@ -128,12 +128,37 @@ def _fetch_endpoints_for_model(
     return data.get("endpoints") or []
 
 
+def _normalize_uptime(value: Any) -> float | None:
+    """Coerce uptime to 0-1 fraction.
+
+    OpenRouter's live response sometimes returns uptime as a 0-100
+    percentage (e.g. 99.806 for 99.806% uptime) AND sometimes as a
+    0-1 fraction (e.g. 0.998). Both shapes appear in the wild.
+    Normalise to fraction so downstream code can compare against
+    a 0-1 ``min_uptime`` argument consistently.
+
+    Returns None on missing / non-numeric input.
+    """
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v / 100.0 if v > 1.0 else v
+
+
 def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
     """Normalize the per-endpoint payload + compute best-of aggregates.
 
     Endpoint fields renamed to a stable shape so downstream code doesn't
     chase OR's snake_case-with-suffix conventions: ``uptime_last_30m`` →
     ``uptime_30m``, ``latency_last_30m.p50`` → ``latency_p50_ms``, etc.
+
+    Uptime fields are normalised to 0-1 fractions via ``_normalize_uptime``
+    — the live API has been observed serving both 0-1 fractions and
+    0-100 percentages; this normalises to the documented fraction shape
+    so downstream filters using ``min_uptime`` (0-1) work consistently.
 
     Best-of aggregates pick the most favourable value across all upstreams
     for the model — useful as a single sortable metric per row:
@@ -157,9 +182,9 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
             "provider_name": e.get("provider_name"),
             "name": e.get("name"),
             "status": e.get("status"),
-            "uptime_5m": e.get("uptime_last_5m"),
-            "uptime_30m": e.get("uptime_last_30m"),
-            "uptime_1d": e.get("uptime_last_1d"),
+            "uptime_5m": _normalize_uptime(e.get("uptime_last_5m")),
+            "uptime_30m": _normalize_uptime(e.get("uptime_last_30m")),
+            "uptime_1d": _normalize_uptime(e.get("uptime_last_1d")),
             "latency_p50_ms": latency.get("p50"),
             "latency_p95_ms": latency.get("p95") or latency.get("p90"),
             "throughput_p50_tps": throughput.get("p50"),

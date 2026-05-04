@@ -14,6 +14,7 @@ from pyutilz.llm.openrouter_provider import (
     _per_token_cost_pair,
     _resolve_model_limits,
     _summarize_endpoints,
+    _normalize_uptime,
     _resolve_or_api_key,
 )
 import pyutilz.llm.openrouter_provider as openrouter_module
@@ -507,6 +508,59 @@ class TestSummarizeEndpoints:
             "latency_last_30m": {"p50": 100, "p90": 400},
         }])
         assert out["endpoints"][0]["latency_p95_ms"] == 400
+
+    def test_percentage_uptime_normalised_to_fraction(self):
+        """OpenRouter's live API has been observed serving uptime as
+        a 0-100 percentage (e.g. 99.806 for 99.806% uptime) instead
+        of the documented 0-1 fraction. ``_summarize_endpoints``
+        normalises both shapes to fraction so downstream filters
+        using a 0-1 ``min_uptime`` work consistently."""
+        out = _summarize_endpoints([
+            {
+                "provider_name": "A",
+                "uptime_last_5m": 99.5,    # percentage
+                "uptime_last_30m": 99.806,  # percentage
+                "uptime_last_1d": 100.0,   # 100% as a percentage
+            },
+            {
+                "provider_name": "B",
+                "uptime_last_30m": 0.95,   # already a fraction
+            },
+        ])
+        # All three endpoint A values must end up in 0-1 range.
+        eps = out["endpoints"]
+        a, b = eps[0], eps[1]
+        assert a["uptime_5m"] == pytest.approx(0.995)
+        assert a["uptime_30m"] == pytest.approx(0.99806)
+        assert a["uptime_1d"] == pytest.approx(1.0)
+        # Already-fractional value is preserved.
+        assert b["uptime_30m"] == pytest.approx(0.95)
+        # Best aggregate is now in fraction-space.
+        assert 0.99 < out["best_uptime_30m"] <= 1.0
+
+
+class TestNormalizeUptime:
+    def test_fraction_returned_unchanged(self):
+        assert _normalize_uptime(0.998) == pytest.approx(0.998)
+        assert _normalize_uptime(0.5) == pytest.approx(0.5)
+        assert _normalize_uptime(1.0) == pytest.approx(1.0)
+
+    def test_percentage_divided_by_100(self):
+        assert _normalize_uptime(99.806) == pytest.approx(0.99806)
+        assert _normalize_uptime(50) == pytest.approx(0.5)
+        assert _normalize_uptime(100) == pytest.approx(1.0)
+
+    def test_none_returns_none(self):
+        assert _normalize_uptime(None) is None
+
+    def test_non_numeric_returns_none(self):
+        assert _normalize_uptime("bad") is None
+        assert _normalize_uptime([0.5]) is None
+
+    def test_zero_returned_as_zero(self):
+        # Edge: 0 is a fraction, NOT a percentage to divide.
+        assert _normalize_uptime(0) == 0.0
+        assert _normalize_uptime(0.0) == 0.0
 
 
 class TestResolveApiKey:
