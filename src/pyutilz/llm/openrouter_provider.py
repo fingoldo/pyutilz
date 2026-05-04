@@ -355,7 +355,7 @@ def list_openrouter_models(
             logger.warning(
                 "list_openrouter_models(return_only_healthy=True) needs an "
                 "OpenRouter API key (env OPENROUTER_API_KEY or api_key=); "
-                "skipping health filter — returning Stage-1 results."
+                "skipping health filter -- returning Stage-1 results."
             )
         else:
             rows = _enrich_with_health(rows, key, min_uptime, max_workers, timeout)
