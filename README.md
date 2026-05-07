@@ -43,149 +43,171 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 | `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata |
 | `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib`, `matrix` |
 | `pyutilz.database`   | PostgreSQL/MySQL helpers, parameterised queries, identifier validation, Redis, Delta Lake |
-| `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, proxy rotation |
+| `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, statistical proxy health-tracking |
 | `pyutilz.cloud`      | S3 and Google Cloud Storage helpers                  |
-| `pyutilz.system`     | System info, hardware detection, monitoring with timeouts, parallel execution, distributed coordination |
-| `pyutilz.text`       | String processing, similarity metrics, NLP tokenisers |
+| `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination |
+| `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers |
 | `pyutilz.dev`        | Logging, benchmarking, dashboards, FileMaker, Jupyter helpers, meta-test utilities |
 | `pyutilz.llm`        | Unified async interface across Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code |
 
 ## Quick examples
 
-### DataFrame memory optimisation
+**Shrink a DataFrame's memory** — auto-downcast every column to the
+narrowest type that holds the data without precision loss; typical
+50-80% reduction on real-world tabular data:
 
 ```python
 from pyutilz.data.pandaslib import optimize_dtypes
-
-df = pd.read_csv("large.csv")
-df = optimize_dtypes(df)              # 50-80% memory reduction on typical data
+df = optimize_dtypes(df)
 ```
 
-### Safe parameterised SQL
+**Pick the best on-disk format** — measures write/read time and file
+size across every parquet/feather/pickle × snappy/lz4/zstd/gzip combo
+on the head of the frame, sorted by your chosen metric:
 
 ```python
-from pyutilz.database.db import validate_sql_identifier, safe_execute
-
-table = validate_sql_identifier(user_input)            # raises on injection attempts
-rows = safe_execute("SELECT * FROM {} WHERE id = %s", (table, user_id))
+from pyutilz.data.pandaslib import benchmark_dataframe_compression
+ranked = benchmark_dataframe_compression(df, head=100_000, sort_by="mean_write_size")
 ```
 
-### LLM provider, unified interface
+**Profile a DataFrame in one call** — per-column dtype, null/unique
+counts, value distribution, automatic categorical detection. Works on
+pandas and polars frames:
+
+```python
+from pyutilz.data.pandaslib import showcase_df_columns
+showcase_df_columns(df, max_cat_uniq_qty=50, dropna=False)
+```
+
+**Unified LLM interface across 7 providers** — same `generate()` /
+`generate_json()` / `generate_stream()` / `get_account_credits()` /
+`check_account_limits()` surface; switch by changing one string:
 
 ```python
 from pyutilz.llm import get_llm_provider
 
 p = get_llm_provider("openrouter", model="anthropic/claude-sonnet-4.6")
 text = await p.generate("Summarise this", system="You are concise.")
-print(p.last_call_summary())   # cost, tokens, upstream provider, finish reason
+
+print(p.last_call_summary())
+# {'generation_id': 'gen-...', 'upstream_provider': 'Anthropic',
+#  'cost_usd': 0.0042, 'input_tokens': 1200, 'cache_hit_tokens': 800,
+#  'native_finish_reason': 'end_turn', 'is_byok': False, ...}
 ```
 
-The same `generate()` / `generate_json()` / `generate_stream()` surface works
-across every provider; switch by changing the factory key (`"anthropic"`,
-`"openai"`, `"deepseek"`, `"gemini"`, `"xai"`, `"openrouter"`, `"claude-code"`).
+Streaming preserves token-usage tracking. Account credits work where
+the upstream API exposes them (OpenRouter, DeepSeek); other providers
+fall back to capturing `anthropic-ratelimit-*` / `x-ratelimit-*`
+response headers automatically.
 
-### OpenRouter health-aware model selection
+**OpenRouter health-aware model selection** — two-stage lookup
+(offline catalogue → concurrent live `/endpoints` health check) drops
+degraded upstreams and ranks by live latency. Stage-2 is auth-gated
+but not billed:
 
 ```python
 from pyutilz.llm import list_openrouter_models
 
-# Cheapest healthy Claude variant under $1/1M input, sorted by uptime
+# Cheapest healthy Claude variant under $1/1M input, sorted by uptime.
 rows = list_openrouter_models(
     name_contains="claude",
     max_input_per_1m=1.0,
     sort_by="uptime",
+    min_uptime=0.99,
 )
 top = rows[0]
 print(top["id"], top["health"]["best_uptime_30m"], top["health"]["best_latency_p50_ms"], "ms p50")
 ```
 
-### Performance monitoring
+**Statistical proxy health tracking** — bans a port only when its
+error rate is `ban_rate_multiplier` × the cohort average (computed
+across peers with enough data). Survives noisy proxies that
+occasionally fail and bans ports that genuinely broke:
 
 ```python
-from pyutilz.system.monitoring import timeout_wrapper
+from pyutilz.web.proxy.base import PortHealthTracker
 
-@timeout_wrapper(timeout=10)
-def slow_call():
-    return requests.get("https://api.example.com/data").json()
+tracker = PortHealthTracker(min_requests=30, ban_rate_multiplier=2.0,
+                             ban_duration=900.0)
+tracker.report_success(port_offset=1)
+tracker.report_error(port_offset=2)
+port = tracker.pick_port(port_range=10_000)        # random non-banned offset
+print(tracker.stats())                              # banned_count + averages
 ```
 
-## Testing
+**Strip the AI fingerprint from generated text** — replaces em-dashes,
+hedging openers ("Certainly!"), parenthetical justifications,
+overused vocabulary ("delve into", "leverage", "in conclusion"):
 
-1900+ tests, 79.6% line coverage on `src/pyutilz/`. Live LLM-provider
-tests are gated behind `--run-live` and skip by default so CI never
-spends real money:
+```python
+from pyutilz.text.humanizer import humanize, strip_ai_patterns, introduce_typos
 
-```bash
-pytest                                # full suite, ~3 min
-pytest tests/test_meta/                # static meta-tests only, ~30 s
-pytest --run-live -m live              # live LLM smoke tests (real API calls)
-pytest --cov=src/pyutilz --cov-report=term-missing
+cleaned = strip_ai_patterns(llm_output)
+typo_aug = introduce_typos(cleaned, count=3)        # adversarial dataset aug
+print(humanize(llm_output, typo_count=2))            # full pipeline
 ```
 
-Coverage is uploaded to Codecov on every CI run; see the badge above for
-the current figure.
+**Numba-accelerated similarity at scale** — pre-pack a tokenised
+corpus once, then run repeated batch queries with no Python overhead
+in the hot loop:
 
-### Static meta-tests
+```python
+from pyutilz.text.similarity import SentenceSimilarityIndex
 
-`tests/test_meta/` is a 22-test static-check suite catching package-level
-drift without exercising runtime behaviour. Wired into
-`.pre-commit-config.yaml`, so configuration regressions are caught at
-commit time. Highlights:
+# candidates are already tokenised: list[list[str]]
+tokenised = [s.split() for s in corpus]
+index = SentenceSimilarityIndex(candidates=tokenised, parallel=True)
+scores = index.query("query string here".split())
+```
 
-| Test                                       | Polices                                                                                                                                                              |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_provider_registration.py`            | Every canonical name in `llm.factory._PROVIDER_MODULES` resolves; every alias has a target; no key collisions.                                                       |
-| `test_module_alias_integrity.py`           | The 24-entry backward-compat module alias map imports cleanly and proxies real symbols.                                                                              |
-| `test_provider_contract.py`                | Every concrete LLM provider inherits from `LLMProvider`, overrides every abstract method, and signature-matches the base interface.                                  |
-| `test_optional_deps_isolation.py`          | `import pyutilz` succeeds with each optional-dep group masked; sub-process isolated.                                                                                 |
-| `test_no_top_level_side_effects.py`        | Importing pyutilz performs zero network I/O at module-load time. Sub-process socket block.                                                                           |
-| `test_api_stability.py`                    | Snapshots the public surface (top-level `__all__`, alias map, public symbol set with signatures, class MROs). Renames / removals fail; additions are silent.         |
-| `test_resource_handle_safety.py`           | Every `open()` / `Popen()` / `NamedTemporaryFile()` call is context-managed.                                                                                         |
-| `test_encoding_consistency.py`             | Every builtin `open(...)` in production code passes `encoding=` (Windows cp1251 safety).                                                                             |
-| `test_no_unicode_in_console_output.py`     | Snapshot-based check for non-ASCII string literals in `print(...)` / `logger.*(...)` calls (Windows stdout safety).                                                  |
-| `test_provider_cache_concurrency.py`       | 20 concurrent `get_llm_provider()` callers share one instance; constructor runs exactly once.                                                                        |
-| `test_no_import_cycles.py`                 | Tarjan's SCC over the AST-built import graph; flags multi-node cycles.                                                                                               |
-| `test_logger_lazy_formatting.py`           | Logger calls use `%`-style formatting (lazy) instead of f-strings (eager) so messages aren't formatted when level is disabled.                                       |
-| `test_deferred_drift.py`                   | Counts every `_USER_DEFERRED_*` whitelist across the meta-test suite. Fails when a whitelist grows; refresh via `--refresh-debt-baseline`.                           |
+**Parallel apply, RAM-aware worker count** — picks how many processes
+fit without OOM-ing the box, then runs the pool with proper exception
+propagation:
 
-Each meta-test exposes one or both whitelists at file scope:
+```python
+from pyutilz.system.system import get_max_affordable_workers_count
+from pyutilz.system.parallel import applyfunc_parallel
 
-- `_KNOWN_*` — items consumed via routes static analysis can't see; cite the consumer location.
-- `_USER_DEFERRED_*` — items the maintainer surfaced and chose to defer cleanup on. Drain to zero over time.
+n = get_max_affordable_workers_count(reservedCores=1)
+results = applyfunc_parallel(expensive_fn, iterable=inputs, n_cores=n,
+                              show_progress=True)
+```
 
-Shared helpers (`consumer_corpus`, `public_top_level_symbols`,
-`capture_signature`, `count_user_deferred_entries`, etc.) live in
-[`pyutilz.dev.meta_test_utils`](src/pyutilz/dev/meta_test_utils.py).
+**System & hardware introspection in one call** — CPU info (via
+py-cpuinfo + WMI on Windows / lscpu on Linux), per-disk free space,
+NVIDIA GPU stats, RAM, network interfaces, active power plan; opt-in
+flags select what to include:
 
-### Live LLM tests
+```python
+from pyutilz.system.system import get_system_info
 
-Live tests (`tests/test_llm_live.py`) hit real provider APIs and cost a
-fraction of a cent per run. Setup:
+info = get_system_info(
+    return_usage_stats=True,
+    return_hardware_info=True,
+    return_network_info=True,
+)
+```
 
-1. Copy `.env.example` to `.env` and fill in the keys you have. Fixtures
-   skip individually when a key is missing, so contributors with a subset
-   of accounts still get partial coverage.
-2. Run `pytest --run-live tests/test_llm_live.py`. Each test asserts
-   `assert_under_budget` ($0.005 cap by default) so an accidental huge
-   prompt fails the test rather than burning credits.
+**Synchronous timeouts and slow-call alerting:**
 
-`.env` is gitignored; the [detect-secrets](https://github.com/Yelp/detect-secrets)
-pre-commit hook blocks accidental commits of API keys to source files.
+```python
+from pyutilz.system.monitoring import timeout_wrapper, log_duration
 
-## Performance
+@timeout_wrapper(timeout=10, report_actual_duration=True)
+def slow_api_call(): ...
 
-Verified speedups versus the previous in-tree implementations:
+@log_duration(threshold=2.0)           # only logs when call exceeds 2s
+def occasionally_slow_function(): ...
+```
 
-| Operation                              | Before  | After  | Speedup |
-| -------------------------------------- | ------- | ------ | ------- |
-| `optimize_dtypes` (10k × 100)          | ~0.3s   | 0.154s | 2x      |
-| `nullify_standard_values`              | ~1.0s   | 0.005s | 200x    |
-| `get_df_memory_consumption`            | ~1.1s   | 0.074s | 15x     |
-| `ensure_float32` (1k × 60)             | ~0.05s  | 0.010s | 5x      |
+**Parameterised SQL with identifier validation:**
 
-OpenRouter `list_openrouter_models()` health-aware lookup: 8x cold-run
-speedup (58s → 7s) via TTL cache + shared `httpx.Client` connection pool
-+ filter-before-fan-out.
+```python
+from pyutilz.database.db import validate_sql_identifier, safe_execute
+
+table = validate_sql_identifier(user_input)             # raises on injection
+rows = safe_execute("SELECT * FROM {} WHERE id = %s", (table, user_id))
+```
 
 ## Security
 
@@ -194,9 +216,20 @@ speedup (58s → 7s) via TTL cache + shared `httpx.Client` connection pool
 - `subprocess` calls never pass `shell=True`.
 - Bandit security scans run on every CI build with zero HIGH-severity
   findings.
-- API keys for LLM providers are read from `.env` via `pydantic-settings`;
-  the file is gitignored and the detect-secrets pre-commit hook blocks
-  accidental in-source commits.
+- LLM API keys are read from `.env` via `pydantic-settings`; the file is
+  gitignored and a [detect-secrets](https://github.com/Yelp/detect-secrets)
+  pre-commit hook blocks accidental in-source commits.
+
+## Testing
+
+1900+ tests, 79.6% line coverage on `src/pyutilz/`. See
+[TESTING.md](TESTING.md) for the static meta-test suite, live LLM
+tests, and how to run with coverage.
+
+```bash
+pytest                                # full suite, ~3 min
+pytest --run-live -m live              # live LLM smoke tests (real API calls, opt-in)
+```
 
 ## Contributing
 
@@ -211,83 +244,37 @@ pull-request process.
 - Standalone GitHub Actions workflow surfacing meta-test status as a
   separate PR badge (currently runs only via pre-commit locally).
 - Recurring auto-PR scanning every `_USER_DEFERRED_*` set across the
-  meta-test suite, sorted by ease-of-fix. The `test_deferred_drift.py`
-  tracker catches *growth*; an active drain loop would shrink the debt.
-- Mutation testing on the meta-tests themselves
-  (`mutmut run --paths-to-mutate src/pyutilz/llm/ tests/test_meta/`) to
-  surface assertions whose value doesn't actually depend on what's being
-  checked.
+  meta-test suite, sorted by ease-of-fix.
+- Mutation testing on the meta-tests themselves to surface assertions
+  whose value doesn't actually depend on what's being checked.
 
-### LLM provider matrix (deferred L-effort items)
+### LLM provider matrix
 
-The 2026-05-07 audit completed bug fixes (Audit A), info-completeness
-correctness (Audit C top-6 — Anthropic real `count_tokens`, cache fields,
-ratelimit headers; Claude Code `ResultMessage.usage`; streaming usage;
-Gemini `safety_ratings` / grounding / function-calls), Phase 4-A
-(OpenRouter `cache_discount` / `is_byok` / web-search / `cache_control`
-passthrough / `/parameters` introspection), and Phase 4-B (`tool_calls`
-and `citations` capture in the OpenAI-compat base, xAI live-search,
-Gemini multi-candidate, Claude Code `/status`).
+Remaining items from the 2026-05-07 audit are entire new API families;
+each needs an explicit shape decision (persistence semantics, polling
+patterns, separate auth keys) best made with a concrete use case:
 
-Remaining matrix items are entire new API families. Each needs an
-explicit shape decision (persistence semantics, polling patterns,
-separate auth keys) best made with a concrete use case:
+- **Anthropic Files API + Message Batches API** — Batches API gets a
+  50% pricing discount on offline workloads; highest financial ROI.
+- **OpenAI Organisation usage API** (`/v1/organization/usage`,
+  `/costs`) — opt-in `admin_api_key=` knob complementing the existing
+  per-call rate-limit-header capture. Plus Responses API beta, Batches
+  API, Files API.
+- **Gemini `cachedContents` full lifecycle** — Gemini's 90% input-token
+  discount is the largest unrealised cost saving in this provider; we
+  currently only thread the resource name through `generate()`. Plus
+  Files API for caching large PDFs / videos.
+- **DeepSeek FIM endpoint** (`/beta/completions` with prefix + suffix)
+  for IDE-plugin use cases.
+- **xAI deferred chat completions** (async-poll for very long
+  generations) and image generation.
 
-**Anthropic**
-
-- Files API (`/v1/files`) — multimodal upload + cross-call reuse.
-- Message Batches API (`/v1/messages/batches`) — 50% pricing discount
-  for offline workloads, currently unused. Highest financial ROI of the
-  deferred items.
-
-**OpenAI**
-
-- Organisation usage API (`/v1/organization/usage`, `/costs`) — opt-in
-  `admin_api_key=` constructor knob. Complements the existing per-call
-  rate-limit-header capture.
-- Responses API beta (`/v1/responses`) — newer surface with server-side
-  tool loops.
-- Batches API (`/v1/batches`) — same 50% discount story as Anthropic.
-- Files API (`/v1/files`).
-
-**Gemini**
-
-- `cachedContents` API full lifecycle (create / list / get / delete).
-  Gemini's 90% input-token discount is the largest unrealised cost saving
-  in this provider; we currently only thread the resource name through
-  `generate()`.
-- Files API — required for caching large PDFs / videos before referencing
-  them by URI.
-
-**DeepSeek**
-
-- FIM endpoint (`/beta/completions` with prefix + suffix) — unblocks
-  IDE-plugin use cases.
-
-**xAI**
-
-- Deferred chat completions — async-poll variant for very long generations.
-- Image generation (`grok-2-image` and successors) — different endpoint
-  family; would extend pyutilz to multimodal.
-
-**Out of scope (by design)**
-
-- Anthropic Admin API `/cost_report` — needs a separate `sk-ant-admin-` key.
-- Gemini Cloud Billing API — separate GCP service-account auth.
-- OpenAI deprecated `/v1/dashboard/billing/credit_grants` — endpoint
-  removed.
-- xAI management API balance — does not exist at present.
-- OpenRouter `/credits/coinbase` — niche crypto top-up.
-
-When picking up any of these, start by writing the minimal motivating
-use case so the wrapper shape is grounded rather than speculative.
+Out of scope by design: Anthropic Admin `/cost_report` (needs separate
+admin key); Gemini Cloud Billing API (separate GCP service-account
+auth); OpenAI deprecated `/credit_grants` (endpoint removed); xAI
+management API balance (does not exist); OpenRouter `/credits/coinbase`
+(niche).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Links
-
-- Source: https://github.com/fingoldo/pyutilz
-- Issues: https://github.com/fingoldo/pyutilz/issues
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
