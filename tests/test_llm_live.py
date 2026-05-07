@@ -174,7 +174,10 @@ async def test_xai_minimal_call(xai_key, assert_under_budget):
 async def test_openai_minimal_call(openai_key, assert_under_budget):
     from pyutilz.llm.openai_provider import OpenAIProvider
 
-    p = OpenAIProvider(api_key=openai_key, model="gpt-5-nano")
+    # gpt-4o-mini is the broadly-available cheap model. gpt-5-nano costs
+    # less per token but isn't on every account / region; preferring the
+    # available one over the cheaper one for a smoke test.
+    p = OpenAIProvider(api_key=openai_key, model="gpt-4o-mini")
     out = await p.generate(
         "Reply with exactly the word OK.",
         max_tokens=10,
