@@ -654,6 +654,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         provider_sort: str | None = None,
         provider_allow_fallbacks: bool = True,
         models_fallback: tuple[str, ...] | None = None,
+        enable_web_search: bool = False,
+        anthropic_top_level_cache: bool = False,
     ):
         settings = get_llm_settings()
         resolved_key = api_key or (
@@ -678,6 +680,18 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self._provider_sort = provider_sort
         self._provider_allow_fallbacks = provider_allow_fallbacks
         self._models_fallback = models_fallback
+        # Phase-4 request-shape knobs.
+        # ``enable_web_search``: attaches OR's web-search plugin so the
+        #   model can fetch live web results (citations come back in
+        #   choices[0].message.annotations and are auto-captured into
+        #   ``last_web_search_citations``). Adds ~$0.005/call surcharge.
+        # ``anthropic_top_level_cache``: emits ``cache_control:
+        #   {"type":"ephemeral"}`` at the request top level (Anthropic
+        #   only; routes that go through Bedrock/Vertex will have it
+        #   ignored). Per-message breakpoints work everywhere; this is
+        #   the cheap "just cache the system prompt" lever.
+        self._enable_web_search = enable_web_search
+        self._anthropic_top_level_cache = anthropic_top_level_cache
 
         # Per-call usage breakdown — set after every generate(). All
         # cumulative counters mirror their last_* counterpart.
@@ -697,6 +711,19 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self.last_upstream_provider: str | None = None
         self.last_upstream_model: str | None = None
         self.last_native_finish_reason: str | None = None
+        # Phase-4 OR-extra fields. cache_discount: usage-block field --
+        # negative on cache writes (extra cost) or positive on cache reads
+        # (savings). is_byok: whether the call was billed via the user's
+        # own upstream key (5% surcharge after monthly free tier).
+        # response_cache_source_id: present when the response was served
+        # from OR's CDN-level response cache rather than a fresh upstream
+        # call -- distinct from the per-prompt input cache.
+        self.last_cache_discount_usd: float | None = None
+        self.total_cache_discount_usd = 0.0
+        self.last_is_byok: bool | None = None
+        self.last_response_cache_source_id: str | None = None
+        # Phase-4 web-search citations from OR's web plugin (when enabled).
+        self.last_web_search_citations: list[dict[str, Any]] = []
 
     def _reset_per_call_state(self) -> None:
         """Clear per-call ``last_*`` state at the start of every generate().
@@ -717,6 +744,10 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self.last_native_finish_reason = None
         self._last_finish_reason = None
         self._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        self.last_cache_discount_usd = None
+        self.last_is_byok = None
+        self.last_response_cache_source_id = None
+        self.last_web_search_citations = []
 
     @property
     def context_window(self) -> int:
@@ -798,6 +829,12 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             body["provider"] = provider_field
         if self._models_fallback:
             body["models"] = list(self._models_fallback)
+        if self._enable_web_search:
+            # The "web" plugin id is the canonical OR shape; default
+            # engine = exa unless OR overrides per-account.
+            body["plugins"] = [{"id": "web"}]
+        if self._anthropic_top_level_cache:
+            body["cache_control"] = {"type": "ephemeral"}
         return body
 
     def _thinking_request_field(
@@ -883,6 +920,15 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         if audio:
             self.total_audio_tokens += audio
 
+        # Phase-4: cache_discount (OR's per-call line item showing how
+        # much the cache hit saved -- positive = savings vs cold call).
+        cache_discount = usage.get("cache_discount")
+        if isinstance(cache_discount, (int, float)):
+            self.last_cache_discount_usd = float(cache_discount)
+            self.total_cache_discount_usd += float(cache_discount)
+        else:
+            self.last_cache_discount_usd = None
+
     def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
         """Capture response-level metadata outside the ``usage`` block.
 
@@ -913,12 +959,54 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             native = choices[0].get("native_finish_reason")
             if isinstance(native, str):
                 self.last_native_finish_reason = native
+            # OR's web-search plugin attaches citations on the message.
+            msg = choices[0].get("message") or {}
+            annotations = msg.get("annotations") or []
+            citations: list[dict[str, Any]] = []
+            for ann in annotations:
+                if not isinstance(ann, dict):
+                    continue
+                if ann.get("type") == "url_citation":
+                    citations.append(ann.get("url_citation") or {})
+            if citations:
+                self.last_web_search_citations = citations
+
+        # Phase-4 OR-extra response-level fields.
+        is_byok = data.get("is_byok")
+        if isinstance(is_byok, bool):
+            self.last_is_byok = is_byok
+        cache_src = data.get("response_cache_source_id")
+        if isinstance(cache_src, str):
+            self.last_response_cache_source_id = cache_src
 
     def _input_cost_per_1m(self, model: str) -> float:
         return _per_token_cost_pair(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
         return _per_token_cost_pair(model)[1]
+
+    async def fetch_model_parameters(
+        self,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        """``GET /api/v1/parameters/{author}/{slug}`` — supported parameters
+        and their default values for a model.
+
+        Returns a dict with keys like ``temperature``, ``top_p``, ``top_k``,
+        ``max_tokens``, ``frequency_penalty``, ``presence_penalty``, plus
+        whatever the upstream supports. Useful before sending a request so
+        you can pre-populate sensible defaults and warn early on unsupported
+        kwargs.
+
+        Args:
+            model: Defaults to ``self.model_name``.
+        """
+        target = model or self.model_name
+        resp = await self._client.get(f"/parameters/{target}")
+        resp.raise_for_status()
+        payload = resp.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, dict) else {}
 
     async def check_model_health(
         self,
@@ -1140,10 +1228,14 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             "native_finish_reason": self.last_native_finish_reason,
             "cost_usd": self.last_actual_cost_usd,
             "upstream_inference_cost_usd": self.last_upstream_inference_cost_usd,
+            "cache_discount_usd": self.last_cache_discount_usd,
+            "is_byok": self.last_is_byok,
+            "response_cache_source_id": self.last_response_cache_source_id,
             "input_tokens": self._last_usage.get("input_tokens", 0),
             "output_tokens": self._last_usage.get("output_tokens", 0),
             "reasoning_tokens": self._last_usage.get("reasoning_tokens", 0),
             "cache_hit_tokens": self.last_cache_hit_tokens,
             "cache_write_tokens": self.last_cache_write_tokens,
             "audio_tokens": self.last_audio_tokens,
+            "web_search_citations": self.last_web_search_citations,
         }

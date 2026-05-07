@@ -18,6 +18,17 @@
 #   pre-commit run --hook-stage=manual pyutilz-meta-tests-static-only
 
 repos:
+  # Secret-scanner -- catches accidental commits of LLM API keys
+  # (sk-ant-..., sk-or-..., xai-...). Runs on every staged change.
+  # Update the baseline with:
+  #   detect-secrets scan > .secrets.baseline
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: '\.secrets\.baseline$'
+
   - repo: local
     hooks:
       - id: pyutilz-meta-tests

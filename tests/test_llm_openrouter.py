@@ -59,6 +59,15 @@ def _provider(**overrides) -> OpenRouterProvider:
     p.last_upstream_provider = None
     p.last_upstream_model = None
     p.last_native_finish_reason = None
+    p.last_rate_limits = {}
+    # Phase-4 fields
+    p._enable_web_search = overrides.get("enable_web_search", False)
+    p._anthropic_top_level_cache = overrides.get("anthropic_top_level_cache", False)
+    p.last_cache_discount_usd = None
+    p.total_cache_discount_usd = 0.0
+    p.last_is_byok = None
+    p.last_response_cache_source_id = None
+    p.last_web_search_citations = []
     return p
 
 
@@ -576,9 +585,12 @@ class TestResolveApiKey:
 
     def test_returns_none_when_nothing_configured(self, monkeypatch):
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        # Settings might still resolve from .env file in dev — patch it out.
+        # The module imports get_llm_settings at the top level; patch the
+        # IMPORTED reference (not the source module) so the override is
+        # effective. Otherwise an .env file with OPENROUTER_API_KEY set
+        # leaks through (which is exactly what just happened on the dev box).
         with patch(
-            "pyutilz.llm.config.get_llm_settings",
+            "pyutilz.llm.openrouter_provider.get_llm_settings",
             return_value=MagicMock(openrouter_api_key=None),
         ):
             assert _resolve_or_api_key(None) is None

@@ -80,6 +80,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_llm_deepseek": "covers pyutilz.llm.deepseek_provider",
     "test_llm_xai": "covers pyutilz.llm.xai_provider",
     "test_llm_retry": "covers pyutilz.llm._retry (private module)",
+    "test_llm_live": "live LLM-provider smoke tests (opt-in via --run-live, cross-cutting)",
     "test_hardware_detection": "covers pyutilz.system.hardware_monitor",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
     # Meta-tests test infrastructure, not a single source module.

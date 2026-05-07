@@ -154,7 +154,8 @@ addopts = "-v --tb=short --strict-markers -ra"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
-    "gpu: marks tests requiring GPU"
+    "gpu: marks tests requiring GPU",
+    "live: marks tests requiring live provider API keys (deselect with '-m \"not live\"'; default is to skip via missing-key fixtures)"
 ]
 
 # Coverage configuration
