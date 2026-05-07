@@ -193,11 +193,32 @@ class TestProviderStubMessages:
             await p.get_account_credits()
 
     @pytest.mark.asyncio
-    async def test_anthropic_limits_mentions_response_headers(self):
+    async def test_anthropic_limits_no_snapshot_yet_hint(self):
+        # Anthropic's check_account_limits returns the captured headers
+        # snapshot from the LAST call. Before any call has been made,
+        # NotImplementedError fires with a hint to issue a request first.
         from pyutilz.llm.anthropic_provider import AnthropicProvider
         p = self._make(AnthropicProvider)
-        with pytest.raises(NotImplementedError, match="anthropic-ratelimit"):
+        with pytest.raises(NotImplementedError, match="generate"):
             await p.check_account_limits()
+
+    @pytest.mark.asyncio
+    async def test_anthropic_limits_returns_captured_headers(self):
+        # After capture, returns structured dict.
+        from pyutilz.llm.anthropic_provider import AnthropicProvider
+        p = self._make(AnthropicProvider)
+        p.last_rate_limits = {
+            "anthropic-ratelimit-requests-limit": "50",
+            "anthropic-ratelimit-requests-remaining": "47",
+            "anthropic-ratelimit-tokens-limit": "100000",
+        }
+        p.last_organization_id = "org_test"
+        out = await p.check_account_limits()
+        assert out["requests_limit"] == "50"
+        assert out["requests_remaining"] == "47"
+        assert out["tokens_limit"] == "100000"
+        assert out["organization_id"] == "org_test"
+        assert "raw" in out
 
     @pytest.mark.asyncio
     async def test_openai_credits_points_to_platform(self):

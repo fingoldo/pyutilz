@@ -99,6 +99,16 @@ class GeminiProvider(LLMProvider):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        # Per-call response metadata captured by ``_capture_candidate_metadata``.
+        # Without these, grounding / citations / function calls / safety
+        # categories silently disappear when only ``.text`` is extracted.
+        self.last_safety_ratings: list[dict[str, Any]] = []
+        self.last_grounding_metadata: Any = None
+        self.last_citation_metadata: Any = None
+        self.last_function_calls: list[dict[str, Any]] = []
+        self.last_all_candidates: list[Any] = []
+        self.last_cached_content_tokens = 0
+        self.total_cached_content_tokens = 0
 
     @property
     def context_window(self) -> int:
@@ -167,23 +177,38 @@ class GeminiProvider(LLMProvider):
             else:
                 self._last_finish_reason = "unknown"
 
+            # Capture safety ratings, grounding, citations, function calls
+            # from candidate[0]. Saves callers from re-parsing the raw
+            # response object themselves.
+            self._capture_candidate_metadata(response)
+
             um = getattr(response, "usage_metadata", None)
             if um:
                 self._last_usage = {
                     "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
                     "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
                     "reasoning_tokens": getattr(um, "thoughts_token_count", 0) or 0,
+                    "cached_content_token_count": (
+                        getattr(um, "cached_content_token_count", 0) or 0
+                    ),
                 }
+                self.last_cached_content_tokens = self._last_usage["cached_content_token_count"]
+                self.total_cached_content_tokens += self.last_cached_content_tokens
 
             # Safety-filter detection: Gemini returns finish_reason=SAFETY
             # when the response is blocked. response.text may be empty or
-            # raise when accessed; handle both.
+            # raise when accessed; handle both. We surface the per-category
+            # safety_ratings (HARASSMENT / HATE_SPEECH / SEXUALLY_EXPLICIT
+            # / DANGEROUS_CONTENT) so callers know WHICH category fired.
             _fr = self._last_finish_reason.upper() if isinstance(self._last_finish_reason, str) else ""
             if "SAFETY" in _fr or "BLOCK" in _fr:
                 raise LLMSafetyBlockError(
                     f"Gemini blocked response by safety filter (finish_reason={self._last_finish_reason})",
                     raw_text=None,
-                    details={"finish_reason": self._last_finish_reason},
+                    details={
+                        "finish_reason": self._last_finish_reason,
+                        "safety_ratings": self.last_safety_ratings,
+                    },
                 )
             try:
                 text_out = response.text
@@ -191,14 +216,69 @@ class GeminiProvider(LLMProvider):
                 # Accessing .text on a blocked/empty candidate raises
                 raise LLMSafetyBlockError(
                     f"Gemini response has no text (likely safety block): {exc}",
-                    details={"finish_reason": self._last_finish_reason},
+                    details={
+                        "finish_reason": self._last_finish_reason,
+                        "safety_ratings": self.last_safety_ratings,
+                    },
                 )
             if not text_out:
                 raise LLMSafetyBlockError(
                     "Gemini returned empty text (likely safety block)",
-                    details={"finish_reason": self._last_finish_reason},
+                    details={
+                        "finish_reason": self._last_finish_reason,
+                        "safety_ratings": self.last_safety_ratings,
+                    },
                 )
             return text_out
+
+    def _capture_candidate_metadata(self, response: Any) -> None:
+        """Stash safety ratings / grounding / citation / function-call info
+        from ``response.candidates[0]`` onto ``last_*`` attributes.
+
+        Without this, Google Search grounding sources, citation segments,
+        and function_calls all silently disappear -- pyutilz's previous
+        wrapper extracted only ``.text``. Best-effort: any failure leaves
+        the previous snapshot in place.
+        """
+        try:
+            candidates = getattr(response, "candidates", None) or []
+            if not candidates:
+                self.last_safety_ratings = []
+                self.last_grounding_metadata = None
+                self.last_citation_metadata = None
+                self.last_function_calls = []
+                return
+            cand = candidates[0]
+            ratings = getattr(cand, "safety_ratings", None) or []
+            self.last_safety_ratings = [
+                {
+                    "category": str(getattr(r, "category", "")),
+                    "probability": str(getattr(r, "probability", "")),
+                    "blocked": bool(getattr(r, "blocked", False)),
+                }
+                for r in ratings
+            ]
+            grounding = getattr(cand, "grounding_metadata", None)
+            self.last_grounding_metadata = grounding
+            citation = getattr(cand, "citation_metadata", None)
+            self.last_citation_metadata = citation
+
+            calls: list[dict[str, Any]] = []
+            content = getattr(cand, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    calls.append({
+                        "name": getattr(fc, "name", ""),
+                        "args": dict(getattr(fc, "args", {}) or {}),
+                    })
+            self.last_function_calls = calls
+            # Preserve raw additional candidates for callers that requested
+            # multi-candidate generation.
+            self.last_all_candidates = list(candidates)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Gemini candidate metadata capture failed: %s", exc)
 
     async def generate_json(
         self,

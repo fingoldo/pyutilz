@@ -141,6 +141,11 @@ class OpenAICompatibleProvider(LLMProvider):
             "output_tokens": 0,
             "reasoning_tokens": 0,
         }
+        # Most recent rate-limit headers seen on a response. Captured
+        # automatically from x-ratelimit-* (OpenAI-family) and the
+        # legacy ratelimit-* form some providers use. Read from
+        # ``check_account_limits()``.
+        self.last_rate_limits: dict[str, str] = {}
 
     # ── hooks for subclasses ─────────────────────────────────────────
 
@@ -194,6 +199,55 @@ class OpenAICompatibleProvider(LLMProvider):
         from the previous successful call masquerading as the latest one.
         """
         return None
+
+    def _capture_rate_limit_headers(self, headers: Any) -> None:
+        """Snapshot rate-limit headers from the most recent response.
+
+        OpenAI-family providers send ``x-ratelimit-{requests,tokens,
+        input-tokens,output-tokens}-{limit,remaining,reset}``; some send
+        the legacy ``ratelimit-*`` (no x prefix). We capture both forms
+        case-insensitively. Read via ``check_account_limits()``.
+        """
+        if headers is None:
+            return
+        try:
+            mapping = {k.lower(): v for k, v in dict(headers).items()}
+        except Exception:  # noqa: BLE001
+            return
+        captured = {
+            k: v for k, v in mapping.items()
+            if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")
+        }
+        if captured:
+            self.last_rate_limits = captured
+
+    async def check_account_limits(self) -> dict[str, Any]:
+        """Return rate-limit info from the most recent response headers.
+
+        Most OpenAI-compatible upstreams (OpenAI, xAI, DeepSeek) lack a
+        standalone introspection endpoint, so per-call headers are the
+        only source. After at least one ``generate()`` call has
+        succeeded, this returns the captured snapshot. Subclasses with
+        a real introspection endpoint (OpenRouter) override.
+        """
+        # ``getattr`` not direct attr — covers tests that bypass __init__.
+        rl = getattr(self, "last_rate_limits", {}) or {}
+        if not rl:
+            raise NotImplementedError(
+                f"{self._provider_name}: no rate-limit snapshot captured yet -- "
+                "issue at least one generate() call first; the headers are "
+                "captured automatically. Standalone introspection endpoints "
+                "are not exposed for regular keys on this provider."
+            )
+        out: dict[str, Any] = {"raw": dict(rl)}
+        for key, value in rl.items():
+            short = (
+                key.replace("x-ratelimit-", "")
+                .replace("ratelimit-", "")
+                .replace("-", "_")
+            )
+            out[short] = value
+        return out
 
     @abstractmethod
     def _input_cost_per_1m(self, model: str) -> float: ...
@@ -335,11 +389,19 @@ class OpenAICompatibleProvider(LLMProvider):
                 if tf is not None:
                     body.update(tf)
 
+            # OR + many OpenAI-compat upstreams emit usage on the FINAL
+            # SSE chunk only when ``stream_options: {"include_usage": true}``
+            # is set. Without it the stream never publishes usage at all,
+            # leaving streaming callers with zero cost / token tracking.
+            body.setdefault("stream_options", {"include_usage": True})
+
             async with self._client.stream(
                 "POST", "/chat/completions", json=body,
             ) as resp:
                 self._handle_special_status(resp)
                 resp.raise_for_status()
+                self._capture_rate_limit_headers(resp.headers)
+                last_chunk: dict[str, Any] | None = None
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -350,6 +412,12 @@ class OpenAICompatibleProvider(LLMProvider):
                         chunk = _json.loads(data_part)
                     except _json.JSONDecodeError:
                         continue
+                    last_chunk = chunk
+                    # Usage block tends to arrive on a chunk with empty choices
+                    # AFTER the last content delta; track it whenever it's seen.
+                    usage = chunk.get("usage")
+                    if usage:
+                        self._track_streaming_usage(usage)
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -357,6 +425,35 @@ class OpenAICompatibleProvider(LLMProvider):
                     content = delta.get("content")
                     if content:
                         yield content
+                # Response-level metadata (id, model, provider) usually rides
+                # on the first chunk; some upstreams send it on the last.
+                if last_chunk is not None:
+                    self._track_provider_specific_response(last_chunk)
+
+    def _track_streaming_usage(self, usage: dict[str, Any]) -> None:
+        """Mirror of the non-streaming usage path, for streaming responses.
+
+        Called when an SSE chunk's ``usage`` field is non-empty (OpenAI-
+        compat upstreams send it on the final chunk when
+        ``stream_options.include_usage=true``). Updates the same totals /
+        last_usage / provider-specific hooks that ``generate()`` does.
+        """
+        prompt_tok = usage.get("prompt_tokens", 0)
+        compl_tok = usage.get("completion_tokens", 0)
+        cache_hit = usage.get("prompt_cache_hit_tokens", 0)
+        details = usage.get("completion_tokens_details", {}) or {}
+        reasoning_tok = details.get("reasoning_tokens", 0) or 0
+        self.total_prompt_tokens += prompt_tok
+        self.total_completion_tokens += compl_tok
+        self.total_cache_hit_tokens += cache_hit
+        self.total_reasoning_tokens += reasoning_tok
+        self._call_count += 1
+        self._last_usage = {
+            "input_tokens": prompt_tok,
+            "output_tokens": self._compute_billed_output(compl_tok, reasoning_tok),
+            "reasoning_tokens": reasoning_tok,
+        }
+        self._track_provider_specific_usage(usage)
 
     @retry(
         retry=retry_if_exception(_is_retryable_http_error),
@@ -423,6 +520,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
             resp.raise_for_status()
             data = resp.json()
+
+            # Snapshot rate-limit headers — providers don't expose a
+            # dedicated introspection endpoint for free, but they all
+            # send these on every response.
+            self._capture_rate_limit_headers(resp.headers)
 
             # Token usage tracking
             usage = data.get("usage", {})

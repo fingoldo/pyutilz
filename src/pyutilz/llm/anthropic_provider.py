@@ -72,6 +72,22 @@ class AnthropicProvider(LLMProvider):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         # Per-call usage (read by LLMClient after generate())
         self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        # Per-call cache + extended-thinking accounting.
+        # cache_creation_input_tokens — tokens written to ephemeral cache
+        #   (5min default, 2x base rate; 1h opt-in, 1.25x).
+        # cache_read_input_tokens — tokens read from cache (10% of input rate).
+        # thinking_tokens — extended-thinking output (Opus 4 only).
+        self.last_cache_creation_input_tokens = 0
+        self.last_cache_read_input_tokens = 0
+        self.total_cache_creation_input_tokens = 0
+        self.total_cache_read_input_tokens = 0
+        self.last_thinking_tokens = 0
+        self.total_thinking_tokens = 0
+        # Rate-limit info captured from response headers on every call.
+        # Populated lazily by ``check_account_limits()`` from the snapshot
+        # of the most recent response.
+        self.last_rate_limits: dict[str, str] = {}
+        self.last_organization_id: str | None = None
 
     @property
     def max_output_tokens(self) -> int:
@@ -134,16 +150,65 @@ class AnthropicProvider(LLMProvider):
                     }
                 ]
 
-            response = await self.client.messages.create(**kwargs)
+            # ``with_raw_response`` exposes HTTP headers (rate-limit + org id)
+            # alongside the parsed body. Without it the SDK swallows headers.
+            raw = await self.client.messages.with_raw_response.create(**kwargs)
+            response = raw.parse()
+            self._capture_response_headers(raw.headers)
+
             self._last_finish_reason = response.stop_reason
 
+            usage = response.usage
+            cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            thinking = 0
+            for block in response.content:
+                if getattr(block, "type", None) == "thinking":
+                    text = getattr(block, "thinking", "") or ""
+                    thinking += max(1, len(text) // 4)  # rough estimate
+
+            self.last_cache_creation_input_tokens = cache_creation
+            self.last_cache_read_input_tokens = cache_read
+            self.total_cache_creation_input_tokens += cache_creation
+            self.total_cache_read_input_tokens += cache_read
+            self.last_thinking_tokens = thinking
+            self.total_thinking_tokens += thinking
+
             self._last_usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-                "reasoning_tokens": 0,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "reasoning_tokens": thinking,
+                "cache_creation_input_tokens": cache_creation,
+                "cache_read_input_tokens": cache_read,
             }
 
+            # Pull text from the first text block (skip thinking blocks).
+            for block in response.content:
+                if getattr(block, "type", None) == "text":
+                    return block.text
+            # Fall back to the legacy single-block layout.
             return response.content[0].text
+
+    def _capture_response_headers(self, headers: Any) -> None:
+        """Snapshot rate-limit headers + org id from the latest response.
+
+        ``check_account_limits()`` reads from this snapshot rather than
+        raising NotImplementedError when at least one call has been made.
+        Anthropic doesn't expose a standalone introspection endpoint for
+        regular keys, so the per-call headers are the best source.
+        """
+        try:
+            mapping = dict(headers) if headers is not None else {}
+        except Exception:  # noqa: BLE001
+            return
+        # Lower-case the keys for case-insensitive lookup downstream.
+        lower = {k.lower(): v for k, v in mapping.items()}
+        rl = {k: v for k, v in lower.items() if k.startswith("anthropic-ratelimit-")}
+        if rl:
+            self.last_rate_limits = rl
+        org = lower.get("anthropic-organization-id")
+        if isinstance(org, str):
+            self.last_organization_id = org
 
     async def generate_json(
         self,
@@ -212,10 +277,32 @@ class AnthropicProvider(LLMProvider):
         output_cost = (output_tokens / 1_000_000) * out_rate
         return input_cost + output_cost
 
-    async def count_tokens(self, text: str) -> int:
-        """Count tokens using tiktoken (accurate) or len//4 fallback."""
-        from pyutilz.llm.token_counter import count_tokens
-        return count_tokens(text)
+    async def count_tokens(
+        self,
+        text: str,
+        system: str | None = None,
+    ) -> int:
+        """Count tokens via Anthropic's native ``messages.count_tokens`` API.
+
+        Tiktoken — the previous fallback — uses OpenAI's tokenizer, which
+        is the WRONG tokenizer for Claude (the cl100k_base mapping
+        diverges from Claude's BPE for >5% of typical text). Cache-budget
+        and prompt-fits-in-context calculations need the real number.
+
+        Falls back to tiktoken on any API failure so a transient outage
+        doesn't block calling code.
+        """
+        try:
+            messages = [{"role": "user", "content": text}]
+            kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
+            if system:
+                kwargs["system"] = system
+            result = await self.client.messages.count_tokens(**kwargs)
+            return int(result.input_tokens)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Anthropic count_tokens API failed (%s); falling back to tiktoken.", exc)
+            from pyutilz.llm.token_counter import count_tokens
+            return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
         # Anthropic publishes balance only via the web console — there is no
@@ -229,10 +316,58 @@ class AnthropicProvider(LLMProvider):
         )
 
     async def check_account_limits(self) -> dict:
-        # Per-key rate limits surface in 429-response headers; there is no
-        # standalone introspection endpoint.
-        raise NotImplementedError(
-            "Anthropic does not expose per-key rate limits via API. "
-            "Inspect ``anthropic-ratelimit-*`` response headers on a real call, "
-            "or check console.anthropic.com/settings/limits."
+        """Return rate-limit info from the most recent response headers.
+
+        Anthropic has no standalone introspection endpoint — per-key limits
+        are published as ``anthropic-ratelimit-*`` headers on every call.
+        After at least one call, this returns the captured snapshot
+        (limit / remaining / reset for requests, tokens, input-tokens,
+        output-tokens). Before any call, raises NotImplementedError with
+        a hint to issue a tiny request first.
+        """
+        rl = getattr(self, "last_rate_limits", {}) or {}
+        if not rl:
+            raise NotImplementedError(
+                "No Anthropic rate-limit snapshot available yet -- issue at "
+                "least one generate() call first; the headers are captured "
+                "automatically. Or check console.anthropic.com/settings/limits."
+            )
+        # Normalize from raw header form into structured dict.
+        out: dict[str, Any] = {"raw": dict(rl)}
+        for key, value in rl.items():
+            # anthropic-ratelimit-tokens-limit -> tokens_limit
+            short = key.replace("anthropic-ratelimit-", "").replace("-", "_")
+            out[short] = value
+        org = getattr(self, "last_organization_id", None)
+        if org:
+            out["organization_id"] = org
+        return out
+
+    def get_session_cost(self) -> dict[str, Any]:
+        """Return cumulative usage including cache + thinking accounting.
+
+        Cache-aware cost: cache_read tokens billed at 0.10x input rate;
+        cache_creation tokens billed at 1.25x (5min) or 2x (1h) input rate.
+        We use 1.25x as the default (5min ephemeral) -- if you opt into
+        1h cache, multiply ``cache_creation_input_tokens`` by 2 instead.
+        """
+        in_rate, out_rate = self._get_pricing()
+        # Effective non-cache input tokens (paid at full input rate)
+        plain_input = max(
+            0,
+            self._last_usage.get("input_tokens", 0)  # last_call's plain input
+            - self.last_cache_creation_input_tokens
+            - self.last_cache_read_input_tokens,
         )
+        return {
+            "calls": getattr(self, "_call_count", 0),
+            "prompt_tokens": self._last_usage.get("input_tokens", 0),
+            "completion_tokens": self._last_usage.get("output_tokens", 0),
+            "thinking_tokens": self.total_thinking_tokens,
+            "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
+            "cache_read_input_tokens": self.total_cache_read_input_tokens,
+            "input_cost_usd": (plain_input / 1_000_000) * in_rate
+            + (self.total_cache_creation_input_tokens / 1_000_000) * in_rate * 1.25
+            + (self.total_cache_read_input_tokens / 1_000_000) * in_rate * 0.10,
+            "output_cost_usd": (self._last_usage.get("output_tokens", 0) / 1_000_000) * out_rate,
+        }

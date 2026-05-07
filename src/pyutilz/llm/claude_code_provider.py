@@ -269,19 +269,42 @@ class ClaudeCodeProvider(LLMProvider):
         self._call_count = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        # Real per-call accounting from ResultMessage when SDK path runs.
+        # Max-subscription users don't get billed per call, but the SDK
+        # reports the underlying API cost as if they were -- useful for
+        # tracking session burn even on subscription accounts.
+        self.total_cost_usd = 0.0
+        self.last_cost_usd = 0.0
+        self.total_cache_creation_input_tokens = 0
+        self.total_cache_read_input_tokens = 0
+        self.last_cache_creation_input_tokens = 0
+        self.last_cache_read_input_tokens = 0
+        self.last_session_id: str | None = None
+        self.last_num_turns: int | None = None
 
     def get_session_cost(self) -> dict:
-        """Return estimated cost data (Max subscription -- no per-call billing)."""
+        """Return cost data, sourced from ResultMessage.usage when SDK path
+        ran, falling back to tiktoken estimates for the CLI path.
+
+        ``total_cost_usd`` is what Claude's SDK reports for this session,
+        even on Max subscription -- subscription users still pay nothing
+        out-of-pocket, but the underlying API cost is informative for
+        understanding session burn against weekly limits.
+        """
         return {
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,
-            "cache_hit_tokens": 0,
-            "cache_miss_tokens": self.total_prompt_tokens,
+            "cache_hit_tokens": self.total_cache_read_input_tokens,
+            "cache_miss_tokens": max(
+                0, self.total_prompt_tokens - self.total_cache_read_input_tokens
+            ),
+            "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
+            "cache_read_input_tokens": self.total_cache_read_input_tokens,
             "completion_tokens": self.total_completion_tokens,
             "reasoning_tokens": 0,
             "input_cost_usd": 0.0,
             "output_cost_usd": 0.0,
-            "total_cost_usd": 0.0,
+            "total_cost_usd": self.total_cost_usd,
         }
 
     @property
@@ -338,13 +361,46 @@ class ClaudeCodeProvider(LLMProvider):
                     )
                     if fence_match:
                         result = fence_match.group(1).strip()
-                from pyutilz.llm.token_counter import count_tokens as _count_tok
-                in_tok = _count_tok(prompt) + _count_tok(system or "")
-                out_tok = _count_tok(result)
+                # Prefer the SDK's ResultMessage usage / cost over a
+                # tiktoken estimate (wrong tokenizer for Claude). Falls
+                # back to tiktoken on the CLI path or if the SDK didn't
+                # surface a ResultMessage with usage.
+                rm = getattr(self, "_last_result_message", None)
+                rm_usage = getattr(rm, "usage", None) if rm is not None else None
+                if rm_usage is not None:
+                    in_tok = int(getattr(rm_usage, "input_tokens", 0) or 0)
+                    out_tok = int(getattr(rm_usage, "output_tokens", 0) or 0)
+                    cache_create = int(
+                        getattr(rm_usage, "cache_creation_input_tokens", 0) or 0
+                    )
+                    cache_read = int(
+                        getattr(rm_usage, "cache_read_input_tokens", 0) or 0
+                    )
+                    cost = float(getattr(rm, "total_cost_usd", 0.0) or 0.0)
+                    sid = getattr(rm, "session_id", None)
+                    nturns = getattr(rm, "num_turns", None)
+                    self.last_cache_creation_input_tokens = cache_create
+                    self.last_cache_read_input_tokens = cache_read
+                    self.total_cache_creation_input_tokens += cache_create
+                    self.total_cache_read_input_tokens += cache_read
+                    self.last_cost_usd = cost
+                    self.total_cost_usd += cost
+                    if isinstance(sid, str):
+                        self.last_session_id = sid
+                    if isinstance(nturns, int):
+                        self.last_num_turns = nturns
+                else:
+                    from pyutilz.llm.token_counter import count_tokens as _count_tok
+                    in_tok = _count_tok(prompt) + _count_tok(system or "")
+                    out_tok = _count_tok(result)
+                    self.last_cache_creation_input_tokens = 0
+                    self.last_cache_read_input_tokens = 0
                 self._last_usage = {
                     "input_tokens": in_tok,
                     "output_tokens": out_tok,
                     "reasoning_tokens": 0,
+                    "cache_creation_input_tokens": self.last_cache_creation_input_tokens,
+                    "cache_read_input_tokens": self.last_cache_read_input_tokens,
                 }
                 self.total_prompt_tokens += in_tok
                 self.total_completion_tokens += out_tok
@@ -439,6 +495,10 @@ class ClaudeCodeProvider(LLMProvider):
                 if isinstance(msg, ResultMessage):
                     if isinstance(msg.result, str) and msg.result:
                         result_text = msg.result
+                    # Capture the real usage / cost / session metadata
+                    # from the SDK rather than inferring with tiktoken
+                    # against a wrong tokenizer.
+                    self._last_result_message = msg
                 elif msg_type == "AssistantMessage":
                     if hasattr(msg, "content") and msg.content:
                         parts = []
