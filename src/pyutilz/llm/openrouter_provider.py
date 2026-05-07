@@ -29,6 +29,7 @@ What's distinctive about a meta-provider, and how this class handles it:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -39,6 +40,7 @@ from typing import Any
 import httpx
 
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
 # Upper bound on the per-process health cache. Calibrated for "typical"
@@ -656,6 +658,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         models_fallback: tuple[str, ...] | None = None,
         enable_web_search: bool = False,
         anthropic_top_level_cache: bool = False,
+        retry_routing_404: bool = False,
+        routing_404_max_attempts: int = 3,
+        routing_404_pause_sec: float = 60.0,
     ):
         settings = get_llm_settings()
         resolved_key = api_key or (
@@ -725,6 +730,20 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         # Phase-4 web-search citations from OR's web plugin (when enabled).
         self.last_web_search_citations: list[dict[str, Any]] = []
 
+        # Bench-only opt-in: bounded retry on routing 404/405. Disabled by
+        # default because the parent's _NON_RETRYABLE_STATUSES rule (instant
+        # fail on 404) protects production from spinning 30+ min on a model
+        # that's permanently gone. But OR routing 404s are also commonly
+        # transient (provider redeploy, cold start, regional failover) -
+        # benchmarks lose 18% of rows to this. With ``retry_routing_404=True``
+        # the provider retries the call up to ``routing_404_max_attempts``
+        # times with ``routing_404_pause_sec`` between attempts. Total
+        # wall-clock cap = max_attempts * pause - bounded so concurrency
+        # pool never spins forever even if the model is genuinely dead.
+        self._retry_routing_404 = retry_routing_404
+        self._routing_404_max_attempts = max(1, int(routing_404_max_attempts))
+        self._routing_404_pause_sec = max(0.0, float(routing_404_pause_sec))
+
     def _reset_per_call_state(self) -> None:
         """Clear per-call ``last_*`` state at the start of every generate().
 
@@ -748,6 +767,52 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self.last_is_byok = None
         self.last_response_cache_source_id = None
         self.last_web_search_citations = []
+
+    async def generate(self, *args: Any, **kwargs: Any) -> str:
+        """OR-specific bounded retry on routing 404/405.
+
+        When ``retry_routing_404=True`` was passed at construction, an
+        ``LLMProviderError`` carrying "API error 404"/"405" with the
+        OR-specific routing wording ("No endpoints found" / "Method not
+        allowed") triggers up to ``routing_404_max_attempts`` retries with
+        ``routing_404_pause_sec`` between each. All other errors propagate
+        immediately so the parent's tenacity retry machinery handles them.
+
+        Default ``retry_routing_404=False`` keeps production behaviour:
+        instant fail on 404, no retries (the original design intent of
+        ``_NON_RETRYABLE_STATUSES`` - protects concurrency pool from
+        spinning on permanently-gone models).
+        """
+        if not self._retry_routing_404:
+            return await super().generate(*args, **kwargs)
+        last_exc: LLMProviderError | None = None
+        for attempt in range(1, self._routing_404_max_attempts + 1):
+            try:
+                return await super().generate(*args, **kwargs)
+            except LLMProviderError as exc:
+                msg = str(exc).lower()
+                is_routing = (
+                    ("api error 404" in msg or "api error 405" in msg)
+                    and (
+                        "no endpoints found" in msg
+                        or "method not allowed" in msg
+                        or " not found" in msg
+                    )
+                )
+                if not is_routing:
+                    raise
+                last_exc = exc
+                if attempt < self._routing_404_max_attempts:
+                    logger.warning(
+                        "[OR routing %s] %s attempt %d/%d - sleeping %ss "
+                        "before retry: %s",
+                        "404/405", self.model_name, attempt,
+                        self._routing_404_max_attempts,
+                        self._routing_404_pause_sec, str(exc)[:120],
+                    )
+                    await asyncio.sleep(self._routing_404_pause_sec)
+        assert last_exc is not None
+        raise last_exc
 
     @property
     def context_window(self) -> int:

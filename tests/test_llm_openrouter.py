@@ -1584,3 +1584,118 @@ class TestFactoryIntegration:
     def test_aliases_resolve(self, alias):
         from pyutilz.llm.factory import _ALIASES
         assert _ALIASES[alias] == "openrouter"
+
+
+class TestRoutingRetry:
+    """``retry_routing_404`` opt-in: bounded retry on OR routing 404/405.
+
+    Default OFF preserves production behaviour (instant fail on 404
+    keeps the concurrency pool safe). When ON, transient routing 404s
+    (provider redeploy / cold start / region failover) get a chance to
+    recover before the row is recorded as a failure.
+    """
+
+    def test_default_disabled(self):
+        p = _provider()
+        assert p._retry_routing_404 is False
+        assert p._routing_404_max_attempts == 3
+        assert p._routing_404_pause_sec == 60.0
+
+    def test_enabled_via_constructor(self):
+        p = _provider(
+            retry_routing_404=True,
+            routing_404_max_attempts=4,
+            routing_404_pause_sec=10.0,
+        )
+        assert p._retry_routing_404 is True
+        assert p._routing_404_max_attempts == 4
+        assert p._routing_404_pause_sec == 10.0
+
+    @pytest.mark.asyncio
+    async def test_disabled_by_default_no_retry(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+        p = _provider()
+        with patch(
+            "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
+            new=AsyncMock(side_effect=LLMProviderError(
+                "OpenRouter API error 404: No endpoints found for X."
+            )),
+        ) as parent:
+            with pytest.raises(LLMProviderError):
+                await p.generate("hi")
+            assert parent.call_count == 1  # no retry path
+
+    @pytest.mark.asyncio
+    async def test_retries_on_routing_404(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+        p = _provider(
+            retry_routing_404=True,
+            routing_404_max_attempts=3,
+            routing_404_pause_sec=0.0,
+        )
+        with patch(
+            "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
+            new=AsyncMock(side_effect=LLMProviderError(
+                "OpenRouter API error 404: No endpoints found for X."
+            )),
+        ) as parent:
+            with pytest.raises(LLMProviderError):
+                await p.generate("hi")
+            assert parent.call_count == 3  # original + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_retry_recovers_when_second_attempt_succeeds(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+        p = _provider(
+            retry_routing_404=True,
+            routing_404_max_attempts=3,
+            routing_404_pause_sec=0.0,
+        )
+        side_effects = [
+            LLMProviderError("OpenRouter API error 404: No endpoints found for X."),
+            "second-attempt-ok",
+        ]
+        with patch(
+            "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
+            new=AsyncMock(side_effect=side_effects),
+        ) as parent:
+            result = await p.generate("hi")
+            assert result == "second-attempt-ok"
+            assert parent.call_count == 2  # one fail, one success
+
+    @pytest.mark.asyncio
+    async def test_non_routing_error_propagates_immediately(self):
+        """A 422 ContextOverflow is NOT a routing 404 - must not retry."""
+        from pyutilz.llm.exceptions import LLMProviderError
+        p = _provider(
+            retry_routing_404=True,
+            routing_404_max_attempts=3,
+            routing_404_pause_sec=0.0,
+        )
+        with patch(
+            "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
+            new=AsyncMock(side_effect=LLMProviderError(
+                "OpenRouter API error 422: maximum context length is 8192"
+            )),
+        ) as parent:
+            with pytest.raises(LLMProviderError):
+                await p.generate("hi")
+            assert parent.call_count == 1  # no retry on non-routing error
+
+    @pytest.mark.asyncio
+    async def test_retry_recognises_405_method_not_allowed(self):
+        from pyutilz.llm.exceptions import LLMProviderError
+        p = _provider(
+            retry_routing_404=True,
+            routing_404_max_attempts=2,
+            routing_404_pause_sec=0.0,
+        )
+        with patch(
+            "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
+            new=AsyncMock(side_effect=LLMProviderError(
+                "OpenRouter API error 405: Method not allowed"
+            )),
+        ) as parent:
+            with pytest.raises(LLMProviderError):
+                await p.generate("hi")
+            assert parent.call_count == 2
