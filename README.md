@@ -297,6 +297,44 @@ pre-commit run --hook-stage=manual pyutilz-meta-tests-static-only
 
 ---
 
+## 📋 TODO — LLM provider matrix (deferred L-effort items)
+
+The 2026-05-07 audit completed Phase 1 (HIGH/MEDIUM bug fixes from Audit A), Phase 2 (Audit C top-6 correctness — Anthropic real `count_tokens`/cache fields/ratelimit headers, Claude Code `ResultMessage.usage`, streaming usage, Gemini `safety_ratings`/grounding/function_calls), Phase 4-A (OpenRouter `cache_discount`/`is_byok`/web-search/`cache_control`/`/parameters`), and Phase 4-B (tool_calls/citations capture, xAI live-search, Gemini multi-candidate, Claude Code `/status`).
+
+The remaining matrix items below are L-effort entire API families that justify a dedicated session each — every one needs explicit shape decisions (persistence semantics, polling patterns, separate auth keys) that are easier to get right with concrete usage in mind:
+
+**Anthropic.**
+- **Files API** (`/v1/files`) — multimodal upload + cross-call reuse. SDK exposes `client.files.upload/list/delete/retrieve`; pyutilz wrapper would be a thin delegate plus integration with the cache key (uploaded file IDs survive sessions).
+- **Message Batches API** (`/v1/messages/batches`) — **50% pricing discount** for offline workloads, currently unused. Needs create + poll + stream-results loop. Highest financial ROI of the deferred items.
+
+**OpenAI.**
+- **Organization usage API** (`/v1/organization/usage` / `/costs`) — opt-in `admin_api_key=` constructor knob. Complements existing `check_account_limits` which only surfaces per-call rate-limit headers.
+- **Responses API beta** (`/v1/responses`) — newer surface with server-side tool loops. Currently we only target `/chat/completions`.
+- **Batches API** (`/v1/batches`) — same 50% discount story as Anthropic.
+- **Files API** (`/v1/files`) — same as Anthropic.
+
+**Gemini.**
+- **`cachedContents` API** (full lifecycle: create / list / get / delete) — Gemini's **90% input-token discount** is the largest unrealised cost saving in this provider. Currently we only thread the `cached_content=` resource name through `generate()`; managing the cache lifetime is left to the caller. A wrapper class would close the loop.
+- **Files API** — required for caching large PDFs / videos before referencing them by URI in prompts.
+
+**DeepSeek.**
+- **FIM endpoint** (`/beta/completions` with prefix + suffix) — code-completion niche; unblocks IDE-plugin use cases.
+
+**xAI.**
+- **Deferred chat completions** — async-poll variant for very long generations.
+- **Image generation** (`grok-2-image` and successors) — different endpoint family from text chat; would expand pyutilz's scope to multimodal.
+
+**Out of scope (correctly skipped — documented for clarity):**
+- Anthropic Admin API `/cost_report` — needs separate `sk-ant-admin-` key.
+- Gemini Cloud Billing API — separate GCP service-account auth.
+- OpenAI deprecated `/v1/dashboard/billing/credit_grants` — endpoint removed.
+- xAI management API balance — does not exist at present.
+- OpenRouter `/credits/coinbase` — niche crypto top-up.
+
+When picking up any of these, start by writing the minimal motivating use case (one specific batch script / IDE integration / cache scenario) so the wrapper shape is grounded rather than speculative.
+
+---
+
 ## 📈 Performance Benchmarks
 
 Verified performance improvements (see [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md)):

@@ -21,59 +21,34 @@ import pyutilz.llm.openrouter_provider as openrouter_module
 
 
 def _provider(**overrides) -> OpenRouterProvider:
-    """Build a provider without hitting settings — bypasses key resolution."""
-    p = OpenRouterProvider.__new__(OpenRouterProvider)
-    # Run base __init__ logic via a manual setup
-    import asyncio
-    p.api_key = "test-key"
-    p.model_name = overrides.get("model", "openai/gpt-4o-mini")
-    p.semaphore = asyncio.Semaphore(10)
-    p._client = httpx.AsyncClient(
-        base_url=OpenRouterProvider._base_url,
-        headers={
-            "Authorization": "Bearer test-key",
-            "Content-Type": "application/json",
-        },
-    )
-    p.total_prompt_tokens = 0
-    p.total_completion_tokens = 0
-    p.total_cache_hit_tokens = 0
-    p.total_reasoning_tokens = 0
-    p._call_count = 0
-    p._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
-    p._provider_order = overrides.get("provider_order")
-    p._provider_ignore = overrides.get("provider_ignore")
-    p._provider_sort = overrides.get("provider_sort")
-    p._provider_allow_fallbacks = overrides.get("provider_allow_fallbacks", True)
-    p._models_fallback = overrides.get("models_fallback")
-    p.total_actual_cost_usd = 0.0
-    p.last_actual_cost_usd = 0.0
-    p.total_cache_write_tokens = 0
-    p.last_cache_write_tokens = 0
-    p.last_cache_hit_tokens = 0
-    p.total_audio_tokens = 0
-    p.last_audio_tokens = 0
-    p.total_upstream_inference_cost_usd = 0.0
-    p.last_upstream_inference_cost_usd = None
-    p.last_generation_id = None
-    p.last_upstream_provider = None
-    p.last_upstream_model = None
-    p.last_native_finish_reason = None
-    p.last_rate_limits = {}
-    # Phase-4 fields
-    p._enable_web_search = overrides.get("enable_web_search", False)
-    p._anthropic_top_level_cache = overrides.get("anthropic_top_level_cache", False)
-    p.last_cache_discount_usd = None
-    p.total_cache_discount_usd = 0.0
-    p.last_is_byok = None
-    p.last_response_cache_source_id = None
-    p.last_web_search_citations = []
-    return p
+    """Build a fully-initialised OpenRouterProvider for tests.
+
+    Calls the REAL ``__init__`` via a patched settings stub -- avoids
+    the previous "manually set 30 attributes" pattern that silently
+    drifted when ``__init__`` gained new fields. ``overrides`` accepts
+    any constructor kwarg; sensible test defaults are supplied below.
+    """
+    mock_settings = MagicMock()
+    mock_settings.openrouter_api_key = None  # force explicit api_key path
+    init_kwargs = {
+        "api_key": "test-key",
+        "model": "openai/gpt-4o-mini",
+        "max_concurrent": 10,
+    }
+    init_kwargs.update(overrides)
+    with patch(
+        "pyutilz.llm.openrouter_provider.get_llm_settings",
+        return_value=mock_settings,
+    ):
+        return OpenRouterProvider(**init_kwargs)
 
 
 @pytest.fixture(autouse=True)
-def _reset_models_cache():
-    """Each test starts with fresh caches so prior fixtures don't leak."""
+def _reset_caches():
+    """Each test starts with fresh module-level caches so prior fixtures
+    don't leak. The catalogue + health cache are process-wide singletons
+    in the implementation; clearing on entry AND exit guards both ways.
+    """
     openrouter_module._MODELS_CATALOGUE = None
     openrouter_module._HEALTH_CACHE.clear()
     yield
@@ -185,13 +160,7 @@ class TestExtraRequestBody:
 
 
 class TestCostTracking:
-    def test_track_usage_records_actual_cost(self):
-        p = _provider()
-        p._track_provider_specific_usage(
-            {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0042}
-        )
-        assert p.last_actual_cost_usd == pytest.approx(0.0042)
-        assert p.total_actual_cost_usd == pytest.approx(0.0042)
+    # B13 dedup: covered by integration test_usage_cost_recorded_after_generate.
 
     def test_track_usage_accumulates(self):
         p = _provider()
@@ -205,12 +174,8 @@ class TestCostTracking:
         p._track_provider_specific_usage({"prompt_tokens": 10})
         assert p.total_actual_cost_usd == 0.0
 
-    def test_track_usage_cache_write_tokens(self):
-        p = _provider()
-        p._track_provider_specific_usage(
-            {"prompt_tokens_details": {"cache_write_tokens": 100}}
-        )
-        assert p.total_cache_write_tokens == 100
+    # B14 dedup: cache-write tokens covered by integration
+    # test_usage_cost_recorded_after_generate which asserts the same totals.
 
     def test_track_usage_cached_tokens_fallback(self):
         # OR's modern field is prompt_tokens_details.cached_tokens; the legacy
@@ -237,17 +202,8 @@ class TestPricing:
         openrouter_module._MODELS_CATALOGUE = {}
         assert _per_token_cost_pair("nonexistent/model") == (0.0, 0.0)
 
-    def test_per_token_cost_converts_per_token_to_per_1m(self):
-        # OR publishes pricing as USD-per-token strings.
-        openrouter_module._MODELS_CATALOGUE = {
-            "openai/gpt-4o": {
-                "id": "openai/gpt-4o",
-                "pricing": {"prompt": "0.0000025", "completion": "0.00001"},
-            }
-        }
-        in_p, out_p = _per_token_cost_pair("openai/gpt-4o")
-        assert in_p == pytest.approx(2.5)
-        assert out_p == pytest.approx(10.0)
+    # B12 dedup: per-token to per-1M conversion covered through the
+    # public-API path test_input_cost_per_1m_uses_catalogue below.
 
     def test_per_token_cost_handles_malformed_pricing(self):
         openrouter_module._MODELS_CATALOGUE = {
