@@ -24,8 +24,26 @@ class TestExtractJsonEdgeCases:
         result = LLMProvider.extract_json(text)
         assert result == [1, 2, 3]
 
-    def test_multiple_json_objects_raises(self):
+    def test_multiple_json_objects_returns_first(self):
+        # New JSONDecoder.raw_decode scan returns the first parseable
+        # object rather than the old greedy-regex behaviour of raising.
+        # First-wins matches what most LLM responses intend when prose
+        # frames the JSON with trailing commentary.
         text = '{"a": 1} {"b": 2}'
+        result = LLMProvider.extract_json(text)
+        assert result == {"a": 1}
+
+    def test_json_with_trailing_prose(self):
+        # raw_decode scan stops at the JSON value; trailing prose is OK.
+        text = '{"key": "value"} -- and that\'s the answer'
+        assert LLMProvider.extract_json(text) == {"key": "value"}
+
+    def test_json_with_leading_prose(self):
+        text = "Sure, here you go: {\"key\": \"value\"}"
+        assert LLMProvider.extract_json(text) == {"key": "value"}
+
+    def test_invalid_json_still_raises(self):
+        text = "this is not json at all { broken"
         with pytest.raises(JSONParsingError):
             LLMProvider.extract_json(text)
 

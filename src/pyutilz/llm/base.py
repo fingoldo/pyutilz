@@ -77,6 +77,12 @@ class LLMProvider(ABC):
     def extract_json(text: str, provider_name: str = "LLM") -> dict[str, Any]:
         """Extract and parse JSON from LLM response, handling code blocks.
 
+        Strategy: prefer markdown-fenced JSON, then scan the body with
+        ``json.JSONDecoder.raw_decode`` from each ``{`` candidate. The
+        scan-based approach replaces brittle regexes — a lazy ``\\{...?\\}``
+        stops at the first ``}`` even mid-object, while a greedy form
+        crosses multiple objects. ``raw_decode`` knows JSON's grammar.
+
         Args:
             text: Raw LLM response that may contain JSON in code blocks.
             provider_name: Name of the provider for error messages.
@@ -92,26 +98,54 @@ class LLMProvider(ABC):
         try:
             text = text.strip()
 
-            # Try to find JSON in markdown code block first
-            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
-            if json_match:
-                return json.loads(json_match.group(1))
+            # 1. Markdown-fenced JSON wins. The outer fences delimit the
+            #    payload unambiguously, so we extract via regex (only the
+            #    wrapper is regex; the JSON itself is parsed properly).
+            fence_match = re.search(
+                r"```(?:json)?\s*\n?(\{.*?\}|\[.*?\])\s*\n?```",
+                text,
+                re.DOTALL,
+            )
+            if fence_match:
+                return json.loads(fence_match.group(1))
 
-            # Try stripping code block markers
-            if text.startswith("```json"):
-                text = text[7:]
-            if text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
+            # 2. Strip leading fence even without a closing fence (some
+            #    streaming LLMs forget to close).
+            stripped = text
+            if stripped.startswith("```json"):
+                stripped = stripped[7:]
+            elif stripped.startswith("```"):
+                stripped = stripped[3:]
+            if stripped.endswith("```"):
+                stripped = stripped[:-3]
+            stripped = stripped.strip()
 
-            # Try to find raw JSON object
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if json_match:
-                return json.loads(json_match.group(0))
+            # 3. Try the whole stripped text first (cheap path: most
+            #    json_mode= responses are pure JSON).
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
 
-            # Last resort: try parsing the whole text
-            return json.loads(text.strip())
+            # 4. Scan for the first parseable JSON object via raw_decode.
+            #    Walks each ``{`` candidate, asks the decoder to consume
+            #    a single JSON value, and returns the first one that
+            #    parses cleanly. Robust against prose-before-JSON,
+            #    JSON-with-trailing-prose, and nested-object boundaries.
+            decoder = json.JSONDecoder()
+            for i, ch in enumerate(stripped):
+                if ch != "{":
+                    continue
+                try:
+                    obj, _end = decoder.raw_decode(stripped, i)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    return obj
+
+            # 5. Last resort — re-raise via the original strict parse so
+            #    the JSONDecodeError handler below produces a clean error.
+            return json.loads(stripped)
         except json.JSONDecodeError as e:
             # Before reporting as malformed JSON, check whether the model
             # simply refused to answer — that's a distinct error class with

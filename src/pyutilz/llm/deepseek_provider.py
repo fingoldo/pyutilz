@@ -80,10 +80,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
                 "retrying indefinitely until balance is restored..."
             )
 
-    def _compute_billed_output(
-        self, completion_tokens: int, reasoning_tokens: int
-    ) -> int:
-        return completion_tokens
+    # _compute_billed_output not overridden — base default returns
+    # completion_tokens which matches DeepSeek's billing semantics
+    # (reasoning tokens are already included in completion_tokens).
 
     # NOTE: thinking mode is intentionally LEFT ENABLED by default for V4.
     # Callers who need non-thinking mode (e.g. tight max_tokens budget on
@@ -94,8 +93,16 @@ class DeepSeekProvider(OpenAICompatibleProvider):
 
     def _thinking_request_field(self, thinking: bool | str) -> dict | None:
         # Only V4 models support this toggle; legacy aliases (chat/reasoner)
-        # are fixed-mode server-side and reject the field.
+        # are fixed-mode server-side and reject the field. Log a warning
+        # so a caller passing thinking= to a legacy alias notices the
+        # request goes through unchanged rather than silently ignored.
         if not self.model_name.startswith("deepseek-v4"):
+            if thinking:
+                logger.warning(
+                    "DeepSeek %r does not support the thinking toggle "
+                    "(only deepseek-v4-* models do); thinking=%r ignored.",
+                    self.model_name, thinking,
+                )
             return None
         # DeepSeek V4 expects a hard on/off, not an effort string.
         # Coerce: ``True`` or any non-empty effort string -> enabled;
@@ -145,11 +152,37 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             "raw": data,
         }
 
+    def _resolve_pricing(self, model: str) -> tuple[float, float, float]:
+        """Look up (input, cache_hit, output) per-1M USD rates for ``model``.
+
+        Falls back to ``deepseek-v4-flash`` pricing on miss, with a single
+        warning per unknown model name (logged once via the cache itself
+        as a side-effect) so callers don't get silently mis-priced. A
+        typo like ``"deepseekv4"`` would otherwise estimate cost using
+        flash rates without any signal.
+        """
+        if model not in _PRICING:
+            self._warn_unknown_model_once(model)
+            return _PRICING["deepseek-v4-flash"]
+        return _PRICING[model]
+
+    _seen_unknown_models: set[str] = set()
+
+    def _warn_unknown_model_once(self, model: str) -> None:
+        if model in DeepSeekProvider._seen_unknown_models:
+            return
+        DeepSeekProvider._seen_unknown_models.add(model)
+        logger.warning(
+            "DeepSeek pricing for %r is unknown; falling back to "
+            "deepseek-v4-flash rates. Cost estimates may be off.",
+            model,
+        )
+
     def _input_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[0]
+        return self._resolve_pricing(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[2]
+        return self._resolve_pricing(model)[2]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, _PRICING["deepseek-v4-flash"])[1]
+        return self._resolve_pricing(model)[1]

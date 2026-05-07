@@ -1512,40 +1512,99 @@ class TestAccountIntrospection:
     @pytest.mark.asyncio
     async def test_get_account_credits(self):
         p = _provider()
-        body = {"data": {"total_credits": 100.0, "total_usage": 37.5}}
-        resp = httpx.Response(
-            status_code=200,
-            json=body,
-            request=httpx.Request("GET", "https://openrouter.ai/api/v1/credits"),
-        )
+        # /credits AND /key are called now (the latter to read is_free_tier
+        # so a free-tier user with balance=None still reports available).
+        credits_body = {"data": {"total_credits": 100.0, "total_usage": 37.5}}
+        key_body = {"data": {"is_free_tier": False, "limit": None}}
+
+        async def _fake_get(path):
+            body = credits_body if path == "/credits" else key_body
+            return httpx.Response(
+                status_code=200, json=body,
+                request=httpx.Request("GET", f"https://openrouter.ai/api/v1{path}"),
+            )
+
         p._client = AsyncMock()
-        p._client.get = AsyncMock(return_value=resp)
+        p._client.get = AsyncMock(side_effect=_fake_get)
 
         out = await p.get_account_credits()
-        p._client.get.assert_awaited_once_with("/credits")
-        # Normalized to match base-class schema across all providers
+        # Both endpoints hit
+        assert p._client.get.await_count == 2
+        called_paths = sorted(c.args[0] for c in p._client.get.await_args_list)
+        assert called_paths == ["/credits", "/key"]
         assert out["balance_usd"] == pytest.approx(62.5)
         assert out["total_granted"] == pytest.approx(100.0)
         assert out["total_used"] == pytest.approx(37.5)
         assert out["currency"] == "USD"
         assert out["is_available"] is True
+        assert out["is_free_tier"] is False
         assert out["raw"] == {"total_credits": 100.0, "total_usage": 37.5}
 
     @pytest.mark.asyncio
     async def test_get_account_credits_zero_balance_unavailable(self):
         p = _provider()
-        body = {"data": {"total_credits": 10.0, "total_usage": 10.0}}
-        resp = httpx.Response(
-            status_code=200,
-            json=body,
-            request=httpx.Request("GET", "https://openrouter.ai/api/v1/credits"),
-        )
+        credits_body = {"data": {"total_credits": 10.0, "total_usage": 10.0}}
+        key_body = {"data": {"is_free_tier": False}}
+
+        async def _fake_get(path):
+            body = credits_body if path == "/credits" else key_body
+            return httpx.Response(
+                status_code=200, json=body,
+                request=httpx.Request("GET", f"https://openrouter.ai/api/v1{path}"),
+            )
+
         p._client = AsyncMock()
-        p._client.get = AsyncMock(return_value=resp)
+        p._client.get = AsyncMock(side_effect=_fake_get)
 
         out = await p.get_account_credits()
         assert out["balance_usd"] == 0.0
         assert out["is_available"] is False
+        assert out["is_free_tier"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_account_credits_free_tier_available_despite_no_balance(self):
+        """A free-tier user (never purchased credits) has balance=None
+        but is_available=True since free-models quota still applies."""
+        p = _provider()
+        credits_body = {"data": {}}  # no total_credits / total_usage
+        key_body = {"data": {"is_free_tier": True}}
+
+        async def _fake_get(path):
+            body = credits_body if path == "/credits" else key_body
+            return httpx.Response(
+                status_code=200, json=body,
+                request=httpx.Request("GET", f"https://openrouter.ai/api/v1{path}"),
+            )
+
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(side_effect=_fake_get)
+
+        out = await p.get_account_credits()
+        assert out["balance_usd"] is None
+        assert out["is_free_tier"] is True
+        assert out["is_available"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_account_credits_resilient_to_key_lookup_failure(self):
+        """If /key fails, fall back to strict balance check; don't blow up."""
+        p = _provider()
+        credits_body = {"data": {"total_credits": 50.0, "total_usage": 10.0}}
+
+        async def _fake_get(path):
+            if path == "/key":
+                raise httpx.ConnectError("network glitch")
+            return httpx.Response(
+                status_code=200, json=credits_body,
+                request=httpx.Request("GET", f"https://openrouter.ai/api/v1{path}"),
+            )
+
+        p._client = AsyncMock()
+        p._client.get = AsyncMock(side_effect=_fake_get)
+
+        out = await p.get_account_credits()
+        assert out["balance_usd"] == pytest.approx(40.0)
+        assert out["is_free_tier"] is None  # lookup failed
+        assert out["is_available"] is True  # balance > 0 still drives this
 
 
 class TestFactoryIntegration:

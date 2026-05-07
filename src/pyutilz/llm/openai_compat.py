@@ -21,14 +21,35 @@ from pyutilz.llm.base import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+_NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({
+    400,  # bad request — body invalid, retry won't help
+    401,  # unauthorized — wrong/expired API key
+    403,  # forbidden — RBAC/region block
+    404,  # not found — model deprecated or misspelled; OpenRouter
+          # /chat/completions returns 404 even when /models/{id}/endpoints
+          # still lists provider endpoints (catalog can lag). Retrying with
+          # exponential backoff burns 30+ minutes per dead model before
+          # the wall-clock timeout fires.
+    405,  # method not allowed — endpoint doesn't accept POST. Same
+          # underlying pattern as 404: catalog claims model is alive, but
+          # the actual /chat/completions endpoint won't service the call.
+          # Observed 2026-05-05 on llama-guard-4-12b, nemotron-3-nano-30b-a3b,
+          # olmo-3.1-32b-instruct — 110+ calls each spinning through 50
+          # retry attempts, blocking the concurrency pool for hours.
+    410,  # gone — endpoint permanently removed; identical reasoning to 404.
+    422,  # unprocessable entity — request well-formed but semantically
+          # rejected (bad enum, schema violation); won't be accepted on retry.
+})
+
+
 def _is_retryable_http_error(exc: BaseException) -> bool:
     """Return True for transient HTTP errors that should be retried infinitely.
 
-    Non-retryable: 400 (bad request), 401 (auth), 403 (forbidden).
+    Non-retryable: 400, 401, 403, 404, 410, 422 (see ``_NON_RETRYABLE_STATUSES``).
     Retryable: 402 (billing), 429 (rate limit), 5xx, transport errors.
     """
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code not in (400, 401, 403)
+        return exc.response.status_code not in _NON_RETRYABLE_STATUSES
     return isinstance(exc, httpx.TransportError)
 
 
@@ -165,6 +186,15 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return None
 
+    def _reset_per_call_state(self) -> None:
+        """Hook called at the START of every ``generate()`` / ``generate_stream()``.
+
+        Default no-op. Providers tracking ``last_*`` per-call attributes
+        should reset them here so a failed call doesn't leave stale state
+        from the previous successful call masquerading as the latest one.
+        """
+        return None
+
     @abstractmethod
     def _input_cost_per_1m(self, model: str) -> float: ...
 
@@ -284,6 +314,7 @@ class OpenAICompatibleProvider(LLMProvider):
         Token-usage accounting is updated only after the stream completes
         (the final ``[DONE]`` chunk carries it for OpenAI-compat APIs).
         """
+        self._reset_per_call_state()
         import json as _json
 
         if max_tokens <= 0:
@@ -358,6 +389,7 @@ class OpenAICompatibleProvider(LLMProvider):
           V4) coerce a non-empty string to ``True``.
         Providers that don't support a thinking toggle ignore this flag.
         """
+        self._reset_per_call_state()
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
         async with self.semaphore:
@@ -380,7 +412,7 @@ class OpenAICompatibleProvider(LLMProvider):
             # Provider-specific status handling (e.g. DeepSeek 402)
             self._handle_special_status(resp)
 
-            if resp.status_code in (400, 401, 403):
+            if resp.status_code in _NON_RETRYABLE_STATUSES:
                 try:
                     err_body = resp.json()
                     detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
@@ -473,7 +505,7 @@ class OpenAICompatibleProvider(LLMProvider):
     ) -> AsyncIterator[dict[str, Any]]:
         """Generate responses in batch using concurrent requests."""
 
-        async def process_request(req: dict) -> dict:
+        async def process_request(req: dict) -> dict[str, Any]:
             request_id = req.get("id", "unknown")
             try:
                 result = await self.generate(
@@ -487,7 +519,10 @@ class OpenAICompatibleProvider(LLMProvider):
                 logger.error("Batch request %s failed: %s", request_id, e)
                 return {"id": request_id, "error": str(e)}
 
-        tasks = [process_request(req) for req in requests]
+        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
+        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
+        # — feeding Tasks instead works across versions.
+        tasks = [asyncio.create_task(process_request(req)) for req in requests]
         for coro in asyncio.as_completed(tasks):
             yield await coro
 

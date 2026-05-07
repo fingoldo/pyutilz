@@ -41,6 +41,14 @@ import httpx
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
+# Upper bound on the per-process health cache. Calibrated for "typical"
+# meta-provider workloads (a few hundred candidate models, queried in
+# bursts); adjust if you've got a real reason. Above this size we sweep
+# stale entries first, then evict oldest until under cap. Each entry is
+# ~1-4 KB so even at the cap memory is trivial; this is a runaway-growth
+# guard, not a tight resource limit.
+_HEALTH_CACHE_MAX_SIZE = 1024
+
 logger = logging.getLogger(__name__)
 
 # Process-wide cache of /api/v1/models — pricing is published per token,
@@ -55,9 +63,10 @@ _MODELS_URL = "https://openrouter.ai/api/v1/models"
 def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     """Fetch and parse the public /api/v1/models catalogue.
 
-    Returns a dict mapping ``model_id`` to its raw entry. Empty dict on any
-    failure — callers must treat missing entries as "unknown pricing" and
-    fall back to zero cost rather than crashing the request flow.
+    Returns a dict mapping ``model_id`` to its raw entry. Returns an empty
+    dict on failure WITHOUT caching the failure — a transient outage at
+    startup would otherwise lock the process into zero pricing forever.
+    The next call retries; once a fetch succeeds the result is cached.
     """
     global _MODELS_CATALOGUE
     if _MODELS_CATALOGUE is not None:
@@ -70,15 +79,16 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             resp.raise_for_status()
             payload = resp.json()
             entries = payload.get("data") or payload.get("models") or []
-            _MODELS_CATALOGUE = {
+            catalogue = {
                 e["id"]: e for e in entries if isinstance(e, dict) and "id" in e
             }
         except Exception as exc:
             logger.warning(
                 "OpenRouter /models catalogue fetch failed (%s); "
-                "estimate_cost() will return 0 until restart.", exc,
+                "estimate_cost() will return 0 for this call. Next call retries.", exc,
             )
-            _MODELS_CATALOGUE = {}
+            return {}  # do NOT cache failure — retry on next call
+        _MODELS_CATALOGUE = catalogue
         return _MODELS_CATALOGUE
 
 
@@ -124,13 +134,38 @@ def _resolve_or_api_key(explicit: str | None) -> str | None:
     if env_key:
         return env_key
     try:
-        from pyutilz.llm.config import get_llm_settings
         s = get_llm_settings()
         if s.openrouter_api_key:
             return s.openrouter_api_key.get_secret_value()
     except Exception:
         pass
     return None
+
+
+def _sweep_health_cache_locked(now: float) -> None:
+    """Evict cached entries when ``_HEALTH_CACHE`` grows past the cap.
+
+    Caller MUST hold ``_HEALTH_CACHE_LOCK``. Two-pass strategy:
+      1. Drop entries older than 24h regardless of TTL (definitely stale).
+      2. If still over cap, drop oldest entries until 128 below cap so
+         we don't sweep on every subsequent miss.
+
+    Sized for the long-lived-process case: an audit script probing 10k
+    distinct models over hours would otherwise grow ``_HEALTH_CACHE``
+    unboundedly. The dict survives the catalogue cache because models
+    can rotate in/out of OR's listing while the same id stays valid.
+    """
+    if len(_HEALTH_CACHE) <= _HEALTH_CACHE_MAX_SIZE:
+        return
+    cutoff_long = now - 86400.0
+    for k in [k for k, (ts, _) in _HEALTH_CACHE.items() if ts < cutoff_long]:
+        del _HEALTH_CACHE[k]
+    if len(_HEALTH_CACHE) <= _HEALTH_CACHE_MAX_SIZE:
+        return
+    sorted_keys = sorted(_HEALTH_CACHE, key=lambda k: _HEALTH_CACHE[k][0])
+    drop_count = len(_HEALTH_CACHE) - _HEALTH_CACHE_MAX_SIZE + 128
+    for k in sorted_keys[:drop_count]:
+        del _HEALTH_CACHE[k]
 
 
 def _fetch_endpoints_for_model(
@@ -180,13 +215,23 @@ def _normalize_uptime(value: Any) -> float | None:
     Normalise to fraction so downstream code can compare against
     a 0-1 ``min_uptime`` argument consistently.
 
-    Returns None on missing / non-numeric input.
+    Values outside ``[0, 100]`` are treated as malformed (logged and
+    coerced to ``None``) — silently dividing 1.5 down to 0.015 hides
+    upstream schema drift.
+
+    Returns None on missing / non-numeric / out-of-range input.
     """
     if value is None:
         return None
     try:
         v = float(value)
     except (TypeError, ValueError):
+        return None
+    if v < 0.0 or v > 100.0:
+        logger.warning(
+            "OpenRouter uptime out of expected [0, 100] range: %r; treating as None.",
+            value,
+        )
         return None
     return v / 100.0 if v > 1.0 else v
 
@@ -338,9 +383,19 @@ def _enrich_with_health(
                     fresh_health[mid] = _summarize_endpoints(endpoints)
 
         if health_ttl_seconds > 0 and fresh_health:
+            # Re-take monotonic at write time. The original `now` was taken
+            # before the (potentially multi-second) HTTP fan-out, so writing
+            # with `now` would age every fresh entry by however long the
+            # fetch took. Plus a parallel call could have written a newer
+            # entry in the meantime — preserve the newer one.
+            write_time = time.monotonic()
             with _HEALTH_CACHE_LOCK:
                 for mid, h in fresh_health.items():
-                    _HEALTH_CACHE[mid] = (now, h)
+                    existing = _HEALTH_CACHE.get(mid)
+                    if existing is not None and existing[0] >= write_time:
+                        continue
+                    _HEALTH_CACHE[mid] = (write_time, h)
+                _sweep_health_cache_locked(write_time)
 
     # ── Stage 2c: combine + filter by min_uptime ────────────────────
     for r in rows:
@@ -642,6 +697,26 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self.last_upstream_provider: str | None = None
         self.last_upstream_model: str | None = None
         self.last_native_finish_reason: str | None = None
+
+    def _reset_per_call_state(self) -> None:
+        """Clear per-call ``last_*`` state at the start of every generate().
+
+        Without this, a failed or partial call would leave stale metadata
+        from the previous successful call — ``last_call_summary()`` would
+        report fields from the wrong call, silently misleading callers.
+        Cumulative ``total_*`` counters are NOT reset.
+        """
+        self.last_actual_cost_usd = 0.0
+        self.last_cache_write_tokens = 0
+        self.last_cache_hit_tokens = 0
+        self.last_audio_tokens = 0
+        self.last_upstream_inference_cost_usd = None
+        self.last_generation_id = None
+        self.last_upstream_provider = None
+        self.last_upstream_model = None
+        self.last_native_finish_reason = None
+        self._last_finish_reason = None
+        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
 
     @property
     def context_window(self) -> int:
@@ -955,12 +1030,21 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     async def get_account_credits(self) -> dict[str, Any]:
         """Query ``/api/v1/credits`` and normalize to the base schema.
 
+        Cross-checks ``/api/v1/key`` for ``is_free_tier`` so a free-tier
+        user (``balance=None`` because they never purchased credits) is
+        marked ``is_available=True`` — they can still issue calls
+        against the free-models quota. Without this cross-check, a
+        free-tier user looks "unavailable" purely because the credits
+        endpoint can't compute a balance.
+
         Returns:
-            ``balance_usd``  — remaining credits (total_credits - total_usage)
+            ``balance_usd``   — remaining credits (total_credits - total_usage)
+                                or ``None`` for free-tier users
             ``total_granted`` — total credits ever loaded (USD)
             ``total_used``    — lifetime spend (USD)
             ``currency``      — always "USD" for OpenRouter
-            ``is_available``  — True iff balance > 0
+            ``is_available``  — True if balance > 0 OR free-tier user
+            ``is_free_tier``  — never-purchased-credits flag (or None on lookup error)
             ``raw``           — provider's full response under ``data``
         """
         resp = await self._client.get("/credits")
@@ -980,12 +1064,27 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         used = _to_float(data.get("total_usage"))
         balance = (granted - used) if (granted is not None and used is not None) else None
 
+        # Free-tier check: secondary GET to /key. Best-effort — if that
+        # call fails, ``is_free_tier=None`` and ``is_available`` falls
+        # back to the strict balance > 0 check.
+        is_free_tier: bool | None = None
+        try:
+            key_info = await self.check_account_limits()
+            raw_key = key_info.get("raw") or key_info
+            if isinstance(raw_key, dict) and "is_free_tier" in raw_key:
+                is_free_tier = bool(raw_key["is_free_tier"])
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("OR /key lookup for is_free_tier failed: %s", exc)
+
+        is_available = (balance is not None and balance > 0) or is_free_tier is True
+
         return {
             "balance_usd": balance,
             "total_granted": granted,
             "total_used": used,
             "currency": "USD",
-            "is_available": (balance is not None and balance > 0),
+            "is_available": is_available,
+            "is_free_tier": is_free_tier,
             "raw": data,
         }
 
