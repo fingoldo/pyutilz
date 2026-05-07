@@ -23,11 +23,22 @@ def test_base_default_is_false():
     """If a new provider subclass forgets to override, callers get
     False — safe default that triggers fallback parsing rather than
     crashing on an unsupported kwarg."""
-    # Build a minimal subclass that satisfies the abstract interface
-    # only enough to be instantiable.
+    # Minimal subclass implementing every abstract method on
+    # LLMProvider (generate, generate_json, generate_batch,
+    # estimate_cost, count_tokens). When the abstract surface grows
+    # this stub must grow with it.
     class _Stub(LLMProvider):
         async def generate(self, prompt, system=None, temperature=0.7, max_tokens=0):
             return ""
+        async def generate_json(self, prompt, system=None, temperature=0.3, max_tokens=0):
+            return {}
+        async def generate_batch(self, requests):
+            if False:
+                yield {}
+        def estimate_cost(self, input_tokens, output_tokens):
+            return 0.0
+        async def count_tokens(self, text):
+            return 0
     assert _Stub().supports_json_mode() is False
 
 
