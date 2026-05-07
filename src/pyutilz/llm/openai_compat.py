@@ -146,6 +146,14 @@ class OpenAICompatibleProvider(LLMProvider):
         # legacy ratelimit-* form some providers use. Read from
         # ``check_account_limits()``.
         self.last_rate_limits: dict[str, str] = {}
+        # tool_calls captured from choices[0].message.tool_calls when
+        # present (DeepSeek / OpenAI / xAI function-calling). The
+        # wrapper still returns the assistant text via ``generate()``;
+        # callers wanting structured tool calls read this attribute.
+        self.last_tool_calls: list[dict[str, Any]] = []
+        # citations from xAI live-search and similar grounded responses.
+        # Empty list when no grounding occurred.
+        self.last_citations: list[dict[str, Any]] = []
 
     # ── hooks for subclasses ─────────────────────────────────────────
 
@@ -573,7 +581,28 @@ class OpenAICompatibleProvider(LLMProvider):
                 raise LLMProviderError(f"{self._provider_name} returned no choices")
 
             self._last_finish_reason = choices[0].get("finish_reason", "unknown")
-            return choices[0]["message"]["content"]
+            message = choices[0].get("message") or {}
+            # Capture function-calling output before unwrapping content -- these
+            # silently disappeared previously; pyutilz returned only the bare
+            # text (often empty when the model chose tool_calls path).
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list):
+                self.last_tool_calls = tool_calls
+            else:
+                self.last_tool_calls = []
+            # xAI live-search citations + OpenAI annotations (which OR also
+            # uses for web-search) live on the message.
+            citations = message.get("citations")
+            if isinstance(citations, list):
+                self.last_citations = citations
+            else:
+                self.last_citations = []
+            content = message.get("content")
+            if content is None:
+                # Tool-call-only response (no assistant text). Return empty
+                # string but keep tool_calls accessible via the attribute.
+                return ""
+            return content
 
     async def generate_json(
         self,

@@ -95,6 +95,9 @@ class XAIProvider(OpenAICompatibleProvider):
         api_key: str | None = None,
         model: str = "grok-4-1-fast-reasoning",
         max_concurrent: int = 10,
+        live_search: bool | str = False,
+        live_search_max_sources: int | None = None,
+        return_citations: bool = True,
     ):
         settings = get_llm_settings()
         resolved_key = api_key or (
@@ -108,6 +111,28 @@ class XAIProvider(OpenAICompatibleProvider):
                 "Set XAI_API_KEY in .env or pass api_key="
             )
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
+        # Phase-4 live-search opt-in. Mode mirrors xAI's API:
+        # ``"auto"`` (let the model decide), ``"on"`` (force search),
+        # ``"off"``. ``True`` is treated as ``"on"``; ``False`` / ``"off"``
+        # disables. Citations come back on choices[0].message.citations
+        # and are auto-captured into ``self.last_citations`` via the
+        # OpenAI-compat base.
+        self._live_search = live_search
+        self._live_search_max_sources = live_search_max_sources
+        self._return_citations = return_citations
+
+    def _extra_request_body(self, model: str) -> dict:
+        body: dict = super()._extra_request_body(model)
+        if self._live_search:
+            mode = (
+                self._live_search if isinstance(self._live_search, str)
+                else "on"
+            )
+            params: dict = {"mode": mode, "return_citations": self._return_citations}
+            if self._live_search_max_sources is not None:
+                params["max_search_results"] = self._live_search_max_sources
+            body["search_parameters"] = params
+        return body
 
     def _get_timeout(self, model: str) -> float:
         # Reasoning-mode variants need long timeout (chain-of-thought can be slow).

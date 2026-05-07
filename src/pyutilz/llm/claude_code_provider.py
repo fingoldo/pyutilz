@@ -735,7 +735,49 @@ class ClaudeCodeProvider(LLMProvider):
         )
 
     async def check_account_limits(self) -> dict:
-        raise NotImplementedError(
-            "Claude Code rate limits follow Max-subscription session windows, "
-            "not exposed via API. The CLI shows them inline as ``/status``."
+        """Shell out to ``claude /status`` for subscription window info.
+
+        Claude Code uses Max-subscription session windows (5h burn,
+        weekly cap) rather than per-token limits. The CLI's
+        ``/status`` command renders these; we capture its raw output
+        and parse the obvious numeric markers (sessions left, reset
+        time).
+
+        Returns ``{"raw_text": <CLI output>, "session_summary":
+        <parsed-best-effort dict>}``. Raises NotImplementedError when
+        the CLI isn't available locally.
+        """
+        try:
+            claude_path = _find_claude_executable()
+        except Exception as exc:
+            raise NotImplementedError(
+                f"Claude Code CLI not on PATH ({exc}); cannot query /status."
+            )
+
+        proc = await asyncio.create_subprocess_exec(
+            claude_path, "/status",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise NotImplementedError(
+                "claude /status timed out; CLI may be hung."
+            )
+        text = (stdout or b"").decode(errors="replace")
+
+        # Best-effort parse of common markers; CLI output format isn't
+        # versioned-stable so we always include the raw text.
+        summary: dict[str, Any] = {}
+        for line in text.splitlines():
+            l = line.strip()
+            if "session" in l.lower() and "remain" in l.lower():
+                summary["session_remaining_hint"] = l
+            elif "reset" in l.lower():
+                summary["reset_hint"] = l
+
+        return {"raw_text": text, "session_summary": summary}

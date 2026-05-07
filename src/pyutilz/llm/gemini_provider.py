@@ -81,6 +81,8 @@ class GeminiProvider(LLMProvider):
         api_key: str | None = None,
         model: str = "gemini-3.1-flash-lite-preview",
         max_concurrent: int = 10,
+        candidate_count: int = 1,
+        cached_content: str | None = None,
     ):
         if not GENAI_AVAILABLE:
             raise ImportError("google-genai package not installed. Run: pip install google-genai")
@@ -109,6 +111,16 @@ class GeminiProvider(LLMProvider):
         self.last_all_candidates: list[Any] = []
         self.last_cached_content_tokens = 0
         self.total_cached_content_tokens = 0
+        # Phase-4 multi-candidate + cache support.
+        # ``candidate_count``: how many response candidates to ask for in
+        # one call (Gemini supports up to ~8). The first is returned by
+        # ``generate()``; ``last_all_candidates`` holds the rest.
+        # ``cached_content``: pass a Cached Content resource name (from
+        # the Caching API) to skip re-paying the prompt-input rate on
+        # cached prefixes; usage_metadata.cached_content_token_count
+        # surfaces the saving in ``last_cached_content_tokens``.
+        self._candidate_count = max(1, int(candidate_count))
+        self._cached_content = cached_content
 
     @property
     def context_window(self) -> int:
@@ -153,12 +165,20 @@ class GeminiProvider(LLMProvider):
         async with self.semaphore:
             contents = prompt
 
-            config = types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-                system_instruction=system if system else None,
-                response_mime_type="application/json" if json_mode else None,
-            )
+            config_kwargs: dict[str, Any] = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+                "system_instruction": system if system else None,
+                "response_mime_type": "application/json" if json_mode else None,
+            }
+            # Phase-4 multi-candidate + cached-content support. Skip
+            # ``candidate_count`` when 1 (the SDK default) so the request
+            # body stays unchanged for the common path.
+            if self._candidate_count > 1:
+                config_kwargs["candidate_count"] = self._candidate_count
+            if self._cached_content:
+                config_kwargs["cached_content"] = self._cached_content
+            config = types.GenerateContentConfig(**config_kwargs)
 
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
