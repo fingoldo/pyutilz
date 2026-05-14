@@ -104,6 +104,38 @@ class TestCleanNumeric:
         expr = clean_numeric(pl.col("a"))
         assert isinstance(expr, pl.Expr)
 
+    def test_cleaned_result_is_safe_to_cast_to_int(self):
+        """Regression: prior implementation used ``expr.replace([nan, inf, -inf], filler)`` which
+        silently failed on NaN (polars matches via float equality and ``NaN != NaN``). The
+        result still contained NaN, and any downstream ``.cast(pl.Int64)`` then crashed with
+        ``InvalidOperationError: conversion from f64 to i64 failed in column ... for ... values:
+        [inf, -inf, NaN]``. Now uses ``is_finite() ? expr : filler`` and the cast must succeed.
+        """
+        df = pl.DataFrame({"x": [1.0, float("nan"), float("inf"), -float("inf"), 5.0]})
+        # Round-trip through int: only succeeds if every non-finite was replaced.
+        out = df.select(clean_numeric(pl.col("x"), nans_filler=0.0).cast(pl.Int64))
+        assert out["x"].to_list() == [1, 0, 0, 0, 5]
+
+    def test_cleans_after_groupby_zero_weight_division(self):
+        """End-to-end: a weighted-mean expression on a per-group sum can divide by zero when
+        all weights in a group are zero. The resulting NaN must be cleaned, then the frame is
+        joinable / castable downstream. Mirrors the real bug surface from
+        mlframe.feature_engineering.financial.create_ohlcv_wholemarket_features.
+        """
+        df = pl.DataFrame({
+            "group": ["A", "A", "B", "B"],
+            "value": [10.0, 20.0, 30.0, 40.0],
+            "weight": [0.0, 0.0, 1.0, 2.0],  # group A: all zero -> divide-by-zero
+        })
+        result = df.group_by("group", maintain_order=True).agg(
+            clean_numeric((pl.col("value") * pl.col("weight")).sum() / pl.col("weight").sum())
+            .alias("weighted_mean")
+        )
+        wm = result.sort("group")["weighted_mean"].to_list()
+        # Group A: 0/0 -> NaN -> cleaned to 0.0. Group B: (30+80)/3 = 36.667.
+        assert wm[0] == 0.0
+        assert abs(wm[1] - 110.0 / 3.0) < 1e-9
+
 
 class TestCastF64ToF32:
     """Test cast_f64_to_f32 function"""

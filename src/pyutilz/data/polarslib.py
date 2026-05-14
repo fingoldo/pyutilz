@@ -57,8 +57,15 @@ def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
-    return expr.replace([float("inf"), -float("inf"), float("nan")], nans_filler)
-    # return pl.when(expr.is_infinite()).then(expr).otherwise(pl.lit(nans_filler))
+    """Replace non-finite floats (inf, -inf, NaN) with ``nans_filler``.
+
+    Uses ``is_finite()`` rather than ``.replace([inf, -inf, NaN], ...)`` because polars
+    ``replace`` matches via float equality, and ``NaN != NaN`` so the NaN branch never fires.
+    Without this fix, downstream ``.cast(int)`` after a groupby-agg that produced NaN/inf
+    (zero-weight groups in weighted-mean, single-row variance, etc.) raises
+    ``InvalidOperationError: conversion from f64 to i64 failed for [inf, -inf, NaN]``.
+    """
+    return pl.when(expr.is_finite()).then(expr).otherwise(pl.lit(float(nans_filler)))
 
 
 def cast_f64_to_f32(df: pl.DataFrame) -> pl.DataFrame:
