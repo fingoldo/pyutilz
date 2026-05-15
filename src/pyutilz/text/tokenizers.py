@@ -22,8 +22,10 @@ ensure_installed("psycopg2 nltk spacy")
 
 from typing import Any
 
-import psycopg2
-from pyutilz.database import db
+# psycopg2 + pyutilz.database are deferred to call site - tokenizers.py is
+# loaded by mlframe via the pyutilz.text re-export chain; not every consumer
+# needs the database stack just to use string utilities below.
+from pyutilz.database import db  # noqa: E402,F401  # used by call sites in this file
 from pyutilz.text.strings import (
     merge_punctuation_signs,
     fix_broken_sentences,
@@ -162,6 +164,10 @@ class AdvancedTokenizer:
                     last_sentence_word = last_word
 
     def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: str = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
+        # psycopg2 is the actual cursor backend - import lazily so the module
+        # itself can be loaded without psycopg2 installed (only this DB-reading
+        # method is gated on it).
+        import psycopg2.extras  # noqa: F401
         nchunks = 0
         nitems = 0
         cur = db.safe_execute(sql, cursor_factory=psycopg2.extras.NamedTupleCursor, cursor_name="test", return_cursor=True)

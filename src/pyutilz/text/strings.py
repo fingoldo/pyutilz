@@ -24,7 +24,9 @@ import pandas as pd, numpy as np
 import string
 import json
 
-from psycopg2.extras import Json
+# psycopg2 is in the [database] extras of pyutilz; importing it at module load
+# would force every consumer (mlframe, etc.) to pull libpq + a C-extension wheel
+# even when they never call json_pg_dumps(). Defer to the one function that uses it.
 
 from collections import OrderedDict
 import unicodedata
@@ -251,7 +253,18 @@ def remove_json_defaults(
 
 def json_pg_dumps(obj: object, sort_keys: bool = False) -> str:
     # json.loads(json.dumps(obj, default=json_serial).replace(r"\u0000", "").replace("NaN", "null"))
-    return Json(json.loads(json.dumps(obj, default=json_serial, sort_keys=sort_keys).replace("\\u0000", "")))  # ,object_pairs_hook=OrderedDict
+    # orjson is ~5-10x faster than stdlib json on dumps; emits UTF-8 bytes so we
+    # decode once before the literal-six-char backslash-u-0000 escape strip (postgres
+    # rejects NUL inside jsonb text). Falls back to stdlib only if orjson missing.
+    from psycopg2.extras import Json  # lazy: only needed when this fn is actually called
+
+    try:
+        import orjson  # type: ignore
+        opts = orjson.OPT_SORT_KEYS if sort_keys else 0
+        raw = orjson.dumps(obj, default=json_serial, option=opts).decode("utf-8")
+    except ImportError:
+        raw = json.dumps(obj, default=json_serial, sort_keys=sort_keys)
+    return Json(json.loads(raw.replace("\\u0000", "")))  # ,object_pairs_hook=OrderedDict
 
 
 def get_jsonlist_property(data: Iterable, property_name: str, return_indices: Optional[bool] = False, verbose: Optional[bool] = False) -> list:
