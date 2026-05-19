@@ -94,10 +94,28 @@ def _cpu_model_slug() -> str:
         return "unknown"
 
 
-def _gpu_slug_and_cc() -> tuple[str, str]:
-    """Returns (gpu_name_slug, cc_str). On CPU-only host: ("no-gpu", "")."""
+def _current_device_id() -> int:
+    """Return the live CUDA device id (whatever the caller is using).
+    Falls back to 0 on probe failure. Lets the cache key reflect e.g.
+    ``device=1`` on a 2-GPU box where the user routed mlframe to a
+    non-default device."""
     try:
-        summary = gpu_capability_summary(0)
+        import cupy as cp
+        return int(cp.cuda.runtime.getDevice())
+    except Exception:
+        return 0
+
+
+def _gpu_slug_and_cc() -> tuple[str, str]:
+    """Returns (gpu_name_slug, cc_str). On CPU-only host: ("no-gpu", "").
+
+    Uses the LIVE current CUDA device id, not always 0, so a 2-GPU box
+    where the user routes to device 1 gets a distinct fingerprint
+    (different GPU model + cc may apply).
+    """
+    try:
+        dev_id = _current_device_id()
+        summary = gpu_capability_summary(dev_id)
         if summary is None:
             return ("no-gpu", "")
         name = summary.get("name") or "unknown"
@@ -292,19 +310,62 @@ class KernelTuningCache:
         return data
 
     def _save(self, kernels: dict) -> None:
-        """Atomic write of the full payload."""
-        payload = {
-            "schema_version": SCHEMA_VERSION,
-            "hw_fingerprint": hw_fingerprint(),
-            "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-            "provenance": _build_provenance(),
-            "kernels": kernels,
-        }
-        tmp = self._path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
-        os.replace(tmp, self._path)
-        logger.info("kernel_tuning_cache: saved %s", self._path)
+        """Atomic write of the full payload, safe across PROCESSES.
+
+        Two joblib worker processes both calling ``update(...)`` on the
+        same on-disk cache file race: each loaded a snapshot, mutates
+        its own ``kernels`` dict, saves -- last writer wins, silently
+        dropping the other worker's kernel update. Fix: take an OS-level
+        advisory file lock around the read-modify-write so concurrent
+        saves serialise and merge correctly. Best-effort: if the
+        ``filelock`` lib is missing, fall back to plain atomic rename
+        and accept the race (in-process callers always go through
+        ``_ensure_loaded`` under the ``RLock`` so single-process is
+        safe regardless).
+        """
+        lock_path = self._path + ".lock"
+        try:
+            from filelock import FileLock
+            _file_lock = FileLock(lock_path, timeout=10)
+        except ImportError:
+            _file_lock = None
+
+        def _do_save() -> None:
+            # Re-read existing on-disk state INSIDE the lock + merge the
+            # caller's ``kernels`` dict so concurrent writers preserve
+            # each other's entries instead of clobbering.
+            existing_kernels: dict = {}
+            if os.path.isfile(self._path):
+                try:
+                    with open(self._path, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                    if (existing_data.get("schema_version") == SCHEMA_VERSION
+                            and existing_data.get("hw_fingerprint") == hw_fingerprint()):
+                        existing_kernels = existing_data.get("kernels", {}) or {}
+                except (OSError, json.JSONDecodeError):
+                    pass
+            # Merge: caller's kernels win for matching names; other names
+            # preserved.
+            merged = dict(existing_kernels)
+            merged.update(kernels)
+            payload = {
+                "schema_version": SCHEMA_VERSION,
+                "hw_fingerprint": hw_fingerprint(),
+                "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+                "provenance": _build_provenance(),
+                "kernels": merged,
+            }
+            tmp = self._path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, sort_keys=True)
+            os.replace(tmp, self._path)
+            logger.info("kernel_tuning_cache: saved %s", self._path)
+
+        if _file_lock is not None:
+            with _file_lock:
+                _do_save()
+        else:
+            _do_save()
 
     def _ensure_loaded(self) -> dict:
         """Return the live cache payload (loaded once per process). On
