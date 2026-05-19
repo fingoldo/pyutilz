@@ -208,7 +208,7 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
     if old is None or new is None:
         return False  # be conservative: no data -> no invalidation
     keys = ("cuda_driver_version", "cuda_runtime_version",
-            "cupy_version", "numba_version")
+            "cupy_version", "numba_version", "numpy_version")
     for k in keys:
         if old.get(k) != new.get(k):
             return True

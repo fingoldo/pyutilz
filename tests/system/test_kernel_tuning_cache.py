@@ -168,6 +168,13 @@ class TestProvenance:
         new = {"python_version": "3.11.6", "cupy_version": "13.0.0"}
         assert ktc.provenance_changed(old, new) is False
 
+    def test_numpy_major_bump_detected(self):
+        # NumPy 1.x -> 2.x has ABI-level changes that can affect cupy interop;
+        # treated as material so the cache invalidates.
+        old = {"numpy_version": "1.26.4"}
+        new = {"numpy_version": "2.0.0"}
+        assert ktc.provenance_changed(old, new) is True
+
     def test_none_payload_treated_as_no_change(self):
         # Be conservative on missing data -- don't invalidate the cache.
         assert ktc.provenance_changed(None, {"x": 1}) is False
