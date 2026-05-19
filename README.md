@@ -188,6 +188,27 @@ info = get_system_info(
 )
 ```
 
+**Per-host kernel-tuning cache** — when a project ships multiple CUDA / numba / cupy variants of the same hot numerical kernel, the "best" choice depends on the live GPU. Hardcoded thresholds stop being correct as soon as the package runs on a different cc. This module stores empirically-measured `(variant, block_size, ...)` decisions per `hw_fingerprint` and dispatches at runtime:
+
+```python
+from pyutilz.system.kernel_tuning_cache import KernelTuningCache, hw_fingerprint
+
+cache = KernelTuningCache.load_or_create()
+print(hw_fingerprint())                # "cpu_intel-i7-9700k_gpu_gtx-1050-ti_cc6.1"
+
+# Project-side tuner emits per-region winners; pyutilz only stores them.
+cache.update("joint_hist_batched", axes=["n_samples", "joint_size"], regions=[
+    {"n_samples_max": 200_000, "joint_size_max": 25, "variant": "shared", "block_size": 256},
+    {"n_samples_max": None,    "joint_size_max": None, "variant": "shared", "block_size": 512},  # catch-all
+])
+
+# Runtime dispatch:
+region = cache.lookup("joint_hist_batched", n_samples=1_000_000, joint_size=100)
+launch_kernel(variant=region["variant"], block=region["block_size"])
+```
+
+Schema-versioned JSON at `~/.pyutilz/kernel_tuning/<hw_fingerprint>.json` (override via `$PYUTILZ_KERNEL_CACHE_DIR`). Cross-process safe (filelock + merge-on-write). Provenance (CUDA driver/runtime, cupy/numba/numpy versions, GPU summary) auto-stamped; stale entries from upgraded libs are detected via `provenance_changed()`. Concrete consumer: [mlframe MRMR](https://github.com/fingoldo/mlframe) feature selection uses this for joint-histogram CUDA RawKernel dispatch (shared-mem vs global-atomic vs numba.cuda), measured 2.6× cumulative speedup at N=1M, p=30.
+
 **Synchronous timeouts and slow-call alerting:**
 
 ```python

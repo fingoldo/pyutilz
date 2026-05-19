@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-19
+
+### Added — ``pyutilz.system.kernel_tuning_cache``: persistent per-host kernel-tuning cache
+
+When a project ships multiple implementations of a hot numerical kernel
+(global-atomic vs shared-mem CUDA RawKernels, numba.cuda vs cupy, plain
+numpy vs njit-prange), the "best" choice depends on the live hardware.
+Hardcoded thresholds stop being correct as soon as the package runs on
+a different GPU or CPU.
+
+New module provides storage + lookup primitives only; the auto-tune
+sweep stays project-side.
+
+**Public surface:**
+
+* :func:`hw_fingerprint` -- stable per-host key
+  ``cpu_<slug>_gpu_<slug>_cc<M.m>``.
+* :func:`cache_dir` / :func:`cache_path` -- file-system layout
+  (``~/.pyutilz/kernel_tuning/<fingerprint>.json``; override via
+  ``$PYUTILZ_KERNEL_CACHE_DIR``).
+* :class:`KernelTuningCache` -- ``.load_or_create()``, ``.update()``,
+  ``.lookup()``, ``.save()``; multiple kernels per host file,
+  schema-versioned JSON.
+* :func:`provenance_changed` -- material-key comparator (cuda driver /
+  runtime, cupy / numba / numpy versions, gpu cc + name) to detect
+  stale entries after lib upgrades.
+
+**Schema-v1 JSON layout** (one file per fingerprint):
+
+```
+{
+  "schema_version": 1,
+  "hw_fingerprint": "cpu_<...>_gpu_<...>_cc<M.m>",
+  "timestamp_utc": "2026-05-19T...",
+  "kernels": {
+    "<kernel_name>": {
+      "axes": ["axis_1_name", "axis_2_name", ...],
+      "regions": [
+        {"axis_1_max": 200000, "axis_2_max": 25,
+         "variant": "shared", "block_size": 256, "wall_ms": 0.21},
+        ...,
+        {"axis_1_max": null, "axis_2_max": null,
+         "variant": "shared", "block_size": 512}    // catch-all
+      ]
+    }
+  }
+}
+```
+
+**Cross-process safety:**
+
+Save path is wrapped in ``filelock`` with read-modify-write inside the
+lock -- two suites running in parallel on the same ``data_dir`` both
+land in the final on-disk cache. Atomic-write via temp + rename;
+corrupt or version-mismatched files trigger a re-tune (safe
+degradation, never a hard fail).
+
+**Concrete consumer:** ``mlframe.feature_selection._benchmarks.kernel_tuning_cache``
+houses the auto-tune sweep for ``joint_hist_batched`` (CUDA RawKernels
+in ``mlframe.feature_selection.filters.gpu``). Measured cumulative
+MRMR.fit speedup at N=1M, p=30, fe_npermutations=50: 23.75s baseline ->
+9.15s with full stack (joblib threading + njit batch_pair_mi_prange +
+numba.cuda + cupy + shared-mem kernel + kernel_tuning_cache dispatch),
+2.60x net.
+
+**Optional dep:** the GPU-fingerprint helpers import
+``pyutilz.system.gpu_dispatch.gpu_capability_summary``, which already
+exists in pyutilz and is a no-op on CPU-only hosts (returns an empty
+summary). The cache itself works without CUDA -- the fingerprint
+degrades to ``cpu_<slug>_gpu_nogpu_cc0.0``.
+
 ## [Unreleased] — 2026-05-04
 
 ### Added — OpenRouter unified ``reasoning`` field + widened ``thinking=`` parameter (mixed bool|str)
