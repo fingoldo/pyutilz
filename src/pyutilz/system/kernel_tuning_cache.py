@@ -148,6 +148,79 @@ def cache_path() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Provenance (recorded on every save; readable for staleness checks)
+# ---------------------------------------------------------------------------
+
+def _safe_version(import_name: str, attr: str = "__version__") -> Optional[str]:
+    """Return module's version string or None if module / attr is missing."""
+    try:
+        mod = __import__(import_name)
+        return str(getattr(mod, attr, None))
+    except Exception:
+        return None
+
+
+def _build_provenance() -> dict:
+    """Snapshot of the env that produced this tuning. Recorded on save.
+    Readers can compare this dict to the live env and invalidate if
+    something material changed (CUDA driver bump, cupy upgrade, etc.).
+    """
+    prov: dict[str, object] = {
+        "python_version": _safe_version("sys", "version"),
+        "numpy_version": _safe_version("numpy"),
+        "numba_version": _safe_version("numba"),
+        "cupy_version": _safe_version("cupy"),
+    }
+    # CUDA runtime + driver (if cupy is importable).
+    try:
+        import cupy as cp  # type: ignore
+        try:
+            prov["cuda_runtime_version"] = int(cp.cuda.runtime.runtimeGetVersion())
+        except Exception:
+            pass
+        try:
+            prov["cuda_driver_version"] = int(cp.cuda.runtime.driverGetVersion())
+        except Exception:
+            pass
+    except ImportError:
+        pass
+    # Live GPU capability summary (cc, vram, name) at save time.
+    try:
+        summary = gpu_capability_summary(0)
+        if summary is not None:
+            prov["gpu_summary"] = {
+                "cc_major": summary.get("cc_major"),
+                "cc_minor": summary.get("cc_minor"),
+                "name": summary.get("name"),
+                "total_vram_gb": summary.get("total_vram_gb"),
+                "sm_count": summary.get("sm_count"),
+            }
+    except Exception:
+        pass
+    return prov
+
+
+def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
+    """True iff a MATERIAL provenance field differs (cuda driver/runtime,
+    cupy/numba versions, GPU cc/name). Timestamps + python version are
+    NOT considered material -- a Python patch bump shouldn't invalidate
+    a kernel tuning."""
+    if old is None or new is None:
+        return False  # be conservative: no data -> no invalidation
+    keys = ("cuda_driver_version", "cuda_runtime_version",
+            "cupy_version", "numba_version")
+    for k in keys:
+        if old.get(k) != new.get(k):
+            return True
+    old_gpu = old.get("gpu_summary") or {}
+    new_gpu = new.get("gpu_summary") or {}
+    for k in ("cc_major", "cc_minor", "name"):
+        if old_gpu.get(k) != new_gpu.get(k):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Cache class
 # ---------------------------------------------------------------------------
 
@@ -205,6 +278,17 @@ class KernelTuningCache:
                 self._path, data.get("hw_fingerprint"), hw_fingerprint(),
             )
             return None
+        # Provenance staleness check: a CUDA driver / cupy / numba bump
+        # since the tuning was saved invalidates the cache (a new sweep
+        # may find different optima under updated kernels / drivers).
+        saved_prov = data.get("provenance")
+        live_prov = _build_provenance()
+        if saved_prov and provenance_changed(saved_prov, live_prov):
+            logger.info(
+                "kernel_tuning_cache: provenance changed since save "
+                "(CUDA/cupy/numba/GPU bump); treating as miss to trigger re-tune"
+            )
+            return None
         return data
 
     def _save(self, kernels: dict) -> None:
@@ -213,6 +297,7 @@ class KernelTuningCache:
             "schema_version": SCHEMA_VERSION,
             "hw_fingerprint": hw_fingerprint(),
             "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "provenance": _build_provenance(),
             "kernels": kernels,
         }
         tmp = self._path + ".tmp"

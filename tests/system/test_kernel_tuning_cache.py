@@ -130,3 +130,77 @@ class TestEnvOverride:
         assert d == str(tmp_path)
         p = ktc.cache_path()
         assert p.startswith(str(tmp_path))
+
+
+class TestProvenance:
+    """Cover ``_build_provenance`` + ``provenance_changed`` + the
+    ``_load`` staleness short-circuit."""
+
+    def test_build_provenance_returns_dict_with_versions(self):
+        prov = ktc._build_provenance()
+        # Always-present keys (None values OK for missing modules):
+        assert "python_version" in prov
+        assert "numpy_version" in prov
+
+    def test_provenance_unchanged_returns_false(self):
+        prov = {"cuda_driver_version": 12000, "cupy_version": "13.0.0",
+                "gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "GTX"}}
+        assert ktc.provenance_changed(prov, dict(prov)) is False
+
+    def test_cuda_driver_bump_detected(self):
+        old = {"cuda_driver_version": 12000, "cupy_version": "13.0.0"}
+        new = {"cuda_driver_version": 12300, "cupy_version": "13.0.0"}
+        assert ktc.provenance_changed(old, new) is True
+
+    def test_cupy_version_bump_detected(self):
+        old = {"cupy_version": "13.0.0"}
+        new = {"cupy_version": "13.1.0"}
+        assert ktc.provenance_changed(old, new) is True
+
+    def test_gpu_cc_change_detected(self):
+        old = {"gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "GTX 1050 Ti"}}
+        new = {"gpu_summary": {"cc_major": 8, "cc_minor": 6, "name": "RTX 3070"}}
+        assert ktc.provenance_changed(old, new) is True
+
+    def test_python_patch_does_not_invalidate(self):
+        # python_version is NOT in the material-keys list -> ignored.
+        old = {"python_version": "3.11.5", "cupy_version": "13.0.0"}
+        new = {"python_version": "3.11.6", "cupy_version": "13.0.0"}
+        assert ktc.provenance_changed(old, new) is False
+
+    def test_none_payload_treated_as_no_change(self):
+        # Be conservative on missing data -- don't invalidate the cache.
+        assert ktc.provenance_changed(None, {"x": 1}) is False
+        assert ktc.provenance_changed({"x": 1}, None) is False
+
+    def test_provenance_written_on_save(self, tmp_cache_dir):
+        cache = ktc.KernelTuningCache()
+        cache.update("k", axes=["n"], regions=[{"n_max": None, "variant": "x"}])
+        # File on disk must contain a "provenance" block now.
+        import json
+        with open(cache._path, "r") as f:
+            data = json.load(f)
+        assert "provenance" in data
+        assert isinstance(data["provenance"], dict)
+
+    def test_stale_provenance_treated_as_miss(self, tmp_cache_dir):
+        # Write a cache with deliberately-stale CUDA driver version, then
+        # load with mocked-current driver -> should treat as miss.
+        import json
+        from unittest import mock
+        cache = ktc.KernelTuningCache()
+        cache.update("k", axes=["n"], regions=[{"n_max": None, "variant": "x"}])
+        # Hand-edit the saved provenance to look stale.
+        with open(cache._path, "r") as f:
+            data = json.load(f)
+        data["provenance"]["cuda_driver_version"] = 1000  # ancient
+        with open(cache._path, "w") as f:
+            json.dump(data, f)
+        # Force a fresh KernelTuningCache instance (no in-memory state).
+        fresh = ktc.KernelTuningCache()
+        # Mock _build_provenance to claim a NEW driver version.
+        with mock.patch.object(
+            ktc, "_build_provenance",
+            return_value={"cuda_driver_version": 12300},
+        ):
+            assert fresh._load() is None  # stale -> miss
