@@ -41,31 +41,43 @@ logger = logging.getLogger(__name__)
 WARP_SIZE = 32
 
 # ---------------------------------------------------------------------------
-# Per-CC static shared-memory budget table (bytes).
-# Sorted by (major, minor). For each entry: (default, opt_in).
+# Per-CC static shared-memory budget table (bytes). Per-BLOCK (not per-SM).
+# Sorted by (major, minor). For each entry: (default, opt_in_max).
+#
+# "default" is the static shared-memory ceiling every kernel gets without
+# any opt-in. On all hardware shipped to date this is 48 KB (49152 bytes).
+#
+# "opt_in_max" is the larger per-block ceiling reachable via
+# ``cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+# requested_bytes)``. The opt-in path only ships from Volta (cc 7.0) onward;
+# earlier architectures had only the static 48 KB regardless of per-SM
+# capacity. On cc >= 8.0 the runtime reserves 1 KB per block so the
+# per-block opt-in is (per-SM - 1024), e.g. A100 is 164 KB per-SM but
+# 163 KB = 166912 bytes per-block.
+#
+# Source: NVIDIA CUDA C Programming Guide, Appendix H "Compute Capabilities",
+# Table 21 "Maximum amount of shared memory per thread block" column.
 # ---------------------------------------------------------------------------
 CC_SHARED_MEM_BUDGET: dict[tuple[int, int], tuple[int, int]] = {
-    # cc          default     opt_in
-    (3, 0):     ( 49152,     49152),
-    (3, 2):     ( 49152,     49152),
-    (3, 5):     ( 49152,     49152),
-    (3, 7):     (114688,    114688),  # 112 KB on cc 3.7
-    (5, 0):     ( 49152,     49152),
-    (5, 2):     ( 49152,     65536),  # 64 KB physical on cc 5.2
-    (5, 3):     ( 49152,     49152),
-    (6, 0):     ( 49152,     49152),
-    (6, 1):     ( 49152,     98304),  # 96 KB physical on Pascal consumer
-    (6, 2):     ( 49152,     65536),
-    (7, 0):     ( 98304,     98304),  # Volta exposes 96 KB without opt-in
-    (7, 2):     ( 98304,     98304),
-    (7, 5):     ( 65536,     65536),  # Turing: 64 KB
-    (8, 0):     ( 49152,    167936),  # A100: 164 KB opt-in
-    (8, 6):     (102400,    102400),  # Ampere consumer: 100 KB
-    (8, 7):     (102400,    102400),
-    (8, 9):     (102400,    102400),  # Ada Lovelace
-    (9, 0):     (233472,    233472),  # Hopper: 228 KB
-    (10, 0):    (233472,    233472),  # forward-compat placeholders
-    (12, 0):    (233472,    233472),  # Blackwell
+    # cc          default     opt_in_max
+    (3, 0):     ( 49152,      49152),  # Kepler: 48 KB per block, no opt-in
+    (3, 2):     ( 49152,      49152),
+    (3, 5):     ( 49152,      49152),
+    (3, 7):     ( 49152,      49152),  # 112 KB is per-SM, NOT per-block
+    (5, 0):     ( 49152,      49152),  # Maxwell: 48 KB per block, no opt-in
+    (5, 2):     ( 49152,      49152),  # 96 KB per-SM, per-block stays at 48 KB
+    (5, 3):     ( 49152,      49152),
+    (6, 0):     ( 49152,      49152),  # Pascal: 48 KB per block, no opt-in
+    (6, 1):     ( 49152,      49152),  # 96 KB per-SM, per-block stays at 48 KB
+    (6, 2):     ( 49152,      49152),
+    (7, 0):     ( 49152,      98304),  # Volta V100: 96 KB per-block opt-in
+    (7, 2):     ( 49152,      98304),  # Xavier
+    (7, 5):     ( 49152,      65536),  # Turing: 64 KB per-block opt-in
+    (8, 0):     ( 49152,     166912),  # A100: 163 KB per-block (164 KB per-SM - 1 KB)
+    (8, 6):     ( 49152,     101376),  # Ampere consumer: 99 KB per-block (100 - 1)
+    (8, 7):     ( 49152,     166912),  # Orin: 163 KB per-block (same as A100)
+    (8, 9):     ( 49152,     101376),  # Ada Lovelace: 99 KB per-block
+    (9, 0):     ( 49152,     232448),  # Hopper: 227 KB per-block (228 - 1)
 }
 
 _SAFE_DEFAULT_SMEM = 49152  # 48 KB fallback for unknown / forward-compat
@@ -228,6 +240,7 @@ def optimal_threads_per_block(
 def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
     try:
         import cupy as cp
+        from cupy.cuda.runtime import CUDARuntimeError
     except ImportError:
         return None
     try:
@@ -237,6 +250,13 @@ def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
         else:
             free, _total = cp.cuda.runtime.memGetInfo()
         return int(free)
+    except CUDARuntimeError as e:
+        # Loud-fail on invalid device id; silently degrade only on transient
+        # / lookup errors. ``cudaErrorInvalidDevice == 101``.
+        if getattr(e, "status", None) == 101:
+            raise
+        logger.debug("cupy memGetInfo runtime error: %s", e)
+        return None
     except Exception as e:
         logger.debug("cupy memGetInfo failed: %s", e)
         return None

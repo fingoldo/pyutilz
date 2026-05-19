@@ -1443,16 +1443,22 @@ def get_nvidia_smi_info(
 
     from pyutilz.core.pythonlib import sort_dict_by_key
 
-    # Run nvidia-smi with XML output
+    # Run nvidia-smi with XML output. A 10 s timeout guards against wedged
+    # drivers (real incident class on Windows after a GPU reset); without the
+    # timeout an import of this module on a misbehaving host blocks forever.
     try:
         result = subprocess.run(
             ["nvidia-smi", "-q", "-x"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=10,
         )
     except FileNotFoundError:
         logger.warning("nvidia-smi not found (NVIDIA GPU not present or drivers not installed)")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("nvidia-smi did not respond within 10s; assuming GPU is wedged / unavailable")
         return None
 
     # Check if command executed successfully

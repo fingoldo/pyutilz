@@ -68,7 +68,9 @@ class TestCPUOnlyHost:
 
     def test_shared_mem_independent_of_cuda(self):
         # Pure table lookup -- works fine on CPU-only.
-        assert gd.get_shared_mem_budget_per_block(7, 5) == 65536
+        # cc 7.5 (Turing) per-block default is 48 KB; the 64 KB ceiling is opt-in only.
+        assert gd.get_shared_mem_budget_per_block(7, 5) == 49152
+        assert gd.get_shared_mem_budget_per_block(7, 5, allow_opt_in=True) == 65536
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ class TestSharedMemBudget:
     @pytest.mark.parametrize(
         "cc",
         [(3, 0), (3, 5), (3, 7), (5, 0), (5, 2), (6, 0), (6, 1), (6, 2),
-         (7, 0), (7, 5), (8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (12, 0)],
+         (7, 0), (7, 5), (8, 0), (8, 6), (8, 9), (9, 0)],
     )
     def test_known_cc_returns_positive_budget(self, cc):
         major, minor = cc
@@ -87,9 +89,32 @@ class TestSharedMemBudget:
         opt_in_b = gd.get_shared_mem_budget_per_block(major, minor, allow_opt_in=True)
         assert default_b > 0
         assert opt_in_b >= default_b
-        # Anything we ship in the table must fit the documented 228 KB ceiling.
-        assert default_b <= 233472
+        # Default static shared-mem is 48 KB on every shipped architecture.
+        assert default_b == 49152
+        # Per-block opt-in must not exceed 228 KB (Hopper ceiling).
         assert opt_in_b <= 233472
+
+    @pytest.mark.parametrize(
+        "cc,expected_opt_in",
+        [
+            ((7, 0),  98304),   # Volta V100: 96 KB
+            ((7, 2),  98304),   # Xavier
+            ((7, 5),  65536),   # Turing: 64 KB
+            ((8, 0), 166912),   # A100: 163 KB (164 KB per-SM - 1 KB reserved)
+            ((8, 6), 101376),   # Ampere consumer: 99 KB
+            ((8, 7), 166912),   # Orin: 163 KB
+            ((8, 9), 101376),   # Ada Lovelace: 99 KB
+            ((9, 0), 232448),   # Hopper: 227 KB
+        ],
+    )
+    def test_opt_in_specific_values_per_cc(self, cc, expected_opt_in):
+        """Pin exact per-block opt-in budgets for every cc where opt-in differs
+        from default. Catches regressions if someone confuses per-SM with
+        per-block numbers (per-SM is always higher; per-block has a 1 KB
+        runtime reserve on cc >= 8.0)."""
+        major, minor = cc
+        opt_in = gd.get_shared_mem_budget_per_block(major, minor, allow_opt_in=True)
+        assert opt_in == expected_opt_in
 
     def test_unknown_cc_falls_back_safely(self):
         # cc 99.99 is obviously not in the table; we should still get a sane
@@ -98,18 +123,30 @@ class TestSharedMemBudget:
         assert budget == 49152
 
     def test_forward_compat_within_known_major(self):
-        # cc 8.99 should pick up the highest-known cc-8.x entry.
+        # cc 8.99 should pick up the cc-8.x default (every shipped cc shares 48 KB
+        # default static; this test only verifies the fallback finds *something*
+        # known rather than the unknown-cc safe default).
         budget = gd.get_shared_mem_budget_per_block(8, 99)
-        assert budget > 0
-        # Must be one of the cc 8.x defaults in the table.
-        cc8_defaults = {v[0] for k, v in gd.CC_SHARED_MEM_BUDGET.items() if k[0] == 8}
-        assert budget in cc8_defaults
+        # Must equal the highest-known cc 8.x default (8.9 currently).
+        highest_minor_8 = max(k[1] for k in gd.CC_SHARED_MEM_BUDGET if k[0] == 8)
+        assert budget == gd.CC_SHARED_MEM_BUDGET[(8, highest_minor_8)][0]
 
     def test_opt_in_higher_than_default_for_a100(self):
-        # A100 (cc 8.0) is the canonical case where opt-in unlocks 164 KB.
+        # A100 (cc 8.0) is the canonical case where opt-in unlocks 163 KB per-block.
         default_b = gd.get_shared_mem_budget_per_block(8, 0)
         opt_in_b = gd.get_shared_mem_budget_per_block(8, 0, allow_opt_in=True)
         assert opt_in_b > default_b
+        assert opt_in_b == 166912  # 163 KB exact
+
+    def test_pre_volta_has_no_opt_in_path(self):
+        """On cc <= 6.x there is NO per-block opt-in beyond 48 KB regardless of
+        what nvidia-smi reports for per-SM capacity. The 96 KB Pascal-consumer
+        figure is per-SM, not per-block."""
+        for cc in [(5, 0), (5, 2), (6, 0), (6, 1), (6, 2)]:
+            default_b = gd.get_shared_mem_budget_per_block(*cc)
+            opt_in_b = gd.get_shared_mem_budget_per_block(*cc, allow_opt_in=True)
+            assert default_b == 49152, f"cc {cc} default must be 48 KB"
+            assert opt_in_b == 49152, f"cc {cc} opt-in must equal default (no opt-in path pre-Volta)"
 
 
 # ---------------------------------------------------------------------------
