@@ -61,36 +61,44 @@ def fix_typing_wildcard_imports(file_path: Path) -> Tuple[bool, List[str]]:
     return False, []
 
 
-def fix_mutable_defaults(file_path: Path) -> Tuple[bool, List[str]]:
+def _build_mutable_default_index(root: Path) -> dict:
+    """One-shot AST scan of the entire ``root`` tree for mutable-default
+    findings. Result is a dict keyed by relative path (POSIX-form) ->
+    list[(line, severity, detail)].
+
+    Replaces the per-file regex match the previous version performed.
+    Delegates to ``pyutilz.dev.code_audit.scan_mutable_defaults`` so the
+    detection logic stays in one place (importable + CLI-testable).
     """
-    Fix mutable default arguments (list, dict) in function signatures.
+    from pyutilz.dev.code_audit import scan_mutable_defaults
+    findings = scan_mutable_defaults(root)
+    index: dict = {}
+    for f in findings:
+        index.setdefault(f.file, []).append((f.line, f.severity, f.detail))
+    return index
 
-    Changes:
-        def func(arg=[]) -> def func(arg=None) with guard
-        def func(arg={}) -> def func(arg=None) with guard
+
+def fix_mutable_defaults(file_path: Path, index: dict) -> Tuple[bool, List[str]]:
     """
-    with open(file_path, encoding='utf-8') as f:
-        content = f.read()
+    Report mutable default arguments (list, dict, set) in function signatures.
 
-    fixed_functions = []
+    Reads from the pre-built ``index`` (see ``_build_mutable_default_index``)
+    so we don't re-parse every file once per call. Returns
+    ``(has_findings, list_of_descriptors)`` for compatibility with the
+    existing summary block at the end of this script.
 
-    # Pattern to find function definitions with mutable defaults
-    # This is complex - better to do manual review for safety
-    # For now, just report them
-
-    patterns = [
-        (r'def\s+(\w+)\([^)]*=\s*\[\]', 'list default'),
-        (r'def\s+(\w+)\([^)]*=\s*\{\}', 'dict default'),
-        (r'def\s+(\w+)\([^)]*=\s*\[', 'list literal default'),
+    Severity distinction (P0 vs Low) comes from the AST-based scanner -
+    the prior regex couldn't tell mutated-in-body from read-only.
+    """
+    rel = file_path.relative_to(PYUTILZ_ROOT).as_posix()
+    matches = index.get(rel, [])
+    if not matches:
+        return False, []
+    descriptors = [
+        f"line {line} [{severity}]: {detail.split(': ')[0]}"
+        for line, severity, detail in matches
     ]
-
-    for pattern, issue_type in patterns:
-        matches = re.finditer(pattern, content)
-        for match in matches:
-            func_name = match.group(1)
-            fixed_functions.append(f"{func_name} ({issue_type})")
-
-    return len(fixed_functions) > 0, fixed_functions
+    return True, descriptors
 
 
 def scan_and_fix_all():
@@ -118,6 +126,10 @@ def scan_and_fix_all():
     wildcard_fixes = []
     mutable_defaults_issues = []
 
+    # One-shot AST scan of the whole tree (the prior per-file regex would
+    # be O(N) calls; this is O(N) parses with a structured result).
+    mutable_index = _build_mutable_default_index(PYUTILZ_ROOT)
+
     for file_path in sorted(py_files):
         rel_path = file_path.relative_to(PYUTILZ_ROOT)
 
@@ -128,8 +140,8 @@ def scan_and_fix_all():
             print(f"[OK] Fixed typing import in {rel_path}")
             print(f"     Imports: {', '.join(used_symbols)}")
 
-        # Check for mutable defaults
-        has_mutable, functions = fix_mutable_defaults(file_path)
+        # Check for mutable defaults (uses pre-built AST index).
+        has_mutable, functions = fix_mutable_defaults(file_path, mutable_index)
         if has_mutable:
             mutable_defaults_issues.append((rel_path, functions))
             print(f"[WARN] Found mutable defaults in {rel_path}:")

@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-20
+
+### Added — ``pyutilz.dev.code_audit``: AST-based scanners for recurring Python bug classes
+
+Promotes the throwaway ``ast.walk`` scripts that subagent audit runs
+kept dropping into ``D:/Temp`` into a permanent, reusable library +
+CLI. Scans any Python source tree (not just pyutilz) for four bug
+classes uncovered repeatedly during mlframe audits:
+
+* ``mutable_default`` — ``def f(x=[])`` / ``={}`` / ``=set()`` / ``=list()`` /
+  ``=dict()``. Distinguishes mutated-in-body (**P0**: state leaks across
+  callers) from never-mutated (**Low**: idiomatic-but-questionable). The
+  regex matcher previously in ``scripts/auto_refactor.py`` could not see
+  this distinction.
+* ``late_binding_closure`` — ``lambda`` / nested ``def`` inside a ``for``
+  loop that captures the loop variable AND escapes the iteration
+  (stored in a list/dict/callback registry). Heuristic excludes
+  synchronous consumers (``sorted(..., key=lambda k: ...)``, ``min``,
+  ``max``, ``filter``, ``map``, ``functools.reduce``) which exhaust
+  the closure before the next iteration.
+* ``default_via_or`` — ``x = arg or DEFAULT`` where DEFAULT is a non-trivial
+  literal that silently rewrites caller-passed ``0`` / ``0.0`` / ``""`` /
+  empty container. Severity-tiered: ``or 4`` (integer) is P1, ``or
+  compute()`` (callable) is P2, ``or "default"`` is Low.
+* ``broad_except_swallow`` — ``except Exception:`` / bare ``except:``
+  with body of ``pass`` / ``continue`` / bare ``return`` and no
+  ``logger.warning``/``logger.error`` call or re-raise. The classic
+  "silent data drop" pattern.
+
+**Public surface:**
+
+* :class:`pyutilz.dev.code_audit.Finding` — dataclass with ``check``,
+  ``severity``, ``file``, ``line``, ``snippet``, ``detail``; renders
+  to markdown via :meth:`Finding.as_md_row`.
+* :func:`scan_mutable_defaults` / :func:`scan_late_binding_closures` /
+  :func:`scan_default_via_or_trap` / :func:`scan_broad_except_swallows`
+  — pure ``(root: Path) -> list[Finding]`` functions.
+* :func:`run_all` — convenience wrapper running every (or selected)
+  scanner; sorts by (severity, check, file, line).
+* CLI: ``python -m pyutilz.dev.code_audit <root> [--check NAME ...]
+  [--format markdown|json] [--min-severity P0|P1|P2|Low]``. Exit
+  code is non-zero when any P0/P1 finding is present so CI can gate
+  on it.
+
+**Integration:**
+
+* ``scripts/auto_refactor.py`` now delegates its mutable-default
+  detection to ``scan_mutable_defaults``; the prior regex version
+  flagged read-only defaults as warnings indiscriminately and missed
+  ``=set()`` / ``=list()`` / ``=dict()`` call-form defaults.
+* Tested green against the entire ``mlframe/src/mlframe/`` tree (zero
+  P0/P1 findings for mutable defaults and late-binding closures, which
+  matches what the prior subagent AST walk reported).
+
+**Tests:** ``tests/test_code_audit.py`` — 25 tests covering positive
+and negative cases for every scanner, sort ordering of
+``run_all``, the excluded-dir convention, the markdown rendering,
+and CLI exit-code / JSON-output behavior.
+
 ## [Unreleased] — 2026-05-19
 
 ### Added — ``pyutilz.system.kernel_tuning_cache``: persistent per-host kernel-tuning cache

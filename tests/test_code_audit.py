@@ -1,0 +1,328 @@
+"""Unit tests for pyutilz.dev.code_audit AST scanners.
+
+Each scanner gets a positive case (constructed snippet that MUST be
+flagged) and a negative case (constructed snippet that MUST NOT be
+flagged). Tests use tmp_path so the audit runs against a hermetic
+directory; no cross-test bleed.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from pyutilz.dev.code_audit import (
+    Finding,
+    run_all,
+    scan_broad_except_swallows,
+    scan_default_via_or_trap,
+    scan_late_binding_closures,
+    scan_mutable_defaults,
+)
+
+
+def _write(tmp_path: Path, name: str, source: str) -> Path:
+    p = tmp_path / name
+    p.write_text(source.lstrip("\n"), encoding="utf-8")
+    return p
+
+
+# ---- mutable_default ----------------------------------------------------
+
+
+def test_mutable_default_mutated_list_flags_p0(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def collect(items=[]):
+    items.append(1)
+    return items
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert len(findings) == 1, findings
+    f = findings[0]
+    assert f.check == "mutable_default"
+    assert f.severity == "P0"
+    assert "items" in f.detail
+    assert "MUTATED" in f.detail
+
+
+def test_mutable_default_mutated_dict_flags_p0(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def collect(cfg={}):
+    cfg["k"] = 1
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P0"
+
+
+def test_mutable_default_unmutated_list_flags_low(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def length_only(items=[]):
+    return len(items)
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"
+    assert "never mutated" in findings[0].detail
+
+
+def test_mutable_default_call_form_list(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def collect(items=list()):
+    items.append(1)
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert any(f.severity == "P0" for f in findings)
+
+
+def test_mutable_default_none_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def collect(items=None):
+    items = items if items is not None else []
+    items.append(1)
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert findings == [], findings
+
+
+def test_mutable_default_set_form(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def collect(seen=set()):
+    seen.add(1)
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert len(findings) == 1 and findings[0].severity == "P0"
+
+
+# ---- late_binding_closure ----------------------------------------------
+
+
+def test_late_binding_lambda_in_for_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def build():
+    callbacks = []
+    for x in range(5):
+        callbacks.append(lambda: x * 2)
+    return callbacks
+""")
+    findings = scan_late_binding_closures(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].severity == "P1"
+    assert findings[0].check == "late_binding_closure"
+
+
+def test_late_binding_lambda_with_default_arg_safe(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def build():
+    callbacks = []
+    for x in range(5):
+        callbacks.append(lambda x=x: x * 2)
+    return callbacks
+""")
+    findings = scan_late_binding_closures(tmp_path)
+    assert findings == [], findings
+
+
+def test_sync_lambda_in_sorted_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def order(items):
+    for group in items:
+        sorted(group, key=lambda k: group[k])
+""")
+    # The lambda doesn't escape the iteration (sorted is synchronous).
+    findings = scan_late_binding_closures(tmp_path)
+    assert findings == []
+
+
+# ---- default_via_or ----------------------------------------------------
+
+
+def test_default_via_or_int_positive_flags_p1(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(n=None):
+    n_jobs = n or 4
+    return n_jobs
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1, findings
+    assert "or 4" in p1[0].detail
+
+
+def test_default_via_or_zero_rhs_skipped(tmp_path: Path):
+    # `or 0` is a no-op for falsy left -> no real trap.
+    _write(tmp_path, "ok.py", """
+def f(n=None):
+    return n or 0
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1 == []
+
+
+def test_default_via_or_call_rhs_flags_p2(tmp_path: Path):
+    _write(tmp_path, "warn.py", """
+def f(data=None):
+    return data or compute_default()
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p2 = [f for f in findings if f.severity == "P2"]
+    assert p2, findings
+
+
+def test_default_via_or_dict_empty_rhs_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(d=None):
+    return d or {}
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    # `or {}` is exactly the null-safety idiom and is NOT a trap.
+    assert all(f.severity != "P1" for f in findings)
+
+
+# ---- broad_except_swallow ----------------------------------------------
+
+
+def test_broad_except_pass_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f():
+    try:
+        do_thing()
+    except Exception:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+
+
+def test_broad_except_with_logger_warning_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def f():
+    try:
+        do_thing()
+    except Exception as exc:
+        logger.warning("do_thing failed: %s", exc)
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == [], findings
+
+
+def test_broad_except_with_reraise_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    try:
+        do_thing()
+    except Exception:
+        cleanup()
+        raise
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == []
+
+
+def test_narrow_except_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    try:
+        do_thing()
+    except KeyError:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == []
+
+
+def test_bare_except_pass_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f():
+    try:
+        do_thing()
+    except:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert len(findings) == 1
+    assert "bare except" in findings[0].detail
+
+
+# ---- run_all + ordering -------------------------------------------------
+
+
+def test_run_all_returns_sorted_by_severity(tmp_path: Path):
+    _write(tmp_path, "mixed.py", """
+def bad_mutable(items=[]):
+    items.append(1)
+
+def bad_or(n=None):
+    return n or 4
+""")
+    findings = run_all(tmp_path)
+    # P0 (mutable_default mutated) should come before P1 (default_via_or).
+    severities = [f.severity for f in findings]
+    assert severities == sorted(severities, key=lambda s: {"P0": 0, "P1": 1, "P2": 2, "Low": 3}[s])
+    assert "P0" in severities
+    assert "P1" in severities
+
+
+def test_run_all_empty_on_clean_tree(tmp_path: Path):
+    _write(tmp_path, "clean.py", """
+def f(x=None):
+    if x is None:
+        x = []
+    return x
+""")
+    findings = run_all(tmp_path)
+    assert findings == []
+
+
+def test_excluded_dir_ignored(tmp_path: Path):
+    bad = tmp_path / "build" / "bad.py"
+    bad.parent.mkdir()
+    bad.write_text("def f(x=[]): x.append(1)\n", encoding="utf-8")
+    findings = run_all(tmp_path)
+    assert findings == [], "build/ should be excluded by default"
+
+
+def test_finding_md_row_format():
+    f = Finding(
+        check="x", severity="P0", file="src/a.py", line=42,
+        snippet="def f(x=[])", detail="bad",
+    )
+    row = f.as_md_row()
+    assert row.startswith("| P0 | x | src/a.py:42 |")
+    assert "`def f(x=[])`" in row
+
+
+# ---- CLI surface --------------------------------------------------------
+
+
+def test_cli_exits_nonzero_on_p1(tmp_path: Path, capsys):
+    _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
+    from pyutilz.dev.code_audit import main as cli_main
+    rc = cli_main([str(tmp_path), "--format", "markdown"])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "mutable_default" in out
+    assert "P0" in out
+
+
+def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
+    _write(tmp_path, "ok.py", "def f(x=None):\n    return x\n")
+    from pyutilz.dev.code_audit import main as cli_main
+    rc = cli_main([str(tmp_path)])
+    assert rc == 0
+
+
+def test_cli_json_output(tmp_path: Path, capsys):
+    _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
+    from pyutilz.dev.code_audit import main as cli_main
+    cli_main([str(tmp_path), "--format", "json"])
+    import json as _json
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    assert isinstance(payload, list)
+    assert payload and payload[0]["check"] == "mutable_default"
