@@ -18,6 +18,7 @@ from pyutilz.dev.code_audit import (
     scan_default_via_or_trap,
     scan_late_binding_closures,
     scan_mutable_defaults,
+    scan_mutation_during_iteration,
     scan_nan_equality,
 )
 
@@ -403,6 +404,106 @@ def f(x):
     return x == math.nan
 """)
     findings = scan_nan_equality(tmp_path)
+    assert len(findings) == 1
+
+
+# ---- mutation_during_iteration ------------------------------------------
+
+
+def test_mut_iter_del_dict_during_iter_flags_p0(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(d):
+    for k in d:
+        if k.startswith("_"):
+            del d[k]
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P0"
+    assert findings[0].check == "mutation_during_iteration"
+
+
+def test_mut_iter_list_append_during_iter_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(items):
+    for x in items:
+        if cond(x):
+            items.append(transform(x))
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P0"
+
+
+def test_mut_iter_dict_pop_during_iter_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(d):
+    for k, v in d.items():
+        if v < 0:
+            d.pop(k)
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P0"
+
+
+def test_mut_iter_list_copy_pattern_safe(tmp_path: Path):
+    """Defensive copy via list(d) is correctly NOT flagged."""
+    _write(tmp_path, "ok.py", """
+def f(d):
+    for k in list(d):
+        if k.startswith("_"):
+            del d[k]
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert findings == []
+
+
+def test_mut_iter_copy_method_pattern_safe(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(d):
+    for k, v in d.copy().items():
+        if cond(v):
+            del d[k]
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert findings == []
+
+
+def test_mut_iter_mutation_on_different_collection_safe(tmp_path: Path):
+    """Iterating one collection + mutating a different one is the
+    typical correct case."""
+    _write(tmp_path, "ok.py", """
+def f(src, dst):
+    for k in src:
+        dst[k] = compute(k)
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert findings == []
+
+
+def test_mut_iter_assign_existing_key_flags_p1(tmp_path: Path):
+    """Reassigning an EXISTING key is size-preserving and safe (CPython),
+    but we can't statically tell new vs existing. Flag P1 (lower than
+    del/pop) so reviewers can verify."""
+    _write(tmp_path, "warn.py", """
+def f(d):
+    for k in d:
+        d[k] = transform(d[k])
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+
+
+def test_mut_iter_set_add_during_iter_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(s):
+    for x in s:
+        if cond(x):
+            s.add(transform(x))
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
 
 
