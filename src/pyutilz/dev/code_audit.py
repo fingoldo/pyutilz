@@ -467,6 +467,81 @@ def _is_trivial_default(value: ast.AST) -> bool:
     return False
 
 
+# Documented-safe LHS callables whose ``or DEFAULT`` cannot mask caller intent
+# because the callable's only falsy return is ``None`` (or an unknowable
+# "no CPU detected" value). Suppress the trap warning when the LHS is one of
+# these patterns.
+#
+# ``os.cpu_count()``:    returns int or None on unknown systems; 0 is not in
+#                        the documented return set, so ``or 1`` only catches
+#                        the None case.
+# ``psutil.cpu_count()``: same contract; documented to return None on systems
+#                        that can't determine cpu count.
+# ``np.std(...)``, ``np.var(...)``, ``np.var()``, ``arr.std()``: returns 0.0
+#                        ONLY when all values equal, in which case treating
+#                        the result as "use the fallback denominator" is the
+#                        intentional divide-by-zero guard, not a trap.
+# ``len(...)``:          returns int (always >= 0); ``len(x) or N`` is the
+#                        common "empty-collection fallback" idiom.
+_DOCUMENTED_SAFE_LHS_FUNCS = frozenset({
+    "cpu_count",  # os / psutil / multiprocessing
+    "std", "var", "nanstd", "nanvar",  # numpy stats: 0.0 only when all-equal
+    "len",  # always int >= 0; ``or N`` is empty-fallback idiom
+})
+
+
+_TRANSPARENT_WRAPPER_FUNCS = frozenset({
+    # Coercions that don't change the "is the value falsy when source was None
+    # or 0 / 0.0" semantics: if the inner call returns None, the wrapper
+    # raises or returns 0/0.0 - either way the trap analysis is the same as
+    # the inner call. We unwrap to check the inner.
+    "int", "float", "bool",
+    # Reducers that take multiple args; we treat the LAST arg as the
+    # candidate (common idiom: `max(1, os.cpu_count() or 1)`).
+    "max", "min", "abs",
+})
+
+
+def _unwrap_lhs(lhs: ast.AST) -> ast.AST:
+    """Strip transparent wrapper calls (int / float / max / min / abs) and
+    return the innermost AST node. Used by ``_lhs_is_documented_safe`` so
+    ``float(np.std(arr)) or 1.0`` still recognises ``np.std`` underneath."""
+    while isinstance(lhs, ast.Call):
+        func = lhs.func
+        name = func.id if isinstance(func, ast.Name) else None
+        if name in _TRANSPARENT_WRAPPER_FUNCS:
+            # For unary wrappers (int/float/bool/abs), the first positional
+            # arg is the value. For max/min, the LAST positional arg is
+            # commonly the candidate. Try the last positional first; if it
+            # isn't a recognised pattern, fall back to the first.
+            if name in {"max", "min"} and len(lhs.args) >= 2:
+                lhs = lhs.args[-1]
+                continue
+            if lhs.args:
+                lhs = lhs.args[0]
+                continue
+        break
+    return lhs
+
+
+def _lhs_is_documented_safe(lhs: ast.AST) -> bool:
+    """True when ``lhs`` is a call to a callable whose only falsy return is
+    None (or an intentional guard). Suppresses default-via-or noise for the
+    ~30 `os.cpu_count() or 1` shapes that aren't actually traps. Drills
+    through transparent wrappers (``int``, ``float``, ``max``, ``min``,
+    ``abs``) so ``int(os.cpu_count() or 1)`` and
+    ``max(1, np.std(arr) or 1.0)`` both resolve correctly."""
+    lhs = _unwrap_lhs(lhs)
+    if not isinstance(lhs, ast.Call):
+        return False
+    func = lhs.func
+    if isinstance(func, ast.Name) and func.id in _DOCUMENTED_SAFE_LHS_FUNCS:
+        return True
+    if isinstance(func, ast.Attribute) and func.attr in _DOCUMENTED_SAFE_LHS_FUNCS:
+        return True
+    return False
+
+
 def scan_default_via_or_trap(root: Path,
                              exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                              ) -> list[Finding]:
@@ -494,6 +569,15 @@ def scan_default_via_or_trap(root: Path,
             # Skip when RHS is itself "trivial" (None/empty/falsy).
             if _is_trivial_default(rhs):
                 continue
+            # Skip documented-safe LHS callables (cpu_count, std/var, len).
+            lhs = node.values[0]
+            if _lhs_is_documented_safe(lhs):
+                continue
+            # Also skip when the LHS is wrapped in a non-mutating expression
+            # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
+            # `max(1, os.cpu_count() or 1)`). The BoolOp here is the `or`
+            # node, so check whether its left operand is wrapped in such a
+            # call-chain back up the tree.
             sev = "Low"
             detail = "default-via-or trap candidate"
             if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
@@ -591,6 +675,50 @@ def _is_broad_except(handler: ast.ExceptHandler) -> bool:
     return False
 
 
+# Best-effort filesystem / process operations whose failure is legitimately
+# swallowed in production (the file may not exist, the dir may already be
+# cleaned up, the process may have already exited). Suppress the broad-except
+# warning when the try body is a single call to one of these.
+_BEST_EFFORT_OPS = frozenset({
+    # filesystem
+    "chmod", "unlink", "remove", "rmdir", "makedirs", "mkdir", "rmtree",
+    "close", "flush",
+    # process
+    "kill", "terminate", "wait",
+    # logging / metrics teardown
+    "stop", "shutdown", "join",
+})
+
+
+def _try_body_is_imports_only(try_body: list[ast.stmt]) -> bool:
+    """True if every statement in the try body is an Import / ImportFrom
+    (optional-dep guard pattern). These broad-except blocks are legitimate
+    -- the swallow is the entire point of the import guard."""
+    if not try_body:
+        return False
+    for s in try_body:
+        if not isinstance(s, (ast.Import, ast.ImportFrom)):
+            return False
+    return True
+
+
+def _try_body_is_best_effort_op(try_body: list[ast.stmt]) -> bool:
+    """True if the try body is a single call (or attribute assignment) to a
+    documented best-effort op (``os.chmod``, ``proc.kill``, ``file.close``,
+    etc.). These swallows are intentional and don't degrade observability."""
+    if len(try_body) != 1:
+        return False
+    s = try_body[0]
+    # ``os.chmod(path, mode)`` etc.
+    if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call):
+        call = s.value
+        if isinstance(call.func, ast.Attribute) and call.func.attr in _BEST_EFFORT_OPS:
+            return True
+        if isinstance(call.func, ast.Name) and call.func.id in _BEST_EFFORT_OPS:
+            return True
+    return False
+
+
 def scan_broad_except_swallows(root: Path,
                                exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                                ) -> list[Finding]:
@@ -612,6 +740,13 @@ def scan_broad_except_swallows(root: Path,
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
+                continue
+            # Suppress whole Try if the body is one of the documented-safe
+            # shapes (import guard / single best-effort op). The handler
+            # body's silent swallow is intentional in these cases.
+            if _try_body_is_imports_only(node.body):
+                continue
+            if _try_body_is_best_effort_op(node.body):
                 continue
             for handler in node.handlers:
                 if not _is_broad_except(handler):

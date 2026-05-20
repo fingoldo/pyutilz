@@ -180,6 +180,165 @@ def f(d=None):
     assert all(f.severity != "P1" for f in findings)
 
 
+def test_default_via_or_os_cpu_count_allowlisted(tmp_path: Path):
+    """`os.cpu_count() or 1` is documented-safe (cpu_count returns int or
+    None; 0 isn't in the return set), so it must NOT be flagged as a trap."""
+    _write(tmp_path, "ok.py", """
+import os
+def f():
+    n = os.cpu_count() or 1
+    return n
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1 == [], f"`os.cpu_count() or 1` is documented-safe; got: {p1}"
+
+
+def test_default_via_or_psutil_cpu_count_allowlisted(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import psutil
+def f():
+    return psutil.cpu_count(logical=True) or 1
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1 == [], f"`psutil.cpu_count(...) or 1` is documented-safe; got: {p1}"
+
+
+def test_default_via_or_numpy_std_allowlisted(tmp_path: Path):
+    """`np.std(arr) or 1.0` is the intentional divide-by-zero guard
+    (std returns 0.0 only when all values equal)."""
+    _write(tmp_path, "ok.py", """
+import numpy as np
+def f(arr):
+    return float(np.std(arr)) or 1.0
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1 == [], f"`np.std(arr) or 1.0` is documented-safe; got: {p1}"
+
+
+def test_default_via_or_len_allowlisted(tmp_path: Path):
+    """`len(xs) or N` is the common empty-collection fallback idiom."""
+    _write(tmp_path, "ok.py", """
+def f(xs):
+    return len(xs) or 100
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1 == [], f"`len(xs) or N` is empty-fallback idiom; got: {p1}"
+
+
+def test_default_via_or_user_attr_still_flagged(tmp_path: Path):
+    """User-controlled attribute on the LHS is still flagged: the user
+    config may legitimately pass 0 as a sentinel."""
+    _write(tmp_path, "bad.py", """
+def f(cfg):
+    return getattr(cfg, "n_jobs", 1) or 4
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1, "user-attribute LHS must still be flagged"
+
+
+# ---- broad_except_swallow: precision refinements ----------------------
+
+
+def test_broad_except_import_guard_skipped(tmp_path: Path):
+    """Optional-dep import guards are legitimate broad-except patterns;
+    the WHOLE POINT of the swallow is to silently degrade when the dep
+    is missing. Don't flag these."""
+    _write(tmp_path, "ok.py", """
+try:
+    import torch
+    import torch.nn
+except Exception:
+    pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == [], (
+        f"import-guard try-block must not be flagged; got {findings}"
+    )
+
+
+def test_broad_except_import_from_guard_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+try:
+    from numba import cuda
+except Exception:
+    pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == []
+
+
+def test_broad_except_best_effort_chmod_skipped(tmp_path: Path):
+    """Best-effort filesystem ops (chmod / unlink / makedirs) legitimately
+    swallow OSError-class failures."""
+    _write(tmp_path, "ok.py", """
+import os
+def cleanup(path):
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == [], (
+        f"best-effort filesystem op must not be flagged; got {findings}"
+    )
+
+
+def test_broad_except_best_effort_method_skipped(tmp_path: Path):
+    """``proc.kill()`` / ``file.close()`` swallows are legitimate."""
+    _write(tmp_path, "ok.py", """
+def teardown(proc):
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == []
+
+
+def test_broad_except_real_data_swallow_still_flagged(tmp_path: Path):
+    """Data-path swallow with non-trivial body MUST still be flagged."""
+    _write(tmp_path, "bad.py", """
+def process(rows):
+    out = []
+    for r in rows:
+        try:
+            out.append(transform(r))
+        except Exception:
+            continue
+    return out
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    # The try body is a single Call, but it's `out.append(...)` which is
+    # in our STORING_METHODS set, not in BEST_EFFORT_OPS. Should still flag.
+    assert findings, (
+        "data-path swallow with non-best-effort body MUST flag"
+    )
+
+
+def test_broad_except_import_plus_setup_flagged(tmp_path: Path):
+    """Import-guard suppression should NOT fire when the try body mixes
+    imports with side-effecting setup (the swallow then hides real setup
+    failures, not just missing-dep failures)."""
+    _write(tmp_path, "bad.py", """
+try:
+    import torch
+    torch.cuda.set_device(0)
+except Exception:
+    pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings, (
+        "import + side-effect must NOT be allowlisted as pure import guard"
+    )
+
+
 # ---- broad_except_swallow ----------------------------------------------
 
 
