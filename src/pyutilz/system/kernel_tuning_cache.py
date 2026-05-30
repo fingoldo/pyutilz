@@ -62,6 +62,7 @@ import logging
 import os
 import re
 import threading
+import time
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -126,6 +127,66 @@ def _gpu_slug_and_cc() -> tuple[str, str]:
         return ("no-gpu", "")
 
 
+_HW_FP_DISK_FILENAME = ".hw_fingerprint.json"
+_HW_FP_SCHEMA_VERSION = 1
+_HW_FP_FRESHNESS_SECONDS = 7 * 24 * 3600  # 7 days
+
+
+def _read_hw_fingerprint_from_disk() -> Optional[str]:
+    """Return the fingerprint from the on-disk cache if present, schema-
+    compatible, and recent enough; ``None`` otherwise.
+
+    Uses file mtime rather than an embedded timestamp so a stale file is
+    invalidated even if the JSON parses fine. The default freshness
+    window is 7 days; ``PYUTILZ_HW_FP_REFRESH=1`` forces a recompute
+    even on a fresh file (for users who just swapped GPU / upgraded
+    drivers and don't want to delete the file by hand).
+    """
+    if os.environ.get("PYUTILZ_HW_FP_REFRESH", "").strip() == "1":
+        return None
+    try:
+        # ``cache_dir()`` makedirs on first call -- safe to invoke here
+        # before any kernel-tuning JSON exists.
+        path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
+    except Exception:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    age = max(0.0, time.time() - st.st_mtime)
+    if age > _HW_FP_FRESHNESS_SECONDS:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if data.get("schema_version") != _HW_FP_SCHEMA_VERSION:
+        return None
+    fp = data.get("fingerprint")
+    return fp if isinstance(fp, str) and fp else None
+
+
+def _write_hw_fingerprint_to_disk(fingerprint: str) -> None:
+    """Persist the freshly-computed fingerprint. Best-effort: silently
+    swallows write errors (read-only homedir, permissions, etc.) so the
+    in-memory lru_cache still works."""
+    try:
+        path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
+        tmp = path + ".tmp"
+        payload = {
+            "schema_version": _HW_FP_SCHEMA_VERSION,
+            "fingerprint": fingerprint,
+            "ts_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        }
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.debug("hw_fingerprint: failed to persist to disk: %s", e)
+
+
 @lru_cache(maxsize=1)
 def hw_fingerprint() -> str:
     """Stable per-host key. Format::
@@ -133,13 +194,35 @@ def hw_fingerprint() -> str:
         cpu_<cpu_slug>_gpu_<gpu_slug>_cc<major>.<minor>
         cpu_<cpu_slug>_no-gpu                    (CPU-only host)
 
-    Cached for the process lifetime (host doesn't change mid-run).
+    Cached two ways:
+      * ``lru_cache(maxsize=1)`` for the process lifetime.
+      * On-disk JSON at ``<cache_dir>/.hw_fingerprint.json`` shared
+        across processes (7-day freshness window via file mtime;
+        invalidate manually by deleting the file or setting
+        ``PYUTILZ_HW_FP_REFRESH=1``).
+
+    The cross-process cache exists because ``_cpu_model_slug()`` calls
+    ``cpuinfo.get_cpu_info()`` which on Windows queries WMI / runs
+    CPUID probes (~1.9s cold per process), and ``_gpu_slug_and_cc()``
+    queries nvidia-smi via gputil (~100ms-2s cold). For short-lived
+    CLI tools / tests / per-target training scripts that pay this
+    ~2.7s first-call cost on every invocation, the disk cache drops
+    subsequent processes to ~1ms (file read + JSON parse + mtime
+    check). HW doesn't change between processes on the same host;
+    the 7-day staleness gate covers driver / GPU swaps without
+    manual maintenance.
     """
+    disk = _read_hw_fingerprint_from_disk()
+    if disk is not None:
+        return disk
     cpu = _cpu_model_slug()
     gpu, cc = _gpu_slug_and_cc()
     if gpu == "no-gpu":
-        return f"cpu_{cpu}_no-gpu"
-    return f"cpu_{cpu}_gpu_{gpu}_cc{cc}"
+        fp = f"cpu_{cpu}_no-gpu"
+    else:
+        fp = f"cpu_{cpu}_gpu_{gpu}_cc{cc}"
+    _write_hw_fingerprint_to_disk(fp)
+    return fp
 
 
 def cache_dir() -> str:

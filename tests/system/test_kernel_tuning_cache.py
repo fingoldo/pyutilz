@@ -108,19 +108,61 @@ class TestRegionMatching:
 
 
 class TestHwFingerprint:
-    def test_returns_non_empty_string(self):
-        ktc.hw_fingerprint.cache_clear()
+    def test_returns_non_empty_string(self, tmp_cache_dir):
+        # tmp_cache_dir overrides PYUTILZ_KERNEL_CACHE_DIR so the disk
+        # cache file lands in an empty per-test directory; without it
+        # this test would read a stale fingerprint from any prior run.
         fp = ktc.hw_fingerprint()
         assert isinstance(fp, str)
         assert len(fp) > 0
         assert fp.startswith("cpu_")
 
-    def test_includes_no_gpu_marker_when_cuda_absent(self):
-        ktc.hw_fingerprint.cache_clear()
+    def test_includes_no_gpu_marker_when_cuda_absent(self, tmp_cache_dir):
+        # ``tmp_cache_dir`` gives us an empty disk cache so the mocked
+        # ``gpu_capability_summary`` actually runs (the disk cache layer
+        # would otherwise short-circuit before any GPU probe).
         with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
             fp = ktc.hw_fingerprint()
         assert "no-gpu" in fp
+
+    def test_disk_cache_persists_across_cache_clear(self, tmp_cache_dir):
+        # First call: compute + write to disk.
+        fp1 = ktc.hw_fingerprint()
         ktc.hw_fingerprint.cache_clear()
+        # Second call: the lru_cache is gone but the disk file isn't, so
+        # the result must match without re-running the slow probes.
+        # Patch both ``_cpu_model_slug`` and ``_gpu_slug_and_cc`` to
+        # return sentinels; if the disk cache works, neither runs.
+        with mock.patch.object(ktc, "_cpu_model_slug", return_value="UNCALLED-CPU"), \
+             mock.patch.object(ktc, "_gpu_slug_and_cc", return_value=("UNCALLED-GPU", "9.9")):
+            fp2 = ktc.hw_fingerprint()
+        assert fp1 == fp2
+        assert "UNCALLED" not in fp2
+
+    def test_disk_cache_refresh_env_forces_recompute(self, tmp_cache_dir, monkeypatch):
+        # Seed the on-disk cache with a sentinel value, then set
+        # ``PYUTILZ_HW_FP_REFRESH=1`` and confirm the next call ignores it.
+        import json as _json
+        disk_file = os.path.join(tmp_cache_dir, ".hw_fingerprint.json")
+        with open(disk_file, "w", encoding="utf-8") as f:
+            _json.dump({"schema_version": 1, "fingerprint": "STALE-SENTINEL"}, f)
+        ktc.hw_fingerprint.cache_clear()
+        monkeypatch.setenv("PYUTILZ_HW_FP_REFRESH", "1")
+        fp = ktc.hw_fingerprint()
+        assert fp != "STALE-SENTINEL"
+        assert fp.startswith("cpu_")
+
+    def test_disk_cache_schema_mismatch_triggers_recompute(self, tmp_cache_dir):
+        # An old (or hand-edited) cache file with a future schema_version
+        # must be treated as a miss, NOT returned as the fingerprint.
+        import json as _json
+        disk_file = os.path.join(tmp_cache_dir, ".hw_fingerprint.json")
+        with open(disk_file, "w", encoding="utf-8") as f:
+            _json.dump({"schema_version": 999, "fingerprint": "STALE-SENTINEL"}, f)
+        ktc.hw_fingerprint.cache_clear()
+        fp = ktc.hw_fingerprint()
+        assert fp != "STALE-SENTINEL"
+        assert fp.startswith("cpu_")
 
 
 class TestEnvOverride:
