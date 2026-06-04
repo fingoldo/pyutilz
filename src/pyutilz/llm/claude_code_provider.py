@@ -602,7 +602,13 @@ class ClaudeCodeProvider(LLMProvider):
                 reader_thread = threading.Thread(target=_reader, daemon=True)
                 reader_thread.start()
 
+                # The _reader thread is the SOLE consumer of stdout. Do NOT
+                # call proc.communicate() here -- it would race the reader on
+                # the same pipe (ValueError: I/O operation on closed file, or
+                # partial reads). For reaping we kill + wait; stderr is read
+                # directly (the reader never touches it).
                 deadline = time.monotonic() + self.timeout
+                timed_out = False
                 try:
                     while time.monotonic() < deadline:
                         try:
@@ -632,26 +638,45 @@ class ClaudeCodeProvider(LLMProvider):
                         elif etype == 'system' and event.get('subtype') == 'init':
                             logger.debug("Claude CLI initialized")
                     else:
-                        proc.kill()
-                        proc.communicate()
-                        raise subprocess.TimeoutExpired(proc.args, self.timeout)
+                        timed_out = True
                 finally:
                     try:
                         proc.kill()
                     except OSError:
                         pass
+                    # Reap the process WITHOUT reading the pipes (the reader
+                    # owns stdout). wait() avoids the communicate() double-drain.
                     try:
-                        proc.communicate(timeout=5)
-                    except (subprocess.TimeoutExpired, ValueError, OSError):
+                        proc.wait(timeout=5)
+                    except (subprocess.TimeoutExpired, OSError):
                         pass
+                    # Join the reader so stdout is fully drained/closed before
+                    # we read stderr below -- prevents a half-open-pipe race.
+                    reader_thread.join(timeout=5)
+
+                # Read stderr now that the reader thread has finished (it never
+                # consumed stderr). proc.stderr is still ours to read.
+                try:
+                    stderr_data = proc.stderr.read(500) if proc.stderr and not proc.stderr.closed else ""
+                except (ValueError, OSError):
+                    stderr_data = ""
+
+                if timed_out:
+                    raise subprocess.TimeoutExpired(proc.args, self.timeout)
 
                 if error_text is not None:
                     raise RuntimeError(f"Claude CLI error: {error_text}")
                 if result_text is None:
-                    stderr_data = proc.stderr.read(500) if not proc.stderr.closed else ""
                     raise RuntimeError(f"Claude CLI produced no result. stderr: {stderr_data}")
 
-                return 0, result_text, ""
+                # A parsed ``result`` success event is the authoritative
+                # success signal for the stream-json protocol, so we report
+                # returncode 0 here regardless of the OS exit code (the CLI
+                # may exit non-zero on cleanup even after a good result). All
+                # genuine failures already raised above; the downstream
+                # ``if returncode != 0`` guard is intentionally kept as
+                # belt-and-braces for any future non-success return path.
+                return 0, result_text, stderr_data
 
             loop = asyncio.get_event_loop()
             returncode, stdout, stderr = await loop.run_in_executor(None, run_cli)

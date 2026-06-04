@@ -332,14 +332,24 @@ class GeminiProvider(LLMProvider):
                     max_tokens=req.get("max_tokens", 1024),
                 )
                 return {"id": request_id, "result": result}
-            except ValueError as e:
-                logger.error(f"Batch request {request_id} value error: {e}")
-                return {"id": request_id, "error": f"Value error: {e}"}
-            except RuntimeError as e:
-                logger.error(f"Batch request {request_id} runtime error: {e}")
-                return {"id": request_id, "error": f"Runtime error: {e}"}
+            except LLMSafetyBlockError as e:
+                # Safety blocks are the single most common Gemini failure
+                # mode and are NOT ValueError/RuntimeError, so a narrow
+                # except would let them abort the whole batch. Isolate them
+                # per-request and tag the error type so callers can branch.
+                logger.error(f"Batch request {request_id} safety-blocked: {e}")
+                return {"id": request_id, "error": str(e), "error_type": "safety_block"}
+            except Exception as e:
+                # Catch-all so a malformed request dict (KeyError on
+                # req["prompt"]) or any other per-request failure becomes a
+                # per-request error instead of aborting the whole batch.
+                logger.error(f"Batch request {request_id} failed: {e}")
+                return {"id": request_id, "error": str(e)}
 
-        tasks = [process_request(req) for req in requests]
+        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
+        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
+        # — feeding Tasks instead works across versions.
+        tasks = [asyncio.create_task(process_request(req)) for req in requests]
         for coro in asyncio.as_completed(tasks):
             yield await coro
 
@@ -392,3 +402,17 @@ class GeminiProvider(LLMProvider):
             "Gemini does not expose per-key rate limits via API. "
             "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas."
         )
+
+    async def _close(self) -> None:
+        """Release the per-provider ThreadPoolExecutor.
+
+        The factory's atexit handler (factory.py ``_close_cached_providers``)
+        awaits ``_close`` on every cached provider that exposes it. Without
+        this hook the executor's worker threads accumulate when a long-lived
+        process builds many distinct Gemini providers (the stdlib executor's
+        own atexit hook only joins threads at interpreter exit).
+        ``wait=False`` so shutdown never blocks on an in-flight call.
+        """
+        executor = getattr(self, "_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False)

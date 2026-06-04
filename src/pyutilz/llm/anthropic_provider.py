@@ -72,6 +72,13 @@ class AnthropicProvider(LLMProvider):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         # Per-call usage (read by LLMClient after generate())
         self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        # Cumulative session accounting (mirrors OpenAICompatibleProvider).
+        # ``get_session_cost`` reports these across ALL calls in the session;
+        # without them it would silently report calls=0 and the last call's
+        # tokens only. Incremented in ``generate()`` once usage is parsed.
+        self._call_count = 0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
         # Per-call cache + extended-thinking accounting.
         # cache_creation_input_tokens — tokens written to ephemeral cache
         #   (5min default, 2x base rate; 1h opt-in, 1.25x).
@@ -174,6 +181,11 @@ class AnthropicProvider(LLMProvider):
             self.last_thinking_tokens = thinking
             self.total_thinking_tokens += thinking
 
+            # Cumulative session totals (for get_session_cost).
+            self._call_count += 1
+            self.total_input_tokens += usage.input_tokens
+            self.total_output_tokens += usage.output_tokens
+
             self._last_usage = {
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
@@ -251,8 +263,17 @@ class AnthropicProvider(LLMProvider):
             except anthropic.APIStatusError as e:
                 logger.error(f"Batch request {request_id} API error: {e}")
                 return {"id": request_id, "error": f"API error: {e}"}
+            except Exception as e:
+                # Catch-all so a malformed request dict (KeyError on
+                # req["prompt"]) or any other per-request failure becomes a
+                # per-request error instead of aborting the whole batch.
+                logger.error(f"Batch request {request_id} failed: {e}")
+                return {"id": request_id, "error": str(e)}
 
-        tasks = [process_request(req) for req in requests]
+        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
+        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
+        # — feeding Tasks instead works across versions.
+        tasks = [asyncio.create_task(process_request(req)) for req in requests]
         for coro in asyncio.as_completed(tasks):
             yield await coro
 
@@ -261,9 +282,27 @@ class AnthropicProvider(LLMProvider):
         pricing = self._PRICING.get(self.model)
         if pricing:
             return pricing
+        # No exact match (an unpinned / future model id). Pick the LONGEST
+        # matching prefix so a more specific tier wins over a shorter,
+        # overlapping one — e.g. a hypothetical "claude-opus-4-2-YYYYMMDD"
+        # must not silently inherit "claude-opus-4-7"'s cheaper 4.5 price
+        # just because that entry happens to be iterated first. Iteration
+        # order is otherwise arbitrary, so always compare prefix lengths.
+        best_val: tuple[float, float] | None = None
+        best_len = -1
         for key, val in self._PRICING.items():
-            if self.model.startswith(key.rsplit("-", 1)[0]):
-                return val
+            prefix = key.rsplit("-", 1)[0]
+            if self.model.startswith(prefix) and len(prefix) > best_len:
+                best_len = len(prefix)
+                best_val = val
+        if best_val is not None:
+            logger.warning(
+                "Anthropic model %r not pinned in _PRICING; falling back to "
+                "the longest-prefix match (%s/%s per 1M). Pin its exact id to "
+                "avoid silent mispricing.",
+                self.model, best_val[0], best_val[1],
+            )
+            return best_val
         return self._DEFAULT_PRICING
 
     def estimate_cost(
@@ -352,22 +391,27 @@ class AnthropicProvider(LLMProvider):
         1h cache, multiply ``cache_creation_input_tokens`` by 2 instead.
         """
         in_rate, out_rate = self._get_pricing()
-        # Effective non-cache input tokens (paid at full input rate)
+        # Effective non-cache input tokens across the WHOLE session (paid at
+        # full input rate). The Anthropic ``input_tokens`` field already
+        # excludes cache_read tokens but not cache_creation; subtract both
+        # cumulative cache totals to avoid double-counting cached input.
+        total_input = getattr(self, "total_input_tokens", 0)
+        total_output = getattr(self, "total_output_tokens", 0)
         plain_input = max(
             0,
-            self._last_usage.get("input_tokens", 0)  # last_call's plain input
-            - self.last_cache_creation_input_tokens
-            - self.last_cache_read_input_tokens,
+            total_input
+            - self.total_cache_creation_input_tokens
+            - self.total_cache_read_input_tokens,
         )
         return {
             "calls": getattr(self, "_call_count", 0),
-            "prompt_tokens": self._last_usage.get("input_tokens", 0),
-            "completion_tokens": self._last_usage.get("output_tokens", 0),
+            "prompt_tokens": total_input,
+            "completion_tokens": total_output,
             "thinking_tokens": self.total_thinking_tokens,
             "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
             "cache_read_input_tokens": self.total_cache_read_input_tokens,
             "input_cost_usd": (plain_input / 1_000_000) * in_rate
             + (self.total_cache_creation_input_tokens / 1_000_000) * in_rate * 1.25
             + (self.total_cache_read_input_tokens / 1_000_000) * in_rate * 0.10,
-            "output_cost_usd": (self._last_usage.get("output_tokens", 0) / 1_000_000) * out_rate,
+            "output_cost_usd": (total_output / 1_000_000) * out_rate,
         }

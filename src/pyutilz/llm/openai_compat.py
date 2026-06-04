@@ -8,6 +8,7 @@ Subclasses override a small set of hooks for provider-specific behaviour.
 import asyncio
 import json
 import logging
+import random
 from abc import abstractmethod
 from typing import Any, AsyncIterator
 
@@ -15,7 +16,7 @@ import httpx
 from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError
-from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,13 @@ def parse_retry_after(resp: Any) -> float | None:
     Providers (Anthropic, OpenAI, Gemini) return ``Retry-After`` on 429 —
     honouring it is cheaper than blind exponential backoff and avoids
     re-triggering the rate limit. Returns seconds (float) or None.
+
+    Honoured by the manual retry loop in ``generate_stream`` (it takes
+    ``max(server_hint, exponential_floor)`` between attempts). The
+    non-streaming ``generate()`` path uses tenacity's pure exponential+jitter
+    wait and does NOT read this hint — wiring it into the shared tenacity
+    wait would change retry timing for every provider and is left out
+    pending a benchmark on rate-limit-heavy paths.
     """
     if resp is None:
         return None
@@ -357,10 +365,6 @@ class OpenAICompatibleProvider(LLMProvider):
             return (True, thinking.lower())
         return (bool(thinking), None)
 
-    @retry(
-        retry=retry_if_exception(_is_retryable_http_error),
-        **INFINITE_RETRY_KWARGS,
-    )
     async def generate_stream(
         self,
         prompt: str,
@@ -375,68 +379,111 @@ class OpenAICompatibleProvider(LLMProvider):
         Yields each content delta as a string; the caller concatenates.
         Token-usage accounting is updated only after the stream completes
         (the final ``[DONE]`` chunk carries it for OpenAI-compat APIs).
+
+        Retry semantics: a tenacity ``@retry`` decorator is a NO-OP on an
+        async-generator function (tenacity dispatches on
+        ``iscoroutinefunction``, which is False for async generators), so
+        retry is implemented manually below. We retry the stream-open phase
+        on transient HTTP errors (``_is_retryable_http_error``) using the
+        shared exponential+jitter wait. Once the FIRST content delta has
+        been yielded we stop retrying and let mid-stream failures propagate
+        — restarting a partially consumed stream would duplicate already-
+        emitted tokens.
         """
         self._reset_per_call_state()
         import json as _json
 
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
-        async with self.semaphore:
-            body: dict[str, Any] = {
-                "model": self.model_name,
-                "messages": self._build_messages(prompt, system),
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": True,
-            }
-            if json_mode:
-                body["response_format"] = {"type": "json_object"}
-            body.update(self._extra_request_body(self.model_name))
-            if thinking is not None:
-                tf = self._thinking_request_field(thinking)
-                if tf is not None:
-                    body.update(tf)
 
-            # OR + many OpenAI-compat upstreams emit usage on the FINAL
-            # SSE chunk only when ``stream_options: {"include_usage": true}``
-            # is set. Without it the stream never publishes usage at all,
-            # leaving streaming callers with zero cost / token tracking.
-            body.setdefault("stream_options", {"include_usage": True})
+        body: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": self._build_messages(prompt, system),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+        body.update(self._extra_request_body(self.model_name))
+        if thinking is not None:
+            tf = self._thinking_request_field(thinking)
+            if tf is not None:
+                body.update(tf)
 
-            async with self._client.stream(
-                "POST", "/chat/completions", json=body,
-            ) as resp:
-                self._handle_special_status(resp)
-                resp.raise_for_status()
-                self._capture_rate_limit_headers(resp.headers)
-                last_chunk: dict[str, Any] | None = None
-                async for line in resp.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data_part = line[5:].strip()
-                    if data_part == "[DONE]":
-                        break
-                    try:
-                        chunk = _json.loads(data_part)
-                    except _json.JSONDecodeError:
-                        continue
-                    last_chunk = chunk
-                    # Usage block tends to arrive on a chunk with empty choices
-                    # AFTER the last content delta; track it whenever it's seen.
-                    usage = chunk.get("usage")
-                    if usage:
-                        self._track_streaming_usage(usage)
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        yield content
-                # Response-level metadata (id, model, provider) usually rides
-                # on the first chunk; some upstreams send it on the last.
-                if last_chunk is not None:
-                    self._track_provider_specific_response(last_chunk)
+        # OR + many OpenAI-compat upstreams emit usage on the FINAL
+        # SSE chunk only when ``stream_options: {"include_usage": true}``
+        # is set. Without it the stream never publishes usage at all,
+        # leaving streaming callers with zero cost / token tracking.
+        body.setdefault("stream_options", {"include_usage": True})
+
+        attempt = 0
+        emitted_any = False
+        while True:
+            attempt += 1
+            try:
+                async with self.semaphore:
+                    async with self._client.stream(
+                        "POST", "/chat/completions", json=body,
+                    ) as resp:
+                        self._handle_special_status(resp)
+                        resp.raise_for_status()
+                        self._capture_rate_limit_headers(resp.headers)
+                        last_chunk: dict[str, Any] | None = None
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_part = line[5:].strip()
+                            if data_part == "[DONE]":
+                                break
+                            try:
+                                chunk = _json.loads(data_part)
+                            except _json.JSONDecodeError:
+                                continue
+                            last_chunk = chunk
+                            # Usage block tends to arrive on a chunk with empty
+                            # choices AFTER the last content delta; track it
+                            # whenever it's seen.
+                            usage = chunk.get("usage")
+                            if usage:
+                                self._track_streaming_usage(usage)
+                            choices = chunk.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                emitted_any = True
+                                yield content
+                        # Response-level metadata (id, model, provider) usually
+                        # rides on the first chunk; some upstreams send it on
+                        # the last.
+                        if last_chunk is not None:
+                            self._track_provider_specific_response(last_chunk)
+                return
+            except Exception as exc:  # noqa: BLE001
+                # Only the stream-open / pre-first-token phase is safely
+                # retryable. After we've yielded content, re-raise so the
+                # caller doesn't receive duplicated tokens.
+                if emitted_any or not _is_retryable_http_error(exc):
+                    raise
+                if MAX_RETRY_ATTEMPTS != 0 and attempt >= MAX_RETRY_ATTEMPTS:
+                    raise
+                # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
+                # (multiplier=2, min=5, max=300) plus random jitter [0,5).
+                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)
+                # Honour a server-supplied Retry-After when present on a 429,
+                # taking the larger of (server hint, exponential floor) so we
+                # never retry sooner than the server asked and re-trigger the
+                # rate limit. This is the one live caller of parse_retry_after.
+                resp_obj = getattr(exc, "response", None)
+                server_hint = parse_retry_after(resp_obj)
+                wait_s = max(backoff, server_hint) if server_hint is not None else backoff
+                logger.warning(
+                    "Streaming attempt %d failed (%s: %s), retrying in %.0fs...",
+                    attempt, type(exc).__name__, str(exc)[:200], wait_s,
+                )
+                await asyncio.sleep(wait_s)
 
     def _track_streaming_usage(self, usage: dict[str, Any]) -> None:
         """Mirror of the non-streaming usage path, for streaming responses.
