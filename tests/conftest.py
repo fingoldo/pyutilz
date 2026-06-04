@@ -1,9 +1,59 @@
 import os
+import warnings
 import pytest
 import pandas as pd
 import numpy as np
 import tempfile
 from pathlib import Path
+
+# ===========================================================================
+# thinc / pytest-randomly seed-overflow compat shim (ported from mlframe)
+# ===========================================================================
+# Root cause: thinc (spacy/explosion.ai dep) ships a
+# ``pytest_randomly.random_seeder`` entry point -> ``thinc.util.fix_random_seed``,
+# which calls ``numpy.random.seed(seed)`` WITHOUT the ``% 2**32`` clamp that
+# pytest-randomly applies in its OWN ``_reseed``. pytest-randomly invokes every
+# registered seeder with ``seed = randomly_seed + crc32(nodeid)`` -- the sum
+# easily exceeds 2**32 -> ``ValueError: Seed must be between 0 and 2**32 - 1``
+# at fixture setup, cascading to every test. Must patch at conftest IMPORT time
+# (module level), not in a fixture: pytest-randomly resolves its entry points
+# via ``e.load()`` before any fixture runs, so by then the wrapper must already
+# be the bound ``thinc.util.fix_random_seed``. Drop once thinc clamps upstream.
+try:
+    import thinc.util as _thinc_util  # noqa: E402
+    _thinc_original_fix = _thinc_util.fix_random_seed
+
+    def _thinc_clamped_fix_random_seed(seed: int = 0) -> None:
+        try:
+            return _thinc_original_fix(int(seed) % (2**32))
+        except Exception as _seed_err:
+            # thinc transitively calls cupy.random.seed, which can crash on
+            # boxes where cupy is installed but curand init fails. Fall back to
+            # seeding python+numpy directly so determinism still holds.
+            import random
+            random.seed(int(seed) % (2**32))
+            np.random.seed(int(seed) % (2**32))
+            warnings.warn(
+                f"thinc.util.fix_random_seed raised {_seed_err!r}; fell back to "
+                f"seeding python+numpy directly (cupy random state unset).",
+                RuntimeWarning, stacklevel=2,
+            )
+
+    _thinc_util.fix_random_seed = _thinc_clamped_fix_random_seed
+    try:  # if pytest-randomly already cached the entry points, swap ours in
+        import pytest_randomly as _pr  # noqa: E402
+        if getattr(_pr, "entrypoint_reseeds", None):
+            _pr.entrypoint_reseeds = [
+                _thinc_clamped_fix_random_seed if r is _thinc_original_fix else r
+                for r in _pr.entrypoint_reseeds
+            ]
+    except Exception:  # pragma: no cover
+        pass
+except (ImportError, OSError, RuntimeError) as exc:  # pragma: no cover
+    warnings.warn(
+        f"Skipping thinc pytest-randomly seed shim (thinc import failed: {exc})",
+        RuntimeWarning,
+    )
 
 # ─── Live LLM-provider test infrastructure ──────────────────────────
 # Live tests are gated by ``@pytest.mark.live`` AND a per-provider

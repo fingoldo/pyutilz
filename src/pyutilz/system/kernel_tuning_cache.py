@@ -56,6 +56,7 @@ mismatched files trigger a re-tune (safe degradation).
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 import logging
@@ -64,14 +65,14 @@ import re
 import threading
 import time
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Protocol
 
 from pyutilz.core.pythonlib import is_cuda_available
 from pyutilz.system.gpu_dispatch import gpu_capability_summary
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2: code_version + categorical (_eq) / range (_min) axes + python_version material
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +87,13 @@ def _slug(s: str, maxlen: int = 40) -> str:
     return s.strip("-._").lower()[:maxlen] or "unknown"
 
 
+@lru_cache(maxsize=1)
 def _cpu_model_slug() -> str:
+    # cpuinfo.get_cpu_info() runs a ~2s WMI/CPUID probe on Windows (and can
+    # stall under load); the CPU model is invariant, so cache it for the process
+    # lifetime. This lru survives hw_fingerprint.cache_clear() (which tests call
+    # every test), so cpuinfo runs at most ONCE per process regardless of how
+    # often the fingerprint lru or the cache-dir is reset.
     try:
         import cpuinfo
         info = cpuinfo.get_cpu_info()
@@ -107,6 +114,17 @@ def _current_device_id() -> int:
         return 0
 
 
+@lru_cache(maxsize=16)
+def _gpu_summary_cached(device_id: int):
+    """Per-device GPU capability probe (nvidia-smi / gputil / cupy query --
+    ~0.1-2s and can stall under load), cached for the process. Keyed BY device
+    id so a multi-GPU box gets a distinct cached summary per device (the
+    per-device fingerprint + the multi-GPU sweep rely on this). CPU is cached
+    globally (_cpu_model_slug -- one CPU); GPUs must be per-device. Tests that
+    mock gpu_capability_summary must call _gpu_summary_cached.cache_clear()."""
+    return gpu_capability_summary(device_id)
+
+
 def _gpu_slug_and_cc() -> tuple[str, str]:
     """Returns (gpu_name_slug, cc_str). On CPU-only host: ("no-gpu", "").
 
@@ -116,7 +134,7 @@ def _gpu_slug_and_cc() -> tuple[str, str]:
     """
     try:
         dev_id = _current_device_id()
-        summary = gpu_capability_summary(dev_id)
+        summary = _gpu_summary_cached(dev_id)
         if summary is None:
             return ("no-gpu", "")
         name = summary.get("name") or "unknown"
@@ -267,7 +285,7 @@ def _build_provenance() -> dict:
     something material changed (CUDA driver bump, cupy upgrade, etc.).
     """
     prov: dict[str, object] = {
-        "python_version": _safe_version("sys", "version"),
+        "python_version": "%d.%d" % __import__("sys").version_info[:2],
         "numpy_version": _safe_version("numpy"),
         "numba_version": _safe_version("numba"),
         "cupy_version": _safe_version("cupy"),
@@ -287,7 +305,7 @@ def _build_provenance() -> dict:
         pass
     # Live GPU capability summary (cc, vram, name) at save time.
     try:
-        summary = gpu_capability_summary(0)
+        summary = _gpu_summary_cached(_current_device_id())
         if summary is not None:
             prov["gpu_summary"] = {
                 "cc_major": summary.get("cc_major"),
@@ -303,13 +321,15 @@ def _build_provenance() -> dict:
 
 def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
     """True iff a MATERIAL provenance field differs (cuda driver/runtime,
-    cupy/numba versions, GPU cc/name). Timestamps + python version are
-    NOT considered material -- a Python patch bump shouldn't invalidate
-    a kernel tuning."""
+    cupy/numba/numpy versions, GPU cc/name, or python MAJOR.MINOR). python
+    major.minor IS material: numba/cupy codegen can differ across interpreter
+    minors, so a Python upgrade should re-tune deterministically (cheap +
+    correct) rather than let codegen drift invalidate unpredictably. Patch
+    bumps are NOT material (python_version stores only major.minor)."""
     if old is None or new is None:
         return False  # be conservative: no data -> no invalidation
-    keys = ("cuda_driver_version", "cuda_runtime_version",
-            "cupy_version", "numba_version", "numpy_version")
+    keys = ("cuda_driver_version", "cuda_runtime_version", "cupy_version",
+            "numba_version", "numpy_version", "python_version")
     for k in keys:
         if old.get(k) != new.get(k):
             return True
@@ -343,8 +363,11 @@ class KernelTuningCache:
     trigger an auto-tune sweep or fall back to a hand-tuned default.
     """
 
-    def __init__(self, path: Optional[str] = None):
-        self._path = path or cache_path()
+    def __init__(self, path: Optional[str] = None, *, in_memory: bool = False):
+        # in_memory=True skips all disk / filelock / provenance -- a seedable
+        # RAM cache for fast unit tests (KernelTuningCache(in_memory=True)).
+        self._in_memory = in_memory
+        self._path = None if in_memory else (path or cache_path())
         # Reentrant so ``update`` can call ``_ensure_loaded`` under its own
         # lock without deadlocking (regression caught by
         # tests/system/test_kernel_tuning_cache.py during the first
@@ -357,7 +380,7 @@ class KernelTuningCache:
     def _load(self) -> Optional[dict]:
         """Lazy file-read. Returns the validated payload, or None on
         absent / unreadable / schema-version / fingerprint mismatch."""
-        if not os.path.isfile(self._path):
+        if self._in_memory or not os.path.isfile(self._path):
             return None
         try:
             with open(self._path, "r", encoding="utf-8") as f:
@@ -406,6 +429,8 @@ class KernelTuningCache:
         ``_ensure_loaded`` under the ``RLock`` so single-process is
         safe regardless).
         """
+        if self._in_memory:
+            return  # RAM-only: nothing to persist
         lock_path = self._path + ".lock"
         try:
             from filelock import FileLock
@@ -458,19 +483,41 @@ class KernelTuningCache:
                 return self._loaded
             self._loaded = self._load() or {
                 "schema_version": SCHEMA_VERSION,
-                "hw_fingerprint": hw_fingerprint(),
+                "hw_fingerprint": "in_memory" if self._in_memory else hw_fingerprint(),
                 "kernels": {},
             }
             return self._loaded
 
     # ----- public API -----
 
-    def update(self, kernel_name: str, *, axes: list[str], regions: list[dict]) -> None:
+    def update(self, kernel_name: str, *, axes: list[str], regions: list[dict],
+               code_version: Optional[str] = None, salt: int = 0,
+               equiv_tol: Optional[float] = None, tuned_utc: Optional[str] = None,
+               hooks: "Optional[TuningHooks]" = None) -> None:
         """Replace ``kernels[kernel_name]`` with the given axes + regions and
-        persist. Other kernels' tunings are preserved."""
+        persist (other kernels preserved). Records ``code_version``/``salt``/
+        ``tuned_utc`` metadata. If ``equiv_tol`` is given, any region whose
+        recorded ``max_abs_diff`` exceeds it is REJECTED (dropped) with a loud
+        warning -- a faster-but-numerically-divergent variant is a bug, never a
+        winner; regions without a recorded ``max_abs_diff`` are unvalidated and
+        kept as-is."""
+        regions = list(regions)
+        if equiv_tol is not None:
+            regions = self._apply_equiv_gate(kernel_name, regions, equiv_tol, hooks)
+        entry: dict = {
+            "axes": list(axes),
+            "regions": regions,
+            "tuned_utc": tuned_utc or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        }
+        if code_version is not None:
+            entry["code_version"] = code_version
+        if salt:
+            entry["salt"] = int(salt)
         with self._lock:
             self._ensure_loaded()
-            self._loaded["kernels"][kernel_name] = {"axes": list(axes), "regions": list(regions)}
+            self._loaded["kernels"][kernel_name] = entry
+            if hooks is not None:
+                hooks.persist(kernel_name, self._path, len(regions))
             self._save(self._loaded["kernels"])
 
     def has(self, kernel_name: str) -> bool:
@@ -486,10 +533,12 @@ class KernelTuningCache:
             return list(entry["regions"])
         return None
 
-    def lookup(self, kernel_name: str, **dims: int) -> Optional[dict]:
-        """First region whose ``..._max`` caps are all >= the requested
-        ``dims`` (or None / absent = match any). Returns the region dict
-        verbatim, minus the ``..._max`` keys. None on cache miss.
+    def lookup(self, kernel_name: str, **dims) -> Optional[dict]:
+        """First region whose axis constraints all match the requested ``dims``.
+        Constraints: ``<axis>_max`` (dim <= max), ``<axis>_min`` (dim >= min),
+        ``<axis>_eq`` (dim == value, categorical -- e.g. dtype/ndim/location);
+        absent/None = unconstrained. Returns the region dict minus all constraint
+        keys. None on cache miss.
 
         Example::
 
@@ -501,7 +550,7 @@ class KernelTuningCache:
             return None
         for region in regions:
             if _region_matches(region, dims):
-                return {k: v for k, v in region.items() if not k.endswith("_max")}
+                return {k: v for k, v in region.items() if not k.endswith(_AXIS_SUFFIXES)}
         return None
 
     def reset(self) -> None:
@@ -510,23 +559,295 @@ class KernelTuningCache:
         with self._lock:
             self._loaded = None
 
+    # ----- metadata / eviction (NO auto-evict on read) -----
 
-def _region_matches(region: dict, dims: dict[str, int]) -> bool:
-    """A region matches a dims dict iff every ``axis_max`` key in the
-    region is None / absent, OR the request's matching dim is <= max."""
+    def get_metadata(self, kernel_name: str) -> Optional[dict]:
+        """``{code_version, salt, tuned_utc, age_seconds, n_regions}`` for a
+        tuned kernel, else None. ``age_seconds`` = wall-age since the tuning."""
+        data = self._ensure_loaded()
+        entry = data.get("kernels", {}).get(kernel_name)
+        if not entry:
+            return None
+        meta = {
+            "code_version": entry.get("code_version"),
+            "salt": entry.get("salt", 0),
+            "tuned_utc": entry.get("tuned_utc"),
+            "n_regions": len(entry.get("regions", [])),
+            "age_seconds": None,
+        }
+        ts = entry.get("tuned_utc")
+        if ts:
+            try:
+                t = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                meta["age_seconds"] = max(0.0, time.time() - t.timestamp())
+            except (ValueError, AttributeError):
+                pass
+        return meta
+
+    def evict(self, kernel_name: str) -> bool:
+        """Drop one kernel's tuning + persist. Returns whether it was present.
+        Deliberately NO auto-evict-on-read: a tuning is permanent for a given
+        hw_fingerprint + provenance + code_version."""
+        with self._lock:
+            self._ensure_loaded()
+            if kernel_name in self._loaded.get("kernels", {}):
+                del self._loaded["kernels"][kernel_name]
+                self._save(self._loaded["kernels"])
+                return True
+            return False
+
+    # ----- introspection -----
+
+    def lookup_explain(self, kernel_name: str, **dims) -> dict:
+        """Like ``lookup`` but explains the decision -- returns
+        ``{matched, region_index, region, reason}``. For tests + debugging which
+        region (and why) a dispatch resolved to."""
+        regions = self.get_regions(kernel_name)
+        if not regions:
+            return {"matched": False, "region_index": None, "region": None,
+                    "reason": f"no regions for kernel {kernel_name!r}"}
+        first_reason = None
+        for i, region in enumerate(regions):
+            ok, why = _region_match_reason(region, dims)
+            if ok:
+                payload = {k: v for k, v in region.items() if not k.endswith(_AXIS_SUFFIXES)}
+                return {"matched": True, "region_index": i, "region": payload,
+                        "reason": f"region {i} matched"}
+            if first_reason is None:
+                first_reason = f"region 0 rejected: {why}"
+        return {"matched": False, "region_index": None, "region": None,
+                "reason": first_reason or f"no region matched dims {dims}"}
+
+    # ----- equiv-tol gate (used by update) -----
+
+    def _apply_equiv_gate(self, kernel_name, regions, equiv_tol, hooks=None):
+        """Drop (with a loud warning) any region whose recorded ``max_abs_diff``
+        exceeds ``equiv_tol`` -- SURFACE divergence, never silently substitute a
+        reference. Regions without ``max_abs_diff`` are unvalidated + kept."""
+        kept = []
+        for r in regions:
+            d = r.get("max_abs_diff")
+            if d is not None and d > equiv_tol:
+                caps = {k: v for k, v in r.items() if k.endswith(_AXIS_SUFFIXES)}
+                logger.warning(
+                    "kernel_tuning_cache: %s region %s REJECTED -- max_abs_diff=%.3e > "
+                    "equiv_tol=%.3e. A faster-but-divergent variant is a bug, not a winner; "
+                    "not persisting it.", kernel_name, caps, d, equiv_tol)
+                if hooks is not None:
+                    hooks.winner_chosen(kernel_name, r, f"rejected: diverges {d:.3e}>{equiv_tol:.3e}")
+                continue
+            kept.append(r)
+        return kept
+
+    # ----- orchestration: env -> code_version-checked lookup -> locked sweep -> fallback -----
+
+    def get_or_tune(self, kernel_name: str, *, dims: dict, tuner: Callable,
+                    axes: list[str], fallback, env_key: Optional[str] = None,
+                    code_version: Optional[str] = None, salt: int = 0,
+                    equiv_tol: Optional[float] = None,
+                    hooks: "Optional[TuningHooks]" = None,
+                    once_per_process: bool = True, lock_timeout: float = 900.0):
+        """Unified dispatch collapsing the env -> lookup -> on-miss sweep ->
+        persist -> re-lookup -> fallback flow.
+
+        ``tuner``: zero-arg callable returning a region list (the project sweep).
+        ``fallback``: a value or zero-arg callable (called lazily).
+        ``env_key``: if set and the env var is a non-empty string, short-circuit
+        to that raw string. ``code_version``: when both stored + passed are
+        non-None and differ, the stale entry is bypassed. The once-per-process
+        guard is keyed on (kernel, cache-path) so tests switching
+        PYUTILZ_KERNEL_CACHE_DIR re-tune. Sweeps serialize cross-process."""
+        hk = hooks if hooks is not None else _DEFAULT_HOOKS
+        if env_key:
+            forced = os.environ.get(env_key, "").strip()
+            if forced:
+                hk.env_override(kernel_name, forced)
+                return forced
+        if self._code_version_stale(kernel_name, code_version):
+            hk.invalidation(kernel_name, "code_version changed")
+        else:
+            hit = self.lookup(kernel_name, **dims)
+            if hit is not None:
+                hk.cache_hit(kernel_name, dims, hit)
+                return hit
+        hk.cache_miss(kernel_name, dims)
+        guard_key = (kernel_name, self._path or id(self))
+        if once_per_process and guard_key in _TUNED_THIS_PROCESS:
+            return fallback() if callable(fallback) else fallback
+        with self._tuning_lock(kernel_name, lock_timeout, hk):
+            # another process may have tuned it while we waited for the lock
+            if not self._code_version_stale(kernel_name, code_version):
+                hit = self.lookup(kernel_name, **dims)
+                if hit is not None:
+                    return hit
+            _TUNED_THIS_PROCESS.add(guard_key)
+            hk.sweep_start(kernel_name, axes)
+            try:
+                regions = tuner()
+            except Exception as e:  # a sweep failure must never break dispatch
+                logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
+                regions = None
+            if regions:
+                self.update(kernel_name, axes=axes, regions=regions, code_version=code_version,
+                            salt=salt, equiv_tol=equiv_tol, hooks=hk)
+                hk.sweep_end(kernel_name, len(regions))
+                hit = self.lookup(kernel_name, **dims)
+                if hit is not None:
+                    hk.winner_chosen(kernel_name, hit, "from sweep")
+                    return hit
+        hk.winner_chosen(kernel_name, None, "fallback")
+        return fallback() if callable(fallback) else fallback
+
+    def _code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
+        """True iff a stored code_version exists and differs from the live one."""
+        if code_version is None:
+            return False
+        data = self._ensure_loaded()
+        stored = data.get("kernels", {}).get(kernel_name, {}).get("code_version")
+        return stored is not None and stored != code_version
+
+    @contextlib.contextmanager
+    def _tuning_lock(self, kernel_name: str, timeout: float, hooks):
+        """Cross-process advisory lock so two cold processes don't both run the
+        (expensive) sweep. No-op if ``filelock`` is absent or in_memory. On
+        timeout (a crashed / over-long tuner) fires a hook and proceeds WITHOUT
+        the lock rather than deadlocking dispatch (accept a rare duplicate
+        sweep, which ``_save`` merges, over a lost update)."""
+        if self._in_memory or self._path is None:
+            yield
+            return
+        try:
+            from filelock import FileLock, Timeout
+        except ImportError:
+            yield
+            return
+        lock = FileLock(self._path + "." + _slug(kernel_name) + ".tune.lock", timeout=timeout)
+        try:
+            lock.acquire()
+        except Timeout:
+            hooks.concurrent_sweep_detected(kernel_name)
+            logger.warning("kernel_tuning_cache: tuning lock timeout for %s after %.0fs; "
+                           "proceeding without lock (possible duplicate sweep)", kernel_name, timeout)
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
+# Region keys ending with one of these suffixes are interpreted as axis
+# CONSTRAINTS by the matcher; everything else in a region dict is opaque
+# decision payload. ``lookup`` strips exactly these suffixes from its return.
+_AXIS_SUFFIXES = ("_max", "_min", "_eq")
+
+
+def _region_matches(region: dict, dims: dict) -> bool:
+    """A region matches a dims dict iff, for every requested dim, the region's
+    constraints on that axis hold:
+      * ``<axis>_max``: dim <= max   (numeric upper cap)
+      * ``<axis>_min``: dim >= min   (numeric lower cap)
+      * ``<axis>_eq`` : dim == value (categorical / exact -- dtype, ndim, location)
+    A constraint key absent or None is unconstrained; a dim with no constraint
+    key in the region is ignored (the region applies to any value of it)."""
     for axis_name, axis_value in dims.items():
-        cap_key = f"{axis_name}_max"
-        cap_value = region.get(cap_key)
-        if cap_value is None:
-            continue  # this axis is unconstrained for this region
-        if axis_value > cap_value:
+        cap = region.get(f"{axis_name}_max")
+        if cap is not None and axis_value > cap:
+            return False
+        lo = region.get(f"{axis_name}_min")
+        if lo is not None and axis_value < lo:
+            return False
+        eq = region.get(f"{axis_name}_eq")
+        if eq is not None and axis_value != eq:
             return False
     return True
+
+
+def _region_match_reason(region: dict, dims: dict) -> tuple:
+    """Like ``_region_matches`` but returns ``(ok, reason)`` -- the first failing
+    constraint -- for ``lookup_explain``."""
+    for axis_name, axis_value in dims.items():
+        cap = region.get(f"{axis_name}_max")
+        if cap is not None and axis_value > cap:
+            return False, f"{axis_name}={axis_value} > {axis_name}_max={cap}"
+        lo = region.get(f"{axis_name}_min")
+        if lo is not None and axis_value < lo:
+            return False, f"{axis_name}={axis_value} < {axis_name}_min={lo}"
+        eq = region.get(f"{axis_name}_eq")
+        if eq is not None and axis_value != eq:
+            return False, f"{axis_name}={axis_value!r} != {axis_name}_eq={eq!r}"
+    return True, "all constraints satisfied"
+
+
+# Process-scoped "tuned this run" guard, keyed on (kernel_name, cache_path), so
+# get_or_tune sweeps at most once per kernel per process (tests that switch
+# PYUTILZ_KERNEL_CACHE_DIR get a different path -> a fresh re-tune).
+_TUNED_THIS_PROCESS: set = set()
+
+
+class TuningHooks(Protocol):
+    """Optional instrumentation fired by ``get_or_tune`` / sweeps. Supply a
+    custom implementation for structured logging / dashboards; the default
+    ``LoggerHooks`` logs at sensible levels."""
+
+    def env_override(self, kernel: str, choice: str) -> None: ...
+    def cache_hit(self, kernel: str, dims: dict, region: dict) -> None: ...
+    def cache_miss(self, kernel: str, dims: dict) -> None: ...
+    def sweep_start(self, kernel: str, axes: list) -> None: ...
+    def variant_measured(self, kernel: str, label: str, wall_ms: float) -> None: ...
+    def sweep_end(self, kernel: str, n_regions: int) -> None: ...
+    def winner_chosen(self, kernel: str, region: Optional[dict], reason: str) -> None: ...
+    def persist(self, kernel: str, path: Optional[str], n_regions: int) -> None: ...
+    def invalidation(self, kernel: str, reason: str) -> None: ...
+    def concurrent_sweep_detected(self, kernel: str) -> None: ...
+
+
+class LoggerHooks:
+    """Default ``TuningHooks`` -- logs at the levels the cache used historically
+    (info for sweep start/done + invalidation, debug for hit/miss/persist)."""
+
+    def env_override(self, kernel, choice):
+        logger.debug("kernel_tuning_cache: %s env override -> %r", kernel, choice)
+
+    def cache_hit(self, kernel, dims, region):
+        logger.debug("kernel_tuning_cache: %s cache hit %s", kernel, dims)
+
+    def cache_miss(self, kernel, dims):
+        logger.debug("kernel_tuning_cache: %s cache miss %s", kernel, dims)
+
+    def sweep_start(self, kernel, axes):
+        logger.info("kernel_tuning_cache: %s sweep starting (axes=%s)", kernel, axes)
+
+    def variant_measured(self, kernel, label, wall_ms):
+        logger.debug("kernel_tuning_cache: %s variant %s = %.3fms", kernel, label, wall_ms)
+
+    def sweep_end(self, kernel, n_regions):
+        logger.info("kernel_tuning_cache: %s sweep done (%d regions)", kernel, n_regions)
+
+    def winner_chosen(self, kernel, region, reason):
+        logger.debug("kernel_tuning_cache: %s winner (%s): %s", kernel, reason, region)
+
+    def persist(self, kernel, path, n_regions):
+        logger.debug("kernel_tuning_cache: %s persisted %d regions -> %s", kernel, n_regions, path)
+
+    def invalidation(self, kernel, reason):
+        logger.info("kernel_tuning_cache: %s invalidated (%s); will re-tune", kernel, reason)
+
+    def concurrent_sweep_detected(self, kernel):
+        logger.warning("kernel_tuning_cache: %s concurrent sweep / lock timeout", kernel)
+
+
+_DEFAULT_HOOKS = LoggerHooks()
 
 
 __all__ = [
     "SCHEMA_VERSION",
     "KernelTuningCache",
+    "TuningHooks",
+    "LoggerHooks",
     "cache_dir",
     "cache_path",
     "hw_fingerprint",

@@ -122,6 +122,7 @@ class TestHwFingerprint:
         # ``gpu_capability_summary`` actually runs (the disk cache layer
         # would otherwise short-circuit before any GPU probe).
         with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
+            ktc._gpu_summary_cached.cache_clear()  # GPU probe is per-device-cached now
             fp = ktc.hw_fingerprint()
         assert "no-gpu" in fp
 
@@ -204,11 +205,19 @@ class TestProvenance:
         new = {"gpu_summary": {"cc_major": 8, "cc_minor": 6, "name": "RTX 3070"}}
         assert ktc.provenance_changed(old, new) is True
 
+    def test_python_minor_bump_detected(self):
+        # v2: python MAJOR.MINOR is material (numba/cupy codegen can differ
+        # across interpreter minors) -> a minor change re-tunes deterministically.
+        old = {"python_version": "3.11", "cupy_version": "13.0.0"}
+        new = {"python_version": "3.12", "cupy_version": "13.0.0"}
+        assert ktc.provenance_changed(old, new) is True
+
     def test_python_patch_does_not_invalidate(self):
-        # python_version is NOT in the material-keys list -> ignored.
-        old = {"python_version": "3.11.5", "cupy_version": "13.0.0"}
-        new = {"python_version": "3.11.6", "cupy_version": "13.0.0"}
-        assert ktc.provenance_changed(old, new) is False
+        # ...but a patch bump does NOT: _build_provenance records ONLY
+        # major.minor, so 3.11.5 and 3.11.6 both become "3.11" and compare equal.
+        import re
+        pv = ktc._build_provenance()["python_version"]
+        assert re.fullmatch(r"\d+\.\d+", pv), pv
 
     def test_numpy_major_bump_detected(self):
         # NumPy 1.x -> 2.x has ABI-level changes that can affect cupy interop;
@@ -253,3 +262,127 @@ class TestProvenance:
             return_value={"cuda_driver_version": 12300},
         ):
             assert fresh._load() is None  # stale -> miss
+
+
+# ============================================================================
+# v2: categorical/range axes, get_or_tune, code_version, equiv_tol, metadata
+# (in-memory cache -> no disk / no hw_fingerprint / no cpuinfo)
+# ============================================================================
+
+class TestV2Matcher:
+    def test_eq_min_max(self):
+        c = ktc.KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n", "dtype", "ndim"], regions=[
+            {"ndim_eq": 3, "backend": "numpy3d"},
+            {"n_max": 1000, "n_min": 100, "dtype_eq": "float64", "backend": "small64"},
+            {"backend": "catch"},
+        ])
+        assert c.lookup("k", n=50, dtype="float64", ndim=3) == {"backend": "numpy3d"}
+        assert c.lookup("k", n=500, dtype="float64", ndim=2) == {"backend": "small64"}
+        assert c.lookup("k", n=50, dtype="float64", ndim=2) == {"backend": "catch"}   # below n_min
+        assert c.lookup("k", n=500, dtype="float32", ndim=2) == {"backend": "catch"}  # dtype mismatch
+
+    def test_lookup_explain(self):
+        c = ktc.KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=[{"n_max": 100, "backend": "x"}])
+        assert c.lookup_explain("k", n=50)["region_index"] == 0
+        miss = c.lookup_explain("k", n=500)
+        assert not miss["matched"] and "n=500" in miss["reason"]
+
+
+class TestV2GetOrTune:
+    def _fresh(self):
+        ktc._TUNED_THIS_PROCESS.clear()
+        return ktc.KernelTuningCache(in_memory=True)
+
+    def test_miss_then_hit_one_sweep(self):
+        c = self._fresh(); calls = {"n": 0}
+        def tuner():
+            calls["n"] += 1; return [{"backend": "numba"}]
+        r1 = c.get_or_tune("g", dims={"n": 100}, tuner=tuner, axes=["n"], fallback={"backend": "FB"})
+        r2 = c.get_or_tune("g", dims={"n": 100}, tuner=tuner, axes=["n"], fallback={"backend": "FB"})
+        assert r1 == {"backend": "numba"} and r2 == {"backend": "numba"} and calls["n"] == 1
+
+    def test_env_override(self, monkeypatch):
+        c = self._fresh(); monkeypatch.setenv("MY_BK", "forced")
+        assert c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"x": 1}],
+                             axes=["n"], fallback="FB", env_key="MY_BK") == "forced"
+
+    def test_fallback_on_empty_and_failing_tuner(self):
+        c = self._fresh()
+        assert c.get_or_tune("a", dims={"n": 1}, tuner=lambda: [], axes=["n"], fallback="FB") == "FB"
+        c2 = self._fresh()
+        def boom():
+            raise RuntimeError("x")
+        assert c2.get_or_tune("b", dims={"n": 1}, tuner=boom, axes=["n"], fallback="FB") == "FB"
+
+    def test_once_per_process_guard(self):
+        c = self._fresh(); calls = {"n": 0}
+        def boom():
+            calls["n"] += 1; raise RuntimeError("x")
+        c.get_or_tune("g", dims={"n": 1}, tuner=boom, axes=["n"], fallback="FB")
+        c.get_or_tune("g", dims={"n": 2}, tuner=boom, axes=["n"], fallback="FB")
+        assert calls["n"] == 1
+
+    def test_code_version_invalidation(self):
+        c = self._fresh()
+        c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v1"}],
+                      axes=["n"], fallback="FB", code_version="A")
+        ktc._TUNED_THIS_PROCESS.clear()
+        got = c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v2"}],
+                            axes=["n"], fallback="FB", code_version="B")
+        assert got == {"backend": "v2"}
+
+
+class TestV2EquivGate:
+    def test_divergent_region_rejected_not_masked(self):
+        c = ktc.KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=[
+            {"n_max": 100, "backend": "good", "max_abs_diff": 1e-14},
+            {"backend": "bad", "max_abs_diff": 1e-2},
+        ], equiv_tol=1e-9)
+        assert (c.lookup("k", n=50) or {}).get("backend") == "good"
+        assert c.lookup("k", n=5000) is None  # divergent catch-all dropped, not substituted
+
+
+class TestV2Metadata:
+    def test_metadata_and_evict_no_autoevict(self):
+        c = ktc.KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=[{"backend": "x"}], code_version="CV", salt=3)
+        m = c.get_metadata("k")
+        assert m["code_version"] == "CV" and m["salt"] == 3 and m["n_regions"] == 1
+        assert m["age_seconds"] is not None
+        assert c.evict("k") is True and c.get_metadata("k") is None and c.evict("k") is False
+
+
+class TestV2Disk:
+    """v2 disk round-trip (cpuinfo mocked so hw_fingerprint can't hang on WMI)."""
+
+    @pytest.fixture
+    def fast_cache_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ktc, "_cpu_model_slug", lambda: "testcpu")
+        monkeypatch.setattr(ktc, "_gpu_slug_and_cc", lambda: ("no-gpu", ""))
+        ktc.hw_fingerprint.cache_clear()
+        ktc._TUNED_THIS_PROCESS.clear()
+        yield str(tmp_path)
+        ktc.hw_fingerprint.cache_clear()
+
+    def test_code_version_persists_and_invalidates_across_instances(self, fast_cache_dir):
+        ktc.KernelTuningCache().update("k", axes=["n"],
+                                       regions=[{"n_max": None, "backend": "v1"}], code_version="A")
+        c2 = ktc.KernelTuningCache()
+        assert c2.get_metadata("k")["code_version"] == "A"
+        assert c2.lookup("k", n=1) == {"backend": "v1"}
+        ktc._TUNED_THIS_PROCESS.clear()
+        c3 = ktc.KernelTuningCache()
+        got = c3.get_or_tune("k", dims={"n": 1}, tuner=lambda: [{"n_max": None, "backend": "v2"}],
+                             axes=["n"], fallback="FB", code_version="B")
+        assert got == {"backend": "v2"}
+
+    def test_categorical_region_survives_disk_roundtrip(self, fast_cache_dir):
+        ktc.KernelTuningCache().update("k", axes=["dtype"], regions=[
+            {"dtype_eq": "float64", "backend": "f64"}, {"backend": "other"}])
+        c2 = ktc.KernelTuningCache()
+        assert c2.lookup("k", dtype="float64") == {"backend": "f64"}
+        assert c2.lookup("k", dtype="int32") == {"backend": "other"}
