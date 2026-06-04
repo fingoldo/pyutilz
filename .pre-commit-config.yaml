@@ -50,3 +50,17 @@ repos:
         pass_filenames: false
         always_run: false
         stages: [manual]
+
+  # Format + lint WARNINGS only -- ruff format --check + ruff check, never
+  # rewrites and never blocks (always exits 0). Auto-reformat is intentionally
+  # off (would churn large diffs that collide with concurrent work); run
+  # ``ruff format`` / ``ruff check --fix`` manually to apply. Mirrors mlframe.
+  - repo: local
+    hooks:
+      - id: format-lint-warn
+        name: "format + lint (WARN only — never rewrites or blocks)"
+        entry: python scripts/format_warn.py
+        language: system
+        types: [python]
+        verbose: true
+        stages: [pre-commit]
