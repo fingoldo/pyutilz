@@ -240,6 +240,14 @@ ignore = [
     "F401",  # unused imports (cleaning up separately)
     "F541",  # f-string without placeholders (sometimes used for consistency)
     "UP031", # use format specifiers instead of percent format (legacy code, not urgent)
+    "UP006", # list/dict over typing.List: project targets py38 (parity with mlframe)
+    "UP007", # X|Y over Union: py38 concern (parity with mlframe)
+    "UP045", # X|None over Optional: py38 concern (parity with mlframe)
+    "UP037", # quoted annotation: forward refs in dataclass slots (parity with mlframe)
+    "F403",  # ``from x import *``: intentional in several namespace modules
+    "F405",  # name may be undefined / from star-import: consequence of intentional F403, not a bug
+    "B904",  # raise ... from inside except: stylistic, not a correctness issue
+    "B009",  # getattr(x, "const"): stylistic
 ]
 
 [tool.ruff.lint.per-file-ignores]

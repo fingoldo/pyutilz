@@ -65,7 +65,7 @@ import re
 import threading
 import time
 from functools import lru_cache
-from typing import Any, Callable, Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from pyutilz.core.pythonlib import is_cuda_available
 from pyutilz.system.gpu_dispatch import gpu_capability_summary
