@@ -23,6 +23,7 @@ __all__ = [
     "kernel_tuner",
     "discover_tuners",
     "retune_all",
+    "tune_spec",
     "get_registry",
 ]
 
@@ -288,6 +289,26 @@ def _pick_least_loaded_device(
         if attempt < idle_wait_tries - 1:
             time.sleep(idle_wait_sec)
     return None
+
+
+def tune_spec(
+    spec: TunerSpec,
+    *,
+    force: bool = True,
+    device_id: Optional[int] = None,
+    idle_wait_tries: int = 5,
+    idle_wait_sec: float = 0.5,
+    hooks: Optional[Any] = None,
+) -> int:
+    """Tune a single registered spec (compute its code_version, run the sweep,
+    persist) and return the number of regions now cached. The public single-spec
+    entry point -- e.g. ``mlframe-tune-kernels refresh <kernel>``; ``retune_all``
+    batches this across every spec + GPU model."""
+    code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
+    return _run_spec_tuning(
+        KernelTuningCache(), spec, code_version, device_id=device_id, force=force,
+        idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
+    )
 
 
 def _run_spec_tuning(

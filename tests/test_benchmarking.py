@@ -213,3 +213,73 @@ class TestSweepBackendGrid:
             repeats=2,
         )
         assert all(r["backend_choice"] == "numpy" for r in regions)
+
+
+class TestSelectionAndRouting:
+    """End-to-end: the benchmarker picks the fastest EQUIVALENT backend, and the
+    cache routes the right backend per dims + residency."""
+
+    @staticmethod
+    def _inp(d):
+        return (np.arange(d["n"], dtype=float),)
+
+    def test_benchmarker_picks_faster_equivalent(self):
+        # 'fast' and 'slow' give the SAME output; 'slow' sleeps 5ms -> 'fast' must win.
+        import time
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        regions = sweep_backend_grid(
+            {"slow": lambda x: (time.sleep(0.005) or x.sum()), "fast": lambda x: x.sum()},
+            {"n": [10, 100]}, self._inp, reference="slow", repeats=3,
+        )
+        assert regions and all(r["backend_choice"] == "fast" for r in regions)
+
+    def test_benchmarker_rejects_faster_but_divergent(self):
+        # 'wrong' is instant but returns a different value -> equiv gate disqualifies
+        # it, so the (slower) correct reference wins.
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        regions = sweep_backend_grid(
+            {"ref": lambda x: (_t() or x.sum()), "wrong": lambda x: x.sum() + 1e6},
+            {"n": [10, 100]}, self._inp, reference="ref", repeats=3,
+        )
+        assert regions and all(r["backend_choice"] == "ref" for r in regions)
+
+    def test_routing_by_size_band(self):
+        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+
+        c = KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=[{"n_max": 100, "backend_choice": "cpu"}, {"backend_choice": "gpu"}])
+        assert c.lookup("k", n=50)["backend_choice"] == "cpu"
+        assert c.lookup("k", n=500)["backend_choice"] == "gpu"
+
+    def test_routing_by_residency(self):
+        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+
+        c = KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n", "location"], regions=[
+            {"location_eq": "host", "backend_choice": "numpy"},
+            {"location_eq": "device", "backend_choice": "cupy"},
+        ])
+        assert c.lookup("k", n=1000, location="host")["backend_choice"] == "numpy"
+        assert c.lookup("k", n=1000, location="device")["backend_choice"] == "cupy"
+
+    def test_sweep_to_dispatch_routes_swept_winner(self):
+        # Full path: benchmark -> persist regions -> lookup returns the measured winner.
+        import time
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+
+        regions = sweep_backend_grid(
+            {"slow": lambda x: (time.sleep(0.004) or x.sum()), "fast": lambda x: x.sum()},
+            {"n": [10, 100]}, self._inp, reference="slow", repeats=3,
+        )
+        c = KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=regions)
+        assert c.lookup("k", n=50)["backend_choice"] == "fast"
+        assert c.lookup("k", n=100)["backend_choice"] == "fast"
+
+
+def _t():
+    import time
+    time.sleep(0.004)
