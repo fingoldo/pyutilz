@@ -125,21 +125,31 @@ class TunerSpec:
             return self._choice_cache[key]
         fb = self._fallback_choice(dims)
         bc = fb
+        tuned = False
         try:
             from .cache import KernelTuningCache
 
-            result = KernelTuningCache.load_or_create().get_or_tune(
+            cache = KernelTuningCache.load_or_create()
+            result = cache.get_or_tune(
                 self.kernel_name, dims=dims, tuner=self.tuner, axes=list(self.axes.keys()),
                 fallback={"backend_choice": fb}, code_version=self.code_version(),
                 env_key=self.env_key,
                 equiv_tol=(self.equiv_tol or {}).get("max_abs_diff") if self.equiv_tol else None,
+                async_sweep=True,  # FIT-TIME dispatch: never block the fit on the sweep; measure in the background
             )
             cand = result if isinstance(result, str) else str((result or {}).get("backend_choice", ""))
             if cand:
                 bc = cand
+            # The kernel is "tuned" once regions exist (the background sweep wrote them). Until then get_or_tune
+            # returns the fallback; we must NOT memoize that, or every fit in this process would be pinned to the
+            # fallback even after the async sweep lands.
+            tuned = cache.has(self.kernel_name) and not cache._code_version_stale(self.kernel_name, self.code_version())
         except Exception as e:
             logger.debug("%s choose() failed: %s", self.kernel_name, e)
-        self._choice_cache[key] = bc
+        # Memoize only a settled (tuned) decision. While the async sweep is pending, re-resolve each call (a cheap
+        # in-memory lookup) so the measured backend is picked up the moment the background sweep finishes.
+        if tuned:
+            self._choice_cache[key] = bc
         return bc
 
 
@@ -375,6 +385,7 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
             spec.kernel_name, dims={}, tuner=spec.tuner, axes=list(spec.axes.keys()),
             fallback=spec.fallback, env_key=spec.env_key, code_version=code_version,
             salt=spec.salt, equiv_tol=tol, hooks=hooks, once_per_process=False,
+            async_sweep=False,  # offline tuning must run the sweep SYNCHRONOUSLY and wait for/persist the result
         )
 
     if device_id is not None:

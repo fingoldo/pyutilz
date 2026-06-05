@@ -737,7 +737,8 @@ class KernelTuningCache:
                     code_version: Optional[str] = None, salt: int = 0,
                     equiv_tol: Optional[float] = None,
                     hooks: "Optional[TuningHooks]" = None,
-                    once_per_process: bool = True, lock_timeout: float = 900.0):
+                    once_per_process: bool = True, lock_timeout: float = 900.0,
+                    async_sweep: bool = False):
         """Unified dispatch collapsing the env -> lookup -> on-miss sweep ->
         persist -> re-lookup -> fallback flow.
 
@@ -765,6 +766,28 @@ class KernelTuningCache:
         guard_key = (kernel_name, self._path or id(self))
         if once_per_process and guard_key in _TUNED_THIS_PROCESS:
             return fallback() if callable(fallback) else fallback
+
+        _sweep_disabled = os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False")
+
+        # ASYNC sweep (opt-in via async_sweep=True; the FIT-TIME path -- TunerSpec.choose + hot-path dispatchers pass
+        # it). The CPU-vs-GPU sweep is EXPENSIVE (hundreds of seconds) and must NEVER run synchronously inside a
+        # caller's fit -- doing so blocks the fit, contaminates its timing, and (if the
+        # process is killed mid-sweep) can wedge every fresh fit on the cross-process tuning lock. Instead: mark the
+        # kernel tuned-this-process, kick the sweep into a background daemon thread, and return the measurement-backed
+        # FALLBACK immediately. The sweep measures on THIS host and writes the cache, so SUBSEQUENT get_or_tune calls
+        # (this process once the thread finishes, and all future processes) return the per-host-OPTIMAL backend -- the
+        # measurement is preserved, just moved off the hot path. The background thread acquires the lock with a SHORT
+        # timeout and GIVES UP if another process is already sweeping (no wedge, no duplicate). One-shot scripts get the
+        # fallback (which they don't benefit from tuning anyway). ``mlframe-tune-kernels`` / ``retune_all`` pass
+        # ``async_sweep=False`` for synchronous, wait-for-result offline tuning.
+        if async_sweep and not _sweep_disabled:
+            _TUNED_THIS_PROCESS.add(guard_key)
+            self._spawn_async_sweep(kernel_name, dims=dims, tuner=tuner, axes=axes,
+                                    code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
+            hk.winner_chosen(kernel_name, None, "fallback (async sweep dispatched)")
+            return fallback() if callable(fallback) else fallback
+
+        # SYNCHRONOUS path: explicit offline tuning (async_sweep=False) or the disable-sweep escape hatch.
         with self._tuning_lock(kernel_name, lock_timeout, hk):
             # another process may have tuned it while we waited for the lock
             if not self._code_version_stale(kernel_name, code_version):
@@ -772,17 +795,7 @@ class KernelTuningCache:
                 if hit is not None:
                     return hit
             _TUNED_THIS_PROCESS.add(guard_key)
-            if os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False"):
-                # Escape hatch (test suites / latency-sensitive prod): skip the on-miss auto-sweep and use the caller's
-                # fallback. Explicit ``ensure_*`` / ``run_*_sweep`` paths are unaffected -- they don't route through here.
-                regions = None
-            else:
-                hk.sweep_start(kernel_name, axes)
-                try:
-                    regions = tuner()
-                except Exception as e:  # a sweep failure must never break dispatch
-                    logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
-                    regions = None
+            regions = None if _sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
             if regions:
                 self.update(kernel_name, axes=axes, regions=regions, code_version=code_version,
                             salt=salt, equiv_tol=equiv_tol, hooks=hk)
@@ -793,6 +806,65 @@ class KernelTuningCache:
                     return hit
         hk.winner_chosen(kernel_name, None, "fallback")
         return fallback() if callable(fallback) else fallback
+
+    def _run_tuner(self, kernel_name: str, tuner: Callable, axes: list, hooks):
+        """Run a project sweep, firing the start hook and swallowing any failure (a sweep error must never
+        break dispatch). Returns the region list or None."""
+        hooks.sweep_start(kernel_name, axes)
+        try:
+            return tuner()
+        except Exception as e:
+            logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
+            return None
+
+    def _spawn_async_sweep(self, kernel_name: str, *, dims, tuner, axes, code_version, salt, equiv_tol, hooks):
+        """Run the sweep in a background daemon thread: measure on this host + write the cache for SUBSEQUENT
+        calls, without ever blocking the caller's fit. Acquires the cross-process tuning lock with a short timeout
+        and gives up if another process is already sweeping this kernel -> a crashed/killed sweep can never wedge a
+        fresh fit, and there is at most one sweep per kernel across processes."""
+        def _run():
+            try:
+                with self._async_sweep_lock(kernel_name) as acquired:
+                    if not acquired:
+                        return  # another process is already tuning this kernel; let it
+                    if not self._code_version_stale(kernel_name, code_version) and self.lookup(kernel_name, **dims) is not None:
+                        return  # tuned while we waited for the lock
+                    regions = self._run_tuner(kernel_name, tuner, axes, hooks)
+                    if regions:
+                        self.update(kernel_name, axes=axes, regions=list(regions), code_version=code_version,
+                                    salt=salt, equiv_tol=equiv_tol, hooks=hooks)
+                        hooks.sweep_end(kernel_name, len(regions))
+            except Exception as e:  # a background sweep must never surface
+                logger.debug("kernel_tuning_cache: async sweep for %s crashed: %s", kernel_name, e)
+        threading.Thread(target=_run, name="ktc-sweep-" + _slug(kernel_name), daemon=True).start()
+
+    @contextlib.contextmanager
+    def _async_sweep_lock(self, kernel_name: str, timeout: float = 10.0):
+        """Yield True if the cross-process tuning lock was acquired (caller should sweep), False if another process
+        holds it (caller gives up -- no wait, no duplicate sweep). A short timeout means even a stale lock from a
+        killed holder only delays the BACKGROUND thread briefly, never a fit. No-op (True) if filelock is absent or
+        this cache is in-memory."""
+        if self._in_memory or self._path is None:
+            yield True
+            return
+        try:
+            from filelock import FileLock, Timeout
+        except ImportError:
+            yield True
+            return
+        lock = FileLock(self._path + "." + _slug(kernel_name) + ".tune.lock", timeout=timeout)
+        try:
+            lock.acquire()
+        except Timeout:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            try:
+                lock.release()
+            except Exception:
+                pass
 
     def _code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
         """True iff a stored code_version exists and differs from the live one."""
