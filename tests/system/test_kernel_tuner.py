@@ -77,22 +77,23 @@ def test_get_registry_returns_copy():
     assert len(get_registry()) == 1
 
 
-def test_discover_tuners_clears_then_repopulates(monkeypatch):
-    # Register a stray spec; discover_tuners() on a trivial package should
-    # clear it (fresh state), then repopulate from the walked package.
+def test_discover_tuners_accumulates_not_clears(monkeypatch):
+    # discover_tuners must NOT clear the registry: registration fires at module
+    # import, and Python's import cache means an already-imported module never
+    # re-runs its kernel_tuner(...) -- clearing would permanently lose it. So a
+    # spec registered before discovery survives a walk of a spec-free package.
     kernel_tuner(kernel_name="stray", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
-    assert len(get_registry()) == 1
+    assert "stray" in get_registry()
 
-    # Walk a package with no kernel_tuner specs (use a stdlib package).
     found = discover_tuners(package="json", warn_on_import_fail=False)
-    # json has no @kernel_tuner specs -> registry cleared, nothing added.
-    assert found == {}
-    assert len(get_registry()) == 0
+    assert "stray" in found  # preserved, not wiped
+    assert "stray" in get_registry()
 
 
-def test_discover_tuners_unknown_package_returns_empty():
+def test_discover_tuners_unknown_package_preserves_registry():
+    kernel_tuner(kernel_name="keep", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
     found = discover_tuners(package="no_such_package_xyz", warn_on_import_fail=False)
-    assert found == {}
+    assert "keep" in found  # an unimportable package returns the existing registry, not {}
 
 
 def test_retune_all_no_specs_returns_empty():
@@ -113,11 +114,9 @@ def test_run_spec_tuning_populates_cache():
         axes={"n": [100, 1000]},
         fallback={"backend_choice": "numpy"},
     )
-    n = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=False,
-                         idle_wait_tries=1, idle_wait_sec=0.0, hooks=None)
+    n = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=False, hooks=None)
     assert n == 2
     assert cache.has("fake_k")
     # force=True re-evicts then re-tunes -> still 2 regions
-    n2 = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=True,
-                          idle_wait_tries=1, idle_wait_sec=0.0, hooks=None)
+    n2 = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=True, hooks=None)
     assert n2 == 2

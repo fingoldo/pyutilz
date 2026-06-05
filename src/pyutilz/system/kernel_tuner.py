@@ -126,29 +126,27 @@ def get_registry() -> dict:
 def discover_tuners(
     package: str = "mlframe", warn_on_import_fail: bool = True
 ) -> dict:
-    """Walk a package, import all modules, and collect @kernel_tuner specs.
+    """Import every module under ``package`` so each module-level
+    ``kernel_tuner(...)`` call fires, then return the accumulated registry.
 
-    Algorithm: use pkgutil.walk_packages to enumerate all modules under
-    `package`. For each module, attempt import. If the import fails, log a
-    WARNING (not silently swallowed) and skip that module — the remaining
-    modules' specs are still collected.
+    Registration happens at module import. We do NOT clear the registry first:
+    Python caches imported modules, so re-importing an already-imported module
+    does NOT re-run its top-level ``kernel_tuner(...)`` -- clearing would
+    therefore wipe specs we can never re-register in the same process, leaving
+    ``retune_all`` with an empty/partial registry. Accumulation is safe: each
+    module registers exactly once per process (import cache), and the
+    duplicate-name guard in ``kernel_tuner`` surfaces genuine collisions.
 
-    Returns:
-        {kernel_name: TunerSpec, ...}
-
-    Side effects:
-        - Clears the global registry and repopulates it (so subsequent
-          discover_tuners() calls give the freshest state).
-        - Logs WARNINGs for any import failures.
+    Import failures are logged at WARNING (not swallowed) and skipped so one
+    broken module never stops the walk. Returns ``{kernel_name: TunerSpec}``.
     """
-    _REGISTRY.clear()
-
-    # Resolve the package module.
+    # Resolve the package module. On failure the existing registry still stands
+    # (we never cleared it), so return that rather than a misleading empty dict.
     try:
         pkg = importlib.import_module(package)
     except ImportError as e:
         logger.error("Failed to import package %r: %s", package, e)
-        return {}
+        return dict(_REGISTRY)
 
     pkg_path = pkg.__path__ if hasattr(pkg, "__path__") else []
     collected = 0
@@ -224,33 +222,32 @@ def retune_all(
         )
         gpu_groups = {}
 
-    results = {}
+    results = {}  # {(model, kernel_name): n_regions} -- keyed per (model, kernel), NOT clobbered
 
     # CPU-only specs: run once.
     cpu_specs = [(k, s) for k, s in specs.items() if not s.gpu_capable]
     for kernel_name, spec in tqdm(cpu_specs, desc="Tuning CPU specs", leave=False):
         code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-        cache = KernelTuningCache()
-        results[kernel_name] = _run_spec_tuning(
-            cache, spec, code_version, device_id=None, force=force,
-            idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
+        results[("cpu", kernel_name)] = _run_spec_tuning(
+            KernelTuningCache(), spec, code_version, device_id=None, force=force, hooks=hooks
         )
 
-    # GPU-capable specs: group by device model, run on least-loaded.
+    # GPU-capable specs: tune once per unique GPU model, on its least-loaded device.
+    # NOTE (known limitation): the cache persists under cache_path()'s hw_fingerprint,
+    # which is computed for the LIVE default device. On a host with DIFFERENT GPU
+    # models this writes every model's tuning under device-0's fingerprint -- correct
+    # for single-GPU and identical-multi-GPU hosts (one fingerprint), but a
+    # device-aware hw_fingerprint() is needed for mixed-model hosts (untestable here).
     gpu_specs = [(k, s) for k, s in specs.items() if s.gpu_capable]
     for kernel_name, spec in tqdm(gpu_specs, desc="Tuning GPU specs", leave=False):
         for model_name, device_ids in gpu_groups.items():
-            # Pick least-loaded device in this group.
             device_id = _pick_least_loaded_device(device_ids, idle_wait_tries, idle_wait_sec)
             if device_id is None:
                 logger.warning("No available device for %s; skipping %s", model_name, kernel_name)
                 continue
-
             code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-            cache = KernelTuningCache()
-            results[kernel_name] = _run_spec_tuning(
-                cache, spec, code_version, device_id=device_id, force=force,
-                idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
+            results[(model_name, kernel_name)] = _run_spec_tuning(
+                KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks
             )
 
     return results
@@ -291,77 +288,49 @@ def _pick_least_loaded_device(
     return None
 
 
-def tune_spec(
-    spec: TunerSpec,
-    *,
-    force: bool = True,
-    device_id: Optional[int] = None,
-    idle_wait_tries: int = 5,
-    idle_wait_sec: float = 0.5,
-    hooks: Optional[Any] = None,
-) -> int:
+def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] = None, hooks: Optional[Any] = None) -> int:
     """Tune a single registered spec (compute its code_version, run the sweep,
     persist) and return the number of regions now cached. The public single-spec
     entry point -- e.g. ``mlframe-tune-kernels refresh <kernel>``; ``retune_all``
     batches this across every spec + GPU model."""
     code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-    return _run_spec_tuning(
-        KernelTuningCache(), spec, code_version, device_id=device_id, force=force,
-        idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
-    )
+    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks)
 
 
-def _run_spec_tuning(
-    cache,
-    spec: TunerSpec,
-    code_version: str,
-    device_id: Optional[int],
-    force: bool,
-    idle_wait_tries: int,
-    idle_wait_sec: float,
-    hooks: Optional[Any],
-) -> int:
-    """Tune one spec via get_or_tune (forcing a fresh sweep when ``force``);
-    return the number of regions now in the cache for this kernel.
+def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int], force: bool, hooks: Optional[Any]) -> int:
+    """Tune one spec via get_or_tune; return the number of regions now cached.
 
-    GPU specs run inside ``cp.cuda.Device(device_id)`` so the sweep measures on
-    the chosen device; CPU specs (device_id None) run as-is. ``once_per_process``
-    is False so each spec re-tunes even if a normal dispatch already ran it."""
+    ``force`` evicts first so the sweep re-runs even on a cache hit. A GPU spec
+    runs inside ``cp.cuda.Device(device_id)`` so the sweep measures on the chosen
+    device; if cupy is unavailable the spec is SKIPPED (running a GPU sweep on the
+    default/CPU path would measure garbage -- B10), not silently mis-measured.
+    CPU specs (device_id None) run as-is. Idle-wait is handled upstream by
+    ``_pick_least_loaded_device`` -- not a concern here."""
     # equiv_tol on the spec is a {metric: tol} dict; the cache gate takes the
     # max-abs-diff float (surfaces + rejects divergent regions, never masks).
-    tol = None
-    if spec.equiv_tol:
-        tol = spec.equiv_tol.get("max_abs_diff")
+    tol = spec.equiv_tol.get("max_abs_diff") if spec.equiv_tol else None
 
     def _tune():
         if force:
             cache.evict(spec.kernel_name)
-        # dims={} -> no specific lookup point; this just drives the tuner +
-        # persist. The return value is ignored; we count persisted regions.
+        # dims={} just drives the tuner + persist; the return is ignored (we
+        # count persisted regions). equiv_tol is threaded so a divergent region
+        # is rejected at update even on this forced sweep.
         cache.get_or_tune(
-            spec.kernel_name,
-            dims={},
-            tuner=spec.tuner,
-            axes=list(spec.axes.keys()),
-            fallback=spec.fallback,
-            env_key=spec.env_key,
-            code_version=code_version,
-            salt=spec.salt,
-            equiv_tol=tol,
-            hooks=hooks,
-            once_per_process=False,
+            spec.kernel_name, dims={}, tuner=spec.tuner, axes=list(spec.axes.keys()),
+            fallback=spec.fallback, env_key=spec.env_key, code_version=code_version,
+            salt=spec.salt, equiv_tol=tol, hooks=hooks, once_per_process=False,
         )
 
     if device_id is not None:
         try:
             import cupy as cp
-
-            with cp.cuda.Device(device_id):
-                _tune()
         except ImportError:
+            logger.warning("cupy unavailable -> skipping GPU spec %s (won't mis-measure on CPU)", spec.kernel_name)
+            return 0
+        with cp.cuda.Device(device_id):
             _tune()
     else:
         _tune()
 
-    regions = cache.get_regions(spec.kernel_name)
-    return len(regions or [])
+    return len(cache.get_regions(spec.kernel_name) or [])

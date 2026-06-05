@@ -283,6 +283,11 @@ def sweep_backend_grid(
     names = list(variants)
     ref = reference or names[0]
     dim_names = list(axes)
+    # Sort each axis ascending so (a) the matcher's first-match scan hits the
+    # tightest enclosing band first and (b) the all-max corner is well-defined
+    # for the catch-all below.
+    axes = {d: sorted(axes[d]) for d in dim_names}
+    _max_combo = tuple(axes[d][-1] for d in dim_names)
 
     def _default_to_device(args):
         import cupy as cp
@@ -291,6 +296,10 @@ def sweep_backend_grid(
 
     mover = to_device or _default_to_device
     regions: list = []
+    # Decision at the all-max corner per residency -> emitted as a catch-all
+    # (all caps None) so inputs LARGER than the swept grid still resolve to the
+    # largest-measured winner instead of falling through to None (the heuristic).
+    catchall: dict = {}
 
     for combo in tqdmu(list(itertools.product(*(axes[d] for d in dim_names))), desc="grid sweep", leave=False):
         dims = dict(zip(dim_names, combo))
@@ -340,6 +349,20 @@ def sweep_backend_grid(
             if np.isfinite(best_diff):
                 region["max_abs_diff"] = float(best_diff)
             regions.append(region)
+            if combo == _max_combo:
+                catchall[res] = region[decision_key]
             if verbose:
                 logger.info("grid %s res=%s -> %s (%.3f ms)", dims, res, best_name, best_ms)
+
+    # Catch-all per residency: all caps None -> matches any input beyond the
+    # grid, carrying the largest-cell winner. Appended LAST so the specific
+    # per-cell bands match first (the matcher returns the first match in order).
+    for res in residencies:
+        if res not in catchall:
+            continue
+        region = {f"{d}_max": None for d in dim_names}
+        if len(residencies) > 1:
+            region["location_eq"] = res
+        region[decision_key] = catchall[res]
+        regions.append(region)
     return regions

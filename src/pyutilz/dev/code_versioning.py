@@ -82,6 +82,16 @@ def _normalized_source(fn: Callable) -> str:
             break
     if target is None:  # lambda / unusual def -- hash the whole parsed module canonically
         return _canonical(tree)
+    # Keep decorator CALL-ARGS but not the decorator's identity/import path (B5):
+    # a numba directive change (@njit(parallel=True) -> fastmath=True) alters
+    # codegen AND the optimal tuning, so it must invalidate the cache; a bare
+    # decorator rename / import move must not. We fold the sorted arg text into
+    # the hash and then drop the decorator nodes themselves.
+    deco_args: list = []
+    for deco in target.decorator_list:
+        if isinstance(deco, ast.Call):
+            deco_args += [_canonical(a) for a in deco.args]
+            deco_args += [f"{kw.arg}={_canonical(kw.value)}" for kw in deco.keywords]
     target.decorator_list = []
     if (
         target.body
@@ -91,10 +101,13 @@ def _normalized_source(fn: Callable) -> str:
     ):
         target.body = target.body[1:] or [ast.Pass()]
     target.name = "_k_"  # name-normalize: a pure rename / module move is not a logic change
-    return _canonical(target)
+    canonical = _canonical(target)
+    if deco_args:
+        canonical += "\n# deco-args: " + ",".join(sorted(deco_args))
+    return canonical
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=2048)
 def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: int = 0) -> str:
     """Deterministic SHA-256 over the normalized source of all ``variant_fns`` +
     ``extra_fns`` + ``salt``.

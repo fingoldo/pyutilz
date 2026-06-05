@@ -180,12 +180,14 @@ class TestSweepBackendGrid:
             lambda d: (np.arange(d["n"], dtype=float),),
             repeats=2,
         )
-        assert len(regions) == 4  # 2 x 2 grid, host residency only
+        assert len(regions) == 5  # 2 x 2 grid + 1 all-None catch-all, host only
         for r in regions:
             assert "n_max" in r and "k_max" in r
             assert r["backend_choice"] == "numpy"
             assert "location_eq" not in r  # single residency -> no location key
-        assert {(r["n_max"], r["k_max"]) for r in regions} == {(10, 1), (10, 2), (100, 1), (100, 2)}
+        cells = {(r["n_max"], r["k_max"]) for r in regions}
+        assert {(10, 1), (10, 2), (100, 1), (100, 2)} <= cells
+        assert (None, None) in cells  # catch-all for inputs beyond the grid
 
     def test_residency_emits_location_regions(self):
         from pyutilz.dev.benchmarking import sweep_backend_grid
@@ -199,8 +201,24 @@ class TestSweepBackendGrid:
             to_device=lambda args: args,
             repeats=2,
         )
-        assert len(regions) == 4  # 2 cells x 2 residencies
+        assert len(regions) == 6  # 2 cells x 2 residencies + 1 catch-all per residency
         assert {r["location_eq"] for r in regions} == {"host", "device"}
+
+    def test_catchall_resolves_inputs_beyond_grid(self):
+        # B3 regression: a live size LARGER than the biggest swept value must still
+        # resolve (to the largest-cell winner via the all-None catch-all), not None.
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+
+        regions = sweep_backend_grid(
+            {"numpy": lambda x: x.sum()}, {"n": [10, 100]},
+            lambda d: (np.arange(d["n"], dtype=float),), repeats=2,
+        )
+        assert any(r["n_max"] is None for r in regions)  # catch-all present
+        c = KernelTuningCache(in_memory=True)
+        c.update("k", axes=["n"], regions=regions)
+        assert c.lookup("k", n=10_000_000) is not None  # beyond grid -> still routes
+        assert c.lookup("k", n=10_000_000)["backend_choice"] == "numpy"
 
     def test_divergent_variant_skipped(self):
         from pyutilz.dev.benchmarking import sweep_backend_grid

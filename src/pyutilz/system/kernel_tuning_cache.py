@@ -472,7 +472,14 @@ class KernelTuningCache:
         # may find different optima under updated kernels / drivers).
         saved_prov = data.get("provenance")
         live_prov = _build_provenance()
-        if saved_prov and provenance_changed(saved_prov, live_prov):
+        if not saved_prov:
+            # _save always writes provenance, so a payload without it is
+            # hand-crafted or from an old/foreign writer -- we can't validate it
+            # against a driver/cupy/numba bump, so surface it (B8). Conservative:
+            # we still serve it (the hw_fingerprint already matched).
+            logger.warning("kernel_tuning_cache: %s has no provenance -- cannot "
+                           "validate against a driver/cupy bump; serving as-is", self._path)
+        elif provenance_changed(saved_prov, live_prov):
             logger.info(
                 "kernel_tuning_cache: provenance changed since save "
                 "(CUDA/cupy/numba/GPU bump); treating as miss to trigger re-tune"
@@ -617,12 +624,18 @@ class KernelTuningCache:
             cache.lookup("joint_hist_batched", n_samples=1_000_000, joint_size=25)
             # -> {"variant": "shared", "block_size": 512, "wall_ms": 0.78}
         """
-        regions = self.get_regions(kernel_name)
-        if not regions:
+        entry = self._ensure_loaded().get("kernels", {}).get(kernel_name)
+        if not entry:
             return None
+        regions = entry.get("regions") or []
+        # Strip ONLY the declared axes' constraint keys (<axis>_max/_min/_eq), not
+        # arbitrary payload fields that happen to end in such a suffix (e.g. a
+        # ``block_size_max`` decision field) -- B4: suffix-based strip is a
+        # namespace collision; drive it from the entry's declared ``axes``.
+        constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
         for region in regions:
             if _region_matches(region, dims):
-                return {k: v for k, v in region.items() if not k.endswith(_AXIS_SUFFIXES)}
+                return {k: v for k, v in region.items() if k not in constraint_keys}
         return None
 
     def reset(self) -> None:
@@ -662,6 +675,10 @@ class KernelTuningCache:
         hw_fingerprint + provenance + code_version."""
         with self._lock:
             self._ensure_loaded()
+            # Clear the once-per-process sweep guard so a subsequent get_or_tune
+            # can actually re-tune this kernel (B11) instead of short-circuiting
+            # to the fallback because "we already swept it this process".
+            _TUNED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
             if kernel_name in self._loaded.get("kernels", {}):
                 del self._loaded["kernels"][kernel_name]
                 self._save(self._loaded["kernels"])
@@ -674,15 +691,17 @@ class KernelTuningCache:
         """Like ``lookup`` but explains the decision -- returns
         ``{matched, region_index, region, reason}``. For tests + debugging which
         region (and why) a dispatch resolved to."""
-        regions = self.get_regions(kernel_name)
+        entry = self._ensure_loaded().get("kernels", {}).get(kernel_name)
+        regions = (entry or {}).get("regions") or []
         if not regions:
             return {"matched": False, "region_index": None, "region": None,
                     "reason": f"no regions for kernel {kernel_name!r}"}
+        constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
         first_reason = None
         for i, region in enumerate(regions):
             ok, why = _region_match_reason(region, dims)
             if ok:
-                payload = {k: v for k, v in region.items() if not k.endswith(_AXIS_SUFFIXES)}
+                payload = {k: v for k, v in region.items() if k not in constraint_keys}
                 return {"matched": True, "region_index": i, "region": payload,
                         "reason": f"region {i} matched"}
             if first_reason is None:
@@ -869,7 +888,6 @@ class TuningHooks(Protocol):
     def cache_hit(self, kernel: str, dims: dict, region: dict) -> None: ...
     def cache_miss(self, kernel: str, dims: dict) -> None: ...
     def sweep_start(self, kernel: str, axes: list) -> None: ...
-    def variant_measured(self, kernel: str, label: str, wall_ms: float) -> None: ...
     def sweep_end(self, kernel: str, n_regions: int) -> None: ...
     def winner_chosen(self, kernel: str, region: Optional[dict], reason: str) -> None: ...
     def persist(self, kernel: str, path: Optional[str], n_regions: int) -> None: ...
@@ -892,9 +910,6 @@ class LoggerHooks:
 
     def sweep_start(self, kernel, axes):
         logger.info("kernel_tuning_cache: %s sweep starting (axes=%s)", kernel, axes)
-
-    def variant_measured(self, kernel, label, wall_ms):
-        logger.debug("kernel_tuning_cache: %s variant %s = %.3fms", kernel, label, wall_ms)
 
     def sweep_end(self, kernel, n_regions):
         logger.info("kernel_tuning_cache: %s sweep done (%d regions)", kernel, n_regions)
