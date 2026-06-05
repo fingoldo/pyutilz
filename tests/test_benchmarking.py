@@ -98,3 +98,27 @@ class TestBenchmarkAlgosByRuntime:
         )
 
         assert set(sorted_impls) == set(implementations)
+
+
+class TestSynchronizeGpu:
+    """The GPU-sync guard so async cupy/cuda kernels are timed at completion."""
+
+    def test_synchronize_is_noop_without_cupy(self):
+        # Must never raise whether or not cupy is installed.
+        from pyutilz.dev.benchmarking import synchronize_gpu_if_available
+
+        synchronize_gpu_if_available()  # no exception == pass
+
+    def test_benchmark_with_synchronize_gpu_true(self):
+        # CPU algos + synchronize_gpu=True: sync is a no-op, results still valid.
+        sorted_impls, durations = benchmark_algos_by_runtime(
+            [algo_fast, algo_slow], n_reps=2, synchronize_gpu=True, x=5
+        )
+        assert len(durations) == 2
+        assert all(d >= 0 for d in durations)
+
+    def test_benchmark_with_synchronize_gpu_false(self):
+        sorted_impls, durations = benchmark_algos_by_runtime(
+            [algo_fast], n_reps=1, synchronize_gpu=False, x=1
+        )
+        assert durations[0] >= 0

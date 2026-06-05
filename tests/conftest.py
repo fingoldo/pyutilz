@@ -76,6 +76,16 @@ def pytest_addoption(parser):
         default=False,
         help="run @pytest.mark.live tests (real LLM API calls -- costs money)",
     )
+    # test_api_stability.py checks ``--refresh-api-snapshot`` in sys.argv to
+    # rewrite _api_snapshot.json on an intentional public-API change. Without
+    # this addoption pytest rejected the flag as unrecognized, so the documented
+    # refresh path was broken -- register it here.
+    parser.addoption(
+        "--refresh-api-snapshot",
+        action="store_true",
+        default=False,
+        help="rewrite tests/test_meta/_api_snapshot.json instead of comparing (intentional API change)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):

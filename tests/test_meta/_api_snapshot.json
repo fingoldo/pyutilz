@@ -1,8 +1,9 @@
 {
   "alias_surfaces": {
     "benchmarking": {
-      "benchmark_algos_by_runtime": "callable(implementations:any:0, algo_name:any:1, n_reps:any:1, verbose:any:1, algo_kwargs:**kw:0)",
+      "benchmark_algos_by_runtime": "callable(implementations:any:0, algo_name:any:1, n_reps:any:1, verbose:any:1, synchronize_gpu:any:1, algo_kwargs:**kw:0)",
       "logger": "value:Logger",
+      "synchronize_gpu_if_available": "callable()",
       "tqdmu": "callable(args:*args:0, kwargs:**kw:0)"
     },
     "browser": {

@@ -27,7 +27,11 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
-        exclude: '\.secrets\.baseline$'
+        # _api_snapshot.json is generated from API introspection -- it holds
+        # symbol NAMES (e.g. ``password_input_name``, ``pwd``) not values, which
+        # trip the keyword heuristic as false positives. It can't carry a real
+        # secret (defaults live in source, scanned there), so exclude it.
+        exclude: '\.secrets\.baseline$|tests/test_meta/_api_snapshot\.json$'
 
   # Real-bug gate: pyflakes + syntax errors block the commit. CLI --select
   # bypasses the pyproject ignore list, so re-apply the taste-ignores
