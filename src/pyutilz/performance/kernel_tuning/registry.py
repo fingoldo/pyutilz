@@ -160,11 +160,15 @@ def kernel_tuner(**kwargs) -> "TunerSpec":
             salt=1,
         )
 
-    Registered under its (globally-unique) ``kernel_name``. Raises on a
-    duplicate name. Returns the spec (handy for tests / introspection)."""
+    Registered under its (globally-unique) ``kernel_name``. Idempotent on
+    re-registration. Returns the spec (handy for tests / introspection)."""
     spec = TunerSpec(**kwargs)
     if spec.kernel_name in _REGISTRY:
-        raise ValueError(f"Duplicate kernel_tuner registration: {spec.kernel_name}")
+        # Re-registration is legitimate: a module re-import (importlib.reload, a test that drops + re-imports the
+        # consumer subgraph, or two import paths reaching the same module) re-runs the decorator with an equivalent
+        # spec. Overwrite -- it is the same kernel. Raising here would break every consumer imported after the
+        # re-registration (e.g. the whole MRMR/RFECV path once the feature_selection.filters subgraph is re-imported).
+        logger.debug("kernel_tuner: re-registering %s (module re-import); overwriting prior spec", spec.kernel_name)
     _REGISTRY[spec.kernel_name] = spec
     return spec
 

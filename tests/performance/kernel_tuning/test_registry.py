@@ -64,10 +64,14 @@ def test_kernel_tuner_returns_spec():
     assert get_registry()["k_ret"] is spec
 
 
-def test_duplicate_registration_raises():
+def test_duplicate_registration_is_idempotent():
+    # Re-registering the same kernel_name overwrites (last wins) instead of raising: a module re-import
+    # (importlib.reload, a test dropping + re-importing the consumer subgraph, or two import paths to the same
+    # module) re-runs the decorator, and crashing there would break every consumer imported afterwards.
     kernel_tuner(kernel_name="dup", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
-    with pytest.raises(ValueError, match="Duplicate kernel_tuner"):
-        kernel_tuner(kernel_name="dup", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
+    second = kernel_tuner(kernel_name="dup", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
+    assert get_registry()["dup"] is second
+    assert len(get_registry()) == 1
 
 
 def test_get_registry_returns_copy():
