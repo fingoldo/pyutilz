@@ -772,12 +772,17 @@ class KernelTuningCache:
                 if hit is not None:
                     return hit
             _TUNED_THIS_PROCESS.add(guard_key)
-            hk.sweep_start(kernel_name, axes)
-            try:
-                regions = tuner()
-            except Exception as e:  # a sweep failure must never break dispatch
-                logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
+            if os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False"):
+                # Escape hatch (test suites / latency-sensitive prod): skip the on-miss auto-sweep and use the caller's
+                # fallback. Explicit ``ensure_*`` / ``run_*_sweep`` paths are unaffected -- they don't route through here.
                 regions = None
+            else:
+                hk.sweep_start(kernel_name, axes)
+                try:
+                    regions = tuner()
+                except Exception as e:  # a sweep failure must never break dispatch
+                    logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
+                    regions = None
             if regions:
                 self.update(kernel_name, axes=axes, regions=regions, code_version=code_version,
                             salt=salt, equiv_tol=equiv_tol, hooks=hk)
