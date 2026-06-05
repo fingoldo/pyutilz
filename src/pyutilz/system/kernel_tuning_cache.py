@@ -381,6 +381,13 @@ class KernelTuningCache:
         # implementation pass).
         self._lock = threading.RLock()
         self._loaded: Optional[dict] = None  # None until first load() call
+        # Optional shared remote store (PYUTILZ_KERNEL_REMOTE=s3://...). None
+        # for in-memory caches or when no remote is configured -> local-only.
+        if in_memory:
+            self._remote = None
+        else:
+            from .kernel_tuning_remote import get_remote_backend
+            self._remote = get_remote_backend()
 
     @classmethod
     def load_or_create(cls) -> "KernelTuningCache":
@@ -406,11 +413,40 @@ class KernelTuningCache:
 
     # ----- I/O -----
 
+    def _write_local_copy(self, data: dict) -> None:
+        """Atomically cache a remote-fetched payload to the local file so the
+        normal local read path validates + serves it on subsequent calls."""
+        try:
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            tmp = self._path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, sort_keys=True)
+            os.replace(tmp, self._path)
+        except OSError as e:
+            logger.debug("kernel_tuning_cache: failed to cache remote payload: %s", e)
+
     def _load(self) -> Optional[dict]:
         """Lazy file-read. Returns the validated payload, or None on
-        absent / unreadable / schema-version / fingerprint mismatch."""
-        if self._in_memory or not os.path.isfile(self._path):
+        absent / unreadable / schema-version / fingerprint mismatch.
+
+        On a local miss, reads through to the shared remote store (if any) for
+        this fingerprint and caches it locally before validating."""
+        if self._in_memory:
             return None
+        if not os.path.isfile(self._path):
+            # Read-through: pull this host's fingerprint payload from the
+            # shared remote store, cache locally, then validate via the normal
+            # local path below. Remote miss / no remote -> stays absent.
+            if self._remote is not None:
+                try:
+                    remote_data = self._remote.read(hw_fingerprint())
+                except Exception as e:  # any backend error -> local-only
+                    logger.debug("kernel_tuning_cache: remote read failed: %s", e)
+                    remote_data = None
+                if remote_data is not None:
+                    self._write_local_copy(remote_data)
+            if not os.path.isfile(self._path):
+                return None
         try:
             with open(self._path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -497,6 +533,13 @@ class KernelTuningCache:
                 json.dump(payload, f, indent=2, sort_keys=True)
             os.replace(tmp, self._path)
             logger.info("kernel_tuning_cache: saved %s", self._path)
+            # Write-through to the shared remote store (best-effort; a flaky
+            # network or raising backend never breaks the local save).
+            if self._remote is not None:
+                try:
+                    self._remote.write(hw_fingerprint(), payload)
+                except Exception as e:
+                    logger.debug("kernel_tuning_cache: remote write failed: %s", e)
 
         if _file_lock is not None:
             with _file_lock:
