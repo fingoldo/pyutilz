@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from pyutilz.system.kernel_tuner import (
+from pyutilz.performance.kernel_tuning.registry import (
     TunerSpec,
     kernel_tuner,
     get_registry,
@@ -103,8 +103,8 @@ def test_retune_all_no_specs_returns_empty():
 
 
 def test_run_spec_tuning_populates_cache():
-    from pyutilz.system.kernel_tuner import _run_spec_tuning
-    from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+    from pyutilz.performance.kernel_tuning.registry import _run_spec_tuning
+    from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
     cache = KernelTuningCache(in_memory=True)
     spec = TunerSpec(

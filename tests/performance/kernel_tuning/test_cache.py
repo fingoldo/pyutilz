@@ -1,4 +1,4 @@
-"""Smoke tests for pyutilz.system.kernel_tuning_cache."""
+"""Smoke tests for pyutilz.performance.kernel_tuning.cache."""
 from __future__ import annotations
 
 import json

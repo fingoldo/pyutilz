@@ -13,8 +13,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from ..dev.code_versioning import compute_code_version
-from .kernel_tuning_cache import KernelTuningCache
+from .cache import KernelTuningCache
+from .code_versioning import compute_code_version
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def kernel_tuner(**kwargs) -> "TunerSpec":
     top level (pyutilz is a hard dependency, so no defensive try/except is
     needed)::
 
-        from pyutilz.system.kernel_tuner import kernel_tuner
+        from pyutilz.performance.kernel_tuning.registry import kernel_tuner
 
         kernel_tuner(
             kernel_name="dtw_dispatch",

@@ -386,7 +386,7 @@ class KernelTuningCache:
         if in_memory:
             self._remote = None
         else:
-            from .kernel_tuning_remote import get_remote_backend
+            from .remote import get_remote_backend
             self._remote = get_remote_backend()
 
     @classmethod

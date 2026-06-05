@@ -1,11 +1,11 @@
-"""Unit tests for pyutilz.dev.code_versioning.compute_code_version.
+"""Unit tests for pyutilz.performance.kernel_tuning.code_versioning.compute_code_version.
 
 The hashed functions are defined at MODULE level so inspect.getsource can
 retrieve their source (functions defined in a ``python -c`` string or the REPL
 have no retrievable source and fall back to the identity hash)."""
 import pytest
 
-from pyutilz.dev.code_versioning import compute_code_version as cv
+from pyutilz.performance.kernel_tuning.code_versioning import compute_code_version as cv
 
 
 def _f1(x):

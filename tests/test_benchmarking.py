@@ -208,7 +208,7 @@ class TestSweepBackendGrid:
         # B3 regression: a live size LARGER than the biggest swept value must still
         # resolve (to the largest-cell winner via the all-None catch-all), not None.
         from pyutilz.dev.benchmarking import sweep_backend_grid
-        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+        from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
         regions = sweep_backend_grid(
             {"numpy": lambda x: x.sum()}, {"n": [10, 100]},
@@ -264,7 +264,7 @@ class TestSelectionAndRouting:
         assert regions and all(r["backend_choice"] == "ref" for r in regions)
 
     def test_routing_by_size_band(self):
-        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+        from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
         c = KernelTuningCache(in_memory=True)
         c.update("k", axes=["n"], regions=[{"n_max": 100, "backend_choice": "cpu"}, {"backend_choice": "gpu"}])
@@ -272,7 +272,7 @@ class TestSelectionAndRouting:
         assert c.lookup("k", n=500)["backend_choice"] == "gpu"
 
     def test_routing_by_residency(self):
-        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+        from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
         c = KernelTuningCache(in_memory=True)
         c.update("k", axes=["n", "location"], regions=[
@@ -286,7 +286,7 @@ class TestSelectionAndRouting:
         # Full path: benchmark -> persist regions -> lookup returns the measured winner.
         import time
         from pyutilz.dev.benchmarking import sweep_backend_grid
-        from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+        from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
 
         regions = sweep_backend_grid(
             {"slow": lambda x: (time.sleep(0.004) or x.sum()), "fast": lambda x: x.sum()},
