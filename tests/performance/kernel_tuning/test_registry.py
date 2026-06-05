@@ -120,3 +120,39 @@ def test_run_spec_tuning_populates_cache():
     # force=True re-evicts then re-tunes -> still 2 regions
     n2 = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=True, hooks=None)
     assert n2 == 2
+
+
+def test_group_gpus_by_model(monkeypatch):
+    """_group_gpus_by_model groups devices by name + compute capability."""
+
+    import pyutilz.performance.kernel_tuning.registry as reg
+
+    class _G:
+        def __init__(self, gid, name, cc):
+            self.id, self.name, self.compute_capability = gid, name, cc
+
+    fake = types.ModuleType("GPUtil")
+    fake.getGPUs = lambda: [_G(0, "NVIDIA RTX 4090", (8, 9)), _G(1, "NVIDIA RTX 4090", (8, 9)), _G(2, "Tesla V100", (7, 0))]
+    monkeypatch.setitem(sys.modules, "GPUtil", fake)
+    groups = reg._group_gpus_by_model()
+    assert len(groups) == 2  # the two identical 4090s collapse into one model
+    assert sorted(len(v) for v in groups.values()) == [1, 2]
+    assert [0, 1] in [sorted(v) for v in groups.values()]
+
+
+def test_pick_least_loaded_device(monkeypatch):
+    """_pick_least_loaded_device returns the lowest-load available GPU; None if all busy."""
+
+    import pyutilz.performance.kernel_tuning.registry as reg
+
+    class _G:
+        def __init__(self, gid, load):
+            self.id, self.load = gid, load
+
+    fake = types.ModuleType("GPUtil")
+    fake.getGPUs = lambda: [_G(0, 0.7), _G(1, 0.2), _G(2, 0.5)]
+    monkeypatch.setitem(sys.modules, "GPUtil", fake)
+    assert reg._pick_least_loaded_device([0, 1, 2], idle_wait_tries=1, idle_wait_sec=0.0) == 1
+    assert reg._pick_least_loaded_device([0, 2], idle_wait_tries=1, idle_wait_sec=0.0) == 2  # subset
+    fake.getGPUs = lambda: [_G(0, 0.95), _G(1, 0.9)]  # all > 0.8 -> busy
+    assert reg._pick_least_loaded_device([0, 1], idle_wait_tries=1, idle_wait_sec=0.0) is None
