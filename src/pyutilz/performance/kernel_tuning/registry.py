@@ -10,7 +10,7 @@ import importlib
 import logging
 import pkgutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .cache import KernelTuningCache
@@ -90,6 +90,57 @@ class TunerSpec:
     cli_label: Optional[str] = None
     """Human-friendly name for the CLI (defaults to kernel_name). Used in
     ``mlframe-tune-kernels show <label>`` commands."""
+
+    _choice_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    """Per-spec memo of choose() results, keyed by sorted dims (the dispatch is hot)."""
+
+    def code_version(self) -> Optional[str]:
+        """code_version over variant_fns + extra_fns + salt (memoized in
+        compute_code_version). None if code-versioning is unavailable."""
+        from .code_versioning import compute_code_version
+
+        try:
+            return compute_code_version(*self.variant_fns, extra_fns=self.extra_fns, salt=self.salt)
+        except Exception:
+            return None
+
+    def _fallback_choice(self, dims: dict) -> str:
+        """Resolve the fallback to a backend_choice string. ``fallback`` may be a
+        callable (dims -> str/dict, the dynamic heuristic), a {'backend_choice': X}
+        dict, or a bare string."""
+        fb = self.fallback(**dims) if callable(self.fallback) else self.fallback
+        if isinstance(fb, dict):
+            return str(fb.get("backend_choice", ""))
+        return str(fb)
+
+    def choose(self, **dims) -> str:
+        """Per-host backend decision for these dims -- the one-call dispatch that
+        replaces a consumer's hand-written _backend_choice + _code_version. Routes
+        env -> code-version-checked cache -> on-miss (locked, once-per-process)
+        sweep -> fallback via get_or_tune, returns the backend_choice string,
+        memoized per dims. The caller MUST still gate a GPU choice on live CUDA +
+        per-op compatibility before routing to device."""
+        key = tuple(sorted(dims.items()))
+        if key in self._choice_cache:
+            return self._choice_cache[key]
+        fb = self._fallback_choice(dims)
+        bc = fb
+        try:
+            from .cache import KernelTuningCache
+
+            result = KernelTuningCache.load_or_create().get_or_tune(
+                self.kernel_name, dims=dims, tuner=self.tuner, axes=list(self.axes.keys()),
+                fallback={"backend_choice": fb}, code_version=self.code_version(),
+                env_key=self.env_key,
+                equiv_tol=(self.equiv_tol or {}).get("max_abs_diff") if self.equiv_tol else None,
+            )
+            cand = result if isinstance(result, str) else str((result or {}).get("backend_choice", ""))
+            if cand:
+                bc = cand
+        except Exception as e:
+            logger.debug("%s choose() failed: %s", self.kernel_name, e)
+        self._choice_cache[key] = bc
+        return bc
 
 
 def kernel_tuner(**kwargs) -> "TunerSpec":

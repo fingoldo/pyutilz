@@ -156,3 +156,21 @@ def test_pick_least_loaded_device(monkeypatch):
     assert reg._pick_least_loaded_device([0, 2], idle_wait_tries=1, idle_wait_sec=0.0) == 2  # subset
     fake.getGPUs = lambda: [_G(0, 0.95), _G(1, 0.9)]  # all > 0.8 -> busy
     assert reg._pick_least_loaded_device([0, 1], idle_wait_tries=1, idle_wait_sec=0.0) is None
+
+
+def test_spec_choose_returns_fallback_on_empty_cache(monkeypatch, tmp_path):
+    """spec.choose() -> the fallback backend when the cache is empty + tuner is a no-op."""
+    monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
+    spec = kernel_tuner(kernel_name="zzz_choose", variant_fns=(_np,), tuner=lambda: [],
+                        axes={"n": [10]}, fallback={"backend_choice": "cpu"})
+    assert spec.choose(n=5) == "cpu"
+    assert spec.choose(n=5) == "cpu"  # memoized
+
+
+def test_spec_choose_callable_fallback(monkeypatch, tmp_path):
+    """A callable fallback (dims -> str) gives the dynamic heuristic via choose()."""
+    monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
+    spec = kernel_tuner(kernel_name="zzz_choose2", variant_fns=(_np,), tuner=lambda: [],
+                        axes={"n": [10]}, fallback=lambda n: "gpu" if n >= 100 else "cpu")
+    assert spec.choose(n=5) == "cpu"
+    assert spec.choose(n=500) == "gpu"
