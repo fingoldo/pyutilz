@@ -147,3 +147,25 @@ def test_retune_all_no_specs_returns_empty():
     # Discovering a spec-free package -> retune_all returns {}.
     result = retune_all(package="json")
     assert result == {}
+
+
+def test_run_spec_tuning_populates_cache():
+    from pyutilz.system.kernel_tuner import _run_spec_tuning
+    from pyutilz.system.kernel_tuning_cache import KernelTuningCache
+
+    cache = KernelTuningCache(in_memory=True)
+    spec = TunerSpec(
+        kernel_name="fake_k",
+        variant_fns=(_np, _nb),
+        tuner=lambda: [{"n_max": 100, "backend_choice": "numpy"}, {"backend_choice": "numba"}],
+        axes={"n": [100, 1000]},
+        fallback={"backend_choice": "numpy"},
+    )
+    n = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=False,
+                         idle_wait_tries=1, idle_wait_sec=0.0, hooks=None)
+    assert n == 2
+    assert cache.has("fake_k")
+    # force=True re-evicts then re-tunes -> still 2 regions
+    n2 = _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=True,
+                          idle_wait_tries=1, idle_wait_sec=0.0, hooks=None)
+    assert n2 == 2

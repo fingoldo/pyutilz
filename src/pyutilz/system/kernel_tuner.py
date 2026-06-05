@@ -342,19 +342,47 @@ def _run_spec_tuning(
     idle_wait_sec: float,
     hooks: Optional[Any],
 ) -> int:
-    """Run one spec via get_or_tune, return n_regions."""
-    # This is a placeholder orchestration. In practice, you'd call:
-    #   cache.get_or_tune(
-    #       kernel=spec.kernel_name,
-    #       dims={},
-    #       tuner=spec.tuner,
-    #       axes=spec.axes,
-    #       fallback=spec.fallback,
-    #       code_version=code_version,
-    #       env_key=spec.env_key,
-    #       hooks=hooks,
-    #       once_per_process=False,
-    #   )
-    # And handle device selection via CUDA_VISIBLE_DEVICES or similar.
-    # For now, return a placeholder.
-    return 0
+    """Tune one spec via get_or_tune (forcing a fresh sweep when ``force``);
+    return the number of regions now in the cache for this kernel.
+
+    GPU specs run inside ``cp.cuda.Device(device_id)`` so the sweep measures on
+    the chosen device; CPU specs (device_id None) run as-is. ``once_per_process``
+    is False so each spec re-tunes even if a normal dispatch already ran it."""
+    # equiv_tol on the spec is a {metric: tol} dict; the cache gate takes the
+    # max-abs-diff float (surfaces + rejects divergent regions, never masks).
+    tol = None
+    if spec.equiv_tol:
+        tol = spec.equiv_tol.get("max_abs_diff")
+
+    def _tune():
+        if force:
+            cache.evict(spec.kernel_name)
+        # dims={} -> no specific lookup point; this just drives the tuner +
+        # persist. The return value is ignored; we count persisted regions.
+        cache.get_or_tune(
+            spec.kernel_name,
+            dims={},
+            tuner=spec.tuner,
+            axes=list(spec.axes.keys()),
+            fallback=spec.fallback,
+            env_key=spec.env_key,
+            code_version=code_version,
+            salt=spec.salt,
+            equiv_tol=tol,
+            hooks=hooks,
+            once_per_process=False,
+        )
+
+    if device_id is not None:
+        try:
+            import cupy as cp
+
+            with cp.cuda.Device(device_id):
+                _tune()
+        except ImportError:
+            _tune()
+    else:
+        _tune()
+
+    regions = cache.get_regions(spec.kernel_name)
+    return len(regions or [])
