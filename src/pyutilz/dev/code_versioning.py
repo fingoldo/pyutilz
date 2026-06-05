@@ -28,6 +28,7 @@ import hashlib
 import inspect
 import logging
 import textwrap
+from functools import lru_cache
 from typing import Callable
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ def _normalized_source(fn: Callable) -> str:
     return _canonical(target)
 
 
+@lru_cache(maxsize=None)
 def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: int = 0) -> str:
     """Deterministic SHA-256 over the normalized source of all ``variant_fns`` +
     ``extra_fns`` + ``salt``.
@@ -101,6 +103,11 @@ def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: in
     variants in any order yields the same hash. A change to ANY listed function's
     logic -- or a ``salt`` bump -- changes the result; comment / format / docstring
     edits do not.
+
+    Memoized: the AST parse + unparse is ~1.3 ms/call, and dispatchers call this
+    on a hot path, so the result is cached per (variant_fns, extra_fns, salt).
+    The hash is deterministic per process, so caching is sound; ``extra_fns``
+    must be a tuple (hashable) -- it is, by signature + TunerSpec convention.
     """
     # Logic-only: hash the name-normalized sources, sorted, so order / rename /
     # module-move do not change the result -- only a body-logic edit or salt does.

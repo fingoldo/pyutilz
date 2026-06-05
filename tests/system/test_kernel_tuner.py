@@ -45,72 +45,33 @@ def test_tunerspec_fields_and_defaults():
     assert spec.equiv_tol is None
 
 
-def test_kernel_tuner_decorator_registers():
-    @kernel_tuner(
+def test_kernel_tuner_registers():
+    kernel_tuner(
         kernel_name="joint_hist_2d",
         variant_fns=(_np,),
-        tuner=lambda *a: {},
+        tuner=lambda: [],
         axes={"ndim_eq": [2]},
         fallback=_np,
     )
-    def _gpu_variant():
-        return _nb
-
     reg = get_registry()
-    # Key is (module, kernel_name); module is this test module.
-    keys = [k for k in reg if k[1] == "joint_hist_2d"]
-    assert len(keys) == 1
-    assert reg[keys[0]].kernel_name == "joint_hist_2d"
-    # Decorator returns the original function unmodified.
-    assert _gpu_variant() is _nb
+    assert "joint_hist_2d" in reg  # keyed by the globally-unique kernel_name
+    assert reg["joint_hist_2d"].kernel_name == "joint_hist_2d"
 
 
-def test_kernel_tuner_decorator_does_not_call_fn():
-    called = []
-
-    @kernel_tuner(
-        kernel_name="k_nocall",
-        variant_fns=(_np,),
-        tuner=lambda *a: {},
-        axes={},
-        fallback=_np,
-    )
-    def _marker():
-        called.append(1)
-        return 42
-
-    # Registration must NOT invoke the decorated function.
-    assert called == []
+def test_kernel_tuner_returns_spec():
+    spec = kernel_tuner(kernel_name="k_ret", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
+    assert spec.kernel_name == "k_ret"
+    assert get_registry()["k_ret"] is spec
 
 
 def test_duplicate_registration_raises():
-    def make():
-        @kernel_tuner(
-            kernel_name="dup",
-            variant_fns=(_np,),
-            tuner=lambda *a: {},
-            axes={},
-            fallback=_np,
-        )
-        def _f():
-            pass
-
-    make()
+    kernel_tuner(kernel_name="dup", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
     with pytest.raises(ValueError, match="Duplicate kernel_tuner"):
-        make()
+        kernel_tuner(kernel_name="dup", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
 
 
 def test_get_registry_returns_copy():
-    @kernel_tuner(
-        kernel_name="kc",
-        variant_fns=(_np,),
-        tuner=lambda *a: {},
-        axes={},
-        fallback=_np,
-    )
-    def _f():
-        pass
-
+    kernel_tuner(kernel_name="kc", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
     reg = get_registry()
     reg.clear()  # mutating the copy must not affect the global registry
     assert len(get_registry()) == 1
@@ -119,16 +80,7 @@ def test_get_registry_returns_copy():
 def test_discover_tuners_clears_then_repopulates(monkeypatch):
     # Register a stray spec; discover_tuners() on a trivial package should
     # clear it (fresh state), then repopulate from the walked package.
-    @kernel_tuner(
-        kernel_name="stray",
-        variant_fns=(_np,),
-        tuner=lambda *a: {},
-        axes={},
-        fallback=_np,
-    )
-    def _f():
-        pass
-
+    kernel_tuner(kernel_name="stray", variant_fns=(_np,), tuner=lambda: [], axes={}, fallback=_np)
     assert len(get_registry()) == 1
 
     # Walk a package with no kernel_tuner specs (use a stdlib package).

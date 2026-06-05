@@ -1,13 +1,22 @@
-"""Kernel tuner registry: @kernel_tuner decorator + TunerSpec + discovery.
+"""Kernel tuner registry: TunerSpec + kernel_tuner() registration + discovery.
 
-A tuner spec defines a hot kernel variant, how to measure it, what hardware it
-targets, and how to gate the decision. Each spec registers at import time (cheap;
-no heavy deps). Discovery walks the mlframe package (only when explicitly
-invoked, never at `import mlframe`) and collects all specs for batch tuning via
-retune_all() or the CLI.
+A tuner spec defines a hot kernel's variants, how to measure them, what hardware
+it targets, and how to gate the decision. A consumer registers its spec with a
+single ``kernel_tuner(...)`` call at module top. Discovery walks the mlframe
+package (only when explicitly invoked, never at `import mlframe`) and collects
+all specs for batch tuning via retune_all() or the CLI.
 """
+import importlib
+import logging
+import pkgutil
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+from ..dev.code_versioning import compute_code_version
+from .kernel_tuning_cache import KernelTuningCache
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "TunerSpec",
@@ -17,7 +26,7 @@ __all__ = [
     "get_registry",
 ]
 
-# Global registry: (module_name, kernel_name) -> TunerSpec
+# Global registry: kernel_name -> TunerSpec (kernel names are globally unique)
 _REGISTRY = {}
 
 
@@ -26,17 +35,17 @@ class TunerSpec:
     """Specification for one kernel variant, its tuning, and dispatch decision."""
 
     kernel_name: str
-    """Name of this variant (e.g. 'joint_hist_2d', 'mi_classif_gpu'). Unique
-    within its module."""
+    """Globally-unique kernel name (e.g. 'dtw_dispatch', 'batch_pair_mi') -- the
+    registry key and the kernel_tuning_cache key."""
 
     variant_fns: tuple
-    """One or more callables (the kernel implementations to benchmark). Passed
-    to compute_code_version() for version-stable hashing."""
+    """The reference (and any always-defined) kernel implementations, hashed by
+    compute_code_version() so a kernel edit re-tunes. GPU variants that are only
+    conditionally defined are covered by ``salt`` instead."""
 
-    tuner: Callable[..., dict[str, Any]]
-    """Function that runs a sweep. Signature: tuner(dims_dict, axes_dict,
-    fallback) -> {region_key: decision_dict}. Called by get_or_tune() on cache
-    miss."""
+    tuner: Callable[[], list]
+    """Zero-arg callable returning a region list (the project's benchmark sweep).
+    Called by get_or_tune() on a cache miss."""
 
     axes: dict[str, list[Any]]
     """Categorical/range axes for the region matcher. Keys map to axes in the
@@ -82,51 +91,40 @@ class TunerSpec:
     ``mlframe-tune-kernels show <label>`` commands."""
 
 
-def kernel_tuner(**kwargs) -> Callable:
-    """Decorator registering a TunerSpec at the module's import time.
+def kernel_tuner(**kwargs) -> "TunerSpec":
+    """Build + register a TunerSpec. Call it directly at a consumer module's
+    top level (pyutilz is a hard dependency, so no defensive try/except is
+    needed)::
 
-    Usage:
-        @kernel_tuner(
-            kernel_name='joint_hist_2d',
-            variant_fns=(_joint_hist_numpy, _joint_hist_numba),
-            tuner=tune_joint_hist,
-            axes={'ndim_eq': [2], 'n_max': [100, 1000, 10000]},
-            fallback=_joint_hist_numpy,
+        from pyutilz.system.kernel_tuner import kernel_tuner
+
+        kernel_tuner(
+            kernel_name="dtw_dispatch",
+            variant_fns=(dtw_cpu,),          # reference body for code_version
+            tuner=_run_dtw_sweep,
+            axes={"n_cells": [10_000, 160_000, 2_560_000]},
+            fallback={"backend_choice": "cpu"},
             gpu_capable=True,
+            salt=1,
         )
-        def _joint_hist_gpu():
-            return _joint_hist_cupy
 
-    The decorated function is NOT called; it's metadata only. Registration
-    happens immediately at the module's import, before __init__.py finishes.
-    """
-
+    Registered under its (globally-unique) ``kernel_name``. Raises on a
+    duplicate name. Returns the spec (handy for tests / introspection)."""
     spec = TunerSpec(**kwargs)
-
-    def decorator(fn):
-        # Record the spec in the global registry, keyed by module + kernel name.
-        # Module path is inferred from fn.__module__.
-        module_name = fn.__module__
-        key = (module_name, spec.kernel_name)
-        if key in _REGISTRY:
-            raise ValueError(
-                f"Duplicate kernel_tuner registration: {module_name}:{spec.kernel_name}"
-            )
-        _REGISTRY[key] = spec
-        # Return the original function unmodified (not called by the decorator).
-        return fn
-
-    return decorator
+    if spec.kernel_name in _REGISTRY:
+        raise ValueError(f"Duplicate kernel_tuner registration: {spec.kernel_name}")
+    _REGISTRY[spec.kernel_name] = spec
+    return spec
 
 
 def get_registry() -> dict:
-    """Return the global tuner registry: {(module, kernel_name): TunerSpec}."""
+    """Return the global tuner registry: {kernel_name: TunerSpec}."""
     return dict(_REGISTRY)
 
 
 def discover_tuners(
     package: str = "mlframe", warn_on_import_fail: bool = True
-) -> dict[tuple[str, str], TunerSpec]:
+) -> dict:
     """Walk a package, import all modules, and collect @kernel_tuner specs.
 
     Algorithm: use pkgutil.walk_packages to enumerate all modules under
@@ -135,18 +133,13 @@ def discover_tuners(
     modules' specs are still collected.
 
     Returns:
-        {(module_name, kernel_name): TunerSpec, ...}
+        {kernel_name: TunerSpec, ...}
 
     Side effects:
         - Clears the global registry and repopulates it (so subsequent
           discover_tuners() calls give the freshest state).
         - Logs WARNINGs for any import failures.
     """
-    import importlib
-    import pkgutil
-    import logging
-
-    logger = logging.getLogger(__name__)
     _REGISTRY.clear()
 
     # Resolve the package module.
@@ -180,7 +173,7 @@ def retune_all(
     idle_wait_tries: int = 5,
     idle_wait_sec: float = 0.5,
     hooks: Optional[Any] = None,
-) -> dict[tuple[str, str], int]:
+) -> dict:
     """Orchestrate tuning of all discovered specs: multi-GPU grouping, retry.
 
     Algorithm:
@@ -204,16 +197,14 @@ def retune_all(
         hooks: Optional TuningHooks for progress/events.
 
     Returns:
-        {(module_name, kernel_name): n_regions_tuned, ...}
+        {kernel_name: n_regions_tuned, ...}
 
     Side effects:
         - Calls discover_tuners (clears + repopulates registry).
         - Updates cache files under the host's hw_fingerprint.
     """
-    import logging
     from tqdm import tqdm
 
-    logger = logging.getLogger(__name__)
     specs = discover_tuners(package=package)
 
     if not specs:
@@ -236,61 +227,30 @@ def retune_all(
 
     # CPU-only specs: run once.
     cpu_specs = [(k, s) for k, s in specs.items() if not s.gpu_capable]
-    for (mod_name, kernel_name), spec in tqdm(
-        cpu_specs, desc="Tuning CPU specs", leave=False
-    ):
-        from .kernel_tuning_cache import KernelTuningCache
-        from .code_versioning import compute_code_version
-
-        code_version = compute_code_version(
-            *spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt
-        )
+    for kernel_name, spec in tqdm(cpu_specs, desc="Tuning CPU specs", leave=False):
+        code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
         cache = KernelTuningCache()
-        n_regions = _run_spec_tuning(
-            cache,
-            spec,
-            code_version,
-            device_id=None,
-            force=force,
-            idle_wait_tries=idle_wait_tries,
-            idle_wait_sec=idle_wait_sec,
-            hooks=hooks,
+        results[kernel_name] = _run_spec_tuning(
+            cache, spec, code_version, device_id=None, force=force,
+            idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
         )
-        results[(mod_name, kernel_name)] = n_regions
 
     # GPU-capable specs: group by device model, run on least-loaded.
     gpu_specs = [(k, s) for k, s in specs.items() if s.gpu_capable]
-    for (mod_name, kernel_name), spec in tqdm(
-        gpu_specs, desc="Tuning GPU specs", leave=False
-    ):
+    for kernel_name, spec in tqdm(gpu_specs, desc="Tuning GPU specs", leave=False):
         for model_name, device_ids in gpu_groups.items():
             # Pick least-loaded device in this group.
             device_id = _pick_least_loaded_device(device_ids, idle_wait_tries, idle_wait_sec)
             if device_id is None:
-                logger.warning(
-                    "No available device for %s; skipping %s:%s",
-                    model_name, mod_name, kernel_name,
-                )
+                logger.warning("No available device for %s; skipping %s", model_name, kernel_name)
                 continue
 
-            from .kernel_tuning_cache import KernelTuningCache
-            from .code_versioning import compute_code_version
-
-            code_version = compute_code_version(
-                *spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt
-            )
+            code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
             cache = KernelTuningCache()
-            n_regions = _run_spec_tuning(
-                cache,
-                spec,
-                code_version,
-                device_id=device_id,
-                force=force,
-                idle_wait_tries=idle_wait_tries,
-                idle_wait_sec=idle_wait_sec,
-                hooks=hooks,
+            results[kernel_name] = _run_spec_tuning(
+                cache, spec, code_version, device_id=device_id, force=force,
+                idle_wait_tries=idle_wait_tries, idle_wait_sec=idle_wait_sec, hooks=hooks,
             )
-            results[(mod_name, kernel_name)] = n_regions
 
     return results
 
@@ -318,9 +278,7 @@ def _pick_least_loaded_device(
 
     If all devices are busy (load > 80%) after idle_wait_tries, return None.
     """
-    import time
-
-    import GPUtil
+    import GPUtil  # optional dep -> lazy
 
     for attempt in range(idle_wait_tries):
         gpus = {g.id: g.load for g in GPUtil.getGPUs() if g.id in device_ids}
