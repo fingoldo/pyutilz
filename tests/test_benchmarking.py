@@ -122,3 +122,43 @@ class TestSynchronizeGpu:
             [algo_fast], n_reps=1, synchronize_gpu=False, x=1
         )
         assert durations[0] >= 0
+
+
+class TestSweepBackendCrossover:
+    """sweep_backend_crossover: fastest EQUIVALENT backend per size band."""
+
+    @staticmethod
+    def _inp(size):
+        return (np.arange(size, dtype=float),)
+
+    def test_single_variant_one_catchall_region(self):
+        from pyutilz.dev.benchmarking import sweep_backend_crossover
+
+        regions = sweep_backend_crossover(
+            {"numpy": lambda x: x.sum()}, [10, 100, 1000], self._inp, "n", repeats=2
+        )
+        assert len(regions) == 1
+        assert regions[0]["n_max"] is None  # catch-all
+        assert regions[0]["backend_choice"] == "numpy"
+
+    def test_divergent_variant_never_chosen(self):
+        from pyutilz.dev.benchmarking import sweep_backend_crossover
+
+        regions = sweep_backend_crossover(
+            {"numpy": lambda x: x.sum(), "bad": lambda x: x.sum() + 1e6},
+            [10, 100], self._inp, "n", reference="numpy", repeats=2,
+        )
+        # bad diverges (1e6 >> tol) -> disqualified at every size -> numpy wins.
+        assert all(r["backend_choice"] == "numpy" for r in regions)
+
+    def test_equivalent_variant_eligible(self):
+        from pyutilz.dev.benchmarking import sweep_backend_crossover
+
+        regions = sweep_backend_crossover(
+            {"numpy": lambda x: x.sum(), "equiv": lambda x: float(np.add.reduce(x))},
+            [10, 100], self._inp, "n", reference="numpy", repeats=2,
+        )
+        # both produce the same value -> winner is a valid eligible backend.
+        for r in regions:
+            assert r["backend_choice"] in ("numpy", "equiv")
+            assert r.get("max_abs_diff", 0.0) < 1e-6

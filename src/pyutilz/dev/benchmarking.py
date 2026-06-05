@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, Callable, Optional
 import numpy as np
 from timeit import default_timer as timer
 
@@ -94,3 +94,131 @@ def benchmark_algos_by_runtime(
     sorted_durations = durations[indices].tolist()
 
     return sorted_implementations, sorted_durations
+
+
+def _max_abs_diff(a, b) -> float:
+    """Max abs elementwise difference between two array-likes (host or device).
+    cupy arrays are pulled to host for the comparison; shape-mismatch -> inf."""
+    try:
+        a = np.asarray(a.get() if hasattr(a, "get") else a, dtype=np.float64)
+        b = np.asarray(b.get() if hasattr(b, "get") else b, dtype=np.float64)
+        if a.shape != b.shape:
+            return float("inf")
+        if a.size == 0:
+            return 0.0
+        return float(np.abs(a - b).max())
+    except Exception:
+        return float("inf")
+
+
+def sweep_backend_crossover(
+    variants: "dict[str, Callable]",
+    sizes: "list[int]",
+    make_inputs: "Callable[[int], tuple]",
+    primary_axis: str,
+    *,
+    reference: "Optional[str]" = None,
+    extra_region_keys: "Optional[dict]" = None,
+    repeats: int = 15,
+    equiv_atol: float = 1e-6,
+    equiv_rtol: float = 1e-6,
+    synchronize_gpu: bool = True,
+    decision_key: str = "backend_choice",
+    verbose: int = 0,
+) -> list:
+    """Benchmark backend ``variants`` across a primary-size grid and return
+    ``kernel_tuning_cache`` regions (fastest EQUIVALENT backend per size band).
+
+    This is the generic form of the per_member / recursion sweeps, for kernels
+    whose dispatch turns on a single size axis (n_samples / n_cells / arr_size).
+
+    Args:
+        variants: ``{"numpy": fn, "numba": fn, "cupy": fn, ...}``. Each is called
+            as ``fn(*make_inputs(size))``. Order is preserved for tie-breaking
+            (earlier = preferred on equal time).
+        sizes: ascending primary-axis values to benchmark.
+        make_inputs: ``size -> args tuple`` fed to every variant (same inputs,
+            so timings + outputs are comparable).
+        primary_axis: region key; emitted as ``"<primary_axis>_max"`` bands.
+        reference: variant whose output defines correctness; others must match
+            within tol or they are disqualified at that size (SURFACES a
+            divergent-but-faster variant instead of silently picking it).
+            Defaults to the first variant key.
+        extra_region_keys: fixed keys merged into every region (e.g. other dims
+            held constant for this sweep).
+        repeats: timed reps per variant per size (a warmup pass precedes timing).
+        synchronize_gpu: sync the GPU before stopping each timer so async
+            cupy/cuda kernels are timed at completion, not launch.
+
+    Returns:
+        Region dicts ``[{"<axis>_max": int|None, decision_key: name,
+        "max_abs_diff": float, "wall_ms": {name: ms}}, ...]`` ascending, with a
+        catch-all (``"<axis>_max": None``) carrying the largest size's winner.
+        Consecutive equal-winner sizes are collapsed into one band.
+    """
+    if not variants:
+        return []
+    names = list(variants)
+    ref = reference or names[0]
+    extra = dict(extra_region_keys or {})
+
+    per_size_winner: list[tuple] = []  # (size, winner_name, max_diff_of_winner)
+    for size in tqdmu(sizes, desc=f"sweep {primary_axis}", leave=False):
+        args = make_inputs(size)
+        try:
+            ref_out = variants[ref](*args)
+            synchronize_gpu_if_available() if synchronize_gpu else None
+        except Exception:
+            ref_out = None
+        best_name, best_ms, best_diff = None, float("inf"), 0.0
+        for name in names:
+            fn = variants[name]
+            try:
+                fn(*args)  # warmup (jit / cudagraph / alloc)
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+                out = fn(*args)
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+                diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, out)
+                # equivalence gate: a faster-but-divergent variant is a bug, not a winner
+                if name != ref and not (diff <= equiv_atol + equiv_rtol * float(np.abs(np.asarray(
+                        ref_out.get() if hasattr(ref_out, "get") else ref_out, dtype=np.float64)).max() or 1.0)):
+                    if verbose:
+                        logger.info("sweep %s=%d: %s DIVERGES (maxdiff=%.2e) -> skip", primary_axis, size, name, diff)
+                    continue
+                t0 = timer()
+                for _ in range(repeats):
+                    fn(*args)
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+                ms = (timer() - t0) / repeats * 1e3
+            except Exception as e:
+                if verbose:
+                    logger.info("sweep %s=%d: %s failed (%s) -> skip", primary_axis, size, name, e)
+                continue
+            if ms < best_ms:
+                best_name, best_ms, best_diff = name, ms, diff
+        if best_name is None:
+            best_name, best_diff = ref, 0.0
+        per_size_winner.append((size, best_name, best_diff))
+        if verbose:
+            logger.info("sweep %s=%d -> %s (%.3f ms)", primary_axis, size, best_name, best_ms)
+
+    # Collapse consecutive equal-winner sizes into <axis>_max bands.
+    regions: list = []
+    i = 0
+    while i < len(per_size_winner):
+        j = i
+        while j + 1 < len(per_size_winner) and per_size_winner[j + 1][1] == per_size_winner[i][1]:
+            j += 1
+        band_max = per_size_winner[j][0]
+        is_last = j == len(per_size_winner) - 1
+        worst_diff = max(d for _, _, d in per_size_winner[i:j + 1])
+        region = {f"{primary_axis}_max": None if is_last else int(band_max), decision_key: per_size_winner[i][1]}
+        if np.isfinite(worst_diff):
+            region["max_abs_diff"] = float(worst_diff)
+        region.update(extra)
+        regions.append(region)
+        i = j + 1
+    return regions
