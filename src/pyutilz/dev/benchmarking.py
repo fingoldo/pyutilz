@@ -222,3 +222,124 @@ def sweep_backend_crossover(
         regions.append(region)
         i = j + 1
     return regions
+
+
+def _to_host(x):
+    """Pull a cupy array to host numpy; pass numpy / scalars through."""
+    return x.get() if hasattr(x, "get") else x
+
+
+def sweep_backend_grid(
+    variants: "dict[str, Callable]",
+    axes: "dict[str, list]",
+    make_inputs: "Callable[[dict], tuple]",
+    *,
+    reference: "Optional[str]" = None,
+    residencies: "tuple" = ("host",),
+    to_device: "Optional[Callable]" = None,
+    repeats: int = 15,
+    equiv_atol: float = 1e-6,
+    equiv_rtol: float = 1e-6,
+    synchronize_gpu: bool = True,
+    decision_key: str = "backend_choice",
+    verbose: int = 0,
+) -> list:
+    """Full-grid, residency-aware backend sweep -> kernel_tuning_cache regions.
+
+    Benchmarks every Cartesian combination of ``axes`` (not a 1-D crossover --
+    every cell is measured) and, when ``residencies=("host","device")``, both
+    DRAM-resident and VRAM-resident inputs. Emits ONE region per
+    ``(grid cell × residency)`` keyed on ``<dim>_max`` for every dim (plus
+    ``location_eq`` when measuring residency) carrying the fastest EQUIVALENT
+    backend. The multi-axis matcher then selects the smallest region bounding the
+    live dims at dispatch, so the full N-D surface is honoured exactly.
+
+    Residency model (real transfer cost, not assumed):
+      * ``variants`` must accept inputs in EITHER memory and pay the matching
+        transfer themselves -- a GPU variant ``cp.asarray``-es host input (H2D),
+        a CPU variant ``cp.asnumpy``-es device input (D2H) -- so the timed
+        interval includes the residency-dependent transfer.
+      * For ``residency="device"`` the host inputs from ``make_inputs`` are moved
+        to VRAM via ``to_device`` OUTSIDE the timed region (default: ``cp.asarray``
+        each ndarray), so only compute + any per-variant transfer is timed.
+
+    Args:
+        variants: ``{name: fn}``; ``fn(*make_inputs(dims))``. First key (or
+            ``reference``) defines correctness; divergent variants are dropped.
+        axes: ``{dim: [values]}`` -- the full Cartesian grid to sweep.
+        make_inputs: ``dims_dict -> args tuple`` of HOST (numpy) arrays.
+        residencies: subset of ``("host", "device")``.
+        to_device: ``args -> args`` mover to VRAM (default ``cp.asarray`` ndarrays).
+
+    Returns:
+        Region dicts ``[{"<dim>_max": int, ..., "location_eq": "host"|"device",
+        decision_key: name, "max_abs_diff": float}, ...]`` -- one per cell ×
+        residency.
+    """
+    import itertools
+
+    if not variants or not axes:
+        return []
+    names = list(variants)
+    ref = reference or names[0]
+    dim_names = list(axes)
+
+    def _default_to_device(args):
+        import cupy as cp
+
+        return tuple(cp.asarray(a) if isinstance(a, np.ndarray) else a for a in args)
+
+    mover = to_device or _default_to_device
+    regions: list = []
+
+    for combo in tqdmu(list(itertools.product(*(axes[d] for d in dim_names))), desc="grid sweep", leave=False):
+        dims = dict(zip(dim_names, combo))
+        host_args = make_inputs(dims)
+        for res in residencies:
+            try:
+                args = mover(host_args) if res == "device" else host_args
+            except Exception as e:
+                if verbose:
+                    logger.info("grid %s res=%s: to_device failed (%s) -> skip residency", dims, res, e)
+                continue
+            try:
+                ref_out = _to_host(variants[ref](*args))
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+            except Exception:
+                ref_out = None
+            best_name, best_ms, best_diff = None, float("inf"), 0.0
+            ref_scale = float(np.abs(np.asarray(ref_out, dtype=np.float64)).max()) if ref_out is not None else 1.0
+            for name in names:
+                fn = variants[name]
+                try:
+                    fn(*args)  # warmup (jit / cudagraph / alloc / transfer plan)
+                    if synchronize_gpu:
+                        synchronize_gpu_if_available()
+                    diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
+                    if name != ref and diff > equiv_atol + equiv_rtol * (ref_scale or 1.0):
+                        if verbose:
+                            logger.info("grid %s res=%s: %s DIVERGES (%.2e) -> skip", dims, res, name, diff)
+                        continue
+                    t0 = timer()
+                    for _ in range(repeats):
+                        fn(*args)
+                    if synchronize_gpu:
+                        synchronize_gpu_if_available()
+                    ms = (timer() - t0) / repeats * 1e3
+                except Exception as e:
+                    if verbose:
+                        logger.info("grid %s res=%s: %s failed (%s) -> skip", dims, res, name, e)
+                    continue
+                if ms < best_ms:
+                    best_name, best_ms, best_diff = name, ms, diff
+            region = {f"{d}_max": int(dims[d]) for d in dim_names}
+            if len(residencies) > 1:
+                region["location_eq"] = res
+            region[decision_key] = best_name or ref
+            if np.isfinite(best_diff):
+                region["max_abs_diff"] = float(best_diff)
+            regions.append(region)
+            if verbose:
+                logger.info("grid %s res=%s -> %s (%.3f ms)", dims, res, best_name, best_ms)
+    return regions

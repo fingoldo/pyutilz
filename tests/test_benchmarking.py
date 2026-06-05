@@ -162,3 +162,54 @@ class TestSweepBackendCrossover:
         for r in regions:
             assert r["backend_choice"] in ("numpy", "equiv")
             assert r.get("max_abs_diff", 0.0) < 1e-6
+
+
+class TestSweepBackendGrid:
+    """Full N-D Cartesian grid + residency-aware backend sweep."""
+
+    @staticmethod
+    def _inp(dims):
+        return (np.arange(dims["n"], dtype=float),)
+
+    def test_full_cartesian_one_region_per_cell(self):
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        regions = sweep_backend_grid(
+            {"numpy": lambda x: x.sum()},
+            {"n": [10, 100], "k": [1, 2]},
+            lambda d: (np.arange(d["n"], dtype=float),),
+            repeats=2,
+        )
+        assert len(regions) == 4  # 2 x 2 grid, host residency only
+        for r in regions:
+            assert "n_max" in r and "k_max" in r
+            assert r["backend_choice"] == "numpy"
+            assert "location_eq" not in r  # single residency -> no location key
+        assert {(r["n_max"], r["k_max"]) for r in regions} == {(10, 1), (10, 2), (100, 1), (100, 2)}
+
+    def test_residency_emits_location_regions(self):
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        # identity to_device (no real GPU) just exercises the host/device structure.
+        regions = sweep_backend_grid(
+            {"numpy": lambda x: x.sum()},
+            {"n": [10, 100]},
+            lambda d: (np.arange(d["n"], dtype=float),),
+            residencies=("host", "device"),
+            to_device=lambda args: args,
+            repeats=2,
+        )
+        assert len(regions) == 4  # 2 cells x 2 residencies
+        assert {r["location_eq"] for r in regions} == {"host", "device"}
+
+    def test_divergent_variant_skipped(self):
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+
+        regions = sweep_backend_grid(
+            {"numpy": lambda x: x.sum(), "bad": lambda x: x.sum() + 1e6},
+            {"n": [10, 100]},
+            lambda d: (np.arange(d["n"], dtype=float),),
+            reference="numpy",
+            repeats=2,
+        )
+        assert all(r["backend_choice"] == "numpy" for r in regions)
