@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from pyutilz.system import kernel_tuning_cache as ktc
+from pyutilz.performance.kernel_tuning import cache as ktc
 
 
 @pytest.fixture

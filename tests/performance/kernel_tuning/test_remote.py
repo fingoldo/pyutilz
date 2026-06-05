@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from pyutilz.system import kernel_tuning_cache as ktc
-from pyutilz.system import kernel_tuning_remote as ktr
+from pyutilz.performance.kernel_tuning import cache as ktc
+from pyutilz.performance.kernel_tuning import remote as ktr
 
 
 @pytest.fixture
