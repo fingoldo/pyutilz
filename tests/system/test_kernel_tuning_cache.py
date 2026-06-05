@@ -386,3 +386,48 @@ class TestV2Disk:
         c2 = ktc.KernelTuningCache()
         assert c2.lookup("k", dtype="float64") == {"backend": "f64"}
         assert c2.lookup("k", dtype="int32") == {"backend": "other"}
+
+
+class TestLoadOrCreate:
+    """load_or_create() revives the 8 mlframe dispatch sites that consulted a
+    non-existent classmethod (AttributeError was swallowed -> cache unused)."""
+
+    def setup_method(self):
+        # Reset the singleton between tests so each starts clean.
+        ktc._DEFAULT_INSTANCE = None
+
+    def teardown_method(self):
+        ktc._DEFAULT_INSTANCE = None
+
+    def test_returns_instance(self, tmp_cache_dir):
+        c = ktc.KernelTuningCache.load_or_create()
+        assert isinstance(c, ktc.KernelTuningCache)
+
+    def test_is_singleton(self, tmp_cache_dir):
+        a = ktc.KernelTuningCache.load_or_create()
+        b = ktc.KernelTuningCache.load_or_create()
+        assert a is b
+
+    def test_empty_cache_lookup_returns_none(self, tmp_cache_dir):
+        # The revived-site contract: empty cache -> lookup None -> caller falls
+        # back to its hand-tuned default (no error).
+        c = ktc.KernelTuningCache.load_or_create()
+        assert c.lookup("rmse_partial_sum", n_samples=50000, n_cols=10) is None
+
+    def test_singleton_thread_safe_init(self, tmp_cache_dir):
+        import threading
+
+        results = []
+        barrier = threading.Barrier(8)
+
+        def grab():
+            barrier.wait()
+            results.append(ktc.KernelTuningCache.load_or_create())
+
+        threads = [threading.Thread(target=grab) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # All threads see the same singleton.
+        assert len({id(r) for r in results}) == 1

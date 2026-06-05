@@ -345,6 +345,13 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
 # Cache class
 # ---------------------------------------------------------------------------
 
+# Process-wide singleton for load_or_create() -- hot-path dispatch callers
+# (GPU/numba kernels) consult the cache on every invocation; one shared
+# instance avoids re-reading the per-host JSON each call.
+_DEFAULT_INSTANCE = None
+_DEFAULT_INSTANCE_LOCK = threading.Lock()
+
+
 class KernelTuningCache:
     """Per-host kernel-tuning cache. Single instance per process is enough;
     the class is thread-safe under a single ``threading.Lock``.
@@ -374,6 +381,28 @@ class KernelTuningCache:
         # implementation pass).
         self._lock = threading.RLock()
         self._loaded: Optional[dict] = None  # None until first load() call
+
+    @classmethod
+    def load_or_create(cls) -> "KernelTuningCache":
+        """Return the process-wide singleton cache (load-or-create once).
+
+        Hot-path dispatch callers (GPU/numba kernels) consult the cache on
+        every kernel invocation; constructing a fresh instance per call would
+        re-read the per-host JSON each time. The first call builds and caches
+        the singleton (the file is lazy-loaded on first ``lookup``); later
+        calls return the same object. Thread-safe (double-checked lock).
+
+        On an un-tuned host the cache is empty, so ``lookup`` returns ``None``
+        and callers fall back to their hand-tuned default -- identical to the
+        prior behavior, but now via a real miss instead of a swallowed
+        ``AttributeError`` (the method did not previously exist).
+        """
+        global _DEFAULT_INSTANCE
+        if _DEFAULT_INSTANCE is None:
+            with _DEFAULT_INSTANCE_LOCK:
+                if _DEFAULT_INSTANCE is None:
+                    _DEFAULT_INSTANCE = cls()
+        return _DEFAULT_INSTANCE
 
     # ----- I/O -----
 
