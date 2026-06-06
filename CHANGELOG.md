@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-05-20
 
+### Changed — kernel-tuning cache: immutable per-(host,kernel,code_version) storage (no filelock, no lost update)
+
+Replaces the shared-mutable-per-host-JSON + ``filelock`` model in
+``pyutilz.performance.kernel_tuning.cache`` (the root cause of the
+process/thread locking pain) with **immutable** files, one per tuning:
+
+    <cache_dir>/<hw_fingerprint>/<kernel_slug>/<code_version>.<salt>.<pid>.<ts>.json
+
+* **No read-modify-write** — each ``update`` writes a brand-new uniquely-named
+  file (tempfile + ``os.replace``); no file is ever modified in place, so the
+  D1 lost-update (a concurrent writer of one kernel silently reverting another's
+  fresher entry via a stale whole-snapshot merge) is structurally impossible.
+* **Lock-free reads** — ``lookup`` resolves a kernel by globbing its directory
+  and picking the newest file by ``tuned_utc`` (mtime tiebreak); the parse is
+  cached in ``self._loaded`` so the hot path stays in-memory as before.
+* **Singleton-without-blocking** — a sweep is claimed by atomically creating a
+  ``<code_version>.INPROGRESS`` marker via ``os.open(O_CREAT|O_EXCL)``. Win =
+  own the sweep; ``EEXIST`` = give up immediately (no ``filelock``, no 900s
+  timeout). The marker embeds ``pid`` + ``start_ts``; a would-be sweeper STEALS
+  a stale marker (dead owner pid OR start_ts older than a max-sweep budget,
+  ``$PYUTILZ_KERNEL_SWEEP_BUDGET_SEC``, default 1800s), so a crashed sweeper
+  never wedges anyone.
+* **Migration** — on first access a legacy monolithic ``<fp>.json`` is split
+  into per-kernel immutable files once (under an ``O_EXCL`` claim) and renamed
+  aside; existing caches keep working.
+* **D9** — the remote write-through now happens OUTSIDE any lock (there is no
+  lock), and ``S3Backend`` sets explicit boto3 connect/read timeouts
+  (``$PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT`` / ``..._READ_TIMEOUT``) so a hung
+  S3 ``put`` never stalls a local save.
+* **D3** — a bounded retry (3× ~50ms) wraps ``os.replace`` for Windows
+  AV / share-delete transients.
+
+Public API is 100% stable: ``lookup`` / ``update`` / ``get_or_tune`` /
+``load_or_create`` / ``reset`` / ``evict`` / ``get_metadata`` /
+``register_default_cache`` / ``cache_path`` / ``hw_fingerprint`` /
+``KernelTuningCache(in_memory=True)`` keep their signatures + semantics.
+``SCHEMA_VERSION`` bumped to 3. New helper ``host_cache_dir()`` exposes the
+per-host directory.
+
+### Added — ``retune_all`` / ``tune_spec`` ``skip_existing`` parameter
+
+``skip_existing: bool = True`` skips sweeping any (kernel, hardware) whose
+CURRENT ``code_version`` already has a cached tuning, so re-running an offline
+benchmark doesn't redo finished work. ``skip_existing=False`` forces a full
+re-sweep (``force=True`` still takes precedence and re-sweeps unconditionally).
+
 ### Added — ``pyutilz.dev.code_audit``: AST-based scanners for recurring Python bug classes
 
 Promotes the throwaway ``ast.walk`` scripts that subagent audit runs

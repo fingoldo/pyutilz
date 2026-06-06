@@ -53,14 +53,46 @@ None.
 Honours ``$PYUTILZ_KERNEL_CACHE_DIR`` (env override) > default
 ``~/.pyutilz/kernel_tuning/``. Atomic writes; corrupt / version-
 mismatched files trigger a re-tune (safe degradation).
+
+Storage model (v3, immutable per-(host,kernel,code_version) files)
+------------------------------------------------------------------
+
+The legacy v1/v2 model stored ALL kernels for a host in one mutable JSON
+(``<fp>.json``) and serialised every writer with a ``filelock`` around a
+read-modify-write. That single mutable document was the root cause of the
+lost-update / stale-lock / 900s-wedge defects (see the locking critique). v3
+dissolves them by making each tuning an **immutable** file::
+
+    <cache_dir>/<hw_fingerprint>/<kernel_slug>/<code_version>.<salt>.<pid>.<ts>.json
+
+* **WRITE** -- a tuner writes a brand-new uniquely-named file (tempfile +
+  ``os.replace``); no file is ever modified in place, so there is no
+  read-modify-write and no lost update, hence NO write lock.
+* **READ** -- ``lookup`` resolves a kernel by globbing its directory and
+  picking the newest file by ``tuned_utc`` (falling back to mtime); pure read,
+  NO lock. The parse is cached in ``self._loaded`` exactly as before so the hot
+  path stays in-memory after the first resolution.
+* **SINGLETON-WITHOUT-BLOCKING** -- to start a sweep, a process atomically
+  creates ``<kernel_dir>/<code_version>.INPROGRESS`` via
+  ``os.open(O_CREAT|O_EXCL)``. Win = own the sweep; ``EEXIST`` = someone else
+  is sweeping -> give up immediately (no filelock, no timeout). The marker
+  embeds ``pid`` + ``start_ts``; a would-be sweeper STEALS a stale marker
+  (dead owner pid OR start_ts older than the max-sweep budget), so a crashed
+  sweeper never wedges anyone (self-healing).
+* **MIGRATION** -- on first access the legacy monolithic ``<fp>.json`` is split
+  into per-kernel immutable files once (under an ``O_EXCL`` claim) and then
+  renamed aside; existing caches keep working.
 """
 from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import errno
+import glob as _glob
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -72,7 +104,17 @@ from pyutilz.system.gpu_dispatch import gpu_capability_summary
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2  # v2: code_version + categorical (_eq) / range (_min) axes + python_version material
+SCHEMA_VERSION = 3  # v3: immutable per-(host,kernel,code_version) files + O_EXCL sweep markers (was v2: monolithic JSON)
+
+# How long an INPROGRESS sweep marker is trusted before a would-be sweeper may
+# STEAL it (owner crashed / hung). The expensive GPU/CPU sweeps run hundreds of
+# seconds; this budget must exceed a legitimate sweep but bound the wedge from a
+# killed-mid-sweep process. Override via $PYUTILZ_KERNEL_SWEEP_BUDGET_SEC.
+_DEFAULT_SWEEP_BUDGET_SECONDS = 1800.0
+
+# Sentinel used in a filename when a tuning carries no code_version (update()
+# may be called without one). A real code_version is a SHA-256 hex string.
+_NO_CODE_VERSION = "nocv"
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +304,74 @@ def cache_dir() -> str:
 
 
 def cache_path() -> str:
-    """Full path to the JSON file for the live host."""
+    """Path to the LEGACY monolithic per-host JSON file.
+
+    Kept for backward compatibility (migration source + a stable public path).
+    The v3 storage no longer writes this file; tunings live as immutable
+    per-kernel files under :func:`host_cache_dir`. ``cache_path`` still resolves
+    to the v1/v2 location so a pre-existing monolith is found + migrated.
+    """
     return os.path.join(cache_dir(), f"{hw_fingerprint()}.json")
+
+
+def host_cache_dir() -> str:
+    """Per-host directory holding the immutable per-kernel tuning files (v3).
+
+    Layout: ``<cache_dir>/<hw_fingerprint>/<kernel_slug>/<...>.json``. Created on
+    first call.
+    """
+    path = os.path.join(cache_dir(), hw_fingerprint())
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _kernel_dir(host_dir: str, kernel_name: str) -> str:
+    """Directory for one kernel's immutable tuning files."""
+    return os.path.join(host_dir, _slug(kernel_name, maxlen=80))
+
+
+def _sweep_budget_seconds() -> float:
+    """Max-sweep budget (seconds) after which an INPROGRESS marker is steal-able."""
+    raw = os.environ.get("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "").strip()
+    if raw:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            pass
+    return _DEFAULT_SWEEP_BUDGET_SECONDS
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort: is ``pid`` a live process on this host? Conservative -- on any
+    probe uncertainty returns True (don't steal a marker we can't prove is dead)."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            # No os.kill(pid, 0) signal semantics on Windows; query the OS task list.
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                # ERROR_INVALID_PARAMETER (87) => no such pid; anything else => assume alive.
+                return ctypes.get_last_error() not in (87,)
+            try:
+                exit_code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    STILL_ACTIVE = 259
+                    return exit_code.value == STILL_ACTIVE
+                return True
+            finally:
+                kernel32.CloseHandle(handle)
+        else:
+            os.kill(pid, 0)
+            return True
+    except OSError as e:
+        # ESRCH => dead; EPERM => alive but not ours.
+        return getattr(e, "errno", None) != errno.ESRCH
+    except Exception:
+        return True  # never steal on an unexpected probe failure
 
 
 # ---------------------------------------------------------------------------
@@ -403,10 +511,18 @@ class KernelTuningCache:
     """
 
     def __init__(self, path: Optional[str] = None, *, in_memory: bool = False):
-        # in_memory=True skips all disk / filelock / provenance -- a seedable
-        # RAM cache for fast unit tests (KernelTuningCache(in_memory=True)).
+        # in_memory=True skips all disk / provenance -- a seedable RAM cache for
+        # fast unit tests (KernelTuningCache(in_memory=True)).
         self._in_memory = in_memory
-        self._path = None if in_memory else (path or cache_path())
+        # ``self._path`` is the per-host DIRECTORY holding immutable per-kernel
+        # files (v3), NOT a single JSON file (v1/v2). ``path`` (legacy positional
+        # arg) is interpreted as that directory if a caller passes one. The
+        # once-per-process guard + sweep markers key off this path, so it stays a
+        # stable per-cache identity. None for in-memory caches.
+        self._path = None if in_memory else (path or host_cache_dir())
+        # The kernels whose legacy monolith has already been migrated this
+        # process (one-time split per host dir).
+        self._migrated = False
         # Reentrant so ``update`` can call ``_ensure_loaded`` under its own
         # lock without deadlocking (regression caught by
         # tests/system/test_kernel_tuning_cache.py during the first
@@ -443,148 +559,277 @@ class KernelTuningCache:
                     _DEFAULT_INSTANCE = cls()
         return _DEFAULT_INSTANCE
 
-    # ----- I/O -----
+    # ----- I/O (v3 immutable per-kernel files) -----
 
-    def _write_local_copy(self, data: dict) -> None:
-        """Atomically cache a remote-fetched payload to the local file so the
-        normal local read path validates + serves it on subsequent calls."""
+    @staticmethod
+    def _atomic_write_json(final_path: str, payload: dict, *, retries: int = 3, backoff: float = 0.05) -> bool:
+        """Write ``payload`` to ``final_path`` via tempfile + ``os.replace``,
+        with a bounded retry around the rename (D3: Windows AV / share-delete
+        without FILE_SHARE_DELETE can make ``os.replace`` transiently raise
+        ``OSError`` errno 5/13). Returns True on success, False on persistent
+        failure (degrades silently -- a failed cache write must never break
+        dispatch). Each attempt writes a FRESH uniquely-named temp file so a
+        concurrent writer never collides on the temp name."""
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+        last_err: Optional[Exception] = None
+        for attempt in range(max(1, retries)):
+            tmp = f"{final_path}.{os.getpid()}.{random.randrange(1 << 30):x}.tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, sort_keys=True)
+                os.replace(tmp, final_path)
+                return True
+            except OSError as e:
+                last_err = e
+                with contextlib.suppress(OSError):
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                if attempt < retries - 1:
+                    time.sleep(backoff * (attempt + 1))
+        logger.debug("kernel_tuning_cache: atomic write of %s failed after %d tries: %s",
+                     final_path, retries, last_err)
+        return False
+
+    def _migrate_legacy(self) -> None:
+        """One-time split of a legacy monolithic ``<fp>.json`` into per-kernel
+        immutable files, under an ``O_EXCL`` claim so only one process migrates.
+        After a successful split the monolith is renamed aside (``.migrated``) so
+        it is found-once but never re-read. Backward compatible: existing caches
+        keep working transparently. Idempotent + crash-safe (a partial migration
+        just re-runs; immutable writes can't corrupt)."""
+        if self._in_memory or self._path is None or self._migrated:
+            return
+        self._migrated = True  # at most one attempt per process
+        legacy = cache_path()
+        if not os.path.isfile(legacy):
+            return
+        claim = os.path.join(self._path, ".migrate.INPROGRESS")
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
-            tmp = self._path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, sort_keys=True)
-            os.replace(tmp, self._path)
+            os.makedirs(self._path, exist_ok=True)
+            fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+        except FileExistsError:
+            return  # another process is migrating; its result will be read on next _load
         except OSError as e:
-            logger.debug("kernel_tuning_cache: failed to cache remote payload: %s", e)
+            logger.debug("kernel_tuning_cache: migration claim failed: %s", e)
+            return
+        try:
+            with open(legacy, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Only import kernels from a SCHEMA- and FINGERPRINT-compatible
+            # monolith (v2 or v3 shape, matching host). A schema-999 / foreign /
+            # corrupt monolith is treated exactly as the old _load did -- as a
+            # miss -- so it is renamed aside WITHOUT importing anything (no
+            # accidental resurrection of an invalid cache).
+            compatible = (data.get("schema_version") in (SCHEMA_VERSION, 2)
+                          and data.get("hw_fingerprint") == hw_fingerprint())
+            kernels = (data.get("kernels", {}) or {}) if compatible else {}
+            prov = data.get("provenance")
+            for name, entry in kernels.items():
+                if not isinstance(entry, dict):
+                    continue
+                # Carry provenance into each split file so the staleness check
+                # behaves exactly as it did against the monolith.
+                self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
+            os.replace(legacy, legacy + ".migrated")
+            logger.info("kernel_tuning_cache: migrated %d kernels from legacy %s (compatible=%s)",
+                        len(kernels), legacy, compatible)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.debug("kernel_tuning_cache: legacy migration failed: %s", e)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(claim)
+
+    def _read_kernel_newest(self, kernel_name: str) -> Optional[dict]:
+        """Resolve one kernel by globbing its directory and picking the NEWEST
+        immutable file (by embedded ``tuned_utc``, mtime as tiebreaker). Pure
+        read, NO lock. Returns the kernel ENTRY dict (axes/regions/code_version/
+        salt/tuned_utc) with a per-file provenance staleness check applied, or
+        None on miss / stale."""
+        kdir = _kernel_dir(self._path, kernel_name)
+        files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
+        if not files:
+            return None
+        live_prov = _build_provenance()
+        candidates: list[tuple] = []  # (tuned_ts, mtime, entry)
+        for p in files:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    rec = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue  # os.replace is atomic; a parse failure is a foreign/partial file -> skip
+            if rec.get("schema_version") != SCHEMA_VERSION:
+                continue
+            if rec.get("hw_fingerprint") != hw_fingerprint():
+                continue
+            saved_prov = rec.get("provenance")
+            if saved_prov and provenance_changed(saved_prov, live_prov):
+                continue  # driver/cupy/numba bump since this tuning -> ignore (structural staleness)
+            entry = rec.get("entry")
+            if not isinstance(entry, dict):
+                continue
+            ts = entry.get("tuned_utc") or ""
+            try:
+                mtime = os.path.getmtime(p)
+            except OSError:
+                mtime = 0.0
+            candidates.append((ts, mtime, entry))
+        if not candidates:
+            return None
+        # Newest by tuned_utc (ISO-8601 strings sort chronologically), then mtime.
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        return candidates[-1][2]
 
     def _load(self) -> Optional[dict]:
-        """Lazy file-read. Returns the validated payload, or None on
-        absent / unreadable / schema-version / fingerprint mismatch.
-
-        On a local miss, reads through to the shared remote store (if any) for
-        this fingerprint and caches it locally before validating."""
+        """Build the in-memory ``{schema_version, hw_fingerprint, kernels}`` view
+        by resolving every kernel directory to its newest immutable file. Pure
+        read, NO lock. On an empty local store, reads through to the shared remote
+        (if any) and caches the pulled kernels locally as immutable files before
+        resolving. Returns None when nothing is found (so ``_ensure_loaded``
+        installs an empty stub)."""
         if self._in_memory:
             return None
-        if not os.path.isfile(self._path):
-            # Read-through: pull this host's fingerprint payload from the
-            # shared remote store, cache locally, then validate via the normal
-            # local path below. Remote miss / no remote -> stays absent.
-            if self._remote is not None:
-                try:
-                    remote_data = self._remote.read(hw_fingerprint())
-                except Exception as e:  # any backend error -> local-only
-                    logger.debug("kernel_tuning_cache: remote read failed: %s", e)
-                    remote_data = None
-                if remote_data is not None:
-                    self._write_local_copy(remote_data)
-            if not os.path.isfile(self._path):
-                return None
-        try:
-            with open(self._path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning("kernel_tuning_cache: failed to read %s: %s", self._path, e)
+        self._migrate_legacy()
+        host_dir = self._path
+        kernels: dict = {}
+        if os.path.isdir(host_dir):
+            try:
+                kernel_dirs = [d for d in os.scandir(host_dir) if d.is_dir()]
+            except OSError:
+                kernel_dirs = []
+            for d in kernel_dirs:
+                # Recover the kernel name from any file in the dir (the slug is
+                # lossy); the entry itself carries the canonical kernel_name.
+                entry = self._read_kernel_dir_by_path(d.path)
+                if entry is not None:
+                    kernels[entry[0]] = entry[1]
+        if not kernels and self._remote is not None:
+            # Read-through: pull this host's payload from the shared store + cache
+            # each kernel as an immutable local file, then they resolve normally.
+            try:
+                remote_data = self._remote.read(hw_fingerprint())
+            except Exception as e:
+                logger.debug("kernel_tuning_cache: remote read failed: %s", e)
+                remote_data = None
+            if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
+                prov = remote_data.get("provenance")
+                live_prov = _build_provenance()
+                if not (prov and provenance_changed(prov, live_prov)):
+                    for name, entry in (remote_data.get("kernels", {}) or {}).items():
+                        if isinstance(entry, dict):
+                            self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
+                            kernels[name] = entry
+        if not kernels:
             return None
-        if data.get("schema_version") != SCHEMA_VERSION:
-            logger.info(
-                "kernel_tuning_cache: schema mismatch at %s (got %r, expected %d); "
-                "treating as miss",
-                self._path, data.get("schema_version"), SCHEMA_VERSION,
-            )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "hw_fingerprint": hw_fingerprint(),
+            "kernels": kernels,
+        }
+
+    def _read_kernel_dir_by_path(self, kdir: str) -> Optional[tuple]:
+        """Like ``_read_kernel_newest`` but takes a directory path + returns
+        ``(kernel_name, entry)`` (the name is read from the winning record).
+        Used by ``_load`` which scans directories without knowing kernel names."""
+        files = _glob.glob(os.path.join(kdir, "*.json"))
+        if not files:
             return None
-        if data.get("hw_fingerprint") != hw_fingerprint():
-            logger.info(
-                "kernel_tuning_cache: hw_fingerprint mismatch at %s "
-                "(got %r, expected %r); treating as miss",
-                self._path, data.get("hw_fingerprint"), hw_fingerprint(),
-            )
-            return None
-        # Provenance staleness check: a CUDA driver / cupy / numba bump
-        # since the tuning was saved invalidates the cache (a new sweep
-        # may find different optima under updated kernels / drivers).
-        saved_prov = data.get("provenance")
         live_prov = _build_provenance()
-        if not saved_prov:
-            # _save always writes provenance, so a payload without it is
-            # hand-crafted or from an old/foreign writer -- we can't validate it
-            # against a driver/cupy/numba bump, so surface it (B8). Conservative:
-            # we still serve it (the hw_fingerprint already matched).
-            logger.warning("kernel_tuning_cache: %s has no provenance -- cannot "
-                           "validate against a driver/cupy bump; serving as-is", self._path)
-        elif provenance_changed(saved_prov, live_prov):
-            logger.info(
-                "kernel_tuning_cache: provenance changed since save "
-                "(CUDA/cupy/numba/GPU bump); treating as miss to trigger re-tune"
-            )
+        candidates: list[tuple] = []
+        for p in files:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    rec = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if rec.get("schema_version") != SCHEMA_VERSION:
+                continue
+            if rec.get("hw_fingerprint") != hw_fingerprint():
+                continue
+            saved_prov = rec.get("provenance")
+            if saved_prov and provenance_changed(saved_prov, live_prov):
+                continue
+            entry = rec.get("entry")
+            name = rec.get("kernel_name")
+            if not isinstance(entry, dict) or not name:
+                continue
+            ts = entry.get("tuned_utc") or ""
+            try:
+                mtime = os.path.getmtime(p)
+            except OSError:
+                mtime = 0.0
+            candidates.append((ts, mtime, name, entry))
+        if not candidates:
             return None
-        return data
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        winner = candidates[-1]
+        return (winner[2], winner[3])
 
-    def _save(self, kernels: dict) -> None:
-        """Atomic write of the full payload, safe across PROCESSES.
-
-        Two joblib worker processes both calling ``update(...)`` on the
-        same on-disk cache file race: each loaded a snapshot, mutates
-        its own ``kernels`` dict, saves -- last writer wins, silently
-        dropping the other worker's kernel update. Fix: take an OS-level
-        advisory file lock around the read-modify-write so concurrent
-        saves serialise and merge correctly. Best-effort: if the
-        ``filelock`` lib is missing, fall back to plain atomic rename
-        and accept the race (in-process callers always go through
-        ``_ensure_loaded`` under the ``RLock`` so single-process is
-        safe regardless).
+    def _persist_kernel(self, kernel_name: str, entry: dict, *,
+                        provenance: Optional[dict] = None, remote: bool = True) -> None:
+        """Write ONE immutable per-kernel tuning file (no read-modify-write, no
+        lock). Filename: ``<code_version>.<salt>.<pid>.<ts>.<rand>.json`` so every
+        write is unique and prior tunings are never overwritten (a reader picks
+        the newest). Best-effort remote write-through happens AFTER the local
+        write and OUTSIDE any lock (D9), so a hung S3 never stalls the local save.
         """
-        if self._in_memory:
-            return  # RAM-only: nothing to persist
-        lock_path = self._path + ".lock"
+        if self._in_memory or self._path is None:
+            return
+        cv = entry.get("code_version") or _NO_CODE_VERSION
+        salt = entry.get("salt", 0)
+        ts = time.time()
+        fname = f"{_slug(str(cv), maxlen=70)}.{int(salt)}.{os.getpid()}.{int(ts * 1000)}.{random.randrange(1 << 24):x}.json"
+        kdir = _kernel_dir(self._path, kernel_name)
+        final_path = os.path.join(kdir, fname)
+        record = {
+            "schema_version": SCHEMA_VERSION,
+            "hw_fingerprint": hw_fingerprint(),
+            "kernel_name": kernel_name,
+            "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "provenance": provenance if provenance is not None else _build_provenance(),
+            "entry": entry,
+        }
+        if self._atomic_write_json(final_path, record):
+            logger.info("kernel_tuning_cache: saved %s", final_path)
+            self._gc_kernel_dir(kdir)
+        # Remote write-through OUTSIDE any lock (D9): one immutable object per
+        # (fp, kernel) -- last writer wins remotely, race-free, fire-and-forget.
+        if remote and self._remote is not None:
+            try:
+                self._remote.write(hw_fingerprint(), self._remote_payload())
+            except Exception as e:
+                logger.debug("kernel_tuning_cache: remote write failed: %s", e)
+
+    def _remote_payload(self) -> dict:
+        """Assemble the legacy-shaped monolithic payload (all kernels) for the
+        remote store, so the remote object stays one-per-fingerprint and a peer's
+        read-through repopulates every kernel."""
+        kernels = (self._loaded or {}).get("kernels", {}) if self._loaded else {}
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "hw_fingerprint": hw_fingerprint(),
+            "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "provenance": _build_provenance(),
+            "kernels": dict(kernels),
+        }
+
+    def _gc_kernel_dir(self, kdir: str, keep: int = 4) -> None:
+        """Lazily garbage-collect a kernel directory, keeping the newest ``keep``
+        immutable files (by mtime). Negligible space + never blocks; best-effort
+        (a failed unlink is harmless -- the reader always picks the newest)."""
         try:
-            from filelock import FileLock
-            _file_lock = FileLock(lock_path, timeout=10)
-        except ImportError:
-            _file_lock = None
-
-        def _do_save() -> None:
-            # Re-read existing on-disk state INSIDE the lock + merge the
-            # caller's ``kernels`` dict so concurrent writers preserve
-            # each other's entries instead of clobbering.
-            existing_kernels: dict = {}
-            if os.path.isfile(self._path):
-                try:
-                    with open(self._path, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
-                    if (existing_data.get("schema_version") == SCHEMA_VERSION
-                            and existing_data.get("hw_fingerprint") == hw_fingerprint()):
-                        existing_kernels = existing_data.get("kernels", {}) or {}
-                except (OSError, json.JSONDecodeError):
-                    pass
-            # Merge: caller's kernels win for matching names; other names
-            # preserved.
-            merged = dict(existing_kernels)
-            merged.update(kernels)
-            payload = {
-                "schema_version": SCHEMA_VERSION,
-                "hw_fingerprint": hw_fingerprint(),
-                "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-                "provenance": _build_provenance(),
-                "kernels": merged,
-            }
-            tmp = self._path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, sort_keys=True)
-            os.replace(tmp, self._path)
-            logger.info("kernel_tuning_cache: saved %s", self._path)
-            # Write-through to the shared remote store (best-effort; a flaky
-            # network or raising backend never breaks the local save).
-            if self._remote is not None:
-                try:
-                    self._remote.write(hw_fingerprint(), payload)
-                except Exception as e:
-                    logger.debug("kernel_tuning_cache: remote write failed: %s", e)
-
-        if _file_lock is not None:
-            with _file_lock:
-                _do_save()
-        else:
-            _do_save()
+            files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
+        except OSError:
+            return
+        if len(files) <= keep:
+            return
+        try:
+            files.sort(key=lambda p: os.path.getmtime(p))
+        except OSError:
+            return
+        for p in files[:-keep]:
+            with contextlib.suppress(OSError):
+                os.remove(p)
 
     def _ensure_loaded(self) -> dict:
         """Return the live cache payload (loaded once per process). On
@@ -626,10 +871,15 @@ class KernelTuningCache:
             entry["salt"] = int(salt)
         with self._lock:
             self._ensure_loaded()
+            # Update the in-memory snapshot, then persist ONLY this one kernel as
+            # a new immutable file. No read-modify-write of a shared document ->
+            # no lost update (D1 dissolved): a concurrent writer of a DIFFERENT
+            # kernel writes a different directory, and a concurrent writer of the
+            # SAME kernel writes a distinct file (newest wins), never clobbering.
             self._loaded["kernels"][kernel_name] = entry
             if hooks is not None:
                 hooks.persist(kernel_name, self._path, len(regions))
-            self._save(self._loaded["kernels"])
+            self._persist_kernel(kernel_name, entry)
 
     def has(self, kernel_name: str) -> bool:
         """True iff a tuning for ``kernel_name`` is present on disk."""
@@ -711,11 +961,30 @@ class KernelTuningCache:
             # can actually re-tune this kernel (B11) instead of short-circuiting
             # to the fallback because "we already swept it this process".
             _TUNED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
-            if kernel_name in self._loaded.get("kernels", {}):
+            present = kernel_name in self._loaded.get("kernels", {})
+            if present:
                 del self._loaded["kernels"][kernel_name]
-                self._save(self._loaded["kernels"])
+            self._delete_kernel_files(kernel_name)
+            if present:
+                # Refresh the remote object so the eviction propagates (best-effort).
+                if not self._in_memory and self._remote is not None:
+                    try:
+                        self._remote.write(hw_fingerprint(), self._remote_payload())
+                    except Exception as e:
+                        logger.debug("kernel_tuning_cache: remote write failed: %s", e)
                 return True
             return False
+
+    def _delete_kernel_files(self, kernel_name: str) -> None:
+        """Remove all immutable files for a kernel on disk (used by evict). No-op
+        for in-memory caches. Best-effort; a failed unlink degrades to a stale
+        file the newest-wins reader still resolves correctly after a re-tune."""
+        if self._in_memory or self._path is None:
+            return
+        kdir = _kernel_dir(self._path, kernel_name)
+        for p in _glob.glob(os.path.join(kdir, "*.json")):
+            with contextlib.suppress(OSError):
+                os.remove(p)
 
     # ----- introspection -----
 
@@ -837,12 +1106,20 @@ class KernelTuningCache:
             return _fb()
 
         # SYNCHRONOUS path: explicit offline tuning (async_sweep=False) or the disable-sweep escape hatch.
-        with self._tuning_lock(kernel_name, lock_timeout, hk):
-            # another process may have tuned it while we waited for the lock
+        # Claim the sweep via an O_EXCL INPROGRESS marker (no filelock, no blocking, no 900s wedge). Win = own the
+        # sweep; lose = another process is already sweeping this (kernel, code_version) -> we DON'T duplicate it, we
+        # re-check for a freshly-landed result and otherwise return the fallback (lock_timeout retained for signature
+        # stability only -- there is no blocking wait to time out anymore).
+        with self._claim_sweep(kernel_name, code_version, hk) as owns:
+            # another process may have tuned it while we were resolving the claim
             if not self._code_version_stale(kernel_name, code_version):
+                self.reset()
                 hit = self.lookup(kernel_name, **dims)
                 if hit is not None:
                     return hit
+            if not owns:
+                hk.winner_chosen(kernel_name, None, "fallback (another process is sweeping)")
+                return _fb()
             _TUNED_THIS_PROCESS.add(guard_key)
             regions = None if _sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
             if regions:
@@ -868,16 +1145,17 @@ class KernelTuningCache:
 
     def _spawn_async_sweep(self, kernel_name: str, *, dims, tuner, axes, code_version, salt, equiv_tol, hooks):
         """Run the sweep in a background daemon thread: measure on this host + write the cache for SUBSEQUENT
-        calls, without ever blocking the caller's fit. Acquires the cross-process tuning lock with a short timeout
-        and gives up if another process is already sweeping this kernel -> a crashed/killed sweep can never wedge a
-        fresh fit, and there is at most one sweep per kernel across processes."""
+        calls, without ever blocking the caller's fit. Claims the sweep via an O_EXCL INPROGRESS marker and gives up
+        if another process is already sweeping this kernel -> a crashed/killed sweep can never wedge a fresh fit
+        (the stale marker is steal-able), and there is at most one sweep per (kernel, code_version) across processes."""
         def _run():
             try:
-                with self._async_sweep_lock(kernel_name) as acquired:
-                    if not acquired:
+                with self._claim_sweep(kernel_name, code_version, hooks) as owns:
+                    if not owns:
                         return  # another process is already tuning this kernel; let it
+                    self.reset()  # pick up any result a peer landed since we were spawned
                     if not self._code_version_stale(kernel_name, code_version) and self.lookup(kernel_name, **dims) is not None:
-                        return  # tuned while we waited for the lock
+                        return  # tuned while we claimed
                     regions = self._run_tuner(kernel_name, tuner, axes, hooks)
                     if regions:
                         self.update(kernel_name, axes=axes, regions=list(regions), code_version=code_version,
@@ -887,34 +1165,6 @@ class KernelTuningCache:
                 logger.debug("kernel_tuning_cache: async sweep for %s crashed: %s", kernel_name, e)
         threading.Thread(target=_run, name="ktc-sweep-" + _slug(kernel_name), daemon=True).start()
 
-    @contextlib.contextmanager
-    def _async_sweep_lock(self, kernel_name: str, timeout: float = 10.0):
-        """Yield True if the cross-process tuning lock was acquired (caller should sweep), False if another process
-        holds it (caller gives up -- no wait, no duplicate sweep). A short timeout means even a stale lock from a
-        killed holder only delays the BACKGROUND thread briefly, never a fit. No-op (True) if filelock is absent or
-        this cache is in-memory."""
-        if self._in_memory or self._path is None:
-            yield True
-            return
-        try:
-            from filelock import FileLock, Timeout
-        except ImportError:
-            yield True
-            return
-        lock = FileLock(self._path + "." + _slug(kernel_name) + ".tune.lock", timeout=timeout)
-        try:
-            lock.acquire()
-        except Timeout:
-            yield False
-            return
-        try:
-            yield True
-        finally:
-            try:
-                lock.release()
-            except Exception:
-                pass
-
     def _code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
         """True iff a stored code_version exists and differs from the live one."""
         if code_version is None:
@@ -923,37 +1173,85 @@ class KernelTuningCache:
         stored = data.get("kernels", {}).get(kernel_name, {}).get("code_version")
         return stored is not None and stored != code_version
 
+    def _marker_path(self, kernel_name: str, code_version: Optional[str]) -> str:
+        """Path to the per-(kernel, code_version) INPROGRESS sweep marker."""
+        cv = _slug(str(code_version or _NO_CODE_VERSION), maxlen=70)
+        return os.path.join(_kernel_dir(self._path, kernel_name), f"{cv}.INPROGRESS")
+
     @contextlib.contextmanager
-    def _tuning_lock(self, kernel_name: str, timeout: float, hooks):
-        """Cross-process advisory lock so two cold processes don't both run the
-        (expensive) sweep. No-op if ``filelock`` is absent or in_memory. On
-        timeout (a crashed / over-long tuner) fires a hook and proceeds WITHOUT
-        the lock rather than deadlocking dispatch (accept a rare duplicate
-        sweep, which ``_save`` merges, over a lost update)."""
+    def _claim_sweep(self, kernel_name: str, code_version: Optional[str], hooks):
+        """Singleton-without-blocking: yield True iff THIS process owns the sweep
+        for ``(kernel, code_version)``, False if another live process already does.
+
+        Atomically create the INPROGRESS marker via ``os.open(O_CREAT|O_EXCL)``.
+        Win -> own it (marker removed on exit). ``EEXIST`` -> read the marker's
+        ``pid`` + ``start_ts``: if the owner pid is dead OR the start_ts is older
+        than the max-sweep budget, STEAL it (unlink + recreate) and own; else give
+        up (yield False) immediately -- no filelock, no timeout, no 900s wedge. A
+        crashed sweeper self-heals after at most one budget window. No-op (yields
+        True) for in-memory caches."""
         if self._in_memory or self._path is None:
-            yield
+            yield True
             return
+        marker = self._marker_path(kernel_name, code_version)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        owns = self._try_create_marker(marker)
+        if not owns:
+            owns = self._maybe_steal_marker(marker, kernel_name, hooks)
         try:
-            from filelock import FileLock, Timeout
-        except ImportError:
-            yield
-            return
-        lock = FileLock(self._path + "." + _slug(kernel_name) + ".tune.lock", timeout=timeout)
-        try:
-            lock.acquire()
-        except Timeout:
-            hooks.concurrent_sweep_detected(kernel_name)
-            logger.warning("kernel_tuning_cache: tuning lock timeout for %s after %.0fs; "
-                           "proceeding without lock (possible duplicate sweep)", kernel_name, timeout)
-            yield
-            return
-        try:
-            yield
+            yield owns
         finally:
-            try:
-                lock.release()
-            except Exception:
-                pass
+            if owns:
+                with contextlib.suppress(OSError):
+                    os.remove(marker)
+
+    def _try_create_marker(self, marker: str) -> bool:
+        """Atomically create the marker (O_EXCL), stamping pid + start_ts.
+        Returns True on success, False if it already exists."""
+        try:
+            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
+        except OSError as e:
+            logger.debug("kernel_tuning_cache: marker create failed (%s); sweeping without claim", e)
+            return True  # can't claim -> behave as owner (degrade to no-singleton, never wedge)
+        try:
+            payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(),
+                                  "host": hw_fingerprint()}).encode("utf-8")
+            os.write(fd, payload)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+        return True
+
+    def _maybe_steal_marker(self, marker: str, kernel_name: str, hooks) -> bool:
+        """An existing marker was found. Steal it (return True) iff the owning pid
+        is dead OR start_ts is older than the max-sweep budget; else give up
+        (False). Stealing is itself racy-safe: we remove the stale marker and
+        re-create via O_EXCL; if a third process beats us to the recreate, we lose
+        the claim (return False) -- correct, exactly one sweeper wins."""
+        try:
+            with open(marker, "r", encoding="utf-8") as f:
+                info = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            info = {}
+        pid = int(info.get("pid", 0) or 0)
+        start_ts = float(info.get("start_ts", 0.0) or 0.0)
+        age = time.time() - start_ts if start_ts else float("inf")
+        budget = _sweep_budget_seconds()
+        same_host = info.get("host") in (None, hw_fingerprint())
+        # Only trust the pid-liveness probe for a marker written on THIS host.
+        owner_dead = same_host and not _pid_alive(pid)
+        if not (owner_dead or age > budget):
+            return False  # a live, in-budget sweeper owns it -> give up
+        logger.info("kernel_tuning_cache: stealing stale sweep marker for %s "
+                    "(pid=%s alive=%s age=%.0fs budget=%.0fs)",
+                    kernel_name, pid, not owner_dead, age, budget)
+        hooks.concurrent_sweep_detected(kernel_name)
+        with contextlib.suppress(OSError):
+            os.remove(marker)
+        return self._try_create_marker(marker)
 
 
 # Region keys ending with one of these suffixes are interpreted as axis
@@ -1063,6 +1361,8 @@ __all__ = [
     "LoggerHooks",
     "cache_dir",
     "cache_path",
+    "host_cache_dir",
+    "register_default_cache",
     "hw_fingerprint",
 ]
 

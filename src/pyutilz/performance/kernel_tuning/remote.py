@@ -57,7 +57,21 @@ class S3Backend(RemoteBackend):
             try:
                 import boto3  # lazy: not a hard dependency
 
-                self._client = boto3.client("s3")
+                # Explicit connect/read timeouts + bounded retries (D9): an
+                # unbounded S3 call could otherwise hang the kernel-cache save
+                # for minutes on a flaky network. Overridable via env.
+                try:
+                    from botocore.config import Config
+
+                    connect_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT", "3") or 3)
+                    read_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_READ_TIMEOUT", "5") or 5)
+                    cfg = Config(connect_timeout=connect_t, read_timeout=read_t,
+                                 retries={"max_attempts": 1})
+                    self._client = boto3.client("s3", config=cfg)
+                except Exception:
+                    # botocore Config missing/odd -> still create a client (better
+                    # than no remote); it just lacks the explicit timeouts.
+                    self._client = boto3.client("s3")
             except Exception as e:  # boto3 absent / no creds / config error
                 logger.debug("S3Backend unavailable (%s); kernel cache stays local-only", e)
                 self._unavailable = True

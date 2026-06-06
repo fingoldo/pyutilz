@@ -231,37 +231,48 @@ class TestProvenance:
         assert ktc.provenance_changed(None, {"x": 1}) is False
         assert ktc.provenance_changed({"x": 1}, None) is False
 
+    def _read_kernel_record(self, cache, kernel_name):
+        """Read the single immutable per-kernel record file (v3 storage)."""
+        import glob as _glob
+        import json
+        kdir = ktc._kernel_dir(cache._path, kernel_name)
+        files = _glob.glob(os.path.join(kdir, "*.json"))
+        assert files, f"no immutable file written for {kernel_name}"
+        # Newest wins; for these single-write tests there is exactly one.
+        with open(sorted(files)[-1], "r", encoding="utf-8") as f:
+            return json.load(f)
+
     def test_provenance_written_on_save(self, tmp_cache_dir):
         cache = ktc.KernelTuningCache()
         cache.update("k", axes=["n"], regions=[{"n_max": None, "variant": "x"}])
-        # File on disk must contain a "provenance" block now.
-        import json
-        with open(cache._path, "r") as f:
-            data = json.load(f)
-        assert "provenance" in data
-        assert isinstance(data["provenance"], dict)
+        # The immutable per-kernel record on disk must carry a "provenance" block.
+        rec = self._read_kernel_record(cache, "k")
+        assert "provenance" in rec
+        assert isinstance(rec["provenance"], dict)
+        assert rec["entry"]["regions"] == [{"n_max": None, "variant": "x"}]
 
     def test_stale_provenance_treated_as_miss(self, tmp_cache_dir):
-        # Write a cache with deliberately-stale CUDA driver version, then
-        # load with mocked-current driver -> should treat as miss.
+        # Write a tuning with a deliberately-stale CUDA driver version into its
+        # immutable record, then load with a mocked-current driver -> miss.
         import json
         from unittest import mock
+        import glob as _glob
         cache = ktc.KernelTuningCache()
         cache.update("k", axes=["n"], regions=[{"n_max": None, "variant": "x"}])
-        # Hand-edit the saved provenance to look stale.
-        with open(cache._path, "r") as f:
-            data = json.load(f)
-        data["provenance"]["cuda_driver_version"] = 1000  # ancient
-        with open(cache._path, "w") as f:
-            json.dump(data, f)
-        # Force a fresh KernelTuningCache instance (no in-memory state).
+        kdir = ktc._kernel_dir(cache._path, "k")
+        rec_path = sorted(_glob.glob(os.path.join(kdir, "*.json")))[-1]
+        with open(rec_path, "r", encoding="utf-8") as f:
+            rec = json.load(f)
+        rec.setdefault("provenance", {})["cuda_driver_version"] = 1000  # ancient
+        with open(rec_path, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+        # Fresh instance (no in-memory state) + a mocked NEW driver version.
         fresh = ktc.KernelTuningCache()
-        # Mock _build_provenance to claim a NEW driver version.
         with mock.patch.object(
             ktc, "_build_provenance",
             return_value={"cuda_driver_version": 12300},
         ):
-            assert fresh._load() is None  # stale -> miss
+            assert fresh._load() is None  # stale -> miss (the only kernel is filtered out)
 
 
 # ============================================================================

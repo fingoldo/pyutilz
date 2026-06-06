@@ -87,9 +87,13 @@ class TestReadThrough:
         assert remote.reads >= 1
 
         # A fresh cache instance now reads the locally-cached copy (no 2nd remote read).
+        # v3: the read-through caches each kernel as an immutable per-kernel file
+        # under the per-host directory (cache._path), not a single monolith file.
         ktc.hw_fingerprint.cache_clear()
+        import glob as _glob
         import os
-        assert os.path.isfile(cache._path), "remote payload should be cached locally"
+        local_files = _glob.glob(os.path.join(cache._path, "**", "*.json"), recursive=True)
+        assert local_files, "remote payload should be cached locally as per-kernel files"
 
     def test_remote_miss_returns_none(self, tmp_cache_dir):
         remote = FakeRemote(seed={})  # empty remote

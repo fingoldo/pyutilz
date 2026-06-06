@@ -237,6 +237,7 @@ def retune_all(
     idle_wait_tries: int = 5,
     idle_wait_sec: float = 0.5,
     hooks: Optional[Any] = None,
+    skip_existing: bool = True,
 ) -> dict:
     """Orchestrate tuning of all discovered specs: multi-GPU grouping, retry.
 
@@ -259,6 +260,11 @@ def retune_all(
         idle_wait_tries: Retry count if GPU load > 80%.
         idle_wait_sec: Sleep duration (seconds) between retries.
         hooks: Optional TuningHooks for progress/events.
+        skip_existing: If True (default), SKIP sweeping any (kernel, hardware)
+            whose CURRENT code_version already has a cached tuning -- re-running
+            the benchmark does not redo finished work. False forces a full
+            re-sweep of every spec (combine with ``force`` to also discard the
+            existing tuning before measuring).
 
     Returns:
         {kernel_name: n_regions_tuned, ...}
@@ -294,7 +300,8 @@ def retune_all(
     for kernel_name, spec in tqdm(cpu_specs, desc="Tuning CPU specs", leave=False):
         code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
         results[("cpu", kernel_name)] = _run_spec_tuning(
-            KernelTuningCache(), spec, code_version, device_id=None, force=force, hooks=hooks
+            KernelTuningCache(), spec, code_version, device_id=None, force=force, hooks=hooks,
+            skip_existing=skip_existing,
         )
 
     # GPU-capable specs: tune once per unique GPU model, on its least-loaded device.
@@ -312,7 +319,8 @@ def retune_all(
                 continue
             code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
             results[(model_name, kernel_name)] = _run_spec_tuning(
-                KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks
+                KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks,
+                skip_existing=skip_existing,
             )
 
     return results
@@ -353,16 +361,24 @@ def _pick_least_loaded_device(
     return None
 
 
-def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] = None, hooks: Optional[Any] = None) -> int:
+def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] = None,
+              hooks: Optional[Any] = None, skip_existing: bool = True) -> int:
     """Tune a single registered spec (compute its code_version, run the sweep,
     persist) and return the number of regions now cached. The public single-spec
     entry point -- e.g. ``mlframe-tune-kernels refresh <kernel>``; ``retune_all``
-    batches this across every spec + GPU model."""
+    batches this across every spec + GPU model.
+
+    ``skip_existing`` (default True): if the kernel's CURRENT code_version is
+    already cached, skip the sweep and return the existing region count -- so a
+    re-run of an offline benchmark doesn't redo finished work. ``force=True``
+    overrides skip_existing (it evicts then re-sweeps unconditionally)."""
     code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks)
+    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id,
+                            force=force, hooks=hooks, skip_existing=skip_existing)
 
 
-def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int], force: bool, hooks: Optional[Any]) -> int:
+def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int],
+                     force: bool, hooks: Optional[Any], skip_existing: bool = True) -> int:
     """Tune one spec via get_or_tune; return the number of regions now cached.
 
     ``force`` evicts first so the sweep re-runs even on a cache hit. A GPU spec
@@ -370,10 +386,21 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
     device; if cupy is unavailable the spec is SKIPPED (running a GPU sweep on the
     default/CPU path would measure garbage -- B10), not silently mis-measured.
     CPU specs (device_id None) run as-is. Idle-wait is handled upstream by
-    ``_pick_least_loaded_device`` -- not a concern here."""
+    ``_pick_least_loaded_device`` -- not a concern here.
+
+    ``skip_existing`` (default True): if the kernel's CURRENT code_version is
+    already tuned, skip the (expensive) sweep entirely and just return the
+    cached region count. ``force`` takes precedence (always re-sweeps)."""
     # equiv_tol on the spec is a {metric: tol} dict; the cache gate takes the
     # max-abs-diff float (surfaces + rejects divergent regions, never masks).
     tol = spec.equiv_tol.get("max_abs_diff") if spec.equiv_tol else None
+
+    if skip_existing and not force:
+        # Already tuned at the live code_version on this hardware -> nothing to do.
+        if cache.has(spec.kernel_name) and not cache._code_version_stale(spec.kernel_name, code_version):
+            logger.debug("skip_existing: %s already tuned at code_version %s; skipping sweep",
+                         spec.kernel_name, code_version)
+            return len(cache.get_regions(spec.kernel_name) or [])
 
     def _tune():
         if force:
