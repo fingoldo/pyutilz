@@ -351,6 +351,38 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
 _DEFAULT_INSTANCE = None
 _DEFAULT_INSTANCE_LOCK = threading.Lock()
 
+# Project-shipped, anonymized (hw-agnostic) DEFAULT tunings: a read-only cache consulted on a local per-host MISS,
+# BEFORE the hand-specified fallback. Measurement-derived (averaged to abstract cpu/gpu, committed to the project
+# repo), so a fresh host gets near-optimal dispatch immediately while its own async sweep runs. The LOCAL measured
+# cache ALWAYS wins (it is checked first in get_or_tune); this is only the fallback layer. None until a project
+# registers its defaults file via register_default_cache().
+_DEFAULT_CACHE = None
+
+
+def register_default_cache(path: str) -> bool:
+    """Register a project's anonymized default-tuning JSON (committed to the project repo). On a local per-host
+    cache miss, ``get_or_tune`` consults it before the hand-specified fallback (and still kicks the async sweep to
+    measure THIS host). Returns whether it loaded. A missing/unreadable file degrades silently to no defaults."""
+    global _DEFAULT_CACHE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        c = KernelTuningCache(in_memory=True)
+        with c._lock:
+            c._loaded = {"schema_version": payload.get("schema_version", SCHEMA_VERSION),
+                         "kernels": payload.get("kernels", {})}
+        _DEFAULT_CACHE = c
+        logger.debug("kernel_tuning_cache: registered %d default kernels from %s", len(payload.get("kernels", {})), path)
+        return True
+    except FileNotFoundError:
+        logger.debug("kernel_tuning_cache: no default cache at %s", path)
+        _DEFAULT_CACHE = None
+        return False
+    except Exception as e:
+        logger.warning("kernel_tuning_cache: could not load default cache %s: %s", path, e)
+        _DEFAULT_CACHE = None
+        return False
+
 
 class KernelTuningCache:
     """Per-host kernel-tuning cache. Single instance per process is enough;
@@ -750,6 +782,23 @@ class KernelTuningCache:
         guard is keyed on (kernel, cache-path) so tests switching
         PYUTILZ_KERNEL_CACHE_DIR re-tune. Sweeps serialize cross-process."""
         hk = hooks if hooks is not None else _DEFAULT_HOOKS
+
+        def _fb():
+            # DEFAULT-cache layer: a project-shipped anonymized (hw-agnostic) tuning, consulted on a local per-host
+            # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
+            # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
+            # took precedence (checked above), so this never overrides a real local result.
+            dc = _DEFAULT_CACHE
+            if dc is not None and dc is not self:
+                try:
+                    if not dc._code_version_stale(kernel_name, code_version):
+                        d = dc.lookup(kernel_name, **dims)
+                        if d is not None:
+                            return d
+                except Exception:
+                    pass
+            return fallback() if callable(fallback) else fallback
+
         if env_key:
             forced = os.environ.get(env_key, "").strip()
             if forced:
@@ -765,7 +814,7 @@ class KernelTuningCache:
         hk.cache_miss(kernel_name, dims)
         guard_key = (kernel_name, self._path or id(self))
         if once_per_process and guard_key in _TUNED_THIS_PROCESS:
-            return fallback() if callable(fallback) else fallback
+            return _fb()
 
         _sweep_disabled = os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False")
 
@@ -785,7 +834,7 @@ class KernelTuningCache:
             self._spawn_async_sweep(kernel_name, dims=dims, tuner=tuner, axes=axes,
                                     code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
             hk.winner_chosen(kernel_name, None, "fallback (async sweep dispatched)")
-            return fallback() if callable(fallback) else fallback
+            return _fb()
 
         # SYNCHRONOUS path: explicit offline tuning (async_sweep=False) or the disable-sweep escape hatch.
         with self._tuning_lock(kernel_name, lock_timeout, hk):
@@ -805,7 +854,7 @@ class KernelTuningCache:
                     hk.winner_chosen(kernel_name, hit, "from sweep")
                     return hit
         hk.winner_chosen(kernel_name, None, "fallback")
-        return fallback() if callable(fallback) else fallback
+        return _fb()
 
     def _run_tuner(self, kernel_name: str, tuner: Callable, axes: list, hooks):
         """Run a project sweep, firing the start hook and swallowing any failure (a sweep error must never
