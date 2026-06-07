@@ -846,6 +846,29 @@ def is_jupyter_notebook():
         return False
 
 
+def _ensure_cuda_home_from_pip() -> None:
+    """Point CUDA_HOME/CUDA_PATH at the pip ``nvidia-cuda-nvcc`` package when they are unset.
+
+    pip-installed ``cupy-cuda12x`` + ``nvidia-cuda-nvcc-cu12`` ship nvvm/ptxas/libdevice/headers under
+    ``site-packages/nvidia/cuda_nvcc/`` but set NO env var. cupy locates them via cuda-pathfinder, but numba.cuda
+    relies on CUDA_HOME/CUDA_PATH -- so without a system CUDA toolkit AND without these vars, ``numba.cuda.is_available()``
+    silently returns False and every GPU/kernel-tuning path is disabled. Set the vars from the pip package so numba
+    finds the same CUDA cupy already uses. Must run before the first ``cuda.is_available()`` probe (numba caches it)."""
+    import os as _os
+    if _os.environ.get("CUDA_HOME") or _os.environ.get("CUDA_PATH"):
+        return
+    try:
+        import nvidia
+        import pathlib as _pathlib
+
+        cand = _pathlib.Path(nvidia.__file__).parent / "cuda_nvcc"
+        if (cand / "nvvm").exists():
+            _os.environ["CUDA_HOME"] = str(cand)
+            _os.environ["CUDA_PATH"] = str(cand)
+    except Exception:
+        pass
+
+
 def is_cuda_available() -> bool:
     """Check if CUDA is available via numba.
 
@@ -853,6 +876,7 @@ def is_cuda_available() -> bool:
         bool: True if CUDA is available, False otherwise
     """
     try:
+        _ensure_cuda_home_from_pip()
         from numba import cuda
         return cuda.is_available()
     except (ImportError, Exception):
