@@ -242,3 +242,25 @@ def test_concurrent_claim_threads_single_owner(host_dir):
     for t in threads:
         t.join()
     assert len(owners) == 1, f"exactly one thread must own the claim, got {len(owners)}"
+
+
+# ---------------------------------------------------------------------------
+# Root-cause regression for the stale-marker steal: the pid-liveness probe
+# ---------------------------------------------------------------------------
+
+def test_pid_alive_reports_dead_for_nonexistent_pid():
+    """Regression: on Windows the dead-pid steal silently never fired because
+    ``_pid_alive`` read the Win32 last-error off ``ctypes.windll.kernel32`` --
+    which does NOT track ``GetLastError`` -- so ``ctypes.get_last_error()``
+    returned 0 (not the ERROR_INVALID_PARAMETER=87 that means "no such pid"),
+    and a dead owner was reported ALIVE. The marker was then never stolen and the
+    sweep never ran. ``_pid_alive`` must build kernel32 with
+    ``use_last_error=True`` (or otherwise read the real error) so a guaranteed-
+    dead pid returns False."""
+    # A pid astronomically beyond any live process -> OpenProcess fails with
+    # ERROR_INVALID_PARAMETER (Windows) / ESRCH (POSIX): unambiguously dead.
+    assert ktc._pid_alive(999_999_999) is False
+    assert ktc._pid_alive(0) is False
+    assert ktc._pid_alive(-1) is False
+    # Our OWN pid is unambiguously alive (don't steal a live sweeper's marker).
+    assert ktc._pid_alive(os.getpid()) is True

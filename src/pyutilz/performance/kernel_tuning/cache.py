@@ -349,12 +349,18 @@ def _pid_alive(pid: int) -> bool:
     try:
         if os.name == "nt":
             # No os.kill(pid, 0) signal semantics on Windows; query the OS task list.
+            # Must build the kernel32 handle with use_last_error=True: the shared
+            # ``ctypes.windll.kernel32`` does NOT capture the Win32 thread-local last
+            # error, so ``ctypes.get_last_error()`` would read 0 (uninitialized) after
+            # a failed OpenProcess -> a dead pid was reported ALIVE, so a stale sweep
+            # marker owned by a crashed process was never stolen (the sweep wedged).
             import ctypes
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
             if not handle:
-                # ERROR_INVALID_PARAMETER (87) => no such pid; anything else => assume alive.
+                # ERROR_INVALID_PARAMETER (87) => no such pid (dead). Any other failure
+                # (e.g. ERROR_ACCESS_DENIED 5 => alive but not ours) => assume alive.
                 return ctypes.get_last_error() not in (87,)
             try:
                 exit_code = ctypes.c_ulong()

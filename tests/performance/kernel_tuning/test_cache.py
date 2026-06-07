@@ -121,10 +121,20 @@ class TestHwFingerprint:
         # ``tmp_cache_dir`` gives us an empty disk cache so the mocked
         # ``gpu_capability_summary`` actually runs (the disk cache layer
         # would otherwise short-circuit before any GPU probe).
-        with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
-            ktc._gpu_summary_cached.cache_clear()  # GPU probe is per-device-cached now
-            fp = ktc.hw_fingerprint()
-        assert "no-gpu" in fp
+        try:
+            with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
+                ktc._gpu_summary_cached.cache_clear()  # GPU probe is per-device-cached now
+                fp = ktc.hw_fingerprint()
+            assert "no-gpu" in fp
+        finally:
+            # _gpu_summary_cached is an lru on the REAL function; calling it under
+            # the mock caches the mocked ``None`` for the process lifetime, which
+            # then makes _build_provenance() drop its ``gpu_summary`` block in
+            # EVERY later test -> a real-GPU host's persisted tunings are wrongly
+            # judged provenance-stale and dropped (observed: this leaked into
+            # test_different_kernels_no_lost_update_D1, which then lost k_0). Clear
+            # the lru on the way out so the next real probe repopulates it.
+            ktc._gpu_summary_cached.cache_clear()
 
     def test_disk_cache_persists_across_cache_clear(self, tmp_cache_dir):
         # First call: compute + write to disk.
