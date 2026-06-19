@@ -82,6 +82,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_llm_retry": "covers pyutilz.llm._retry (private module)",
     "test_llm_live": "live LLM-provider smoke tests (opt-in via --run-live, cross-cutting)",
     "test_hardware_detection": "covers pyutilz.system.hardware_monitor",
+    "test_cuda_home_autodetect": "cross-cutting — CUDA_HOME autodetection from the pip nvidia-cuda-nvcc wheel (env/setup behaviour, not one source module)",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
     # Meta-tests test infrastructure, not a single source module.
     "test_provider_registration": "meta-test (PT-1)",

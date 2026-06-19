@@ -1354,7 +1354,14 @@ class LoggerHooks:
         logger.info("kernel_tuning_cache: %s invalidated (%s); will re-tune", kernel, reason)
 
     def concurrent_sweep_detected(self, kernel):
-        logger.warning("kernel_tuning_cache: %s concurrent sweep / lock timeout", kernel)
+        # v3 is lock-free (O_EXCL marker, no filelock, no timeout): this fires only
+        # when a STALE marker is being self-healed (steal of a dead/over-budget
+        # owner). That is a healthy recovery, not an error -- and under heavy
+        # concurrent load (many fits, one killed mid-sweep) every peer that steals
+        # would otherwise spam a scary per-call WARNING about a "lock timeout" that
+        # no longer exists. Keep it at DEBUG with accurate wording; live-contention
+        # losers don't reach here at all (they give up silently and fall back).
+        logger.debug("kernel_tuning_cache: %s reclaiming stale sweep marker (self-heal)", kernel)
 
 
 _DEFAULT_HOOKS = LoggerHooks()
