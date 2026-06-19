@@ -10,6 +10,7 @@ Relocated from ``pyutilz.system`` -- kernel tuning is a *performance* concern.
 Import the public API from here; the implementation lives in the ``cache`` /
 ``registry`` / ``remote`` / ``code_versioning`` submodules.
 """
+from .benchmark import benchmark_backends, time_backend
 from .cache import KernelTuningCache, cache_path, register_default_cache
 from .code_versioning import compute_code_version
 from .registry import TunerSpec, discover_tuners, get_registry, kernel_tuner, retune_all, tune_spec
@@ -39,4 +40,6 @@ __all__ = [
     "RemoteBackend",
     "S3Backend",
     "array_location",
+    "time_backend",
+    "benchmark_backends",
 ]
