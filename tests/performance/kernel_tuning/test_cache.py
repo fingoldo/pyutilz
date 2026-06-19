@@ -452,3 +452,62 @@ class TestLoadOrCreate:
             t.join()
         # All threads see the same singleton.
         assert len({id(r) for r in results}) == 1
+
+
+class TestAsyncSweepGpuBusyGate:
+    """The async (fit-time) sweep must DEFER while the GPU is busy: a contended
+    sweep both taxes the caller's fit (~18% wall on a 100k MRMR fit) and records
+    contended timings as this host's optimum. Verifies the GPUtil-backed gate."""
+
+    def _reset(self):
+        ktc._GPU_BUSY_CACHE = None
+
+    def test_busy_gpu_defers(self, monkeypatch):
+        self._reset()
+        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
+        fake = mock.MagicMock()
+        fake.getGPUs.return_value = [mock.Mock(load=0.95)]
+        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
+            assert ktc._async_sweep_gpu_busy() is True
+
+    def test_idle_gpu_proceeds(self, monkeypatch):
+        self._reset()
+        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
+        fake = mock.MagicMock()
+        fake.getGPUs.return_value = [mock.Mock(load=0.02)]
+        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
+            assert ktc._async_sweep_gpu_busy() is False
+
+    def test_no_gputil_does_not_defer(self, monkeypatch):
+        self._reset()
+        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
+        # Force the lazy ``import GPUtil`` to raise -> cannot tell -> never regress.
+        import builtins
+        real_import = builtins.__import__
+
+        def _no_gputil(name, *a, **k):
+            if name == "GPUtil":
+                raise ImportError("no GPUtil")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", _no_gputil)
+        assert ktc._async_sweep_gpu_busy() is False
+
+    def test_threshold_above_one_disables_gate(self, monkeypatch):
+        self._reset()
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", "2.0")
+        fake = mock.MagicMock()
+        fake.getGPUs.return_value = [mock.Mock(load=0.99)]
+        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
+            assert ktc._async_sweep_gpu_busy() is False
+
+    def test_verdict_is_ttl_cached(self, monkeypatch):
+        self._reset()
+        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
+        fake = mock.MagicMock()
+        fake.getGPUs.return_value = [mock.Mock(load=0.95)]
+        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
+            assert ktc._async_sweep_gpu_busy() is True
+            # Second call within the TTL must NOT re-poll GPUtil.
+            assert ktc._async_sweep_gpu_busy() is True
+        assert fake.getGPUs.call_count == 1

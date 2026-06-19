@@ -456,6 +456,56 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# GPU-busy gate for async sweeps
+# ---------------------------------------------------------------------------
+
+# An async (fit-time) sweep that runs while the GPU is busy is doubly wrong: it
+# (a) contends with the caller's own fit (measured ~18% wall tax on a 100k MRMR
+# fit -- 151s vs 124s) and (b) records CONTENDED kernel timings as this host's
+# "optimum", which then mis-route every future dispatch. Auto-tuning is only
+# valid on an idle GPU, so we defer the sweep when the GPU is loaded and let the
+# offline CLI (or a later idle process) tune instead. The shipped default cache
+# covers correctness in the meantime. GPUtil.getGPUs() costs ~0.1-2s (nvidia-smi),
+# so cache the verdict process-wide for a short TTL -- a burst of sweep spawns at
+# fit start then shares ONE poll instead of one per kernel.
+_GPU_BUSY_CACHE: "tuple[float, bool] | None" = None  # (sampled_at, is_busy)
+_GPU_BUSY_LOCK = threading.Lock()
+_GPU_BUSY_TTL = 1.0
+
+
+def _async_sweep_gpu_busy() -> bool:
+    """True iff a GPU is busy enough that an async sweep should defer. False when
+    GPUtil is unavailable / no GPU present (then we cannot tell -> never regress
+    those hosts; proceed as before). Threshold via PYUTILZ_KERNEL_SWEEP_GPU_BUSY
+    (default 0.30 load). Set it to a value >1 to disable the gate entirely."""
+    try:
+        threshold = float(os.environ.get("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", "0.30"))
+    except ValueError:
+        threshold = 0.30
+    if threshold > 1.0:
+        return False  # gate disabled
+    global _GPU_BUSY_CACHE
+    now = time.time()
+    cached = _GPU_BUSY_CACHE
+    if cached is not None and (now - cached[0]) < _GPU_BUSY_TTL:
+        return cached[1]
+    with _GPU_BUSY_LOCK:
+        cached = _GPU_BUSY_CACHE
+        if cached is not None and (time.time() - cached[0]) < _GPU_BUSY_TTL:
+            return cached[1]
+        busy = False
+        try:
+            import GPUtil  # optional dep -> lazy
+
+            gpus = GPUtil.getGPUs()
+            busy = any(g.load > threshold for g in gpus)
+        except Exception:
+            busy = False  # no GPUtil / no GPU / poll failed -> cannot tell, don't defer
+        _GPU_BUSY_CACHE = (time.time(), busy)
+        return busy
+
+
+# ---------------------------------------------------------------------------
 # Cache class
 # ---------------------------------------------------------------------------
 
@@ -1156,6 +1206,12 @@ class KernelTuningCache:
         (the stale marker is steal-able), and there is at most one sweep per (kernel, code_version) across processes."""
         def _run():
             try:
+                # Defer if the GPU is busy: an async sweep that contends with the caller's fit both taxes the
+                # fit (~18% wall) AND records contended timings as this host's optimum. The offline CLI / a
+                # later idle process tunes instead; the shipped default cache keeps dispatch correct meanwhile.
+                if _async_sweep_gpu_busy():
+                    logger.debug("kernel_tuning_cache: GPU busy, deferring async sweep for %s", kernel_name)
+                    return
                 with self._claim_sweep(kernel_name, code_version, hooks) as owns:
                     if not owns:
                         return  # another process is already tuning this kernel; let it
