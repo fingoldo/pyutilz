@@ -6,6 +6,8 @@ single ``kernel_tuner(...)`` call at module top. Discovery walks the mlframe
 package (only when explicitly invoked, never at `import mlframe`) and collects
 all specs for batch tuning via retune_all() or the CLI.
 """
+from __future__ import annotations
+
 import importlib
 import logging
 import pkgutil
