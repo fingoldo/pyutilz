@@ -478,6 +478,16 @@ def _async_sweep_start_delay() -> float:
         return 10.0
 
 
+def _async_sweep_idle_max_wait() -> float:
+    """Max seconds the async sweep waits for the hardware to go idle before sweeping ANYWAY (rather than
+    abandoning and leaving the per-host cache empty forever). Env PYUTILZ_KERNEL_SWEEP_IDLE_MAX_WAIT,
+    default 120s. 0 -> proceed immediately (no idle wait)."""
+    try:
+        return max(0.0, float(os.environ.get("PYUTILZ_KERNEL_SWEEP_IDLE_MAX_WAIT", "120.0")))
+    except ValueError:
+        return 120.0
+
+
 def _async_sweep_hw_busy() -> bool:
     """True iff the CPU or GPU is busy enough that an async sweep should defer (so we only ever
     benchmark on idle hardware -- a contended sweep both taxes the caller and records contended
@@ -1197,12 +1207,22 @@ class KernelTuningCache:
                 delay = _async_sweep_start_delay()
                 if delay:
                     time.sleep(delay)
-                # Defer if the CPU/GPU is busy: an async sweep that contends with the caller's fit both taxes
-                # the fit (~18% wall) AND records contended timings as this host's optimum. The offline CLI /
-                # a later idle process tunes instead; the shipped default cache keeps dispatch correct meanwhile.
-                if _async_sweep_hw_busy():
-                    logger.debug("kernel_tuning_cache: hardware busy, deferring async sweep for %s", kernel_name)
-                    return
+                # WAIT for the hardware to go idle before benchmarking -- an async sweep that contends with
+                # the caller's fit both taxes it (~18% wall) AND records contended timings as the optimum.
+                # But do NOT abandon: the sweep is TRIGGERED by a fit, and a fit keeps the device busy, so a
+                # defer-and-return would mean the cache NEVER populates on any host that actually fits (the
+                # once-per-process guard is already set, so this process won't retry). Instead wait for an
+                # idle gap up to a bounded budget; if the host stays busy that long (back-to-back fits),
+                # proceed ANYWAY -- one mildly-contended sweep that populates the per-host cache beats never
+                # tuning. The offline CLI remains the clean path; this is the best-effort fit-time fallback.
+                try:
+                    from .benchmark import wait_for_idle_hardware
+                    idle = wait_for_idle_hardware(max_wait=_async_sweep_idle_max_wait(), poll=2.0)
+                except Exception:
+                    idle = True
+                if not idle:
+                    logger.debug("kernel_tuning_cache: hardware still busy after wait; sweeping %s anyway "
+                                 "(populate cache rather than starve tuning)", kernel_name)
                 with self._claim_sweep(kernel_name, code_version, hooks) as owns:
                     if not owns:
                         return  # another process is already tuning this kernel; let it

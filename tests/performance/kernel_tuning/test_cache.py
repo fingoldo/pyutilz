@@ -560,3 +560,42 @@ class TestHardwareBusyHelpers:
 
         # Always busy -> must time out (return False) and not loop forever.
         assert bm.wait_for_idle_hardware(poll=0.5, max_wait=2.0, sleep=_sleep, timer=_timer) is False
+
+
+class TestAsyncSweepNoStarvation:
+    """Regression: a fit triggers the async sweep, but a fit keeps the device busy -- so the sweep must
+    NOT defer-and-abandon (that would leave the per-host cache empty forever, since the once-per-process
+    guard is already set). After waiting for an idle gap up to a bounded budget it sweeps ANYWAY."""
+
+    def test_busy_host_still_sweeps(self, tmp_cache_dir, monkeypatch):
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_START_DELAY", "0")
+        # Hardware never goes idle -> wait_for_idle_hardware returns False (timed out still busy).
+        monkeypatch.setattr(bm, "hardware_busy", lambda *a, **k: True)
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_IDLE_MAX_WAIT", "0")  # don't actually block the test
+
+        cache = ktc.KernelTuningCache()
+        ran = {"n": 0}
+
+        def _tuner():
+            ran["n"] += 1
+            return [{"n_samples_max": None, "variant": "v1", "block_size": 64}]
+
+        done = ktc.threading.Event()
+        orig = cache._run_tuner
+
+        def _wrapped(*a, **k):
+            try:
+                return orig(*a, **k)
+            finally:
+                done.set()
+        cache._run_tuner = _wrapped
+
+        cache._spawn_async_sweep("kstarve", dims={"n_samples": 1000}, tuner=_tuner,
+                                 axes=["n_samples"], code_version="1", salt=0, equiv_tol=None,
+                                 hooks=ktc._DEFAULT_HOOKS)
+        assert done.wait(timeout=10), "sweep thread never ran the tuner (it abandoned on a busy host)"
+        assert ran["n"] == 1
+        # And the result is now cached -> a subsequent lookup hits (no starvation).
+        cache.reset()
+        assert cache.lookup("kstarve", n_samples=1000) == {"variant": "v1", "block_size": 64}
