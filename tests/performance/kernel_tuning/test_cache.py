@@ -454,60 +454,109 @@ class TestLoadOrCreate:
         assert len({id(r) for r in results}) == 1
 
 
-class TestAsyncSweepGpuBusyGate:
-    """The async (fit-time) sweep must DEFER while the GPU is busy: a contended
+class TestAsyncSweepHwBusyGate:
+    """The async (fit-time) sweep must DEFER while the CPU OR GPU is busy: a contended
     sweep both taxes the caller's fit (~18% wall on a 100k MRMR fit) and records
-    contended timings as this host's optimum. Verifies the GPUtil-backed gate."""
+    contended timings as this host's optimum. Verifies the CPU+GPU-backed gate."""
 
     def _reset(self):
-        ktc._GPU_BUSY_CACHE = None
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+        bm._HW_BUSY_CACHE = None
+
+    def _patch(self, monkeypatch, *, gpu_load=None, cpu_pct=None):
+        """Patch GPUtil + psutil into the lazy imports the gate uses."""
+        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_HW_BUSY", raising=False)
+        import builtins
+        real_import = builtins.__import__
+        gpu_mod = mock.MagicMock()
+        gpu_mod.getGPUs.return_value = ([mock.Mock(load=gpu_load)] if gpu_load is not None else [])
+        ps_mod = mock.MagicMock()
+        ps_mod.cpu_percent.return_value = (cpu_pct if cpu_pct is not None else 0.0)
+
+        def _imp(name, *a, **k):
+            if name == "GPUtil":
+                if gpu_load is None:
+                    raise ImportError("no GPUtil")
+                return gpu_mod
+            if name == "psutil":
+                if cpu_pct is None:
+                    raise ImportError("no psutil")
+                return ps_mod
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", _imp)
+        return gpu_mod, ps_mod
 
     def test_busy_gpu_defers(self, monkeypatch):
         self._reset()
-        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
-        fake = mock.MagicMock()
-        fake.getGPUs.return_value = [mock.Mock(load=0.95)]
-        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
-            assert ktc._async_sweep_gpu_busy() is True
+        self._patch(monkeypatch, gpu_load=0.95, cpu_pct=1.0)
+        assert ktc._async_sweep_hw_busy() is True
 
-    def test_idle_gpu_proceeds(self, monkeypatch):
+    def test_busy_cpu_defers(self, monkeypatch):
         self._reset()
-        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
-        fake = mock.MagicMock()
-        fake.getGPUs.return_value = [mock.Mock(load=0.02)]
-        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
-            assert ktc._async_sweep_gpu_busy() is False
+        self._patch(monkeypatch, gpu_load=0.02, cpu_pct=80.0)
+        assert ktc._async_sweep_hw_busy() is True
 
-    def test_no_gputil_does_not_defer(self, monkeypatch):
+    def test_idle_hw_proceeds(self, monkeypatch):
         self._reset()
-        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
-        # Force the lazy ``import GPUtil`` to raise -> cannot tell -> never regress.
-        import builtins
-        real_import = builtins.__import__
+        self._patch(monkeypatch, gpu_load=0.02, cpu_pct=5.0)
+        assert ktc._async_sweep_hw_busy() is False
 
-        def _no_gputil(name, *a, **k):
-            if name == "GPUtil":
-                raise ImportError("no GPUtil")
-            return real_import(name, *a, **k)
-
-        monkeypatch.setattr(builtins, "__import__", _no_gputil)
-        assert ktc._async_sweep_gpu_busy() is False
+    def test_no_deps_does_not_defer(self, monkeypatch):
+        self._reset()
+        self._patch(monkeypatch, gpu_load=None, cpu_pct=None)  # both imports raise
+        assert ktc._async_sweep_hw_busy() is False
 
     def test_threshold_above_one_disables_gate(self, monkeypatch):
         self._reset()
-        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", "2.0")
-        fake = mock.MagicMock()
-        fake.getGPUs.return_value = [mock.Mock(load=0.99)]
-        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
-            assert ktc._async_sweep_gpu_busy() is False
+        self._patch(monkeypatch, gpu_load=0.99, cpu_pct=99.0)
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_HW_BUSY", "2.0")
+        assert ktc._async_sweep_hw_busy() is False
 
     def test_verdict_is_ttl_cached(self, monkeypatch):
         self._reset()
-        monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", raising=False)
-        fake = mock.MagicMock()
-        fake.getGPUs.return_value = [mock.Mock(load=0.95)]
-        with mock.patch.dict("sys.modules", {"GPUtil": fake}):
-            assert ktc._async_sweep_gpu_busy() is True
-            # Second call within the TTL must NOT re-poll GPUtil.
-            assert ktc._async_sweep_gpu_busy() is True
-        assert fake.getGPUs.call_count == 1
+        gpu_mod, _ = self._patch(monkeypatch, gpu_load=0.95, cpu_pct=1.0)
+        assert ktc._async_sweep_hw_busy() is True
+        # Second call within the TTL must NOT re-poll GPUtil.
+        assert ktc._async_sweep_hw_busy() is True
+        assert gpu_mod.getGPUs.call_count == 1
+
+    def test_start_delay_env(self, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_START_DELAY", "10")
+        assert ktc._async_sweep_start_delay() == 10.0
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_START_DELAY", "0")
+        assert ktc._async_sweep_start_delay() == 0.0
+        monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_START_DELAY", "garbage")
+        assert ktc._async_sweep_start_delay() == 10.0
+
+
+class TestHardwareBusyHelpers:
+    """The shared CPU/GPU busy helpers used by both the async-sweep deferral and
+    the per-iteration sweep gate (``time_backend(hw_idle_gate=True)``)."""
+
+    def _reset(self):
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+        bm._HW_BUSY_CACHE = None
+
+    def test_wait_for_idle_returns_true_when_idle(self, monkeypatch):
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+        self._reset()
+        monkeypatch.setattr(bm, "hardware_busy", lambda *a, **k: False)
+        slept = []
+        assert bm.wait_for_idle_hardware(sleep=slept.append) is True
+        assert slept == []  # never had to wait
+
+    def test_wait_for_idle_times_out_when_busy(self, monkeypatch):
+        from pyutilz.performance.kernel_tuning import benchmark as bm
+        self._reset()
+        monkeypatch.setattr(bm, "hardware_busy", lambda *a, **k: True)
+        clock = {"t": 0.0}
+
+        def _timer():
+            return clock["t"]
+
+        def _sleep(s):
+            clock["t"] += s
+
+        # Always busy -> must time out (return False) and not loop forever.
+        assert bm.wait_for_idle_hardware(poll=0.5, max_wait=2.0, sleep=_sleep, timer=_timer) is False

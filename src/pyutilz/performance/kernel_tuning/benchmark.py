@@ -25,10 +25,96 @@ with even a realistic micro-measurement, trust the end-to-end one.
 """
 from __future__ import annotations
 
+import os
 import statistics
 import threading
 import time
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
+
+
+# ---------------------------------------------------------------------------
+# Hardware-busy gate (shared by the async-sweep deferral and the per-iteration
+# sweep gate). A sweep that runs while the CPU *or* GPU it needs is loaded both
+# contends with the real workload AND records contended timings as this host's
+# "optimum" -- so we only ever benchmark on genuinely idle hardware.
+# ---------------------------------------------------------------------------
+
+# Default load fraction (0..1) above which a device counts as busy. A kernel
+# sweep is short and bursty, so 0.40 lets light background activity through
+# while still deferring under a real concurrent fit. Env-overridable; > 1 disables.
+DEFAULT_HW_BUSY_THRESHOLD = 0.40
+
+_HW_BUSY_CACHE: "Optional[tuple[float, float, bool]]" = None  # (sampled_at, threshold, busy)
+_HW_BUSY_LOCK = threading.Lock()
+_HW_BUSY_TTL = 1.0
+
+
+def _busy_threshold(threshold: Optional[float]) -> float:
+    if threshold is not None:
+        return float(threshold)
+    try:
+        return float(os.environ.get("PYUTILZ_KERNEL_SWEEP_HW_BUSY", DEFAULT_HW_BUSY_THRESHOLD))
+    except ValueError:
+        return DEFAULT_HW_BUSY_THRESHOLD
+
+
+def hardware_busy(threshold: Optional[float] = None, *, check_cpu: bool = True,
+                  check_gpu: bool = True, timer: Callable[[], float] = time.perf_counter) -> bool:
+    """True iff the CPU OR any GPU is loaded above ``threshold`` (fraction 0..1).
+
+    CPU load via ``psutil``, GPU load via ``GPUtil``. A missing dependency or an
+    absent device for a kind simply does not trip that kind -- we never block on
+    hardware we cannot measure (so a no-psutil / no-GPU host behaves as before).
+    ``threshold`` defaults to ``PYUTILZ_KERNEL_SWEEP_HW_BUSY`` (else 0.40); a
+    value > 1 disables the gate. The verdict is TTL-cached process-wide (1s) so a
+    burst of checks (many kernels spawning sweeps at once) shares one poll."""
+    thr = _busy_threshold(threshold)
+    if thr > 1.0:
+        return False  # gate disabled
+    global _HW_BUSY_CACHE
+    now = timer()
+    cached = _HW_BUSY_CACHE
+    if cached is not None and cached[1] == thr and (now - cached[0]) < _HW_BUSY_TTL:
+        return cached[2]
+    with _HW_BUSY_LOCK:
+        cached = _HW_BUSY_CACHE
+        if cached is not None and cached[1] == thr and (timer() - cached[0]) < _HW_BUSY_TTL:
+            return cached[2]
+        busy = False
+        if check_gpu:
+            try:
+                import GPUtil  # optional dep -> lazy
+
+                busy = any(g.load > thr for g in GPUtil.getGPUs())
+            except Exception:
+                pass  # no GPUtil / no GPU / poll failed -> cannot tell, don't trip
+        if not busy and check_cpu:
+            try:
+                import psutil  # optional dep -> lazy
+
+                # interval=0.1 -> a real sample (cpu_percent(None) returns 0.0 on first call);
+                # off the hot path (sweep thread), so a 100ms poll is fine.
+                busy = (psutil.cpu_percent(interval=0.1) / 100.0) > thr
+            except Exception:
+                pass  # no psutil -> cannot tell, don't trip
+        _HW_BUSY_CACHE = (timer(), thr, busy)
+        return busy
+
+
+def wait_for_idle_hardware(threshold: Optional[float] = None, *, poll: float = 0.5,
+                           max_wait: float = 30.0, check_cpu: bool = True,
+                           check_gpu: bool = True, sleep: Callable[[float], None] = time.sleep,
+                           timer: Callable[[], float] = time.perf_counter) -> bool:
+    """Block until the CPU/GPU drop below ``threshold`` or ``max_wait`` seconds elapse.
+
+    Returns True if the hardware became idle, False if it timed out still busy.
+    Used to hold off the NEXT sweep iteration while the device is in use."""
+    deadline = timer() + max(0.0, float(max_wait))
+    while hardware_busy(threshold, check_cpu=check_cpu, check_gpu=check_gpu, timer=timer):
+        if timer() >= deadline:
+            return False
+        sleep(float(poll))
+    return True
 
 
 def time_backend(
@@ -39,6 +125,10 @@ def time_backend(
     n_iters: int = 5,
     warmup: int = 2,
     fresh_inputs_per_call: bool = True,
+    hw_idle_gate: bool = False,
+    hw_idle_threshold: Optional[float] = None,
+    hw_idle_poll: float = 0.5,
+    hw_idle_max_wait: float = 30.0,
     timer: Callable[[], float] = time.perf_counter,
 ) -> float:
     """Median per-call wall time (ms) of ``fn(*make_inputs())`` under realistic conditions.
@@ -89,6 +179,11 @@ def time_backend(
     def _run(inputs_list: list, out: list) -> None:
         local = []
         for args in inputs_list:
+            # Don't START the next iteration while the device we need is busy: a contended
+            # sample is a wrong measurement. Wait (bounded) for the hardware to free up first.
+            if hw_idle_gate:
+                wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll,
+                                       max_wait=hw_idle_max_wait, timer=timer)
             t0 = timer()
             fn(*args)
             local.append(timer() - t0)

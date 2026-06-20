@@ -468,41 +468,27 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
 # covers correctness in the meantime. GPUtil.getGPUs() costs ~0.1-2s (nvidia-smi),
 # so cache the verdict process-wide for a short TTL -- a burst of sweep spawns at
 # fit start then shares ONE poll instead of one per kernel.
-_GPU_BUSY_CACHE: "tuple[float, bool] | None" = None  # (sampled_at, is_busy)
-_GPU_BUSY_LOCK = threading.Lock()
-_GPU_BUSY_TTL = 1.0
-
-
-def _async_sweep_gpu_busy() -> bool:
-    """True iff a GPU is busy enough that an async sweep should defer. False when
-    GPUtil is unavailable / no GPU present (then we cannot tell -> never regress
-    those hosts; proceed as before). Threshold via PYUTILZ_KERNEL_SWEEP_GPU_BUSY
-    (default 0.30 load). Set it to a value >1 to disable the gate entirely."""
+# Seconds to wait after deciding a sweep is needed before actually starting it: lets the triggering
+# fit get past its bursty start (kernel launches, H2D) so the busy-check below sees the real load, and
+# avoids stealing the device the instant the caller needs it. Env-overridable; 0 disables the delay.
+def _async_sweep_start_delay() -> float:
     try:
-        threshold = float(os.environ.get("PYUTILZ_KERNEL_SWEEP_GPU_BUSY", "0.30"))
+        return max(0.0, float(os.environ.get("PYUTILZ_KERNEL_SWEEP_START_DELAY", "10.0")))
     except ValueError:
-        threshold = 0.30
-    if threshold > 1.0:
-        return False  # gate disabled
-    global _GPU_BUSY_CACHE
-    now = time.time()
-    cached = _GPU_BUSY_CACHE
-    if cached is not None and (now - cached[0]) < _GPU_BUSY_TTL:
-        return cached[1]
-    with _GPU_BUSY_LOCK:
-        cached = _GPU_BUSY_CACHE
-        if cached is not None and (time.time() - cached[0]) < _GPU_BUSY_TTL:
-            return cached[1]
-        busy = False
-        try:
-            import GPUtil  # optional dep -> lazy
+        return 10.0
 
-            gpus = GPUtil.getGPUs()
-            busy = any(g.load > threshold for g in gpus)
-        except Exception:
-            busy = False  # no GPUtil / no GPU / poll failed -> cannot tell, don't defer
-        _GPU_BUSY_CACHE = (time.time(), busy)
-        return busy
+
+def _async_sweep_hw_busy() -> bool:
+    """True iff the CPU or GPU is busy enough that an async sweep should defer (so we only ever
+    benchmark on idle hardware -- a contended sweep both taxes the caller and records contended
+    timings as this host's optimum). Delegates to the shared ``benchmark.hardware_busy`` (CPU via
+    psutil, GPU via GPUtil, threshold ``PYUTILZ_KERNEL_SWEEP_HW_BUSY`` default 0.40). Never trips on
+    hardware it cannot measure (no psutil / no GPU)."""
+    try:
+        from .benchmark import hardware_busy
+        return hardware_busy()
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1206,11 +1192,16 @@ class KernelTuningCache:
         (the stale marker is steal-able), and there is at most one sweep per (kernel, code_version) across processes."""
         def _run():
             try:
-                # Defer if the GPU is busy: an async sweep that contends with the caller's fit both taxes the
-                # fit (~18% wall) AND records contended timings as this host's optimum. The offline CLI / a
-                # later idle process tunes instead; the shipped default cache keeps dispatch correct meanwhile.
-                if _async_sweep_gpu_busy():
-                    logger.debug("kernel_tuning_cache: GPU busy, deferring async sweep for %s", kernel_name)
+                # Debounce: wait before starting so the triggering fit gets past its bursty start, then the
+                # busy-check sees the real device load (and we never grab the device the instant it's needed).
+                delay = _async_sweep_start_delay()
+                if delay:
+                    time.sleep(delay)
+                # Defer if the CPU/GPU is busy: an async sweep that contends with the caller's fit both taxes
+                # the fit (~18% wall) AND records contended timings as this host's optimum. The offline CLI /
+                # a later idle process tunes instead; the shipped default cache keeps dispatch correct meanwhile.
+                if _async_sweep_hw_busy():
+                    logger.debug("kernel_tuning_cache: hardware busy, deferring async sweep for %s", kernel_name)
                     return
                 with self._claim_sweep(kernel_name, code_version, hooks) as owns:
                     if not owns:
