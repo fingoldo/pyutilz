@@ -122,7 +122,7 @@ def time_backend(
     make_inputs: Callable[[], Sequence],
     *,
     concurrency: int = 1,
-    n_iters: int = 5,
+    n_iters: int = 2,
     warmup: int = 2,
     fresh_inputs_per_call: bool = True,
     hw_idle_gate: bool = False,
@@ -148,7 +148,9 @@ def time_backend(
         Number of threads that hammer ``fn`` simultaneously, each with its OWN fresh inputs -- models
         a worker pool contending on one shared device. ``1`` (default) is the legacy solo path.
     n_iters
-        Timed calls per thread (>=1).
+        Timed calls per thread (>=1). Default 2 (was 5): the median of 2 is enough to pick a backend in a
+        one-time per-host tuning sweep, and halving the timed calls roughly halves the (multi-minute) grid
+        sweep wall -- callers that want a more stable median can pass a higher value explicitly.
     warmup
         Untimed calls (on throwaway fresh inputs) before timing, to absorb JIT / cupy-compile cost.
     fresh_inputs_per_call
