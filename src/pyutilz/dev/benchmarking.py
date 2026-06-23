@@ -124,6 +124,7 @@ def sweep_backend_crossover(
     equiv_rtol: float = 1e-6,
     synchronize_gpu: bool = True,
     decision_key: str = "backend_choice",
+    ranking: str = "robust",
     verbose: int = 0,
 ) -> list:
     """Benchmark backend ``variants`` across a primary-size grid and return
@@ -149,6 +150,9 @@ def sweep_backend_crossover(
         repeats: timed reps per variant per size (a warmup pass precedes timing).
         synchronize_gpu: sync the GPU before stopping each timer so async
             cupy/cuda kernels are timed at completion, not launch.
+        ranking: ``"robust"`` (default) interleaves candidates per rep + takes the
+            per-candidate MIN over reps (contention-robust); ``"mean"`` is the legacy
+            sequential per-candidate mean. See :func:`_rank_candidates`.
 
     Returns:
         Region dicts ``[{"<axis>_max": int|None, decision_key: name,
@@ -171,6 +175,11 @@ def sweep_backend_crossover(
         except Exception:
             ref_out = None
         best_name, best_ms, best_diff = None, float("inf"), 0.0
+        ref_scale = float(np.abs(np.asarray(
+            ref_out.get() if hasattr(ref_out, "get") else ref_out, dtype=np.float64)).max() or 1.0) if ref_out is not None else 1.0
+        # Pass 1: warm up + equivalence-gate; survivors go into the timed rank.
+        survivors: dict = {}
+        diffs: dict = {}
         for name in names:
             fn = variants[name]
             try:
@@ -182,23 +191,24 @@ def sweep_backend_crossover(
                     synchronize_gpu_if_available()
                 diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, out)
                 # equivalence gate: a faster-but-divergent variant is a bug, not a winner
-                if name != ref and not (diff <= equiv_atol + equiv_rtol * float(np.abs(np.asarray(
-                        ref_out.get() if hasattr(ref_out, "get") else ref_out, dtype=np.float64)).max() or 1.0)):
+                if name != ref and not (diff <= equiv_atol + equiv_rtol * (ref_scale or 1.0)):
                     if verbose:
                         logger.info("sweep %s=%d: %s DIVERGES (maxdiff=%.2e) -> skip", primary_axis, size, name, diff)
                     continue
-                t0 = timer()
-                for _ in range(repeats):
-                    fn(*args)
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                ms = (timer() - t0) / repeats * 1e3
             except Exception as e:
                 if verbose:
-                    logger.info("sweep %s=%d: %s failed (%s) -> skip", primary_axis, size, name, e)
+                    logger.info("sweep %s=%d: %s failed warmup (%s) -> skip", primary_axis, size, name, e)
                 continue
+            diffs[name] = diff
+            survivors[name] = (lambda _fn=fn, _a=args: _fn(*_a))
+        # Pass 2: rank survivors (robust=interleaved min over reps; mean=legacy).
+        timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
+        for name in names:  # declared order -> ties prefer the earlier (reference) variant
+            if name not in timings:
+                continue
+            ms = timings[name]
             if ms < best_ms:
-                best_name, best_ms, best_diff = name, ms, diff
+                best_name, best_ms, best_diff = name, ms, diffs[name]
         if best_name is None:
             best_name, best_diff = ref, 0.0
         per_size_winner.append((size, best_name, best_diff))
@@ -229,6 +239,78 @@ def _to_host(x):
     return x.get() if hasattr(x, "get") else x
 
 
+def _rank_candidates(
+    candidates: "dict[str, Callable]",
+    *,
+    repeats: int,
+    synchronize_gpu: bool,
+    ranking: str,
+) -> "dict[str, float]":
+    """Time each already-equivalence-vetted candidate and return {name: ms}.
+
+    Two ranking modes:
+
+    * ``"mean"`` (legacy) -- for each candidate run all ``repeats`` calls
+      back-to-back and report the MEAN per-call ms. SEQUENTIAL per candidate: one
+      candidate finishes all its reps before the next starts. This is fine on a
+      QUIET device, but on a CONTENDED GPU (a concurrent process competing for the
+      device) a candidate that happens to be measured during a contention SPIKE
+      loses to one measured in a LULL -- the absolute timings interleave with the
+      other process's kernels, so the sweep mis-ranks and can pin a SLOW config as
+      "fastest". (Real incident: an MI-gate hist kernel proved 3.05x faster at 1024
+      vs 128 threads in an isolated CUDA-event A/B, yet a contended mean-sweep
+      picked 128 and the win never materialised -- ~1.28s left on the table.)
+
+    * ``"robust"`` (default, contention-robust) -- for each rep, time ALL
+      candidates back-to-back (INTERLEAVED), so within one rep every candidate sees
+      the SAME contention weather. Then take, per candidate, the MIN over reps. min
+      is the right estimator under contention because noise only ADDS time: the
+      FASTEST observed call for a candidate approaches its true uncontended cost, so
+      the candidate that is genuinely faster wins even while another process churns
+      the GPU. On a quiet device min-of-interleaved-reps converges to the same pick
+      as the legacy mean, so the ranking is unchanged where it was already correct.
+
+    A per-candidate failure (exception) is recorded as ``inf`` (disqualified), never
+    crashing the whole rank. Returns an empty dict if ``candidates`` is empty.
+    """
+    names = list(candidates)
+    if not names:
+        return {}
+    reps = max(1, int(repeats))
+
+    if ranking == "mean":
+        out: dict[str, float] = {}
+        for name in names:
+            fn = candidates[name]
+            try:
+                t0 = timer()
+                for _ in range(reps):
+                    fn()
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+                out[name] = (timer() - t0) / reps * 1e3
+            except Exception:
+                out[name] = float("inf")
+        return out
+
+    # robust: interleave candidates within each rep, take per-candidate min over reps.
+    best: dict[str, float] = {name: float("inf") for name in names}
+    for _rep in range(reps):
+        for name in names:
+            fn = candidates[name]
+            try:
+                t0 = timer()
+                fn()
+                if synchronize_gpu:
+                    synchronize_gpu_if_available()
+                ms = (timer() - t0) * 1e3
+            except Exception:
+                ms = float("inf")
+            if ms < best[name]:
+                best[name] = ms
+    return best
+
+
 def sweep_backend_grid(
     variants: "dict[str, Callable]",
     axes: "dict[str, list]",
@@ -242,6 +324,7 @@ def sweep_backend_grid(
     equiv_rtol: float = 1e-6,
     synchronize_gpu: bool = True,
     decision_key: str = "backend_choice",
+    ranking: str = "robust",
     verbose: int = 0,
 ) -> list:
     """Full-grid, residency-aware backend sweep -> kernel_tuning_cache regions.
@@ -270,6 +353,13 @@ def sweep_backend_grid(
         make_inputs: ``dims_dict -> args tuple`` of HOST (numpy) arrays.
         residencies: subset of ``("host", "device")``.
         to_device: ``args -> args`` mover to VRAM (default ``cp.asarray`` ndarrays).
+        ranking: how the per-cell timings are aggregated to pick the winner.
+            ``"robust"`` (default) interleaves candidates within each rep and takes
+            the per-candidate MIN over reps -- contention-robust, so a concurrent GPU
+            process can't mis-rank the sweep (min approaches the uncontended cost
+            since noise only adds time). ``"mean"`` is the legacy sequential
+            per-candidate mean (kept for A/B; correct only on a quiet device). See
+            :func:`_rank_candidates`.
 
     Returns:
         Region dicts ``[{"<dim>_max": int, ..., "location_eq": "host"|"device",
@@ -319,10 +409,16 @@ def sweep_backend_grid(
                 ref_out = None
             best_name, best_ms, best_diff = None, float("inf"), 0.0
             ref_scale = float(np.abs(np.asarray(ref_out, dtype=np.float64)).max()) if ref_out is not None else 1.0
+            # Pass 1: warm up + equivalence-gate every variant. Survivors (those whose
+            # output matches the reference within tol) go into the timed rank; a
+            # divergent-but-faster variant is a bug, never a winner, so it is dropped
+            # here BEFORE timing. Warmup absorbs jit / cudagraph / alloc / transfer-plan.
+            survivors: dict = {}
+            diffs: dict = {}
             for name in names:
                 fn = variants[name]
                 try:
-                    fn(*args)  # warmup (jit / cudagraph / alloc / transfer plan)
+                    fn(*args)  # warmup
                     if synchronize_gpu:
                         synchronize_gpu_if_available()
                     diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
@@ -330,18 +426,21 @@ def sweep_backend_grid(
                         if verbose:
                             logger.info("grid %s res=%s: %s DIVERGES (%.2e) -> skip", dims, res, name, diff)
                         continue
-                    t0 = timer()
-                    for _ in range(repeats):
-                        fn(*args)
-                    if synchronize_gpu:
-                        synchronize_gpu_if_available()
-                    ms = (timer() - t0) / repeats * 1e3
                 except Exception as e:
                     if verbose:
-                        logger.info("grid %s res=%s: %s failed (%s) -> skip", dims, res, name, e)
+                        logger.info("grid %s res=%s: %s failed warmup (%s) -> skip", dims, res, name, e)
                     continue
+                diffs[name] = diff
+                survivors[name] = (lambda _fn=fn, _a=args: _fn(*_a))
+            # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
+            # which is contention-robust; mean=legacy sequential per-candidate mean).
+            timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
+            for name in names:  # iterate in declared order so ties prefer the earlier (e.g. reference) variant
+                if name not in timings:
+                    continue
+                ms = timings[name]
                 if ms < best_ms:
-                    best_name, best_ms, best_diff = name, ms, diff
+                    best_name, best_ms, best_diff = name, ms, diffs[name]
             region = {f"{d}_max": int(dims[d]) for d in dim_names}
             if len(residencies) > 1:
                 region["location_eq"] = res

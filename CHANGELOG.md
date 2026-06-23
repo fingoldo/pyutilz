@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-06-23
+
+### Changed — contention-robust GPU-kernel sweep ranking (interleaved min-over-reps)
+
+``pyutilz.dev.benchmarking.sweep_backend_grid`` / ``sweep_backend_crossover``
+gained a ``ranking`` parameter, defaulting to ``"robust"``:
+
+* The legacy ranking (now ``ranking="mean"``) timed each candidate's whole
+  rep-block back-to-back and took the MEAN per-call ms — SEQUENTIALLY per
+  candidate. On a CONTENDED GPU (a concurrent process competing for the device)
+  a candidate measured during a contention spike loses to one measured in a
+  lull, so the sweep mis-ranks and can pin a SLOW config as "fastest".
+* ``ranking="robust"`` (default) instead interleaves all candidates WITHIN each
+  rep (so every candidate sees the same contention weather per rep) and takes
+  the per-candidate MIN over reps. min is the right estimator under contention
+  because noise only ADDS time: the fastest observed call approaches the true
+  uncontended cost. On a quiet device it converges to the same pick as the mean.
+* Equivalence-gating is unchanged (a divergent-but-faster variant is still
+  dropped before timing); the cache file format is unchanged. CPU sweeps that
+  pass no ``ranking`` now also use the robust metric (safe — same pick when
+  uncontended). Regression-tested via a scripted-clock contention scenario.
+
 ## [Unreleased] — 2026-05-20
 
 ### Changed — kernel-tuning cache: immutable per-(host,kernel,code_version) storage (no filelock, no lost update)

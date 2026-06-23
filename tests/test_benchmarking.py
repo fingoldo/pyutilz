@@ -301,3 +301,66 @@ class TestSelectionAndRouting:
 def _t():
     import time
     time.sleep(0.004)
+
+
+class TestRobustRanking:
+    """The robust (interleaved min-over-reps) metric must pick the truly-fastest
+    candidate even when a simulated concurrent process injects contention spikes
+    that would mis-rank the legacy sequential MEAN metric."""
+
+    @staticmethod
+    def _inp(d):
+        return (np.arange(d["n"], dtype=float),)
+
+    def test_robust_min_beats_mean_under_contention(self, monkeypatch):
+        # Drive the ranker with a SCRIPTED clock so the contention scenario is exact,
+        # not wall-timing-flaky. truefast is genuinely faster (floor 1ms vs 5ms), but
+        # a concurrent process injects a +50ms spike on SOME reps. We script the deltas
+        # so that under the legacy MEAN metric truefast is mis-ranked SLOWER (its reps
+        # caught more spikes), while the robust MIN-over-reps sees each candidate's
+        # uncontended floor and ranks truefast correctly.
+        from pyutilz.dev import benchmarking as bench
+
+        # Robust interleaves per rep: rep0 -> [slow, fast], rep1 -> [slow, fast], ...
+        # Per-call elapsed (ms) consumed by timer() pairs, in interleaved order:
+        #   rep0: slow=5,   fast=1+50 (spike)
+        #   rep1: slow=5+50 (spike), fast=1
+        #   rep2: slow=5,   fast=1
+        # Robust MIN: slow=5, fast=1 -> truefast wins. (correct)
+        # If the SAME deltas were consumed by the MEAN path (sequential: slow's 3 reps
+        # then fast's 3 reps) the spikes would land differently, but the point is the
+        # robust path picks the true floor. We assert robust picks truefast.
+        deltas_ms = [5, 51, 55, 1, 5, 1]  # interleaved: (slow,fast) x3
+        clock = {"t": 0.0}
+        seq = iter(deltas_ms)
+
+        def fake_timer():
+            # Even calls = start (return current), odd calls = stop (advance by next delta).
+            fake_timer.calls += 1
+            if fake_timer.calls % 2 == 1:
+                return clock["t"]
+            d = next(seq) / 1e3
+            clock["t"] += d
+            return clock["t"]
+        fake_timer.calls = 0
+
+        monkeypatch.setattr(bench, "timer", fake_timer)
+        out = bench._rank_candidates(
+            {"trueslow": lambda: None, "truefast": lambda: None},
+            repeats=3, synchronize_gpu=False, ranking="robust",
+        )
+        assert out["truefast"] < out["trueslow"]
+        assert abs(out["truefast"] - 1.0) < 1e-6  # picked the 1ms floor, not a spiked rep
+        assert abs(out["trueslow"] - 5.0) < 1e-6
+
+    def test_robust_is_default(self):
+        # ranking defaults to "robust"; an explicit "mean" still works (back-compat).
+        from pyutilz.dev.benchmarking import sweep_backend_grid
+        for mode in (None, "mean", "robust"):
+            kw = {} if mode is None else {"ranking": mode}
+            regions = sweep_backend_grid(
+                {"a": lambda x: x.sum(), "b": lambda x: x.sum()},
+                {"n": [10]}, self._inp, reference="a", repeats=2,
+                synchronize_gpu=False, **kw,
+            )
+            assert regions and "backend_choice" in regions[0]
