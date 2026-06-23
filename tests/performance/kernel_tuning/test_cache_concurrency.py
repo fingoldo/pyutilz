@@ -174,6 +174,55 @@ def test_stale_marker_is_stolen_when_start_ts_expired(host_dir, monkeypatch):
     assert got["backend"] == "budget_steal"
 
 
+def test_fresh_empty_marker_is_NOT_stolen(host_dir):
+    """Regression (CI double-sweep): a marker observed EMPTY (zero-byte) is a peer caught between the O_EXCL
+    create and the separate payload write -- the create-vs-write TOCTOU. A second claimer must NOT read the
+    missing pid/start_ts as a dead/over-budget owner and steal it: pre-fix, ``pid=0`` (``_pid_alive`` False)
+    + ``start_ts=0`` (``age=inf > budget``) tripped a steal, so two processes swept the same kernel (observed
+    only on the contended 2-core CI runner where the create->write gap widens). A FRESH empty marker (file
+    mtime within budget) means a live peer is mid-publish -> give up, no sweep."""
+    cache = ktc.KernelTuningCache()
+    marker = cache._marker_path("empty_fresh", "cv1")
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    open(marker, "w").close()  # zero-byte: the create-before-write window
+
+    swept = {"v": False}
+
+    def tuner():
+        swept["v"] = True
+        return [{"backend": "should_not_run"}]
+
+    got = cache.get_or_tune("empty_fresh", dims={"n": 1}, tuner=tuner, axes=["n"],
+                            fallback={"backend": "FB"}, code_version="cv1",
+                            once_per_process=False, async_sweep=False)
+    assert not swept["v"], "a fresh empty (mid-create) marker must not be stolen -> no second sweep"
+    assert got["backend"] == "FB"
+
+
+def test_stale_empty_marker_IS_stolen(host_dir, monkeypatch):
+    """Complement: an EMPTY marker whose FILE mtime is older than the budget is a process that crashed between
+    create and write -> self-heal by stealing it (never wedge on a half-written marker)."""
+    monkeypatch.setenv("PYUTILZ_KERNEL_SWEEP_BUDGET_SEC", "1")
+    cache = ktc.KernelTuningCache()
+    marker = cache._marker_path("empty_stale", "cv1")
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    open(marker, "w").close()
+    old = time.time() - 100
+    os.utime(marker, (old, old))  # age the empty marker well past the 1s budget
+
+    swept = {"v": False}
+
+    def tuner():
+        swept["v"] = True
+        return [{"backend": "healed"}]
+
+    got = cache.get_or_tune("empty_stale", dims={"n": 1}, tuner=tuner, axes=["n"],
+                            fallback={"backend": "FB"}, code_version="cv1",
+                            once_per_process=False, async_sweep=False)
+    assert swept["v"], "an mtime-stale empty marker (crashed mid-create) must be stolen + swept"
+    assert got["backend"] == "healed"
+
+
 def test_live_in_budget_marker_is_NOT_stolen(host_dir):
     """A marker owned by a LIVE in-budget process must NOT be stolen -- the
     would-be second sweeper gives up (returns the fallback) without sweeping."""

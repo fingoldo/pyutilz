@@ -1279,24 +1279,64 @@ class KernelTuningCache:
                     os.remove(marker)
 
     def _try_create_marker(self, marker: str) -> bool:
-        """Atomically create the marker (O_EXCL), stamping pid + start_ts.
-        Returns True on success, False if it already exists."""
+        """Atomically PUBLISH the marker WITH its content, stamping pid + start_ts.
+        Returns True on success, False if it already exists.
+
+        The marker must never be observable in an EMPTY state: the old code did
+        ``os.open(O_CREAT|O_EXCL)`` then a SEPARATE ``os.write`` of the payload, so
+        between those two syscalls a concurrent loser could read a zero-byte marker,
+        parse ``{}`` -> ``pid=0`` (``_pid_alive(0)`` is False) + ``start_ts=0``
+        (``age=inf > budget``), judge it STALE, and STEAL it -> two sweepers run. The
+        window is sub-microsecond on an idle host but the OS scheduler widens it on a
+        contended runner (observed only on the 2-core CI box: "expected one sweep,
+        got 2"). Fix: write the payload to a per-attempt temp file, then ``os.link``
+        it into place -- an atomic, exclusive publish (fails if the marker exists), so
+        the marker is only ever visible fully-formed."""
+        payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(),
+                              "host": hw_fingerprint()}).encode("utf-8")
+        # Staging path must be UNIQUE per concurrent claimer: same-process THREADS share os.getpid(), and
+        # time.time_ns() can collide on a coarse-resolution clock (Windows), so (pid, tid, ns) -- tid disambiguates
+        # concurrent threads, ns disambiguates a thread's sequential retries -- guarantees no two live claimers
+        # pick the same tmp (a collision would make the loser's O_EXCL fail and the degrade-path wrongly own).
+        tmp = f"{marker}.tmp.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}"
         try:
-            fd = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except OSError as e:
-            logger.debug("kernel_tuning_cache: marker create failed (%s); sweeping without claim", e)
-            return True  # can't claim -> behave as owner (degrade to no-singleton, never wedge)
+            logger.debug("kernel_tuning_cache: marker tmp create failed (%s); sweeping without claim", e)
+            return True  # can't stage -> behave as owner (degrade to no-singleton, never wedge)
         try:
-            payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(),
-                                  "host": hw_fingerprint()}).encode("utf-8")
             os.write(fd, payload)
         except OSError:
             pass
         finally:
             os.close(fd)
-        return True
+        try:
+            # Atomic exclusive publish: link() fails with FileExistsError if the marker already exists,
+            # giving the same single-winner guarantee as O_EXCL but with the content already in place.
+            os.link(tmp, marker)
+            return True
+        except FileExistsError:
+            return False
+        except OSError as e:
+            # Hardlinks unsupported on this fs (rare): fall back to the legacy O_EXCL-then-write path,
+            # which still serialises winners; the empty-marker steal window reappears only there.
+            logger.debug("kernel_tuning_cache: marker link unsupported (%s); O_EXCL fallback", e)
+            try:
+                fd2 = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                return False
+            except OSError:
+                return True
+            try:
+                os.write(fd2, payload)
+            except OSError:
+                pass
+            finally:
+                os.close(fd2)
+            return True
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
 
     def _maybe_steal_marker(self, marker: str, kernel_name: str, hooks) -> bool:
         """An existing marker was found. Steal it (return True) iff the owning pid
@@ -1311,8 +1351,22 @@ class KernelTuningCache:
             info = {}
         pid = int(info.get("pid", 0) or 0)
         start_ts = float(info.get("start_ts", 0.0) or 0.0)
-        age = time.time() - start_ts if start_ts else float("inf")
         budget = _sweep_budget_seconds()
+        # INCOMPLETE-MARKER GUARD: a marker missing pid/start_ts is either a peer caught mid-creation (the
+        # legacy O_EXCL-then-write fallback's empty-file window) or a process that crashed between create and
+        # write. Do NOT steal it on the empty-payload heuristic alone (pid=0 -> _pid_alive False; start_ts=0 ->
+        # age=inf > budget) -- that is exactly the double-sweep race. Fall back to the file mtime as the age:
+        # a FRESH incomplete marker (within budget) means a live peer is publishing -> give up; only an mtime-
+        # stale one is a genuine crash to steal.
+        if pid <= 0 or start_ts <= 0.0:
+            try:
+                age = time.time() - os.path.getmtime(marker)
+            except OSError:
+                age = float("inf")
+            if age <= budget:
+                return False  # a peer is mid-creation -> let it finish
+        else:
+            age = time.time() - start_ts
         same_host = info.get("host") in (None, hw_fingerprint())
         # Only trust the pid-liveness probe for a marker written on THIS host.
         owner_dead = same_host and not _pid_alive(pid)
