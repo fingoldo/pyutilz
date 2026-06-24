@@ -709,7 +709,8 @@ def classify_column_types(df: pd.DataFrame = None, col: str = None, dtype: objec
         dtype = df[col].dtype
     type_name = dtype.name
     col_is_boolean = "bool" in type_name
-    col_is_object = "object" in type_name
+    # pandas >=3.0 / future.infer_string reports string columns as 'str'/'string' (not 'object'); treat them as object-like so they are not misclassified as numeric downstream.
+    col_is_object = "object" in type_name or "str" in type_name
     col_is_datetime = "datetime" in type_name
     col_is_categorical = "category" in type_name
     col_is_numeric = not (col_is_boolean or col_is_object or col_is_datetime or col_is_categorical)

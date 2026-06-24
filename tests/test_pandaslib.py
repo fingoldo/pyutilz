@@ -367,6 +367,20 @@ class TestClassifyColumnTypes:
             # The new direct lookup must agree with the dtype reported by the full dtypes Series.
             assert classify_column_types(dtype=df.dtypes[col]) == exp, col
 
+    def test_string_dtype_classified_as_object_not_numeric(self):
+        """pandas >=3.0 / future.infer_string report string columns with dtype.name 'str'/'string' (not 'object').
+        They must classify as object-like (not numeric), else downstream consumers (e.g. mlframe preprocessing.cleaning) treat text as numeric."""
+        tested = 0
+        for dtype in ("string", "str"):
+            try:
+                ser = pd.Series(["a", "b", "c"], dtype=dtype)
+            except TypeError:
+                continue  # the bare 'str' dtype alias only exists on pandas >=3.0
+            is_bool, is_obj, is_dt, is_cat, is_num = classify_column_types(dtype=ser.dtype)
+            assert is_obj and not is_num, f"{dtype} -> {(is_bool, is_obj, is_dt, is_cat, is_num)}"
+            tested += 1
+        assert tested, "no pandas string dtype was available to test"
+
 
 @pytest.mark.parametrize("input_list,expected", [
     ([1, 2, 3], True),
@@ -402,10 +416,12 @@ class TestGetColumnsOfType:
             'f': [1.0, 2.0, 3.0],
             's': ['a', 'b', 'c'],
         })
+        # The string column's dtype repr is 'object' on classic pandas and 'str' under pandas future.infer_string; probe whatever it actually is so the test pins the hoist behavior, not the ambient string-inference default.
+        s_type = str(df.dtypes['s'])
         # 'int' matches 'i'; both 'int' and 'in' match 'i' -> two appends, preserving the multi-match behavior.
         assert get_columns_of_type(df, ['int', 'in']) == ['i', 'i']
         assert get_columns_of_type(df, ['float', 'int']) == ['i', 'f']
-        assert get_columns_of_type(df, ['object', 'int']) == ['i', 's']
+        assert get_columns_of_type(df, [s_type, 'int']) == ['i', 's']
 
 
 class TestSetDfColumnsTypes:
