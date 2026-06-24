@@ -341,6 +341,32 @@ class TestClassifyColumnTypes:
         assert is_cat is True
         assert is_num is False
 
+    def test_per_column_dtype_classification_all_kinds(self):
+        """Per-column lookup (df[col].dtype) must classify every dtype kind exactly
+        like the whole-frame df.dtypes[col] path it replaced (wide-frame O(ncols**2) fix)."""
+        df = pd.DataFrame(
+            {
+                "num": [1, 2, 3],
+                "flt": [1.0, 2.0, 3.0],
+                "obj": ["a", "b", "c"],
+                "boo": [True, False, True],
+                "cat": pd.Categorical(["a", "b", "a"]),
+                "dt": pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-03"]),
+            }
+        )
+        expected = {
+            "num": (False, False, False, False, True),
+            "flt": (False, False, False, False, True),
+            "obj": (False, True, False, False, False),
+            "boo": (True, False, False, False, False),
+            "cat": (False, False, False, True, False),
+            "dt": (False, False, True, False, False),
+        }
+        for col, exp in expected.items():
+            assert classify_column_types(df=df, col=col) == exp, col
+            # The new direct lookup must agree with the dtype reported by the full dtypes Series.
+            assert classify_column_types(dtype=df.dtypes[col]) == exp, col
+
 
 @pytest.mark.parametrize("input_list,expected", [
     ([1, 2, 3], True),

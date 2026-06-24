@@ -701,7 +701,10 @@ def classify_column_types(df: pd.DataFrame = None, col: str = None, dtype: objec
     """Return bunch of booleans: whether certain column is of particualr dtype."""
     if dtype is None:
         assert (df is not None) and (col)
-        dtype = df.dtypes[col]
+        # df[col].dtype reads the single column's dtype directly; df.dtypes[col] rebuilds the
+        # whole-frame dtypes Series on every call, which is O(ncols) per call (O(ncols**2) per
+        # per-column scan) and dominates the cost on wide frames.
+        dtype = df[col].dtype
     type_name = dtype.name
     col_is_boolean = "bool" in type_name
     col_is_object = "object" in type_name
