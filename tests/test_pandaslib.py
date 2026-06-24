@@ -395,6 +395,18 @@ class TestGetColumnsOfType:
         assert 'int_col' in int_cols
         assert 'float_col' in float_cols
 
+    def test_order_and_multimatch_preserved(self):
+        """The hoisted str(dtype) repr must yield the same result (column order + one entry per matching type_name) as the per-probe variant."""
+        df = pd.DataFrame({
+            'i': pd.array([1, 2, 3], dtype='int64'),
+            'f': [1.0, 2.0, 3.0],
+            's': ['a', 'b', 'c'],
+        })
+        # 'int' matches 'i'; both 'int' and 'in' match 'i' -> two appends, preserving the multi-match behavior.
+        assert get_columns_of_type(df, ['int', 'in']) == ['i', 'i']
+        assert get_columns_of_type(df, ['float', 'int']) == ['i', 'f']
+        assert get_columns_of_type(df, ['object', 'int']) == ['i', 's']
+
 
 class TestSetDfColumnsTypes:
     """Test set_df_columns_types function"""

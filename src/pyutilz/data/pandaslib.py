@@ -89,8 +89,10 @@ def get_categorical_columns_indices(ds: object) -> tuple:
 def get_columns_of_type(df: object, type_names: Sequence) -> list:
     res = []
     for col, type_name in df.dtypes.to_dict().items():
+        # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
+        type_name_str = str(type_name)
         for the_type in type_names:
-            if the_type in str(type_name):
+            if the_type in type_name_str:
                 res.append(col)
     return res
 
