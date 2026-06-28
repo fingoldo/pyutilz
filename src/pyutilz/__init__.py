@@ -40,18 +40,27 @@ _MODULE_ALIASES = {
     'notebook_init': 'pyutilz.dev.notebook_init',
 }
 
-def _create_lazy_module(real_module_name):
-    """Create a lazy-loading proxy module."""
+def _create_lazy_module(real_module_name, proxy_fullname):
+    """Create a lazy-loading proxy module registered under ``proxy_fullname``.
+
+    ``proxy_fullname`` MUST be the fully-qualified alias key (``pyutilz.<alias>``), not the
+    bare leaf name. On first attribute access the proxy replaces ITSELF in ``sys.modules``
+    with the resolved real module -- and it must do so under its OWN fully-qualified key. A
+    bare leaf ``__name__`` (e.g. ``tokenizers``) would instead write ``sys.modules['tokenizers']``,
+    globally shadowing an unrelated top-level package of the same name (the real HuggingFace
+    ``tokenizers`` -- which broke ``transformers`` / SHAP TreeExplainer with
+    ``cannot import name 'Encoding' from 'pyutilz.text.tokenizers'``).
+    """
     def __getattr__(name):
         # Skip dunder attributes to avoid triggering imports from IPython autoreload,
         # inspect.getmodule, hasattr(module, '__file__'), etc.
         if name.startswith('__') and name.endswith('__'):
             raise AttributeError(name)
         real_mod = import_module(real_module_name)
-        sys.modules[proxy_mod.__name__] = real_mod
+        sys.modules[proxy_fullname] = real_mod
         return getattr(real_mod, name)
 
-    proxy_mod = types.ModuleType(real_module_name.split('.')[-1])
+    proxy_mod = types.ModuleType(proxy_fullname)
     proxy_mod.__getattr__ = __getattr__
     return proxy_mod
 
@@ -59,7 +68,7 @@ def _create_lazy_module(real_module_name):
 for alias, real_name in _MODULE_ALIASES.items():
     alias_fullname = f'pyutilz.{alias}'
     if alias_fullname not in sys.modules:
-        proxy = _create_lazy_module(real_name)
+        proxy = _create_lazy_module(real_name, alias_fullname)
         sys.modules[alias_fullname] = proxy
 
 def __getattr__(name):

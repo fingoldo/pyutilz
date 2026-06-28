@@ -134,3 +134,63 @@ def test_alias_targets_live_under_pyutilz_namespace():
             f"{len(bad)} alias target(s) point outside the pyutilz "
             f"namespace:\n  " + "\n  ".join(bad)
         )
+
+
+def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
+    """A lazy alias proxy must replace ITSELF in ``sys.modules`` under its OWN
+    fully-qualified key (``pyutilz.<alias>``) on first attribute access -- NEVER
+    under the bare leaf name.
+
+    Regression: ``_create_lazy_module`` built the proxy with ``__name__`` set to the
+    bare leaf (``tokenizers``), so the first attribute access wrote
+    ``sys.modules['tokenizers'] = pyutilz.text.tokenizers`` and GLOBALLY shadowed the
+    unrelated HuggingFace top-level ``tokenizers`` package -- which broke
+    ``transformers`` (``from tokenizers import Encoding``) and every SHAP TreeExplainer
+    downstream. The alias whose leaf collides with an installed top-level package is the
+    canonical tripwire.
+    """
+    import importlib.util
+
+    def _is_pyutilz_file(mod) -> bool:
+        path = str(getattr(mod, "__file__", "") or "").replace("\\", "/")
+        return "/pyutilz/" in path
+
+    # Alias keys whose bare leaf is ALSO a real installed top-level package (the collision case).
+    risky = {}
+    for alias, real_path in pyutilz._MODULE_ALIASES.items():
+        leaf = real_path.rsplit(".", 1)[-1]
+        if leaf != alias:
+            continue
+        try:
+            spec = importlib.util.find_spec(alias)
+        except (ImportError, ValueError):
+            spec = None
+        if spec is not None and "pyutilz" not in (spec.origin or ""):
+            risky[alias] = real_path
+    if not risky:
+        pytest.skip("no alias leaf collides with an installed top-level package on this host")
+
+    for alias, real_path in risky.items():
+        proxy_key = f"pyutilz.{alias}"
+        proxy = sys.modules.get(proxy_key) or importlib.import_module(proxy_key)
+        # Force the proxy's __getattr__ to fire (mirrors transformers touching the module),
+        # which is what triggered the bad ``sys.modules[<leaf>] = pyutilz_module`` write.
+        real_mod = importlib.import_module(real_path)
+        public = next((c for c in dir(real_mod) if not c.startswith("_")), None)
+        if public is not None:
+            try:
+                getattr(proxy, public)
+            except Exception:
+                pass
+        # The bare top-level key must NOT now point at a pyutilz module.
+        shadow = sys.modules.get(alias)
+        assert shadow is None or not _is_pyutilz_file(shadow), (
+            f"alias {alias!r} shadowed the bare top-level ``{alias}`` in sys.modules with the "
+            f"pyutilz proxy ({getattr(shadow, '__file__', '?')}); it must cache under {proxy_key!r}."
+        )
+        # And the genuine top-level package must still import to its real (non-pyutilz) location.
+        real_toplevel = importlib.import_module(alias)
+        assert not _is_pyutilz_file(real_toplevel), (
+            f"``import {alias}`` resolved to the pyutilz module {getattr(real_toplevel,'__file__','?')} "
+            f"instead of the real top-level package."
+        )
