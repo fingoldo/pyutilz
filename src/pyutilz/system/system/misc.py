@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from pyutilz.core.pythonlib import ensure_installed
 
 # ensure_installed("pympler psutil numba tqdm gpu-info")
 
@@ -21,24 +20,17 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional, Sequence, Set, Union
+from typing import Optional, Sequence, Union
 
-import uuid
 import locale
-import pandas as pd
-import re, json, tqdm
-import socket, psutil
+import tqdm
+import psutil
+import tracemalloc
 from pympler import asizeof
 import platform, sys, importlib
-import os, subprocess
-from datetime import timezone, datetime, timedelta
+from datetime import timezone, datetime
 
-import gc
-import ctypes
-import tracemalloc
-import ctypes.wintypes
 
-from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, find_between
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # IPython
@@ -232,8 +224,6 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object
     if nbig > 0:
         logger.info(report)
         if initial_memory_snapshot:
-            import tracemalloc
-
             try:
                 current_snapshot = tracemalloc.take_snapshot()
                 top_stats = current_snapshot.compare_to(initial_memory_snapshot, "lineno")

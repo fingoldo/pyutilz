@@ -487,10 +487,12 @@ class TestSystemSubpackageFacade:
         assert ensure_dir_exists is deep_edx
 
     def test_public_surface_size_unchanged(self):
-        # The pre-split monolith exposed 85 public names (module-level
-        # imports leaked as well, since there was no __all__). The facade
-        # must reproduce that surface exactly.
+        # The pre-split monolith exposed 85 public names, three of which were
+        # merely leaked module-level imports (unused stdlib/helpers re-exported
+        # via ``import *`` with no ``__all__``). Those 3 leaks were removed as an
+        # F401 cleanup, leaving 82 real public names. This pins the current
+        # surface so a future accidental change is caught.
         from pyutilz.system import system as m
 
         public = [n for n in dir(m) if not n.startswith("_")]
-        assert len(public) == 85, f"public surface drifted: {len(public)}"
+        assert len(public) == 82, f"public surface drifted: {len(public)}"
