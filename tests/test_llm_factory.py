@@ -81,3 +81,24 @@ class TestGetLlmProvider:
         import inspect
         sig = inspect.signature(get_llm_provider)
         assert sig.parameters["provider_name"].default == "claude-code"
+
+    def test_unhashable_kwarg_bypasses_cache_but_is_tracked_for_cleanup(self):
+        # Regression: a provider built with an unhashable kwarg bypasses the
+        # instance cache; it must still be tracked (in _uncached_providers) so
+        # the atexit closer shuts its HTTP client instead of leaking it.
+        from pyutilz.llm import factory
+
+        created = []
+
+        class _FakeLeakProvider:
+            def __init__(self, **kwargs):
+                created.append(self)
+
+        # Register a controllable fake provider resolvable via importlib.
+        globals()["_FakeLeakProvider"] = _FakeLeakProvider
+        with patch.dict(factory._PROVIDER_MODULES, {"faketest": ("tests.test_llm_factory", "_FakeLeakProvider")}):
+            returned = get_llm_provider("faketest", extra_headers=["unhashable", "list"])
+
+        assert returned is created[0]
+        assert returned not in _provider_cache.values()      # cache was bypassed
+        assert returned in list(factory._uncached_providers)  # but tracked for cleanup

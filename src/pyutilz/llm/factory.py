@@ -9,6 +9,7 @@ import asyncio
 import atexit
 import logging
 import threading
+import weakref
 
 from pyutilz.llm.config import LLMSettings, get_llm_settings
 from pyutilz.llm.base import LLMProvider
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 # Instance cache: (canonical_name, kwargs_key) → LLMProvider
 _provider_cache: dict[tuple, LLMProvider] = {}
 _provider_lock = threading.Lock()
+# Providers built with unhashable kwargs bypass the cache (below). Track them
+# weakly so the atexit handler still closes their HTTP clients instead of leaking.
+_uncached_providers: "weakref.WeakSet[LLMProvider]" = weakref.WeakSet()
 
 
 # Canonical provider names → (module_path, class_name) for lazy import
@@ -144,7 +148,9 @@ def get_llm_provider(
             "JSON strings instead of dicts to enable caching.",
             provider_name, exc,
         )
-        return constructor(**kwargs)
+        instance = constructor(**kwargs)
+        _uncached_providers.add(instance)
+        return instance
 
     if cache_key in _provider_cache:
         return _provider_cache[cache_key]
@@ -165,7 +171,8 @@ def _close_cached_providers() -> None:
     producing ``unclosed transport`` warnings or TLS finalisation errors
     on Windows. Best-effort: failures during shutdown are logged at debug.
     """
-    if not _provider_cache:
+    providers = list(_provider_cache.values()) + list(_uncached_providers)
+    if not providers:
         return
     # Try to schedule async close. If no event loop running, skip async
     # cleanup — the OS will reclaim sockets at process exit anyway.
@@ -174,7 +181,7 @@ def _close_cached_providers() -> None:
     except Exception:  # noqa: BLE001
         return
     try:
-        for provider in list(_provider_cache.values()):
+        for provider in providers:
             close = getattr(provider, "_close", None)
             if close is None:
                 continue

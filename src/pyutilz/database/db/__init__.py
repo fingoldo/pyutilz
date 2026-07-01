@@ -744,6 +744,8 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
                     select {full_path}->>'{field}' as val,count(*) as qty from {table} where {full_path} is not null group by {full_path}->>'{field}' order by qty desc
             """
         )
+        if not vals:  # safe_execute can return None/empty; nothing to analyse for this field
+            continue
 
         # Compute distributiuon %
         has_none = False
@@ -766,14 +768,9 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
 
         # Print opt suggestions for that field
         if total_occurences > 0 and max_occurences / total_occurences >= min_occurence_percent:
-            if has_none and (best_val is not None):
-                print(" ")
-            else:
+            if not (has_none and best_val is not None):
                 print(f"Suggestion: make {best_val} as default for {field}. That will save {max_occurences/total_occurences:.2%} of space.")
-
                 res[field] = best_val
-        else:
-            print(" ")
 
     return res
 

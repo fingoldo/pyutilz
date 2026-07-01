@@ -42,8 +42,9 @@ def connect(prefect_key:str=None)->None:
 
 def get_schema() -> dict:
     if client: return graphql.query_schema()
+    return {}
 
-def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels,start_time",status:str=None) -> dict:
+def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels,start_time",status:str=None) -> list:
     variables={}
     if status: variables["status"]=status
     if client:
@@ -65,8 +66,9 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
         if status:
             flows=[flow for flow in flows if len(flow.get("flow_runs",[]))>0]
         return flows
+    return []
 
-def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id:str=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->dict:
+def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id:str=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->list:
     """
         flow_id - can be used to check if an instance of the same flow is already running.
         ie, no need to do inference if previous one is still running
@@ -101,6 +103,7 @@ def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id
                 else:
                     results.append(flow)
         return results
+    return []
 
 def wait_for_absense_of_tasks(
     flow_id:str=None,

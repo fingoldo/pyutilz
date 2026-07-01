@@ -94,10 +94,12 @@ def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attem
     Returns True on success; raises ValueError if the token cannot be refreshed or the
     request keeps failing.
     """
+    last_error = None
     for _ in range(num_attempts):
         try:
             res = web.get_url(filemaker_url + f"/layouts/{layout}/records/", verb="post", json=data)
         except Exception as e:
+            last_error = e
             logger.error("Exception %s when inserting into filemaker object %s", e, data)
         else:
             if res.status_code == HTTPStatus.OK:
@@ -109,4 +111,6 @@ def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attem
                         raise ValueError("Could not refresh the token")
                 else:
                     logger.error("Exception %s when inserting object details %s", str(res.status_code) + ": " + res.text, data)
-                    raise ValueError
+                    raise ValueError(f"Filemaker insert failed with status {res.status_code}: {res.text}")
+    # All attempts exhausted via transient errors: surface the failure instead of returning None silently.
+    raise ValueError(f"Filemaker insert failed after {num_attempts} attempts: {last_error}")

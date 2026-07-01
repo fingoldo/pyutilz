@@ -144,6 +144,3 @@ app/all_data.pkl
 
 # Benchmark results
 .benchmarks/
-
-# Temporary files
-cleanup_plan.md

@@ -89,6 +89,7 @@ class AnthropicProvider(LLMProvider):
         self.total_cache_creation_input_tokens = 0
         self.total_cache_read_input_tokens = 0
         self.last_thinking_tokens = 0
+        self.last_thinking_tokens_estimated = False
         self.total_thinking_tokens = 0
         # Rate-limit info captured from response headers on every call.
         # Populated lazily by ``check_account_limits()`` from the snapshot
@@ -168,18 +169,25 @@ class AnthropicProvider(LLMProvider):
             usage = response.usage
             cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            # NOTE: the Anthropic usage object does not report thinking/reasoning tokens directly,
+            # so this is an APPROXIMATION (chars // 4), not an API-reported count. It is flagged via
+            # `last_thinking_tokens_estimated` and logged so callers know the reasoning-token figure
+            # is a heuristic, not billed usage.
             thinking = 0
             for block in response.content:
                 if getattr(block, "type", None) == "thinking":
                     text = getattr(block, "thinking", "") or ""
-                    thinking += max(1, len(text) // 4)  # rough estimate
+                    thinking += max(1, len(text) // 4)  # rough estimate (chars // 4)
 
             self.last_cache_creation_input_tokens = cache_creation
             self.last_cache_read_input_tokens = cache_read
             self.total_cache_creation_input_tokens += cache_creation
             self.total_cache_read_input_tokens += cache_read
             self.last_thinking_tokens = thinking
+            self.last_thinking_tokens_estimated = thinking > 0
             self.total_thinking_tokens += thinking
+            if thinking > 0:
+                logger.debug("Anthropic thinking tokens are estimated (chars//4=%d), not API-reported.", thinking)
 
             # Cumulative session totals (for get_session_cost).
             self._call_count += 1
