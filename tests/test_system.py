@@ -440,3 +440,57 @@ class TestSystemUtilities:
             list(range(3)), desc="multi", disable=True,
         ))
         assert result == [0, 1, 2]
+
+
+class TestSystemSubpackageFacade:
+    """Sensor test for the system.py -> system/ subpackage split.
+
+    Guards two invariants that the split must preserve:
+      1. Every representative public name is still resolvable via the
+         ``pyutilz.system.system`` facade AND via the ``pyutilz.system``
+         package alias (many modules import through both paths).
+      2. Each facade symbol is the SAME object as the one defined in its
+         cohesive submodule (no accidental shadow/copy).
+    """
+
+    # (facade name -> owning submodule) — one representative per submodule.
+    _REPRESENTATIVE = {
+        "summarize_devices": "_common",
+        "remove_nas": "_common",
+        "get_nvidia_smi_info": "probing",
+        "get_battery_info": "probing",
+        "clean_ram": "memory",
+        "get_own_memory_usage": "memory",
+        "ensure_dir_exists": "fsutils",
+        "get_max_singledisk_free_space_gb": "fsutils",
+        "beep": "misc",
+        "get_os_info": "misc",
+        "get_system_info": "sysinfo",
+    }
+
+    def test_facade_reexports_are_submodule_objects(self):
+        import importlib
+
+        facade = importlib.import_module("pyutilz.system.system")
+        for name, submod in self._REPRESENTATIVE.items():
+            mod = importlib.import_module(f"pyutilz.system.system.{submod}")
+            assert hasattr(facade, name), f"facade lost {name}"
+            assert getattr(facade, name) is getattr(mod, name), (
+                f"{name} on facade is not the object defined in {submod}"
+            )
+
+    def test_package_alias_resolves_split_symbols(self):
+        # ``from pyutilz.system import ensure_dir_exists`` etc. must keep working.
+        from pyutilz.system import ensure_dir_exists, get_system_info, clean_ram  # noqa: F401
+        from pyutilz.system.system import ensure_dir_exists as deep_edx
+
+        assert ensure_dir_exists is deep_edx
+
+    def test_public_surface_size_unchanged(self):
+        # The pre-split monolith exposed 85 public names (module-level
+        # imports leaked as well, since there was no __all__). The facade
+        # must reproduce that surface exactly.
+        from pyutilz.system import system as m
+
+        public = [n for n in dir(m) if not n.startswith("_")]
+        assert len(public) == 85, f"public surface drifted: {len(public)}"

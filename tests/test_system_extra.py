@@ -73,7 +73,7 @@ def test_decode_cpu_upgrade_method_unknown():
 
 # -- get_os_info --
 
-@patch("pyutilz.system.system.platform")
+@patch("pyutilz.system.system.misc.platform")
 def test_get_os_info_linux(mock_plat):
     mock_plat.system.return_value = "Linux"
     mock_plat.machine.return_value = "x86_64"
@@ -86,7 +86,7 @@ def test_get_os_info_linux(mock_plat):
     assert "edition" not in info
 
 
-@patch("pyutilz.system.system.platform")
+@patch("pyutilz.system.system.misc.platform")
 def test_get_os_info_windows(mock_plat):
     mock_plat.system.return_value = "Windows"
     mock_plat.machine.return_value = "AMD64"
@@ -100,7 +100,7 @@ def test_get_os_info_windows(mock_plat):
 
 # -- get_battery_info --
 
-@patch("pyutilz.system.system.psutil")
+@patch("pyutilz.system.system.probing.psutil")
 def test_get_battery_info_present(mock_psutil):
     BatteryTuple = namedtuple("sbattery", ["percent", "secsleft", "power_plugged"])
     mock_psutil.sensors_battery.return_value = BatteryTuple(75, 3600, True)
@@ -109,13 +109,13 @@ def test_get_battery_info_present(mock_psutil):
     assert result["power_plugged"] is True
 
 
-@patch("pyutilz.system.system.psutil")
+@patch("pyutilz.system.system.probing.psutil")
 def test_get_battery_info_none(mock_psutil):
     mock_psutil.sensors_battery.return_value = None
     assert get_battery_info() is None
 
 
-@patch("pyutilz.system.system.psutil")
+@patch("pyutilz.system.system.probing.psutil")
 def test_get_battery_info_exception(mock_psutil):
     mock_psutil.sensors_battery.side_effect = RuntimeError("no battery")
     assert get_battery_info() is None
@@ -123,15 +123,15 @@ def test_get_battery_info_exception(mock_psutil):
 
 # -- get_power_plan --
 
-@patch("pyutilz.system.system.platform")
-@patch("pyutilz.system.system.get_windows_power_plan", return_value={"plan": "High"})
+@patch("pyutilz.system.system.probing.platform")
+@patch("pyutilz.system.system.probing.get_windows_power_plan", return_value={"plan": "High"})
 def test_get_power_plan_windows(mock_wp, mock_plat):
     mock_plat.system.return_value = "Windows"
     assert get_power_plan() == {"plan": "High"}
 
 
-@patch("pyutilz.system.system.platform")
-@patch("pyutilz.system.system.get_linux_power_plan", return_value={"governor": "performance"})
+@patch("pyutilz.system.system.probing.platform")
+@patch("pyutilz.system.system.probing.get_linux_power_plan", return_value={"governor": "performance"})
 def test_get_power_plan_linux(mock_lp, mock_plat):
     mock_plat.system.return_value = "Linux"
     assert get_power_plan() == {"governor": "performance"}

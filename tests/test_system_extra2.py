@@ -60,16 +60,16 @@ class TestGetWmiObjAsDict:
 # ── tqdmu (lines 347-351) ──
 
 class TestTqdmu:
-    @patch("pyutilz.system.system.run_from_ipython", return_value=True)
-    @patch("pyutilz.system.system.tqdm")
+    @patch("pyutilz.system.system.misc.run_from_ipython", return_value=True)
+    @patch("pyutilz.system.system.misc.tqdm")
     def test_ipython_notebook(self, mock_tqdm, mock_ip):
         from pyutilz.system.system import tqdmu
         mock_tqdm.tqdm_notebook.return_value = "notebook_bar"
         result = tqdmu([1, 2, 3])
         assert result == "notebook_bar"
 
-    @patch("pyutilz.system.system.run_from_ipython", return_value=True)
-    @patch("pyutilz.system.system.tqdm")
+    @patch("pyutilz.system.system.misc.run_from_ipython", return_value=True)
+    @patch("pyutilz.system.system.misc.tqdm")
     def test_ipython_notebook_fallback(self, mock_tqdm, mock_ip):
         from pyutilz.system.system import tqdmu
         mock_tqdm.tqdm_notebook.side_effect = Exception("no notebook")
@@ -81,13 +81,13 @@ class TestTqdmu:
 # ── get_system_info sensitive info branches (lines 439-485, 491, 509-517, 545-549, 557-558, 570-577, 580-590, 603-615) ──
 
 class TestGetSystemInfoSensitive:
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.subprocess")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={"system": "Linux"})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.socket")
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.subprocess")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={"system": "Linux"})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.socket")
     def test_linux_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info,
                                mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
@@ -98,13 +98,13 @@ class TestGetSystemInfoSensitive:
         assert result["os_machine_guid"] == "abc123"
         assert result["host_name"] == "myhost"
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.subprocess")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={"system": "Linux"})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.socket")
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.subprocess")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={"system": "Linux"})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.socket")
     def test_linux_fallback_etc_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info,
                                             mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
@@ -114,13 +114,13 @@ class TestGetSystemInfoSensitive:
         result = get_system_info(return_os_info=True, return_sensitive_info=True)
         assert result["os_machine_guid"] == "fallback123"
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.subprocess")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.socket")
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.subprocess")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.socket")
     def test_windows_serial(self, mock_socket, mock_bat, mock_pp, mock_os_info,
                              mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
@@ -131,12 +131,12 @@ class TestGetSystemInfoSensitive:
         assert result["os_machine_guid"] == "ABCD-1234"
         assert result["os_serial"] == "ABCD-1234"
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.socket")
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.socket")
     def test_usage_stats(self, mock_socket, mock_bat, mock_pp, mock_os_info,
                           mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
@@ -152,15 +152,15 @@ class TestGetSystemInfoSensitive:
         assert result["cpu_current_frequency_hz"] == 2400
         assert result["ram_free_gb"] == 8.0
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.get_nvidia_smi_info", return_value=None)
-    @patch("pyutilz.system.system.get_cpu_info", return_value={"brand": "Intel"})
-    @patch("pyutilz.system.system.check_large_pages_support", return_value=True)
-    @patch("pyutilz.system.system.socket")
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_nvidia_smi_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_cpu_info", return_value={"brand": "Intel"})
+    @patch("pyutilz.system.system.sysinfo.check_large_pages_support", return_value=True)
+    @patch("pyutilz.system.system.sysinfo.socket")
     def test_hardware_info_linux(self, mock_socket, mock_lp, mock_cpu, mock_gpu,
                                   mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
@@ -172,20 +172,20 @@ class TestGetSystemInfoSensitive:
         mock_psutil.cpu_freq.return_value = freq
         mock_psutil.virtual_memory.return_value = ram
         mock_psutil.cpu_count.side_effect = [4, 8]
-        with patch("pyutilz.system.system.get_lscpu_info", return_value={"Model": "79"}), \
-             patch("pyutilz.system.system.get_linux_board_info", return_value={"Vendor": "ASUSTeK"}), \
-             patch("pyutilz.system.system.get_nix_cpu_sockets_number", return_value=1):
+        with patch("pyutilz.system.system.sysinfo.get_lscpu_info", return_value={"Model": "79"}), \
+             patch("pyutilz.system.system.sysinfo.get_linux_board_info", return_value={"Vendor": "ASUSTeK"}), \
+             patch("pyutilz.system.system.sysinfo.get_nix_cpu_sockets_number", return_value=1):
             result = get_system_info(return_hardware_info=True)
         assert result["cpu"] == {"brand": "Intel"}
         assert result["cpu_lscpu_info"] == {"Model": "79"}
         assert result["cpu_num_sockets"] == 1
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.get_max_singledisk_free_space_gb", return_value=(100, 0.5, "C:", 500, 200))
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_max_singledisk_free_space_gb", return_value=(100, 0.5, "C:", 500, 200))
     def test_hdd_info(self, mock_hdd, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Windows"
@@ -195,13 +195,13 @@ class TestGetSystemInfoSensitive:
         assert result["hdd_free_space_gb"] == 200
         assert result["hdd_total_space_gb"] == 500
 
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.psutil")
-    @patch("pyutilz.system.system.get_os_info", return_value={})
-    @patch("pyutilz.system.system.get_power_plan", return_value=None)
-    @patch("pyutilz.system.system.get_battery_info", return_value=None)
-    @patch("pyutilz.system.system.parse_dmidecode_info", return_value=[{"item": {"key": "val"}, "Count": 1}])
-    @patch("pyutilz.system.system.list_linux_devices", return_value=[{"device": "eth0"}])
+    @patch("pyutilz.system.system.sysinfo.platform")
+    @patch("pyutilz.system.system.sysinfo.psutil")
+    @patch("pyutilz.system.system.sysinfo.get_os_info", return_value={})
+    @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
+    @patch("pyutilz.system.system.sysinfo.parse_dmidecode_info", return_value=[{"item": {"key": "val"}, "Count": 1}])
+    @patch("pyutilz.system.system.sysinfo.list_linux_devices", return_value=[{"device": "eth0"}])
     def test_hardware_details_linux(self, mock_dev, mock_dmi, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
@@ -215,7 +215,7 @@ class TestGetSystemInfoSensitive:
 # ── get_lscpu_info (lines 685-708) ──
 
 class TestGetLscpuInfo:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_parses_lscpu_output(self, mock_sub):
         from pyutilz.system.system import get_lscpu_info
         mock_sub.check_output.return_value = "Architecture: x86_64\nCPU(s): 8\nCPU MHz: 2199.998\nFlags: avx sse\n"
@@ -225,7 +225,7 @@ class TestGetLscpuInfo:
         assert result["CPU MHz"] == 2199.998
         assert result["Flags"] == "avx sse"
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_lscpu_exception(self, mock_sub):
         from pyutilz.system.system import get_lscpu_info
         mock_sub.check_output.side_effect = FileNotFoundError("no lscpu")
@@ -259,14 +259,14 @@ class TestGetLinuxBoardInfo:
 # ── get_nix_cpu_sockets_number (lines 907-915) ──
 
 class TestGetNixCpuSocketsNumber:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_parses_socket_count(self, mock_sub):
         from pyutilz.system.system import get_nix_cpu_sockets_number
         mock_sub.check_output.return_value = b"Socket(s): 2\nother stuff\n"
         result = get_nix_cpu_sockets_number()
         assert result == 2
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_exception_returns_1(self, mock_sub):
         from pyutilz.system.system import get_nix_cpu_sockets_number
         mock_sub.check_output.side_effect = FileNotFoundError
@@ -277,7 +277,7 @@ class TestGetNixCpuSocketsNumber:
 # ── get_own_memory_usage (lines 929-930) ──
 
 class TestGetOwnMemoryUsage:
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.memory.psutil")
     def test_exception_returns_none(self, mock_psutil):
         # Reset the module-level ``_LAST_OWN_MEMORY_USAGE_GB`` cache:
         # other tests earlier in the session may have called
@@ -286,20 +286,20 @@ class TestGetOwnMemoryUsage:
         # ``get_own_memory_usage`` return the cached value on psutil
         # exception IF it has one — test contract is "no prior reading
         # + psutil fails → None", so we explicitly wipe the cache here.
-        import pyutilz.system.system as sys_mod
+        import pyutilz.system.system.memory as sys_mod
         sys_mod._LAST_OWN_MEMORY_USAGE_GB = 0.0
         from pyutilz.system.system import get_own_memory_usage
         mock_psutil.Process.side_effect = Exception("no process")
         result = get_own_memory_usage()
         assert result is None
 
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.memory.psutil")
     def test_exception_after_good_reading_returns_cached(self, mock_psutil):
         """Symmetric case: when the cache holds a prior good reading and
         psutil subsequently fails, return the cached value (don't
         discard real usage information). This is the core of the
         2026-04-21 glitch-tolerance refactor."""
-        import pyutilz.system.system as sys_mod
+        import pyutilz.system.system.memory as sys_mod
         sys_mod._LAST_OWN_MEMORY_USAGE_GB = 3.5  # simulate a prior good reading
         from pyutilz.system.system import get_own_memory_usage
         mock_psutil.Process.side_effect = Exception("transient psutil glitch")
@@ -312,7 +312,7 @@ class TestGetOwnMemoryUsage:
 # ── trim_windows_process_memory (lines 939-969) ──
 
 class TestTrimWindowsProcessMemory:
-    @patch("pyutilz.system.system.ctypes")
+    @patch("pyutilz.system.system.memory.ctypes")
     def test_success(self, mock_ctypes):
         from pyutilz.system.system import trim_windows_process_memory
         mock_ctypes.sizeof.return_value = 8
@@ -322,7 +322,7 @@ class TestTrimWindowsProcessMemory:
         result = trim_windows_process_memory()
         assert result is True
 
-    @patch("pyutilz.system.system.ctypes")
+    @patch("pyutilz.system.system.memory.ctypes")
     def test_failure(self, mock_ctypes):
         from pyutilz.system.system import trim_windows_process_memory
         mock_ctypes.sizeof.return_value = 4
@@ -333,7 +333,7 @@ class TestTrimWindowsProcessMemory:
         result = trim_windows_process_memory()
         assert result is False
 
-    @patch("pyutilz.system.system.ctypes")
+    @patch("pyutilz.system.system.memory.ctypes")
     def test_with_explicit_pid(self, mock_ctypes):
         from pyutilz.system.system import trim_windows_process_memory
         mock_ctypes.sizeof.return_value = 8
@@ -346,9 +346,9 @@ class TestTrimWindowsProcessMemory:
 # ── clean_ram (lines 976-983) ──
 
 class TestCleanRam:
-    @patch("pyutilz.system.system.gc")
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.trim_windows_process_memory")
+    @patch("pyutilz.system.system.memory.gc")
+    @patch("pyutilz.system.system.memory.platform")
+    @patch("pyutilz.system.system.memory.trim_windows_process_memory")
     def test_windows(self, mock_trim, mock_plat, mock_gc):
         from pyutilz.system.system import clean_ram
         mock_plat.system.return_value = "Windows"
@@ -356,18 +356,18 @@ class TestCleanRam:
         mock_gc.collect.assert_called_once()
         mock_trim.assert_called_once()
 
-    @patch("pyutilz.system.system.gc")
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.ctypes")
+    @patch("pyutilz.system.system.memory.gc")
+    @patch("pyutilz.system.system.memory.platform")
+    @patch("pyutilz.system.system.memory.ctypes")
     def test_linux(self, mock_ctypes, mock_plat, mock_gc):
         from pyutilz.system.system import clean_ram
         mock_plat.system.return_value = "Linux"
         clean_ram()
         mock_gc.collect.assert_called_once()
 
-    @patch("pyutilz.system.system.gc")
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.ctypes")
+    @patch("pyutilz.system.system.memory.gc")
+    @patch("pyutilz.system.system.memory.platform")
+    @patch("pyutilz.system.system.memory.ctypes")
     def test_linux_malloc_trim_fails(self, mock_ctypes, mock_plat, mock_gc):
         from pyutilz.system.system import clean_ram
         mock_plat.system.return_value = "Linux"
@@ -379,8 +379,8 @@ class TestCleanRam:
 # ── show_biggest_session_objects (lines 992-1012) ──
 
 class TestShowBiggestSessionObjects:
-    @patch("pyutilz.system.system.clean_ram")
-    @patch("pyutilz.system.system.get_own_memory_usage", return_value=1.5)
+    @patch("pyutilz.system.system.memory.clean_ram")
+    @patch("pyutilz.system.system.memory.get_own_memory_usage", return_value=1.5)
     def test_returns_dataframe(self, mock_mem, mock_clean):
         from pyutilz.system.system import show_biggest_session_objects
         import pandas as pd
@@ -388,8 +388,8 @@ class TestShowBiggestSessionObjects:
         result = show_biggest_session_objects(session, N=2, min_size_bytes=1)
         assert isinstance(result, pd.DataFrame) or isinstance(result, list)
 
-    @patch("pyutilz.system.system.clean_ram")
-    @patch("pyutilz.system.system.get_own_memory_usage", return_value=0.5)
+    @patch("pyutilz.system.system.memory.clean_ram")
+    @patch("pyutilz.system.system.memory.get_own_memory_usage", return_value=0.5)
     def test_empty_session(self, mock_mem, mock_clean):
         from pyutilz.system.system import show_biggest_session_objects
         result = show_biggest_session_objects({}, N=5, min_size_bytes=999999999)
@@ -420,14 +420,14 @@ class TestCheckHugePagesLinux:
 # ── check_large_pages_support (lines 1102, 1105-1109) ──
 
 class TestCheckLargePagesSupport:
-    @patch("pyutilz.system.system.platform")
-    @patch("pyutilz.system.system.check_huge_pages_linux", return_value=True)
+    @patch("pyutilz.system.system.probing.platform")
+    @patch("pyutilz.system.system.probing.check_huge_pages_linux", return_value=True)
     def test_linux(self, mock_hp, mock_plat):
         from pyutilz.system.system import check_large_pages_support
         mock_plat.system.return_value = "Linux"
         assert check_large_pages_support() is True
 
-    @patch("pyutilz.system.system.platform")
+    @patch("pyutilz.system.system.probing.platform")
     def test_unsupported_os(self, mock_plat):
         from pyutilz.system.system import check_large_pages_support
         mock_plat.system.return_value = "FreeBSD"
@@ -455,21 +455,21 @@ class TestGetLinuxPowerPlan:
 # ── get_macos_power_plan (lines 1143-1150) ──
 
 class TestGetMacosPowerPlan:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_returns_plan(self, mock_sub):
         from pyutilz.system.system import get_macos_power_plan
         mock_sub.run.return_value = MagicMock(stdout="Battery Power:\n displaysleep 10\n")
         result = get_macos_power_plan()
         assert "plan_full_name" in result
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_empty_result(self, mock_sub):
         from pyutilz.system.system import get_macos_power_plan
         mock_sub.run.return_value = MagicMock(stdout="")
         result = get_macos_power_plan()
         assert result is None
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_exception(self, mock_sub):
         from pyutilz.system.system import get_macos_power_plan
         mock_sub.run.side_effect = FileNotFoundError
@@ -480,7 +480,7 @@ class TestGetMacosPowerPlan:
 # ── get_windows_power_plan_cmd (lines 1166, 1174-1177) ──
 
 class TestGetWindowsPowerPlanCmd:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_parses_powercfg(self, mock_sub):
         from pyutilz.system.system import get_windows_power_plan_cmd
         mock_sub.run.return_value = MagicMock(
@@ -490,21 +490,21 @@ class TestGetWindowsPowerPlanCmd:
         assert result["plan_guid"] == "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
         assert result["plan_name"] == "High performance"
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_unparseable(self, mock_sub):
         from pyutilz.system.system import get_windows_power_plan_cmd
         mock_sub.run.return_value = MagicMock(stdout="some weird output")
         result = get_windows_power_plan_cmd()
         assert "plan_full_name" in result
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_empty(self, mock_sub):
         from pyutilz.system.system import get_windows_power_plan_cmd
         mock_sub.run.return_value = MagicMock(stdout="")
         result = get_windows_power_plan_cmd()
         assert result is None
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_exception(self, mock_sub):
         from pyutilz.system.system import get_windows_power_plan_cmd
         mock_sub.run.side_effect = OSError
@@ -515,7 +515,7 @@ class TestGetWindowsPowerPlanCmd:
 # ── get_windows_power_plan WMI (lines 1188-1197) ──
 
 class TestGetWindowsPowerPlan:
-    @patch("pyutilz.system.system.get_windows_power_plan_cmd", return_value={"plan_guid": "x", "plan_name": "y"})
+    @patch("pyutilz.system.system.probing.get_windows_power_plan_cmd", return_value={"plan_guid": "x", "plan_name": "y"})
     def test_wmi_import_error(self, mock_cmd):
         from pyutilz.system.system import get_windows_power_plan
         with patch.dict("sys.modules", {"wmi": None}):
@@ -527,14 +527,14 @@ class TestGetWindowsPowerPlan:
 # ── get_battery_info (lines 1277-1279) ──
 
 class TestGetBatteryInfo:
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.probing.psutil")
     def test_no_battery(self, mock_psutil):
         from pyutilz.system.system import get_battery_info
         mock_psutil.sensors_battery.return_value = None
         result = get_battery_info()
         assert result is None
 
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.probing.psutil")
     def test_exception(self, mock_psutil):
         from pyutilz.system.system import get_battery_info
         mock_psutil.sensors_battery.side_effect = RuntimeError("no battery")
@@ -545,7 +545,7 @@ class TestGetBatteryInfo:
 # ── get_nvidia_smi_info (lines 1291-1293, 1297-1298) ──
 
 class TestGetNvidiaSmiInfo:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_not_found(self, mock_sub):
         from pyutilz.system.system import get_nvidia_smi_info
         mock_sub.run.side_effect = FileNotFoundError
@@ -553,7 +553,7 @@ class TestGetNvidiaSmiInfo:
             result = get_nvidia_smi_info()
         assert result is None
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_nonzero_returncode(self, mock_sub):
         from pyutilz.system.system import get_nvidia_smi_info
         mock_sub.run.return_value = MagicMock(returncode=1, stdout="err", stderr="fail")
@@ -592,7 +592,7 @@ class TestComputeTotalGpusRam:
 # ── get_max_singledisk_free_space_gb (lines 1515-1537) ──
 
 class TestGetMaxSinglediskFreeSpaceGb:
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.fsutils.psutil")
     def test_basic(self, mock_psutil):
         from pyutilz.system.system import get_max_singledisk_free_space_gb
         disk = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")
@@ -602,7 +602,7 @@ class TestGetMaxSinglediskFreeSpaceGb:
         assert abs(max_free - 200.0) < 0.01
         assert abs(total - 500.0) < 0.01
 
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.fsutils.psutil")
     def test_required_filesystem_filter(self, mock_psutil):
         from pyutilz.system.system import get_max_singledisk_free_space_gb
         disk1 = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")
@@ -616,7 +616,7 @@ class TestGetMaxSinglediskFreeSpaceGb:
 # ── list_linux_devices (lines 1548-1559) ──
 
 class TestListLinuxDevices:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.fsutils.subprocess")
     def test_exception(self, mock_sub):
         from pyutilz.system.system import list_linux_devices
         mock_sub.check_output.side_effect = FileNotFoundError
@@ -664,7 +664,7 @@ class TestEnsureIdleDevices:
         with pytest.raises(ValueError):
             ensure_idle_devices(max_gpu_load_percent=-1)
 
-    @patch("pyutilz.system.system.psutil")
+    @patch("pyutilz.system.system.misc.psutil")
     def test_cpu_ram_exceeds_total(self, mock_psutil):
         from pyutilz.system.system import ensure_idle_devices
         mock_psutil.virtual_memory.return_value = MagicMock(total=2 * 1024**3)
@@ -715,14 +715,14 @@ class TestWmiFallbacks:
 # ── check_huge_pages_macos (lines 1083-1091) ──
 
 class TestCheckHugePagesMacos:
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_vm_stat_output(self, mock_sub):
         from pyutilz.system.system import check_huge_pages_macos
         mock_sub.check_output.return_value = b"Pages free: 12345\nPages active: 67890\n"
         result = check_huge_pages_macos()
         assert result is True
 
-    @patch("pyutilz.system.system.subprocess")
+    @patch("pyutilz.system.system.probing.subprocess")
     def test_vm_stat_error(self, mock_sub):
         from pyutilz.system.system import check_huge_pages_macos
         mock_sub.check_output.side_effect = FileNotFoundError
