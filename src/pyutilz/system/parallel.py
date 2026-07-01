@@ -28,8 +28,8 @@ import pandas as pd
 import atexit
 import shutil
 from multiprocessing.pool import ThreadPool
-from multiprocessing import Pool, set_start_method
-from joblib import Parallel, delayed, parallel_backend
+from multiprocessing import Pool
+from joblib import Parallel, parallel_backend
 
 # Module-level tracking of temporary directories for cleanup
 _TEMP_DIRS = []

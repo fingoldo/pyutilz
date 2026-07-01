@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed — accidentally-public leaked imports (surface cleanup)
+
+Removed 14 leaked import symbols from the public surface of `pyutilz.image`, `pyutilz.logginglib`,
+`pyutilz.numpylib` and `pyutilz.parallel`. These were never intended API — they were module-level
+imports of helpers that live elsewhere and were re-exported by accident:
+`ensure_installed` (real home `pyutilz.core.pythonlib`), `json_pg_dumps` / `extract_json_attribute`
+/ `leave_json_attributes` / `remove_json_attributes` (`pyutilz.text.strings`), `get_external_ip`
+(`pyutilz.web.web`), `get_script_file` (`pyutilz.system.system`), `sep`, `set_start_method`.
+Import them from their real homes instead. Verified no in-house downstream (mlframe + sibling
+projects) imports any of these from the affected modules. No function code was removed.
+
 ## [Unreleased] — 2026-06-23
 
 ### Changed — contention-robust GPU-kernel sweep ranking (interleaved min-over-reps)
