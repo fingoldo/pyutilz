@@ -31,30 +31,45 @@ def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:st
 
     return rc
 
-def rexecute (method_name:str,*args,**kwargs):
-    """
-        Safely execute any Redis command, not worrying about temporarily network/server issues
-
-    """
-    res=None
-
-    while True:
+def rclose() -> None:
+    """Close the global Redis connection and release its pool, if any."""
+    global rc
+    if rc is not None:
         try:
-            method=getattr(rc,method_name)
+            rc.close()
         except Exception as e:
             logger.exception(e)
-            sleep(1*random())
-        else:
-            break
+        finally:
+            rc = None
 
+def rexecute (method_name:str,*args,**kwargs) -> Any:
+    """
+        Safely execute any Redis command, not worrying about temporary network/server issues.
+
+        Transient ConnectionErrors are retried with a small random backoff. A permanent error
+        (e.g. missing connection, unknown method) is logged and re-raised instead of busy-looping forever.
+    """
+    if rc is None:
+        raise RuntimeError("Redis connection is not established. Call rconnect(...) first.")
+
+    try:
+        method = getattr(rc, method_name)
+    except AttributeError as e:
+        logger.exception(e)
+        raise
+
+    res = None
     while True:
         try:
-            res=method(*args,**kwargs)
+            res = method(*args, **kwargs)
         except ConnectionError as e:
+            # Transient: retry with backoff.
             logger.exception(e)
-            sleep(1*random())
+            sleep(1 * random())
         except Exception as e:
+            # Permanent error: log and propagate instead of busy-looping forever.
             logger.exception(e)
+            raise
         else:
             break
     return res

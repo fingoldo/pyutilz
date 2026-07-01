@@ -481,8 +481,8 @@ def test_ensure_space_after_comma_dot_fix():
 from pyutilz.strings import suffixize
 
 
-@pytest.mark.skipif(True, reason="Requires inflect module")
 def test_suffixize_plural():
+    pytest.importorskip("inflect")
     assert suffixize("job", 2) == "jobs"
 
 

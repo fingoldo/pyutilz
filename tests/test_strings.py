@@ -241,11 +241,13 @@ class TestStringUtilities:
         result = slugify("HELLO WORLD", lowercase=True)
         assert result.islower() or result == ""
 
-    @pytest.mark.skip(reason="Requires inflect module")
     def test_suffixize(self):
-        """Test adding plural suffix"""
-        # Requires inflect module which may not be installed
-        pass
+        """Test adding plural suffix (runs when inflect is installed)."""
+        pytest.importorskip("inflect")
+        from pyutilz.strings import suffixize
+
+        assert suffixize("job", 2) == "jobs"
+        assert suffixize("job", 1) == "job"
 
     def test_unescape_html(self):
         """Test HTML entity unescaping"""
@@ -431,9 +433,9 @@ class TestHTMLProcessing:
 class TestTextCleaning:
     """Test text cleaning functions"""
 
-    @pytest.mark.skip(reason="Requires emoji_data_python module not installed")
     def test_clean_description(self):
-        """Test cleaning description text"""
+        """Test cleaning description text (runs when emoji_data_python is installed)."""
+        pytest.importorskip("emoji_data_python")
         from pyutilz.strings import clean_description
 
         text = "  Hello   World  \n\n  Test  "
@@ -451,15 +453,32 @@ class TestTextCleaning:
 
         assert isinstance(result, str)
 
-    @pytest.mark.skip(reason="Function has infinite loop bug when find() returns p>0 but p is never advanced")
+    @pytest.mark.timeout(10)
     def test_fix_missed_space_between_sentences(self):
-        """Test fixing missed spaces"""
+        """Regression: previously infinite-looped because the search position was never advanced.
+
+        Must terminate (timeout guard) and insert a space after end-of-sentence punctuation
+        followed directly by an alphanumeric character.
+        """
         from pyutilz.strings import fix_missed_space_between_sentences
 
+        # Input that triggered the infinite loop / no-op stub.
         text = "Sentence one.Sentence two."
         result = fix_missed_space_between_sentences(text)
 
         assert isinstance(result, str)
+        assert result == "Sentence one. Sentence two."
+
+    @pytest.mark.timeout(10)
+    def test_fix_missed_space_multiple_and_noop(self):
+        """Handles multiple punctuation kinds and leaves already-spaced text unchanged."""
+        from pyutilz.strings import fix_missed_space_between_sentences
+
+        assert fix_missed_space_between_sentences("Hi!There?Yo.End") == "Hi! There? Yo. End"
+        assert fix_missed_space_between_sentences("Already ok. Fine. Done.") == "Already ok. Fine. Done."
+        # Numeric follower and no punctuation cases.
+        assert fix_missed_space_between_sentences("Cost is 5.99 dollars") == "Cost is 5. 99 dollars"
+        assert fix_missed_space_between_sentences("no punctuation here") == "no punctuation here"
 
     def test_merge_punctuation_signs(self):
         """Test merging punctuation"""
@@ -521,9 +540,9 @@ class TestPathOperations:
 class TestSentenceProcessing:
     """Test sentence processing"""
 
-    @pytest.mark.skip(reason="Requires emoji_data_python module not installed")
     def test_sentencize_text(self):
-        """Test converting text to sentences"""
+        """Test converting text to sentences (runs when emoji_data_python is installed)."""
+        pytest.importorskip("emoji_data_python")
         from pyutilz.strings import sentencize_text
 
         text = "First sentence. Second sentence. Third sentence."

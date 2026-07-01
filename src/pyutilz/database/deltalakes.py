@@ -1,4 +1,5 @@
 import os
+import tempfile
 import logging
 from urllib.parse import urlparse
 from filelock import FileLock, Timeout
@@ -57,7 +58,7 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
         safe_delta_write(MARKET_ADS_PATH, write_market_ads)
     """
     if is_local_path(path):
-        lock_file = os.path.join("/tmp", f"{os.path.basename(path).replace('/', '_')}{lock_suffix}")
+        lock_file = os.path.join(tempfile.gettempdir(), f"{os.path.basename(path).replace('/', '_')}{lock_suffix}")
         lock = FileLock(lock_file)
 
         try:
@@ -75,3 +76,4 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
             return delta_op_func()
         except Exception as e:
             logger.exception(f"Delta operation failed on {path}: {e}")
+            raise
