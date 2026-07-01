@@ -578,7 +578,6 @@ caught at commit time instead of in downstream CI.
 - **Cross-platform testing** with platform-specific markers
 
 ### Documentation
-- **MIGRATION_TEST_REPORT.md** - Comprehensive migration and testing documentation
 - Complete test results with hardware-specific outputs
 - Dependency installation guide
 - Integration examples for ml_perf_test project
