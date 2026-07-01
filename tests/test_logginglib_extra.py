@@ -90,18 +90,25 @@ from pyutilz.logginglib import _message
 import pyutilz.dev.logginglib as _logginglib_mod
 
 
+def _rendered(mock_logger) -> str:
+    """Render the lazy logging call (fmt % args) the way logging would."""
+    args, _ = mock_logger.info.call_args
+    fmt, *params = args
+    return fmt % tuple(params)
+
+
 def test_message_with_ellipsis():
     mock_logger = MagicMock()
     _logginglib_mod.logger = mock_logger
     _message("Loading data")
-    mock_logger.info.assert_called_with("Loading data...")
+    assert _rendered(mock_logger) == "Loading data..."
 
 
 def test_message_with_punctuation():
     mock_logger = MagicMock()
     _logginglib_mod.logger = mock_logger
     _message("Done!")
-    mock_logger.info.assert_called_with("Done!")
+    assert _rendered(mock_logger) == "Done!"
 
 
 def test_message_empty():
