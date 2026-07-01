@@ -86,7 +86,10 @@ class UtilizationMonitor:
 
             # CPU
             self.cpu_utilizaton.append(psutil.cpu_percent(percpu=False))
-            self.cpu_clocks.append(psutil.cpu_freq(percpu=False).current)
+            # cpu_freq() can return None on platforms/VMs where the frequency
+            # is unavailable; fall back to 0.0 rather than crashing the thread.
+            cpu_freq = psutil.cpu_freq(percpu=False)
+            self.cpu_clocks.append(cpu_freq.current if cpu_freq is not None else 0.0)
 
             # RAM
             self.own_ram_used.append(get_own_memory_usage())
@@ -112,7 +115,13 @@ class UtilizationMonitor:
             n = 0
 
             for gpu_info in gpu_stats.get("gpu", []):
-                gpu_id = int(gpu_info.get("gpu_module_id", 0))
+                # gpu_module_id may be a non-numeric string (e.g. from malformed
+                # nvidia-smi output); coerce safely instead of raising ValueError.
+                raw_gpu_id = gpu_info.get("gpu_module_id", 0)
+                try:
+                    gpu_id = int(raw_gpu_id)
+                except (TypeError, ValueError):
+                    gpu_id = 0
                 if self.gpu_ids and gpu_id not in self.gpu_ids:
                     continue
 

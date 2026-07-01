@@ -22,7 +22,8 @@ except ImportError:
 
 def setup_polars_config():
     """Setup Polars threading and memory configuration"""
-    os.environ["POLARS_MAX_THREADS"] = str(max(1, int(psutil.cpu_count(logical=False)/2)))
+    physical_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 1
+    os.environ["POLARS_MAX_THREADS"] = str(max(1, int(physical_cores / 2)))
     print(f"Using {os.environ['POLARS_MAX_THREADS']} polars threads")
     os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:500"
 

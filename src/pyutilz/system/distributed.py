@@ -16,7 +16,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, Optional, Tuple
 
 from pyutilz.database import db
 from pyutilz.system import system
@@ -35,7 +35,26 @@ _container = Container()
 m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
 
 
-def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
+def register_scraper(scraper_name: str = None, version: str = None, app_name: str = None, ip: str = None) -> Optional[Any]:
+    """Register the current process as a scraper node and emit a starting heartbeat.
+
+    Resolves node identity from system info, upserts it into the ``nodes`` table,
+    stores node stats, and sends an initial heartbeat.
+
+    Args:
+        scraper_name: logical name of the scraper.
+        version: explicit version; when None, a content-hash-based version of the
+            calling module is computed.
+        app_name: application name; looked up from the call stack when None.
+        ip: external IP; looked up from the stack / external service when None.
+
+    Returns:
+        The resolved ``node_id`` on success.
+
+    Raises:
+        Exception: propagates any error raised while gathering system info, so the
+            caller learns the scraper did NOT register instead of failing silently.
+    """
     global pid
     global _container, node_id, pid, m_app_name, m_scraper_name, m_version, m_ip
 
@@ -68,7 +87,11 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
         try:
             info = system.get_system_info(only_stats=False)
         except Exception as e:
+            # Fail loudly: without system info the scraper cannot register at all,
+            # and silently returning None here left callers believing registration
+            # succeeded. Re-raise so the failure is visible.
             logger.exception(e)
+            raise
         else:
             fields = "host_name,os_machine_guid,os_serial"
 
@@ -92,10 +115,16 @@ def register_scraper(scraper_name=None, version=None, app_name=None, ip=None):
             return _container.node_id
 
 
-def get_heartbeat_sql(status="ok", ip=None):
-    """Generate parameterized heartbeat SQL query.
+def get_heartbeat_sql(status: str = "ok", ip: str = None) -> Tuple[str, Optional[tuple]]:
+    """Generate a parameterized heartbeat UPSERT SQL query.
 
-    Returns: tuple of (sql_query, parameters) for safe execution
+    Args:
+        status: scraper status to record (e.g. "ok", "starting").
+        ip: IP to record; falls back to the module-level registered IP when None.
+
+    Returns:
+        A ``(sql, params)`` tuple for safe parameterized execution. When the node
+        has not been registered yet, returns ``("", None)``.
     """
     if _container.node_id:
         sql = """
@@ -123,5 +152,11 @@ def get_heartbeat_sql(status="ok", ip=None):
         return ("", None)
 
 
-def heartbeat_scraper(status="ok", ip=None):
+def heartbeat_scraper(status: str = "ok", ip: str = None) -> None:
+    """Execute a heartbeat UPSERT for the currently registered scraper node.
+
+    Args:
+        status: scraper status to record.
+        ip: IP to record; falls back to the registered IP when None.
+    """
     db.safe_execute(get_heartbeat_sql(status, ip))

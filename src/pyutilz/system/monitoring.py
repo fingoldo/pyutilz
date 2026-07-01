@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from typing import Optional
 
 import time
+import atexit
 import requests
 import functools
 import concurrent.futures
@@ -28,6 +29,9 @@ API_TIMEOUT_SEC = 15
 
 # Module-level ThreadPoolExecutor for timeout_wrapper to avoid creating new executors for each call
 _TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix="timeout_wrapper")
+
+# Shut the shared executor down at interpreter exit so its worker threads don't leak.
+atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # 3RD PARTIES MONITORING
@@ -136,7 +140,9 @@ def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
                 return result
             except concurrent.futures.TimeoutError:
                 logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
-                future.cancel()  # Attempt to cancel thread
+                # NOTE: future.cancel() cannot stop a thread that is already running
+                # (which is always the case here since we waited on result), so we don't
+                # attempt it; the worker thread keeps running until the wrapped call returns.
                 return None  # Or raise, depending on use case
             except Exception as e:
                 logger.exception(f"Error in {func.__name__}: {e}")

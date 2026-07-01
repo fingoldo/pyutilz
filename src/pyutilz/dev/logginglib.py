@@ -12,7 +12,7 @@ from pyutilz.core.pythonlib import ensure_installed
 
 from typing import Optional
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from os.path import sep, basename
 from random import random
 import numbers, inspect
@@ -47,6 +47,20 @@ def init_logging(
     maxBytes: int = 5_000_000,
     forced_filename: str = None,
 ):
+    """Configure the root logger with file (rotating) and stream handlers.
+
+    Args:
+        custom_logger: if provided, used as-is instead of creating a named logger.
+        level: logging level (e.g. logging.INFO).
+        default_caller_name: fallback name when called from an IPython/Jupyter frame.
+        format: logging format string.
+        log_to_file: whether to attach a rotating file handler.
+        maxBytes: max size of each log file before rotation.
+        forced_filename: explicit caller name overriding stack inspection.
+
+    Returns:
+        The configured Logger instance.
+    """
     global EXTERNAL_IP
 
     # EXTERNAL_IP = get_external_ip()
@@ -99,6 +113,7 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
 
     function_name = None
     module_name = None
+    params = {}
 
     current_frame = inspect.currentframe()
 
@@ -106,7 +121,7 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
         current_frame = current_frame.f_back
         function_name = current_frame.f_code.co_name
         module_name = inspect.getfile(current_frame)
-    except Exception as e:
+    except (AttributeError, TypeError) as e:
         logging.exception(e)
     try:
         params = inspect.getargvalues(current_frame).locals
@@ -117,11 +132,11 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
         else:
             params = filter_elements_by_type(obj=params, allowed_types=allowed_types)
             params = {**params, **kwargs}
-    except Exception as e:
+    except (AttributeError, TypeError) as e:
         logging.exception(e)
 
     results_log = {}
-    results_log["module"] = basename(module_name)
+    results_log["module"] = basename(module_name) if module_name else ""
     results_log["function"] = function_name
     results_log["parameters"] = params
 
@@ -133,11 +148,11 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
 
 
 def _init_clocks(obj: dict) -> None:
-    obj["started_at"] = datetime.utcnow()
+    obj["started_at"] = datetime.now(timezone.utc)
 
 
 def _stop_clocks(obj: dict) -> float:
-    finished_at = datetime.utcnow()
+    finished_at = datetime.now(timezone.utc)
     obj["finished_at"] = finished_at
 
     duration = (finished_at - obj.get("started_at")).total_seconds()
@@ -204,7 +219,7 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
 
     if activity_name:
         ensure_dict_elem(obj=activities, name=activity_name, value={})
-        activities[activity_name]["started_at"] = datetime.utcnow()
+        activities[activity_name]["started_at"] = datetime.now(timezone.utc)
 
         if verbose:
             _message(activity_name)
@@ -224,6 +239,10 @@ def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", res
         "file": {"en": "file", "ru": "файла"},
     }
 
+    if lang not in ("en", "ru"):
+        lang = "en"
+
+    message = ""
     if lang == "en":
         message = f"Loaded {len(obj):_} {suffixize('row',len(obj))} from {source} {sources.get(source_type,{}).get(lang,'')}."
     elif lang == "ru":
@@ -313,23 +332,36 @@ class RedisHandler(Handler):
                 self.rc.ltrim(self.LOG_DEST, 0, self.LOG_SIZE)
                 print("logging list trimmed!")
         except Exception:
-            pass
+            self.handleError(record)
 
 
-def debugged():
+def debugged(max_retries: int = 3):
+    """Decorator that drops into pdb on exception, then retries the call.
+
+    In a non-interactive environment (no TTY on stdin) pdb would hang or
+    loop forever, so the interactive breakpoint is skipped there and the
+    exception is re-raised. Even when interactive, retries are capped at
+    ``max_retries`` to avoid an unbounded retry loop.
+    """
+    import sys
+
     def decorator_debugged(func):
         @functools.wraps(func)
         def wrapper_debugged(*args, **kwargs):
-            done = False
             import pdb
-            while not done:
+
+            interactive = bool(getattr(sys, "stdin", None)) and sys.stdin.isatty()
+            attempts = 0
+            while True:
                 try:
-                    value = func(*args, **kwargs)
-                    done = True
+                    return func(*args, **kwargs)
                 except Exception as e:
-                    logger.exception(e)
+                    if logger is not None:
+                        logger.exception(e)
+                    attempts += 1
+                    if not interactive or attempts >= max_retries:
+                        raise
                     pdb.set_trace()
-            return value
 
         return wrapper_debugged
 

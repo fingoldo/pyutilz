@@ -49,6 +49,7 @@ __all__ = [
     "scan_todo_markers",
     "count_user_deferred_entries",
     "snake_case_variants_of",
+    "safe_import",
     "MARKER_LINE_RE",
     "ATTRIBUTION_RE",
 ]
@@ -170,7 +171,7 @@ def strip_lineno(entry: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def capture_signature(obj) -> str:
+def capture_signature(obj: object) -> str:
     """Stringify a callable's signature in a form stable across
     refactors that don't change semantics.
 
@@ -198,7 +199,7 @@ def capture_signature(obj) -> str:
     return "(" + ", ".join(params) + ")"
 
 
-def capture_module_surface(mod) -> dict[str, str]:
+def capture_module_surface(mod: object) -> dict[str, str]:
     """Return ``{public_name: kind_string}`` for every public symbol
     on a module (skips dunders + private). Used by API-stability
     snapshot tests.

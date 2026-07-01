@@ -4,7 +4,7 @@ import pytest
 import logging
 import numbers
 import functools
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, PropertyMock
 from os.path import basename
 
@@ -75,7 +75,7 @@ def test_init_and_stop_clocks():
 def test_stop_clocks_negative_duration():
     # line 145: duration < 0 -> clamp to 0
     from datetime import timedelta
-    obj = {"started_at": datetime.utcnow() + timedelta(hours=1)}
+    obj = {"started_at": datetime.now(timezone.utc) + timedelta(hours=1)}
     duration = _stop_clocks(obj)
     assert duration == 0
 
@@ -121,7 +121,7 @@ from pyutilz.logginglib import finalize_function_log
 
 def test_finalize_function_log_no_db():
     results_log = {
-        "results": {"timing": {"started_at": datetime.utcnow()}}
+        "results": {"timing": {"started_at": datetime.now(timezone.utc)}}
     }
     result = finalize_function_log(results_log)
     assert "duration" in result["results"]["timing"]
@@ -130,8 +130,8 @@ def test_finalize_function_log_no_db():
 def test_finalize_function_log_with_activities():
     results_log = {
         "results": {
-            "timing": {"started_at": datetime.utcnow()},
-            "activities": {"step1": {"started_at": datetime.utcnow()}}
+            "timing": {"started_at": datetime.now(timezone.utc)},
+            "activities": {"step1": {"started_at": datetime.now(timezone.utc)}}
         }
     }
     result = finalize_function_log(results_log)
@@ -140,7 +140,7 @@ def test_finalize_function_log_with_activities():
 
 def test_finalize_function_log_verbose(capsys):
     results_log = {
-        "results": {"timing": {"started_at": datetime.utcnow()}}
+        "results": {"timing": {"started_at": datetime.now(timezone.utc)}}
     }
     finalize_function_log(results_log, verbose=True)
     captured = capsys.readouterr()
@@ -191,7 +191,7 @@ def test_log_activity():
 def test_log_activity_close_previous():
     mock_logger = MagicMock()
     _logginglib_mod.logger = mock_logger
-    rl = {"results": {"activities": {"step1": {"started_at": datetime.utcnow()}}}}
+    rl = {"results": {"activities": {"step1": {"started_at": datetime.now(timezone.utc)}}}}
     duration = log_activity(rl, "step2", verbose=True)
     assert duration is not None
 
