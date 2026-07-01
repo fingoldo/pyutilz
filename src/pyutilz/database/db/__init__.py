@@ -49,24 +49,27 @@ from psycopg2 import OperationalError, InternalError, InterfaceError
 
 import re
 
-# Pre-compiled at module level: validate_sql_identifier is on a hot query-building path (called per identifier per query).
-# timeit micro-benchmark (1M iters, "my_table_name"): re.match(pattern_str, s) ~0.82us/call
-# vs _SQL_IDENTIFIER_RE.match(s) ~0.36us/call -> ~2.26x faster by avoiding the per-call pattern-cache lookup.
-_SQL_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+# ----------------------------------------------------------------------------------------------------------------------------
+# Re-exported PURE / STATELESS helpers carved into cohesive submodules.
+# These do NOT read the module-level connection globals (conn/cur/cursors),
+# so they live in submodules; the connection-stateful functions below stay
+# in this parent module so they all share the SAME global state.
+# ``_SQL_IDENTIFIER_RE`` / ``validate_sql_identifier`` are imported here so
+# every ``from pyutilz.database.db import X`` and ``pyutilz.db`` alias usage
+# keeps resolving exactly as before.
+# ----------------------------------------------------------------------------------------------------------------------------
 
-
-def validate_sql_identifier(identifier: str) -> str:
-    """Validate that an identifier (table name, column name) is safe to use in SQL.
-
-    Raises ValueError if the identifier contains potentially malicious characters.
-    Valid identifiers must match: alphanumeric, underscore, start with letter/underscore.
-    """
-    if not isinstance(identifier, str):
-        raise ValueError(f"SQL identifier must be a string, got {type(identifier)}")
-    if not _SQL_IDENTIFIER_RE.match(identifier):
-        raise ValueError(f"Invalid SQL identifier: {identifier!r}. Must contain only alphanumeric and underscore, start with letter or underscore.")
-    return identifier
-
+from pyutilz.database.db.sql_helpers import (
+    _SQL_IDENTIFIER_RE,
+    validate_sql_identifier,
+    construct_templates_and_values,
+    u,
+    nu,
+    MakeSetExcludedClause,
+    update_if_now,
+)
+from pyutilz.database.db.upsert import build_upsert_query
+from pyutilz.database.db.sqlite import ensure_db_tables_created, insert_sqllite_data
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Global variables
@@ -311,30 +314,6 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
                 setattr(self, prefix + field, element[indices[i]])
 
 
-def construct_templates_and_values(mode, fields, replace_values, source, jsonize):
-    """
-    Helper sub to assist filling correct templates in db_command sub, based on mode passed.
-    """
-    values, templates = [], []
-    for key in fields:
-        if key in replace_values:
-            value = replace_values[key]
-        else:
-            value = source.get(key, None)
-
-        if jsonize:
-            if type(value) in (dict, list):
-                # OPT_SORT_KEYS gives stable serialization (stable hashing/dedup rule); decode to str for DB storage.
-                value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
-
-        values.append(value)
-        if mode == "insert":
-            templates.append("%s")
-        elif mode == "select":
-            templates.append(key + "=%s")
-    return values, templates
-
-
 def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values=None, returning="*", source=None, jsonize=True, fetch_into=None, prefix=""):
     """
     Executes DML commands easily, looking up sql fields in main and replacement dictionaries, optionally fetching returned values into separate class or dictionary instance[prefixed, if needed]
@@ -400,20 +379,6 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
                 prefix = table_name[:-1] + "_"
         fetch_db_elements(fetch_into, res, returning, prefix=prefix)
     return res
-
-
-def u(str_val, symb="'"):
-    if str_val is None:
-        return "null"
-    else:
-        return symb + str_val.replace(symb, symb * 2) + symb
-
-
-def nu(str_val, symb="'"):
-    if str_val is None or len(str_val) == 0:
-        return "null"
-    else:
-        return u(str_val, symb)
 
 
 def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
@@ -581,19 +546,6 @@ def read_unique_table_field(table_name: str, field_name: str, container: object,
         for rec in res:
             container[rec[0]] = placeholder_value
     return container
-
-
-def MakeSetExcludedClause(sFields: str, bAddUpdatedAtTimestamp: Optional[str] = None) -> str:
-
-    res = ""
-    v = sFields.split(",")
-    for i in v:
-        res = res + i + "=excluded." + i + ","
-    if bAddUpdatedAtTimestamp:
-        res = res + f"{bAddUpdatedAtTimestamp}=(now() at time zone 'utc')"  # updated_at
-    else:
-        res = res[:-1]
-    return res
 
 
 def GetIdByKeyFieldAndInsertIfNeeded(
@@ -826,223 +778,6 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
     return res
 
 
-def build_upsert_query(
-    fields_names: list,
-    table_name: str,
-    conflict_fields: list = None,
-    fields_types: dict = None,
-    skip_fields: list = None,
-    timestamp_check_fields: list = None,
-    timestamp_update_fields: list = None,
-    on_conflict_update_fields: list = None,
-    on_conflict_update_values: dict = None,
-    custom_onconflict: str = None,
-    returning_fields: list = None,
-    history_table_name: str = None,
-    history_fields: list = None,
-    history_fields_aliases: dict = None,
-    hash_fields: str = "",
-    default_timestamp: str = "now()",
-) -> str:
-    """
-    Inserts new records or Updates fields in a Postgres table
-    Optionally saves data into History table after comparing Hash field of the new and old record.
-
-    Params:
-    timestamp_check_fields: when element was last checked (queried from source)
-    timestamp_update_fields: when element was last updated (queried from source and found changed)
-    """
-    if conflict_fields is None:
-        conflict_fields = ["id"]
-    if fields_types is None:
-        fields_types = {}
-    if history_fields is None:
-        history_fields = []
-    if history_fields_aliases is None:
-        history_fields_aliases = {}
-    if on_conflict_update_fields is None:
-        on_conflict_update_fields = []
-    if on_conflict_update_values is None:
-        on_conflict_update_values = {}
-    if returning_fields is None:
-        returning_fields = []
-    if skip_fields is None:
-        skip_fields = []
-    if timestamp_check_fields is None:
-        timestamp_check_fields = []
-    if timestamp_update_fields is None:
-        timestamp_update_fields = []
-    # ------------------------------
-    # Checks!
-    # ------------------------------
-
-    assert len(fields_names) > 0
-
-    for field in timestamp_check_fields:
-        assert field not in fields_names
-        assert field not in fields_types
-
-    for field_name, field_type in fields_types.items():
-        assert field_name in fields_names
-        assert field_type in "int bigint smallint float real numeric json jsonb text timestamp".split(" ")
-
-    rev_on_conflict_update_values = {}
-    if len(on_conflict_update_values) > 0:
-        for _field in on_conflict_update_values.keys():
-            # assert _field in fields_names
-            pass
-        for field, value in on_conflict_update_values.items():
-            rev_on_conflict_update_values[field] = value.replace("excluded.", "")
-    # ------------------------------
-    # Building query
-    # ------------------------------
-
-    query = f"with data({','.join(fields_names)}) as (VALUES %s)"
-
-    if len(timestamp_check_fields) > 0:
-        actual_fields_names = fields_names + timestamp_check_fields
-    else:
-        actual_fields_names = fields_names.copy()
-
-    for field in skip_fields:
-        if field in actual_fields_names:
-            actual_fields_names.remove(field)
-
-    values = []
-    conversion_clause = " at time zone 'utc' " if ("now" in default_timestamp.lower() or "to_timestamp" in default_timestamp.lower()) else ""
-    for field in actual_fields_names:
-        if field in fields_types:
-            values.append(field + "::" + fields_types[field])
-        elif field in timestamp_check_fields:
-            values.append(f"{default_timestamp}::timestamptz {conversion_clause}")
-        else:
-            values.append(field)
-    fresh_query = f"""
-    insert into {table_name} ({','.join(actual_fields_names)})
-    select {','.join(values)}
-    from data """
-
-    # ------------------------------
-    # On conflict
-    # ------------------------------
-
-    if custom_onconflict or (conflict_fields is not None and len(conflict_fields) > 0 and len(on_conflict_update_fields) > 0):
-        if not custom_onconflict:
-            for field in conflict_fields:
-                assert field in fields_names
-
-            update_values = []
-            for field in on_conflict_update_fields:
-                # assert field in actual_fields_names,f"{field} not in actual_fields_names"
-                if field in on_conflict_update_values:
-                    update_values.append(field + "=" + on_conflict_update_values[field])
-                elif field in fields_types:
-                    update_values.append(field + "=excluded." + field + "::" + fields_types[field])
-                # elif field in timestamp_check_fields:
-                #    update_values.append(field + "=" + default_timestamp)
-                else:
-                    update_values.append(field + "=excluded." + field)
-
-            fresh_query += f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"
-        else:
-            fresh_query += custom_onconflict
-    else:
-        fresh_query += "on conflict do nothing "
-
-    if len(history_fields) > 0:
-        returning_fields = history_fields
-        if hash_fields:
-            for hash_field in hash_fields:
-                assert hash_field in fields_names
-                if hash_field not in history_fields:
-                    returning_fields += [hash_field]
-        fresh_query += f" returning {','.join(returning_fields)}"
-
-    query += ", fresh_data as (" + fresh_query + ")"
-
-    if history_table_name and len(history_table_name) > 0:
-        assert len(conflict_fields) > 0
-
-        history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
-        hist_query = f"""
-        ,changed_data as (insert into {history_table_name}({','.join(history_fields_final)}) select {','.join(['u.'+field for field in history_fields])} from fresh_data u
-        """
-        if len(timestamp_update_fields) > 0:
-            the_list = conflict_fields + timestamp_check_fields
-        else:
-            the_list = conflict_fields
-
-        f_ = [field for field in the_list if field not in history_fields_aliases]
-        if len(timestamp_update_fields) > 0:
-            for field in timestamp_check_fields:
-                new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
-                if new_field not in f_:
-                    f_ = f_ + [
-                        new_field,
-                    ]
-
-        if hash_fields:
-            join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
-
-            hash_changing_cond = []
-            for hash_field in hash_fields:
-                hash_changing_cond.append(
-                    f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
-                )
-            hash_changing_cond = " OR ".join(hash_changing_cond)
-
-            hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
-        else:
-            join_condtion = None
-            hist_query += f" returning {','.join(f_)}"
-
-        hist_query += ")"
-        query += hist_query
-
-        if len(timestamp_update_fields) > 0:
-            assert len(timestamp_update_fields) == len(timestamp_check_fields)
-
-            upd_fields_and_vals = ",".join(
-                [f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields + timestamp_check_fields)]
-            )
-
-            # need to figure out name of update field
-
-            if True:
-                if join_condtion:
-                    the_join_condtion = "where {join_condtion}"
-                else:
-                    the_join_condtion = ""
-
-                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"
-            else:
-                # query += " select * from changed_data c left join test_agencies t on c.rid=t.rid"
-                # query += " update test_agencies as t set info_upd_ts='2021-07-01 00:00:00' from changed_data as c where c.rid=t.rid"
-                pass
-
-            query = "create temp table changed_data ON COMMIT DROP as (" + query  # BEGIN TRANSACTION; +" COMMIT;"
-        else:
-            query += " select 1 from changed_data"
-    else:
-        query += " select 1 from fresh_data"
-    return query
-
-
-def update_if_now(added_at: str, clause: str) -> str:
-    """
-    builds an onconflict_clause. Updates existing data only if now is specified in added_at.
-    """
-    if "now" in added_at.lower():
-        onconflict_clause = f"""
-            do update set
-                {clause}
-        """
-    else:
-        onconflict_clause = """do nothing"""
-
-    return onconflict_clause
-
-
 def regjobs_create_table(table_name: str = "regular_jobs"):
     safe_execute(
         sql.SQL(
@@ -1135,58 +870,3 @@ def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_job
         ).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},
     )
-
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# SQLLITE
-# ----------------------------------------------------------------------------------------------------------------------------
-
-
-def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = None) -> bool:
-
-    if not schema_fpath:
-        schema_fpath = join("database", "schema.sql")
-
-    if not exists(schema_fpath):
-        logger.error(f"DB Schema file not found.")
-        return False
-
-    with open(schema_fpath, encoding="utf-8") as f:
-        schema_string = f.read()
-
-    if len(schema_string) > 0:
-        cursor.executescript(schema_string)
-        conn.commit()
-
-        return True
-    else:
-        logger.error(f"DB Schema empty.")
-        return False
-
-
-def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: object, conn: object, verbose: int = 1):
-    """Самый быстрый способ для массовых вставок"""
-
-    # Создаем SQL запрос
-    placeholders = ", ".join(["?" for _ in columns])
-    columns_str = ", ".join([f'"{col}"' if col == "GROUP" else col for col in columns])
-    sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
-
-    # Преобразуем словари в кортежи в правильном порядке
-    values_list = []
-    for row in data:
-        values = tuple(row.get(col) for col in columns)
-        values_list.append(values)
-
-    # Вставляем данные
-    try:
-        cursor.executemany(sql, values_list)
-        conn.commit()
-        n = len(values_list)
-        if verbose:
-            logger.info("Inserted %s row(s) into %s table.", n, table_name)
-            return n
-    except Exception as e:
-        logger.error(f"Could not insert data into {table_name} table: {e}.")
-        logger.error(f"Data sample: {data[-10:]}")
-        return 0

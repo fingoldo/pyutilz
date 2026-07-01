@@ -154,4 +154,83 @@ def test_rclose_resets_connection(monkeypatch):
     monkeypatch.setattr(redislib, "rc", FakeRC())
     redislib.rclose()
     assert closed["v"] is True
+
+
+# ---------------------------------------------------------------------------
+# db subpackage split sensor
+#
+# db.py (>1000 LOC) was split into a subpackage: db/__init__.py keeps the
+# connection-stateful functions + module-level mutable globals (conn/cur/
+# cursors/conn_alchemy) so they all share ONE global namespace, while pure /
+# stateless helpers were carved into cohesive submodules. This sensor asserts
+# the public import surface still resolves through the facade AND that the
+# carved helpers are the SAME objects re-exported by the facade (single source
+# of truth — no divergent copies).
+# ---------------------------------------------------------------------------
+
+
+def test_db_facade_reexports_representative_public_symbols():
+    import pyutilz.database.db as db
+
+    for name in (
+        # pure helpers carved into submodules
+        "validate_sql_identifier",
+        "construct_templates_and_values",
+        "u",
+        "nu",
+        "MakeSetExcludedClause",
+        "update_if_now",
+        "build_upsert_query",
+        "ensure_db_tables_created",
+        "insert_sqllite_data",
+        # connection-stateful functions kept in the parent facade
+        "connect_to_db",
+        "safe_execute",
+        "db_command",
+        "regjobs_poll",
+        # module-level globals shared across the parent
+        "conn_alchemy",
+        "PAGE_SIZE",
+    ):
+        assert hasattr(db, name), f"facade lost public symbol {name!r}"
+
+    assert db.PAGE_SIZE == 1_000_000
+    assert db.validate_sql_identifier("ok_col") == "ok_col"
+
+
+def test_db_facade_helpers_are_same_objects_as_submodules():
+    """The facade must re-export the ACTUAL submodule objects, not copies."""
+    import pyutilz.database.db as db
+    from pyutilz.database.db import sql_helpers, upsert, sqlite
+
+    assert db.validate_sql_identifier is sql_helpers.validate_sql_identifier
+    assert db._SQL_IDENTIFIER_RE is sql_helpers._SQL_IDENTIFIER_RE
+    assert db.construct_templates_and_values is sql_helpers.construct_templates_and_values
+    assert db.MakeSetExcludedClause is sql_helpers.MakeSetExcludedClause
+    assert db.build_upsert_query is upsert.build_upsert_query
+    assert db.insert_sqllite_data is sqlite.insert_sqllite_data
+
+
+def test_db_connection_globals_live_in_parent_facade():
+    """Connection state (mutable module globals) must exist on the facade so
+    every stateful function reads/writes the SAME namespace after a connect."""
+    import pyutilz.database.db as db
+
+    # conn_alchemy is defined at import time; conn/cur/cursors are created by
+    # connect_to_db. Simulate a connect by assigning the globals and confirm a
+    # stateful reader (get_cursor) sees them via the shared module namespace.
+    class _FakeCur:
+        description = None
+
+        def execute(self, *a, **k):
+            pass
+
+    db.conn = object()
+    db.cursors = {"cursor": _FakeCur()}
+    assert db.get_cursor("cursor") is db.cursors["cursor"]
+
+    # lazy alias pyutilz.db must resolve to the same module object.
+    import pyutilz
+
+    assert pyutilz.db is db
     assert redislib.rc is None
