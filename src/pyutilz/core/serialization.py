@@ -23,6 +23,7 @@ ensure_installed("")
 from typing import Any
 
 import sys
+import io
 import pickle, zlib, os
 from pyutilz.system import system
 
@@ -61,8 +62,10 @@ def serialize(obj, fname: str = None, compression: int = 9):
                 system.ensure_dir_exists(fname)
                 with open(fname, "wb") as f:
                     f.write(data)
-            elif type(fname).__name__ == "_io.BufferedWriter":
-                f.write(data)
+            elif isinstance(fname, io.IOBase):
+                fname.write(data)
+            else:
+                raise TypeError(f"Unsupported fname type for serialize: {type(fname)}")
             return True
         else:
             return data
@@ -88,19 +91,19 @@ def unserialize(obj, compression: int = 9):
             else:
                 with open(obj, "rb") as f:
                     obj = f.read()
-        elif to == "_io.BufferedReader":
-            obj = f.read()
+        elif isinstance(obj, io.IOBase):
+            obj = obj.read()
 
         if isinstance(obj, bytes):
+            data = obj
             if compression is not None:
                 try:
                     data = zlib.decompress(obj)
-                except Exception as e:
-                    if "incorrect data check" in str(e):
-                        logger.warn("Data seems to be not compressed")
-                    else:
-                        logger.exception(e)
-                        return
+                except zlib.error:
+                    # zlib raises "incorrect header check" / "incorrect data check" for uncompressed input:
+                    # fall back to treating obj as raw (uncompressed) pickle bytes.
+                    logger.warning("Data seems to be not compressed; reading as raw pickle")
+                    data = obj
             data = pickle.loads(data)
             return data
         else:

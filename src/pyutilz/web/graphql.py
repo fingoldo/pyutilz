@@ -20,17 +20,19 @@ from typing import Any
 
 client=None
 
-def connect(graphql_client:object)->bool:
+def connect(graphql_client:object)->None:
     global client
     client = graphql_client
 
 def execute(query:str,variables:dict=None)->dict:
+    """Runs a GraphQL query. Always returns a dict; returns an empty dict on error or when no client is connected."""
     if client:
         try:
             res=client.graphql(query,variables=variables)
             if res is not None: return res.to_dict()
         except Exception as e:
             logger.exception(e)
+    return {}
 
 def query_schema()->dict:
     return execute("""

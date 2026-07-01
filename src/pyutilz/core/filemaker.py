@@ -37,7 +37,12 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
     get_session_token(username=filemaker_username, password=filemaker_password)
 
 
-def get_session_token(username: str = filemaker_username, password: str = filemaker_password, max_retries: int = 10, sleep_int_seconds: int = 10) -> str:
+def get_session_token(username: str = None, password: str = None, max_retries: int = 10, sleep_int_seconds: int = 10) -> str:
+    # Resolve to module globals at call time (def-time binding would capture the pre-init() None values).
+    if username is None:
+        username = filemaker_username
+    if password is None:
+        password = filemaker_password
     web.connect(
         m_template_headers={
             "Authorization": "Basic " + b64encode((username + ":" + password).encode()).decode(),
@@ -67,7 +72,7 @@ def simplify_types(obj: dict, sep=",") -> dict:
             obj[key] = sep.join([str(el) for el in val])
         elif isinstance(val, dict):
             obj[key] = str(val)
-        if val is None:
+        elif val is None:
             del obj[key]
     return obj
 

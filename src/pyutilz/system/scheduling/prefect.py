@@ -27,7 +27,7 @@ client=None
 def connect(prefect_key:str=None)->None:
     global client
     if prefect_key is None:
-        string.read_config_file(
+        strings.read_config_file(
             file="settings.ini",
             section="PREFECT",
             variables="prefect_key",
@@ -66,7 +66,7 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
             flows=[flow for flow in flows if len(flow.get("flow_runs",[]))>0]
         return flows
 
-def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id:str=None,allof_labels:set=(),anyof_labels:set=())->dict:
+def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id:str=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->dict:
     """
         flow_id - can be used to check if an instance of the same flow is already running.
         ie, no need to do inference if previous one is still running

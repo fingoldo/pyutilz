@@ -619,7 +619,7 @@ def GetIdByKeyFieldAndInsertIfNeeded(
                 )
             else:
                 rs = safe_execute(
-                    "insert into {sTable} ({sAlternateFieldsNames}) values ({sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sAlternateFieldsNames, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"
+                    f"insert into {sTable} ({sAlternateFieldsNames}) values ({sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sAlternateFieldsNames, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"
                 )
         else:
             rs = safe_execute(
@@ -949,10 +949,8 @@ def build_upsert_query(
 
     query += ", fresh_data as (" + fresh_query + ")"
 
-    if len(history_table_name) > 0:
+    if history_table_name and len(history_table_name) > 0:
         assert len(conflict_fields) > 0
-        "(" + ",".join([f"u.{field}" for field in conflict_fields]) + ")"
-        "(" + ",".join([f"c.{field}" for field in conflict_fields]) + ")"
 
         history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
         hist_query = f"""

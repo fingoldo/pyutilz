@@ -14,6 +14,7 @@ import doctest
 import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
+pytest.importorskip("jellyfish")  # transitively imported by pyutilz.text.similarity
 from hypothesis import given, settings, assume
 from hypothesis import strategies as st
 
