@@ -80,7 +80,7 @@ def get_external_ip(
 
 
 def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"):
-    import json
+    import orjson
 
     if use_urllib:
         try:
@@ -89,7 +89,7 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
             logger.exception(e)
         else:
             if resp.status == http.HTTPStatus.OK:
-                return json.loads(resp.read().decode("utf8").strip())
+                return orjson.loads(resp.read().decode("utf8").strip())
             else:
                 return {}
     else:

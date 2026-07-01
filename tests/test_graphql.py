@@ -72,17 +72,36 @@ class TestExecute:
         mock_client.graphql.assert_called_once_with("{ field }", variables=None)
 
     def test_with_none_client(self):
+        # execute() always returns a dict; no connected client -> empty dict (never None).
         import pyutilz.web.graphql as mod
         mod.client = None
-        assert execute("{ field }") is None
+        assert execute("{ field }") == {}
 
     def test_client_raises_exception(self):
+        # A client error is logged and swallowed; execute() returns {} not None.
         mock_client = MagicMock()
         mock_client.graphql.side_effect = RuntimeError("fail")
 
         import pyutilz.web.graphql as mod
         mod.client = mock_client
-        assert execute("{ field }") is None
+        assert execute("{ field }") == {}
+
+    def test_client_returns_none_result(self):
+        # graphql() returning None must not crash to_dict(); execute() returns {}.
+        mock_client = MagicMock()
+        mock_client.graphql.return_value = None
+
+        import pyutilz.web.graphql as mod
+        mod.client = mock_client
+        assert execute("{ field }") == {}
+
+    def test_query_schema_returns_dict_no_client(self):
+        # query_schema() annotated -> dict; with no client it must return {} (not None).
+        import pyutilz.web.graphql as mod
+        mod.client = None
+        result = mod.query_schema()
+        assert isinstance(result, dict)
+        assert result == {}
 
     def test_with_variables(self):
         mock_result = MagicMock()

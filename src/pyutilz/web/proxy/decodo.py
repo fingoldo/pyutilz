@@ -97,8 +97,8 @@ class DecodoSubscription:
             traffic_used_gb=_safe_float(data.get("traffic_per_period")),
             valid_from=data.get("valid_from", "?"),
             valid_until=data.get("valid_until", "?"),
-            users_limit=int(data.get("users_limit", 0)),
-            ip_address_limit=int(data.get("ip_address_limit", 0)),
+            users_limit=_safe_int(data.get("users_limit", 0)),
+            ip_address_limit=_safe_int(data.get("ip_address_limit", 0)),
             raw=data,
         )
 
@@ -149,6 +149,13 @@ def _safe_float(val: Any) -> float:
         return float(val)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
 
 
 def _fmt_gb(gb: float) -> str:
@@ -275,14 +282,22 @@ class DecodoProvider(ProxyProvider):
 
         headers = self._api_headers()
         result: Dict[str, Any] = {}
-        r = requests.get(f"{API_BASE}/v2/endpoints", headers=headers, timeout=15)
-        r.raise_for_status()
-        for item in r.json():
-            ep_type = item.get("type", "unknown")
-            sub_r = requests.get(f"{API_BASE}/v2/endpoints/{item.get('url', '').split('/')[-1]}",
-                                 headers=headers, timeout=15)
-            if sub_r.status_code == 200:
-                result[ep_type] = sub_r.json()
+        with requests.Session() as session:
+            session.headers.update(headers)
+            r = session.get(f"{API_BASE}/v2/endpoints", timeout=15)
+            r.raise_for_status()
+            for item in r.json():
+                ep_type = item.get("type", "unknown")
+                sub_url = f"{API_BASE}/v2/endpoints/{item.get('url', '').split('/')[-1]}"
+                try:
+                    sub_r = session.get(sub_url, timeout=15)
+                except requests.RequestException as e:
+                    _log.warning("Skipping endpoint %s (%s): request failed: %s", ep_type, sub_url, e)
+                    continue
+                if sub_r.status_code == 200:
+                    result[ep_type] = sub_r.json()
+                else:
+                    _log.warning("Skipping endpoint %s (%s): status %s", ep_type, sub_url, sub_r.status_code)
         return result
 
     def get_traffic(
@@ -353,6 +368,7 @@ class DecodoProvider(ProxyProvider):
                 print(sub.summary())
                 print(f"{'=' * 55}")
         except Exception as e:
+            _log.exception("Error fetching subscriptions: %s", e)
             print(f"  Error fetching subscriptions: {e}")
 
         if days > 0:
@@ -361,6 +377,7 @@ class DecodoProvider(ProxyProvider):
                 report = self.get_traffic(proxy_type=proxy_type, days=days, group_by=group_by)
                 print(report.summary(group_by))
             except Exception as e:
+                _log.exception("Error fetching traffic: %s", e)
                 print(f"  Error fetching traffic: {e}")
 
 
@@ -375,7 +392,7 @@ def _parse_traffic_response(data: Any, group_by: str) -> DecodoTrafficReport:
     total_bytes = 0.0
     for row in raw_rows:
         key = row.get("grouping_key", row.get(group_by, "?"))
-        reqs = int(row.get("requests", 0))
+        reqs = _safe_int(row.get("requests", 0))
         traffic = _safe_float(row.get("totals", row.get("traffic", 0)))
         rows.append(DecodoTrafficRow(group_key=str(key), requests=reqs, traffic_bytes=traffic))
         total_reqs += reqs

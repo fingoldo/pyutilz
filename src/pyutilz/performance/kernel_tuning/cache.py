@@ -1238,6 +1238,13 @@ class KernelTuningCache:
                 logger.debug("kernel_tuning_cache: async sweep for %s crashed: %s", kernel_name, e)
         threading.Thread(target=_run, name="ktc-sweep-" + _slug(kernel_name), daemon=True).start()
 
+    def code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
+        """Public: True iff a stored code_version exists and differs from the live one.
+
+        Stable entry point for callers (e.g. the tuner registry) that must decide
+        whether a cached tuning is still valid without reaching into private state."""
+        return self._code_version_stale(kernel_name, code_version)
+
     def _code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
         """True iff a stored code_version exists and differs from the live one."""
         if code_version is None:

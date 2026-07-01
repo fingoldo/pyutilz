@@ -86,7 +86,7 @@ def hardware_busy(threshold: Optional[float] = None, *, check_cpu: bool = True,
                 import GPUtil  # optional dep -> lazy
 
                 busy = any(g.load > thr for g in GPUtil.getGPUs())
-            except Exception:
+            except (ImportError, OSError, RuntimeError, ValueError):
                 pass  # no GPUtil / no GPU / poll failed -> cannot tell, don't trip
         if not busy and check_cpu:
             try:
@@ -95,8 +95,8 @@ def hardware_busy(threshold: Optional[float] = None, *, check_cpu: bool = True,
                 # interval=0.1 -> a real sample (cpu_percent(None) returns 0.0 on first call);
                 # off the hot path (sweep thread), so a 100ms poll is fine.
                 busy = (psutil.cpu_percent(interval=0.1) / 100.0) > thr
-            except Exception:
-                pass  # no psutil -> cannot tell, don't trip
+            except (ImportError, OSError, RuntimeError, ValueError):
+                pass  # no psutil / poll failed -> cannot tell, don't trip
         _HW_BUSY_CACHE = (timer(), thr, busy)
         return busy
 

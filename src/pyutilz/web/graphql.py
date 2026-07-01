@@ -138,6 +138,12 @@ def query_schema()->dict:
     """)
 
 def text_to_graphql(text: str) -> str:
+    """Escape literal ``\\n`` sequences in *text* so they survive embedding in a GraphQL string.
+
+    Any two-character backslash-n occurrence is doubled into ``\\\\n`` (an escaped
+    backslash followed by ``n``), preventing it from being interpreted as a newline
+    when the resulting text is placed inside a GraphQL query/variable literal.
+    """
     return text.replace(r"\n", "\\" + "n")
 
 def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:

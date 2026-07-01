@@ -7,7 +7,6 @@ object with a ``.text`` attribute.
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
 from typing import Any, Dict, Optional
@@ -45,10 +44,12 @@ def parse_ip_response(text: str) -> str:
     body = text.strip()
     if body.startswith("{"):
         try:
-            data = json.loads(body)
+            import orjson
+
+            data = orjson.loads(body)
             raw = data.get("origin") or data.get("ip") or body
             return raw.split(",")[0].strip() if isinstance(raw, str) else raw
-        except (json.JSONDecodeError, ValueError):
+        except (orjson.JSONDecodeError, ValueError):
             return body
     return body.split(",")[0].strip()
 
@@ -86,7 +87,7 @@ def check_ip_matches_real(
         _log.error(msg)
         return False
     if ip == real_ip and real_ip != "?":
-        msg = f"[PROXY] ERROR: {lib_name} returns real IP {real_ip} \u2014 proxy not working!"
+        msg = f"[PROXY] ERROR: {lib_name} returns real IP {real_ip} -- proxy not working!"
         if exit_on_fail:
             sys.exit(msg)
         _log.error(msg)

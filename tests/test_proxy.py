@@ -19,7 +19,7 @@ from pyutilz.web.proxy import (
     parse_ip_response,
     verify_proxy_ip,
 )
-from pyutilz.web.proxy.decodo import _parse_traffic_response, _fmt_gb
+from pyutilz.web.proxy.decodo import _parse_traffic_response, _fmt_gb, _safe_int
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -271,6 +271,15 @@ class TestCheckIpMatchesReal:
         with pytest.raises(SystemExit):
             check_ip_matches_real("?", "1.1.1.1", "test", exit_on_fail=True)
 
+    def test_leak_message_is_ascii(self):
+        """Leak message must be pure ASCII (no em-dash) so cp1251 stdout never crashes."""
+        with pytest.raises(SystemExit) as ei:
+            check_ip_matches_real("1.1.1.1", "1.1.1.1", "requests", exit_on_fail=True)
+        msg = str(ei.value)
+        msg.encode("ascii")  # raises if any non-ASCII char slipped in
+        assert "--" in msg
+        assert "—" not in msg
+
 
 # ── verify_proxy_ip ────────────────────────────────────────────────────────
 
@@ -353,6 +362,82 @@ class TestDecodoTrafficReport:
         report = _parse_traffic_response({}, "day")
         assert report.rows == []
         assert report.total_requests == 0
+
+
+class TestSafeInt:
+    @pytest.mark.parametrize("val,expected", [
+        ("42", 42),
+        (42, 42),
+        (3.9, 3),
+        ("abc", 0),        # pre-fix: int("abc") raised ValueError
+        (None, 0),         # pre-fix: int(None) raised TypeError
+        ("", 0),
+    ])
+    def test_coercion(self, val, expected):
+        assert _safe_int(val) == expected
+
+    def test_custom_default(self):
+        assert _safe_int("nope", default=-1) == -1
+
+    def test_from_api_non_numeric_limits(self):
+        """Non-numeric users_limit/ip_address_limit must not crash from_api (pre-fix: raised)."""
+        sub = DecodoSubscription.from_api({"users_limit": "N/A", "ip_address_limit": None})
+        assert sub.users_limit == 0
+        assert sub.ip_address_limit == 0
+
+    def test_parse_traffic_non_numeric_requests(self):
+        """Non-numeric 'requests' must not crash _parse_traffic_response (pre-fix: raised)."""
+        report = _parse_traffic_response([{"grouping_key": "x", "requests": "bad", "totals": 0}], "day")
+        assert report.rows[0].requests == 0
+        assert report.total_requests == 0
+
+
+class TestGetEndpoints:
+    def test_uses_session_and_skips_non_200(self, provider, caplog):
+        """get_endpoints reuses a Session and logs (not silently drops) non-200 sub-responses."""
+        top = MagicMock()
+        top.json.return_value = [
+            {"type": "residential", "url": "https://x/res"},
+            {"type": "mobile", "url": "https://x/mob"},
+        ]
+        top.raise_for_status.return_value = None
+        ok = MagicMock(status_code=200)
+        ok.json.return_value = {"host": "gate"}
+        bad = MagicMock(status_code=500)
+
+        session = MagicMock()
+        session.get.side_effect = [top, ok, bad]
+        session.__enter__ = MagicMock(return_value=session)
+        session.__exit__ = MagicMock(return_value=False)
+
+        with patch("requests.Session", return_value=session):
+            with caplog.at_level("WARNING"):
+                result = provider.get_endpoints()
+
+        assert result == {"residential": {"host": "gate"}}
+        assert "mobile" not in result
+        assert any("mobile" in r.message for r in caplog.records)
+        # header set once on the session, not per-request
+        session.headers.update.assert_called_once()
+
+    def test_skips_on_request_exception(self, provider, caplog):
+        import requests
+
+        top = MagicMock()
+        top.json.return_value = [{"type": "residential", "url": "https://x/res"}]
+        top.raise_for_status.return_value = None
+
+        session = MagicMock()
+        session.get.side_effect = [top, requests.RequestException("boom")]
+        session.__enter__ = MagicMock(return_value=session)
+        session.__exit__ = MagicMock(return_value=False)
+
+        with patch("requests.Session", return_value=session):
+            with caplog.at_level("WARNING"):
+                result = provider.get_endpoints()
+
+        assert result == {}
+        assert any("residential" in r.message for r in caplog.records)
 
 
 class TestFmtGb:

@@ -103,7 +103,8 @@ class TunerSpec:
 
         try:
             return compute_code_version(*self.variant_fns, extra_fns=self.extra_fns, salt=self.salt)
-        except Exception:
+        except Exception as e:
+            logger.debug("%s code_version() unavailable: %s", self.kernel_name, e)
             return None
 
     def _fallback_choice(self, dims: dict) -> str:
@@ -145,9 +146,11 @@ class TunerSpec:
             # The kernel is "tuned" once regions exist (the background sweep wrote them). Until then get_or_tune
             # returns the fallback; we must NOT memoize that, or every fit in this process would be pinned to the
             # fallback even after the async sweep lands.
-            tuned = cache.has(self.kernel_name) and not cache._code_version_stale(self.kernel_name, self.code_version())
-        except Exception as e:
+            tuned = cache.has(self.kernel_name) and not cache.code_version_stale(self.kernel_name, self.code_version())
+        except (OSError, ValueError, KeyError, RuntimeError) as e:
             logger.debug("%s choose() failed: %s", self.kernel_name, e)
+        except Exception as e:
+            logger.warning("%s choose() failed with unexpected %s: %s", self.kernel_name, type(e).__name__, e)
         # Memoize only a settled (tuned) decision. While the async sweep is pending, re-resolve each call (a cheap
         # in-memory lookup) so the measured backend is picked up the moment the background sweep finishes.
         if tuned:
@@ -399,7 +402,7 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
 
     if skip_existing and not force:
         # Already tuned at the live code_version on this hardware -> nothing to do.
-        if cache.has(spec.kernel_name) and not cache._code_version_stale(spec.kernel_name, code_version):
+        if cache.has(spec.kernel_name) and not cache.code_version_stale(spec.kernel_name, code_version):
             logger.debug("skip_existing: %s already tuned at code_version %s; skipping sweep",
                          spec.kernel_name, code_version)
             return len(cache.get_regions(spec.kernel_name) or [])

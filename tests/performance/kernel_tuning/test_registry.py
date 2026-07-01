@@ -178,3 +178,22 @@ def test_spec_choose_callable_fallback(monkeypatch, tmp_path):
                         axes={"n": [10]}, fallback=lambda n: "gpu" if n >= 100 else "cpu")
     assert spec.choose(n=5) == "cpu"
     assert spec.choose(n=500) == "gpu"
+
+
+def test_cache_public_code_version_stale():
+    """The cache exposes a PUBLIC code_version_stale (registry no longer reaches into the private one)."""
+    from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
+
+    cache = KernelTuningCache(in_memory=True)
+    assert hasattr(cache, "code_version_stale")
+    spec = TunerSpec(kernel_name="cv_k", variant_fns=(_np,),
+                     tuner=lambda: [{"backend_choice": "numpy"}], axes={}, fallback={"backend_choice": "numpy"})
+    from pyutilz.performance.kernel_tuning.registry import _run_spec_tuning
+    _run_spec_tuning(cache, spec, code_version="cvA", device_id=None, force=False, hooks=None)
+    # Same code_version -> not stale; a different one -> stale; None -> never stale.
+    assert cache.code_version_stale("cv_k", "cvA") is False
+    assert cache.code_version_stale("cv_k", "cvB") is True
+    assert cache.code_version_stale("cv_k", None) is False
+    # Public method delegates to the private one identically.
+    assert cache.code_version_stale("cv_k", "cvB") == cache._code_version_stale("cv_k", "cvB")
+

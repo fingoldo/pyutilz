@@ -82,10 +82,10 @@ class S3Backend(RemoteBackend):
         if client is None:
             return None
         try:
-            import json
+            import orjson
 
             obj = client.get_object(Bucket=self.bucket, Key=self._key(fingerprint))
-            return json.loads(obj["Body"].read())
+            return orjson.loads(obj["Body"].read())
         except Exception as e:  # NoSuchKey, network, parse -- all degrade to miss
             logger.debug("S3Backend.read(%s) miss/error: %s", fingerprint, e)
             return None
@@ -95,12 +95,12 @@ class S3Backend(RemoteBackend):
         if client is None:
             return False
         try:
-            import json
+            import orjson
 
             client.put_object(
                 Bucket=self.bucket,
                 Key=self._key(fingerprint),
-                Body=json.dumps(payload, sort_keys=True).encode("utf-8"),
+                Body=orjson.dumps(payload, option=orjson.OPT_SORT_KEYS),
                 ContentType="application/json",
             )
             return True
