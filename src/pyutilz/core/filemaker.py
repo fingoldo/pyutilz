@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
+from typing import Optional
 
 from time import sleep
 from http import HTTPStatus
@@ -29,7 +29,11 @@ from pyutilz.pythonlib import get_attr
 filemaker_url, filemaker_username, filemaker_password = None, None, None
 
 
-def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: str):
+def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: str) -> None:
+    """Store FileMaker connection credentials in module globals and open a session.
+
+    Must be called once before any other function; subsequent calls re-authenticate.
+    """
     global filemaker_url, filemaker_username, filemaker_password
     filemaker_url = m_filemaker_url
     filemaker_username = m_filemaker_username
@@ -37,7 +41,14 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
     get_session_token(username=filemaker_username, password=filemaker_password)
 
 
-def get_session_token(username: str = None, password: str = None, max_retries: int = 10, sleep_int_seconds: int = 10) -> str:
+def get_session_token(
+    username: Optional[str] = None, password: Optional[str] = None, max_retries: int = 10, sleep_int_seconds: int = 10
+) -> Optional[str]:
+    """Obtain a FileMaker Data API session token, retrying on transient failures.
+
+    Falls back to module-level credentials when username/password are not supplied.
+    Returns the bearer token, or None if all attempts fail.
+    """
     # Resolve to module globals at call time (def-time binding would capture the pre-init() None values).
     if username is None:
         username = filemaker_username
@@ -77,8 +88,12 @@ def simplify_types(obj: dict, sep=",") -> dict:
     return obj
 
 
-def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attempts: int = 3):
-    """Attempts to post a record several times, refreshing the auth token if needed."""
+def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attempts: int = 3) -> Optional[bool]:
+    """Attempts to post a record several times, refreshing the auth token if needed.
+
+    Returns True on success; raises ValueError if the token cannot be refreshed or the
+    request keeps failing.
+    """
     for _ in range(num_attempts):
         try:
             res = web.get_url(filemaker_url + f"/layouts/{layout}/records/", verb="post", json=data)

@@ -18,30 +18,40 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
-
 import numpy as np
 
 
 def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool = True) -> np.ndarray:
-    """Return indices of top-k highest or lowest elements of an array.
-    >>>arr=np.array([2., 0., 3.], dtype=float32)
-    >>>get_topk_indices(arr, k=2, highest=True)
+    """Return indices of top-k highest or lowest elements along a given axis.
+
+    Works for arrays of any dimensionality. The result has k entries along `axis`,
+    ordered from best to worst (highest-first when highest=True, lowest-first otherwise).
+
+    >>> arr = np.array([2., 0., 3.], dtype=np.float32)
+    >>> get_topk_indices(arr, k=2, highest=True)
     array([2, 0], dtype=int64)
-    >>>get_topk_indices(arr, k=2, highest=False)
-    array([1, 0], dtype=int64))
+    >>> get_topk_indices(arr, k=2, highest=False)
+    array([1, 0], dtype=int64)
     """
-    if highest:
-        indices = np.argpartition(arr, -k, axis=axis)[-k:]
-    else:
-        indices = np.argpartition(arr, k, axis=axis)[:k]
-
-    indices = indices[np.argsort(arr[indices], axis=axis)]
+    arr = np.asarray(arr)
+    n = arr.shape[axis]
+    if k > n:
+        raise ValueError(f"k={k} exceeds array length {n} along axis {axis}")
 
     if highest:
-        return indices[::-1]
+        # Partition so the k largest end up in the last k positions along axis.
+        part = np.argpartition(arr, n - k, axis=axis)
+        cand = np.take(part, np.arange(n - k, n), axis=axis)
     else:
-        return indices
+        part = np.argpartition(arr, k - 1, axis=axis)
+        cand = np.take(part, np.arange(0, k), axis=axis)
+
+    # Reorder the k candidates by their actual values (argpartition leaves them unordered).
+    cand_vals = np.take_along_axis(arr, cand, axis=axis)
+    order = np.argsort(cand_vals, axis=axis)
+    if highest:
+        order = np.flip(order, axis=axis)
+    return np.take_along_axis(cand, order, axis=axis)
 
 
 def div0(a, b, na_fill=np.nan):

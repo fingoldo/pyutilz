@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Dict, Sequence
+from typing import Sequence
 
 import numba
 import numpy as np

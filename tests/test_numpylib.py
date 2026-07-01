@@ -51,28 +51,44 @@ class TestGetTopKIndices:
         values = arr[result]
         assert sorted(values) == [1, 1, 2]
 
-    @pytest.mark.skip(reason="Function designed for 1D arrays, 2D support incomplete")
     def test_get_topk_2d_array_last_axis(self):
-        """Test with 2D array on last axis"""
-        # This function is primarily designed for 1D arrays
-        # 2D support is incomplete and causes IndexError
-        pass
+        """Regression: 2D top-k along the last axis must be axis-aware and correct.
 
-    def test_get_topk_2d_array_first_axis(self):
-        """Test with 2D array on first axis - simplified test"""
+        Pre-fix the source used bare arr[indices] + [::-1] which is only valid for 1D
+        and produced wrong results / IndexError on 2D. This asserts exact indices.
+        """
         arr = np.array([
-            [3, 1, 4],
-            [1, 5, 9]
+            [3, 1, 4, 1],
+            [9, 2, 6, 5],
         ])
 
-        # This function is designed for 1D arrays primarily
-        # For 2D, behavior may vary - just test it doesn't crash
-        try:
-            result = get_topk_indices(arr, k=1, axis=0, highest=True)
-            assert result is not None
-        except (ValueError, IndexError):
-            # Also acceptable to raise error for 2D
-            pass
+        # Top-2 highest per row: row0 -> col2(4), col0(3); row1 -> col0(9), col2(6)
+        res = get_topk_indices(arr, k=2, axis=-1, highest=True)
+        assert res.shape == (2, 2)
+        assert res[0].tolist() == [2, 0]
+        assert res[1].tolist() == [0, 2]
+        # Verify the gathered values are indeed sorted highest-first
+        vals = np.take_along_axis(arr, res, axis=-1)
+        assert vals[0].tolist() == [4, 3]
+        assert vals[1].tolist() == [9, 6]
+
+        # Lowest-first per row: row0 -> the two 1s; row1 -> col1(2), col3(5)
+        res_low = get_topk_indices(arr, k=2, axis=-1, highest=False)
+        vals_low = np.take_along_axis(arr, res_low, axis=-1)
+        assert vals_low[0].tolist() == [1, 1]
+        assert vals_low[1].tolist() == [2, 5]
+
+    def test_get_topk_2d_array_first_axis(self):
+        """2D top-k along axis 0 (down columns) returns correct per-column indices."""
+        arr = np.array([
+            [3, 1, 4],
+            [1, 5, 9],
+        ])
+
+        # Top-1 highest down each column: col0 -> row0(3), col1 -> row1(5), col2 -> row1(9)
+        result = get_topk_indices(arr, k=1, axis=0, highest=True)
+        assert result.shape == (1, 3)
+        assert result[0].tolist() == [0, 1, 1]
 
     def test_get_topk_all_elements(self):
         """Test getting k equal to array size"""
@@ -89,6 +105,21 @@ class TestGetTopKIndices:
 
         assert result.shape == (1,)
         assert result[0] == 0
+
+    def test_get_topk_1d_vs_2d_benchmark(self):
+        """Informational timeit note comparing 1D vs axis-aware 2D top-k paths."""
+        import timeit
+
+        rng = np.random.default_rng(0)
+        arr_1d = rng.random(100_000)
+        arr_2d = rng.random((1000, 100))  # same total element count
+
+        t1d = timeit.timeit(lambda: get_topk_indices(arr_1d, k=10, highest=True), number=50)
+        t2d = timeit.timeit(lambda: get_topk_indices(arr_2d, k=10, axis=-1, highest=True), number=50)
+
+        # Not an assertion on speed (hardware-dependent); just sanity that both run.
+        print(f"\nget_topk_indices bench (50 iters): 1D(100k)={t1d*1e3:.2f}ms  2D(1000x100)={t2d*1e3:.2f}ms")
+        assert t1d >= 0 and t2d >= 0
 
     def test_get_topk_negative_values(self):
         """Test with negative values"""

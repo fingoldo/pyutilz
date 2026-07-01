@@ -20,7 +20,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, Optional, Union
 
 import sys
 import io
@@ -28,7 +28,7 @@ import pickle, zlib, os
 from pyutilz.system import system
 
 
-def str_to_class(classname):
+def str_to_class(classname: str) -> Any:
     pos1 = classname.find("(")
     init_data = ""
     if pos1 > 0:
@@ -45,7 +45,7 @@ def str_to_class(classname):
         return getattr(sys.modules[__name__], classname)(init_data)
 
 
-def serialize(obj, fname: str = None, compression: int = 9):
+def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compression: Optional[int] = 9) -> Union[bool, bytes, None]:
     """
         If fname is passed, data will be persisted onto disk and success code will be returned
         Otherwise, serialized representation of the obj in memory will be returned.
@@ -73,7 +73,7 @@ def serialize(obj, fname: str = None, compression: int = 9):
         logger.exception(e)
 
 
-def unserialize(obj, compression: int = 9):
+def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9) -> Any:
     """
         If fname is passed, data will be read from disk.
         Otherwise, obj will be read from memory directl.
