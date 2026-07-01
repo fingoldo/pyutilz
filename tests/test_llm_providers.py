@@ -374,3 +374,140 @@ class TestGeminiProvider:
         exc = LLMSafetyBlockError("blocked", details={"finish_reason": "SAFETY"})
         assert exc.details == {"finish_reason": "SAFETY"}
         assert "blocked" in str(exc)
+
+    def test_pricing_longest_prefix_beats_first_match(self):
+        """Regression (audit P1): _get_pricing must pick the LONGEST-prefix
+        entry, not the first arbitrary dict-order startswith match.
+
+        ``gemini-2.5-flash-lite-preview`` is not an exact key. It startswith
+        BOTH ``gemini-2.5-flash`` (0.30/2.50) and ``gemini-2.5-flash-lite``
+        (0.10/0.40). ``gemini-2.5-flash`` is declared FIRST, so the old
+        first-match algorithm returned flash pricing (0.30/2.50) — a
+        mispricing. The correct answer is the more specific flash-lite tier.
+        """
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-2.5-flash-lite-preview"
+        inp, out = p._get_pricing()
+        assert (inp, out) == (0.10, 0.40)
+
+    def test_pricing_exact_flash_lite(self):
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-2.5-flash-lite"
+        assert p._get_pricing() == (0.10, 0.40)
+
+    def test_pricing_plain_flash_not_captured_by_flash_lite(self):
+        """A plain flash variant must NOT inherit flash-lite pricing."""
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-2.5-flash-preview-09-2025"
+        assert p._get_pricing() == (0.30, 2.50)
+
+
+class TestLongestPrefixPricingHelper:
+    def test_exact_match(self):
+        from pyutilz.llm.base import _longest_prefix_pricing
+        table = {"a-1": (1.0, 2.0), "a-1-x": (3.0, 4.0)}
+        assert _longest_prefix_pricing("a-1", table, (0.0, 0.0)) == (1.0, 2.0)
+
+    def test_longest_full_key_prefix_wins(self):
+        from pyutilz.llm.base import _longest_prefix_pricing
+        table = {"a-flash": (0.3, 2.5), "a-flash-lite": (0.1, 0.4)}
+        # model starts with both; longest full-key must win.
+        assert _longest_prefix_pricing("a-flash-lite-x", table, (9.0, 9.0)) == (0.1, 0.4)
+
+    def test_date_suffixed_key_via_rsplit_fallback(self):
+        from pyutilz.llm.base import _longest_prefix_pricing
+        # Anthropic-style: date-less model, date-suffixed key.
+        table = {"claude-opus-4-6-20250610": (5.0, 25.0)}
+        assert _longest_prefix_pricing("claude-opus-4-6", table, (3.0, 15.0)) == (5.0, 25.0)
+
+    def test_default_when_no_match(self):
+        from pyutilz.llm.base import _longest_prefix_pricing
+        table = {"a-1": (1.0, 2.0)}
+        assert _longest_prefix_pricing("zzz", table, (7.0, 8.0)) == (7.0, 8.0)
+
+
+class TestAnthropicMaxTokensRedundantClause:
+    def test_opus_46_still_128k_after_dropping_redundant_clause(self):
+        """Audit Low #7: dropped the redundant ``or 'opus-4-6' in self.model``
+        clause; opus-4-6 must still resolve to 128k via ``'4-6' in model``."""
+        from pyutilz.llm.anthropic_provider import AnthropicProvider
+        p = AnthropicProvider.__new__(AnthropicProvider)
+        p.model = "claude-opus-4-6-20250610"
+        assert p.max_output_tokens == 128000
+        p.model = "claude-opus-4-7"
+        assert p.max_output_tokens == 32000
+
+
+class TestSharedBaseImplementations:
+    """Audit P2: generate_json / generate_batch / estimate_cost hoisted to base."""
+
+    def test_gemini_estimate_cost_uses_base(self):
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-2.5-flash-lite"
+        # base.estimate_cost -> _get_pricing (0.10/0.40)
+        assert p.estimate_cost(1_000_000, 1_000_000) == pytest.approx(0.10 + 0.40)
+
+    def test_anthropic_estimate_cost_uses_base(self):
+        from pyutilz.llm.anthropic_provider import AnthropicProvider
+        p = AnthropicProvider.__new__(AnthropicProvider)
+        p.model = "claude-sonnet-4-20250514"
+        assert p.estimate_cost(1_000_000, 1_000_000) == pytest.approx(3.0 + 15.0)
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_isolates_per_request_errors(self):
+        """A malformed request (missing 'prompt') becomes a per-request error,
+        not a batch abort; a valid request still succeeds."""
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+
+        async def fake_generate(prompt, system=None, temperature=0.7, max_tokens=0):
+            return f"echo:{prompt}"
+
+        p.generate = fake_generate
+        reqs = [
+            {"id": "ok", "prompt": "hi"},
+            {"id": "bad"},  # missing 'prompt' -> KeyError inside process_request
+        ]
+        results = {r["id"]: r async for r in p.generate_batch(reqs)}
+        assert results["ok"]["result"] == "echo:hi"
+        assert "error" in results["bad"]
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_tags_gemini_safety_block(self):
+        """Gemini's _classify_batch_exception tags safety blocks."""
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        from pyutilz.llm.exceptions import LLMSafetyBlockError
+        p = GeminiProvider.__new__(GeminiProvider)
+
+        async def fake_generate(prompt, system=None, temperature=0.7, max_tokens=0):
+            raise LLMSafetyBlockError("blocked", details={})
+
+        p.generate = fake_generate
+        results = {r["id"]: r async for r in p.generate_batch([{"id": "x", "prompt": "p"}])}
+        assert results["x"]["error_type"] == "safety_block"
+
+    @pytest.mark.asyncio
+    async def test_generate_json_delegates_to_extract(self):
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+
+        async def fake_generate(prompt, system=None, temperature=0.3, max_tokens=0):
+            assert "valid JSON only" in system
+            return '{"k": 1}'
+
+        p.generate = fake_generate
+        assert await p.generate_json("give json") == {"k": 1}
+
+
+class TestGeminiTypesNotClobbered:
+    def test_types_binding_survives_when_genai_available(self):
+        """Audit Low #8: ``types`` must be a real module (not None) when the
+        genai SDK is installed, even if google.api_core import fails."""
+        from pyutilz.llm.gemini_provider import GENAI_AVAILABLE, types
+        if not GENAI_AVAILABLE:
+            pytest.skip("google-genai not installed")
+        assert types is not None

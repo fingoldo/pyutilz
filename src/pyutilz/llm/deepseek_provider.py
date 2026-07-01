@@ -140,7 +140,8 @@ class DeepSeekProvider(OpenAICompatibleProvider):
                 return None
             try:
                 return float(v)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
+                logger.debug("DeepSeek balance field %r not coercible to float: %s", v, exc)
                 return None
 
         return {

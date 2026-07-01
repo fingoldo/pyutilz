@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,65 @@ from pyutilz.llm.exceptions import (  # noqa: F401 — re-export for backward co
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _longest_prefix_pricing(
+    model: str,
+    pricing_table: dict[str, tuple[float, float]],
+    default: tuple[float, float],
+    provider_label: str = "LLM",
+) -> tuple[float, float]:
+    """Return ``(input_per_1m, output_per_1m)`` for ``model`` from ``pricing_table``.
+
+    Resolution order:
+      1. Exact key match.
+      2. LONGEST matching prefix — a more specific tier wins over a shorter,
+         overlapping one. Dict iteration order is arbitrary, so a naive
+         first-``startswith`` match can silently mis-price (e.g. a future
+         ``claude-opus-4-2-YYYYMMDD`` inheriting ``claude-opus-4-7``'s cheaper
+         tier just because that entry iterated first). We always compare
+         prefix lengths, mirroring the algorithm used by every provider.
+      3. ``default`` fallback (with a single warning).
+
+    Two prefix forms are tried, most-precise first, so both the
+    Anthropic (date-suffixed KEY, date-less model) and the Gemini
+    (semantic-suffixed keys like ``...-flash`` vs ``...-flash-lite``) naming
+    schemes resolve correctly:
+
+      a. Longest FULL key that ``model`` starts with (handles date-suffixed
+         model ids against date-less keys, and keeps ``-flash-lite`` from
+         being captured by the shorter ``-flash`` entry).
+      b. If none, longest key with its trailing ``-<segment>`` dropped
+         (``key.rsplit("-", 1)[0]``) — lets a date-less canonical model id
+         (``claude-opus-4-6``) match a date-suffixed key
+         (``claude-opus-4-6-20250610``).
+    """
+    exact = pricing_table.get(model)
+    if exact:
+        return exact
+    # (a) longest full-key prefix.
+    best_val: tuple[float, float] | None = None
+    best_len = -1
+    for key, val in pricing_table.items():
+        if model.startswith(key) and len(key) > best_len:
+            best_len = len(key)
+            best_val = val
+    # (b) fall back to trailing-segment-trimmed prefixes.
+    if best_val is None:
+        for key, val in pricing_table.items():
+            prefix = key.rsplit("-", 1)[0]
+            if model.startswith(prefix) and len(prefix) > best_len:
+                best_len = len(prefix)
+                best_val = val
+    if best_val is not None:
+        logger.warning(
+            "%s model %r not pinned in pricing table; falling back to the "
+            "longest-prefix match (%s/%s per 1M). Pin its exact id to avoid "
+            "silent mispricing.",
+            provider_label, model, best_val[0], best_val[1],
+        )
+        return best_val
+    return default
 
 
 # ── Refusal detection ─────────────────────────────────────────────────────
@@ -183,7 +243,51 @@ class LLMProvider(ABC):
         """
         pass
 
-    @abstractmethod
+    # ── shared implementation hooks ──────────────────────────────────
+    # Subclasses that use the default estimate_cost / _get_pricing below
+    # supply a per-1M pricing table and default via these class attrs.
+    _PRICING: dict[str, tuple[float, float]] = {}
+    _DEFAULT_PRICING: tuple[float, float] = (0.0, 0.0)
+
+    def _pricing_model_id(self) -> str:
+        """Return the model id used for pricing lookup.
+
+        Providers store the current model under different attribute names
+        (``self.model`` on Anthropic, ``self.model_name`` on Gemini /
+        OpenAI-compat). Resolve either so the shared ``_get_pricing`` works
+        for both without per-provider overrides.
+        """
+        return getattr(self, "model", None) or getattr(self, "model_name", "")
+
+    def _get_pricing(self) -> tuple[float, float]:
+        """Return ``(input_per_1m, output_per_1m)`` for the current model.
+
+        Default uses longest-prefix matching against ``self._PRICING`` with
+        ``self._DEFAULT_PRICING`` as fallback. Override for bespoke pricing.
+        """
+        return _longest_prefix_pricing(
+            self._pricing_model_id(),
+            self._PRICING,
+            self._DEFAULT_PRICING,
+            provider_label=self.__class__.__name__,
+        )
+
+    @property
+    def _provider_display_name(self) -> str:
+        """Human-readable provider name used in JSON-parse error messages."""
+        return getattr(self, "_provider_name", self.__class__.__name__)
+
+    def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
+        """Return extra fields to merge into a per-request batch error dict.
+
+        Hook for provider-specific exception classification (e.g. Gemini
+        tags safety blocks with ``error_type="safety_block"``). Return
+        ``None`` for the generic path. The base ``generate_batch`` always
+        catches every exception per-request so one bad request never aborts
+        the whole batch.
+        """
+        return None
+
     async def generate_json(
         self,
         prompt: str,
@@ -193,33 +297,58 @@ class LLMProvider(ABC):
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
-        Args:
-            prompt: User prompt requesting JSON.
-            system: Optional system prompt.
-            temperature: Sampling temperature (lower for structured output).
-            max_tokens: Maximum tokens to generate.
-
-        Returns:
-            Parsed JSON dict.
+        Appends a "respond with valid JSON only" steer to the system prompt,
+        calls ``generate``, then parses via ``extract_json``. Providers with a
+        hard JSON-mode toggle (OpenAI-compat) override to pass it through.
         """
-        pass
+        json_system = (system or "") + "\n\nRespond with valid JSON only."
+        text = await self.generate(
+            prompt=prompt,
+            system=json_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return self.extract_json(text, self._provider_display_name)
 
-    @abstractmethod
     async def generate_batch(
         self,
         requests: list[dict[str, Any]],
     ) -> AsyncIterator[dict[str, Any]]:
-        """Generate responses for multiple requests in batch.
+        """Generate responses for multiple requests concurrently.
 
-        Args:
-            requests: List of request dicts with 'prompt', 'system', etc.
+        Every per-request failure (including a malformed request dict raising
+        ``KeyError`` on ``req["prompt"]``) becomes a per-request ``error``
+        entry rather than aborting the whole batch. Provider-specific error
+        classification is delegated to ``_classify_batch_exception``.
 
         Yields:
-            Response dicts with 'id', 'result' or 'error'.
+            Response dicts with ``id`` and either ``result`` or ``error``.
         """
-        pass
+        async def process_request(req: dict) -> dict[str, Any]:
+            request_id = req.get("id", "unknown")
+            try:
+                result = await self.generate(
+                    prompt=req["prompt"],
+                    system=req.get("system"),
+                    temperature=req.get("temperature", 0.7),
+                    max_tokens=req.get("max_tokens", 1024),
+                )
+                return {"id": request_id, "result": result}
+            except Exception as e:  # noqa: BLE001
+                logger.error("Batch request %s failed: %s", request_id, e)
+                out = {"id": request_id, "error": str(e)}
+                extra = self._classify_batch_exception(e)
+                if extra:
+                    out.update(extra)
+                return out
 
-    @abstractmethod
+        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
+        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
+        # — feeding Tasks instead works across versions.
+        tasks = [asyncio.create_task(process_request(req)) for req in requests]
+        for coro in asyncio.as_completed(tasks):
+            yield await coro
+
     def estimate_cost(
         self,
         input_tokens: int,
@@ -227,14 +356,12 @@ class LLMProvider(ABC):
     ) -> float:
         """Estimate cost in USD for token counts.
 
-        Args:
-            input_tokens: Number of input tokens.
-            output_tokens: Number of output tokens.
-
-        Returns:
-            Estimated cost in USD.
+        Default multiplies token counts by the per-1M rates from
+        ``_get_pricing``. Providers with cache-tier or per-token-map pricing
+        (OpenAI-compat) override.
         """
-        pass
+        inp_rate, out_rate = self._get_pricing()
+        return (input_tokens / 1_000_000) * inp_rate + (output_tokens / 1_000_000) * out_rate
 
     async def get_account_credits(self) -> dict[str, Any]:
         """Return account billing snapshot.

@@ -1,17 +1,14 @@
 """Google Gemini LLM provider using the new google.genai SDK."""
 
 import asyncio
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, AsyncIterator
+from typing import Any
 
 from tenacity import retry, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.exceptions import (
-    LLMProviderError, JSONParsingError, LLMSafetyBlockError,
-)
+from pyutilz.llm.exceptions import LLMSafetyBlockError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider
 
@@ -25,6 +22,9 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
     genai = None
+    # Only the genai import failure invalidates ``types``. A later failure
+    # to import google.api_core must NOT clobber a valid ``types`` binding.
+    types = None
 
 # Google API exceptions for rate limit / server errors (retry-worthy).
 try:
@@ -39,11 +39,12 @@ try:
     )
 except ImportError:
     _GENAI_RETRYABLE_EXCEPTIONS = ()
-    types = None
 
 
 class GeminiProvider(LLMProvider):
     """Google Gemini provider using the new google.genai SDK."""
+
+    _provider_name = "Gemini"
 
     # Pricing per 1M tokens: (input, output)
     # Source: https://ai.google.dev/gemini-api/docs/pricing
@@ -300,91 +301,36 @@ class GeminiProvider(LLMProvider):
         except Exception as exc:  # noqa: BLE001
             logger.debug("Gemini candidate metadata capture failed: %s", exc)
 
-    async def generate_json(
-        self,
-        prompt: str,
-        system: str | None = None,
-        temperature: float = 0.3,
-        max_tokens: int = 0,
-    ) -> dict[str, Any]:
-        """Generate structured JSON output."""
-        json_system = (system or "") + "\n\nRespond with valid JSON only."
-        text = await self.generate(
-            prompt=prompt,
-            system=json_system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return self.extract_json(text, "Gemini")
-
-    async def generate_batch(
-        self,
-        requests: list[dict[str, Any]],
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Generate responses in batch using concurrent requests."""
-        async def process_request(req: dict) -> dict:
-            request_id = req.get("id", "unknown")
-            try:
-                result = await self.generate(
-                    prompt=req["prompt"],
-                    system=req.get("system"),
-                    temperature=req.get("temperature", 0.7),
-                    max_tokens=req.get("max_tokens", 1024),
-                )
-                return {"id": request_id, "result": result}
-            except LLMSafetyBlockError as e:
-                # Safety blocks are the single most common Gemini failure
-                # mode and are NOT ValueError/RuntimeError, so a narrow
-                # except would let them abort the whole batch. Isolate them
-                # per-request and tag the error type so callers can branch.
-                logger.error(f"Batch request {request_id} safety-blocked: {e}")
-                return {"id": request_id, "error": str(e), "error_type": "safety_block"}
-            except Exception as e:
-                # Catch-all so a malformed request dict (KeyError on
-                # req["prompt"]) or any other per-request failure becomes a
-                # per-request error instead of aborting the whole batch.
-                logger.error(f"Batch request {request_id} failed: {e}")
-                return {"id": request_id, "error": str(e)}
-
-        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
-        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
-        # — feeding Tasks instead works across versions.
-        tasks = [asyncio.create_task(process_request(req)) for req in requests]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
-
-    def _get_pricing(self) -> tuple[float, float]:
-        """Return (input_cost_per_1m, output_cost_per_1m) for current model."""
-        pricing = self._PRICING.get(self.model_name)
-        if pricing:
-            return pricing
-        for key, val in self._PRICING.items():
-            if self.model_name.startswith(key):
-                return val
-        return self._DEFAULT_PRICING
-
-    def estimate_cost(
-        self,
-        input_tokens: int,
-        output_tokens: int,
-    ) -> float:
-        """Estimate cost in USD based on model-specific pricing."""
-        inp_rate, out_rate = self._get_pricing()
-        input_cost = (input_tokens / 1_000_000) * inp_rate
-        output_cost = (output_tokens / 1_000_000) * out_rate
-        return input_cost + output_cost
+    def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
+        # Safety blocks are the single most common Gemini failure mode.
+        # Tag them so batch callers can branch on ``error_type`` without
+        # re-parsing the error string.
+        if isinstance(exc, LLMSafetyBlockError):
+            return {"error_type": "safety_block"}
+        return None
 
     async def count_tokens(self, text: str) -> int:
-        """Count tokens using Gemini's tokenizer."""
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            self._executor,
-            lambda: self.client.models.count_tokens(
-                model=self.model_name,
-                contents=text,
-            ),
-        )
-        return result.total_tokens
+        """Count tokens using Gemini's tokenizer.
+
+        Makes a network call to the Gemini API. Falls back to tiktoken on any
+        transient API failure so a temporary outage doesn't block calling
+        code (cl100k_base diverges from Gemini's tokenizer but is a usable
+        estimate for budgeting).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                self._executor,
+                lambda: self.client.models.count_tokens(
+                    model=self.model_name,
+                    contents=text,
+                ),
+            )
+            return int(result.total_tokens)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Gemini count_tokens API failed (%s); falling back to tiktoken.", exc)
+            from pyutilz.llm.token_counter import count_tokens
+            return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
         # Gemini billing rides on Google Cloud — credit / spend lives in the

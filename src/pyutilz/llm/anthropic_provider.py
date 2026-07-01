@@ -1,15 +1,13 @@
 """Anthropic Claude LLM provider."""
 
 import asyncio
-import json
 import logging
-from typing import Any, AsyncIterator
+from typing import Any
 
 import anthropic
 from tenacity import retry, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.exceptions import LLMProviderError, JSONParsingError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider
 
@@ -18,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
+
+    _provider_name = "Anthropic"
 
     # Pricing per 1M tokens: (input, output)
     # Source: https://platform.claude.com/docs/en/about-claude/pricing
@@ -101,7 +101,7 @@ class AnthropicProvider(LLMProvider):
         # Source: https://platform.claude.com/docs/en/docs/about-claude/models
         #   Opus 4.6: 128K, Opus 4/4.1: 32K, Sonnet 4.6: 64K, Haiku 4.5: 64K
         if self.model.startswith("claude-opus"):
-            return 128000 if "4-6" in self.model or "opus-4-6" in self.model else 32000
+            return 128000 if "4-6" in self.model else 32000
         if self.model.startswith("claude-sonnet"):
             return 64000
         if self.model.startswith("claude-haiku"):
@@ -211,7 +211,8 @@ class AnthropicProvider(LLMProvider):
         """
         try:
             mapping = dict(headers) if headers is not None else {}
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Anthropic response-header capture failed: %s", exc)
             return
         # Lower-case the keys for case-insensitive lookup downstream.
         lower = {k.lower(): v for k, v in mapping.items()}
@@ -221,100 +222,6 @@ class AnthropicProvider(LLMProvider):
         org = lower.get("anthropic-organization-id")
         if isinstance(org, str):
             self.last_organization_id = org
-
-    async def generate_json(
-        self,
-        prompt: str,
-        system: str | None = None,
-        temperature: float = 0.3,
-        max_tokens: int = 0,
-    ) -> dict[str, Any]:
-        """Generate structured JSON output."""
-        json_system = (system or "") + "\n\nRespond with valid JSON only."
-        text = await self.generate(
-            prompt=prompt,
-            system=json_system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return self.extract_json(text, "Anthropic")
-
-    async def generate_batch(
-        self,
-        requests: list[dict[str, Any]],
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Generate responses in batch using concurrent requests."""
-        async def process_request(req: dict) -> dict:
-            request_id = req.get("id", "unknown")
-            try:
-                result = await self.generate(
-                    prompt=req["prompt"],
-                    system=req.get("system"),
-                    temperature=req.get("temperature", 0.7),
-                    max_tokens=req.get("max_tokens", 1024),
-                )
-                return {"id": request_id, "result": result}
-            except anthropic.RateLimitError as e:
-                logger.error(f"Batch request {request_id} rate limited: {e}")
-                return {"id": request_id, "error": f"Rate limited: {e}"}
-            except anthropic.APIConnectionError as e:
-                logger.error(f"Batch request {request_id} connection error: {e}")
-                return {"id": request_id, "error": f"Connection error: {e}"}
-            except anthropic.APIStatusError as e:
-                logger.error(f"Batch request {request_id} API error: {e}")
-                return {"id": request_id, "error": f"API error: {e}"}
-            except Exception as e:
-                # Catch-all so a malformed request dict (KeyError on
-                # req["prompt"]) or any other per-request failure becomes a
-                # per-request error instead of aborting the whole batch.
-                logger.error(f"Batch request {request_id} failed: {e}")
-                return {"id": request_id, "error": str(e)}
-
-        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
-        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
-        # — feeding Tasks instead works across versions.
-        tasks = [asyncio.create_task(process_request(req)) for req in requests]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
-
-    def _get_pricing(self) -> tuple[float, float]:
-        """Return (input_cost_per_1m, output_cost_per_1m) for current model."""
-        pricing = self._PRICING.get(self.model)
-        if pricing:
-            return pricing
-        # No exact match (an unpinned / future model id). Pick the LONGEST
-        # matching prefix so a more specific tier wins over a shorter,
-        # overlapping one — e.g. a hypothetical "claude-opus-4-2-YYYYMMDD"
-        # must not silently inherit "claude-opus-4-7"'s cheaper 4.5 price
-        # just because that entry happens to be iterated first. Iteration
-        # order is otherwise arbitrary, so always compare prefix lengths.
-        best_val: tuple[float, float] | None = None
-        best_len = -1
-        for key, val in self._PRICING.items():
-            prefix = key.rsplit("-", 1)[0]
-            if self.model.startswith(prefix) and len(prefix) > best_len:
-                best_len = len(prefix)
-                best_val = val
-        if best_val is not None:
-            logger.warning(
-                "Anthropic model %r not pinned in _PRICING; falling back to "
-                "the longest-prefix match (%s/%s per 1M). Pin its exact id to "
-                "avoid silent mispricing.",
-                self.model, best_val[0], best_val[1],
-            )
-            return best_val
-        return self._DEFAULT_PRICING
-
-    def estimate_cost(
-        self,
-        input_tokens: int,
-        output_tokens: int,
-    ) -> float:
-        """Estimate cost in USD based on model-specific pricing."""
-        inp_rate, out_rate = self._get_pricing()
-        input_cost = (input_tokens / 1_000_000) * inp_rate
-        output_cost = (output_tokens / 1_000_000) * out_rate
-        return input_cost + output_cost
 
     async def count_tokens(
         self,

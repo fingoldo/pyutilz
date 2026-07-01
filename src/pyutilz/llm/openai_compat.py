@@ -6,13 +6,13 @@ Subclasses override a small set of hooks for provider-specific behaviour.
 """
 
 import asyncio
-import json
 import logging
 import random
 from abc import abstractmethod
 from typing import Any, AsyncIterator
 
 import httpx
+import orjson
 from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError
@@ -391,7 +391,6 @@ class OpenAICompatibleProvider(LLMProvider):
         emitted tokens.
         """
         self._reset_per_call_state()
-        import json as _json
 
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
@@ -437,8 +436,8 @@ class OpenAICompatibleProvider(LLMProvider):
                             if data_part == "[DONE]":
                                 break
                             try:
-                                chunk = _json.loads(data_part)
-                            except _json.JSONDecodeError:
+                                chunk = orjson.loads(data_part)
+                            except orjson.JSONDecodeError:
                                 continue
                             last_chunk = chunk
                             # Usage block tends to arrive on a chunk with empty
@@ -568,7 +567,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 try:
                     err_body = resp.json()
                     detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
-                except Exception:
+                except (ValueError, orjson.JSONDecodeError):
                     detail = resp.text
                 raise LLMProviderError(
                     f"{self._provider_name} API error {resp.status_code}: {detail}"
