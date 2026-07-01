@@ -1,0 +1,139 @@
+"""Dataframe IO helpers: load/read, concat-and-flush, multi-file merging and
+pyarrow parquet reads.
+
+Split out of the historical flat ``pyutilz.data.pandaslib`` module; re-exported
+from the package ``__init__`` to preserve the public import surface.
+"""
+
+from ._common import (
+    gc,
+    os,
+    pd,
+    glob,
+    join,
+    sep,
+    tqdmu,
+    logger,
+)
+
+import pyutilz.data.pandaslib as _facade  # patchable-name indirection (see below)
+
+from .dtypes import optimize_dtypes
+
+
+def load_df(fpath: str, tail: int) -> pd.DataFrame:
+    logger.info("Loading data from file %s...", fpath)
+
+    df = pd.read_pickle(fpath)
+    if tail is not None:
+        if tail > 0:
+            logger.info("Limiting to last %s responses", tail)
+            df = df.tail(tail)
+    return df
+
+
+def concat_and_flush_df_list(
+    lst: list, file_name: str, to_csv: bool = False, csv_cols: list = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: str = None
+) -> object:
+
+    if len(lst) > 0:
+        joined_df = pd.concat(lst, axis=0, ignore_index=True)
+        lst.clear()
+        gc.collect()
+        if to_csv:
+            if csv_cols is None:
+                joined_df.to_csv(f"{file_name}.csv", mode="w", header=True)
+            else:
+                joined_df[csv_cols].to_csv(f"{file_name}.csv", mode="a", header=False)
+            return joined_df
+        else:
+            if set_index:
+                joined_df.set_index(set_index, inplace=True)
+            getattr(joined_df, write_fcn)(f"{file_name}.{write_extension}")
+            return joined_df
+
+
+def read_stats_from_multiple_files(
+    joint_file_name: str = "joint_features",
+    folder: str = "features",
+    max_files: int = 250,
+    template: str = "*.pckl",
+    exclude: str = None,
+    read_fcn: str = "read_pickle",
+    write_fcn: str = "to_pickle",
+    write_extension: str = "pckl",
+    delete_after: bool = False,
+    sentinel_field: str = None,
+    sentinel_fcn: object = None,
+    set_index: str = None,
+    optimize: bool = False,
+    save_on_successful_optimization: bool = False,
+    min_size_improvement_percent: float = 0.05,
+    min_size_improvement: float = 5.0,
+):
+
+    lst = []
+    fnames = []
+    for _i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
+        if exclude:
+            if exclude in filename:
+                continue
+
+        fnames.append(filename)
+        tmp_df = getattr(pd, read_fcn)(filename)
+
+        old_size = tmp_df.memory_usage(index=True).sum() / 1024**3
+        logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
+
+        if optimize:
+            tmp_df = optimize_dtypes(tmp_df)
+            gc.collect()
+            new_size = tmp_df.memory_usage(index=True).sum() / 1024**3
+            logger.info("After optimization, %s got size %.1f Gb", filename, new_size)
+
+            if save_on_successful_optimization:
+                if new_size <= old_size * (1 - min_size_improvement_percent) or old_size - new_size >= min_size_improvement:
+                    logger.info("Re-saving file %s due to lower size", filename)
+                    getattr(tmp_df, write_fcn)(f"{'.'.join(filename.split('.')[:-1])}.{write_extension}")
+
+        if sentinel_field:
+            # Use local copy to avoid mutation persisting across files
+            current_sentinel = sentinel_field
+            while current_sentinel in tmp_df:
+                logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")
+                current_sentinel += "1"
+
+            fname_part = filename.split(sep)[-1]
+            if sentinel_fcn:
+                tmp_df[current_sentinel] = sentinel_fcn(fname_part)
+            else:
+                tmp_df[current_sentinel] = fname_part
+
+        lst.append(tmp_df)
+        if max_files is not None:
+            if len(lst) >= max_files:
+                break
+        del tmp_df
+    if len(lst) > 0:
+        try:
+            res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
+            logger.info("Final df size (%s rows)", len(res))
+            if delete_after:
+                for _i, filename in enumerate(fnames):
+                    try:
+                        os.remove(filename)
+                    except Exception:
+                        pass
+            return res
+        except Exception:
+            pass
+
+
+def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
+
+    if nrows:
+        df = _facade.dataset(path).scanner().head(nrows).to_pandas()
+    else:
+        df = _facade.dataset(path).scanner().to_pandas()
+
+    return df

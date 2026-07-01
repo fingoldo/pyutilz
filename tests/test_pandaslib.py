@@ -443,3 +443,32 @@ class TestSetDfColumnsTypes:
 
         assert pd.api.types.is_integer_dtype(df['a'])
         assert pd.api.types.is_float_dtype(df['b'])
+
+
+class TestSubpackageFacadeParity:
+    """Sensor: the ``pandaslib`` package facade must re-export the same objects
+    that now live in the cohesive submodules after the >1000-LOC split."""
+
+    def test_facade_reexports_are_submodule_objects(self):
+        import pyutilz.data.pandaslib as facade
+        from pyutilz.data.pandaslib import dtypes, frames, io_ops, benchmarks
+
+        assert facade.optimize_dtypes is dtypes.optimize_dtypes
+        assert facade.classify_column_types is dtypes.classify_column_types
+        assert facade.FeatureNamer is frames.FeatureNamer
+        assert facade.showcase_df_columns is frames.showcase_df_columns
+        assert facade.load_df is io_ops.load_df
+        assert facade.read_parquet_with_pyarrow is io_ops.read_parquet_with_pyarrow
+        assert facade.benchmark_dataframe_compression is benchmarks.benchmark_dataframe_compression
+        assert facade.measure_read_write_performance is benchmarks.measure_read_write_performance
+
+    def test_lazy_alias_resolves_to_same_object(self):
+        import pyutilz.data.pandaslib as facade
+        from pyutilz.pandaslib import optimize_dtypes as aliased
+        assert aliased is facade.optimize_dtypes
+
+    def test_submodule_names_do_not_leak_into_facade_dir(self):
+        import pyutilz.data.pandaslib as facade
+        public = {n for n in dir(facade) if not n.startswith("_")}
+        for submod in ("dtypes", "frames", "io_ops", "benchmarks"):
+            assert submod not in public
