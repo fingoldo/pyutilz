@@ -246,7 +246,7 @@
     },
     "pandaslib": {
       "Array": "callable(typecode_or_type:any:0, size_or_initializer:any:0, lock:kw:1)",
-      "FeatureNamer": "class:pyutilz.data.pandaslib.FeatureNamer",
+      "FeatureNamer": "class:pyutilz.data.pandaslib.frames.FeatureNamer",
       "HAS_IPYTHON": "value:bool",
       "benchmark_dataframe_compression": "callable(df:any:0, head:any:1, benchmark_dir_path:any:1, nrepeats:any:1, sort_by:any:1, return_styled:any:1, should_clean_temp_folder:any:1, verbose:any:1)",
       "benchmark_dataframe_csv_compression": "callable(res:any:0, temp_folder:any:0, df:any:0, nrepeats:any:0)",

@@ -86,15 +86,21 @@ def pytest_addoption(parser):
         default=False,
         help="rewrite tests/test_meta/_api_snapshot.json instead of comparing (intentional API change)",
     )
-    # test_logger_lazy_formatting.py checks ``--refresh-logger-baseline`` in sys.argv to
-    # rewrite _logger_lazy_baseline.json when eager-format sites are intentionally added/removed.
-    # Register it here so pytest does not reject the documented refresh flag as unrecognized.
-    parser.addoption(
+    # Several meta-tests support a ``--refresh-<name>-baseline`` flag (checked via sys.argv) to
+    # rewrite their committed baseline JSON on an intentional change. Every such flag must be
+    # registered here or pytest rejects it as an unrecognized argument (the documented refresh
+    # path is otherwise broken).
+    for _flag in (
         "--refresh-logger-baseline",
-        action="store_true",
-        default=False,
-        help="rewrite tests/test_meta/_logger_lazy_baseline.json instead of comparing (intentional log-format change)",
-    )
+        "--refresh-annotation-baseline",
+        "--refresh-docstring-baseline",
+        "--refresh-bare-except-baseline",
+        "--refresh-console-unicode-baseline",
+        "--refresh-debt-baseline",
+        "--refresh-mutable-defaults-baseline",
+        "--refresh-resource-handle-baseline",
+    ):
+        parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
 
 
 def pytest_collection_modifyitems(config, items):

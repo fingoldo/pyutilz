@@ -100,6 +100,14 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "cache_class": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "cache_hooks": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
     "region_matching": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
+    # text/strings was split from a single >1000-LOC module into a subpackage;
+    # every submodule is exercised jointly through the ``strings`` facade by
+    # tests/test_strings*.py.
+    "basics": "text/strings subpackage; covered by test_strings.py",
+    "configfiles": "text/strings subpackage; covered by test_strings.py",
+    "jsonutils": "text/strings subpackage; covered by test_strings.py",
+    "textentropy": "text/strings subpackage; covered by test_strings.py",
+    "webtext": "text/strings subpackage; covered by test_strings.py",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
@@ -118,6 +126,13 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_cuda_home_autodetect": "cross-cutting — CUDA_HOME autodetection from the pip nvidia-cuda-nvcc wheel (env/setup behaviour, not one source module)",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
     "test_dev_fixes_regression": "cross-cutting — regression tests spanning dev/logginglib, dev/notebook_init, dev/meta_test_utils, system/monitoring, system/hardware_monitor, system/distributed",
+    "test_audit_providers": "cross-cutting — regression tests for the llm-providers quality audit (spans anthropic/gemini/openai-compat/claude-code provider modules)",
+    "test_strings_facade": "sensor test for the text/strings subpackage split (facade re-export identity)",
+    # system.py was split into the system/system/ subpackage; test_system*.py cover it jointly.
+    "test_system": "covers pyutilz.system.system/* sub-package",
+    "test_system_extra": "covers pyutilz.system.system/* sub-package",
+    "test_system_extra2": "covers pyutilz.system.system/* sub-package",
+    "test_system_extra3": "covers pyutilz.system.system/* sub-package",
     # Meta-tests test infrastructure, not a single source module.
     "test_provider_registration": "meta-test (PT-1)",
     "test_module_alias_integrity": "meta-test (PT-2)",
