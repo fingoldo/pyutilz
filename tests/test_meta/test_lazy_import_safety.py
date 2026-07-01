@@ -49,7 +49,7 @@ def test_proxy_unknown_dunder_returns_attribute_error():
     """
     alias = next(iter(pyutilz._MODULE_ALIASES))
     real_path = pyutilz._MODULE_ALIASES[alias]
-    proxy = pyutilz._create_lazy_module(real_path)
+    proxy = pyutilz._create_lazy_module(real_path, f"pyutilz.{alias}")
 
     # Use clearly-fake dunder names that no Python machinery pre-sets.
     for dunder in ("__nonexistent_dunder__", "__totally_made_up__",
@@ -120,7 +120,7 @@ def test_proxy_resolves_consistently_after_first_access():
     full_alias = f"pyutilz.{alias}"
 
     sys.modules.pop(full_alias, None)
-    proxy = pyutilz._create_lazy_module(real_path)
+    proxy = pyutilz._create_lazy_module(real_path, full_alias)
     sys.modules[full_alias] = proxy
 
     real_mod = importlib.import_module(real_path)

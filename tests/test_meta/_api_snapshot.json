@@ -45,12 +45,7 @@
       "version_main": "value:NoneType"
     },
     "dashlib": {
-      "AG_GRID_LOCALE_RU": "value:dict",
-      "create_tabs": "callable(tabsName:any:0, tabsList:any:0, draw_tab_content_function:any:0, content:any:1, prefix:any:1, roles_separator:any:1, tabsClassName:any:1, contentClassName:any:1, activeLabelClassName:any:1, use_cardstyle:any:1)",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
-      "get_active_tab_var_name": "callable(tabsName:any:0, prefix:any:1)",
-      "logger": "value:Logger",
-      "session": "callable<no-signature>"
+      "_import_error": "module fails to import"
     },
     "db": {
       "EnsurePgTableExists": "callable(sTable:any:0, sKeyFieldName:any:1, sIdFieldName:any:1, sAutocreateIdTypeName:any:1)",
@@ -160,7 +155,7 @@
     "logging": {
       "EXTERNAL_IP": "value:NoneType",
       "RedisHandler": "class:pyutilz.dev.logginglib.RedisHandler",
-      "debugged": "callable()",
+      "debugged": "callable(max_retries:any:1)",
       "ensure_dict_elem": "callable(obj:any:0, name:any:0, value:any:0)",
       "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "filter_elements_by_type": "callable(obj:any:0, allowed_types:any:1)",
@@ -184,7 +179,7 @@
     "logginglib": {
       "EXTERNAL_IP": "value:NoneType",
       "RedisHandler": "class:pyutilz.dev.logginglib.RedisHandler",
-      "debugged": "callable()",
+      "debugged": "callable(max_retries:any:1)",
       "ensure_dict_elem": "callable(obj:any:0, name:any:0, value:any:0)",
       "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "filter_elements_by_type": "callable(obj:any:0, allowed_types:any:1)",
@@ -245,6 +240,7 @@
       "smart_ratios": "callable(a:any:0, b:any:0, span_correction:any:1, na_fill:any:1)"
     },
     "openai": {
+      "annotations": "value:_Feature",
       "num_tokens_from_messages": "callable(messages:any:0, model:any:1)",
       "num_tokens_from_string": "callable(string:any:0, encoding_name:any:0)"
     },
@@ -389,6 +385,7 @@
       "logger": "value:Logger",
       "random": "callable()",
       "rc": "value:NoneType",
+      "rclose": "callable()",
       "rconnect": "callable(redis_host:any:0, redis_port:any:0, redis_db_name:any:0, redis_db_pwd:any:0, decode_responses:any:1)",
       "rexecute": "callable(method_name:any:0, args:*args:0, kwargs:**kw:0)"
     },
@@ -400,18 +397,7 @@
       "unserialize": "callable(obj:any:0, compression:any:1)"
     },
     "similarity": {
-      "HAS_NUMBA": "value:bool",
-      "SentenceSimilarityIndex": "class:pyutilz.text.similarity.SentenceSimilarityIndex",
-      "contigous_strings_similarity": "callable(a:any:0, b:any:0)",
-      "levenshtein_strings_similarity": "callable(a:any:0, b:any:0)",
-      "logger": "value:Logger",
-      "normalize_sentence": "callable(sentence:any:0, bSports:any:1, replace_symbols:any:1, placeholder:any:1, abbreviations:any:1)",
-      "pack_sentence": "callable(words:any:0)",
-      "sentences_similarity": "callable(SentenceA:any:0, SentenceB:any:0, cMinLenTHreshold:any:1)",
-      "sentences_similarity_numba": "callable(SentenceA:any:0, SentenceB:any:0, cMinLenTHreshold:any:1)",
-      "sentences_similarity_numba_batch": "callable(query_words:any:0, candidates:any:0, cMinLenTHreshold:any:1, parallel:any:1)",
-      "sentences_similarity_numba_packed": "callable(packed_a:any:0, packed_b:any:0, cMinLenTHreshold:any:1)",
-      "strip_doubled_characters": "callable(text:any:0, char_list:any:0)"
+      "_import_error": "module fails to import"
     },
     "string": {
       "ascii_emojies": "value:NoneType",

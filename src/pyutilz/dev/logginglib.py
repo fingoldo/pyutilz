@@ -165,7 +165,7 @@ def _stop_clocks(obj: dict) -> float:
 
 def _message(activity_name: str):
     if activity_name:
-        logger.info(activity_name + ("" if activity_name.strip()[-1] in "!.?," else "..."))
+        logger.info("%s%s", activity_name, "" if activity_name.strip()[-1] in "!.?," else "...")
 
 
 def _close_opened_activities(activities: dict) -> float:

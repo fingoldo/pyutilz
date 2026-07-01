@@ -84,6 +84,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_hardware_detection": "covers pyutilz.system.hardware_monitor",
     "test_cuda_home_autodetect": "cross-cutting — CUDA_HOME autodetection from the pip nvidia-cuda-nvcc wheel (env/setup behaviour, not one source module)",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
+    "test_dev_fixes_regression": "cross-cutting — regression tests spanning dev/logginglib, dev/notebook_init, dev/meta_test_utils, system/monitoring, system/hardware_monitor, system/distributed",
     # Meta-tests test infrastructure, not a single source module.
     "test_provider_registration": "meta-test (PT-1)",
     "test_module_alias_integrity": "meta-test (PT-2)",

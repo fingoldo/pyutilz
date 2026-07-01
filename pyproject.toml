@@ -136,12 +136,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers -ra"
+addopts = "-v --tb=short --strict-markers -ra --timeout=120"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "gpu: marks tests requiring GPU",
-    "live: marks tests requiring live provider API keys (deselect with '-m \"not live\"'; default is to skip via missing-key fixtures)"
+    "live: marks tests requiring live provider API keys (skipped by default; pass --run-live to execute)"
 ]
 
 # Coverage configuration

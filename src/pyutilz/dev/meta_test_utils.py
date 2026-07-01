@@ -259,7 +259,7 @@ def capture_module_surface(mod: object) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# TODO / FIXME / XXX / HACK marker scanning
+# Debt-marker scanning (TODO-style annotations)
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +283,7 @@ def scan_todo_markers(
     extra_excludes: Iterable[str] = (),
 ) -> list[tuple[Path, int, str, str]]:
     """Walk every production .py file under ``package_dir`` and yield
-    every ``# TODO`` / ``# FIXME`` / ``# XXX`` / ``# HACK`` line.
+    every debt-marker comment line (TODO / FIXME / XXX / HACK).
 
     Returns ``[(path, lineno, marker_kw_uppercase, full_line_stripped)]``.
     """

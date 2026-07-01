@@ -505,11 +505,14 @@ def get_system_info(
                 if current_system == "Windows":
                     os_serial = None
                     try:
+                        # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
                         os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()
                         info["os_machine_guid"] = os_serial
                         info["os_serial"] = os_serial  # Also store as separate field for distributed.py
                     except Exception:
-                        logger.warning(f"Could not extract Windows serial!")
+                        logger.warning("Could not extract Windows serial!")
+                        # Keep the schema consistent (distributed.py requires os_serial): fall back to the machine GUID.
+                        info["os_serial"] = info.get("os_machine_guid", "")
 
                 elif current_system == "Linux":
                     try:

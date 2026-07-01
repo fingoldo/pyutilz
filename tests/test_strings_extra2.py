@@ -335,10 +335,11 @@ from pyutilz.strings import fix_missed_space_between_sentences
 
 
 def test_fix_missed_space_between_sentences():
-    # This function has a bug (infinite loop on some inputs) and returns None.
-    # Just test with input that has no eos marks to exercise the outer loop.
+    # No end-of-sentence marker followed by an uppercase letter: text is returned unchanged.
     result = fix_missed_space_between_sentences("Hello World")
-    assert result is None
+    assert result == "Hello World"
+    # Missing space after a sentence terminator is inserted.
+    assert fix_missed_space_between_sentences("Sentence one.Sentence two.") == "Sentence one. Sentence two."
 
 
 # ---------------------------------------------------------------------------

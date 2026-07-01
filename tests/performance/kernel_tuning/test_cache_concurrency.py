@@ -277,13 +277,20 @@ def test_concurrent_claim_threads_single_owner(host_dir):
     cache = ktc.KernelTuningCache()
     owners = []
     barrier = threading.Barrier(8)
+    # Second barrier: every thread must have ATTEMPTED its claim (and any loser
+    # already seen EEXIST) before the single owner releases the marker. This makes
+    # the "exactly one owner" assertion deterministic instead of relying on a fixed
+    # sleep being longer than the worst-case barrier-release-to-claim latency.
+    attempted = threading.Barrier(8)
 
     def race():
         barrier.wait()
         with cache._claim_sweep("racek", "cv1", ktc._DEFAULT_HOOKS) as owns:
             if owns:
                 owners.append(threading.get_ident())
-                time.sleep(0.05)  # hold the claim so others see EEXIST
+            # Hold the claim (owner) / mark the attempt (losers) until all 8 have
+            # passed through the claim, so the marker is present for every attempt.
+            attempted.wait()
 
     threads = [threading.Thread(target=race) for _ in range(8)]
     for t in threads:
