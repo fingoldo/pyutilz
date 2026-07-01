@@ -1699,3 +1699,51 @@ class TestRoutingRetry:
             with pytest.raises(LLMProviderError):
                 await p.generate("hi")
             assert parent.call_count == 2
+
+class TestSubpackageSplitSensor:
+    """Guards the ``openrouter_provider`` subpackage split (carved out of
+    the former >1000-LOC single module). Asserts the facade preserves the
+    public import surface, that representative symbols resolve to the
+    carved-out submodules, and that the provider is still discoverable via
+    the factory registry so it self-registers at import time.
+    """
+
+    def test_facade_reexports_provider_class_and_symbols(self):
+        import pyutilz.llm.openrouter_provider as m
+
+        assert m.OpenRouterProvider.__name__ == "OpenRouterProvider"
+        assert callable(m.list_openrouter_models)
+        assert callable(m.clear_openrouter_caches)
+        for name in (
+            "_fetch_models_catalogue", "_per_token_cost_pair",
+            "_resolve_model_limits", "_summarize_endpoints",
+            "_normalize_uptime", "_resolve_or_api_key",
+        ):
+            assert hasattr(m, name), f"facade lost {name} after split"
+        assert hasattr(m, "_MODELS_CATALOGUE")
+        assert hasattr(m, "_HEALTH_CACHE")
+
+    def test_carved_submodules_exist(self):
+        import importlib
+
+        for sub in ("_catalogue", "_health", "_provider"):
+            mod = importlib.import_module(
+                f"pyutilz.llm.openrouter_provider.{sub}"
+            )
+            assert mod is not None
+        from pyutilz.llm.openrouter_provider._provider import (
+            OpenRouterProvider as _Cls,
+        )
+        import pyutilz.llm.openrouter_provider as m
+        assert m.OpenRouterProvider is _Cls
+
+    def test_provider_still_registered_in_factory(self):
+        import importlib
+
+        from pyutilz.llm import factory as factory_module
+
+        assert "openrouter" in factory_module._PROVIDER_MODULES
+        mod_path, cls_name = factory_module._PROVIDER_MODULES["openrouter"]
+        assert mod_path == "pyutilz.llm.openrouter_provider"
+        mod = importlib.import_module(mod_path)
+        assert getattr(mod, cls_name).__name__ == "OpenRouterProvider"
