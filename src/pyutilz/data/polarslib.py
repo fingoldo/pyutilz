@@ -19,14 +19,12 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Iterable, Set
-import numpy as np, pandas as pd
+from typing import Iterable
+import numpy as np
 
-from functools import partial
 
-import psutil
 import textwrap
-from collections import defaultdict, Counter
+from collections import Counter
 from pyutilz.system.system import clean_ram
 from pyutilz.pythonlib import is_cuda_available, check_cpu_flag
 

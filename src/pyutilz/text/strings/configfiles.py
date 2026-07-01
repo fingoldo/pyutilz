@@ -11,7 +11,7 @@ from pyutilz.core.pythonlib import is_float
 def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Optional[str] = None, encryption: Optional[str] = "xor") -> None:
     import ast
     import configparser
-    from base64 import b64encode, b64decode
+    from base64 import b64decode
 
     try:
         if isinstance(variables, str):
@@ -64,7 +64,7 @@ def write_config_file(
 ) -> None:
     import os
     import configparser
-    from base64 import b64encode, b64decode
+    from base64 import b64encode
 
     try:
 

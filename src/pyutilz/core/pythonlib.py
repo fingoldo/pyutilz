@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, Iterable, List, Literal, Optional, Sequence, Union
+from typing import Any, Callable, Iterable, Literal, Optional, Sequence, Union
 
 import time
 import numbers
@@ -636,7 +636,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     Load plicked object, dataframe, Catboost model, based on file presence and name.
     """
     from catboost import CatBoostClassifier
-    import pandas as pd, numpy as np
+    import pandas as pd
 
     is_here = False
     fpath = abspath(fpath)

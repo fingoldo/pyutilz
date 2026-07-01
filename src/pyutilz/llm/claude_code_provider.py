@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
 from pyutilz.llm.base import LLMProvider

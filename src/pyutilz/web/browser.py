@@ -40,9 +40,8 @@ from selenium.webdriver.common.by import By
 
 from pyutilz.core import pythonlib
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from time import sleep
-import time
 
 # ***************************************************************************************************************************
 # INITS
@@ -132,7 +131,6 @@ def find_chrome_executable():
 
 def start_selenium() -> object:
     import zipfile
-    import os
 
     global browser
 

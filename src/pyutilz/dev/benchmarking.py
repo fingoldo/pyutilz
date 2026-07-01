@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 import numpy as np
 from timeit import default_timer as timer
 

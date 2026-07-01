@@ -42,7 +42,6 @@ def jsonize_atrtributes(
     if exclude is None:
         exclude = []
     import numbers
-    from collections.abc import Sequence, Iterable
 
     res = None
     if isinstance(obj, str):

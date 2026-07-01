@@ -20,7 +20,6 @@ ensure_installed("psycopg2 nltk spacy")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
 
 # psycopg2 + pyutilz.database are deferred to call site - tokenizers.py is
 # loaded by mlframe via the pyutilz.text re-export chain; not every consumer

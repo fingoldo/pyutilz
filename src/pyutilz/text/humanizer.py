@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import random
 import re
-import unicodedata
 from typing import Sequence
 
 # ---------------------------------------------------------------------------

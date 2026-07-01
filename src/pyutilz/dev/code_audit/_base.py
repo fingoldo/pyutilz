@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import ast
-import json
-import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Iterable, Optional
 
 
 # --- public types --------------------------------------------------------

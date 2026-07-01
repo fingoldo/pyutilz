@@ -12,7 +12,6 @@ import logging
 import os
 
 from tenacity import (
-    retry_if_exception,
     stop_after_attempt,
     stop_never,
     wait_exponential,
