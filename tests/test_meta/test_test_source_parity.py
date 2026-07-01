@@ -85,6 +85,21 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "sql_helpers": "database/db subpackage; covered by test_db_extra.py + test_smoke_untested_modules.py",
     "upsert": "database/db subpackage; covered by test_db_extra.py + test_smoke_untested_modules.py",
     "sqlite": "database/db subpackage; covered by test_db_extra.py + test_smoke_untested_modules.py",
+    # data/pandaslib was split from a single >1000-LOC module into a subpackage;
+    # every submodule is exercised jointly through the ``pandaslib`` facade by
+    # tests/test_pandaslib.py (+ test_pandaslib_extra.py / test_pandaslib_extra2.py).
+    "dtypes": "data/pandaslib subpackage; covered by test_pandaslib.py",
+    "frames": "data/pandaslib subpackage; covered by test_pandaslib.py",
+    "io_ops": "data/pandaslib subpackage; covered by test_pandaslib.py",
+    "benchmarks": "data/pandaslib subpackage; covered by test_pandaslib.py",
+    # performance/kernel_tuning/cache was split from a single >1000-LOC module
+    # into a subpackage; every submodule is exercised jointly through the
+    # ``cache`` facade by tests/performance/kernel_tuning/* (test_cache.py,
+    # test_cache_concurrency.py, test_cache_facade.py re-export sensor).
+    "cache_base": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
+    "cache_class": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
+    "cache_hooks": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
+    "region_matching": "kernel_tuning/cache subpackage; covered by tests/performance/kernel_tuning/*",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
