@@ -661,6 +661,40 @@ def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
     assert rc == 0
 
 
+# ---- subpackage facade sensor ------------------------------------------
+
+
+def test_facade_reexports_are_same_objects():
+    """After the >1000-LOC split into a subpackage, the ``code_audit``
+    facade must re-export every public symbol as the SAME object the
+    cohesive submodule defines. Guards against a future submodule shuffle
+    silently changing the public import surface."""
+    import pyutilz.dev.code_audit as facade
+    from pyutilz.dev.code_audit._base import Finding as _Finding
+    from pyutilz.dev.code_audit.mutable_defaults import scan_mutable_defaults as _smd
+    from pyutilz.dev.code_audit.closures import scan_late_binding_closures as _slbc
+    from pyutilz.dev.code_audit.default_via_or import scan_default_via_or_trap as _sdvot
+    from pyutilz.dev.code_audit.broad_except import scan_broad_except_swallows as _sbes
+    from pyutilz.dev.code_audit.nan_equality import scan_nan_equality as _sne
+    from pyutilz.dev.code_audit.mutation_during_iteration import scan_mutation_during_iteration as _smdi
+    from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _sc
+    from pyutilz.dev.code_audit.cli import main as _main
+
+    assert facade.Finding is _Finding
+    assert facade.scan_mutable_defaults is _smd
+    assert facade.scan_late_binding_closures is _slbc
+    assert facade.scan_default_via_or_trap is _sdvot
+    assert facade.scan_broad_except_swallows is _sbes
+    assert facade.scan_nan_equality is _sne
+    assert facade.scan_mutation_during_iteration is _smdi
+    assert facade.run_all is _ra
+    assert facade.SCANNERS is _sc
+    assert facade.main is _main
+    # Every scanner in the registry is the facade-level attribute of the same name.
+    for name, fn in facade.SCANNERS.items():
+        assert callable(fn)
+
+
 def test_cli_json_output(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
     from pyutilz.dev.code_audit import main as cli_main

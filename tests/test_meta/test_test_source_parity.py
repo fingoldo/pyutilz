@@ -68,6 +68,16 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "dashlib": "covered by test_smoke_untested_modules.py",
     "notebook_init": "covered by test_smoke_untested_modules.py",
     "tokenizers": "covered by test_smoke_untested_modules.py",
+    # dev/code_audit was split from a single >1000-LOC module into a
+    # subpackage; every scanner submodule is exercised jointly by
+    # tests/test_code_audit.py (positive+negative case per scanner).
+    "mutable_defaults": "code_audit scanner; covered by test_code_audit.py",
+    "closures": "code_audit scanner; covered by test_code_audit.py",
+    "default_via_or": "code_audit scanner; covered by test_code_audit.py",
+    "broad_except": "code_audit scanner; covered by test_code_audit.py",
+    "nan_equality": "code_audit scanner; covered by test_code_audit.py",
+    "mutation_during_iteration": "code_audit scanner; covered by test_code_audit.py",
+    "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
