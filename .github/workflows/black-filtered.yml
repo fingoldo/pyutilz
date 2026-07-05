@@ -1,0 +1,29 @@
+name: Black (filtered)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  black-filtered:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install black
+        run: pip install black
+
+      # Flags any Black finding EXCEPT blank-line insertion and arg/import-list
+      # explosion, which the project deliberately keeps -- see
+      # scripts/black_filtered_apply.py docstring for the excluded-class rationale.
+      - name: Black format check, filtered
+        run: python scripts/black_filtered_apply.py --config pyproject.toml --check .

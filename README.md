@@ -1,6 +1,7 @@
 # pyutilz
 
 [![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
+[![Black (filtered)](https://github.com/fingoldo/pyutilz/workflows/Black%20(filtered)/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/main/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
