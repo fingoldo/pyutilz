@@ -76,8 +76,11 @@ jobs:
       run: ruff check .
       continue-on-error: true
 
-    - name: Black format check (advisory)
-      run: black --check .
+    # Custom filtered Black check (advisory): flags any Black finding EXCEPT
+    # blank-line insertion and arg/import-list explosion, which the project
+    # deliberately keeps (see scripts/black_filtered_apply.py docstring).
+    - name: Black format check, filtered (advisory)
+      run: python scripts/black_filtered_apply.py --config pyproject.toml --check .
       continue-on-error: true
 
     - name: mypy (advisory)
