@@ -12,7 +12,8 @@ A Python utilities library covering data-frame ops, databases, web/cloud, system
 ## Installation
 
 ```bash
-pip install pyutilz[all]              # full install
+pip install pyutilz[all,dev]          # full install (recommended)
+
 pip install pyutilz                   # core only, no hard deps
 pip install pyutilz[dataframes]       # pandas + numpy + pyarrow + polars
 pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql
@@ -169,8 +170,11 @@ from pyutilz.system.system import get_max_affordable_workers_count
 from pyutilz.system.parallel import applyfunc_parallel
 
 n = get_max_affordable_workers_count(reservedCores=1)
-results = applyfunc_parallel(expensive_fn, iterable=inputs, n_cores=n,
-                              show_progress=True)
+# iterable is a list of per-call arg tuples (passed to func via starmap);
+# return_dataframe=False for scalar/list results (True concatenates
+# per-call pandas Series/DataFrame results instead).
+results = applyfunc_parallel(iterable=inputs, func=expensive_fn, n_cores=n,
+                              return_dataframe=False)
 ```
 
 **System & hardware introspection in one call** — CPU info (via
@@ -191,7 +195,7 @@ info = get_system_info(
 **Per-host kernel-tuning cache** — when a project ships multiple CUDA / numba / cupy variants of the same hot numerical kernel, the "best" choice depends on the live GPU. Hardcoded thresholds stop being correct as soon as the package runs on a different cc. This module stores empirically-measured `(variant, block_size, ...)` decisions per `hw_fingerprint` and dispatches at runtime:
 
 ```python
-from pyutilz.system.kernel_tuning_cache import KernelTuningCache, hw_fingerprint
+from pyutilz.performance.kernel_tuning import KernelTuningCache, hw_fingerprint
 
 cache = KernelTuningCache.load_or_create()
 print(hw_fingerprint())                # "cpu_intel-i7-9700k_gpu_gtx-1050-ti_cc6.1"
@@ -207,7 +211,7 @@ region = cache.lookup("joint_hist_batched", n_samples=1_000_000, joint_size=100)
 launch_kernel(variant=region["variant"], block=region["block_size"])
 ```
 
-Schema-versioned JSON at `~/.pyutilz/kernel_tuning/<hw_fingerprint>.json` (override via `$PYUTILZ_KERNEL_CACHE_DIR`). Cross-process safe (filelock + merge-on-write). Provenance (CUDA driver/runtime, cupy/numba/numpy versions, GPU summary) auto-stamped; stale entries from upgraded libs are detected via `provenance_changed()`. Concrete consumer: [mlframe MRMR](https://github.com/fingoldo/mlframe) feature selection uses this for joint-histogram CUDA RawKernel dispatch (shared-mem vs global-atomic vs numba.cuda), measured 2.6× cumulative speedup at N=1M, p=30.
+Immutable per-`(host, kernel, code_version)` JSON files under `~/.pyutilz/kernel_tuning/` (override via `$PYUTILZ_KERNEL_CACHE_DIR`) — no `filelock`, no read-modify-write, so concurrent writers can never revert each other's fresher entry. Provenance (CUDA driver/runtime, cupy/numba/numpy versions, GPU summary) auto-stamped; stale entries from upgraded libs are detected via `provenance_changed()`. Concrete consumer: [mlframe MRMR](https://github.com/fingoldo/mlframe) feature selection uses this for joint-histogram CUDA RawKernel dispatch (shared-mem vs global-atomic vs numba.cuda), measured 2.6× cumulative speedup at N=1M, p=30.
 
 **Synchronous timeouts and slow-call alerting:**
 

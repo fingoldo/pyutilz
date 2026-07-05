@@ -11,7 +11,7 @@ Import the public API from here; the implementation lives in the ``cache`` /
 ``registry`` / ``remote`` / ``code_versioning`` submodules.
 """
 from .benchmark import benchmark_backends, time_backend
-from .cache import KernelTuningCache, cache_path, register_default_cache
+from .cache import KernelTuningCache, cache_path, hw_fingerprint, register_default_cache
 from .code_versioning import compute_code_version
 from .registry import TunerSpec, discover_tuners, get_registry, kernel_tuner, retune_all, tune_spec
 from .remote import RemoteBackend, S3Backend
@@ -29,6 +29,7 @@ def array_location(x) -> str:
 __all__ = [
     "KernelTuningCache",
     "cache_path",
+    "hw_fingerprint",
     "register_default_cache",
     "compute_code_version",
     "TunerSpec",

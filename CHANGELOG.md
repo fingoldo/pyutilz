@@ -7,666 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed — accidentally-public leaked imports (surface cleanup)
-
-Removed 14 leaked import symbols from the public surface of `pyutilz.image`, `pyutilz.logginglib`,
-`pyutilz.numpylib` and `pyutilz.parallel`. These were never intended API — they were module-level
-imports of helpers that live elsewhere and were re-exported by accident:
-`ensure_installed` (real home `pyutilz.core.pythonlib`), `json_pg_dumps` / `extract_json_attribute`
-/ `leave_json_attributes` / `remove_json_attributes` (`pyutilz.text.strings`), `get_external_ip`
-(`pyutilz.web.web`), `get_script_file` (`pyutilz.system.system`), `sep`, `set_start_method`.
-Import them from their real homes instead. Verified no in-house downstream (mlframe + sibling
-projects) imports any of these from the affected modules. No function code was removed.
-
-## [Unreleased] — 2026-06-23
-
-### Changed — contention-robust GPU-kernel sweep ranking (interleaved min-over-reps)
-
-``pyutilz.dev.benchmarking.sweep_backend_grid`` / ``sweep_backend_crossover``
-gained a ``ranking`` parameter, defaulting to ``"robust"``:
-
-* The legacy ranking (now ``ranking="mean"``) timed each candidate's whole
-  rep-block back-to-back and took the MEAN per-call ms — SEQUENTIALLY per
-  candidate. On a CONTENDED GPU (a concurrent process competing for the device)
-  a candidate measured during a contention spike loses to one measured in a
-  lull, so the sweep mis-ranks and can pin a SLOW config as "fastest".
-* ``ranking="robust"`` (default) instead interleaves all candidates WITHIN each
-  rep (so every candidate sees the same contention weather per rep) and takes
-  the per-candidate MIN over reps. min is the right estimator under contention
-  because noise only ADDS time: the fastest observed call approaches the true
-  uncontended cost. On a quiet device it converges to the same pick as the mean.
-* Equivalence-gating is unchanged (a divergent-but-faster variant is still
-  dropped before timing); the cache file format is unchanged. CPU sweeps that
-  pass no ``ranking`` now also use the robust metric (safe — same pick when
-  uncontended). Regression-tested via a scripted-clock contention scenario.
-
-## [Unreleased] — 2026-05-20
-
-### Changed — kernel-tuning cache: immutable per-(host,kernel,code_version) storage (no filelock, no lost update)
-
-Replaces the shared-mutable-per-host-JSON + ``filelock`` model in
-``pyutilz.performance.kernel_tuning.cache`` (the root cause of the
-process/thread locking pain) with **immutable** files, one per tuning:
-
-    <cache_dir>/<hw_fingerprint>/<kernel_slug>/<code_version>.<salt>.<pid>.<ts>.json
-
-* **No read-modify-write** — each ``update`` writes a brand-new uniquely-named
-  file (tempfile + ``os.replace``); no file is ever modified in place, so the
-  D1 lost-update (a concurrent writer of one kernel silently reverting another's
-  fresher entry via a stale whole-snapshot merge) is structurally impossible.
-* **Lock-free reads** — ``lookup`` resolves a kernel by globbing its directory
-  and picking the newest file by ``tuned_utc`` (mtime tiebreak); the parse is
-  cached in ``self._loaded`` so the hot path stays in-memory as before.
-* **Singleton-without-blocking** — a sweep is claimed by atomically creating a
-  ``<code_version>.INPROGRESS`` marker via ``os.open(O_CREAT|O_EXCL)``. Win =
-  own the sweep; ``EEXIST`` = give up immediately (no ``filelock``, no 900s
-  timeout). The marker embeds ``pid`` + ``start_ts``; a would-be sweeper STEALS
-  a stale marker (dead owner pid OR start_ts older than a max-sweep budget,
-  ``$PYUTILZ_KERNEL_SWEEP_BUDGET_SEC``, default 1800s), so a crashed sweeper
-  never wedges anyone.
-* **Migration** — on first access a legacy monolithic ``<fp>.json`` is split
-  into per-kernel immutable files once (under an ``O_EXCL`` claim) and renamed
-  aside; existing caches keep working.
-* **D9** — the remote write-through now happens OUTSIDE any lock (there is no
-  lock), and ``S3Backend`` sets explicit boto3 connect/read timeouts
-  (``$PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT`` / ``..._READ_TIMEOUT``) so a hung
-  S3 ``put`` never stalls a local save.
-* **D3** — a bounded retry (3× ~50ms) wraps ``os.replace`` for Windows
-  AV / share-delete transients.
-
-Public API is 100% stable: ``lookup`` / ``update`` / ``get_or_tune`` /
-``load_or_create`` / ``reset`` / ``evict`` / ``get_metadata`` /
-``register_default_cache`` / ``cache_path`` / ``hw_fingerprint`` /
-``KernelTuningCache(in_memory=True)`` keep their signatures + semantics.
-``SCHEMA_VERSION`` bumped to 3. New helper ``host_cache_dir()`` exposes the
-per-host directory.
-
-### Added — ``retune_all`` / ``tune_spec`` ``skip_existing`` parameter
-
-``skip_existing: bool = True`` skips sweeping any (kernel, hardware) whose
-CURRENT ``code_version`` already has a cached tuning, so re-running an offline
-benchmark doesn't redo finished work. ``skip_existing=False`` forces a full
-re-sweep (``force=True`` still takes precedence and re-sweeps unconditionally).
-
-### Added — ``pyutilz.dev.code_audit``: AST-based scanners for recurring Python bug classes
-
-Promotes the throwaway ``ast.walk`` scripts that subagent audit runs
-kept dropping into ``D:/Temp`` into a permanent, reusable library +
-CLI. Scans any Python source tree (not just pyutilz) for four bug
-classes uncovered repeatedly during mlframe audits:
-
-* ``mutable_default`` — ``def f(x=[])`` / ``={}`` / ``=set()`` / ``=list()`` /
-  ``=dict()``. Distinguishes mutated-in-body (**P0**: state leaks across
-  callers) from never-mutated (**Low**: idiomatic-but-questionable). The
-  regex matcher previously in ``scripts/auto_refactor.py`` could not see
-  this distinction.
-* ``late_binding_closure`` — ``lambda`` / nested ``def`` inside a ``for``
-  loop that captures the loop variable AND escapes the iteration
-  (stored in a list/dict/callback registry). Heuristic excludes
-  synchronous consumers (``sorted(..., key=lambda k: ...)``, ``min``,
-  ``max``, ``filter``, ``map``, ``functools.reduce``) which exhaust
-  the closure before the next iteration.
-* ``default_via_or`` — ``x = arg or DEFAULT`` where DEFAULT is a non-trivial
-  literal that silently rewrites caller-passed ``0`` / ``0.0`` / ``""`` /
-  empty container. Severity-tiered: ``or 4`` (integer) is P1, ``or
-  compute()`` (callable) is P2, ``or "default"`` is Low.
-* ``broad_except_swallow`` — ``except Exception:`` / bare ``except:``
-  with body of ``pass`` / ``continue`` / bare ``return`` and no
-  ``logger.warning``/``logger.error`` call or re-raise. The classic
-  "silent data drop" pattern.
-
-**Public surface:**
-
-* :class:`pyutilz.dev.code_audit.Finding` — dataclass with ``check``,
-  ``severity``, ``file``, ``line``, ``snippet``, ``detail``; renders
-  to markdown via :meth:`Finding.as_md_row`.
-* :func:`scan_mutable_defaults` / :func:`scan_late_binding_closures` /
-  :func:`scan_default_via_or_trap` / :func:`scan_broad_except_swallows`
-  — pure ``(root: Path) -> list[Finding]`` functions.
-* :func:`run_all` — convenience wrapper running every (or selected)
-  scanner; sorts by (severity, check, file, line).
-* CLI: ``python -m pyutilz.dev.code_audit <root> [--check NAME ...]
-  [--format markdown|json] [--min-severity P0|P1|P2|Low]``. Exit
-  code is non-zero when any P0/P1 finding is present so CI can gate
-  on it.
-
-**Integration:**
-
-* ``scripts/auto_refactor.py`` now delegates its mutable-default
-  detection to ``scan_mutable_defaults``; the prior regex version
-  flagged read-only defaults as warnings indiscriminately and missed
-  ``=set()`` / ``=list()`` / ``=dict()`` call-form defaults.
-* Tested green against the entire ``mlframe/src/mlframe/`` tree (zero
-  P0/P1 findings for mutable defaults and late-binding closures, which
-  matches what the prior subagent AST walk reported).
-
-**Tests:** ``tests/test_code_audit.py`` — 25 tests covering positive
-and negative cases for every scanner, sort ordering of
-``run_all``, the excluded-dir convention, the markdown rendering,
-and CLI exit-code / JSON-output behavior.
-
-## [Unreleased] — 2026-05-19
-
-### Added — ``pyutilz.system.kernel_tuning_cache``: persistent per-host kernel-tuning cache
-
-When a project ships multiple implementations of a hot numerical kernel
-(global-atomic vs shared-mem CUDA RawKernels, numba.cuda vs cupy, plain
-numpy vs njit-prange), the "best" choice depends on the live hardware.
-Hardcoded thresholds stop being correct as soon as the package runs on
-a different GPU or CPU.
-
-New module provides storage + lookup primitives only; the auto-tune
-sweep stays project-side.
-
-**Public surface:**
-
-* :func:`hw_fingerprint` -- stable per-host key
-  ``cpu_<slug>_gpu_<slug>_cc<M.m>``.
-* :func:`cache_dir` / :func:`cache_path` -- file-system layout
-  (``~/.pyutilz/kernel_tuning/<fingerprint>.json``; override via
-  ``$PYUTILZ_KERNEL_CACHE_DIR``).
-* :class:`KernelTuningCache` -- ``.load_or_create()``, ``.update()``,
-  ``.lookup()``, ``.save()``; multiple kernels per host file,
-  schema-versioned JSON.
-* :func:`provenance_changed` -- material-key comparator (cuda driver /
-  runtime, cupy / numba / numpy versions, gpu cc + name) to detect
-  stale entries after lib upgrades.
-
-**Schema-v1 JSON layout** (one file per fingerprint):
-
-```
-{
-  "schema_version": 1,
-  "hw_fingerprint": "cpu_<...>_gpu_<...>_cc<M.m>",
-  "timestamp_utc": "2026-05-19T...",
-  "kernels": {
-    "<kernel_name>": {
-      "axes": ["axis_1_name", "axis_2_name", ...],
-      "regions": [
-        {"axis_1_max": 200000, "axis_2_max": 25,
-         "variant": "shared", "block_size": 256, "wall_ms": 0.21},
-        ...,
-        {"axis_1_max": null, "axis_2_max": null,
-         "variant": "shared", "block_size": 512}    // catch-all
-      ]
-    }
-  }
-}
-```
-
-**Cross-process safety:**
-
-Save path is wrapped in ``filelock`` with read-modify-write inside the
-lock -- two suites running in parallel on the same ``data_dir`` both
-land in the final on-disk cache. Atomic-write via temp + rename;
-corrupt or version-mismatched files trigger a re-tune (safe
-degradation, never a hard fail).
-
-**Concrete consumer:** ``mlframe.feature_selection._benchmarks.kernel_tuning_cache``
-houses the auto-tune sweep for ``joint_hist_batched`` (CUDA RawKernels
-in ``mlframe.feature_selection.filters.gpu``). Measured cumulative
-MRMR.fit speedup at N=1M, p=30, fe_npermutations=50: 23.75s baseline ->
-9.15s with full stack (joblib threading + njit batch_pair_mi_prange +
-numba.cuda + cupy + shared-mem kernel + kernel_tuning_cache dispatch),
-2.60x net.
-
-**Optional dep:** the GPU-fingerprint helpers import
-``pyutilz.system.gpu_dispatch.gpu_capability_summary``, which already
-exists in pyutilz and is a no-op on CPU-only hosts (returns an empty
-summary). The cache itself works without CUDA -- the fingerprint
-degrades to ``cpu_<slug>_gpu_nogpu_cc0.0``.
-
-## [Unreleased] — 2026-05-04
-
-### Added — OpenRouter unified ``reasoning`` field + widened ``thinking=`` parameter (mixed bool|str)
-
-The base OpenAI-compatible provider's ``generate(thinking=...)`` /
-``generate_stream(thinking=...)`` parameter is widened from ``bool | None``
-to ``bool | str | None``. New string values: ``"low"``, ``"medium"``,
-``"high"``, ``"minimal"`` map to the upstream's effort-tier where the
-upstream supports one (OpenRouter's unified ``reasoning.effort`` field;
-OpenAI ``reasoning_effort``). ``True`` is mapped to ``"medium"`` for
-effort-string upstreams; non-empty string is coerced to ``True`` for
-bool-flag upstreams (DeepSeek V4 ``thinking.type``). Empty string ``""``
-is treated as ``False`` defensively.
-
-New static helper ``OpenAICompatibleProvider._normalize_thinking(value)
--> (enabled, effort)`` lets each provider's ``_thinking_request_field``
-override pick the half of the contract its API requires.
-
-**OpenRouter override (new)**:
-``OpenRouterProvider._thinking_request_field(thinking)`` emits OR's
-unified ``reasoning`` field that auto-routes upstream:
-- ``False`` / ``""`` -> ``{"reasoning": {"exclude": True}}``
-- ``True`` -> ``{"reasoning": {"effort": "medium"}}``
-- ``"low"`` / ``"medium"`` / ``"high"`` / ``"minimal"`` (or any other
-  str) -> ``{"reasoning": {"effort": <str>}}`` (passed through; unknown
-  strings forwarded for OR's edge to accept or 400)
-
-Pre-fix the OR provider inherited the base class default (return
-``None``) so any ``thinking=...`` argument was silently ignored on OR.
-Now it routes via OR's ``reasoning`` field which OR auto-translates to
-the correct upstream-specific shape (Anthropic ``thinking``, OpenAI
-``reasoning_effort``, DeepSeek V4 thinking-toggle, etc.) based on the
-resolved model ID. See https://openrouter.ai/docs/use-cases/reasoning-tokens.
-
-**DeepSeek override updated**:
-``DeepSeekProvider._thinking_request_field`` now goes through
-``_normalize_thinking`` so callers passing ``thinking="high"`` (effort
-string) still get DeepSeek's bool-flag (``{"thinking": {"type":
-"enabled"}}``). Empty string disables.
-
-14 new tests: 9 in ``tests/test_llm_openrouter.py``
-(``TestThinkingRequestField``) + 5 in ``tests/test_llm_deepseek.py``
-covering the bool-flag string-coercion path. 176 LLM regression tests
-green.
-
-## [Unreleased] — 2026-05-02
-
-### Added — Live model-health pre-flight & enriched ``list_openrouter_models``
-
-Two new ``OpenRouterProvider`` methods backed by ``GET /api/v1/models/{slug}/endpoints``
-(auth required, but **not billed** against credits — i.e. a "free ping"):
-
-- ``check_model_health(model=None)`` — per-upstream ``status``,
-  ``uptime_5m`` / ``30m`` / ``1d``, ``latency_p50_ms`` / ``p95``,
-  ``throughput_p50_tps``, ``context_length``, ``max_completion_tokens``,
-  ``pricing``, ``supported_parameters``, ``quantization``,
-  ``supports_implicit_caching``. Plus best-of aggregates across all
-  upstreams: ``best_uptime_30m``, ``best_latency_p50_ms``,
-  ``best_throughput_p50_tps``.
-- ``is_model_healthy(model=None, min_uptime=0.99)`` — boolean guard;
-  returns ``False`` (rather than propagating) on network errors so a
-  failing pre-flight just defers the batch instead of crashing it.
-
-``list_openrouter_models`` becomes a two-stage pipeline:
-
-1. **Stage 1 (offline)** — same /api/v1/models filter as before
-   (``name_contains``, ``max_input_per_1m``).
-2. **Stage 2 (live, opt-in via ``return_only_healthy=True``)** — concurrent
-   ``ThreadPoolExecutor`` fetches /endpoints for each Stage-1 survivor,
-   drops anyone whose ``best_uptime_30m`` < ``min_uptime`` (default 0.95),
-   and attaches the full health block to each surviving row.
-
-New params: ``return_only_healthy=True`` (default), ``min_uptime=0.95``,
-``api_key`` (overrides env), ``max_workers=16``, ``timeout=30.0``.
-``sort_by`` extended with ``"uptime"`` / ``"latency"`` / ``"throughput"``
-(use the best-of aggregate per row).
-
-**Backward compat**: existing callers keep working. With NO API key
-configured, Stage 2 logs a warning and degrades to Stage-1-only output —
-matches the old offline behaviour. Tests using the old shape pass
-``return_only_healthy=False`` to opt out cleanly.
-
-23 new unit tests in this slice; 286 regression tests on touched modules
-green (full LLM suite + provider meta-tests).
-
-### Added — Full OpenRouter usage / response capture surface
-
-`OpenRouterProvider` now records every field OR exposes per request:
-
-- **`usage.cost_details.upstream_inference_cost`** → `last_/total_upstream_inference_cost_usd` (BYOK only — bare upstream price separated from any OR markup)
-- **`usage.prompt_tokens_details.audio_tokens`** → `last_/total_audio_tokens` (audio-modal models)
-- **Response-level metadata** → `last_generation_id` (for /generation lookup), `last_upstream_provider` (which backend actually served — critical when debugging routing), `last_upstream_model` (resolved model when `models_fallback` triggered), `last_native_finish_reason` (upstream's raw finish code: `tool_calls`, `end_turn`, `content_filter`, …)
-
-New methods:
-
-- **`fetch_generation_stats(generation_id=None)`** — hits `GET /api/v1/generation?id=…` for the post-hoc audit shape (~30 fields incl. `latency`, `generation_time`, `moderation_latency`, `provider_responses` per-attempt log, `cache_discount`, `response_cache_source_id`, `is_byok`). Defaults to `self.last_generation_id`. Use after a stream where the inline usage chunk was dropped, or for retroactive cost reconciliation.
-- **`last_call_summary()`** — one-shot dict of every `last_*` metric (cost, tokens, cache, audio, generation id, upstream provider/model, finish reasons). Convenience for ad-hoc inspection / structured logging.
-
-Extension to `get_session_cost()`: now also includes `upstream_inference_cost_usd`, `last_upstream_inference_cost_usd`, `audio_tokens`.
-
-Tiny base-class addition: `_track_provider_specific_response(data)` hook on `OpenAICompatibleProvider`, mirror of the existing `_track_provider_specific_usage` but for response-level fields outside the `usage` block. Default no-op; OR uses it.
-
-22 new unit tests; 264 regression tests on touched modules all green.
-
-### Added — OpenRouter provider (meta-provider, 200+ models behind one API)
-
-New `pyutilz.llm.openrouter_provider.OpenRouterProvider`, factory keys
-`"openrouter"` / `"or"` / `"router"`, env var `OPENROUTER_API_KEY`.
-Inherits from `OpenAICompatibleProvider` (OpenRouter is OpenAI-compatible
-at the wire level), with three meta-provider-specific touches:
-
-- **Authoritative cost via `usage.cost`** — every OR response carries the
-  USD billed by the upstream provider. We track it as ground truth in
-  `total_actual_cost_usd` / `last_actual_cost_usd`, surfaced under
-  `get_session_cost()["actual_cost_usd"]`. Per-token estimates from
-  the model catalogue would be wrong the moment OR reroutes to a
-  different backend; the upstream-reported field is the only honest
-  source. Captured via a tiny new `_track_provider_specific_usage(usage)`
-  hook on the OpenAI-compat base class (no-op for other providers).
-- **Lazy `/api/v1/models` catalogue** for `estimate_cost()` predictions —
-  fetched once per process, cached process-wide; degrades to zero on
-  network/parse failure (estimate isn't load-bearing). Public helper
-  `pyutilz.llm.list_openrouter_models(name_contains=…, sort_by=…,
-  max_input_per_1m=…, refresh=False)` returns the full catalogue so
-  callers can browse pricing / context windows / supported parameters.
-- **Routing knobs as hashable kwargs** so the factory's
-  `tuple(sorted(kwargs.items()))` cache key keeps working:
-  `provider_order`, `provider_ignore`, `provider_sort` (`"price"` /
-  `"throughput"` / `"latency"`), `provider_allow_fallbacks`,
-  `models_fallback`. `app_name` / `site_url` set `X-Title` and
-  `HTTP-Referer` for the public openrouter.ai/rankings dashboard.
-
-- **Per-model limits respect upstream caps** — `context_window` and
-  `max_output_tokens` resolve from `top_provider.context_length` /
-  `top_provider.max_completion_tokens` in the catalogue, falling back to
-  the model-level `context_length` and class defaults. Matters because
-  OR routes through one specific upstream that may cap shorter than the
-  model's theoretical max (e.g. a 1M-context model served by a provider
-  exposing only 200K). The upstream cap is what triggers `400: prompt
-  too long`; trusting the theoretical max would hand callers a footgun.
-- **Account introspection** — `check_account_limits()` calls
-  `/api/v1/key` (returns `limit_remaining`, `usage_daily/weekly/monthly`,
-  `byok_usage*`, `is_free_tier`, `rate_limit`); `get_account_credits()`
-  calls `/api/v1/credits` for the simpler total-credits view. Both
-  unwrap OR's `{"data": {...}}` envelope.
-
-54 unit tests (`tests/test_llm_openrouter.py`); regression tests on
-touched modules (base, deepseek, xai, factory, meta-tests) all green.
-
-### Added — Unified account-credits / rate-limit interface across all LLM providers
-
-Two new methods on `LLMProvider` ABC:
-- `async get_account_credits() -> dict` — billing snapshot (normalized
-  schema: `balance_usd`, `total_granted`, `total_used`, `currency`,
-  `is_available`, plus provider's `raw` response)
-- `async check_account_limits() -> dict` — quota / rate-limit snapshot
-
-Implementation matrix (researched against current public docs, not
-guessed):
-
-| Provider     | get_account_credits     | check_account_limits |
-|--------------|-------------------------|----------------------|
-| OpenRouter   | ✓ /api/v1/credits       | ✓ /api/v1/key        |
-| DeepSeek     | ✓ /user/balance         | NotImplementedError  |
-| Anthropic    | NotImplementedError     | NotImplementedError  |
-| OpenAI       | NotImplementedError     | NotImplementedError  |
-| xAI          | NotImplementedError     | NotImplementedError  |
-| Gemini       | NotImplementedError     | NotImplementedError  |
-| Claude Code  | NotImplementedError     | NotImplementedError  |
-
-NotImplementedError stubs (rather than the base default) carry
-provider-specific guidance: where to look in the console (URL),
-which response headers to inspect (`x-ratelimit-*`,
-`anthropic-ratelimit-*`), or why the API can't expose this (e.g.
-Gemini routes billing through GCP Cloud Billing API requiring
-separate auth; Claude Code is a Max-subscription product without
-per-token credits). Honest "not supported" beats guessed endpoints
-that 404 in production.
-
-176 regression tests green across base, factory, deepseek, xai,
-openai_compat, providers, retry, and meta-test suites; +18 new
-tests in `tests/test_llm_account_credits.py` covering the base
-default, DeepSeek's real implementation, every stub's error
-message, and the meta-test that every provider exposes both
-methods (polymorphic `await provider.get_account_credits()`).
-
-## [Unreleased] — 2026-04-28
-
-### Added (later that day) — `pyutilz.dev.meta_test_utils` + 11 more meta-tests
-
-`pyutilz/src/pyutilz/dev/meta_test_utils.py` — a reusable library of
-helpers for package-level meta-tests, factored out so both pyutilz and
-its dependent (mlframe) import the same plumbing rather than duplicating
-~400 LOC. Public API: `consumer_corpus`, `enumerate_test_files`,
-`public_top_level_symbols`, `strip_lineno`, `capture_signature`,
-`capture_module_surface`, `scan_todo_markers`,
-`count_user_deferred_entries`, `snake_case_variants_of`, `safe_import`.
-
-11 new meta-tests in `tests/test_meta/`:
-
-- `test_deferred_drift.py` (A2) — counts `_USER_DEFERRED_*` /
-  `_GRANDFATHERED` whitelist entries across every meta-test, fails on
-  growth vs `_debt_baseline.json`. Net counter visible per run; refresh
-  via `--refresh-debt-baseline`. Baseline: 4 whitelists, 20 entries.
-- `test_provider_contract.py` (D1) — every concrete LLM provider
-  inherits from `LLMProvider`, overrides every abstract method, and its
-  override signatures stay compatible with the base (no dropped
-  required parameters).
-- `test_encoding_consistency.py` (D2) — every builtin `open(...)` call
-  in production code passes `encoding=` (or uses `"b"` mode). Critical
-  for Windows cp1251/cp1252 where the default codec crashes on non-
-  ASCII files. Defers 8 known offenders in `_USER_DEFERRED_CALLS` for
-  bulk fix later.
-- `test_provider_cache_concurrency.py` (D3) — 20 concurrent
-  `get_llm_provider("anthropic", ...)` callers share the same instance,
-  the constructor runs exactly once, and distinct kwargs produce
-  distinct instances. Catches a future refactor breaking the
-  double-checked-locking pattern in `_provider_cache`.
-- `test_public_docstrings.py` (E1) — snapshot-based check for new
-  public symbols without a docstring. Baseline: 176 undocumented.
-  Refresh: `--refresh-docstring-baseline`.
-- `test_public_annotations.py` (E2) — snapshot-based check for new
-  public functions without complete type annotations (return + every
-  non-self/cls param). Baseline: 157 unannotated. Refresh:
-  `--refresh-annotation-baseline`.
-- `test_version_consistency.py` (E3) — `pyutilz.__version__`,
-  `pyutilz.version.__version__`, and `pyproject.toml::[project].version`
-  must all agree. Both sources currently `1.0.0` — pass.
-- `test_no_import_cycles.py` (E4) — Tarjan's SCC over the AST-built
-  import graph; flags multi-node cycles. pyutilz currently has none
-  (3 single-node `__init__.py` self-references are intentional re-export
-  patterns; not flagged).
-- `test_no_unicode_in_console_output.py` (E5) — snapshot-based check
-  for non-ASCII string literals in `print(...)` / `logger.*(...)` calls.
-  Baseline: 27 existing offenders. Critical for Windows stdout.
-- `test_meta_meta.py` (F1+F2+F3) — actionable failure messages, no
-  private-internals reach-ins (with whitelist citing
-  `_create_lazy_module`, `_PROVIDER_MODULES`, `_provider_cache` as
-  legitimate test surfaces), perf-budget overrides match real test
-  names.
-
-### Existing tests refactored to use `pyutilz.dev.meta_test_utils`
-
-`test_dead_helpers.py`, `test_todo_hygiene.py`, `test_test_source_parity.py`,
-`test_api_stability.py` now import shared building blocks instead of
-re-implementing them inline.
-
-### Total meta-test footprint after this batch: 18 files, 45 tests, ≈ 35 s wall-clock.
-
-## [Unreleased] — 2026-04-28
-
-### Added — meta-test suite (`tests/test_meta/`, 29 tests, ≈ 66 s wall-clock)
-
-A package-level static-check suite that catches whole classes of drift
-without exercising the runtime behaviour. Each test is independently
-runnable, has its own per-test whitelist for "drain over time" debt,
-and is wired into `.pre-commit-config.yaml` so misconfigurations get
-caught at commit time instead of in downstream CI.
-
-- **PT-1 (`test_provider_registration.py`)** — every canonical name in `llm.factory._PROVIDER_MODULES` points to an importable module / class, every alias in `_ALIASES` resolves to a real canonical entry, and aliases never collide with canonical names. Catches "added a new provider, forgot the registry entry" — surfaces the bug *before* the first user request crashes inside `importlib`.
-- **PT-2 (`test_module_alias_integrity.py`)** — every value in `_MODULE_ALIASES` (the 24-entry backward-compat map under `pyutilz/__init__.py`) imports cleanly, the proxy module installed at `pyutilz.<alias>` resolves a real public symbol on attribute access, alias keys never collide with sub-package names, and every alias target lives under the `pyutilz.` namespace. **Surfaced + fixed a real bug:** `pyutilz/web/browser.py:41` was importing `from . import pythonlib` (i.e. `pyutilz.web.pythonlib`), but `pythonlib` lives under `pyutilz.core`. Fixed to `from pyutilz.core import pythonlib`.
-- **PT-3 (`test_test_source_parity.py`)** — every non-trivial production module under `src/pyutilz/` has at least one corresponding `tests/test_<name>.py` (or aliased name); reverse direction also flags test files without a target module. Surfaced 8 modules without test coverage held in `_USER_DEFERRED_MODULES` for later attention.
-- **PT-4 (`test_todo_hygiene.py`)** — every `TODO` / `FIXME` / `XXX` / `HACK` comment in production code carries an attribution (assignee in parens or ISO date or `@assignee`). Currently 0 bare markers — the codebase is clean.
-- **PT-5 (`test_dead_helpers.py`)** — public `def` / `class` symbols inside `pyutilz/llm/` (the only sub-tree where helpers are unambiguously internal) must be referenced ≥ 2× in the production corpus. Surfaced `LLMTruncationError` and `parse_retry_after` — held in `_USER_DEFERRED_DEAD_HELPERS` pending review.
-- **PT-6 (`test_api_stability.py`)** — captures the public surface (top-level `__all__` + alias map + every alias-target's public symbol set with signatures + class MROs) into `tests/test_meta/_api_snapshot.json`. Renames / removals fail the test; additions are silent. Refresh after intentional API changes via `pytest tests/test_meta/test_api_stability.py --refresh-api-snapshot`. Initial snapshot: 27 aliases, 649 symbols.
-- **PT-7 (`test_lazy_import_safety.py`)** — exercises the `_create_lazy_module` proxy infrastructure under realistic access patterns: unknown dunder access raises `AttributeError` (so `hasattr(mod, '__weird__')` works), proxy returns the same object as direct import (no double-wrap), repeated accesses are consistent, alias dict survives `importlib.reload`.
-- **PT-8 (`test_optional_deps_isolation.py`)** — `import pyutilz` succeeds with every optional-dep group masked (pandas / polars / database / web / cloud / nlp / llm). `pyutilz`, `pyutilz.core`, `pyutilz.text` import safely with **all** optional deps masked. Each scenario runs in a sub-process so the masking can't leak between tests.
-- **PT-9 (`test_no_top_level_side_effects.py`)** — importing pyutilz and every probed sub-module performs zero network I/O. Sockets and `urllib.request.urlopen` are blocked in a sub-process; any module attempting a request at module-load time fails the test with the offending call captured.
-- **`.pre-commit-config.yaml`** — runs the meta-test suite on every commit (≈ 30–60 s). A `manual`-stage variant skips PT-8 / PT-9 (the sub-process tests) and runs in ≈ 5 s for tight inner-loop work.
-
-### Fixed
-
-- **`pyutilz/web/browser.py`**: `from . import pythonlib` was unreachable (no such module under `pyutilz/web/`). Now imports `pythonlib` from `pyutilz.core`. Surfaced by PT-2 on its first run.
+### Added
+- `[dataframes]` extras group (`pandas` + `polars` combined); `[all,dev]` is now the recommended one-line install.
+- `pyutilz.dev.code_audit` — AST-based scanner + CLI for four recurring bug classes (mutable defaults, late-binding closures, `x or DEFAULT` footguns, silent broad-except swallows). `python -m pyutilz.dev.code_audit <root>`.
+- Kernel-tuning cache rewritten as immutable per-`(host, kernel, code_version)` files — no `filelock`, no lost updates under concurrent writers; legacy monolithic caches migrate automatically.
+- `pyutilz.dev.benchmarking` sweeps gained `ranking="robust"` (default): interleaved min-over-reps ranking that stays correct on a contended GPU, where the old mean-based ranking could pick the wrong "fastest" config.
+- Unified `get_account_credits()` / `check_account_limits()` across every LLM provider (OpenRouter and DeepSeek implement them; others raise an informative `NotImplementedError`).
+- OpenRouter provider: model catalogue browsing, live health pre-flight (`check_model_health`, `is_model_healthy`), full usage/cost capture (`fetch_generation_stats`, `last_call_summary`), authoritative per-request billed cost.
+- `thinking=` on `generate()`/`generate_stream()` now accepts `"low"/"medium"/"high"/"minimal"` effort strings (previously bool-only), normalized per-provider.
+- `tqdmu_lazy_start()` — starts the elapsed-time bar on first iteration, not construction.
 
 ### Changed
+- **CI/tooling overhaul**: pre-commit's blocking Ruff gate now matches CI exactly (`--select F,E9`, no ignore list) — previously a looser local ignore let unused-import/star-import/empty-fstring/unused-var debt land on `master` that CI would have caught. Black is applied repo-wide via `scripts/black_filtered_apply.py`, which excludes two Black behaviors project convention keeps by hand (arg/collection-list explosion, blank-line insertion); a dedicated `Black (filtered)` CI workflow + badge tracks it.
+- DeepSeek/xAI pricing and model registries refreshed (April 2026); DeepSeek default model switched to `deepseek-v4-flash`.
 
-- **`llm.deepseek_provider`**: updated model registry and pricing for the
-  V4 launch (April 2026). Added `deepseek-v4-flash` (1M context, 384K max
-  output, $0.14/$0.0028/$0.28 per 1M input-miss / input-hit / output) and
-  `deepseek-v4-pro` (1M / 384K, $1.74/$0.0145/$3.48). Cache-hit rates now
-  reflect the 2026-04-26 reduction to 1/10 of launch price. Default model
-  switched from `deepseek-reasoner` to `deepseek-v4-flash`. Legacy aliases
-  `deepseek-chat` / `deepseek-reasoner` retained (deprecated 2026-07-24).
-- **`llm.xai_provider`**: refreshed Grok pricing (April 2026). Fixed prior
-  1000x error on grok-4.20 family ($2000/$6000 → correct $2/$6 per 1M
-  tokens). Added `grok-4.20-beta` (general flagship alias) and `grok-4`
-  (alias for `grok-4-0709`). Added per-model context windows for grok-4
-  (256K) and grok-3 family (131K). Confirmed grok-4.20 cache hit at
-  $0.20/M (90% discount on input miss).
+### Fixed
+- 14 accidentally-public leaked-import symbols removed from `pyutilz.image` / `logginglib` / `numpylib` / `parallel` (never intended API; real homes documented in each symbol's replacement).
+- `pyutilz/web/browser.py` importing a nonexistent `pyutilz.web.pythonlib` (correct home: `pyutilz.core.pythonlib`).
+- SQL-injection and command-injection risks in `db.py` / `system.py` (historical, 0.90).
 
-## [Unreleased] — 2026-04-21
-
-### Added
-
-- **`tqdmu_lazy_start(iterable, **kwargs)` in `system.system`**: drop-in
-  for `tqdmu(iterable, **kwargs)` that starts the elapsed timer at the
-  first iteration, not at bar construction. Prevents the stale-timer
-  artefact (e.g. `desc: 0/N [6:27:44<?]`) that occurs when the caller
-  does heavy work between building the iterable and pulling the first
-  item. Underlying bar is still `tqdmu` — same environment-aware
-  selection between ipython-notebook and terminal back-ends.
-- **`deep: bool = True` kwarg on `data.pandaslib.get_df_memory_consumption`**:
-  default preserves existing byte-precise behaviour.
-  `get_df_memory_consumption(df, deep=False)` returns
-  `df.memory_usage(deep=False).sum()` for pandas — O(cols), milliseconds,
-  accounting for object columns at pointer size only. Use when the
-  consumer is a coarse heuristic (e.g. GPU-RAM fit check) on frames
-  with million-unique string columns where `deep=True` is pathological
-  (O(rows * avg_str_len), minutes on multi-GB frames). Polars branch
-  is unchanged (`.estimated_size()` is already O(cols)).
+### Meta-test infrastructure
+45 tests across 18 files under `tests/test_meta/` guard package-level invariants that runtime tests don't reach: provider registry/alias integrity, public-API snapshot drift, docstring/annotation coverage, import cycles, encoding safety, resource-handle leaks (`with`-block enforcement), lazy-format logging, dead-helper detection, and more. Each has a line-pinned baseline + `--refresh-*-baseline` flag for intentional changes. Wired into `.pre-commit-config.yaml`.
 
 ## [1.0.0] - 2026-02-18
 
-### Added - Hardware Detection Migration
-- **~30 hardware detection functions** migrated from ml_perf_test project to `system.system` module
-- **CPU Detection**:
-  - `get_cpu_info()` - Enhanced CPU detection via py-cpuinfo with better filtering
-  - `get_wmi_cpuinfo()` - Windows WMI CPU detection with detailed hardware info
-  - `get_lscpu_info()` - Linux lscpu parser with automatic type conversion
-  - `get_linux_board_info()` - Linux motherboard info from /sys/devices
-  - `parse_dmidecode_info()` - Linux dmidecode parser (BIOS, memory, etc.)
-- **GPU Detection** (replaces old functions):
-  - `get_nvidia_smi_info()` - Rich nvidia-smi XML parsing with full GPU stats
-  - `get_gpu_cuda_capabilities()` - CUDA device attributes via numba.cuda
-  - `get_cuda_gpu_details()` - Combined nvidia-smi + CUDA capabilities
-  - `CUDA_SM_TO_CORES` - Compute capability to CUDA cores mapping constant
-- **Power & Large Pages**:
-  - `check_large_pages_support()` - Cross-platform large pages detection (Windows/Linux/macOS)
-  - `get_power_plan()` - Cross-platform power plan detection
-  - `get_battery_info()` - Battery status and charge level
-- **WMI Helpers** (Windows):
-  - `get_wmi_obj_as_dict()` - WMI object to dict conversion with type handling
-  - `summarize_devices()` - Hardware aggregation with counts
-  - `dict_to_tuple()` - Dictionary hashing helper
-  - `decode_memory_type()` - DDR type decoder (DDR3/DDR4/DDR5)
-  - `decode_cpu_upgrade_method()` - CPU socket type decoder
-  - `summarize_system_info()` - Complete Windows system summary (GPU, RAM, Cache, BIOS)
-- **OS & Software**:
-  - `get_os_info()` - Enhanced OS detection with detailed info
-  - `get_python_info()` - Python implementation and version detection
-- **Monitoring**:
-  - `ensure_idle_devices()` - Wait for CPU/GPU idle before benchmarks
-  - `system.hardware_monitor.UtilizationMonitor` - Background thread monitoring for CPU/GPU/RAM utilization
-- **Utilities**:
-  - `remove_nas()` - Recursive N/A removal from dicts with type conversion
+### Added
+- ~30 hardware-detection functions migrated from `ml_perf_test` into `system.system`: CPU/GPU/board/BIOS detection (py-cpuinfo, WMI, lscpu, dmidecode, nvidia-smi, CUDA capabilities), power plan + battery + large-pages detection, `UtilizationMonitor` background thread.
+- New `[system]` extras: `py-cpuinfo`, `GPUtil`, `xmltodict`, `pypiwin32` (Windows).
 
 ### Changed
-- **`get_system_info()` enhanced** with new fields while maintaining backward compatibility:
-  - `cpu_wmi_info`, `cpu_lscpu_info`, `cpu_board_info` (platform-specific)
-  - `gpu_nvidia_smi_info`, `gpu_cuda_capabilities` (replaces old gpuinfo)
-  - `large_pages_support`, `power_plan`, `battery_info`
-  - `system_wmi_summary`, `dmidecode_info` (detailed hardware)
-  - **Backward compatible**: Existing fields (`host_name`, `os_machine_guid`, `os_serial`) preserved for `distributed.py`
+- `get_system_info()` gained platform-specific fields (WMI/lscpu/dmidecode/nvidia-smi) while preserving existing fields for backward compatibility.
 
 ### Removed
-- **Old GPU functions** (replaced with superior ml_perf_test implementations):
-  - `compute_total_gpus_ram()` - Use `get_nvidia_smi_info()` instead
-  - `get_gpuinfo_gpu_info()` - Use `get_nvidia_smi_info()` instead
-  - `get_gpuutil_gpu_info()` - Use `get_nvidia_smi_info()` instead
-  - `get_pycuda_gpu_info()` - Use `get_gpu_cuda_capabilities()` instead
-
-### Dependencies
-- **New optional dependencies** in `[system]` extra:
-  - `py-cpuinfo>=9.0` - Enhanced CPU detection
-  - `GPUtil>=1.4` - GPU monitoring
-  - `xmltodict>=0.13` - nvidia-smi XML parsing
-  - `pypiwin32>=223` - WMI support on Windows
+- Superseded GPU functions (`compute_total_gpus_ram`, `get_gpuinfo_gpu_info`, `get_gpuutil_gpu_info`, `get_pycuda_gpu_info`) — use `get_nvidia_smi_info()` / `get_gpu_cuda_capabilities()`.
 
 ### Testing
-- **20 new tests** for hardware detection functions (`test_hardware_detection.py`)
-- **95% success rate** on Windows (19/20 tests passing, 1 skipped for Linux)
-- **Full test coverage** for CPU, GPU, power, OS, and monitoring functions
-- **Cross-platform testing** with platform-specific markers
-
-### Documentation
-- Complete test results with hardware-specific outputs
-- Dependency installation guide
-- Integration examples for ml_perf_test project
-
-### Migration Notes
-- **ml_perf_test integration**: Hardware detection functions now imported from pyutilz
-- **~1500 lines removed** from ml_perf_test.py (migrated to pyutilz)
-- **Graceful dependency handling**: Functions return None with warnings if optional deps unavailable
-- **Platform compatibility**: Proper guards for Windows/Linux/macOS-specific functionality
+20 new hardware-detection tests, 95% passing on Windows (1 Linux-only skip).
 
 ## [0.90] - 2026-02-18
 
-### Added
-- Public GitHub release with full packaging infrastructure
-- Comprehensive test suite (142 tests passing)
-- CI/CD automation with GitHub Actions
-- Quality badges (CI, coverage, Codacy, security)
-- Modern packaging with pyproject.toml
-- Professional README with documentation
-- CHANGELOG for version tracking
-- CONTRIBUTING guidelines for developers
-- Code coverage measurement with pytest-cov
-- Security scanning with bandit
-- Code style enforcement with black (line-length: 160)
-- Linting with ruff
+First public GitHub release: packaging (`pyproject.toml`), CI/CD, badges, 142-test suite, `black`/`ruff`/`bandit` tooling.
 
 ### Fixed
-- **SECURITY**: SQL injection vulnerabilities in db.py (6 locations)
-- **SECURITY**: Command injection risks in system.py
-- Broken imports in cloud.py, distributed.py, matrix.py (.python → .pythonlib)
-- Resource leaks (tracemalloc snapshots, temporary directories)
-- Import errors preventing module loading
-- Multiple bare except clauses replaced with proper exception handling
-
-### Changed
-- All print() calls replaced with proper logging
-- type() comparisons replaced with isinstance()
-- Module structure improved for better maintainability
-- Test coverage improved with additional test cases
+- SQL-injection vulnerabilities in `db.py` (6 locations) and command-injection risk in `system.py`.
+- Broken imports in `cloud.py` / `distributed.py` / `matrix.py`.
+- Resource leaks (`tracemalloc` snapshots, temp directories) and bare `except` clauses.
 
 ### Performance
-- pandaslib: optimize_dtypes 2x faster (verified benchmarks)
-- pandaslib: nullify_standard_values 200x faster
-- pandaslib: get_df_memory_consumption 15x faster
-- pandaslib: ensure_float32 5x faster
+`pandaslib`: `optimize_dtypes` 2x, `nullify_standard_values` 200x, `get_df_memory_consumption` 15x, `ensure_float32` 5x faster (measured).
 
-## [0.1-0.89] - 2024-2026
+## [0.1–0.89] - 2024–2026
 
-### Summary
-- Internal development versions
-- Core functionality development for 31 modules
-- Initial test suite creation
-- Performance optimizations
-- Bug fixes and improvements
+Internal development versions: core functionality across 31 modules, initial test suite, ongoing performance work.
 
 ---
 
 ## Module Categories
 
 ### Data Science & Analytics
-- pandaslib, polarslib, numpylib, numbalib, matrix
+pandaslib, polarslib, numpylib, numbalib, matrix
 
 ### Database & Storage
-- db, redislib, deltalakes, serialization
+db, redislib, deltalakes, serialization
 
 ### Web & Cloud
-- web, browser, cloud, graphql
+web, browser, cloud, graphql
 
 ### System & Infrastructure
-- system, parallel, monitoring, distributed, scheduling
+system, parallel, monitoring, distributed, scheduling
 
 ### Text & NLP
-- strings, tokenizers, similarity
+strings, tokenizers, similarity
 
 ### Development Tools
-- pythonlib, logginglib, benchmarking, dashlib
+pythonlib, logginglib, benchmarking, dashlib, code_audit
 
 ### Specialized
-- image, filemaker, com, openai
+image, filemaker, com, openai
