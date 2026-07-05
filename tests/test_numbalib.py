@@ -101,7 +101,7 @@ class TestArr2Str:
 
         # Check function is not a Numba compiled function
         # Numba functions have special attributes
-        assert not hasattr(arr2str, 'py_func')  # Not a numba dispatcher
+        assert not hasattr(arr2str, "py_func")  # Not a numba dispatcher
 
     def test_handles_different_types(self):
         """Test conversion of different element types"""

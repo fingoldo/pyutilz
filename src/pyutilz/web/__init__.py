@@ -8,4 +8,4 @@ from .web import *  # noqa: F401,F403
 # is fragile under static analysis and lazy-import edge cases).
 from . import browser, graphql, proxy, web  # noqa: F401
 
-__all__ = ['browser', 'web', 'graphql', 'proxy']
+__all__ = ["browser", "web", "graphql", "proxy"]

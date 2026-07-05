@@ -165,8 +165,7 @@ def test_pick_least_loaded_device(monkeypatch):
 def test_spec_choose_returns_fallback_on_empty_cache(monkeypatch, tmp_path):
     """spec.choose() -> the fallback backend when the cache is empty + tuner is a no-op."""
     monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
-    spec = kernel_tuner(kernel_name="zzz_choose", variant_fns=(_np,), tuner=lambda: [],
-                        axes={"n": [10]}, fallback={"backend_choice": "cpu"})
+    spec = kernel_tuner(kernel_name="zzz_choose", variant_fns=(_np,), tuner=lambda: [], axes={"n": [10]}, fallback={"backend_choice": "cpu"})
     assert spec.choose(n=5) == "cpu"
     assert spec.choose(n=5) == "cpu"  # memoized
 
@@ -174,8 +173,7 @@ def test_spec_choose_returns_fallback_on_empty_cache(monkeypatch, tmp_path):
 def test_spec_choose_callable_fallback(monkeypatch, tmp_path):
     """A callable fallback (dims -> str) gives the dynamic heuristic via choose()."""
     monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
-    spec = kernel_tuner(kernel_name="zzz_choose2", variant_fns=(_np,), tuner=lambda: [],
-                        axes={"n": [10]}, fallback=lambda n: "gpu" if n >= 100 else "cpu")
+    spec = kernel_tuner(kernel_name="zzz_choose2", variant_fns=(_np,), tuner=lambda: [], axes={"n": [10]}, fallback=lambda n: "gpu" if n >= 100 else "cpu")
     assert spec.choose(n=5) == "cpu"
     assert spec.choose(n=500) == "gpu"
 
@@ -186,8 +184,7 @@ def test_cache_public_code_version_stale():
 
     cache = KernelTuningCache(in_memory=True)
     assert hasattr(cache, "code_version_stale")
-    spec = TunerSpec(kernel_name="cv_k", variant_fns=(_np,),
-                     tuner=lambda: [{"backend_choice": "numpy"}], axes={}, fallback={"backend_choice": "numpy"})
+    spec = TunerSpec(kernel_name="cv_k", variant_fns=(_np,), tuner=lambda: [{"backend_choice": "numpy"}], axes={}, fallback={"backend_choice": "numpy"})
     from pyutilz.performance.kernel_tuning.registry import _run_spec_tuning
     _run_spec_tuning(cache, spec, code_version="cvA", device_id=None, force=False, hooks=None)
     # Same code_version -> not stale; a different one -> stale; None -> never stale.
@@ -196,4 +193,3 @@ def test_cache_public_code_version_stale():
     assert cache.code_version_stale("cv_k", None) is False
     # Public method delegates to the private one identically.
     assert cache.code_version_stale("cv_k", "cvB") == cache._code_version_stale("cv_k", "cvB")
-

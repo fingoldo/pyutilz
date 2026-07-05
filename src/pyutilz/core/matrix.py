@@ -65,7 +65,7 @@ class CsrRowColConstructor:
 
 def get_sparse_memory_usage(mat:object)->int:
     """
-        Return mem usage of a csr or csc matrix
+    Return mem usage of a csr or csc matrix
     """
     try:
         if isinstance(mat, csr_matrix):

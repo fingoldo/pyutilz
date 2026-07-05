@@ -29,10 +29,8 @@ class TestCacheRoundTrip:
     def test_update_then_lookup(self, tmp_cache_dir):
         cache = ktc.KernelTuningCache()
         regions = [
-            {"n_samples_max": 1000, "joint_size_max": 25,
-             "variant": "shared", "block_size": 256},
-            {"n_samples_max": None, "joint_size_max": None,
-             "variant": "shared", "block_size": 512},
+            {"n_samples_max": 1000, "joint_size_max": 25, "variant": "shared", "block_size": 256},
+            {"n_samples_max": None, "joint_size_max": None, "variant": "shared", "block_size": 512},
         ]
         cache.update("joint_hist_batched", axes=["n_samples", "joint_size"], regions=regions)
         # First region matches
@@ -55,10 +53,8 @@ class TestCacheRoundTrip:
 
     def test_multiple_kernels_preserved(self, tmp_cache_dir):
         cache = ktc.KernelTuningCache()
-        cache.update("kernel_a", axes=["n"],
-                     regions=[{"n_max": None, "variant": "a"}])
-        cache.update("kernel_b", axes=["n"],
-                     regions=[{"n_max": None, "variant": "b"}])
+        cache.update("kernel_a", axes=["n"], regions=[{"n_max": None, "variant": "a"}])
+        cache.update("kernel_b", axes=["n"], regions=[{"n_max": None, "variant": "b"}])
         # Both must be present
         assert cache.has("kernel_a")
         assert cache.has("kernel_b")
@@ -69,8 +65,7 @@ class TestCacheRoundTrip:
         # Write a v999 file directly
         path = os.path.join(tmp_cache_dir, ktc.hw_fingerprint() + ".json")
         with open(path, "w") as f:
-            json.dump({"schema_version": 999, "hw_fingerprint": ktc.hw_fingerprint(),
-                       "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}, f)
+            json.dump({"schema_version": 999, "hw_fingerprint": ktc.hw_fingerprint(), "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}, f)
         cache = ktc.KernelTuningCache()
         # Mismatch -> miss
         assert cache.has("k") is False
@@ -144,8 +139,9 @@ class TestHwFingerprint:
         # the result must match without re-running the slow probes.
         # Patch both ``_cpu_model_slug`` and ``_gpu_slug_and_cc`` to
         # return sentinels; if the disk cache works, neither runs.
-        with mock.patch.object(ktc, "_cpu_model_slug", return_value="UNCALLED-CPU"), \
-             mock.patch.object(ktc, "_gpu_slug_and_cc", return_value=("UNCALLED-GPU", "9.9")):
+        with mock.patch.object(ktc, "_cpu_model_slug", return_value="UNCALLED-CPU"), mock.patch.object(
+            ktc, "_gpu_slug_and_cc", return_value=("UNCALLED-GPU", "9.9")
+        ):
             fp2 = ktc.hw_fingerprint()
         assert fp1 == fp2
         assert "UNCALLED" not in fp2
@@ -196,8 +192,7 @@ class TestProvenance:
         assert "numpy_version" in prov
 
     def test_provenance_unchanged_returns_false(self):
-        prov = {"cuda_driver_version": 12000, "cupy_version": "13.0.0",
-                "gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "GTX"}}
+        prov = {"cuda_driver_version": 12000, "cupy_version": "13.0.0", "gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "GTX"}}
         assert ktc.provenance_changed(prov, dict(prov)) is False
 
     def test_cuda_driver_bump_detected(self):
@@ -300,7 +295,7 @@ class TestV2Matcher:
         ])
         assert c.lookup("k", n=50, dtype="float64", ndim=3) == {"backend": "numpy3d"}
         assert c.lookup("k", n=500, dtype="float64", ndim=2) == {"backend": "small64"}
-        assert c.lookup("k", n=50, dtype="float64", ndim=2) == {"backend": "catch"}   # below n_min
+        assert c.lookup("k", n=50, dtype="float64", ndim=2) == {"backend": "catch"}  # below n_min
         assert c.lookup("k", n=500, dtype="float32", ndim=2) == {"backend": "catch"}  # dtype mismatch
 
     def test_lookup_explain(self):
@@ -317,17 +312,21 @@ class TestV2GetOrTune:
         return ktc.KernelTuningCache(in_memory=True)
 
     def test_miss_then_hit_one_sweep(self):
-        c = self._fresh(); calls = {"n": 0}
+        c = self._fresh()
+        calls = {"n": 0}
+
         def tuner():
-            calls["n"] += 1; return [{"backend": "numba"}]
+            calls["n"] += 1
+            return [{"backend": "numba"}]
+
         r1 = c.get_or_tune("g", dims={"n": 100}, tuner=tuner, axes=["n"], fallback={"backend": "FB"})
         r2 = c.get_or_tune("g", dims={"n": 100}, tuner=tuner, axes=["n"], fallback={"backend": "FB"})
         assert r1 == {"backend": "numba"} and r2 == {"backend": "numba"} and calls["n"] == 1
 
     def test_env_override(self, monkeypatch):
-        c = self._fresh(); monkeypatch.setenv("MY_BK", "forced")
-        assert c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"x": 1}],
-                             axes=["n"], fallback="FB", env_key="MY_BK") == "forced"
+        c = self._fresh()
+        monkeypatch.setenv("MY_BK", "forced")
+        assert c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"x": 1}], axes=["n"], fallback="FB", env_key="MY_BK") == "forced"
 
     def test_fallback_on_empty_and_failing_tuner(self):
         c = self._fresh()
@@ -338,20 +337,22 @@ class TestV2GetOrTune:
         assert c2.get_or_tune("b", dims={"n": 1}, tuner=boom, axes=["n"], fallback="FB") == "FB"
 
     def test_once_per_process_guard(self):
-        c = self._fresh(); calls = {"n": 0}
+        c = self._fresh()
+        calls = {"n": 0}
+
         def boom():
-            calls["n"] += 1; raise RuntimeError("x")
+            calls["n"] += 1
+            raise RuntimeError("x")
+
         c.get_or_tune("g", dims={"n": 1}, tuner=boom, axes=["n"], fallback="FB")
         c.get_or_tune("g", dims={"n": 2}, tuner=boom, axes=["n"], fallback="FB")
         assert calls["n"] == 1
 
     def test_code_version_invalidation(self):
         c = self._fresh()
-        c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v1"}],
-                      axes=["n"], fallback="FB", code_version="A")
+        c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v1"}], axes=["n"], fallback="FB", code_version="A")
         ktc._TUNED_THIS_PROCESS.clear()
-        got = c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v2"}],
-                            axes=["n"], fallback="FB", code_version="B")
+        got = c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v2"}], axes=["n"], fallback="FB", code_version="B")
         assert got == {"backend": "v2"}
 
 
@@ -390,20 +391,17 @@ class TestV2Disk:
         ktc.hw_fingerprint.cache_clear()
 
     def test_code_version_persists_and_invalidates_across_instances(self, fast_cache_dir):
-        ktc.KernelTuningCache().update("k", axes=["n"],
-                                       regions=[{"n_max": None, "backend": "v1"}], code_version="A")
+        ktc.KernelTuningCache().update("k", axes=["n"], regions=[{"n_max": None, "backend": "v1"}], code_version="A")
         c2 = ktc.KernelTuningCache()
         assert c2.get_metadata("k")["code_version"] == "A"
         assert c2.lookup("k", n=1) == {"backend": "v1"}
         ktc._TUNED_THIS_PROCESS.clear()
         c3 = ktc.KernelTuningCache()
-        got = c3.get_or_tune("k", dims={"n": 1}, tuner=lambda: [{"n_max": None, "backend": "v2"}],
-                             axes=["n"], fallback="FB", code_version="B")
+        got = c3.get_or_tune("k", dims={"n": 1}, tuner=lambda: [{"n_max": None, "backend": "v2"}], axes=["n"], fallback="FB", code_version="B")
         assert got == {"backend": "v2"}
 
     def test_categorical_region_survives_disk_roundtrip(self, fast_cache_dir):
-        ktc.KernelTuningCache().update("k", axes=["dtype"], regions=[
-            {"dtype_eq": "float64", "backend": "f64"}, {"backend": "other"}])
+        ktc.KernelTuningCache().update("k", axes=["dtype"], regions=[{"dtype_eq": "float64", "backend": "f64"}, {"backend": "other"}])
         c2 = ktc.KernelTuningCache()
         assert c2.lookup("k", dtype="float64") == {"backend": "f64"}
         assert c2.lookup("k", dtype="int32") == {"backend": "other"}
@@ -469,9 +467,9 @@ class TestAsyncSweepHwBusyGate:
         import builtins
         real_import = builtins.__import__
         gpu_mod = mock.MagicMock()
-        gpu_mod.getGPUs.return_value = ([mock.Mock(load=gpu_load)] if gpu_load is not None else [])
+        gpu_mod.getGPUs.return_value = [mock.Mock(load=gpu_load)] if gpu_load is not None else []
         ps_mod = mock.MagicMock()
-        ps_mod.cpu_percent.return_value = (cpu_pct if cpu_pct is not None else 0.0)
+        ps_mod.cpu_percent.return_value = cpu_pct if cpu_pct is not None else 0.0
 
         def _imp(name, *a, **k):
             if name == "GPUtil":
@@ -591,9 +589,9 @@ class TestAsyncSweepNoStarvation:
                 done.set()
         cache._run_tuner = _wrapped
 
-        cache._spawn_async_sweep("kstarve", dims={"n_samples": 1000}, tuner=_tuner,
-                                 axes=["n_samples"], code_version="1", salt=0, equiv_tol=None,
-                                 hooks=ktc._DEFAULT_HOOKS)
+        cache._spawn_async_sweep(
+            "kstarve", dims={"n_samples": 1000}, tuner=_tuner, axes=["n_samples"], code_version="1", salt=0, equiv_tol=None, hooks=ktc._DEFAULT_HOOKS
+        )
         assert done.wait(timeout=10), "sweep thread never ran the tuner (it abandoned on a busy host)"
         assert ran["n"] == 1
         # And the result is now cached -> a subsequent lookup hits (no starvation).

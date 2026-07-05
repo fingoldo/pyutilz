@@ -99,9 +99,7 @@ async def test_anthropic_minimal_call(anthropic_key, assert_under_budget):
     assert isinstance(p.last_rate_limits, dict)
     # After a real call, headers must be populated.
     assert p.last_rate_limits, "anthropic-ratelimit-* headers missing"
-    cost_estimate = p.estimate_cost(
-        p._last_usage["input_tokens"], p._last_usage["output_tokens"]
-    )
+    cost_estimate = p.estimate_cost(p._last_usage["input_tokens"], p._last_usage["output_tokens"])
     assert_under_budget(cost_estimate)
 
 
@@ -145,9 +143,7 @@ async def test_deepseek_minimal_call(deepseek_key, assert_under_budget):
         thinking=False,  # save tokens by skipping V4 thinking-by-default
     )
     assert "OK" in out.upper()
-    cost = p.estimate_cost(
-        p._last_usage["input_tokens"], p._last_usage["output_tokens"]
-    )
+    cost = p.estimate_cost(p._last_usage["input_tokens"], p._last_usage["output_tokens"])
     assert_under_budget(cost)
 
 
@@ -163,9 +159,7 @@ async def test_xai_minimal_call(xai_key, assert_under_budget):
         temperature=0.0,
     )
     assert "OK" in out.upper()
-    cost = p.estimate_cost(
-        p._last_usage["input_tokens"], p._last_usage["output_tokens"]
-    )
+    cost = p.estimate_cost(p._last_usage["input_tokens"], p._last_usage["output_tokens"])
     assert_under_budget(cost)
 
 
@@ -195,14 +189,9 @@ async def test_openai_minimal_call(openai_key, assert_under_budget):
             timeout=30.0,
         )
     except asyncio.TimeoutError:
-        pytest.skip(
-            "OpenAI rate-limited or unreachable within 30s -- "
-            "account-level issue, not a provider-code bug"
-        )
+        pytest.skip("OpenAI rate-limited or unreachable within 30s -- " "account-level issue, not a provider-code bug")
     assert "OK" in out.upper()
-    cost = p.estimate_cost(
-        p._last_usage["input_tokens"], p._last_usage["output_tokens"]
-    )
+    cost = p.estimate_cost(p._last_usage["input_tokens"], p._last_usage["output_tokens"])
     assert_under_budget(cost)
 
 
@@ -231,7 +220,5 @@ async def test_gemini_minimal_call(gemini_key, assert_under_budget):
     assert "OK" in out.upper()
     # Phase-2: safety_ratings populated after every call (often empty list when nothing flagged)
     assert isinstance(p.last_safety_ratings, list)
-    cost = p.estimate_cost(
-        p._last_usage["input_tokens"], p._last_usage["output_tokens"]
-    )
+    cost = p.estimate_cost(p._last_usage["input_tokens"], p._last_usage["output_tokens"])
     assert_under_budget(cost)

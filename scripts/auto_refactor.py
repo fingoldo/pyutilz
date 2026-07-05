@@ -24,37 +24,34 @@ def fix_typing_wildcard_imports(file_path: Path) -> Tuple[bool, List[str]]:
 
     Analyzes the file to find which typing imports are actually used.
     """
-    with open(file_path, encoding='utf-8') as f:
+    with open(file_path, encoding="utf-8") as f:
         content = f.read()
 
-    if 'from typing import *' not in content:
+    if "from typing import *" not in content:
         return False, []
 
     # Common typing imports used in pyutilz
-    typing_symbols = [
-        'Union', 'Optional', 'Sequence', 'Dict', 'List', 'Tuple',
-        'Any', 'Callable', 'Set', 'Iterable', 'Iterator'
-    ]
+    typing_symbols = ["Union", "Optional", "Sequence", "Dict", "List", "Tuple", "Any", "Callable", "Set", "Iterable", "Iterator"]
 
     # Find which typing symbols are actually used
     used_symbols = []
     for symbol in typing_symbols:
         # Check if symbol is used (word boundary to avoid partial matches)
-        pattern = r'\b' + re.escape(symbol) + r'\b'
+        pattern = r"\b" + re.escape(symbol) + r"\b"
         if re.search(pattern, content):
             used_symbols.append(symbol)
 
     if not used_symbols:
-        used_symbols = ['Any']  # Default if we can't determine
+        used_symbols = ["Any"]  # Default if we can't determine
 
     # Replace wildcard import
-    old_import = r'from typing import \*.*\n'
+    old_import = r"from typing import \*.*\n"
     new_import = f'from typing import {", ".join(sorted(used_symbols))}\n'
 
     new_content = re.sub(old_import, new_import, content)
 
     if new_content != content:
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write(new_content)
         return True, used_symbols
 
@@ -94,32 +91,23 @@ def fix_mutable_defaults(file_path: Path, index: dict) -> Tuple[bool, List[str]]
     matches = index.get(rel, [])
     if not matches:
         return False, []
-    descriptors = [
-        f"line {line} [{severity}]: {detail.split(': ')[0]}"
-        for line, severity, detail in matches
-    ]
+    descriptors = [f"line {line} [{severity}]: {detail.split(': ')[0]}" for line, severity, detail in matches]
     return True, descriptors
 
 
 def scan_and_fix_all():
     """Scan all Python files in pyutilz and apply fixes."""
 
-    print("="*70)
+    print("=" * 70)
     print("PYUTILZ AUTOMATED REFACTORING")
-    print("="*70)
+    print("=" * 70)
 
     # Find all Python files
-    py_files = list(PYUTILZ_ROOT.glob('*.py'))
-    py_files += list(PYUTILZ_ROOT.glob('**/*.py'))
+    py_files = list(PYUTILZ_ROOT.glob("*.py"))
+    py_files += list(PYUTILZ_ROOT.glob("**/*.py"))
 
     # Exclude tests, scripts, __pycache__
-    py_files = [
-        f for f in py_files
-        if '__pycache__' not in str(f)
-        and 'tests' not in str(f)
-        and 'scripts' not in str(f)
-        and f.name != 'setup.py'
-    ]
+    py_files = [f for f in py_files if "__pycache__" not in str(f) and "tests" not in str(f) and "scripts" not in str(f) and f.name != "setup.py"]
 
     print(f"\nFound {len(py_files)} Python files to analyze\n")
 
@@ -149,9 +137,9 @@ def scan_and_fix_all():
                 print(f"       - {func}")
 
     # Summary
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("SUMMARY")
-    print("="*70)
+    print("=" * 70)
     print(f"[OK] Fixed typing wildcard imports in {len(wildcard_fixes)} files")
     print(f"[WARN] Found mutable defaults in {len(mutable_defaults_issues)} files (manual fix recommended)")
 
@@ -167,7 +155,7 @@ if __name__ == "__main__":
     import sys
 
     # Create scripts directory if it doesn't exist
-    PYUTILZ_ROOT.joinpath('scripts').mkdir(exist_ok=True)
+    PYUTILZ_ROOT.joinpath("scripts").mkdir(exist_ok=True)
 
     fixed, warnings = scan_and_fix_all()
 

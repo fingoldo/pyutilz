@@ -87,13 +87,8 @@ def test_no_new_bare_except_clauses():
     current = _build_offending_set()
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
-        _BASELINE_PATH.write_text(
-            json.dumps(sorted(current), indent=2), encoding="utf-8"
-        )
-        pytest.skip(
-            f"bare-except baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} bare clauses)"
-        )
+        _BASELINE_PATH.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        pytest.skip(f"bare-except baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} bare clauses)")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -112,7 +107,5 @@ def test_no_new_bare_except_clauses():
             f"{len(new)} new bare ``except:`` (or ``except BaseException:``) "
             f"clause(s). Replace with ``except Exception:`` or a narrower "
             f"specific exception type — bare-except swallows "
-            f"KeyboardInterrupt/SystemExit and masks real bugs:\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"KeyboardInterrupt/SystemExit and masks real bugs:\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

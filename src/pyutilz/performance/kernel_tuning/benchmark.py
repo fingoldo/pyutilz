@@ -31,7 +31,6 @@ import threading
 import time
 from typing import Callable, Optional, Sequence
 
-
 # ---------------------------------------------------------------------------
 # Hardware-busy gate (shared by the async-sweep deferral and the per-iteration
 # sweep gate). A sweep that runs while the CPU *or* GPU it needs is loaded both
@@ -58,8 +57,7 @@ def _busy_threshold(threshold: Optional[float]) -> float:
         return DEFAULT_HW_BUSY_THRESHOLD
 
 
-def hardware_busy(threshold: Optional[float] = None, *, check_cpu: bool = True,
-                  check_gpu: bool = True, timer: Callable[[], float] = time.perf_counter) -> bool:
+def hardware_busy(threshold: Optional[float] = None, *, check_cpu: bool = True, check_gpu: bool = True, timer: Callable[[], float] = time.perf_counter) -> bool:
     """True iff the CPU OR any GPU is loaded above ``threshold`` (fraction 0..1).
 
     CPU load via ``psutil``, GPU load via ``GPUtil``. A missing dependency or an
@@ -184,8 +182,7 @@ def time_backend(
             # Don't START the next iteration while the device we need is busy: a contended
             # sample is a wrong measurement. Wait (bounded) for the hardware to free up first.
             if hw_idle_gate:
-                wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll,
-                                       max_wait=hw_idle_max_wait, timer=timer)
+                wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll, max_wait=hw_idle_max_wait, timer=timer)
             t0 = timer()
             fn(*args)
             local.append(timer() - t0)
@@ -200,10 +197,7 @@ def time_backend(
     # ``fn`` -- including, for a GPU backend, its own H2D upload of the fresh buffer.
     per_thread_inputs = [_prebuild(n_iters) for _ in range(concurrency)]
     results: list[list] = [[] for _ in range(concurrency)]
-    threads = [
-        threading.Thread(target=_run, args=(per_thread_inputs[i], results[i]))
-        for i in range(concurrency)
-    ]
+    threads = [threading.Thread(target=_run, args=(per_thread_inputs[i], results[i])) for i in range(concurrency)]
     for t in threads:
         t.start()
     for t in threads:

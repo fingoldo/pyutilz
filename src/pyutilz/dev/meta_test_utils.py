@@ -271,9 +271,7 @@ MARKER_LINE_RE = re.compile(
 #   * (assignee) — anything in parens immediately after the keyword
 #   * 2026-04-28 — ISO date anywhere in the comment
 #   * @assignee  — at-mention anywhere in the comment
-ATTRIBUTION_RE = re.compile(
-    r"(\([^)]+\)|\d{4}-\d{2}-\d{2}|@\w+)"
-)
+ATTRIBUTION_RE = re.compile(r"(\([^)]+\)|\d{4}-\d{2}-\d{2}|@\w+)")
 
 
 def scan_todo_markers(

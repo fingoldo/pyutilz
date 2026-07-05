@@ -113,13 +113,8 @@ def test_no_new_eager_log_format_on_debug_or_info():
     current = _build_offending_set()
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
-        _BASELINE_PATH.write_text(
-            json.dumps(sorted(current), indent=2), encoding="utf-8"
-        )
-        pytest.skip(
-            f"logger lazy-format baseline refreshed at "
-            f"{_BASELINE_PATH.name} ({len(current)} eager call site(s))"
-        )
+        _BASELINE_PATH.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        pytest.skip(f"logger lazy-format baseline refreshed at " f"{_BASELINE_PATH.name} ({len(current)} eager call site(s))")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -138,9 +133,7 @@ def test_no_new_eager_log_format_on_debug_or_info():
         pytest.fail(
             f"{len(new)} new ``logger.debug/info`` call(s) using eager "
             f"formatting (f-string / %-format / .format() / +-concat). "
-            f"Replace with lazy form ``logger.info(\"...%s...\", val)`` "
+            f'Replace with lazy form ``logger.info("...%s...", val)`` '
             f"so disabled log levels can skip the format work, OR "
-            f"refresh the baseline if intentional:\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"refresh the baseline if intentional:\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

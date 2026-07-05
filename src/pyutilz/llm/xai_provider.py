@@ -100,16 +100,9 @@ class XAIProvider(OpenAICompatibleProvider):
         return_citations: bool = True,
     ):
         settings = get_llm_settings()
-        resolved_key = api_key or (
-            settings.xai_api_key.get_secret_value()
-            if settings.xai_api_key
-            else None
-        )
+        resolved_key = api_key or (settings.xai_api_key.get_secret_value() if settings.xai_api_key else None)
         if not resolved_key:
-            raise ValueError(
-                "xAI API key not provided. "
-                "Set XAI_API_KEY in .env or pass api_key="
-            )
+            raise ValueError("xAI API key not provided. " "Set XAI_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
         # Phase-4 live-search opt-in. Mode mirrors xAI's API:
         # ``"auto"`` (let the model decide), ``"on"`` (force search),
@@ -124,10 +117,7 @@ class XAIProvider(OpenAICompatibleProvider):
     def _extra_request_body(self, model: str) -> dict:
         body: dict = super()._extra_request_body(model)
         if self._live_search:
-            mode = (
-                self._live_search if isinstance(self._live_search, str)
-                else "on"
-            )
+            mode = self._live_search if isinstance(self._live_search, str) else "on"
             params: dict = {"mode": mode, "return_citations": self._return_citations}
             if self._live_search_max_sources is not None:
                 params["max_search_results"] = self._live_search_max_sources
@@ -140,29 +130,22 @@ class XAIProvider(OpenAICompatibleProvider):
         # so explicitly exclude that suffix first.
         if model.endswith("-non-reasoning"):
             return 240.0
-        if "reasoning" in model or model in ("grok-4", "grok-4-0709",
-                                              "grok-4.20-beta"):
+        if "reasoning" in model or model in ("grok-4", "grok-4-0709", "grok-4.20-beta"):
             return 1200.0
         return 240.0
 
-    def _compute_billed_output(
-        self, completion_tokens: int, reasoning_tokens: int
-    ) -> int:
+    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
         return completion_tokens + reasoning_tokens
 
     async def get_account_credits(self) -> dict:
         # As of May 2026, the public xAI REST docs (api.x.ai + management-api.x.ai)
         # don't list any endpoint for remaining credit; the management API
         # only handles key/ACL CRUD. Balance is dashboard-only.
-        raise NotImplementedError(
-            "xAI has no public API to fetch remaining credit. "
-            "Check console.x.ai for credit balance and usage."
-        )
+        raise NotImplementedError("xAI has no public API to fetch remaining credit. " "Check console.x.ai for credit balance and usage.")
 
     async def check_account_limits(self) -> dict:
         raise NotImplementedError(
-            "xAI does not expose per-key rate limits via API. "
-            "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
+            "xAI does not expose per-key rate limits via API. " "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
         )
 
     def _input_cost_per_1m(self, model: str) -> float:

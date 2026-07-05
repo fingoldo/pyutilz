@@ -24,7 +24,7 @@ class TestObjectsLoader:
         test_data = {"key1": "value1", "key2": "value2"}
         test_file = tmp_path / "test_obj.pkl"
 
-        with open(test_file, 'wb') as f:
+        with open(test_file, "wb") as f:
             pickle.dump(test_data, f)
 
         # Test with rewrite_existing=False (the bug case)
@@ -32,12 +32,7 @@ class TestObjectsLoader:
         container = {}
 
         # This should load the object (was broken due to indentation)
-        result = loader._process_object(
-            container,
-            "test_key",
-            str(test_file),
-            verbose=False
-        )
+        result = loader._process_object(container, "test_key", str(test_file), verbose=False)
 
         # Should have loaded successfully
         assert result is True
@@ -51,19 +46,14 @@ class TestObjectsLoader:
         test_data = {"new": "data"}
         test_file = tmp_path / "test_obj.pkl"
 
-        with open(test_file, 'wb') as f:
+        with open(test_file, "wb") as f:
             pickle.dump(test_data, f)
 
         loader = ObjectsLoader(rewrite_existing=False)
         container = {"test_key": {"existing": "value"}}  # Non-empty existing
 
         # Should NOT overwrite existing non-empty object
-        result = loader._process_object(
-            container,
-            "test_key",
-            str(test_file),
-            verbose=False
-        )
+        result = loader._process_object(container, "test_key", str(test_file), verbose=False)
 
         # Should return None and keep existing value
         assert result is None
@@ -76,18 +66,13 @@ class TestObjectsLoader:
         new_data = {"new": "data"}
         test_file = tmp_path / "test_obj.pkl"
 
-        with open(test_file, 'wb') as f:
+        with open(test_file, "wb") as f:
             pickle.dump(new_data, f)
 
         loader = ObjectsLoader(rewrite_existing=True)
         container = {"test_key": {"old": "value"}}
 
-        result = loader._process_object(
-            container,
-            "test_key",
-            str(test_file),
-            verbose=False
-        )
+        result = loader._process_object(container, "test_key", str(test_file), verbose=False)
 
         # Should overwrite
         assert result is True

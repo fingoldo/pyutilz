@@ -152,4 +152,3 @@ __all__ = [
 # in scope for ``__init__`` re-exports that downstream packages may
 # expect; remove if the import-time cost becomes a concern.
 _ = is_cuda_available  # silence "unused import"
-

@@ -38,11 +38,7 @@ class TestFindNanCols:
 
     def test_all_nan_columns_found(self):
         """Test that all NaN columns are found"""
-        df = pl.DataFrame({
-            "a": [float("nan"), float("nan")],
-            "b": [float("nan"), 1.0],
-            "c": [1.0, 2.0]
-        })
+        df = pl.DataFrame({"a": [float("nan"), float("nan")], "b": [float("nan"), 1.0], "c": [1.0, 2.0]})
         result = find_nan_cols(df)
 
         assert "a" in result.columns
@@ -128,8 +124,7 @@ class TestCleanNumeric:
             "weight": [0.0, 0.0, 1.0, 2.0],  # group A: all zero -> divide-by-zero
         })
         result = df.group_by("group", maintain_order=True).agg(
-            clean_numeric((pl.col("value") * pl.col("weight")).sum() / pl.col("weight").sum())
-            .alias("weighted_mean")
+            clean_numeric((pl.col("value") * pl.col("weight")).sum() / pl.col("weight").sum()).alias("weighted_mean")
         )
         wm = result.sort("group")["weighted_mean"].to_list()
         # Group A: 0/0 -> NaN -> cleaned to 0.0. Group B: (30+80)/3 = 36.667.

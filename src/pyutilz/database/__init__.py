@@ -1,3 +1,3 @@
 """PyUtilz database subpackage."""
 
-__all__ = ['db', 'redislib', 'deltalakes']
+__all__ = ["db", "redislib", "deltalakes"]

@@ -13,7 +13,6 @@ from pyutilz.text.humanizer import (
     _get_adjacent,
 )
 
-
 # ── strip_ai_patterns ──────────────────────────────────────────────────────
 
 
@@ -172,10 +171,10 @@ class TestFixDashes:
 
 class TestStripEmojis:
     def test_removes_smiley(self):
-        assert strip_emojis("Hello \U0001F600 world") == "Hello  world"
+        assert strip_emojis("Hello \U0001f600 world") == "Hello  world"
 
     def test_removes_rocket(self):
-        assert strip_emojis("Launch \U0001F680!") == "Launch !"
+        assert strip_emojis("Launch \U0001f680!") == "Launch !"
 
     def test_removes_star(self):
         assert "⭐" not in strip_emojis("Great ⭐ job")
@@ -303,7 +302,7 @@ class TestHumanize:
         text = (
             "I'm thrilled to delve into this comprehensive project. "
             "Furthermore, I leverage cutting-edge technology\u2014"
-            "ensuring seamless integration. \U0001F680"
+            "ensuring seamless integration. \U0001f680"
         )
         result = humanize(text, typo_count=0)
         assert "thrilled" not in result
@@ -313,7 +312,7 @@ class TestHumanize:
         assert "leverage" not in result
         assert "cutting-edge" not in result
         assert "\u2014" not in result
-        assert "\U0001F680" not in result
+        assert "\U0001f680" not in result
 
     def test_protected_spans_through_pipeline(self):
         text = "ABRACADABRA ;-) I am a skilled developer."

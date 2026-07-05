@@ -7,7 +7,6 @@ from typing import Optional
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text, _arg_names
 
-
 # --- Class B: late-binding closures over loop vars ----------------------
 
 
@@ -69,8 +68,7 @@ def _ancestor_chain(target: ast.AST, root: ast.stmt) -> list[ast.AST]:
     return chain
 
 
-def _closure_escapes_iteration(closure_node: ast.AST,
-                               loop_body: list[ast.stmt]) -> bool:
+def _closure_escapes_iteration(closure_node: ast.AST, loop_body: list[ast.stmt]) -> bool:
     """Conservative check: does ``closure_node`` look like it escapes
     this iteration of the loop body?
 
@@ -192,16 +190,14 @@ def scan_late_binding_closures(root: Path,
                     # Heuristic for escape: the nested def is decorated or assigned.
                     if not (sub.decorator_list or _closure_escapes_iteration(sub, node.body)):
                         continue
-                    findings.append(Finding(
-                        check="late_binding_closure",
-                        severity="P1",
-                        file=rel,
-                        line=sub.lineno,
-                        snippet=_line_text(src_lines, sub.lineno),
-                        detail=(
-                            f"nested def {sub.name!r} inside for-loop "
-                            f"captures loop var(s) {sorted(captured)!r}; "
-                            f"closure escapes iteration."
-                        ),
-                    ))
+                    findings.append(
+                        Finding(
+                            check="late_binding_closure",
+                            severity="P1",
+                            file=rel,
+                            line=sub.lineno,
+                            snippet=_line_text(src_lines, sub.lineno),
+                            detail=(f"nested def {sub.name!r} inside for-loop " f"captures loop var(s) {sorted(captured)!r}; " f"closure escapes iteration."),
+                        )
+                    )
     return findings

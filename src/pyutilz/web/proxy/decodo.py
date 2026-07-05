@@ -112,7 +112,7 @@ class DecodoTrafficRow:
 
     @property
     def traffic_gb(self) -> float:
-        return self.traffic_bytes / (1024 ** 3)
+        return self.traffic_bytes / (1024**3)
 
 
 @dataclass
@@ -125,7 +125,7 @@ class DecodoTrafficReport:
 
     @property
     def total_gb(self) -> float:
-        return self.total_bytes / (1024 ** 3)
+        return self.total_bytes / (1024**3)
 
     def summary(self, group_by: str = "day") -> str:
         lines = [
@@ -245,10 +245,7 @@ class DecodoProvider(ProxyProvider):
 
     def _api_headers(self) -> Dict[str, str]:
         if not self.api_key:
-            raise RuntimeError(
-                "DECODO_API_KEY not set. "
-                "Get it from: dashboard.decodo.com -> Settings -> API Keys"
-            )
+            raise RuntimeError("DECODO_API_KEY not set. " "Get it from: dashboard.decodo.com -> Settings -> API Keys")
         return {"Authorization": self.api_key, "Content-Type": "application/json"}
 
     def get_subscriptions(self) -> List[DecodoSubscription]:

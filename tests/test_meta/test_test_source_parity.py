@@ -243,8 +243,7 @@ def test_every_production_module_has_a_test_file():
         pytest.fail(
             f"{len(untested)} production module(s) without a corresponding "
             f"test file. Either add ``tests/test_<name>.py``, OR document "
-            f"the exemption in _TEST_EXEMPT_MODULES with reasoning:\n  "
-            + "\n  ".join(untested)
+            f"the exemption in _TEST_EXEMPT_MODULES with reasoning:\n  " + "\n  ".join(untested)
         )
 
 
@@ -261,7 +260,7 @@ def test_every_test_file_has_a_target():
         if not stem.startswith("test_"):
             continue
         # Strip the leading "test_" and any "_extra" / "_extra2" suffix.
-        name = stem[len("test_"):]
+        name = stem[len("test_") :]
         for suffix in ("_extra2", "_extra"):
             if name.endswith(suffix):
                 name = name[: -len(suffix)]
@@ -286,6 +285,5 @@ def test_every_test_file_has_a_target():
         pytest.fail(
             f"{len(orphan)} test file(s) without an apparent target module "
             f"(or alias). Either add the target, OR document the cross-"
-            f"cutting test in _TEST_FILES_WITHOUT_SOURCE:\n  "
-            + "\n  ".join(orphan)
+            f"cutting test in _TEST_FILES_WITHOUT_SOURCE:\n  " + "\n  ".join(orphan)
         )

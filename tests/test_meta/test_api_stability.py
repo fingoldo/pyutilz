@@ -62,9 +62,7 @@ def _build_snapshot() -> dict:
         try:
             mod = importlib.import_module(real_path)
         except ImportError:
-            snapshot["alias_surfaces"][alias] = {
-                "_import_error": "module fails to import"
-            }
+            snapshot["alias_surfaces"][alias] = {"_import_error": "module fails to import"}
             continue
         try:
             mod = importlib.reload(mod)
@@ -85,10 +83,7 @@ def test_public_api_matches_snapshot():
         )
         n_aliases = len(current["module_aliases"])
         n_symbols = sum(len(v) for v in current["alias_surfaces"].values())
-        pytest.skip(
-            f"snapshot refreshed at {_SNAPSHOT_PATH.name} "
-            f"({n_aliases} aliases, {n_symbols} symbols)"
-        )
+        pytest.skip(f"snapshot refreshed at {_SNAPSHOT_PATH.name} " f"({n_aliases} aliases, {n_symbols} symbols)")
 
     expected = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     diffs: list[str] = []
@@ -120,10 +115,7 @@ def test_public_api_matches_snapshot():
                 diffs.append(f"REMOVED: pyutilz.{alias}.{name}")
                 continue
             if cur_kind != exp_kind:
-                diffs.append(
-                    f"CHANGED: pyutilz.{alias}.{name}\n      was: {exp_kind}"
-                    f"\n      now: {cur_kind}"
-                )
+                diffs.append(f"CHANGED: pyutilz.{alias}.{name}\n      was: {exp_kind}" f"\n      now: {cur_kind}")
         for name in cur_surface:
             if name not in exp_surface:
                 additions.append(f"pyutilz.{alias}.{name}")
@@ -144,7 +136,5 @@ def test_public_api_matches_snapshot():
             f"{len(diffs)} public-API change(s) detected against snapshot. "
             f"If intentional, refresh with ``pytest "
             f"tests/test_meta/test_api_stability.py "
-            f"--refresh-api-snapshot`` and commit:\n  "
-            + "\n  ".join(diffs[:20])
-            + (f"\n  ... and {len(diffs) - 20} more" if len(diffs) > 20 else "")
+            f"--refresh-api-snapshot`` and commit:\n  " + "\n  ".join(diffs[:20]) + (f"\n  ... and {len(diffs) - 20} more" if len(diffs) > 20 else "")
         )

@@ -6,38 +6,38 @@ import sys
 import types
 from importlib import import_module
 
-__all__ = ['__version__', 'core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev', 'llm']
+__all__ = ["__version__", "core", "data", "database", "web", "cloud", "text", "system", "dev", "llm"]
 
 # Module aliases for backward compatibility
 # NOTE: Don't create aliases for names that conflict with subpackages (system, web, cloud)
 _MODULE_ALIASES = {
-    'pythonlib': 'pyutilz.core.pythonlib',
-    'serialization': 'pyutilz.core.serialization',
-    'image': 'pyutilz.core.image',
-    'openai': 'pyutilz.core.openai',
-    'filemaker': 'pyutilz.core.filemaker',
-    'matrix': 'pyutilz.core.matrix',
-    'pandaslib': 'pyutilz.data.pandaslib',
-    'polarslib': 'pyutilz.data.polarslib',
-    'numpylib': 'pyutilz.data.numpylib',
-    'numbalib': 'pyutilz.data.numbalib',
-    'db': 'pyutilz.database.db',
-    'redislib': 'pyutilz.database.redislib',
-    'deltalakes': 'pyutilz.database.deltalakes',
-    'browser': 'pyutilz.web.browser',
-    'graphql': 'pyutilz.web.graphql',
-    'strings': 'pyutilz.text.strings',
-    'string': 'pyutilz.text.strings',
-    'tokenizers': 'pyutilz.text.tokenizers',
-    'similarity': 'pyutilz.text.similarity',
-    'parallel': 'pyutilz.system.parallel',
-    'monitoring': 'pyutilz.system.monitoring',
-    'distributed': 'pyutilz.system.distributed',
-    'logginglib': 'pyutilz.dev.logginglib',
-    'logging': 'pyutilz.dev.logginglib',
-    'benchmarking': 'pyutilz.dev.benchmarking',
-    'dashlib': 'pyutilz.dev.dashlib',
-    'notebook_init': 'pyutilz.dev.notebook_init',
+    "pythonlib": "pyutilz.core.pythonlib",
+    "serialization": "pyutilz.core.serialization",
+    "image": "pyutilz.core.image",
+    "openai": "pyutilz.core.openai",
+    "filemaker": "pyutilz.core.filemaker",
+    "matrix": "pyutilz.core.matrix",
+    "pandaslib": "pyutilz.data.pandaslib",
+    "polarslib": "pyutilz.data.polarslib",
+    "numpylib": "pyutilz.data.numpylib",
+    "numbalib": "pyutilz.data.numbalib",
+    "db": "pyutilz.database.db",
+    "redislib": "pyutilz.database.redislib",
+    "deltalakes": "pyutilz.database.deltalakes",
+    "browser": "pyutilz.web.browser",
+    "graphql": "pyutilz.web.graphql",
+    "strings": "pyutilz.text.strings",
+    "string": "pyutilz.text.strings",
+    "tokenizers": "pyutilz.text.tokenizers",
+    "similarity": "pyutilz.text.similarity",
+    "parallel": "pyutilz.system.parallel",
+    "monitoring": "pyutilz.system.monitoring",
+    "distributed": "pyutilz.system.distributed",
+    "logginglib": "pyutilz.dev.logginglib",
+    "logging": "pyutilz.dev.logginglib",
+    "benchmarking": "pyutilz.dev.benchmarking",
+    "dashlib": "pyutilz.dev.dashlib",
+    "notebook_init": "pyutilz.dev.notebook_init",
 }
 
 def _create_lazy_module(real_module_name, proxy_fullname):
@@ -54,7 +54,7 @@ def _create_lazy_module(real_module_name, proxy_fullname):
     def __getattr__(name):
         # Skip dunder attributes to avoid triggering imports from IPython autoreload,
         # inspect.getmodule, hasattr(module, '__file__'), etc.
-        if name.startswith('__') and name.endswith('__'):
+        if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
         real_mod = import_module(real_module_name)
         sys.modules[proxy_fullname] = real_mod
@@ -66,15 +66,15 @@ def _create_lazy_module(real_module_name, proxy_fullname):
 
 # Register lazy proxy modules
 for alias, real_name in _MODULE_ALIASES.items():
-    alias_fullname = f'pyutilz.{alias}'
+    alias_fullname = f"pyutilz.{alias}"
     if alias_fullname not in sys.modules:
         proxy = _create_lazy_module(real_name, alias_fullname)
         sys.modules[alias_fullname] = proxy
 
 def __getattr__(name):
     """Lazy import for package-level attributes."""
-    if name in ('core', 'data', 'database', 'web', 'cloud', 'text', 'system', 'dev', 'llm'):
-        return import_module(f'.{name}', __name__)
+    if name in ("core", "data", "database", "web", "cloud", "text", "system", "dev", "llm"):
+        return import_module(f".{name}", __name__)
     if name in _MODULE_ALIASES:
         return import_module(_MODULE_ALIASES[name])
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

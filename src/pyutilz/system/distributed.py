@@ -70,7 +70,7 @@ def register_scraper(scraper_name: str = None, version: str = None, app_name: st
         import hashlib
         frame = inspect.stack()[1]
         module = inspect.getmodule(frame[0])
-        with open(module.__file__, 'rb') as f:
+        with open(module.__file__, "rb") as f:
             file_hash = hashlib.md5(f.read()).hexdigest()[:8]
         version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"
     if app_name is None:
@@ -138,15 +138,7 @@ def get_heartbeat_sql(status: str = "ok", ip: str = None) -> Tuple[str, Optional
                 ip=excluded.ip,
                 application=excluded.application
         """
-        params = (
-            _container.node_id,
-            pid,
-            m_version,
-            m_scraper_name,
-            status,
-            ip if ip else m_ip,
-            m_app_name
-        )
+        params = (_container.node_id, pid, m_version, m_scraper_name, status, ip if ip else m_ip, m_app_name)
         return (sql, params)
     else:
         return ("", None)

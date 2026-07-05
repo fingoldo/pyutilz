@@ -42,8 +42,7 @@ _TEST_META_DIR = Path(__file__).resolve().parent
 # Match a colon (file:line, key: value), a slash (path), an angle (template
 # placeholder), or any of the fix-prompt verbs.
 _ACTIONABLE_RE = re.compile(
-    r"[:/<>]|\b(Add|Either|Refresh|Whitelist|Fix|Run|Update|Remove|Document|"
-    r"Check|See|Catches|Replace|OR)\b",
+    r"[:/<>]|\b(Add|Either|Refresh|Whitelist|Fix|Run|Update|Remove|Document|" r"Check|See|Catches|Replace|OR)\b",
     re.IGNORECASE,
 )
 
@@ -106,8 +105,7 @@ def _pytest_fail_strings(tree: ast.AST) -> list[tuple[int, str, bool]]:
                 chunks.append(sub.value)
             elif isinstance(sub, ast.FormattedValue):
                 has_dynamic = True
-            elif isinstance(sub, (ast.Name, ast.Attribute, ast.Subscript,
-                                  ast.Call)) and sub is not first:
+            elif isinstance(sub, (ast.Name, ast.Attribute, ast.Subscript, ast.Call)) and sub is not first:
                 # A non-string-constant inside the message expression.
                 has_dynamic = True
         out.append((node.lineno, " ".join(chunks), has_dynamic))
@@ -160,9 +158,7 @@ def test_every_pytest_fail_call_has_actionable_text():
                 bad.append(f"{py.name}:{lineno} (empty message)")
                 continue
             if not _ACTIONABLE_RE.search(text):
-                bad.append(
-                    f"{py.name}:{lineno} → {text[:80]!r}"
-                )
+                bad.append(f"{py.name}:{lineno} → {text[:80]!r}")
 
     if audited == 0:
         pytest.skip("no pytest.fail calls found in meta-test directory")
@@ -171,8 +167,7 @@ def test_every_pytest_fail_call_has_actionable_text():
             f"{len(bad)} pytest.fail message(s) lack actionable detail "
             f"(file paths, fix verbs, or template placeholders). The "
             f"reviewer will need to read the test source to figure out "
-            f"what to do — improve the message:\n  "
-            + "\n  ".join(bad[:20])
+            f"what to do — improve the message:\n  " + "\n  ".join(bad[:20])
         )
 
 
@@ -209,8 +204,7 @@ def test_meta_tests_dont_reach_private_internals():
         pytest.fail(
             f"{len(bad)} meta-test(s) import a private symbol without "
             f"justification. Either use the public API instead, OR "
-            f"whitelist via _PERMITTED_PRIVATE_IMPORTS with reasoning:\n  "
-            + "\n  ".join(sorted(set(bad)))
+            f"whitelist via _PERMITTED_PRIVATE_IMPORTS with reasoning:\n  " + "\n  ".join(sorted(set(bad)))
         )
 
 
@@ -239,7 +233,4 @@ def test_perf_budget_overrides_are_documented():
     test_stems = {p.stem for p in _meta_test_files()}
     stale = [k for k in _PERF_BUDGET_OVERRIDES if k not in test_stems]
     if stale:
-        pytest.fail(
-            f"_PERF_BUDGET_OVERRIDES has entries for {stale} which no "
-            f"longer exist in the meta-test dir — clean up after rename"
-        )
+        pytest.fail(f"_PERF_BUDGET_OVERRIDES has entries for {stale} which no " f"longer exist in the meta-test dir — clean up after rename")

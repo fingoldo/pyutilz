@@ -128,10 +128,7 @@ def dagostino_k2(x: np.ndarray) -> tuple:
 
     # ---- Z_skew via D'Agostino (1970) -----------------------------------
     Y = g1 * math.sqrt(((n_f + 1.0) * (n_f + 3.0)) / (6.0 * (n_f - 2.0)))
-    beta2 = (
-        3.0 * (n_f * n_f + 27.0 * n_f - 70.0) * (n_f + 1.0) * (n_f + 3.0)
-        / ((n_f - 2.0) * (n_f + 5.0) * (n_f + 7.0) * (n_f + 9.0))
-    )
+    beta2 = 3.0 * (n_f * n_f + 27.0 * n_f - 70.0) * (n_f + 1.0) * (n_f + 3.0) / ((n_f - 2.0) * (n_f + 5.0) * (n_f + 7.0) * (n_f + 9.0))
     W2 = -1.0 + math.sqrt(2.0 * (beta2 - 1.0))
     # scipy uses ``delta = 1/sqrt(0.5 * log(W2))`` -- W2 not sqrt(W2).
     delta = 1.0 / math.sqrt(0.5 * math.log(W2))
@@ -141,9 +138,7 @@ def dagostino_k2(x: np.ndarray) -> tuple:
 
     # ---- Z_kurt via Anscombe-Glynn (1983) -------------------------------
     Eg2 = -6.0 / (n_f + 1.0)
-    Vg2 = (24.0 * n_f * (n_f - 2.0) * (n_f - 3.0)) / (
-        (n_f + 1.0) * (n_f + 1.0) * (n_f + 3.0) * (n_f + 5.0)
-    )
+    Vg2 = (24.0 * n_f * (n_f - 2.0) * (n_f - 3.0)) / ((n_f + 1.0) * (n_f + 1.0) * (n_f + 3.0) * (n_f + 5.0))
     if Vg2 <= 0.0:
         Z2 = 0.0
     else:
@@ -151,17 +146,12 @@ def dagostino_k2(x: np.ndarray) -> tuple:
         sqrt_b1_g2 = (
             (6.0 * (n_f * n_f - 5.0 * n_f + 2.0))
             / ((n_f + 7.0) * (n_f + 9.0))
-            * math.sqrt(
-                (6.0 * (n_f + 3.0) * (n_f + 5.0)) / (n_f * (n_f - 2.0) * (n_f - 3.0))
-            )
+            * math.sqrt((6.0 * (n_f + 3.0) * (n_f + 5.0)) / (n_f * (n_f - 2.0) * (n_f - 3.0)))
         )
         if sqrt_b1_g2 <= 0.0:
             Z2 = X
         else:
-            A = 6.0 + (8.0 / sqrt_b1_g2) * (
-                2.0 / sqrt_b1_g2
-                + math.sqrt(1.0 + 4.0 / (sqrt_b1_g2 * sqrt_b1_g2))
-            )
+            A = 6.0 + (8.0 / sqrt_b1_g2) * (2.0 / sqrt_b1_g2 + math.sqrt(1.0 + 4.0 / (sqrt_b1_g2 * sqrt_b1_g2)))
             term = (1.0 - 2.0 / A) / (1.0 + X * math.sqrt(2.0 / (A - 4.0)))
             if term <= 0.0:
                 Z2 = 0.0
@@ -208,7 +198,7 @@ def anderson_darling_normal(x: np.ndarray) -> tuple:
     for i in range(n):
         d = x[i] - mu
         s2 += d * d
-    s2 /= (n - 1.0)
+    s2 /= n - 1.0
     if s2 <= 0.0:
         return (np.nan, np.nan)
     sd = math.sqrt(s2)
@@ -312,10 +302,7 @@ def normality_verdict(
             why.append(f"Anderson-Darling A*={ad_stat:.3f} p={ad_p:.4g} (<{alpha})")
         verdict = "non-Gaussian (" + "; ".join(why) + ")"
     else:
-        verdict = (
-            f"consistent with Normal "
-            f"(K2 p={k2_p:.3g}, AD A*={ad_stat:.3f} p={ad_p:.3g})"
-        )
+        verdict = f"consistent with Normal " f"(K2 p={k2_p:.3g}, AD A*={ad_stat:.3f} p={ad_p:.3g})"
 
     return {
         "n": int(ad_input.size),

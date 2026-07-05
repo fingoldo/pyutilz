@@ -1,3 +1,3 @@
 """PyUtilz text subpackage."""
 
-__all__ = ['strings', 'tokenizers', 'similarity', 'humanizer']
+__all__ = ["strings", "tokenizers", "similarity", "humanizer"]

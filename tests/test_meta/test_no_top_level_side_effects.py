@@ -135,10 +135,7 @@ def test_top_level_pyutilz_import_no_network():
     package init starts probing for an external resource."""
     result = _run_with_targets(["pyutilz"])
     if result.returncode != 0:
-        pytest.fail(
-            f"import pyutilz triggered network I/O at module load:\n"
-            f"{result.stderr}"
-        )
+        pytest.fail(f"import pyutilz triggered network I/O at module load:\n" f"{result.stderr}")
 
 
 def test_individual_subpackages_import_no_network():
@@ -153,7 +150,4 @@ def test_individual_subpackages_import_no_network():
             failures.append(f"{target}:\n{result.stderr.rstrip()}")
 
     if failures:
-        pytest.fail(
-            f"{len(failures)} sub-module(s) trigger network I/O at "
-            f"module-load time:\n  " + "\n\n  ".join(failures)
-        )
+        pytest.fail(f"{len(failures)} sub-module(s) trigger network I/O at " f"module-load time:\n  " + "\n\n  ".join(failures))

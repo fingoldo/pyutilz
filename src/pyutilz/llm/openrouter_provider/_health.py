@@ -126,10 +126,7 @@ def _fetch_endpoints_for_model(
         resp = client.get(url, timeout=timeout)
     else:
         if not api_key:
-            raise ValueError(
-                "_fetch_endpoints_for_model: pass either api_key= or a "
-                "preconfigured client= with auth headers."
-            )
+            raise ValueError("_fetch_endpoints_for_model: pass either api_key= or a " "preconfigured client= with auth headers.")
         resp = httpx.get(
             url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -486,13 +483,12 @@ def list_openrouter_models(
             return {
                 "input_price": in_price,
                 "output_price": out_price,
-                "context": -int(ctx),                          # biggest context first
+                "context": -int(ctx),  # biggest context first
                 "name": str(r.get("id", "")),
                 # Stage-2 sorts. Missing health → sort to the end.
-                "uptime":     -(health.get("best_uptime_30m") or 0.0),
-                "latency":    health.get("best_latency_p50_ms")    or float("inf"),
+                "uptime": -(health.get("best_uptime_30m") or 0.0),
+                "latency": health.get("best_latency_p50_ms") or float("inf"),
                 "throughput": -(health.get("best_throughput_p50_tps") or 0.0),
             }.get(sort_by, str(r.get("id", "")))
         rows.sort(key=_key)
     return rows
-

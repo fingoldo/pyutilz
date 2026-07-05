@@ -167,7 +167,7 @@ class TestSmartRatios:
         # Formula: (a-b)/(b+span_correction)
         result = smart_ratios(a, b, span_correction=1.0)
 
-        expected = np.array([(10-5)/6.0, (20-10)/11.0, (30-15)/16.0])
+        expected = np.array([(10 - 5) / 6.0, (20 - 10) / 11.0, (30 - 15) / 16.0])
         np.testing.assert_array_almost_equal(result, expected)
 
     def test_smart_ratios_na_fill(self):

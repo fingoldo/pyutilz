@@ -30,7 +30,6 @@ from pyutilz.text.similarity import (
     normalize_sentence,
 )
 
-
 # ══════════════════════════════════════════════════════════════════════
 # Helper: all implementations as a parametrized fixture
 # ══════════════════════════════════════════════════════════════════════
@@ -362,8 +361,7 @@ class TestCrossImplConsistency:
 
     IMPLS_NO_PYTHON = [impl for impl in ALL_IMPLS if impl.id != "python"]
 
-    @pytest.mark.parametrize("a,b", CONSISTENCY_CASES,
-                             ids=[f"case_{i}" for i in range(len(CONSISTENCY_CASES))])
+    @pytest.mark.parametrize("a,b", CONSISTENCY_CASES, ids=[f"case_{i}" for i in range(len(CONSISTENCY_CASES))])
     @pytest.mark.parametrize("sim_fn", IMPLS_NO_PYTHON)
     def test_matches_python(self, sim_fn, a, b):
         py_result = _sim_python(a, b)
@@ -485,8 +483,7 @@ class TestSentencesSimilarityPacked:
         assert sentences_similarity_numba_packed(None, pack_sentence(["x"])) is None
         assert sentences_similarity_numba_packed(pack_sentence(["x"]), None) is None
 
-    @pytest.mark.parametrize("a,b", CONSISTENCY_CASES,
-                             ids=[f"case_{i}" for i in range(len(CONSISTENCY_CASES))])
+    @pytest.mark.parametrize("a,b", CONSISTENCY_CASES, ids=[f"case_{i}" for i in range(len(CONSISTENCY_CASES))])
     def test_packed_matches_python(self, a, b):
         py = sentences_similarity(a, b)
         pa = pack_sentence(a)

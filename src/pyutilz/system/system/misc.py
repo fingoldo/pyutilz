@@ -30,8 +30,6 @@ from pympler import asizeof
 import platform, sys, importlib
 from datetime import timezone, datetime
 
-
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # IPython
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -280,9 +278,7 @@ def ensure_idle_devices(
     def check_cpu_initial_conditions():
         total_cpu_ram_gb = psutil.virtual_memory().total / (1024**3)
         if min_cpu_free_ram_gb > total_cpu_ram_gb:
-            logger.warning(
-                f"Requested CPU free RAM ({min_cpu_free_ram_gb} GB) exceeds total available RAM ({total_cpu_ram_gb:.2f} GB)"
-            )
+            logger.warning(f"Requested CPU free RAM ({min_cpu_free_ram_gb} GB) exceeds total available RAM ({total_cpu_ram_gb:.2f} GB)")
             return False
         return True
 
@@ -299,9 +295,7 @@ def ensure_idle_devices(
                 continue
             total_gpu_ram_gb = gpu.memoryTotal / 1024
             if min_gpu_free_ram_gb > total_gpu_ram_gb:
-                logger.warning(
-                    f"Requested GPU {gpu.id} free RAM ({min_gpu_free_ram_gb} GB) exceeds total available RAM ({total_gpu_ram_gb:.2f} GB)"
-                )
+                logger.warning(f"Requested GPU {gpu.id} free RAM ({min_gpu_free_ram_gb} GB) exceeds total available RAM ({total_gpu_ram_gb:.2f} GB)")
                 return False
         return True
 

@@ -3,8 +3,8 @@ import time
 import logging
 from unittest.mock import patch, MagicMock
 
-
 # ── job_completed (lines 39-72) ──
+
 
 class TestJobCompleted:
     @patch("pyutilz.system.monitoring.requests")

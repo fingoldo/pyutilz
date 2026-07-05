@@ -1,5 +1,5 @@
-""" Filemaker integration utils.
-"""
+"""Filemaker integration utils."""
+
 # *****************************************************************************************************************************************************
 # IMPORTS
 # *****************************************************************************************************************************************************
@@ -41,9 +41,7 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
     get_session_token(username=filemaker_username, password=filemaker_password)
 
 
-def get_session_token(
-    username: Optional[str] = None, password: Optional[str] = None, max_retries: int = 10, sleep_int_seconds: int = 10
-) -> Optional[str]:
+def get_session_token(username: Optional[str] = None, password: Optional[str] = None, max_retries: int = 10, sleep_int_seconds: int = 10) -> Optional[str]:
     """Obtain a FileMaker Data API session token, retrying on transient failures.
 
     Falls back to module-level credentials when username/password are not supplied.

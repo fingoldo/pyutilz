@@ -69,7 +69,7 @@ def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
 def cast_f64_to_f32(df: pl.DataFrame) -> pl.DataFrame:
     # Int128 was added in polars 0.19.0, make it optional for older versions
     int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
-    if hasattr(pl, 'Int128'):
+    if hasattr(pl, "Int128"):
         int_types.append(pl.Int128)
     return df.with_columns(pl.col(*int_types, pl.Float64).cast(pl.Float32))
 
@@ -711,7 +711,7 @@ def bin_numerical_columns(
     columns_to_drop = []
 
     # Get existing columns from dataframe schema (works for both DataFrame and LazyFrame)
-    df_columns = set(df.collect_schema().names()) if hasattr(df, 'collect_schema') else set(df.columns)
+    df_columns = set(df.collect_schema().names()) if hasattr(df, "collect_schema") else set(df.columns)
 
     # Filter target_columns to only include columns that exist in the dataframe
     existing_target_columns = [col for col in target_columns if col in df_columns]

@@ -31,24 +31,24 @@ class AnthropicProvider(LLMProvider):
     # table; pin the suffix only when the snapshot is the public API ID.
     _PRICING: dict[str, tuple[float, float]] = {
         # Opus 4.5+: dropped from $15/$75 to $5/$25 (3x cheaper than legacy 4/4.1).
-        "claude-opus-4-7":             (5.00, 25.00),
-        "claude-opus-4-6-20250610":    (5.00, 25.00),
-        "claude-opus-4-5-20250414":    (5.00, 25.00),
+        "claude-opus-4-7": (5.00, 25.00),
+        "claude-opus-4-6-20250610": (5.00, 25.00),
+        "claude-opus-4-5-20250414": (5.00, 25.00),
         # Legacy Opus 4 / 4.1 retain old $15/$75 pricing.
-        "claude-opus-4-1-20250805":    (15.00, 75.00),
-        "claude-opus-4-20250514":      (15.00, 75.00),
+        "claude-opus-4-1-20250805": (15.00, 75.00),
+        "claude-opus-4-20250514": (15.00, 75.00),
         # Sonnet family — same $3/$15 across all 4.x variants.
         # As of 2026-05-01 latest is Sonnet 4.6 (no Sonnet 4.7 released).
-        "claude-sonnet-4-6-20250610":  (3.00, 15.00),
-        "claude-sonnet-4-5-20250414":  (3.00, 15.00),
-        "claude-sonnet-4-20250514":    (3.00, 15.00),
-        "claude-sonnet-3-7-20250219":  (3.00, 15.00),  # deprecated
+        "claude-sonnet-4-6-20250610": (3.00, 15.00),
+        "claude-sonnet-4-5-20250414": (3.00, 15.00),
+        "claude-sonnet-4-20250514": (3.00, 15.00),
+        "claude-sonnet-3-7-20250219": (3.00, 15.00),  # deprecated
         # Haiku 4.5: $1/$5; legacy 3.5 stays $0.80/$4; Haiku 3 = $0.25/$1.25.
-        "claude-haiku-4-5-20251001":   (1.00, 5.00),
-        "claude-haiku-3-5-20241022":   (0.80, 4.00),
-        "claude-haiku-3-20240307":     (0.25, 1.25),
+        "claude-haiku-4-5-20251001": (1.00, 5.00),
+        "claude-haiku-3-5-20241022": (0.80, 4.00),
+        "claude-haiku-3-20240307": (0.25, 1.25),
         # Legacy Opus 3 (deprecated).
-        "claude-opus-3-20240229":      (15.00, 75.00),
+        "claude-opus-3-20240229": (15.00, 75.00),
     }
     _DEFAULT_PRICING = (3.00, 15.00)  # fallback = Sonnet pricing
 
@@ -59,11 +59,7 @@ class AnthropicProvider(LLMProvider):
         max_concurrent: int = 5,
     ):
         settings = get_llm_settings()
-        self.api_key = api_key or (
-            settings.anthropic_api_key.get_secret_value()
-            if settings.anthropic_api_key
-            else None
-        )
+        self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)
         if not self.api_key:
             raise ValueError("Anthropic API key not provided")
 
@@ -314,9 +310,7 @@ class AnthropicProvider(LLMProvider):
         total_output = getattr(self, "total_output_tokens", 0)
         plain_input = max(
             0,
-            total_input
-            - self.total_cache_creation_input_tokens
-            - self.total_cache_read_input_tokens,
+            total_input - self.total_cache_creation_input_tokens - self.total_cache_read_input_tokens,
         )
         return {
             "calls": getattr(self, "_call_count", 0),

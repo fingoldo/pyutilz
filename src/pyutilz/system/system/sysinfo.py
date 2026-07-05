@@ -28,7 +28,6 @@ import platform
 import subprocess
 
 
-
 from .misc import get_os_info
 from .probing import (
     get_power_plan,
@@ -77,8 +76,7 @@ def get_system_info(
         return_sensitive_info is automatically enabled.
     """
     # Backward compatibility: distributed.py needs sensitive info by default
-    if not only_stats and not any([return_hdd_info, return_os_info, return_hardware_info,
-                                   return_hardware_details, return_usage_stats, return_network_info]):
+    if not only_stats and not any([return_hdd_info, return_os_info, return_hardware_info, return_hardware_details, return_usage_stats, return_network_info]):
         return_sensitive_info = True
         return_os_info = True  # Needed to trigger sensitive info collection
 
@@ -136,16 +134,12 @@ def get_system_info(
 
                 elif current_system == "Linux":
                     try:
-                        machine_id = subprocess.check_output(
-                            ["cat", "/var/lib/dbus/machine-id"]
-                        ).decode().strip()
+                        machine_id = subprocess.check_output(["cat", "/var/lib/dbus/machine-id"]).decode().strip()
                         info["os_machine_guid"] = machine_id
                         info["os_serial"] = machine_id
                     except Exception:
                         try:
-                            machine_id = subprocess.check_output(
-                                ["cat", "/etc/machine-id"]
-                            ).decode().strip()
+                            machine_id = subprocess.check_output(["cat", "/etc/machine-id"]).decode().strip()
                             info["os_machine_guid"] = machine_id
                             info["os_serial"] = machine_id
                         except Exception:

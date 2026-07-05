@@ -55,10 +55,7 @@ def test_provider_class_declares_own_override(module_path, class_name, expected)
     mod = importlib.import_module(module_path)
     cls = getattr(mod, class_name)
     # Must have its OWN definition, not just inherited.
-    assert "supports_json_mode" in cls.__dict__, (
-        f"{class_name} must declare its own supports_json_mode "
-        f"(currently inheriting base default)"
-    )
+    assert "supports_json_mode" in cls.__dict__, f"{class_name} must declare its own supports_json_mode " f"(currently inheriting base default)"
     # Method should return the documented expected value when called
     # on an instance — but instantiating each provider needs API keys
     # / SDK setup. Inspect the function bytecode default instead.
@@ -77,8 +74,7 @@ def test_provider_class_declares_own_override(module_path, class_name, expected)
         # the simple overrides. (OpenRouterProvider's override has
         # branching logic — skip the bytecode check for it.)
         assert expected in return_consts, (
-            f"{class_name}.supports_json_mode bytecode doesn't include "
-            f"expected literal {expected}; constants seen: {return_consts}"
+            f"{class_name}.supports_json_mode bytecode doesn't include " f"expected literal {expected}; constants seen: {return_consts}"
         )
 
 

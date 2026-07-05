@@ -45,17 +45,16 @@ def _refresh_requested() -> bool:
 
 def _is_resource_call(call: ast.Call) -> bool:
     """Match the resource-acquisition calls we audit:
-      * bare ``open(...)``
-      * ``tempfile.NamedTemporaryFile(...)`` /
-        ``tempfile.TemporaryFile(...)`` / ``tempfile.SpooledTemporaryFile(...)``
-      * ``subprocess.Popen(...)``
+    * bare ``open(...)``
+    * ``tempfile.NamedTemporaryFile(...)`` /
+      ``tempfile.TemporaryFile(...)`` / ``tempfile.SpooledTemporaryFile(...)``
+    * ``subprocess.Popen(...)``
     """
     func = call.func
     if isinstance(func, ast.Name):
         return func.id == "open"
     if isinstance(func, ast.Attribute):
-        if func.attr in {"NamedTemporaryFile", "TemporaryFile",
-                         "SpooledTemporaryFile"}:
+        if func.attr in {"NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile"}:
             return True
         if func.attr == "Popen":
             return True
@@ -72,8 +71,7 @@ def _walk_with_parents(tree: ast.AST):
         yield node, parent_map.get(id(node))
 
 
-def _is_under_with_statement(call: ast.Call, ancestors_by_id: dict[int, ast.AST],
-                             call_to_chain: dict[int, list[ast.AST]]) -> bool:
+def _is_under_with_statement(call: ast.Call, ancestors_by_id: dict[int, ast.AST], call_to_chain: dict[int, list[ast.AST]]) -> bool:
     """True if any ancestor of ``call`` is a ``with`` statement and the
     call appears inside one of its ``items`` (the context-manager position).
     """
@@ -131,13 +129,8 @@ def test_no_new_unmanaged_resource_acquisition():
     current = _build_offending_set()
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
-        _BASELINE_PATH.write_text(
-            json.dumps(sorted(current), indent=2), encoding="utf-8"
-        )
-        pytest.skip(
-            f"resource-handle baseline refreshed at "
-            f"{_BASELINE_PATH.name} ({len(current)} bare-acquisition site(s))"
-        )
+        _BASELINE_PATH.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        pytest.skip(f"resource-handle baseline refreshed at " f"{_BASELINE_PATH.name} ({len(current)} bare-acquisition site(s))")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -159,7 +152,5 @@ def test_no_new_unmanaged_resource_acquisition():
             f"should be context-managed so handles close on exception. "
             f"Replace with ``with open(...) as f:`` form, OR refresh the "
             f"baseline if intentional (e.g. handle is returned as part of "
-            f"the public API):\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"the public API):\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

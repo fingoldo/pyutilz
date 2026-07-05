@@ -98,25 +98,25 @@ def s3_file_exists(key: str, bucket: str) -> bool:
 
 def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
     """
-        Gets an object from s3 or local filesystem (including zipped version).
-        If not found even on s3, reports and starts waiting cycle until expected object is uploaded.
+    Gets an object from s3 or local filesystem (including zipped version).
+    If not found even on s3, reports and starts waiting cycle until expected object is uploaded.
     """
     while not exists(local_object_path):
-        bDownload=True
-        if s3_object_path.endswith('.zip'):
-            if exists(local_object_path+'.zip'):
+        bDownload = True
+        if s3_object_path.endswith(".zip"):
+            if exists(local_object_path + ".zip"):
                 logger.info("Zipped version of %s found in local FS", s3_object_path)
-                bDownload=False
+                bDownload = False
 
         if bDownload:
             # If file exists in our s3
-            if s3_file_exists(s3_object_path,S3_BUCKET_NAME):
-                #Load model from our s3
+            if s3_file_exists(s3_object_path, S3_BUCKET_NAME):
+                # Load model from our s3
                 try:
-                    if s3_object_path.endswith('.zip'):
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path+'.zip')
+                    if s3_object_path.endswith(".zip"):
+                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path + ".zip")
                     else:
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME,Key=s3_object_path,Filename=local_object_path)
+                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path)
                 except Exception as e:
                     logger.error(f"Error while downloading model {s3_object_path} from bucket {S3_BUCKET_NAME}: {e}")
                 else:
@@ -125,14 +125,14 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                 logger.warning(f"Model {s3_object_path} not found in bucket {S3_BUCKET_NAME}")
                 sleep(10)
         else:
-            if s3_object_path.endswith('.zip'):
-                if exists(local_object_path+'.zip'):
+            if s3_object_path.endswith(".zip"):
+                if exists(local_object_path + ".zip"):
                     # unpack it
                     import shutil
                     try:
-                        shutil.unpack_archive(local_object_path+'.zip', temp_dir)
+                        shutil.unpack_archive(local_object_path + ".zip", temp_dir)
                     except Exception as e:
                         logger.error(f"Error while unpacking model from bucket {local_object_path+'.zip'}: {e}")
                     else:
-                        logger.info("Unzipped model from archive %s", local_object_path+'.zip')
-                        os.remove(local_object_path+'.zip')
+                        logger.info("Unzipped model from archive %s", local_object_path + ".zip")
+                        os.remove(local_object_path + ".zip")

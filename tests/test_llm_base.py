@@ -20,7 +20,7 @@ class TestLLMProviderABC:
 
 class TestExtractJsonEdgeCases:
     def test_json_array_in_code_block_parses_as_list(self):
-        text = '```json\n[1, 2, 3]\n```'
+        text = "```json\n[1, 2, 3]\n```"
         result = LLMProvider.extract_json(text)
         assert result == [1, 2, 3]
 
@@ -39,7 +39,7 @@ class TestExtractJsonEdgeCases:
         assert LLMProvider.extract_json(text) == {"key": "value"}
 
     def test_json_with_leading_prose(self):
-        text = "Sure, here you go: {\"key\": \"value\"}"
+        text = 'Sure, here you go: {"key": "value"}'
         assert LLMProvider.extract_json(text) == {"key": "value"}
 
     def test_invalid_json_still_raises(self):

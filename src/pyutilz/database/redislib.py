@@ -23,7 +23,7 @@ from time import sleep
 from random import random
 from redis.exceptions import ConnectionError
 
-rc=None
+rc = None
 
 def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:str, decode_responses:bool=True):
     global rc
@@ -44,10 +44,10 @@ def rclose() -> None:
 
 def rexecute (method_name:str,*args,**kwargs) -> Any:
     """
-        Safely execute any Redis command, not worrying about temporary network/server issues.
+    Safely execute any Redis command, not worrying about temporary network/server issues.
 
-        Transient ConnectionErrors are retried with a small random backoff. A permanent error
-        (e.g. missing connection, unknown method) is logged and re-raised instead of busy-looping forever.
+    Transient ConnectionErrors are retried with a small random backoff. A permanent error
+    (e.g. missing connection, unknown method) is logged and re-raised instead of busy-looping forever.
     """
     if rc is None:
         raise RuntimeError("Redis connection is not established. Call rconnect(...) first.")

@@ -21,7 +21,6 @@ from pyutilz.data.polarslib import (
     POLARS_DEFAULT_QUANTILES,
 )
 
-
 # ============================================================
 # entropy_for_column
 # ============================================================
@@ -151,85 +150,63 @@ class TestDropConstantColumns:
 class TestBinNumericalColumns:
     def test_basic_binning(self, mock_clean):
         df = pl.DataFrame({"a": list(range(100)), "b": list(range(100, 200))}).lazy()
-        bins, binned_targets, clips, dropped, stats = bin_numerical_columns(
-            df, target_columns=[], verbose=0
-        )
+        bins, binned_targets, clips, dropped, stats = bin_numerical_columns(df, target_columns=[], verbose=0)
         assert isinstance(bins, pl.DataFrame)
         assert bins.height == 100
 
     def test_target_columns_separated(self, mock_clean):
         df = pl.DataFrame({"feat": list(range(100)), "target": list(range(100))}).lazy()
-        bins, binned_targets, clips, dropped, stats = bin_numerical_columns(
-            df, target_columns=["target"], verbose=0
-        )
+        bins, binned_targets, clips, dropped, stats = bin_numerical_columns(df, target_columns=["target"], verbose=0)
         assert binned_targets is not None
         assert "target" in binned_targets.columns
 
     def test_constant_columns_dropped(self, mock_clean):
         df = pl.DataFrame({"a": [5] * 20, "b": list(range(20))}).lazy()
-        bins, _, _, dropped, _ = bin_numerical_columns(
-            df, target_columns=[], verbose=0
-        )
+        bins, _, _, dropped, _ = bin_numerical_columns(df, target_columns=[], verbose=0)
         assert "a" in dropped
 
     def test_num_bins_respected(self, mock_clean):
         df = pl.DataFrame({"a": list(range(1000))}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=[], num_bins=5, verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], num_bins=5, verbose=0)
         unique_bins = bins["a"].n_unique()
         assert unique_bins <= 5
 
     def test_exclude_columns(self, mock_clean):
         df = pl.DataFrame({"a": list(range(50)), "b": list(range(50))}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=[], exclude_columns=["b"], verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], exclude_columns=["b"], verbose=0)
         assert "b" not in bins.columns
 
     def test_bin_dtype(self, mock_clean):
         df = pl.DataFrame({"a": list(range(50))}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=[], bin_dtype=pl.Int16, verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], bin_dtype=pl.Int16, verbose=0)
         assert bins["a"].dtype == pl.Int16
 
     def test_clips_dict_populated_for_outliers(self, mock_clean):
         values = list(range(100)) + [10000]
         df = pl.DataFrame({"a": values}).lazy()
-        _, _, clips, _, _ = bin_numerical_columns(
-            df, target_columns=[], verbose=0
-        )
+        _, _, clips, _, _ = bin_numerical_columns(df, target_columns=[], verbose=0)
         # With extreme outlier, clipping should be detected
         assert isinstance(clips, dict)
 
     def test_fill_nulls(self, mock_clean):
         df = pl.DataFrame({"a": [None, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=[], fill_nulls=True, verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], fill_nulls=True, verbose=0)
         assert bins["a"].null_count() == 0
 
     def test_fill_nans(self, mock_clean):
         df = pl.DataFrame({"a": [float("nan")] + list(range(1, 50))}).cast({"a": pl.Float64}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=[], fill_nans=True, verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], fill_nans=True, verbose=0)
         assert bins.height == 50
 
     def test_missing_target_columns_ignored(self, mock_clean):
         df = pl.DataFrame({"a": list(range(50))}).lazy()
-        bins, _, _, _, _ = bin_numerical_columns(
-            df, target_columns=["nonexistent"], verbose=0
-        )
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=["nonexistent"], verbose=0)
         assert bins.height == 50
 
     def test_binned_targets_passthrough(self, mock_clean):
         df = pl.DataFrame({"a": list(range(50))}).lazy()
         pre_binned = pl.DataFrame({"t": list(range(50))})
-        bins, bt, _, _, _ = bin_numerical_columns(
-            df, target_columns=["t"], binned_targets=pre_binned, verbose=0
-        )
+        bins, bt, _, _, _ = bin_numerical_columns(df, target_columns=["t"], binned_targets=pre_binned, verbose=0)
         assert "t" in bins.columns
 
 
@@ -260,18 +237,14 @@ class TestAddWeightedAggregates:
 
     def test_fields_remap(self):
         df = pl.DataFrame({"a": [1.0, 2.0], "w": [1.0, 1.0]})
-        exprs = add_weighted_aggregates(
-            cs.numeric(), weighting_columns=["w"], fields_remap={"w": "weight"}
-        )
+        exprs = add_weighted_aggregates(cs.numeric(), weighting_columns=["w"], fields_remap={"w": "weight"})
         result = df.group_by(pl.lit(1).alias("grp")).agg(exprs)
         col_names = result.columns
         assert any("weight" in c for c in col_names)
 
     def test_fpref(self):
         df = pl.DataFrame({"a": [1.0, 2.0], "w": [1.0, 1.0]})
-        exprs = add_weighted_aggregates(
-            cs.numeric(), weighting_columns=["w"], fpref="pref_"
-        )
+        exprs = add_weighted_aggregates(cs.numeric(), weighting_columns=["w"], fpref="pref_")
         result = df.group_by(pl.lit(1).alias("grp")).agg(exprs)
         col_names = result.columns
         assert any("pref_" in c for c in col_names)
@@ -503,17 +476,13 @@ class TestBuildAggregateFeatures:
 
     def test_fields_remap(self):
         df = pl.DataFrame({"a": [1.0, 2.0]})
-        exprs, _, _ = build_aggregate_features_polars(
-            df, fields_remap={"a": "alpha"}, engine="cpu"
-        )
+        exprs, _, _ = build_aggregate_features_polars(df, fields_remap={"a": "alpha"}, engine="cpu")
         assert len(exprs) > 0
 
     def test_custom_expressions_included(self):
         df = pl.DataFrame({"a": [1.0, 2.0]})
         custom = [pl.col("a").sum().alias("a_total")]
-        exprs, _, _ = build_aggregate_features_polars(
-            df, custom_expressions=custom, engine="cpu"
-        )
+        exprs, _, _ = build_aggregate_features_polars(df, custom_expressions=custom, engine="cpu")
         aliases = []
         # custom expression should be first in list
         assert len(exprs) > 1

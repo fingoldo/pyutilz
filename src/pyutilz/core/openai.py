@@ -41,9 +41,7 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
     return len(encoding.encode(string))
 
 
-def num_tokens_from_messages(
-    messages: list[dict], model: str = "gpt-3.5-turbo-0613"
-) -> int:
+def num_tokens_from_messages(messages: list[dict], model: str = "gpt-3.5-turbo-0613") -> int:
     """Return the number of tokens used by a list of chat messages.
 
     Uses the ``gpt-3.5-turbo-0613`` message-framing overhead (4 tokens per

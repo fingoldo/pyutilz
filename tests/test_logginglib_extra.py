@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, PropertyMock
 from os.path import basename
 
-
 # ---------------------------------------------------------------------------
 # init_logging — lines 54-90
 # ---------------------------------------------------------------------------
@@ -127,28 +126,19 @@ from pyutilz.logginglib import finalize_function_log
 
 
 def test_finalize_function_log_no_db():
-    results_log = {
-        "results": {"timing": {"started_at": datetime.now(timezone.utc)}}
-    }
+    results_log = {"results": {"timing": {"started_at": datetime.now(timezone.utc)}}}
     result = finalize_function_log(results_log)
     assert "duration" in result["results"]["timing"]
 
 
 def test_finalize_function_log_with_activities():
-    results_log = {
-        "results": {
-            "timing": {"started_at": datetime.now(timezone.utc)},
-            "activities": {"step1": {"started_at": datetime.now(timezone.utc)}}
-        }
-    }
+    results_log = {"results": {"timing": {"started_at": datetime.now(timezone.utc)}, "activities": {"step1": {"started_at": datetime.now(timezone.utc)}}}}
     result = finalize_function_log(results_log)
     assert "finished_at" in result["results"]["activities"]["step1"]
 
 
 def test_finalize_function_log_verbose(capsys):
-    results_log = {
-        "results": {"timing": {"started_at": datetime.now(timezone.utc)}}
-    }
+    results_log = {"results": {"timing": {"started_at": datetime.now(timezone.utc)}}}
     finalize_function_log(results_log, verbose=True)
     captured = capsys.readouterr()
     assert "results" in captured.out or "timing" in captured.out

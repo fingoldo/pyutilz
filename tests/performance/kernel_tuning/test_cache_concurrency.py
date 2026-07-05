@@ -103,8 +103,7 @@ def test_different_kernels_no_lost_update_D1(host_dir, tmp_path):
     n = 5
     kernels = [f"k_{i}" for i in range(n)]
     outs = [str(tmp_path / f"own_{i}.json") for i in range(n)]
-    procs = [_launch("own_kernel", host_dir, outs[i], kernel_name=kernels[i], sleep_ms=300)
-             for i in range(n)]
+    procs = [_launch("own_kernel", host_dir, outs[i], kernel_name=kernels[i], sleep_ms=300) for i in range(n)]
     _run_workers(procs)
 
     # Each worker swept its own kernel + persisted it.
@@ -142,9 +141,9 @@ def test_stale_marker_is_stolen_when_owner_pid_dead(host_dir):
         swept["v"] = True
         return [{"backend": "stolen_and_done"}]
 
-    got = cache.get_or_tune("wedged", dims={"n": 1}, tuner=tuner, axes=["n"],
-                            fallback={"backend": "FB"}, code_version="cv1",
-                            once_per_process=False, async_sweep=False)
+    got = cache.get_or_tune(
+        "wedged", dims={"n": 1}, tuner=tuner, axes=["n"], fallback={"backend": "FB"}, code_version="cv1", once_per_process=False, async_sweep=False
+    )
     assert swept["v"], "stale-marker steal failed: sweep never ran"
     assert got["backend"] == "stolen_and_done"
     assert not os.path.exists(marker), "marker should be removed after a completed sweep"
@@ -167,9 +166,9 @@ def test_stale_marker_is_stolen_when_start_ts_expired(host_dir, monkeypatch):
         swept["v"] = True
         return [{"backend": "budget_steal"}]
 
-    got = cache.get_or_tune("expired", dims={"n": 1}, tuner=tuner, axes=["n"],
-                            fallback={"backend": "FB"}, code_version="cv1",
-                            once_per_process=False, async_sweep=False)
+    got = cache.get_or_tune(
+        "expired", dims={"n": 1}, tuner=tuner, axes=["n"], fallback={"backend": "FB"}, code_version="cv1", once_per_process=False, async_sweep=False
+    )
     assert swept["v"]
     assert got["backend"] == "budget_steal"
 
@@ -192,9 +191,9 @@ def test_fresh_empty_marker_is_NOT_stolen(host_dir):
         swept["v"] = True
         return [{"backend": "should_not_run"}]
 
-    got = cache.get_or_tune("empty_fresh", dims={"n": 1}, tuner=tuner, axes=["n"],
-                            fallback={"backend": "FB"}, code_version="cv1",
-                            once_per_process=False, async_sweep=False)
+    got = cache.get_or_tune(
+        "empty_fresh", dims={"n": 1}, tuner=tuner, axes=["n"], fallback={"backend": "FB"}, code_version="cv1", once_per_process=False, async_sweep=False
+    )
     assert not swept["v"], "a fresh empty (mid-create) marker must not be stolen -> no second sweep"
     assert got["backend"] == "FB"
 
@@ -216,9 +215,9 @@ def test_stale_empty_marker_IS_stolen(host_dir, monkeypatch):
         swept["v"] = True
         return [{"backend": "healed"}]
 
-    got = cache.get_or_tune("empty_stale", dims={"n": 1}, tuner=tuner, axes=["n"],
-                            fallback={"backend": "FB"}, code_version="cv1",
-                            once_per_process=False, async_sweep=False)
+    got = cache.get_or_tune(
+        "empty_stale", dims={"n": 1}, tuner=tuner, axes=["n"], fallback={"backend": "FB"}, code_version="cv1", once_per_process=False, async_sweep=False
+    )
     assert swept["v"], "an mtime-stale empty marker (crashed mid-create) must be stolen + swept"
     assert got["backend"] == "healed"
 
@@ -239,9 +238,9 @@ def test_live_in_budget_marker_is_NOT_stolen(host_dir):
         swept["v"] = True
         return [{"backend": "should_not_run"}]
 
-    got = cache.get_or_tune("busy", dims={"n": 1}, tuner=tuner, axes=["n"],
-                            fallback={"backend": "FB"}, code_version="cv1",
-                            once_per_process=False, async_sweep=False)
+    got = cache.get_or_tune(
+        "busy", dims={"n": 1}, tuner=tuner, axes=["n"], fallback={"backend": "FB"}, code_version="cv1", once_per_process=False, async_sweep=False
+    )
     assert not swept["v"], "must not duplicate a live, in-budget sweep"
     assert got["backend"] == "FB"
     assert os.path.exists(marker), "we must not remove a marker we don't own"

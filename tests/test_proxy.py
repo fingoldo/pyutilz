@@ -21,8 +21,8 @@ from pyutilz.web.proxy import (
 )
 from pyutilz.web.proxy.decodo import _parse_traffic_response, _fmt_gb, _safe_int
 
-
 # ── Fixtures ────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def cfg():
@@ -479,9 +479,7 @@ class TestDecodoApiMethods:
     @patch("requests.post")
     def test_get_traffic(self, mock_post, provider):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = [
-            {"grouping_key": "2024-01-01", "requests": 100, "totals": 1048576}
-        ]
+        mock_resp.json.return_value = [{"grouping_key": "2024-01-01", "requests": 100, "totals": 1048576}]
         mock_post.return_value = mock_resp
         report = provider.get_traffic(days=7)
         assert report.total_requests == 100

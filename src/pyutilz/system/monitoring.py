@@ -178,8 +178,8 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
                     return repr_str
 
                 # Format args and kwargs safely with truncation
-                args_str = ', '.join(safe_repr(arg) for arg in args) if args else ''
-                kwargs_str = ', '.join(f"{k}={safe_repr(v)}" for k, v in kwargs.items()) if kwargs else ''
+                args_str = ", ".join(safe_repr(arg) for arg in args) if args else ""
+                kwargs_str = ", ".join(f"{k}={safe_repr(v)}" for k, v in kwargs.items()) if kwargs else ""
                 args_kwargs = f"({args_str}{', ' if args and kwargs else ''}{kwargs_str})"
 
                 logger_msg.info("%s%s took %.2f s.", func.__name__, args_kwargs, dur)

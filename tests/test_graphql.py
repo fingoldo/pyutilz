@@ -113,6 +113,4 @@ class TestExecute:
         mod.client = mock_client
         result = execute("query($id: ID!){ node(id: $id) }", variables={"id": "1"})
         assert result == {"data": "ok"}
-        mock_client.graphql.assert_called_once_with(
-            "query($id: ID!){ node(id: $id) }", variables={"id": "1"}
-        )
+        mock_client.graphql.assert_called_once_with("query($id: ID!){ node(id: $id) }", variables={"id": "1"})

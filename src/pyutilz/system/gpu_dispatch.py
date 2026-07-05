@@ -60,24 +60,24 @@ WARP_SIZE = 32
 # ---------------------------------------------------------------------------
 CC_SHARED_MEM_BUDGET: dict[tuple[int, int], tuple[int, int]] = {
     # cc          default     opt_in_max
-    (3, 0):     ( 49152,      49152),  # Kepler: 48 KB per block, no opt-in
-    (3, 2):     ( 49152,      49152),
-    (3, 5):     ( 49152,      49152),
-    (3, 7):     ( 49152,      49152),  # 112 KB is per-SM, NOT per-block
-    (5, 0):     ( 49152,      49152),  # Maxwell: 48 KB per block, no opt-in
-    (5, 2):     ( 49152,      49152),  # 96 KB per-SM, per-block stays at 48 KB
-    (5, 3):     ( 49152,      49152),
-    (6, 0):     ( 49152,      49152),  # Pascal: 48 KB per block, no opt-in
-    (6, 1):     ( 49152,      49152),  # 96 KB per-SM, per-block stays at 48 KB
-    (6, 2):     ( 49152,      49152),
-    (7, 0):     ( 49152,      98304),  # Volta V100: 96 KB per-block opt-in
-    (7, 2):     ( 49152,      98304),  # Xavier
-    (7, 5):     ( 49152,      65536),  # Turing: 64 KB per-block opt-in
-    (8, 0):     ( 49152,     166912),  # A100: 163 KB per-block (164 KB per-SM - 1 KB)
-    (8, 6):     ( 49152,     101376),  # Ampere consumer: 99 KB per-block (100 - 1)
-    (8, 7):     ( 49152,     166912),  # Orin: 163 KB per-block (same as A100)
-    (8, 9):     ( 49152,     101376),  # Ada Lovelace: 99 KB per-block
-    (9, 0):     ( 49152,     232448),  # Hopper: 227 KB per-block (228 - 1)
+    (3, 0): (49152, 49152),  # Kepler: 48 KB per block, no opt-in
+    (3, 2): (49152, 49152),
+    (3, 5): (49152, 49152),
+    (3, 7): (49152, 49152),  # 112 KB is per-SM, NOT per-block
+    (5, 0): (49152, 49152),  # Maxwell: 48 KB per block, no opt-in
+    (5, 2): (49152, 49152),  # 96 KB per-SM, per-block stays at 48 KB
+    (5, 3): (49152, 49152),
+    (6, 0): (49152, 49152),  # Pascal: 48 KB per block, no opt-in
+    (6, 1): (49152, 49152),  # 96 KB per-SM, per-block stays at 48 KB
+    (6, 2): (49152, 49152),
+    (7, 0): (49152, 98304),  # Volta V100: 96 KB per-block opt-in
+    (7, 2): (49152, 98304),  # Xavier
+    (7, 5): (49152, 65536),  # Turing: 64 KB per-block opt-in
+    (8, 0): (49152, 166912),  # A100: 163 KB per-block (164 KB per-SM - 1 KB)
+    (8, 6): (49152, 101376),  # Ampere consumer: 99 KB per-block (100 - 1)
+    (8, 7): (49152, 166912),  # Orin: 163 KB per-block (same as A100)
+    (8, 9): (49152, 101376),  # Ada Lovelace: 99 KB per-block
+    (9, 0): (49152, 232448),  # Hopper: 227 KB per-block (228 - 1)
 }
 
 _SAFE_DEFAULT_SMEM = 49152  # 48 KB fallback for unknown / forward-compat
@@ -93,9 +93,7 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
     if not is_cuda_available():
         return None
 
-    gpus = get_gpuutil_gpu_info(
-        attrs="id,memoryFree,memoryTotal,load,name,uuid"
-    )
+    gpus = get_gpuutil_gpu_info(attrs="id,memoryFree,memoryTotal,load,name,uuid")
     if not gpus:
         logger.debug("select_best_gpu: GPUtil returned no devices")
         return None
@@ -120,10 +118,7 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
             return float(g.get("memoryFree", 0.0)) * cc
         best = max(gpus, key=_score)
     else:
-        raise ValueError(
-            f"Unknown strategy {strategy!r}. "
-            "Expected one of: 'auto', 'vram', 'compute', 'idle'."
-        )
+        raise ValueError(f"Unknown strategy {strategy!r}. " "Expected one of: 'auto', 'vram', 'compute', 'idle'.")
 
     return int(best["id"])
 
@@ -278,7 +273,7 @@ def _free_bytes_via_gputil(device_id: Optional[int]) -> Optional[int]:
             return None
     # get_gpuutil_gpu_info divides by 1024 -> the value is in GB.
     free_gb = float(gpu.get("memoryFree", 0.0))
-    return int(free_gb * 1024 ** 3)
+    return int(free_gb * 1024**3)
 
 
 @contextmanager
@@ -316,10 +311,7 @@ def cuda_memory_guard(
         free = _free_bytes_via_gputil(device_id)
         source = "GPUtil"
     if free is None:
-        logger.warning(
-            "cuda_memory_guard: cannot determine free VRAM (neither cupy nor "
-            "GPUtil available); proceeding without check"
-        )
+        logger.warning("cuda_memory_guard: cannot determine free VRAM (neither cupy nor " "GPUtil available); proceeding without check")
     else:
         if free < threshold:
             raise MemoryError(

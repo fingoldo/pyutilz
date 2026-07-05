@@ -5,8 +5,8 @@ import pytest
 from unittest.mock import patch, MagicMock, mock_open
 import types
 
-
 # ── parse_dmidecode_info (lines 757-832) ──
+
 
 class TestParseDmidecodeInfo:
     SAMPLE_OUTPUT = (
@@ -73,13 +73,8 @@ class TestParseDmidecodeInfo:
     @patch("pyutilz.system.system.probing.subprocess")
     def test_skip_values(self, mock_sub):
         from pyutilz.system.system import parse_dmidecode_info
-        output = (
-            "Handle 0x0, DMI type 0, 24 bytes\n"
-            "BIOS Information\n"
-            "\tVendor: Not Provided\n"
-            "\tVersion: 2.0\n"
-            "\tSpeed: 3600\n"
-        )
+
+        output = "Handle 0x0, DMI type 0, 24 bytes\n" "BIOS Information\n" "\tVendor: Not Provided\n" "\tVersion: 2.0\n" "\tSpeed: 3600\n"
         mock_sub.run.return_value = MagicMock(stdout=output)
         result = parse_dmidecode_info()
         items = {dict(r["item"]).get("ItemType"): dict(r["item"]) for r in result}
@@ -107,12 +102,8 @@ class TestParseDmidecodeInfo:
     @patch("pyutilz.system.system.probing.subprocess")
     def test_numeric_value_int_conversion(self, mock_sub):
         from pyutilz.system.system import parse_dmidecode_info
-        output = (
-            "Handle 0x0, DMI type 4, 42 bytes\n"
-            "Processor Information\n"
-            "\tMax Speed: 3600\n"
-            "\tCore Count: 8\n"
-        )
+
+        output = "Handle 0x0, DMI type 4, 42 bytes\n" "Processor Information\n" "\tMax Speed: 3600\n" "\tCore Count: 8\n"
         mock_sub.run.return_value = MagicMock(stdout=output)
         result = parse_dmidecode_info()
         items = {dict(r["item"]).get("ItemType"): dict(r["item"]) for r in result}
@@ -124,12 +115,8 @@ class TestParseDmidecodeInfo:
     @patch("pyutilz.system.system.probing.subprocess")
     def test_handle_line_skipped(self, mock_sub):
         from pyutilz.system.system import parse_dmidecode_info
-        output = (
-            "Handle 0x0, DMI type 4, 42 bytes\n"
-            "Processor Information\n"
-            "\tL1 Cache Handle: 0x0049\n"
-            "\tSpeed: 2400\n"
-        )
+
+        output = "Handle 0x0, DMI type 4, 42 bytes\n" "Processor Information\n" "\tL1 Cache Handle: 0x0049\n" "\tSpeed: 2400\n"
         mock_sub.run.return_value = MagicMock(stdout=output)
         result = parse_dmidecode_info()
         items = {dict(r["item"]).get("ItemType"): dict(r["item"]) for r in result}
@@ -158,14 +145,8 @@ class TestParseDmidecodeInfo:
     def test_features_flushed_on_new_section(self, mock_sub):
         """Features list is flushed when a new non-tab line starts."""
         from pyutilz.system.system import parse_dmidecode_info
-        output = (
-            "Handle 0x0, DMI type 0, 24 bytes\n"
-            "BIOS Information\n"
-            "\tFeatures:\n"
-            "\t\tFeature A\n"
-            "\t\tFeature B\n"
-            "\tVendor: TestVendor\n"
-        )
+
+        output = "Handle 0x0, DMI type 0, 24 bytes\n" "BIOS Information\n" "\tFeatures:\n" "\t\tFeature A\n" "\t\tFeature B\n" "\tVendor: TestVendor\n"
         mock_sub.run.return_value = MagicMock(stdout=output)
         result = parse_dmidecode_info()
         items = {dict(r["item"]).get("ItemType"): dict(r["item"]) for r in result}
@@ -177,14 +158,7 @@ class TestParseDmidecodeInfo:
         """Last section with features is flushed at EOF."""
         from pyutilz.system.system import parse_dmidecode_info
         # "BIOS" matches interesting_sections list item "BIOS"
-        output = (
-            "Handle 0x0, DMI type 0, 24 bytes\n"
-            "BIOS Information\n"
-            "\tVendor: Test\n"
-            "\tCapabilities:\n"
-            "\t\tCap1\n"
-            "\t\tCap2\n"
-        )
+        output = "Handle 0x0, DMI type 0, 24 bytes\n" "BIOS Information\n" "\tVendor: Test\n" "\tCapabilities:\n" "\t\tCap1\n" "\t\tCap2\n"
         mock_sub.run.return_value = MagicMock(stdout=output)
         result = parse_dmidecode_info()
         assert len(result) >= 1
@@ -223,8 +197,7 @@ class TestGetSystemInfoLinuxFallbackBothFail:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_both_machine_id_fail(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                                   mock_psutil, mock_sub, mock_plat):
+    def test_both_machine_id_fail(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_sub.check_output.side_effect = [Exception("no dbus"), Exception("no etc")]
@@ -243,8 +216,7 @@ class TestGetSystemInfoAndroid:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_android_serial_success(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                                     mock_psutil, mock_sub, mock_plat):
+    def test_android_serial_success(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Android"
         mock_sub.check_output.return_value = b"ANDROID123\n"
@@ -259,8 +231,7 @@ class TestGetSystemInfoAndroid:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_android_serial_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                                     mock_psutil, mock_sub, mock_plat):
+    def test_android_serial_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Android"
         mock_sub.check_output.side_effect = Exception("no getprop")
@@ -279,8 +250,7 @@ class TestGetSystemInfoMac:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_mac_uuid_success(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                               mock_psutil, mock_sub, mock_plat):
+    def test_mac_uuid_success(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Mac"
         # Popen calls are now context-managed (``with subprocess.Popen(...)``);
@@ -305,8 +275,7 @@ class TestGetSystemInfoMac:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_mac_uuid_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                               mock_psutil, mock_sub, mock_plat):
+    def test_mac_uuid_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Mac"
         mock_sub.Popen.side_effect = Exception("no ioreg")
@@ -326,8 +295,7 @@ class TestGetSystemInfoWindowsSerialFail:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_wmic_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                           mock_psutil, mock_sub, mock_plat):
+    def test_wmic_failure(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Windows"
         mock_sub.check_output.side_effect = Exception("wmic not found")
@@ -348,8 +316,7 @@ class TestGetSystemInfoGpuCuda:
     @patch("pyutilz.system.system.sysinfo.get_cuda_gpu_details", return_value={"0": {"cores": 128}})
     @patch("pyutilz.system.system.sysinfo.get_cpu_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.check_large_pages_support", return_value=None)
-    def test_gpu_cuda_capabilities_included(self, mock_lp, mock_cpu, mock_cuda, mock_nv,
-                                             mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
+    def test_gpu_cuda_capabilities_included(self, mock_lp, mock_cpu, mock_cuda, mock_nv, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_plat.python_implementation.return_value = "CPython"
@@ -359,9 +326,9 @@ class TestGetSystemInfoGpuCuda:
         mock_psutil.cpu_freq.return_value = freq
         mock_psutil.virtual_memory.return_value = ram
         mock_psutil.cpu_count.side_effect = [4, 8]
-        with patch("pyutilz.system.system.sysinfo.get_lscpu_info", return_value=None), \
-             patch("pyutilz.system.system.sysinfo.get_linux_board_info", return_value=None), \
-             patch("pyutilz.system.system.sysinfo.get_nix_cpu_sockets_number", return_value=1):
+        with patch("pyutilz.system.system.sysinfo.get_lscpu_info", return_value=None), patch(
+            "pyutilz.system.system.sysinfo.get_linux_board_info", return_value=None
+        ), patch("pyutilz.system.system.sysinfo.get_nix_cpu_sockets_number", return_value=1):
             result = get_system_info(return_hardware_info=True)
         assert result["gpu_cuda_capabilities"] == {"0": {"cores": 128}}
 
@@ -389,10 +356,9 @@ class TestGetSystemInfoGpuStatsExceptions:
         mock_numba.cuda.is_available.return_value = True
         mock_cuda = MagicMock()
 
-        with patch.dict("sys.modules", {"numba": mock_numba, "numba.cuda": mock_cuda}), \
-             patch("pyutilz.system.system.sysinfo.subprocess") as mock_sub, \
-             patch("pyutilz.system.system.sysinfo.get_nvidia_smi_info", side_effect=Exception("no smi")), \
-             patch("pyutilz.system.system.sysinfo.get_gpuutil_gpu_info", side_effect=Exception("no gputil")):
+        with patch.dict("sys.modules", {"numba": mock_numba, "numba.cuda": mock_cuda}), patch("pyutilz.system.system.sysinfo.subprocess") as mock_sub, patch(
+            "pyutilz.system.system.sysinfo.get_nvidia_smi_info", side_effect=Exception("no smi")
+        ), patch("pyutilz.system.system.sysinfo.get_gpuutil_gpu_info", side_effect=Exception("no gputil")):
             mock_sub.check_output.side_effect = Exception("no nvcc")
             result = get_system_info()
         assert "gpu_current_stats_nvidia_smi" not in result
@@ -614,8 +580,7 @@ class TestGetGpuCudaCapabilities:
             "numba.cuda.cudadrv.enums": mock_enums,
         }):
             # Need to also patch dir() on enums
-            with patch("pyutilz.system.system.probing.remove_json_attributes"), \
-                 patch("pyutilz.system.system.probing.remove_json_defaults"):
+            with patch("pyutilz.system.system.probing.remove_json_attributes"), patch("pyutilz.system.system.probing.remove_json_defaults"):
                 result = get_gpu_cuda_capabilities(device_id=0)
         assert result is not None
 
@@ -788,9 +753,7 @@ class TestEnsureIdleDevices:
         gpu1 = MagicMock(id=1, memoryTotal=8192, memoryFree=6144, load=0.05)
         mock_gputil.getGPUs.return_value = [gpu0, gpu1]
 
-        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), \
-             patch("time.time", side_effect=[0, 0, 6]), \
-             patch("time.sleep"):
+        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), patch("time.time", side_effect=[0, 0, 6]), patch("time.sleep"):
             # Only check GPU 1 which has enough memory
             result = ensure_idle_devices(duration_seconds=5, min_gpu_free_ram_gb=4.0, gpu_ids=[1])
         assert result is True
@@ -804,10 +767,9 @@ class TestEnsureIdleDevices:
         mock_psutil.virtual_memory.return_value = mem
         mock_psutil.cpu_percent.return_value = 5.0
 
-        with patch.dict("sys.modules", {"GPUtil": None}), \
-             patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), \
-             patch("time.time", side_effect=[0, 0, 6]), \
-             patch("time.sleep"):
+        with patch.dict("sys.modules", {"GPUtil": None}), patch("builtins.__import__", side_effect=_selective_import_error("GPUtil")), patch(
+            "time.time", side_effect=[0, 0, 6]
+        ), patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
         assert result is True
 
@@ -824,13 +786,11 @@ class TestEnsureIdleDevices:
         gpu = MagicMock()
         gpu.id = 0
         gpu.memoryTotal = 8192  # 8GB
-        gpu.memoryFree = 6144   # 6GB
-        gpu.load = 0.05         # 5%
+        gpu.memoryFree = 6144  # 6GB
+        gpu.load = 0.05  # 5%
         mock_gputil.getGPUs.return_value = [gpu]
 
-        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), \
-             patch("time.time", side_effect=[0, 0, 6]), \
-             patch("time.sleep"):
+        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), patch("time.time", side_effect=[0, 0, 6]), patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5)
         assert result is True
 
@@ -848,9 +808,7 @@ class TestEnsureIdleDevices:
         gpu_idle = MagicMock(id=0, memoryTotal=8192, memoryFree=6144, load=0.05)
         mock_gputil.getGPUs.side_effect = [[gpu_busy], [gpu_idle], [gpu_idle]]
 
-        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), \
-             patch("time.time", side_effect=[0, 100, 100, 106]), \
-             patch("time.sleep"):
+        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), patch("time.time", side_effect=[0, 100, 100, 106]), patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5)
         assert result is True
 
@@ -868,9 +826,7 @@ class TestEnsureIdleDevices:
         gpu_ok = MagicMock(id=0, memoryTotal=8192, memoryFree=6144, load=0.05)
         mock_gputil.getGPUs.side_effect = [[gpu_low], [gpu_ok], [gpu_ok]]
 
-        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), \
-             patch("time.time", side_effect=[0, 100, 100, 106]), \
-             patch("time.sleep"):
+        with patch.dict("sys.modules", {"GPUtil": mock_gputil}), patch("time.time", side_effect=[0, 100, 100, 106]), patch("time.sleep"):
             result = ensure_idle_devices(duration_seconds=5)
         assert result is True
 
@@ -889,7 +845,7 @@ class TestEnsureIdleDevices:
 
 def _selective_import_error(blocked_module):
     """Return an __import__ replacement that blocks only the specified module."""
-    real_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+    real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
 
     def _import(name, *args, **kwargs):
         if name == blocked_module:

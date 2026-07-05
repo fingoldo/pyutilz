@@ -114,6 +114,5 @@ def test_no_dead_public_helpers_in_llm_subtree():
         pytest.fail(
             f"{len(dead)} public helper(s) in pyutilz/llm/ with no non-test "
             f"consumer (no other module references them, no __init__ "
-            f"re-export). Either delete, OR re-export, OR whitelist:\n  "
-            + "\n  ".join(dead[:30])
+            f"re-export). Either delete, OR re-export, OR whitelist:\n  " + "\n  ".join(dead[:30])
         )

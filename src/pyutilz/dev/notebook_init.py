@@ -43,9 +43,9 @@ def load_jupyter_extensions():
         return
 
     extensions_to_load = [
-        'line_profiler',
-        'autoreload',
-        'autotime',
+        "line_profiler",
+        "autoreload",
+        "autotime",
         # 'nb_black'  # uncomment if needed
     ]
 
@@ -55,17 +55,17 @@ def load_jupyter_extensions():
     for ext in extensions_to_load:
         try:
             # Use magic() method instead of % syntax
-            ipython.magic(f'load_ext {ext}')
+            ipython.magic(f"load_ext {ext}")
             loaded.append(ext)
         except Exception as e:
             failed.append((ext, str(e)))
 
     # Set autoreload
     try:
-        ipython.magic('autoreload 2')
-        loaded.append('autoreload 2')
+        ipython.magic("autoreload 2")
+        loaded.append("autoreload 2")
     except Exception as e:
-        failed.append(('autoreload 2', str(e)))
+        failed.append(("autoreload 2", str(e)))
 
     if loaded:
         print(f"[OK]Loaded extensions: {', '.join(loaded)}")
@@ -80,8 +80,8 @@ def import_common_packages():
         import pandas as pd
         packages['pd'] = pd
         # Set pandas options
-        pd.set_option('display.max_columns', None)
-        pd.set_option('display.width', None)
+        pd.set_option("display.max_columns", None)
+        pd.set_option("display.width", None)
     except ImportError:
         print("[!] pandas not available")
 
@@ -117,8 +117,8 @@ def load_jupyter_extensions_minimal():
 
     # Only load built-in extensions that should always be available
     try:
-        ipython.magic('load_ext autoreload')
-        ipython.magic('autoreload 2')
+        ipython.magic("load_ext autoreload")
+        ipython.magic("autoreload 2")
         print("[OK]Loaded autoreload extension")
     except Exception as e:
         print(f"[!] Failed to load autoreload: {e}")

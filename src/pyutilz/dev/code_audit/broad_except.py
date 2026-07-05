@@ -6,7 +6,6 @@ from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
 
-
 # --- broad-except swallow (wave 16) -------------------------------------
 
 
@@ -63,10 +62,7 @@ def _is_broad_except(handler: ast.ExceptHandler) -> bool:
     if isinstance(handler.type, ast.Name) and handler.type.id in {"Exception", "BaseException"}:
         return True
     if isinstance(handler.type, ast.Tuple):
-        return any(
-            isinstance(el, ast.Name) and el.id in {"Exception", "BaseException"}
-            for el in handler.type.elts
-        )
+        return any(isinstance(el, ast.Name) and el.id in {"Exception", "BaseException"} for el in handler.type.elts)
     return False
 
 

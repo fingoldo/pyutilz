@@ -62,8 +62,7 @@ class TestDeepSeekConfig:
     def test_extra_request_body_empty_by_default(self):
         # No auto-injection; callers opt in via thinking= parameter on generate()
         p = DeepSeekProvider.__new__(DeepSeekProvider)
-        for model in ("deepseek-v4-flash", "deepseek-v4-pro",
-                      "deepseek-chat", "deepseek-reasoner"):
+        for model in ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"):
             assert p._extra_request_body(model) == {}, model
 
     def test_thinking_field_enabled_for_v4_flash(self):
@@ -98,12 +97,8 @@ class TestDeepSeekConfig:
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-v4-flash"
         for effort in ("low", "medium", "high", "minimal", "anything"):
-            assert p._thinking_request_field(effort) == {
-                "thinking": {"type": "enabled"}
-            }, effort
-        assert p._thinking_request_field("") == {
-            "thinking": {"type": "disabled"}
-        }
+            assert p._thinking_request_field(effort) == {"thinking": {"type": "enabled"}}, effort
+        assert p._thinking_request_field("") == {"thinking": {"type": "disabled"}}
 
     def test_timeout_v4_flash_short(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)

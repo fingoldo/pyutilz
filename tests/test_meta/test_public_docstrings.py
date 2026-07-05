@@ -39,11 +39,7 @@ def _has_docstring(node) -> bool:
     if not getattr(node, "body", None):
         return False
     first = node.body[0]
-    return (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Constant)
-        and isinstance(first.value.value, str)
-    )
+    return isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str)
 
 
 def _public_top_level_nodes(path: Path):
@@ -85,10 +81,7 @@ def test_no_new_undocumented_public_symbols():
             json.dumps(sorted(current), indent=2),
             encoding="utf-8",
         )
-        pytest.skip(
-            f"docstring baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} undocumented symbols)"
-        )
+        pytest.skip(f"docstring baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} undocumented symbols)")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)

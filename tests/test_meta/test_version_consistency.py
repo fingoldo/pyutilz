@@ -61,14 +61,8 @@ def test_version_consistent_across_sources():
     if pyproject_version is not None:
         sources["pyproject.toml::[project].version"] = pyproject_version
 
-    assert len(sources) >= 2, (
-        f"version consistency test needs ≥ 2 sources to compare; got "
-        f"{list(sources)}"
-    )
+    assert len(sources) >= 2, f"version consistency test needs ≥ 2 sources to compare; got " f"{list(sources)}"
     distinct = set(sources.values())
     if len(distinct) > 1:
         details = "\n  ".join(f"{k} = {v!r}" for k, v in sources.items())
-        pytest.fail(
-            f"package version disagrees across {len(distinct)} source(s):\n  "
-            + details
-        )
+        pytest.fail(f"package version disagrees across {len(distinct)} source(s):\n  " + details)

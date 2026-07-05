@@ -58,16 +58,10 @@ def test_module_imports_and_exposes_at_least_one_public_symbol(
         pytest.skip(f"{module_path} requires optional dep ({e})")
 
     public = [n for n in dir(mod) if not n.startswith("_")]
-    assert public, (
-        f"{module_path} imports but exposes no public symbols — "
-        f"either delete the file or add real content"
-    )
+    assert public, f"{module_path} imports but exposes no public symbols — " f"either delete the file or add real content"
 
     for name in expected_symbols:
-        assert hasattr(mod, name), (
-            f"{module_path}: expected public symbol {name!r} not found "
-            f"(was the module renamed or refactored?)"
-        )
+        assert hasattr(mod, name), f"{module_path}: expected public symbol {name!r} not found " f"(was the module renamed or refactored?)"
 
 
 def test_module_aliases_resolve_for_smoke_set():
@@ -94,6 +88,4 @@ def test_module_aliases_resolve_for_smoke_set():
                 proxy = importlib.import_module(f"pyutilz.{alias}")
             except ImportError:
                 continue
-            assert proxy is not None, (
-                f"alias pyutilz.{alias} → {path} but proxy lookup returned None"
-            )
+            assert proxy is not None, f"alias pyutilz.{alias} → {path} but proxy lookup returned None"

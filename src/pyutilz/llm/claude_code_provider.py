@@ -105,9 +105,8 @@ try:
                     await self._process.stdin.aclose()
                 self._ready = True
             except FileNotFoundError as e:
-                raise _sc.CLINotFoundError(
-                    f"Claude Code not found at: {cmd[0]}"
-                ) from e
+                raise _sc.CLINotFoundError(f"Claude Code not found at: {cmd[0]}") from e
+
         _sc.SubprocessCLITransport.connect = _patched_connect
 
         # -- PATCH 4: Include real stderr in ProcessError --
@@ -226,24 +225,22 @@ def _is_rate_limit_error(error: BaseException) -> bool:
 
 def _find_claude_executable() -> str:
     """Find the claude executable path safely."""
-    claude_path = shutil.which('claude')
+    claude_path = shutil.which("claude")
     if claude_path:
         return claude_path
 
-    if sys.platform == 'win32':
-        npm_prefix = os.environ.get('APPDATA', '')
+    if sys.platform == "win32":
+        npm_prefix = os.environ.get("APPDATA", "")
         possible_paths = [
-            os.path.join(npm_prefix, 'npm', 'claude.cmd'),
-            os.path.join(npm_prefix, 'npm', 'claude'),
-            os.path.join(os.path.expanduser('~'), 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+            os.path.join(npm_prefix, "npm", "claude.cmd"),
+            os.path.join(npm_prefix, "npm", "claude"),
+            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "npm", "claude.cmd"),
         ]
         for path in possible_paths:
             if os.path.isfile(path):
                 return path
 
-    raise FileNotFoundError(
-        "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
-    )
+    raise FileNotFoundError("Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
 
 
 class ClaudeCodeProvider(LLMProvider):
@@ -295,9 +292,7 @@ class ClaudeCodeProvider(LLMProvider):
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,
             "cache_hit_tokens": self.total_cache_read_input_tokens,
-            "cache_miss_tokens": max(
-                0, self.total_prompt_tokens - self.total_cache_read_input_tokens
-            ),
+            "cache_miss_tokens": max(0, self.total_prompt_tokens - self.total_cache_read_input_tokens),
             "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
             "cache_read_input_tokens": self.total_cache_read_input_tokens,
             "completion_tokens": self.total_completion_tokens,
@@ -346,9 +341,7 @@ class ClaudeCodeProvider(LLMProvider):
         while True:
             attempt += 1
             if attempt > max_attempts:
-                raise RuntimeError(
-                    f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts"
-                )
+                raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
             try:
                 if _HAS_SDK:
                     result = await self._generate_sdk(prompt, system)
@@ -370,12 +363,8 @@ class ClaudeCodeProvider(LLMProvider):
                 if rm_usage is not None:
                     in_tok = int(getattr(rm_usage, "input_tokens", 0) or 0)
                     out_tok = int(getattr(rm_usage, "output_tokens", 0) or 0)
-                    cache_create = int(
-                        getattr(rm_usage, "cache_creation_input_tokens", 0) or 0
-                    )
-                    cache_read = int(
-                        getattr(rm_usage, "cache_read_input_tokens", 0) or 0
-                    )
+                    cache_create = int(getattr(rm_usage, "cache_creation_input_tokens", 0) or 0)
+                    cache_read = int(getattr(rm_usage, "cache_read_input_tokens", 0) or 0)
                     cost = float(getattr(rm, "total_cost_usd", 0.0) or 0.0)
                     sid = getattr(rm, "session_id", None)
                     nturns = getattr(rm, "num_turns", None)
@@ -422,9 +411,9 @@ class ClaudeCodeProvider(LLMProvider):
                 if wait_seconds is None:
                     wait_seconds = 3600
                     logger.warning(
-                        "[RateLimit] Hit rate limit but couldn't parse reset time: %s. "
-                        "Waiting %d seconds (default).",
-                        error_msg[:200], wait_seconds,
+                        "[RateLimit] Hit rate limit but couldn't parse reset time: %s. " "Waiting %d seconds (default).",
+                        error_msg[:200],
+                        wait_seconds,
                     )
                 else:
                     reset_dt = datetime.now() + timedelta(seconds=wait_seconds)
@@ -434,8 +423,7 @@ class ClaudeCodeProvider(LLMProvider):
                         reset_dt.strftime("%H:%M:%S"), wait_seconds, error_msg[:200],
                     )
                 await asyncio.sleep(wait_seconds)
-                logger.info("[RateLimit] Resuming after rate limit pause (attempt %d).",
-                           attempt + 1)
+                logger.info("[RateLimit] Resuming after rate limit pause (attempt %d).", attempt + 1)
 
     _NESTED_BLOCK_VARS = frozenset({
         'CLAUDECODE',
@@ -471,8 +459,7 @@ class ClaudeCodeProvider(LLMProvider):
             _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
             if _tools_val != "":
                 logger.warning(
-                    'ClaudeCodeProvider: extra_args["tools"] was %r -- forcing to "" '
-                    "to disable built-in tools and preserve JSON compliance.",
+                    'ClaudeCodeProvider: extra_args["tools"] was %r -- forcing to "" ' "to disable built-in tools and preserve JSON compliance.",
                     _tools_val,
                 )
                 if opts.extra_args is None:
@@ -523,8 +510,7 @@ class ClaudeCodeProvider(LLMProvider):
                 raise RuntimeError("Claude Code SDK produced no result")
             stripped = result_text.strip()
             if not stripped:
-                logger.warning("SDK returned empty response: model=%s prompt_len=%d msgs=%d types=%s",
-                              self.model, len(prompt), msg_count, msg_types)
+                logger.warning("SDK returned empty response: model=%s prompt_len=%d msgs=%d types=%s", self.model, len(prompt), msg_count, msg_types)
             return stripped
 
     async def _generate_cli(
@@ -536,7 +522,7 @@ class ClaudeCodeProvider(LLMProvider):
     ) -> str:
         """Generate text using Claude Code CLI (fallback)."""
         async with self.semaphore:
-            if not hasattr(self, '_claude_path'):
+            if not hasattr(self, "_claude_path"):
                 self._claude_path = _find_claude_executable()
 
             cmd = [
@@ -551,13 +537,13 @@ class ClaudeCodeProvider(LLMProvider):
                 '--tools', '',
             ]
 
-            if '--tools' not in cmd:
-                cmd.extend(['--tools', ''])
+            if "--tools" not in cmd:
+                cmd.extend(["--tools", ""])
 
             if system:
-                cmd.extend(['--system-prompt', system])
+                cmd.extend(["--system-prompt", system])
 
-            cmd.append('-')
+            cmd.append("-")
 
             logger.debug("Running Claude CLI: %s...", cmd[0])
 
@@ -577,7 +563,7 @@ class ClaudeCodeProvider(LLMProvider):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    encoding='utf-8',
+                    encoding="utf-8",
                     shell=False,
                     env=sub_env,
                 )
@@ -625,17 +611,17 @@ class ClaudeCodeProvider(LLMProvider):
                         except json.JSONDecodeError:
                             continue
 
-                        etype = event.get('type')
-                        if etype == 'result':
-                            subtype = event.get('subtype', '')
-                            if subtype == 'success':
-                                result_text = event.get('result', '')
+                        etype = event.get("type")
+                        if etype == "result":
+                            subtype = event.get("subtype", "")
+                            if subtype == "success":
+                                result_text = event.get("result", "")
                             else:
-                                error_text = event.get('result') or event.get('error') or subtype
+                                error_text = event.get("result") or event.get("error") or subtype
                             break
-                        elif etype == 'rate_limit_event':
+                        elif etype == "rate_limit_event":
                             logger.debug("Claude CLI rate_limit_event (continuing)")
-                        elif etype == 'system' and event.get('subtype') == 'init':
+                        elif etype == "system" and event.get("subtype") == "init":
                             logger.debug("Claude CLI initialized")
                     else:
                         timed_out = True
@@ -706,10 +692,10 @@ class ClaudeCodeProvider(LLMProvider):
 
         try:
             text = text.strip()
-            json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text)
+            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
             if json_match:
                 return json.loads(json_match.group(1))
-            json_match = re.search(r'\{[\s\S]*\}', text)
+            json_match = re.search(r"\{[\s\S]*\}", text)
             if json_match:
                 return json.loads(json_match.group(0))
             return json.loads(text)
@@ -755,8 +741,7 @@ class ClaudeCodeProvider(LLMProvider):
         # subscription's session windows (5h / weekly), surfaced by the CLI
         # itself, not via an API endpoint.
         raise NotImplementedError(
-            "Claude Code uses a Max subscription — no per-token balance to fetch. "
-            "Subscription usage windows surface in the CLI's own status output."
+            "Claude Code uses a Max subscription — no per-token balance to fetch. " "Subscription usage windows surface in the CLI's own status output."
         )
 
     async def check_account_limits(self) -> dict:
@@ -775,9 +760,7 @@ class ClaudeCodeProvider(LLMProvider):
         try:
             claude_path = _find_claude_executable()
         except Exception as exc:
-            raise NotImplementedError(
-                f"Claude Code CLI not on PATH ({exc}); cannot query /status."
-            )
+            raise NotImplementedError(f"Claude Code CLI not on PATH ({exc}); cannot query /status.")
 
         proc = await asyncio.create_subprocess_exec(
             claude_path, "/status",
@@ -790,9 +773,7 @@ class ClaudeCodeProvider(LLMProvider):
             )
         except asyncio.TimeoutError:
             proc.kill()
-            raise NotImplementedError(
-                "claude /status timed out; CLI may be hung."
-            )
+            raise NotImplementedError("claude /status timed out; CLI may be hung.")
         text = (stdout or b"").decode(errors="replace")
 
         # Best-effort parse of common markers; CLI output format isn't

@@ -22,8 +22,7 @@ class TestTimeoutWrapper:
 
         # Should have module-level executor
         # The fix moved executor creation outside timeout_wrapper
-        assert '_TIMEOUT_EXECUTOR' in source or '_executor' in source.lower(), \
-               "Should have module-level ThreadPoolExecutor (performance fix)"
+        assert "_TIMEOUT_EXECUTOR" in source or "_executor" in source.lower(), "Should have module-level ThreadPoolExecutor (performance fix)"
 
     def test_timeout_wrapper_executes_function(self):
         """Test that wrapped function executes correctly"""
@@ -142,7 +141,7 @@ class TestConcurrentExecution:
         @timeout_wrapper(timeout=5)
         def thread_safe_function(x):
             time.sleep(0.01)
-            return x ** 2
+            return x**2
 
         results = []
         threads = []

@@ -265,7 +265,7 @@ def benchmark_dataframe_compression(
     # Parquet has different signature, handle separately
     try:
         parquet_results = _facade.benchmark_dataframe_parquet_compression(df, temp_folder, nrepeats)
-        res.extend(parquet_results.to_dict('records'))
+        res.extend(parquet_results.to_dict("records"))
     except Exception as e:
         logger.error(e)
 

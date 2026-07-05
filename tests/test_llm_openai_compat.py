@@ -143,8 +143,7 @@ class TestGenerate:
         p._client.post = AsyncMock(return_value=_mock_response())
 
         await p.generate("test")
-        body = p._client.post.call_args.kwargs.get("json") \
-            or p._client.post.call_args[1].get("json")
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert "thinking" not in body
 
     @pytest.mark.asyncio
@@ -155,8 +154,7 @@ class TestGenerate:
         p._client.post = AsyncMock(return_value=_mock_response())
 
         await p.generate("test", thinking=False)
-        body = p._client.post.call_args.kwargs.get("json") \
-            or p._client.post.call_args[1].get("json")
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert "thinking" not in body
 
     @pytest.mark.asyncio
@@ -171,13 +169,11 @@ class TestGenerate:
         p._client.post = AsyncMock(return_value=_mock_response())
 
         await p.generate("test", thinking=False)
-        body = p._client.post.call_args.kwargs.get("json") \
-            or p._client.post.call_args[1].get("json")
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["thinking"] == {"type": "disabled"}
 
         await p.generate("test", thinking=True)
-        body = p._client.post.call_args.kwargs.get("json") \
-            or p._client.post.call_args[1].get("json")
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["thinking"] == {"type": "enabled"}
 
     @pytest.mark.asyncio

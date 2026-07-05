@@ -17,7 +17,7 @@ ensure_installed("")
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-client=None
+client = None
 
 def connect(graphql_client:object)->None:
     global client
@@ -147,7 +147,7 @@ def text_to_graphql(text: str) -> str:
 
 def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:
     """
-        Get rid of comments in a graphql query
+    Get rid of comments in a graphql query
     """
     fixedlines = []
     lines = query.split("\n")

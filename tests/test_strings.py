@@ -94,11 +94,7 @@ class TestTokenizeSource:
 
         # Create file with known content
         test_file = tmp_path / "multiline.txt"
-        lines = [
-            "line one with words",
-            "line two with more",
-            "line three final tokens"
-        ]
+        lines = ["line one with words", "line two with more", "line three final tokens"]
         test_file.write_text("\n".join(lines))
 
         def word_tokenizer(text):
@@ -108,9 +104,7 @@ class TestTokenizeSource:
         result = list(tokenize_source(str(test_file), word_tokenizer, is_file=True, lowercase=False))
 
         # Should have all words from all 3 lines
-        expected_words = ["line", "one", "with", "words",
-                         "line", "two", "with", "more",
-                         "line", "three", "final", "tokens"]
+        expected_words = ["line", "one", "with", "words", "line", "two", "with", "more", "line", "three", "final", "tokens"]
 
         assert len(result) == len(expected_words)
 
@@ -175,7 +169,7 @@ class TestStringUtilities:
         from pyutilz.strings import strip_characters
 
         text = "hello, world!"
-        result = strip_characters(text, [',', '!'])
+        result = strip_characters(text, [",", "!"])
         assert result == "hello world"
 
     def test_strip_doubled_characters(self):
@@ -183,9 +177,9 @@ class TestStringUtilities:
         from pyutilz.strings import strip_doubled_characters
 
         text = "hello,,  world!!"
-        result = strip_doubled_characters(text, [',', ' ', '!'])
-        assert ',' not in result or ',,' not in result
-        assert '  ' not in result
+        result = strip_doubled_characters(text, [",", " ", "!"])
+        assert "," not in result or ",," not in result
+        assert "  " not in result
 
     def test_rpad(self):
         """Test right-padding strings"""
@@ -336,10 +330,7 @@ class TestJSONUtilities:
         """Test extracting property from JSON list"""
         from pyutilz.strings import get_jsonlist_property
 
-        data = [
-            {"name": "Alice", "age": 30},
-            {"name": "Bob", "age": 25}
-        ]
+        data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
         result = get_jsonlist_property(data, "name")
 
         assert "Alice" in result
@@ -349,10 +340,7 @@ class TestJSONUtilities:
         """Test extracting multiple properties"""
         from pyutilz.strings import get_jsonlist_properties
 
-        data = [
-            {"name": "Alice", "age": 30, "city": "NYC"},
-            {"name": "Bob", "age": 25, "city": "LA"}
-        ]
+        data = [{"name": "Alice", "age": 30, "city": "NYC"}, {"name": "Bob", "age": 25, "city": "LA"}]
         result = get_jsonlist_properties(data, ["name", "city"])
 
         assert len(result) == 2

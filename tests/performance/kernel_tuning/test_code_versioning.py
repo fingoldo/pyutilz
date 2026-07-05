@@ -15,7 +15,7 @@ def _f1(x):
 
 def _f1_renamed_reformatted(x):
     "a docstring that must not affect the hash"
-    return x   +   1   # reformatted + renamed, SAME logic
+    return x + 1  # reformatted + renamed, SAME logic
 
 
 def _f2(x):

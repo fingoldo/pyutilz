@@ -478,13 +478,11 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
 
 
 def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "public"):
-    res = safe_execute(
-        f"""
+    res = safe_execute(f"""
     SELECT EXISTS (
        SELECT FROM information_schema.tables
        WHERE  table_schema = {u(schema_name)} AND table_name={u(table_name)}
-   )"""
-    )
+   )""")
     if res:
         return res[0][0]
 
@@ -663,8 +661,8 @@ def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> obje
     validate_sql_identifier(table_name)
     # Note: condition parameter should ideally be deprecated in favor of parameterized queries
     # but kept for backward compatibility with warning
-    if condition and not condition.strip().lower().startswith('where'):
-        condition = 'WHERE ' + condition
+    if condition and not condition.strip().lower().startswith("where"):
+        condition = "WHERE " + condition
     return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=conn_alchemy)
 
 
@@ -698,8 +696,7 @@ def enable_tables_sizes_approximation():
 
     """
 
-    safe_execute(
-        """
+    safe_execute("""
 
 CREATE or replace FUNCTION get_approximate_tables_sizes(tables_names text[])
 RETURNS  TABLE (table_name text,nrows bigint)  AS
@@ -707,8 +704,7 @@ $func$
 
 	SELECT relname::text,reltuples::bigint AS estimate FROM pg_class WHERE  oid in (select unnest($1)::regclass)
 $func$ LANGUAGE sql;
-"""
-    )
+""")
 
 
 def create_enum_from_table(enum_name: str, table_name: str, id_field_name: str, desc_field_name: str) -> object:
@@ -750,11 +746,9 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
             full_path = table_field + "->" + path
 
         # Ask DB
-        vals = safe_execute(
-            f"""
+        vals = safe_execute(f"""
                     select {full_path}->>'{field}' as val,count(*) as qty from {table} where {full_path} is not null group by {full_path}->>'{field}' order by qty desc
-            """
-        )
+            """)
         if not vals:  # safe_execute can return None/empty; nothing to analyse for this field
             continue
 
@@ -787,9 +781,7 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
 
 
 def regjobs_create_table(table_name: str = "regular_jobs"):
-    safe_execute(
-        sql.SQL(
-            """
+    safe_execute(sql.SQL("""
 create table {table_name} (
 	name citext primary key,
 	description text,
@@ -808,15 +800,12 @@ create table {table_name} (
 	result jsonb
 
 	)
-    """
-        ).format(table_name=sql.Identifier(table_name))
-    )
+    """).format(table_name=sql.Identifier(table_name)))
 
 
 def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs"):
     return safe_execute(
-        sql.SQL(
-            """
+        sql.SQL("""
         with base as (select name from {table_name} where name=%(job_name)s
             and
                 (
@@ -852,29 +841,24 @@ def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs")
                 limit 1 for update skip locked)
 
             update {table_name} rj set taken_by=%(taken_by)s,started_at=now() at time zone 'utc' from base where rj.name=base.name returning rj.name
-    """
-        ).format(table_name=sql.Identifier(table_name)),
+    """).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "taken_by": taken_by},
     )
 
 
 def regjobs_progress(job_name: str, result: dict, table_name: str = "regular_jobs"):
     return safe_execute(
-        sql.SQL(
-            """
+        sql.SQL("""
         update {table_name} set last_ping_at=now() at time zone 'utc',last_result=%(result)s where name=%(job_name)s
-    """
-        ).format(table_name=sql.Identifier(table_name)),
+    """).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},
     )
 
 
 def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_jobs"):
     return safe_execute(
-        sql.SQL(
-            """
+        sql.SQL("""
         update {table_name} set finished_at=now() at time zone 'utc',result=%(result)s where name=%(job_name)s
-    """
-        ).format(table_name=sql.Identifier(table_name)),
+    """).format(table_name=sql.Identifier(table_name)),
         {"job_name": job_name, "result": result},
     )

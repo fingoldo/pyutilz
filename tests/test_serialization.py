@@ -42,7 +42,7 @@ class TestSerialize:
         data = {"test": "data", "numbers": [1, 2, 3]}
 
         # Use a simpler temp file approach
-        fd, file_path = tempfile.mkstemp(suffix='.pkl')
+        fd, file_path = tempfile.mkstemp(suffix=".pkl")
         os.close(fd)  # Close the file descriptor
 
         try:
@@ -54,7 +54,7 @@ class TestSerialize:
             assert os.path.exists(file_path)
 
             # Read and unserialize
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 loaded = unserialize(f.read())
 
             assert loaded == data
@@ -75,16 +75,7 @@ class TestSerialize:
 
     def test_serialize_complex_object(self):
         """Test serialization of complex objects"""
-        data = {
-            "string": "test",
-            "int": 42,
-            "float": 3.14,
-            "list": [1, 2, 3],
-            "dict": {"nested": True},
-            "tuple": (1, 2),
-            "none": None,
-            "bool": True
-        }
+        data = {"string": "test", "int": 42, "float": 3.14, "list": [1, 2, 3], "dict": {"nested": True}, "tuple": (1, 2), "none": None, "bool": True}
 
         serialized = serialize(data)
         result = unserialize(serialized)
@@ -161,7 +152,7 @@ class TestEdgeCases:
         import os
 
         data = {"test": "from_file", "value": 123}
-        fd, file_path = tempfile.mkstemp(suffix='.pkl')
+        fd, file_path = tempfile.mkstemp(suffix=".pkl")
         os.close(fd)
 
         try:

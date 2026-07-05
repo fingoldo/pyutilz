@@ -157,9 +157,9 @@ def optimize_dtypes(
             fields = [el for el in fields if el not in uint_fields]
             if len(fields) > 0:
                 # Compute min and max in single pass for efficiency
-                stats = df[fields].agg(['min', 'max'])
-                min_vals = stats.loc['min']
-                max_vals = stats.loc['max']
+                stats = df[fields].agg(["min", "max"])
+                min_vals = stats.loc["min"]
+                max_vals = stats.loc["max"]
 
                 if type_name in ("int", "uint"):
                     powers = [8, 16, 32, 64]
@@ -304,11 +304,7 @@ def ensure_dataframe_float32_convertability(
 
     if isinstance(df, pl.DataFrame):
         # Convert integer and float64-like types to float32
-        df = df.with_columns(
-            pl.col([
-                pl.UInt32, pl.Int32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64
-            ]).cast(pl.Float32)
-        )
+        df = df.with_columns(pl.col([pl.UInt32, pl.Int32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64]).cast(pl.Float32))
 
     elif isinstance(df, pd.DataFrame):
         arrow_backed = df.dtypes.apply(lambda dt: "pyarrow" in str(dt))

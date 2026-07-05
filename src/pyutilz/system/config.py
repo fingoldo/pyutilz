@@ -157,11 +157,7 @@ class TomlLiveConfig:
                 try:
                     return type_(val)
                 except (TypeError, ValueError) as exc:
-                    fallback = (
-                        default
-                        if default is not None
-                        else (self._defaults.get(section) or {}).get(key, 0)
-                    )
+                    fallback = default if default is not None else (self._defaults.get(section) or {}).get(key, 0)
                     self._log.warning(
                         "config [%s].%s: bad value %r (%s), using %s",
                         section, key, val, exc, fallback,

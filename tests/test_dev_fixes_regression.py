@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # logginglib.py
 # ---------------------------------------------------------------------------
@@ -174,12 +173,13 @@ class TestHardwareMonitorGuards:
         from pyutilz.system.hardware_monitor import UtilizationMonitor
 
         mon = UtilizationMonitor()
-        with patch.object(psutil, "cpu_freq", return_value=None), \
-             patch.object(psutil, "cpu_percent", return_value=1.0), \
-             patch.object(psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)), \
-             patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), \
-             patch("pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=None), \
-             patch("pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()):
+        with patch.object(psutil, "cpu_freq", return_value=None), patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(
+            psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)
+        ), patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), patch(
+            "pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=None
+        ), patch(
+            "pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()
+        ):
             # single loop iteration then stop; pre-fix crashed on None.current
             mon.query_utilization()
 
@@ -191,12 +191,13 @@ class TestHardwareMonitorGuards:
 
         gpu_stats = {"gpu": [{"gpu_module_id": "N/A"}]}
         mon = UtilizationMonitor(gpu_ids=[0])
-        with patch.object(psutil, "cpu_freq", return_value=MagicMock(current=1000.0)), \
-             patch.object(psutil, "cpu_percent", return_value=1.0), \
-             patch.object(psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)), \
-             patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), \
-             patch("pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=gpu_stats), \
-             patch("pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()):
+        with patch.object(psutil, "cpu_freq", return_value=MagicMock(current=1000.0)), patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(
+            psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)
+        ), patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), patch(
+            "pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=gpu_stats
+        ), patch(
+            "pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()
+        ):
             # Pre-fix: int("N/A") -> ValueError crashed the thread function.
             mon.query_utilization()
 
@@ -217,8 +218,8 @@ class TestRegisterScraperExplicitFailure:
 
         # Ensure node_id is unset so the try-block runs.
         dist._container.node_id = None
-        with patch.object(dist.system, "get_system_info", side_effect=RuntimeError("no info")), \
-             patch.object(dist.web, "get_external_ip", return_value="1.2.3.4"), \
-             patch.object(dist.pythonlib, "lookup_in_stack", return_value=None):
+        with patch.object(dist.system, "get_system_info", side_effect=RuntimeError("no info")), patch.object(
+            dist.web, "get_external_ip", return_value="1.2.3.4"
+        ), patch.object(dist.pythonlib, "lookup_in_stack", return_value=None):
             with pytest.raises(RuntimeError):
                 dist.register_scraper(scraper_name="s", version="v", app_name="a", ip="1.2.3.4")

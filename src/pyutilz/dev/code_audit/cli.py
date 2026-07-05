@@ -10,7 +10,6 @@ from typing import Optional
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
 from .registry import SCANNERS, run_all
 
-
 # --- CLI ----------------------------------------------------------------
 
 
@@ -58,21 +57,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--check",
         action="append",
         choices=sorted(SCANNERS),
-        help=(
-            "scanner(s) to run; repeat for multiple. Default: run all. "
-            "Available: " + ", ".join(sorted(SCANNERS))
-        ),
+        help=("scanner(s) to run; repeat for multiple. Default: run all. " "Available: " + ", ".join(sorted(SCANNERS))),
     )
     parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown",
         help="output format (default markdown).",
     )
     parser.add_argument(
-        "--exclude-dir", action="append", default=None,
-        help=(
-            "directory name to exclude (matched against any path part). "
-            "Repeat. Adds to the default set of build/cache/venv dirs."
-        ),
+        "--exclude-dir",
+        action="append",
+        default=None,
+        help=("directory name to exclude (matched against any path part). " "Repeat. Adds to the default set of build/cache/venv dirs."),
     )
     parser.add_argument(
         "--min-severity", choices=("P0", "P1", "P2", "Low"), default="Low",

@@ -35,8 +35,7 @@ _EXEMPT_PATH_FRAGMENTS = ("__pycache__",)
 
 # Console-output sinks we audit. Cover bare ``print`` and the standard
 # ``logger.X`` family.
-_LOG_METHOD_NAMES = {"info", "warning", "error", "critical", "debug",
-                     "exception", "log"}
+_LOG_METHOD_NAMES = {"info", "warning", "error", "critical", "debug", "exception", "log"}
 
 
 def _refresh_requested() -> bool:
@@ -109,10 +108,7 @@ def test_no_new_non_ascii_console_output():
             json.dumps(sorted(current), indent=2),
             encoding="utf-8",
         )
-        pytest.skip(
-            f"console-Unicode baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} call site(s) with non-ASCII string literal)"
-        )
+        pytest.skip(f"console-Unicode baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} call site(s) with non-ASCII string literal)")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -133,7 +129,5 @@ def test_no_new_non_ascii_console_output():
             f"non-ASCII string literals. On Windows this crashes with "
             f"UnicodeEncodeError on cp1251/cp1252 stdout. Replace fancy "
             f"chars (→, ✓, ✗, em-dash) with ASCII (->, [OK], [X], --), "
-            f"OR refresh the baseline if intentional:\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"OR refresh the baseline if intentional:\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

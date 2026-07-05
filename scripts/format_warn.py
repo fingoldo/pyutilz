@@ -26,8 +26,7 @@ for _cmd in (
     # would otherwise re-enable them on the CLI and spam UP006/UP007/UP037/UP045 (Optional/Union/List
     # modernization) warnings the project deliberately keeps for 3.8/3.9 compatibility. Keep this in sync
     # with pyproject's ignore list so the warn-only hook does not nag about deliberately-kept idioms.
-    [sys.executable, "-m", "ruff", "check", "--select", "E,W,N,UP,I",
-     "--ignore", "UP006,UP007,UP037,UP045,UP031", *_files],
+    [sys.executable, "-m", "ruff", "check", "--select", "E,W,N,UP,I", "--ignore", "UP006,UP007,UP037,UP045,UP031", *_files],
 ):
     try:
         if subprocess.run(_cmd).returncode != 0:

@@ -7,7 +7,6 @@ from typing import Optional
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
 
-
 # --- mutation-during-iteration ------------------------------------------
 
 
@@ -133,22 +132,20 @@ def scan_mutation_during_iteration(
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
                     method = child.func.attr
                     receiver_chain = _iter_target_chain(child.func.value)
-                    if receiver_chain == iter_chain and method in (
-                        _MUTATING_DICT_METHODS
-                        | _MUTATING_LIST_METHODS
-                        | _MUTATING_SET_METHODS
-                    ):
-                        findings.append(Finding(
-                            check="mutation_during_iteration",
-                            severity="P0",
-                            file=rel,
-                            line=child.lineno,
-                            snippet=_line_text(src_lines, child.lineno),
-                            detail=(
-                                f"``{iter_chain}.{method}(...)`` while iterating "
-                                f"the same collection at line {node.lineno}. "
-                                f"Iterate over a copy: ``for x in list({iter_chain}):`` "
-                                f"or ``{iter_chain}.copy()``."
-                            ),
-                        ))
+                    if receiver_chain == iter_chain and method in (_MUTATING_DICT_METHODS | _MUTATING_LIST_METHODS | _MUTATING_SET_METHODS):
+                        findings.append(
+                            Finding(
+                                check="mutation_during_iteration",
+                                severity="P0",
+                                file=rel,
+                                line=child.lineno,
+                                snippet=_line_text(src_lines, child.lineno),
+                                detail=(
+                                    f"``{iter_chain}.{method}(...)`` while iterating "
+                                    f"the same collection at line {node.lineno}. "
+                                    f"Iterate over a copy: ``for x in list({iter_chain}):`` "
+                                    f"or ``{iter_chain}.copy()``."
+                                ),
+                            )
+                        )
     return findings

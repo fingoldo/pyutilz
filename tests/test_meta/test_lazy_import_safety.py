@@ -52,8 +52,7 @@ def test_proxy_unknown_dunder_returns_attribute_error():
     proxy = pyutilz._create_lazy_module(real_path, f"pyutilz.{alias}")
 
     # Use clearly-fake dunder names that no Python machinery pre-sets.
-    for dunder in ("__nonexistent_dunder__", "__totally_made_up__",
-                   "__pyutilz_test_probe__"):
+    for dunder in ("__nonexistent_dunder__", "__totally_made_up__", "__pyutilz_test_probe__"):
         with pytest.raises(AttributeError):
             getattr(proxy, dunder)
 
@@ -87,16 +86,9 @@ def test_proxy_resolves_to_same_object_as_direct_import():
             # PT-9 polices that separately.
             continue
         if real_obj is not proxy_obj:
-            failures.append(
-                f"pyutilz.{alias}.{public}: proxy returned different "
-                f"object id ({id(proxy_obj)}) than direct import "
-                f"({id(real_obj)})"
-            )
+            failures.append(f"pyutilz.{alias}.{public}: proxy returned different " f"object id ({id(proxy_obj)}) than direct import " f"({id(real_obj)})")
     if failures:
-        pytest.fail(
-            f"{len(failures)} proxy-vs-direct mismatch(es) — proxy is "
-            f"silently wrapping objects:\n  " + "\n  ".join(failures)
-        )
+        pytest.fail(f"{len(failures)} proxy-vs-direct mismatch(es) — proxy is " f"silently wrapping objects:\n  " + "\n  ".join(failures))
 
 
 def test_proxy_resolves_consistently_after_first_access():
@@ -130,16 +122,10 @@ def test_proxy_resolves_consistently_after_first_access():
     # Two attribute accesses MUST yield the same object.
     first = getattr(proxy, public)
     second = getattr(proxy, public)
-    assert first is second, (
-        f"proxy returned different objects on repeated accesses to "
-        f"pyutilz.{alias}.{public}: id={id(first)} vs id={id(second)}"
-    )
+    assert first is second, f"proxy returned different objects on repeated accesses to " f"pyutilz.{alias}.{public}: id={id(first)} vs id={id(second)}"
     # And both must be the same as the direct import.
     direct = getattr(real_mod, public)
-    assert first is direct, (
-        f"proxy resolution of pyutilz.{alias}.{public} differs from "
-        f"direct {real_path}.{public}"
-    )
+    assert first is direct, f"proxy resolution of pyutilz.{alias}.{public} differs from " f"direct {real_path}.{public}"
 
 
 def test_module_aliases_dict_is_immutable_at_callsites():

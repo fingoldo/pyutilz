@@ -64,8 +64,7 @@ def register_default_cache(path: str) -> bool:
             payload = json.load(f)
         c = KernelTuningCache(in_memory=True)
         with c._lock:
-            c._loaded = {"schema_version": payload.get("schema_version", SCHEMA_VERSION),
-                         "kernels": payload.get("kernels", {})}
+            c._loaded = {"schema_version": payload.get("schema_version", SCHEMA_VERSION), "kernels": payload.get("kernels", {})}
         fac._DEFAULT_CACHE = c
         logger.debug("kernel_tuning_cache: registered %d default kernels from %s", len(payload.get("kernels", {})), path)
         return True
@@ -173,8 +172,7 @@ class KernelTuningCache:
                         os.remove(tmp)
                 if attempt < retries - 1:
                     time.sleep(backoff * (attempt + 1))
-        logger.debug("kernel_tuning_cache: atomic write of %s failed after %d tries: %s",
-                     final_path, retries, last_err)
+        logger.debug("kernel_tuning_cache: atomic write of %s failed after %d tries: %s", final_path, retries, last_err)
         return False
 
     def _migrate_legacy(self) -> None:
@@ -208,8 +206,7 @@ class KernelTuningCache:
             # corrupt monolith is treated exactly as the old _load did -- as a
             # miss -- so it is renamed aside WITHOUT importing anything (no
             # accidental resurrection of an invalid cache).
-            compatible = (data.get("schema_version") in (SCHEMA_VERSION, 2)
-                          and data.get("hw_fingerprint") == hw_fingerprint())
+            compatible = data.get("schema_version") in (SCHEMA_VERSION, 2) and data.get("hw_fingerprint") == hw_fingerprint()
             kernels = (data.get("kernels", {}) or {}) if compatible else {}
             prov = data.get("provenance")
             for name, entry in kernels.items():
@@ -219,8 +216,7 @@ class KernelTuningCache:
                 # behaves exactly as it did against the monolith.
                 self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
             os.replace(legacy, legacy + ".migrated")
-            logger.info("kernel_tuning_cache: migrated %d kernels from legacy %s (compatible=%s)",
-                        len(kernels), legacy, compatible)
+            logger.info("kernel_tuning_cache: migrated %d kernels from legacy %s (compatible=%s)", len(kernels), legacy, compatible)
         except (OSError, json.JSONDecodeError) as e:
             logger.debug("kernel_tuning_cache: legacy migration failed: %s", e)
         finally:
@@ -352,8 +348,7 @@ class KernelTuningCache:
         winner = candidates[-1]
         return (winner[2], winner[3])
 
-    def _persist_kernel(self, kernel_name: str, entry: dict, *,
-                        provenance: Optional[dict] = None, remote: bool = True) -> None:
+    def _persist_kernel(self, kernel_name: str, entry: dict, *, provenance: Optional[dict] = None, remote: bool = True) -> None:
         """Write ONE immutable per-kernel tuning file (no read-modify-write, no
         lock). Filename: ``<code_version>.<salt>.<pid>.<ts>.<rand>.json`` so every
         write is unique and prior tunings are never overwritten (a reader picks
@@ -582,20 +577,17 @@ class KernelTuningCache:
         entry = self._ensure_loaded().get("kernels", {}).get(kernel_name)
         regions = (entry or {}).get("regions") or []
         if not regions:
-            return {"matched": False, "region_index": None, "region": None,
-                    "reason": f"no regions for kernel {kernel_name!r}"}
+            return {"matched": False, "region_index": None, "region": None, "reason": f"no regions for kernel {kernel_name!r}"}
         constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
         first_reason = None
         for i, region in enumerate(regions):
             ok, why = _region_match_reason(region, dims)
             if ok:
                 payload = {k: v for k, v in region.items() if k not in constraint_keys}
-                return {"matched": True, "region_index": i, "region": payload,
-                        "reason": f"region {i} matched"}
+                return {"matched": True, "region_index": i, "region": payload, "reason": f"region {i} matched"}
             if first_reason is None:
                 first_reason = f"region 0 rejected: {why}"
-        return {"matched": False, "region_index": None, "region": None,
-                "reason": first_reason or f"no region matched dims {dims}"}
+        return {"matched": False, "region_index": None, "region": None, "reason": first_reason or f"no region matched dims {dims}"}
 
     # ----- equiv-tol gate (used by update) -----
 
@@ -687,8 +679,7 @@ class KernelTuningCache:
         # ``async_sweep=False`` for synchronous, wait-for-result offline tuning.
         if async_sweep and not _sweep_disabled:
             _TUNED_THIS_PROCESS.add(guard_key)
-            self._spawn_async_sweep(kernel_name, dims=dims, tuner=tuner, axes=axes,
-                                    code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
+            self._spawn_async_sweep(kernel_name, dims=dims, tuner=tuner, axes=axes, code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
             hk.winner_chosen(kernel_name, None, "fallback (async sweep dispatched)")
             return _fb()
 
@@ -710,8 +701,7 @@ class KernelTuningCache:
             _TUNED_THIS_PROCESS.add(guard_key)
             regions = None if _sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
             if regions:
-                self.update(kernel_name, axes=axes, regions=regions, code_version=code_version,
-                            salt=salt, equiv_tol=equiv_tol, hooks=hk)
+                self.update(kernel_name, axes=axes, regions=regions, code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
                 hk.sweep_end(kernel_name, len(regions))
                 hit = self.lookup(kernel_name, **dims)
                 if hit is not None:
@@ -766,8 +756,7 @@ class KernelTuningCache:
                         return  # tuned while we claimed
                     regions = self._run_tuner(kernel_name, tuner, axes, hooks)
                     if regions:
-                        self.update(kernel_name, axes=axes, regions=list(regions), code_version=code_version,
-                                    salt=salt, equiv_tol=equiv_tol, hooks=hooks)
+                        self.update(kernel_name, axes=axes, regions=list(regions), code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hooks)
                         hooks.sweep_end(kernel_name, len(regions))
             except Exception as e:  # a background sweep must never surface
                 logger.debug("kernel_tuning_cache: async sweep for %s crashed: %s", kernel_name, e)
@@ -834,8 +823,7 @@ class KernelTuningCache:
         got 2"). Fix: write the payload to a per-attempt temp file, then ``os.link``
         it into place -- an atomic, exclusive publish (fails if the marker exists), so
         the marker is only ever visible fully-formed."""
-        payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(),
-                              "host": hw_fingerprint()}).encode("utf-8")
+        payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(), "host": hw_fingerprint()}).encode("utf-8")
         # Staging path must be UNIQUE per concurrent claimer: same-process THREADS share os.getpid(), and
         # time.time_ns() can collide on a coarse-resolution clock (Windows), so (pid, tid, ns) -- tid disambiguates
         # concurrent threads, ns disambiguates a thread's sequential retries -- guarantees no two live claimers
@@ -914,9 +902,9 @@ class KernelTuningCache:
         owner_dead = same_host and not _pid_alive(pid)
         if not (owner_dead or age > budget):
             return False  # a live, in-budget sweeper owns it -> give up
-        logger.info("kernel_tuning_cache: stealing stale sweep marker for %s "
-                    "(pid=%s alive=%s age=%.0fs budget=%.0fs)",
-                    kernel_name, pid, not owner_dead, age, budget)
+        logger.info(
+            "kernel_tuning_cache: stealing stale sweep marker for %s " "(pid=%s alive=%s age=%.0fs budget=%.0fs)", kernel_name, pid, not owner_dead, age, budget
+        )
         hooks.concurrent_sweep_detected(kernel_name)
         with contextlib.suppress(OSError):
             os.remove(marker)

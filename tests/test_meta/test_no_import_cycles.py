@@ -164,7 +164,4 @@ def test_no_import_cycles_in_package():
         details = []
         for cyc in cycles:
             details.append(" → ".join(cyc + [cyc[0]]))
-        pytest.fail(
-            f"{len(cycles)} import cycle(s) detected in {PKG_NAME}:\n  "
-            + "\n  ".join(details)
-        )
+        pytest.fail(f"{len(cycles)} import cycle(s) detected in {PKG_NAME}:\n  " + "\n  ".join(details))

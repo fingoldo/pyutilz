@@ -258,9 +258,7 @@ except Exception:
     pass
 """)
     findings = scan_broad_except_swallows(tmp_path)
-    assert findings == [], (
-        f"import-guard try-block must not be flagged; got {findings}"
-    )
+    assert findings == [], f"import-guard try-block must not be flagged; got {findings}"
 
 
 def test_broad_except_import_from_guard_skipped(tmp_path: Path):
@@ -286,9 +284,7 @@ def cleanup(path):
         pass
 """)
     findings = scan_broad_except_swallows(tmp_path)
-    assert findings == [], (
-        f"best-effort filesystem op must not be flagged; got {findings}"
-    )
+    assert findings == [], f"best-effort filesystem op must not be flagged; got {findings}"
 
 
 def test_broad_except_best_effort_method_skipped(tmp_path: Path):
@@ -319,9 +315,7 @@ def process(rows):
     findings = scan_broad_except_swallows(tmp_path)
     # The try body is a single Call, but it's `out.append(...)` which is
     # in our STORING_METHODS set, not in BEST_EFFORT_OPS. Should still flag.
-    assert findings, (
-        "data-path swallow with non-best-effort body MUST flag"
-    )
+    assert findings, "data-path swallow with non-best-effort body MUST flag"
 
 
 # ---- nan_equality ------------------------------------------------------
@@ -519,9 +513,7 @@ except Exception:
     pass
 """)
     findings = scan_broad_except_swallows(tmp_path)
-    assert findings, (
-        "import + side-effect must NOT be allowlisted as pure import guard"
-    )
+    assert findings, "import + side-effect must NOT be allowlisted as pure import guard"
 
 
 # ---- broad_except_swallow ----------------------------------------------

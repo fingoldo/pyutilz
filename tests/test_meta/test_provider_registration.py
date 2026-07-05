@@ -36,16 +36,11 @@ def test_every_canonical_provider_module_imports():
             failures.append(f"{name!r} → {mod_path!r}: ImportError({e})")
             continue
         if not hasattr(mod, cls_name):
-            failures.append(
-                f"{name!r} → {mod_path}::{cls_name}: module imported but has "
-                f"no {cls_name!r} attribute"
-            )
+            failures.append(f"{name!r} → {mod_path}::{cls_name}: module imported but has " f"no {cls_name!r} attribute")
 
     if failures:
         pytest.fail(
-            f"{len(failures)} _PROVIDER_MODULES entry(ies) broken — "
-            f"first user request via get_llm_provider() will crash:\n  "
-            + "\n  ".join(failures)
+            f"{len(failures)} _PROVIDER_MODULES entry(ies) broken — " f"first user request via get_llm_provider() will crash:\n  " + "\n  ".join(failures)
         )
 
 
@@ -60,10 +55,7 @@ def test_every_alias_resolves_to_a_canonical_provider():
         if canonical not in canonicals:
             bad.append(f"{alias!r} → {canonical!r} (not in _PROVIDER_MODULES)")
     if bad:
-        pytest.fail(
-            f"{len(bad)} alias(es) point to non-existent canonical names:\n  "
-            + "\n  ".join(bad)
-        )
+        pytest.fail(f"{len(bad)} alias(es) point to non-existent canonical names:\n  " + "\n  ".join(bad))
 
 
 def test_aliases_dont_collide_with_canonical_names():
@@ -74,7 +66,5 @@ def test_aliases_dont_collide_with_canonical_names():
     overlap = set(factory_module._ALIASES) & set(factory_module._PROVIDER_MODULES)
     if overlap:
         pytest.fail(
-            f"{len(overlap)} key(s) appear in BOTH _ALIASES and "
-            f"_PROVIDER_MODULES — alias resolution shadows the canonical "
-            f"path: {sorted(overlap)}"
+            f"{len(overlap)} key(s) appear in BOTH _ALIASES and " f"_PROVIDER_MODULES — alias resolution shadows the canonical " f"path: {sorted(overlap)}"
         )

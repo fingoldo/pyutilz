@@ -200,7 +200,7 @@ def sweep_backend_crossover(
                     logger.info("sweep %s=%d: %s failed warmup (%s) -> skip", primary_axis, size, name, e)
                 continue
             diffs[name] = diff
-            survivors[name] = (lambda _fn=fn, _a=args: _fn(*_a))
+            survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
         # Pass 2: rank survivors (robust=interleaved min over reps; mean=legacy).
         timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
         for name in names:  # declared order -> ties prefer the earlier (reference) variant
@@ -224,7 +224,7 @@ def sweep_backend_crossover(
             j += 1
         band_max = per_size_winner[j][0]
         is_last = j == len(per_size_winner) - 1
-        worst_diff = max(d for _, _, d in per_size_winner[i:j + 1])
+        worst_diff = max(d for _, _, d in per_size_winner[i : j + 1])
         region = {f"{primary_axis}_max": None if is_last else int(band_max), decision_key: per_size_winner[i][1]}
         if np.isfinite(worst_diff):
             region["max_abs_diff"] = float(worst_diff)
@@ -431,7 +431,7 @@ def sweep_backend_grid(
                         logger.info("grid %s res=%s: %s failed warmup (%s) -> skip", dims, res, name, e)
                     continue
                 diffs[name] = diff
-                survivors[name] = (lambda _fn=fn, _a=args: _fn(*_a))
+                survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
             # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
             # which is contention-robust; mean=legacy sequential per-candidate mean).
             timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)

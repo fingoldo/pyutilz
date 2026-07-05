@@ -23,26 +23,24 @@ class TestGetSystemInfo:
 
         # Check that Mac UUID extraction uses subprocess.PIPE, not shell=True
         # The fix replaced shell=True with proper Popen chaining
-        if 'ioreg' in source:  # Mac-specific code exists
+        if "ioreg" in source:  # Mac-specific code exists
             # Find the Mac UUID extraction section
-            lines = source.split('\n')
+            lines = source.split("\n")
             in_mac_section = False
             for line in lines:
                 if 'current_system == "Mac"' in line or 'elif current_system == "Mac"' in line:
                     in_mac_section = True
-                elif in_mac_section and 'elif current_system' in line:
+                elif in_mac_section and "elif current_system" in line:
                     in_mac_section = False
 
                 # In Mac section, check for proper implementation
                 if in_mac_section:
-                    if 'ioreg' in line and 'Popen' in line:
+                    if "ioreg" in line and "Popen" in line:
                         # Should use subprocess.PIPE, not shell=True
-                        assert 'subprocess.PIPE' in source or 'stdout=subprocess.PIPE' in source, \
-                               "Mac UUID extraction should use subprocess.PIPE"
-                    if 'grep' in line and 'Popen' in line:
+                        assert "subprocess.PIPE" in source or "stdout=subprocess.PIPE" in source, "Mac UUID extraction should use subprocess.PIPE"
+                    if "grep" in line and "Popen" in line:
                         # Should chain grep command, not use shell=True
-                        assert 'stdin=' in source, \
-                               "Should chain grep with stdin parameter"
+                        assert "stdin=" in source, "Should chain grep with stdin parameter"
 
     def test_returns_dict_with_expected_keys(self):
         """Test that function returns dict with expected system info keys"""
@@ -77,8 +75,7 @@ class TestShowTraceMallocSnapshot:
             pass
 
         # Should NOT be tracing after function completes
-        assert not tracemalloc.is_tracing(), \
-               "tracemalloc should be stopped after show_tracemalloc_snapshot() (resource leak)"
+        assert not tracemalloc.is_tracing(), "tracemalloc should be stopped after show_tracemalloc_snapshot() (resource leak)"
 
     def test_tracemalloc_stopped_even_on_error(self):
         """Test that tracemalloc.stop() is called even if function raises exception"""
@@ -95,8 +92,7 @@ class TestShowTraceMallocSnapshot:
             pass
 
         # Should still stop tracemalloc even if exception occurred
-        assert not tracemalloc.is_tracing(), \
-               "tracemalloc should be stopped even when exception occurs (try/finally fix)"
+        assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when exception occurs (try/finally fix)"
 
     def test_returns_snapshot_object(self):
         """Test that function returns tracemalloc snapshot"""
@@ -111,7 +107,7 @@ class TestShowTraceMallocSnapshot:
         # Should return a snapshot object
         assert result is not None
         # Should be a tracemalloc.Snapshot
-        assert hasattr(result, 'statistics'), "Should return tracemalloc.Snapshot object"
+        assert hasattr(result, "statistics"), "Should return tracemalloc.Snapshot object"
 
 
 class TestPlatformCompatibility:
@@ -127,13 +123,12 @@ class TestPlatformCompatibility:
 
         source = inspect.getsource(system_module)
 
-        if platform.system() != 'Windows':
+        if platform.system() != "Windows":
             # On non-Windows systems, wintypes should be conditionally imported
             # or the code should handle ImportError
-            if 'ctypes.wintypes' in source:
+            if "ctypes.wintypes" in source:
                 # Should have platform check or try/except
-                assert 'platform.system()' in source or 'try:' in source, \
-                       "ctypes.wintypes import should be guarded on non-Windows systems"
+                assert "platform.system()" in source or "try:" in source, "ctypes.wintypes import should be guarded on non-Windows systems"
 
 
 class TestGetCpuUsage:
@@ -148,8 +143,8 @@ class TestGetCpuUsage:
             if info is None:
                 pytest.skip("get_system_info returned None (missing dependencies)")
             # Should include CPU info
-            if 'cpu_current_load_percent' in info:
-                usage = info['cpu_current_load_percent']
+            if "cpu_current_load_percent" in info:
+                usage = info["cpu_current_load_percent"]
                 assert isinstance(usage, (int, float))
                 assert 0 <= usage <= 100
         except ImportError:
@@ -165,7 +160,7 @@ class TestGetCpuUsage:
             source = inspect.getsource(get_system_info)
 
             # Should call cpu_percent
-            assert 'cpu_percent' in source
+            assert "cpu_percent" in source
         except ImportError:
             pytest.skip("psutil not available")
 
@@ -317,9 +312,7 @@ class TestSystemUtilities:
         # Warm up a working set so the trim has something to evict.
         _warm = [bytearray(8 * 1024 * 1024) for _ in range(16)]  # ~128 MB
         before = get_own_memory_usage()
-        assert before is not None and before > 0.05, (
-            "baseline too low to run this regression check"
-        )
+        assert before is not None and before > 0.05, "baseline too low to run this regression check"
 
         # Drop the reference and invoke the exact clean_ram() path that
         # used to cause the "rss plunge". With the private-bytes switch
@@ -415,10 +408,7 @@ class TestSystemUtilities:
         assert result == [42]
         # The hard contract: the iterable is yielded faithfully even when
         # the bar is suppressed.
-        assert before == after, (
-            f"tqdm leak: {after - before} bar instance(s) outlived "
-            f"tqdmu_lazy_start([42])"
-        )
+        assert before == after, f"tqdm leak: {after - before} bar instance(s) outlived " f"tqdmu_lazy_start([42])"
 
     def test_tqdmu_lazy_start_min_total_one_keeps_bar(self):
         """Opt-out: ``min_total=1`` restores the historical "always show
@@ -475,9 +465,7 @@ class TestSystemSubpackageFacade:
         for name, submod in self._REPRESENTATIVE.items():
             mod = importlib.import_module(f"pyutilz.system.system.{submod}")
             assert hasattr(facade, name), f"facade lost {name}"
-            assert getattr(facade, name) is getattr(mod, name), (
-                f"{name} on facade is not the object defined in {submod}"
-            )
+            assert getattr(facade, name) is getattr(mod, name), f"{name} on facade is not the object defined in {submod}"
 
     def test_package_alias_resolves_split_symbols(self):
         # ``from pyutilz.system import ensure_dir_exists`` etc. must keep working.

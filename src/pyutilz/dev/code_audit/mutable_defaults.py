@@ -7,7 +7,6 @@ from typing import Optional
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
 
-
 # --- Class A: mutable defaults ------------------------------------------
 
 
@@ -36,8 +35,7 @@ def _is_mutable_default(default: ast.AST) -> Optional[str]:
     return None
 
 
-def _param_is_mutated(func: ast.FunctionDef | ast.AsyncFunctionDef,
-                     param_name: str) -> bool:
+def _param_is_mutated(func: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
     """Heuristic: does the function body apply a mutating operation to
     the named parameter? Walks calls of shape ``param.append(...)``,
     subscript-assigns ``param[k] = v``, augmented assigns ``param += x``."""
@@ -45,11 +43,7 @@ def _param_is_mutated(func: ast.FunctionDef | ast.AsyncFunctionDef,
         # param.<mutating_method>(...)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             attr = node.func
-            if (
-                isinstance(attr.value, ast.Name)
-                and attr.value.id == param_name
-                and attr.attr in _MUTATING_METHODS
-            ):
+            if isinstance(attr.value, ast.Name) and attr.value.id == param_name and attr.attr in _MUTATING_METHODS:
                 return True
         # param[k] = v  /  del param[k]
         if isinstance(node, (ast.Assign, ast.AugAssign, ast.Delete)):
@@ -89,20 +83,15 @@ def scan_mutable_defaults(root: Path,
                 paired = list(zip(pos_args[-n_defaults:], args.defaults))
             else:
                 paired = []
-            paired.extend(
-                (k, d) for k, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None
-            )
+            paired.extend((k, d) for k, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None)
             for arg_node, default in paired:
                 label = _is_mutable_default(default)
                 if label is None:
                     continue
                 mutated = _param_is_mutated(node, arg_node.arg)
                 sev = "P0" if mutated else "Low"
-                detail = (
-                    f"def {node.name}(..., {arg_node.arg}={label}()): "
-                    + ("MUTATED in body -> shared state leaks across callers"
-                       if mutated else
-                       "default is mutable but never mutated in body (Low)")
+                detail = f"def {node.name}(..., {arg_node.arg}={label}()): " + (
+                    "MUTATED in body -> shared state leaks across callers" if mutated else "default is mutable but never mutated in body (Low)"
                 )
                 findings.append(Finding(
                     check="mutable_default",

@@ -8,7 +8,6 @@ import tempfile
 from datetime import date, datetime, timezone
 from unittest.mock import patch, MagicMock
 
-
 # ---------------------------------------------------------------------------
 # ensure_installed — lines 55, 58-64
 # ---------------------------------------------------------------------------
@@ -156,8 +155,7 @@ def test_imitate_delay_big_delay():
     # lines 482-484
     ts = datetime.utcnow()
     with patch("time.sleep"):
-        result = imitate_delay(0.001, 0.002, last_call_ts=ts, b_force=True,
-                               big_delay_prob=1.0, big_delay_multiplier=2.0)
+        result = imitate_delay(0.001, 0.002, last_call_ts=ts, b_force=True, big_delay_prob=1.0, big_delay_multiplier=2.0)
     assert isinstance(result, datetime)
 
 
@@ -337,8 +335,7 @@ def test_objects_processor_with_namespace():
         container = {"myobj": [1]}
         dumped = MagicMock(return_value=None)
         d = ObjectsDumper(process_fcn=dumped, process_kwargs={})
-        n = d.process_objects(objects_names="myobj", container=container,
-                              path=tmpdir, namespace="ns")
+        n = d.process_objects(objects_names="myobj", container=container, path=tmpdir, namespace="ns")
         assert dumped.called
 
 

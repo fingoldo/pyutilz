@@ -2,8 +2,8 @@ import pytest
 from unittest.mock import patch, MagicMock, mock_open
 import platform
 
-
 # ── get_wmi_obj_as_dict (lines 270-282) ──
+
 
 class TestGetWmiObjAsDict:
     def test_ensure_float_conversion(self):
@@ -88,8 +88,7 @@ class TestGetSystemInfoSensitive:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_linux_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                               mock_psutil, mock_sub, mock_plat):
+    def test_linux_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_sub.check_output.return_value = b"abc123\n"
@@ -105,8 +104,7 @@ class TestGetSystemInfoSensitive:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_linux_fallback_etc_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                                            mock_psutil, mock_sub, mock_plat):
+    def test_linux_fallback_etc_machine_id(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_sub.check_output.side_effect = [Exception("no dbus"), b"fallback123\n"]
@@ -121,8 +119,7 @@ class TestGetSystemInfoSensitive:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_windows_serial(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                             mock_psutil, mock_sub, mock_plat):
+    def test_windows_serial(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Windows"
         mock_sub.check_output.return_value = b"UUID\nABCD-1234\n"
@@ -137,8 +134,7 @@ class TestGetSystemInfoSensitive:
     @patch("pyutilz.system.system.sysinfo.get_power_plan", return_value=None)
     @patch("pyutilz.system.system.sysinfo.get_battery_info", return_value=None)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_usage_stats(self, mock_socket, mock_bat, mock_pp, mock_os_info,
-                          mock_psutil, mock_plat):
+    def test_usage_stats(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_plat.python_implementation.return_value = "CPython"
@@ -161,8 +157,7 @@ class TestGetSystemInfoSensitive:
     @patch("pyutilz.system.system.sysinfo.get_cpu_info", return_value={"brand": "Intel"})
     @patch("pyutilz.system.system.sysinfo.check_large_pages_support", return_value=True)
     @patch("pyutilz.system.system.sysinfo.socket")
-    def test_hardware_info_linux(self, mock_socket, mock_lp, mock_cpu, mock_gpu,
-                                  mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
+    def test_hardware_info_linux(self, mock_socket, mock_lp, mock_cpu, mock_gpu, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_plat):
         from pyutilz.system.system import get_system_info
         mock_plat.system.return_value = "Linux"
         mock_plat.python_implementation.return_value = "CPython"
@@ -172,9 +167,9 @@ class TestGetSystemInfoSensitive:
         mock_psutil.cpu_freq.return_value = freq
         mock_psutil.virtual_memory.return_value = ram
         mock_psutil.cpu_count.side_effect = [4, 8]
-        with patch("pyutilz.system.system.sysinfo.get_lscpu_info", return_value={"Model": "79"}), \
-             patch("pyutilz.system.system.sysinfo.get_linux_board_info", return_value={"Vendor": "ASUSTeK"}), \
-             patch("pyutilz.system.system.sysinfo.get_nix_cpu_sockets_number", return_value=1):
+        with patch("pyutilz.system.system.sysinfo.get_lscpu_info", return_value={"Model": "79"}), patch(
+            "pyutilz.system.system.sysinfo.get_linux_board_info", return_value={"Vendor": "ASUSTeK"}
+        ), patch("pyutilz.system.system.sysinfo.get_nix_cpu_sockets_number", return_value=1):
             result = get_system_info(return_hardware_info=True)
         assert result["cpu"] == {"brand": "Intel"}
         assert result["cpu_lscpu_info"] == {"Model": "79"}
@@ -393,7 +388,7 @@ class TestShowBiggestSessionObjects:
     def test_empty_session(self, mock_mem, mock_clean):
         from pyutilz.system.system import show_biggest_session_objects
         result = show_biggest_session_objects({}, N=5, min_size_bytes=999999999)
-        assert result == [] or (hasattr(result, '__len__') and len(result) == 0)
+        assert result == [] or (hasattr(result, "__len__") and len(result) == 0)
 
 
 # ── check_huge_pages_linux (lines 1047-1055) ──
@@ -483,9 +478,8 @@ class TestGetWindowsPowerPlanCmd:
     @patch("pyutilz.system.system.probing.subprocess")
     def test_parses_powercfg(self, mock_sub):
         from pyutilz.system.system import get_windows_power_plan_cmd
-        mock_sub.run.return_value = MagicMock(
-            stdout="Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)"
-        )
+
+        mock_sub.run.return_value = MagicMock(stdout="Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)")
         result = get_windows_power_plan_cmd()
         assert result["plan_guid"] == "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
         assert result["plan_name"] == "High performance"

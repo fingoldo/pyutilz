@@ -81,9 +81,7 @@ def get_llm_provider(
 
     if canonical not in _PROVIDER_MODULES:
         available = sorted(set(list(_PROVIDER_MODULES.keys()) + list(_ALIASES.keys())))
-        raise ValueError(
-            f"Unknown provider: {provider_name}. Available: {available}"
-        )
+        raise ValueError(f"Unknown provider: {provider_name}. Available: {available}")
 
     import importlib
     mod_path, cls_name = _PROVIDER_MODULES[canonical]
@@ -94,44 +92,32 @@ def get_llm_provider(
     if canonical == "anthropic":
         kwargs.setdefault(
             "api_key",
-            settings.anthropic_api_key.get_secret_value()
-            if settings.anthropic_api_key
-            else None,
+            settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None,
         )
     elif canonical == "gemini":
         kwargs.setdefault(
             "api_key",
-            settings.gemini_api_key.get_secret_value()
-            if settings.gemini_api_key
-            else None,
+            settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None,
         )
     elif canonical == "deepseek":
         kwargs.setdefault(
             "api_key",
-            settings.deepseek_api_key.get_secret_value()
-            if settings.deepseek_api_key
-            else None,
+            settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None,
         )
     elif canonical == "xai":
         kwargs.setdefault(
             "api_key",
-            settings.xai_api_key.get_secret_value()
-            if settings.xai_api_key
-            else None,
+            settings.xai_api_key.get_secret_value() if settings.xai_api_key else None,
         )
     elif canonical == "openai":
         kwargs.setdefault(
             "api_key",
-            settings.openai_api_key.get_secret_value()
-            if settings.openai_api_key
-            else None,
+            settings.openai_api_key.get_secret_value() if settings.openai_api_key else None,
         )
     elif canonical == "openrouter":
         kwargs.setdefault(
             "api_key",
-            settings.openrouter_api_key.get_secret_value()
-            if settings.openrouter_api_key
-            else None,
+            settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None,
         )
 
     # Cache key: provider name + all kwargs (model, api_key, etc.).

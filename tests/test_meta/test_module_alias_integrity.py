@@ -42,7 +42,7 @@ def test_every_alias_target_imports():
         try:
             importlib.import_module(real_path)
         except ModuleNotFoundError as e:
-            missing = (e.name or "")
+            missing = e.name or ""
             if missing.startswith("pyutilz"):
                 # The pyutilz target module itself is gone — real drift.
                 failures.append(f"{alias!r} → {real_path!r}: {e}")
@@ -51,9 +51,7 @@ def test_every_alias_target_imports():
             failures.append(f"{alias!r} → {real_path!r}: ImportError({e})")
     if failures:
         pytest.fail(
-            f"{len(failures)} alias target(s) fail to import — downstream "
-            f"``from pyutilz.<alias> import X`` will crash:\n  "
-            + "\n  ".join(failures)
+            f"{len(failures)} alias target(s) fail to import — downstream " f"``from pyutilz.<alias> import X`` will crash:\n  " + "\n  ".join(failures)
         )
 
 
@@ -82,9 +80,7 @@ def test_every_alias_proxy_resolves_a_public_symbol():
         try:
             proxy = importlib.import_module(f"pyutilz.{alias}")
         except ImportError as e:
-            failures.append(
-                f"pyutilz.{alias} (proxy) failed to import: {e}"
-            )
+            failures.append(f"pyutilz.{alias} (proxy) failed to import: {e}")
             continue
         # Trigger __getattr__ on the proxy. Resolution to ``None`` is OK
         # — many modules expose lazily-initialised constants that are
@@ -92,15 +88,9 @@ def test_every_alias_proxy_resolves_a_public_symbol():
         try:
             getattr(proxy, public)
         except AttributeError as e:
-            failures.append(
-                f"pyutilz.{alias}.{public}: proxy returned AttributeError "
-                f"({e}) but real target {real_path!r} does have {public!r}"
-            )
+            failures.append(f"pyutilz.{alias}.{public}: proxy returned AttributeError " f"({e}) but real target {real_path!r} does have {public!r}")
     if failures:
-        pytest.fail(
-            f"{len(failures)} alias proxy resolution failure(s):\n  "
-            + "\n  ".join(failures)
-        )
+        pytest.fail(f"{len(failures)} alias proxy resolution failure(s):\n  " + "\n  ".join(failures))
 
 
 def test_alias_keys_dont_collide_with_subpackages():
@@ -111,8 +101,7 @@ def test_alias_keys_dont_collide_with_subpackages():
     created for names that conflict with sub-packages (``system``,
     ``web``, ``cloud``). The test asserts that comment-as-policy.
     """
-    sub_packages = {"core", "data", "database", "web", "cloud", "text",
-                    "system", "dev", "llm"}
+    sub_packages = {"core", "data", "database", "web", "cloud", "text", "system", "dev", "llm"}
     overlap = set(pyutilz._MODULE_ALIASES) & sub_packages
     if overlap:
         pytest.fail(
@@ -130,10 +119,7 @@ def test_alias_targets_live_under_pyutilz_namespace():
         if not real_path.startswith("pyutilz."):
             bad.append(f"{alias!r} → {real_path!r}")
     if bad:
-        pytest.fail(
-            f"{len(bad)} alias target(s) point outside the pyutilz "
-            f"namespace:\n  " + "\n  ".join(bad)
-        )
+        pytest.fail(f"{len(bad)} alias target(s) point outside the pyutilz " f"namespace:\n  " + "\n  ".join(bad))
 
 
 def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
@@ -191,6 +177,5 @@ def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
         # And the genuine top-level package must still import to its real (non-pyutilz) location.
         real_toplevel = importlib.import_module(alias)
         assert not _is_pyutilz_file(real_toplevel), (
-            f"``import {alias}`` resolved to the pyutilz module {getattr(real_toplevel,'__file__','?')} "
-            f"instead of the real top-level package."
+            f"``import {alias}`` resolved to the pyutilz module {getattr(real_toplevel,'__file__','?')} " f"instead of the real top-level package."
         )

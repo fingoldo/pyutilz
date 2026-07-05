@@ -5,7 +5,6 @@ import os
 import sys
 from datetime import date, datetime, timezone
 
-
 # ---------------------------------------------------------------------------
 # show_methods
 # ---------------------------------------------------------------------------
@@ -52,31 +51,23 @@ class TestKeysChangedEnough:
     def test_change_above_threshold(self):
         from pyutilz.pythonlib import keys_changed_enough
 
-        assert keys_changed_enough(
-            {"b": 180}, {"b": 200}, min_change_percent=10.0, key_contains="b"
-        ) is True
+        assert keys_changed_enough({"b": 180}, {"b": 200}, min_change_percent=10.0, key_contains="b") is True
 
     def test_change_below_threshold(self):
         from pyutilz.pythonlib import keys_changed_enough
 
-        assert keys_changed_enough(
-            {"b": 195}, {"b": 200}, min_change_percent=10.0, key_contains="b"
-        ) is False
+        assert keys_changed_enough({"b": 195}, {"b": 200}, min_change_percent=10.0, key_contains="b") is False
 
     def test_prev_zero_returns_true(self):
         from pyutilz.pythonlib import keys_changed_enough
 
-        assert keys_changed_enough(
-            {"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x"
-        ) is True
+        assert keys_changed_enough({"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x") is True
 
     def test_key_filter(self):
         from pyutilz.pythonlib import keys_changed_enough
 
         # "a" changed a lot but key_contains="b" so ignored
-        assert keys_changed_enough(
-            {"a": 999, "b": 200}, {"a": 1, "b": 200}, min_change_percent=10.0, key_contains="b"
-        ) is False
+        assert keys_changed_enough({"a": 999, "b": 200}, {"a": 1, "b": 200}, min_change_percent=10.0, key_contains="b") is False
 
 
 # ---------------------------------------------------------------------------

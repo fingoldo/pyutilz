@@ -181,9 +181,7 @@ class TestCostTracking:
         # OR's modern field is prompt_tokens_details.cached_tokens; the legacy
         # prompt_cache_hit_tokens field should still take precedence if present.
         p = _provider()
-        p._track_provider_specific_usage(
-            {"prompt_tokens_details": {"cached_tokens": 50}}
-        )
+        p._track_provider_specific_usage({"prompt_tokens_details": {"cached_tokens": 50}})
         assert p.total_cache_hit_tokens == 50
 
     def test_get_session_cost_includes_actual(self):
@@ -206,9 +204,7 @@ class TestPricing:
     # public-API path test_input_cost_per_1m_uses_catalogue below.
 
     def test_per_token_cost_handles_malformed_pricing(self):
-        openrouter_module._MODELS_CATALOGUE = {
-            "junk/model": {"id": "junk/model", "pricing": {"prompt": "abc"}}
-        }
+        openrouter_module._MODELS_CATALOGUE = {"junk/model": {"id": "junk/model", "pricing": {"prompt": "abc"}}}
         assert _per_token_cost_pair("junk/model") == (0.0, 0.0)
 
     def test_input_cost_per_1m_uses_catalogue(self):
@@ -368,17 +364,13 @@ class TestModelLimitsLookup:
 
     def test_resolve_falls_back_to_model_level_context(self):
         # No top_provider info — use the entry's own context_length.
-        openrouter_module._MODELS_CATALOGUE = {
-            "vendor/m": {"id": "vendor/m", "context_length": 128_000}
-        }
+        openrouter_module._MODELS_CATALOGUE = {"vendor/m": {"id": "vendor/m", "context_length": 128_000}}
         ctx, max_out = _resolve_model_limits("vendor/m")
         assert ctx == 128_000
         assert max_out is None
 
     def test_resolve_handles_missing_context_length(self):
-        openrouter_module._MODELS_CATALOGUE = {
-            "vendor/m": {"id": "vendor/m", "top_provider": {}}
-        }
+        openrouter_module._MODELS_CATALOGUE = {"vendor/m": {"id": "vendor/m", "top_provider": {}}}
         assert _resolve_model_limits("vendor/m") == (None, None)
 
     def test_context_window_uses_top_provider(self):
@@ -624,11 +616,9 @@ class TestHealthEnrichment:
                 prefix = "https://openrouter.ai/api/v1/models/"
                 assert url.startswith(prefix), url
                 assert url.endswith("/endpoints"), url
-                model_id = url[len(prefix):-len("/endpoints")]
+                model_id = url[len(prefix) : -len("/endpoints")]
                 resp = MagicMock()
-                resp.json.return_value = {
-                    "data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}
-                }
+                resp.json.return_value = {"data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}}
                 resp.raise_for_status = MagicMock()
                 return resp
 
@@ -694,11 +684,9 @@ class TestHealthEnrichment:
                 if "broken" in url:
                     raise httpx.ConnectError("boom")
                 prefix = "https://openrouter.ai/api/v1/models/"
-                model_id = url[len(prefix):-len("/endpoints")]
+                model_id = url[len(prefix) : -len("/endpoints")]
                 resp = MagicMock()
-                resp.json.return_value = {
-                    "data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}
-                }
+                resp.json.return_value = {"data": {"id": model_id, "endpoints": test_self._make_endpoints_response(model_id)}}
                 resp.raise_for_status = MagicMock()
                 return resp
 
@@ -925,7 +913,7 @@ class TestMaxOutputFilter:
 
     def test_max_input_and_max_output_combined(self):
         rows = list_openrouter_models(
-            max_input_per_1m=1.0,    # only cheap/model passes
+            max_input_per_1m=1.0,  # only cheap/model passes
             max_output_per_1m=10.0,  # cheap & midrange pass
             return_only_healthy=False,
         )
@@ -975,9 +963,7 @@ class TestProviderHealthMethods:
 
         out = await p.check_model_health()
 
-        p._client.get.assert_awaited_once_with(
-            "/models/anthropic/claude-sonnet-4.6/endpoints"
-        )
+        p._client.get.assert_awaited_once_with("/models/anthropic/claude-sonnet-4.6/endpoints")
         assert out["model"] == "anthropic/claude-sonnet-4.6"
         assert out["name"] == "Claude Sonnet 4.6"
         assert out["best_uptime_30m"] == 0.999
@@ -1062,45 +1048,33 @@ class TestThinkingRequestField:
 
     def test_thinking_true_uses_medium_effort(self):
         p = _provider()
-        assert p._thinking_request_field(True) == {
-            "reasoning": {"effort": "medium"}
-        }
+        assert p._thinking_request_field(True) == {"reasoning": {"effort": "medium"}}
 
     def test_thinking_false_excludes_reasoning(self):
         p = _provider()
-        assert p._thinking_request_field(False) == {
-            "reasoning": {"exclude": True}
-        }
+        assert p._thinking_request_field(False) == {"reasoning": {"exclude": True}}
 
     def test_thinking_empty_str_excludes_reasoning(self):
         """Defensive: empty string is treated as off, matching ``False``."""
         p = _provider()
-        assert p._thinking_request_field("") == {
-            "reasoning": {"exclude": True}
-        }
+        assert p._thinking_request_field("") == {"reasoning": {"exclude": True}}
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "minimal"])
     def test_thinking_effort_string_passes_through(self, effort):
         p = _provider()
-        assert p._thinking_request_field(effort) == {
-            "reasoning": {"effort": effort}
-        }
+        assert p._thinking_request_field(effort) == {"reasoning": {"effort": effort}}
 
     def test_thinking_effort_string_lowercased(self):
         """Helper normalises case so ``"HIGH"`` and ``"high"`` agree."""
         p = _provider()
-        assert p._thinking_request_field("HIGH") == {
-            "reasoning": {"effort": "high"}
-        }
+        assert p._thinking_request_field("HIGH") == {"reasoning": {"effort": "high"}}
 
     def test_thinking_unknown_effort_passes_through(self):
         """OR may add new effort tiers later; the provider doesn't
         gate-keep -- forward unknown strings and let OR's edge accept
         or 400 them."""
         p = _provider()
-        assert p._thinking_request_field("ultra") == {
-            "reasoning": {"effort": "ultra"}
-        }
+        assert p._thinking_request_field("ultra") == {"reasoning": {"effort": "ultra"}}
 
 
 class TestSpecialStatus:
@@ -1180,8 +1154,7 @@ class TestIntegrationViaGenerate:
 
         await p.generate("hello")
 
-        sent = p._client.post.call_args.kwargs.get("json") \
-            or p._client.post.call_args[1].get("json")
+        sent = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert sent["provider"] == {
             "order": ["anthropic", "openai"],
             "sort": "price",
@@ -1194,20 +1167,14 @@ class TestExtendedUsageCapture:
 
     def test_upstream_inference_cost_recorded(self):
         p = _provider()
-        p._track_provider_specific_usage(
-            {"cost": 0.005, "cost_details": {"upstream_inference_cost": 0.0042}}
-        )
+        p._track_provider_specific_usage({"cost": 0.005, "cost_details": {"upstream_inference_cost": 0.0042}})
         assert p.last_upstream_inference_cost_usd == pytest.approx(0.0042)
         assert p.total_upstream_inference_cost_usd == pytest.approx(0.0042)
 
     def test_upstream_inference_cost_accumulates(self):
         p = _provider()
-        p._track_provider_specific_usage(
-            {"cost_details": {"upstream_inference_cost": 0.001}}
-        )
-        p._track_provider_specific_usage(
-            {"cost_details": {"upstream_inference_cost": 0.002}}
-        )
+        p._track_provider_specific_usage({"cost_details": {"upstream_inference_cost": 0.001}})
+        p._track_provider_specific_usage({"cost_details": {"upstream_inference_cost": 0.002}})
         assert p.total_upstream_inference_cost_usd == pytest.approx(0.003)
         assert p.last_upstream_inference_cost_usd == pytest.approx(0.002)
 
@@ -1220,9 +1187,7 @@ class TestExtendedUsageCapture:
 
     def test_audio_tokens_recorded(self):
         p = _provider()
-        p._track_provider_specific_usage(
-            {"prompt_tokens_details": {"audio_tokens": 128}}
-        )
+        p._track_provider_specific_usage({"prompt_tokens_details": {"audio_tokens": 128}})
         assert p.last_audio_tokens == 128
         assert p.total_audio_tokens == 128
 
@@ -1237,9 +1202,7 @@ class TestExtendedUsageCapture:
         # latest call even when the cumulative counter doesn't grow (because
         # the same value was already counted via prompt_cache_hit_tokens).
         p = _provider()
-        p._track_provider_specific_usage(
-            {"prompt_tokens_details": {"cached_tokens": 30}}
-        )
+        p._track_provider_specific_usage({"prompt_tokens_details": {"cached_tokens": 30}})
         assert p.last_cache_hit_tokens == 30
 
 
@@ -1260,17 +1223,13 @@ class TestResponseLevelMetadata:
         # Useful when models_fallback kicks in — actual model differs from
         # what we requested.
         p = _provider(model="anthropic/claude-sonnet-4.6")
-        p._track_provider_specific_response(
-            {"model": "openai/gpt-4o"}  # fallback fired
-        )
+        p._track_provider_specific_response({"model": "openai/gpt-4o"})  # fallback fired
         assert p.last_upstream_model == "openai/gpt-4o"
         assert p.model_name == "anthropic/claude-sonnet-4.6"  # requested unchanged
 
     def test_native_finish_reason_captured(self):
         p = _provider()
-        p._track_provider_specific_response(
-            {"choices": [{"native_finish_reason": "tool_calls"}]}
-        )
+        p._track_provider_specific_response({"choices": [{"native_finish_reason": "tool_calls"}]})
         assert p.last_native_finish_reason == "tool_calls"
 
     def test_response_metadata_resilient_to_missing_fields(self):
@@ -1617,9 +1576,7 @@ class TestRoutingRetry:
         p = _provider()
         with patch(
             "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
-            new=AsyncMock(side_effect=LLMProviderError(
-                "OpenRouter API error 404: No endpoints found for X."
-            )),
+            new=AsyncMock(side_effect=LLMProviderError("OpenRouter API error 404: No endpoints found for X.")),
         ) as parent:
             with pytest.raises(LLMProviderError):
                 await p.generate("hi")
@@ -1635,9 +1592,7 @@ class TestRoutingRetry:
         )
         with patch(
             "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
-            new=AsyncMock(side_effect=LLMProviderError(
-                "OpenRouter API error 404: No endpoints found for X."
-            )),
+            new=AsyncMock(side_effect=LLMProviderError("OpenRouter API error 404: No endpoints found for X.")),
         ) as parent:
             with pytest.raises(LLMProviderError):
                 await p.generate("hi")
@@ -1674,9 +1629,7 @@ class TestRoutingRetry:
         )
         with patch(
             "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
-            new=AsyncMock(side_effect=LLMProviderError(
-                "OpenRouter API error 422: maximum context length is 8192"
-            )),
+            new=AsyncMock(side_effect=LLMProviderError("OpenRouter API error 422: maximum context length is 8192")),
         ) as parent:
             with pytest.raises(LLMProviderError):
                 await p.generate("hi")
@@ -1692,9 +1645,7 @@ class TestRoutingRetry:
         )
         with patch(
             "pyutilz.llm.openai_compat.OpenAICompatibleProvider.generate",
-            new=AsyncMock(side_effect=LLMProviderError(
-                "OpenRouter API error 405: Method not allowed"
-            )),
+            new=AsyncMock(side_effect=LLMProviderError("OpenRouter API error 405: Method not allowed")),
         ) as parent:
             with pytest.raises(LLMProviderError):
                 await p.generate("hi")
@@ -1727,9 +1678,7 @@ class TestSubpackageSplitSensor:
         import importlib
 
         for sub in ("_catalogue", "_health", "_provider"):
-            mod = importlib.import_module(
-                f"pyutilz.llm.openrouter_provider.{sub}"
-            )
+            mod = importlib.import_module(f"pyutilz.llm.openrouter_provider.{sub}")
             assert mod is not None
         from pyutilz.llm.openrouter_provider._provider import (
             OpenRouterProvider as _Cls,

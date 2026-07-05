@@ -34,7 +34,6 @@ from pyutilz.llm.openai_compat import (
     parse_retry_after,
 )
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -352,7 +351,7 @@ class _OneFailThenOkStream:
 
     async def aiter_lines(self):
         yield 'data: {"choices":[{"delta":{"content":"hi"}}]}'
-        yield 'data: [DONE]'
+        yield "data: [DONE]"
 
 
 class TestStreamingRetry:

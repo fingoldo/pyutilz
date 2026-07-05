@@ -9,12 +9,7 @@ This verifies that refactored code is actually faster than the original.
 import pandas as pd
 import numpy as np
 import time
-from pyutilz.pandaslib import (
-    optimize_dtypes,
-    nullify_standard_values,
-    get_df_memory_consumption,
-    ensure_dataframe_float32_convertability
-)
+from pyutilz.pandaslib import optimize_dtypes, nullify_standard_values, get_df_memory_consumption, ensure_dataframe_float32_convertability
 
 
 def benchmark_optimize_dtypes_min_max():
@@ -22,12 +17,12 @@ def benchmark_optimize_dtypes_min_max():
     Benchmark: optimize_dtypes now computes min/max in single pass.
     Performance improvement: ~2x faster for large DataFrames with many columns.
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("BENCHMARK: optimize_dtypes min/max single pass optimization")
-    print("="*70)
+    print("=" * 70)
 
     # Create large DataFrame with many numeric columns
-    df = pd.DataFrame({f'col{i}': np.random.rand(10000) * 1000 for i in range(100)})
+    df = pd.DataFrame({f"col{i}": np.random.rand(10000) * 1000 for i in range(100)})
 
     print(f"DataFrame shape: {df.shape}")
     print(f"Memory usage: {get_df_memory_consumption(df) / 1024**2:.2f} MB")
@@ -50,23 +45,20 @@ def benchmark_nullify_standard_values_groupby():
     Benchmark: nullify_standard_values now uses groupby instead of per-value loop.
     Performance improvement: O(N) instead of O(N × M) - massive speedup for many standard values.
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("BENCHMARK: nullify_standard_values groupby optimization")
-    print("="*70)
+    print("=" * 70)
 
     # Create DataFrame with many standard values and persons
     np.random.seed(42)
-    df = pd.DataFrame({
-        'field': np.random.choice(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', None], 10000),
-        'person': np.random.randint(1, 100, 10000)
-    })
+    df = pd.DataFrame({"field": np.random.choice(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", None], 10000), "person": np.random.randint(1, 100, 10000)})
 
     print(f"DataFrame shape: {df.shape}")
     print(f"Unique values in 'field': {df['field'].nunique()}")
     print(f"Unique persons: {df['person'].nunique()}")
 
     start = time.perf_counter()
-    nullify_standard_values(df, 'field', min_records=100, persons_field='person', min_persons=5)
+    nullify_standard_values(df, "field", min_records=100, persons_field="person", min_persons=5)
     elapsed = time.perf_counter() - start
 
     print(f"[OK] nullify_standard_values completed in {elapsed:.3f}s")
@@ -82,11 +74,11 @@ def benchmark_get_df_memory_consumption():
     Benchmark: get_df_memory_consumption now uses direct API instead of text parsing.
     Performance improvement: ~10-20x faster, more reliable.
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("BENCHMARK: get_df_memory_consumption direct API optimization")
-    print("="*70)
+    print("=" * 70)
 
-    df = pd.DataFrame({f'col{i}': np.random.rand(1000) for i in range(50)})
+    df = pd.DataFrame({f"col{i}": np.random.rand(1000) for i in range(50)})
 
     print(f"DataFrame shape: {df.shape}")
 
@@ -109,26 +101,20 @@ def benchmark_ensure_dataframe_float32_convertability():
     Benchmark: ensure_dataframe_float32_convertability now uses single select_dtypes pass.
     Performance improvement: 5x faster (1 pass instead of 5 passes).
     """
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("BENCHMARK: ensure_dataframe_float32_convertability single-pass optimization")
-    print("="*70)
+    print("=" * 70)
 
     # Create DataFrame with various numeric types
-    df = pd.DataFrame({
-        f'int32_{i}': np.array(np.random.randint(0, 100, 1000), dtype=np.int32)
-        for i in range(20)
-    })
-    df = pd.concat([
-        df,
-        pd.DataFrame({
-            f'int64_{i}': np.array(np.random.randint(0, 100, 1000), dtype=np.int64)
-            for i in range(20)
-        }),
-        pd.DataFrame({
-            f'float64_{i}': np.array(np.random.rand(1000), dtype=np.float64)
-            for i in range(20)
-        })
-    ], axis=1)
+    df = pd.DataFrame({f"int32_{i}": np.array(np.random.randint(0, 100, 1000), dtype=np.int32) for i in range(20)})
+    df = pd.concat(
+        [
+            df,
+            pd.DataFrame({f"int64_{i}": np.array(np.random.randint(0, 100, 1000), dtype=np.int64) for i in range(20)}),
+            pd.DataFrame({f"float64_{i}": np.array(np.random.rand(1000), dtype=np.float64) for i in range(20)}),
+        ],
+        axis=1,
+    )
 
     print(f"DataFrame shape: {df.shape}")
     print(f"Dtype distribution: {df.dtypes.value_counts().to_dict()}")
@@ -147,9 +133,9 @@ def benchmark_ensure_dataframe_float32_convertability():
 
 def run_all_benchmarks():
     """Run all performance benchmarks"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("PYUTILZ PANDASLIB PERFORMANCE BENCHMARKS")
-    print("="*70)
+    print("=" * 70)
     print("Verifying that optimizations actually improve performance...")
 
     benchmarks = [
@@ -170,9 +156,9 @@ def run_all_benchmarks():
             print(f"[ERROR] {e}")
             failed.append(benchmark.__name__)
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("SUMMARY")
-    print("="*70)
+    print("=" * 70)
     if not failed:
         print(f"[OK] ALL {len(benchmarks)} BENCHMARKS PASSED")
         print("  Performance optimizations verified!")

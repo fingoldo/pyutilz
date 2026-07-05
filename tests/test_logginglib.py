@@ -135,11 +135,7 @@ class TestInitLogging:
 
         # Should not crash
         try:
-            init_logging(
-                console=True,
-                file=False,
-                level="INFO"
-            )
+            init_logging(console=True, file=False, level="INFO")
         except Exception:
             # May fail if logger already configured
             pass
@@ -151,11 +147,7 @@ class TestInitLogging:
         log_file = tmp_path / "test.log"
 
         try:
-            init_logging(
-                console=False,
-                file=str(log_file),
-                level="DEBUG"
-            )
+            init_logging(console=False, file=str(log_file), level="DEBUG")
         except Exception:
             # May fail if logger already configured
             pass

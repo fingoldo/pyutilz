@@ -17,10 +17,10 @@ from pyutilz.text.strings import strip_doubled_characters
 
 def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
-        simple string percent similarity
+    simple string percent similarity
 
-        >>> levenshtein_strings_similarity("MeasureOIS21", "MeasureOIS18")
-        0.8333333333333334
+    >>> levenshtein_strings_similarity("MeasureOIS21", "MeasureOIS18")
+    0.8333333333333334
 
     """
     return 1 - levenshtein_distance(a, b) / max(len(a), len(b))
@@ -28,14 +28,14 @@ def levenshtein_strings_similarity(a: str, b: str) -> float:
 
 def contigous_strings_similarity(a: str, b: str) -> tuple:
     """
-        similarity of 2 strings measured in contigous blocks either from the left, from the right, or both (non-symmetrically).
-        it's more strong than just levenshtein_distance.
+    similarity of 2 strings measured in contigous blocks either from the left, from the right, or both (non-symmetrically).
+    it's more strong than just levenshtein_distance.
 
-        >>> contigous_strings_similarity("MeosureOIS21qwe", "MeasureOIS18qwe")
-        (0.3333333333333333, 'Meqwe')
+    >>> contigous_strings_similarity("MeosureOIS21qwe", "MeasureOIS18qwe")
+    (0.3333333333333333, 'Meqwe')
 
-        >>> contigous_strings_similarity("MeosureOIS21qwe", "MeosureOIS21qwe")
-        (1.0, 'MeosureOIS21qwe')
+    >>> contigous_strings_similarity("MeosureOIS21qwe", "MeosureOIS21qwe")
+    (1.0, 'MeosureOIS21qwe')
     """
     best_l, best_r, best_m = 0, 0, 0
 
@@ -179,17 +179,17 @@ def normalize_sentence(
     sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: list = None
 ) -> list:
     """
-        Нормализуем предложение:
-        переводим символы в верхний регистр.
-        удаляем служебные символы (,;!.) и пробелы по краям
-        заменяем все двойные пробелы одиночными.Исключаем точки и запятые
-        результат в виде списка токенов
+    Нормализуем предложение:
+    переводим символы в верхний регистр.
+    удаляем служебные символы (,;!.) и пробелы по краям
+    заменяем все двойные пробелы одиночными.Исключаем точки и запятые
+    результат в виде списка токенов
 
-        >normalize_sentence("", abbreviations = ["WOMEN", "(W)", "W", _
-                                        "AMATEUER", "(AM)", "AM", _
-                                            "RES", "(R)", "R", "B", _
-                                            "VC", "BK", "BC", "SC", "SPORTING CLUB", _
-                                            "FK", "FC", "FOOTBALL CLUB", "AC", "AFC", "CD", "IF", "JK", "SV", "TSV", "AL", "AL-"])
+    >normalize_sentence("", abbreviations = ["WOMEN", "(W)", "W", _
+                                    "AMATEUER", "(AM)", "AM", _
+                                        "RES", "(R)", "R", "B", _
+                                        "VC", "BK", "BC", "SC", "SPORTING CLUB", _
+                                        "FK", "FC", "FOOTBALL CLUB", "AC", "AFC", "CD", "IF", "JK", "SV", "TSV", "AL", "AL-"])
     """
     if abbreviations is None:
         abbreviations = []
@@ -376,7 +376,7 @@ try:
         pos = 0
         for i, w in enumerate(words):
             offsets[i] = pos
-            a = _array.array('i', w.encode('utf-32-le'))  # 4 bytes per codepoint
+            a = _array.array("i", w.encode("utf-32-le"))  # 4 bytes per codepoint
             parts.append(a)
             pos += len(a)
         offsets[n] = pos
@@ -385,7 +385,7 @@ try:
             p = 0
             for a in parts:
                 chunk = np.frombuffer(a, dtype=np.int32)
-                buf[p:p + len(chunk)] = chunk
+                buf[p : p + len(chunk)] = chunk
                 p += len(chunk)
         else:
             buf = np.empty(0, dtype=np.int32)
@@ -453,8 +453,7 @@ try:
         # Concatenate buffers and adjust offsets
         buf = np.concatenate((buf_a, buf_b))
         total_a_chars = off_a[n_a]
-        offsets = np.concatenate((off_a[:n_a], off_b[:n_b] + total_a_chars,
-                                  np.array([off_b[n_b] + total_a_chars], dtype=np.int32)))
+        offsets = np.concatenate((off_a[:n_a], off_b[:n_b] + total_a_chars, np.array([off_b[n_b] + total_a_chars], dtype=np.int32)))
 
         result = _sentences_similarity_core(buf, offsets, n_a, n_b, cMinLenTHreshold)
         if result < 0:
@@ -601,8 +600,7 @@ try:
             pos += word_counts[i + 1]
         return buf, offsets, wc, cand_starts, n_query
 
-    def sentences_similarity_numba_batch(query_words: list, candidates: list,
-                                          cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
+    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
         """
         Compare one query against many candidates in a single numba call.
 
@@ -620,13 +618,9 @@ try:
         buf, offsets, wc, cand_starts, n_query = _prepare_batch(query_words, candidates)
 
         if parallel:
-            raw = _sentences_similarity_batch_parallel(
-                buf, offsets, wc, cand_starts, len(candidates), n_query, cMinLenTHreshold
-            )
+            raw = _sentences_similarity_batch_parallel(buf, offsets, wc, cand_starts, len(candidates), n_query, cMinLenTHreshold)
         else:
-            raw = _sentences_similarity_batch_core(
-                buf, offsets, wc, len(candidates), n_query, cMinLenTHreshold
-            )
+            raw = _sentences_similarity_batch_core(buf, offsets, wc, len(candidates), n_query, cMinLenTHreshold)
         return [None if v < 0 else float(v) for v in raw]
 
     class SentenceSimilarityIndex:
@@ -684,13 +678,9 @@ try:
             cand_starts = self._cand_starts + n_query
 
             if self.parallel:
-                raw = _sentences_similarity_batch_parallel(
-                    buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold
-                )
+                raw = _sentences_similarity_batch_parallel(buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold)
             else:
-                raw = _sentences_similarity_batch_core(
-                    buf, offsets, wc, self.n_candidates, n_query, self.cMinLenTHreshold
-                )
+                raw = _sentences_similarity_batch_core(buf, offsets, wc, self.n_candidates, n_query, self.cMinLenTHreshold)
             return [None if v < 0 else float(v) for v in raw]
 
     HAS_NUMBA = True
@@ -706,8 +696,7 @@ except ImportError:
         """Fallback to pure-Python version when numba is not installed."""
         return sentences_similarity(packed_a, packed_b, cMinLenTHreshold) if packed_a and packed_b else None
 
-    def sentences_similarity_numba_batch(query_words: list, candidates: list,
-                                          cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
+    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
         """Fallback to pure-Python version when numba is not installed."""
         return [sentences_similarity(query_words, c, cMinLenTHreshold) for c in candidates]
 

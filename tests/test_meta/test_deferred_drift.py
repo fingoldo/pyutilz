@@ -50,10 +50,7 @@ def test_user_deferred_lists_havent_grown():
             encoding="utf-8",
         )
         total = sum(current.values())
-        pytest.skip(
-            f"debt baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} whitelist(s), {total} total entry(ies))"
-        )
+        pytest.skip(f"debt baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} whitelist(s), {total} total entry(ies))")
 
     baseline = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
     grown: list[str] = []
@@ -69,10 +66,7 @@ def test_user_deferred_lists_havent_grown():
     if grown or new_keys:
         diff_total = sum(current.values()) - sum(baseline.values())
         sign = "+" if diff_total > 0 else ""
-        msg_parts = [
-            f"Tech-debt whitelist(s) GREW since baseline "
-            f"(net {sign}{diff_total} entries):"
-        ]
+        msg_parts = [f"Tech-debt whitelist(s) GREW since baseline " f"(net {sign}{diff_total} entries):"]
         if grown:
             msg_parts.append("  GROWN:\n    " + "\n    ".join(grown))
         if new_keys:
@@ -86,15 +80,10 @@ def test_user_deferred_lists_havent_grown():
         pytest.fail("\n".join(msg_parts))
 
     # Informational only — print a summary so the dashboard stays visible.
-    shrunk = [
-        f"{k}: {baseline[k]} → {current[k]} (-{baseline[k] - current[k]})"
-        for k in current
-        if k in baseline and current[k] < baseline[k]
-    ]
+    shrunk = [f"{k}: {baseline[k]} → {current[k]} (-{baseline[k] - current[k]})" for k in current if k in baseline and current[k] < baseline[k]]
     if shrunk:
         sys.stderr.write(
             f"\n[test_user_deferred_lists_havent_grown] {len(shrunk)} "
-            f"whitelist(s) SHRANK — drained:\n  " + "\n  ".join(shrunk)
-            + "\n  Refresh baseline to lock in: pytest "
+            f"whitelist(s) SHRANK — drained:\n  " + "\n  ".join(shrunk) + "\n  Refresh baseline to lock in: pytest "
             f"tests/test_meta/test_deferred_drift.py --refresh-debt-baseline\n"
         )

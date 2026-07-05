@@ -52,7 +52,7 @@ last_session_updated_at = None
 version_main = None
 login, pwd = None, None
 browser, headers, proxy_server, target, home_page, user_agent = None, None, None, None, None, None
-data_dir = None#"chrome-data"
+data_dir = None  # "chrome-data"
 logout_signs = "Sign-In"
 successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
@@ -68,25 +68,25 @@ headers = basic_headers
 
 def find_element_by_xpath(browser:object,query:str)->object:
     try:
-        res=browser.find_element(By.XPATH, query)
+        res = browser.find_element(By.XPATH, query)
     except Exception:
-        res=browser.find_element_by_xpath(query)
+        res = browser.find_element_by_xpath(query)
 
     return res
 
 def find_element_by_name(browser:object,query:str)->object:
     try:
-        res=browser.find_element(By.NAME, query)
+        res = browser.find_element(By.NAME, query)
     except Exception:
-        res=browser.find_element_by_name(query)
+        res = browser.find_element_by_name(query)
 
     return res
 
 def find_element_by_tag_name(browser:object,query:str)->object:
     try:
-        res=browser.find_element(By.TAG_NAME, query)
+        res = browser.find_element(By.TAG_NAME, query)
     except Exception:
-        res=browser.find_element_by_tag_name(query)
+        res = browser.find_element_by_tag_name(query)
 
     return res
 
@@ -105,8 +105,8 @@ def browser_get(path:str)->None:
     try:
         browser.get(path)
     except Exception as e:
-        if ('cannot determine loading status' in str(e)) or ('unexpected command response' in str(e)):
-            #logger.warning(e)
+        if ("cannot determine loading status" in str(e)) or ("unexpected command response" in str(e)):
+            # logger.warning(e)
             sleep(2)
         else:
             raise(e)
@@ -114,9 +114,7 @@ def browser_get(path:str)->None:
 def find_chrome_executable():
     """fix find_chrome_executable for x86 Windows"""
     candidates = set()
-    for item in map(
-        os.environ.get, ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
-    ):
+    for item in map(os.environ.get, ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")):
         if item:  # it happens to be None
             for subitem in (
                 "Google/Chrome/Application",
@@ -134,10 +132,10 @@ def start_selenium() -> object:
 
     global browser
 
-    #if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
+    # if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
 
     logger.info("Starting Selenium for %s", target)
-    kwargs={}
+    kwargs = {}
     if undetectable:
         logger.info("Undetectable mode")
         try:
@@ -147,8 +145,8 @@ def start_selenium() -> object:
             except Exception:
                 pass
             options = webdriver.ChromeOptions()
-            kwargs["version_main"]=version_main
-            kwargs["use_subprocess"]=use_subprocess
+            kwargs["version_main"] = version_main
+            kwargs["use_subprocess"] = use_subprocess
 
             if find_executable:
                 try:
@@ -163,7 +161,7 @@ def start_selenium() -> object:
         logger.info("Standard mode")
         from selenium import webdriver
 
-        options = webdriver.ChromeOptions()#webdriver.chrome.options.Options()
+        options = webdriver.ChromeOptions()  # webdriver.chrome.options.Options()
 
     if user_agent:
         options.add_argument(f"--user-agent={user_agent}")
@@ -172,7 +170,7 @@ def start_selenium() -> object:
         options.add_argument(f"--user-data-dir={data_dir}")
 
     if proxy_server:
-        if len(proxy_server.get('PROXY_PASS',''))>0:
+        if len(proxy_server.get("PROXY_PASS", "")) > 0:
             manifest_json = """
             {
                 "version": "1.0.0",
@@ -223,23 +221,23 @@ def start_selenium() -> object:
                         {urls: ["<all_urls>"]},
                         ['blocking']
             );
-            """ % (proxy_server['PROXY_HOST'], proxy_server['PROXY_PORT'], proxy_server['PROXY_USER'], proxy_server['PROXY_PASS'])
-            pluginfile = 'proxy_auth_plugin.zip'
+            """ % (proxy_server["PROXY_HOST"], proxy_server["PROXY_PORT"], proxy_server["PROXY_USER"], proxy_server["PROXY_PASS"])
+            pluginfile = "proxy_auth_plugin.zip"
 
-            with zipfile.ZipFile(pluginfile, 'w') as zp:
+            with zipfile.ZipFile(pluginfile, "w") as zp:
                 zp.writestr("manifest.json", manifest_json)
                 zp.writestr("background.js", background_js)
             options.add_extension(pluginfile)
         else:
             options.add_argument(f"--proxy-server={proxy_server['PROXY_HOST']}:{proxy_server['PROXY_PORT']}")  # example: "localhost:8118"
 
-    #if not undetectable:
+    # if not undetectable:
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--remote-debugging-port=9222")
 
-    kwargs["options"]=options
-    #if not data_dir:
+    kwargs["options"] = options
+    # if not data_dir:
     #    path = os.path.dirname(os.path.curdir)
     #    path=os.path.join(path, 'chromedriver')
     #    kwargs["path"]=path
@@ -262,7 +260,7 @@ def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
         last_session_updated_at = datetime.utcnow()
 
 
-def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=60,restart_on_no_cookie=False) -> bool:
+def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: int = 60, restart_on_no_cookie=False) -> bool:
     global browser, TheCookies, headers
     """
         Ensures Selenium is started
@@ -278,19 +276,17 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
                 browser.refresh()
                 browser.execute_cdp_cmd(
                     "Page.addScriptToEvaluateOnNewDocument",
-                    {
-                        "source": """
+                    {"source": """
                     Object.defineProperty(navigator, 'webdriver', {
                       get: () => undefined
                     })
-                  """
-                    },
+                  """},
                 )
             except Exception as e:
                 logger.exception(e)
-                if 'window was already closed' in str(e) or  'window already closed' in str(e) or 'chrome not reachable' in str(e):
-                    logger.info('Restarting webdriver')
-                    browser=None
+                if "window was already closed" in str(e) or "window already closed" in str(e) or "chrome not reachable" in str(e):
+                    logger.info("Restarting webdriver")
+                    browser = None
             else:
                 break
     while True:
@@ -323,7 +319,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
         elem_login = None
         try:
             elem_login = find_element_by_name(browser, login_input_name)
-            elem_login.send_keys(Keys.CONTROL, 'a')
+            elem_login.send_keys(Keys.CONTROL, "a")
             elem_login.send_keys(Keys.DELETE)
             elem_login.send_keys(login)
             pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
@@ -332,7 +328,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
             pass
         if elem_login is None:
             try:
-                elem_login = find_element_by_xpath(browser,"//div[text()='" + login.lower() + "']")
+                elem_login = find_element_by_xpath(browser, "//div[text()='" + login.lower() + "']")
             except Exception:
                 pass
         if elem_login is None:
@@ -343,7 +339,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
         elem_pwd = None
         try:
             elem_pwd = find_element_by_name(browser, password_input_name)
-            elem_pwd.send_keys(Keys.CONTROL, 'a')
+            elem_pwd.send_keys(Keys.CONTROL, "a")
             elem_pwd.send_keys(Keys.DELETE)
             elem_pwd.send_keys(pwd)
         except Exception:

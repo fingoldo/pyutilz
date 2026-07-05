@@ -21,7 +21,6 @@ from pyutilz.pandaslib import (
     get_suspiciously_constant_columns,
 )
 
-
 # ---------------------------------------------------------------------------
 # HAS_IPYTHON = False branch (lines 41-42)
 # ---------------------------------------------------------------------------
@@ -39,9 +38,9 @@ class TestNoIPython:
         """When HAS_IPYTHON is True and use_markdown, display(Markdown(...)) is called."""
         df = pd.DataFrame({"x": [1]})
         mock_display = MagicMock()
-        with patch("pyutilz.data.pandaslib.HAS_IPYTHON", True), \
-             patch("pyutilz.data.pandaslib.display", mock_display, create=True), \
-             patch("pyutilz.data.pandaslib.Markdown", lambda s: s, create=True):
+        with patch("pyutilz.data.pandaslib.HAS_IPYTHON", True), patch("pyutilz.data.pandaslib.display", mock_display, create=True), patch(
+            "pyutilz.data.pandaslib.Markdown", lambda s: s, create=True
+        ):
             showcase_df_columns(df, use_markdown=True, use_print=False)
         mock_display.assert_called()
 
@@ -88,15 +87,13 @@ class TestOptimizeDtypsSizeReduction:
         # use_uint=True creates two passes over same float column: uint then int
         # float_to_float with ensure_float64_precision triggers mantissa computation
         df = pd.DataFrame({"a": np.array([1.5, 2.5], dtype=np.float64)})
-        result = optimize_dtypes(df, reduce_size=True, float_to_float=True,
-                                 ensure_float64_precision=True, inplace=False)
+        result = optimize_dtypes(df, reduce_size=True, float_to_float=True, ensure_float64_precision=True, inplace=False)
         assert pd.api.types.is_float_dtype(result["a"])
 
     def test_verbose_precision_loss(self):
         """Line 243: verbose log when float can't downcast due to precision."""
         df = pd.DataFrame({"a": np.array([2.205001270000e09 + 0.123456789], dtype=np.float64)})
-        result = optimize_dtypes(df, reduce_size=True, float_to_float=True,
-                                 float_to_int=False, ensure_float64_precision=True, verbose=True, inplace=False)
+        result = optimize_dtypes(df, reduce_size=True, float_to_float=True, float_to_int=False, ensure_float64_precision=True, verbose=True, inplace=False)
         assert pd.api.types.is_float_dtype(result["a"])
 
     def test_verbose_type_change(self):
@@ -464,16 +461,14 @@ class TestOptimizeDtypesEdgeCases:
     def test_skip_halffloat_false_with_small_values(self):
         """Trigger float16 consideration when skip_halffloat=False."""
         df = pd.DataFrame({"a": np.array([0.1, 0.2], dtype=np.float64)})
-        result = optimize_dtypes(df, reduce_size=True, skip_halffloat=False,
-                                 float_to_float=True, ensure_float64_precision=False, inplace=False)
+        result = optimize_dtypes(df, reduce_size=True, skip_halffloat=False, float_to_float=True, ensure_float64_precision=False, inplace=False)
         # Should downcast to float16 since values are small and no precision check
         assert result["a"].dtype.itemsize <= 4
 
     def test_float_to_int_with_use_uint(self):
         """Float with no NaN, no frac -> try uint then int."""
         df = pd.DataFrame({"a": np.array([1.0, 2.0, 255.0], dtype=np.float64)})
-        result = optimize_dtypes(df, reduce_size=True, float_to_int=True,
-                                 use_uint=True, inplace=False)
+        result = optimize_dtypes(df, reduce_size=True, float_to_int=True, use_uint=True, inplace=False)
         assert "int" in result["a"].dtype.name or "uint" in result["a"].dtype.name
 
     def test_inplace_reduce_size(self):

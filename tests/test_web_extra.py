@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, Mock, patch, call
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers to import module-level symbols after mocking ensure_installed
 # ---------------------------------------------------------------------------
@@ -194,9 +193,9 @@ class TestSetParams:
     def test_sets_all(self):
         from pyutilz.web import web as mod
         d1, d2 = {}, {}
-        mod.set_params(m_delay=5, m_max_ip_queries=100, m_last_used_dict=d1,
-                       m_min_idle_interval_minutes=10, m_failed_dict=d2,
-                       m_min_failed_idle_interval_minutes=60)
+        mod.set_params(
+            m_delay=5, m_max_ip_queries=100, m_last_used_dict=d1, m_min_idle_interval_minutes=10, m_failed_dict=d2, m_min_failed_idle_interval_minutes=60
+        )
         assert mod.delay == 5
         assert mod.max_ip_queries == 100
         assert mod.last_used_dict is d1
@@ -253,8 +252,8 @@ class TestMakeProxiesDict:
 class TestGetNewSmartproxy:
     def test_returns_proxies_immediately_no_dicts(self):
         from pyutilz.web import web as mod
-        r = mod.get_new_smartproxy("u", "p", "srv", 20001, 20002,
-                                   last_used_dict={}, failed_dict={})
+
+        r = mod.get_new_smartproxy("u", "p", "srv", 20001, 20002, last_used_dict={}, failed_dict={})
         assert "http" in r and "https" in r
 
     def test_fixed_port(self):
@@ -271,10 +270,7 @@ class TestGetNewSmartproxy:
         last_used = {key: datetime.utcnow()}
         # With fixed port and recent use, it would loop forever.
         # Use random port range so it eventually gets a different port.
-        r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000,
-                                   last_used_dict=last_used,
-                                   min_idle_interval_minutes=999,
-                                   failed_dict={})
+        r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000, last_used_dict=last_used, min_idle_interval_minutes=999, failed_dict={})
         assert "http" in r
 
     def test_failed_dict_blocks_port(self):
@@ -284,10 +280,7 @@ class TestGetNewSmartproxy:
         key = jl_hash(proxies)
         failed = {key: datetime.utcnow()}
         # Random port range so it eventually gets through
-        r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000,
-                                   last_used_dict={},
-                                   min_idle_interval_minutes=999,
-                                   failed_dict=failed)
+        r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000, last_used_dict={}, min_idle_interval_minutes=999, failed_dict=failed)
         assert "http" in r
 
 
@@ -485,8 +478,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 0
-        r = mod.get_url("http://x.com", blocking_statuses=(403,), quit_on_blocking=True,
-                        b_use_proxy=False, b_random_ua=False, max_retries=3)
+        r = mod.get_url("http://x.com", blocking_statuses=(403,), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False, max_retries=3)
         assert mod.was_blocked is True
 
     @patch("pyutilz.web.web.sleep")
@@ -499,8 +491,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.delay = 0
         mod.proxy_server = None
-        r = mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False, max_retries=3,
-                        ratelimited_sleep_interval=0)
+        r = mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False, max_retries=3, ratelimited_sleep_interval=0)
         assert r.status_code == 200
 
     @patch("pyutilz.web.web.sleep")
@@ -520,8 +511,7 @@ class TestGetUrl:
         mod.proxy_max_port = 2
         mod.proxy_port = 1
         mod.proxy_type = "http"
-        r = mod.get_url("http://x.com", b_use_proxy=True, b_random_ua=False, max_retries=3,
-                        ratelimited_proxy_sleep_interval=0)
+        r = mod.get_url("http://x.com", b_use_proxy=True, b_random_ua=False, max_retries=3, ratelimited_proxy_sleep_interval=0)
         assert r.status_code == 200
 
     @patch("pyutilz.web.web.sleep")
@@ -562,8 +552,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.delay = 0
         with patch("pyutilz.web.web.handle_blocking"):
-            r = mod.get_url("http://x.com", blocking_errors=("captcha",), quit_on_blocking=True,
-                            b_use_proxy=False, b_random_ua=False)
+            r = mod.get_url("http://x.com", blocking_errors=("captcha",), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False)
         assert mod.was_blocked is True
 
     @patch("pyutilz.web.web.sleep")
@@ -661,8 +650,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 0
-        r = mod.get_url("http://x.com", custom_headers={"X-Custom": "v"},
-                        b_use_proxy=False, b_random_ua=False)
+        r = mod.get_url("http://x.com", custom_headers={"X-Custom": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "x-custom" in call_kwargs["headers"]
 
@@ -678,8 +666,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.headers = {"existing": "h"}
         mod.delay = 0
-        r = mod.get_url("http://x.com", inject_headers={"added": "v"},
-                        b_use_proxy=False, b_random_ua=False)
+        r = mod.get_url("http://x.com", inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "added" in call_kwargs["headers"]
         assert "existing" in call_kwargs["headers"]
@@ -696,8 +683,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.headers = None
         mod.delay = 0
-        r = mod.get_url("http://x.com", custom_headers=None, inject_headers={"added": "v"},
-                        b_use_proxy=False, b_random_ua=False)
+        r = mod.get_url("http://x.com", custom_headers=None, inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "added" in call_kwargs["headers"]
 

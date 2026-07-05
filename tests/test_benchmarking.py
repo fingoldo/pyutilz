@@ -27,9 +27,7 @@ class TestBenchmarkAlgosByRuntime:
     def test_returns_sorted_implementations(self):
         """Test that implementations are returned sorted by speed"""
         implementations = [algo_fast, algo_slow]
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            implementations, algo_name="test", n_reps=2, x=5
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime(implementations, algo_name="test", n_reps=2, x=5)
 
         assert len(sorted_impls) == 2
         assert len(durations) == 2
@@ -37,26 +35,20 @@ class TestBenchmarkAlgosByRuntime:
     def test_durations_are_non_negative(self):
         """Test that all durations are non-negative"""
         implementations = [algo_fast, algo_slow, algo_identity]
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            implementations, algo_name="test", n_reps=1, x=10
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime(implementations, algo_name="test", n_reps=1, x=10)
 
         assert all(d >= 0 for d in durations)
 
     def test_sorted_by_ascending_duration(self):
         """Test that durations are sorted ascending"""
         implementations = [algo_fast, algo_slow]
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            implementations, n_reps=2, x=5
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime(implementations, n_reps=2, x=5)
 
         assert durations[0] <= durations[1]
 
     def test_single_implementation(self):
         """Test with a single implementation"""
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            [algo_fast], algo_name="single", n_reps=2, x=3
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime([algo_fast], algo_name="single", n_reps=2, x=3)
 
         assert len(sorted_impls) == 1
         assert len(durations) == 1
@@ -74,18 +66,14 @@ class TestBenchmarkAlgosByRuntime:
 
     def test_verbose_mode(self):
         """Test with verbose > 1 (exercises logging paths)"""
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            [algo_fast, algo_identity], algo_name="verbose_test", n_reps=2, verbose=2, x=7
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime([algo_fast, algo_identity], algo_name="verbose_test", n_reps=2, verbose=2, x=7)
 
         assert len(sorted_impls) == 2
         assert len(durations) == 2
 
     def test_multiple_reps(self):
         """Test with multiple repetitions (n_reps > 1)"""
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            [algo_fast], n_reps=5, x=100
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime([algo_fast], n_reps=5, x=100)
 
         assert len(sorted_impls) == 1
         assert durations[0] >= 0
@@ -93,9 +81,7 @@ class TestBenchmarkAlgosByRuntime:
     def test_implementations_preserved(self):
         """Test that all original implementations are in result"""
         implementations = [algo_fast, algo_slow, algo_identity]
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            implementations, n_reps=1, x=1
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime(implementations, n_reps=1, x=1)
 
         assert set(sorted_impls) == set(implementations)
 
@@ -111,16 +97,12 @@ class TestSynchronizeGpu:
 
     def test_benchmark_with_synchronize_gpu_true(self):
         # CPU algos + synchronize_gpu=True: sync is a no-op, results still valid.
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            [algo_fast, algo_slow], n_reps=2, synchronize_gpu=True, x=5
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime([algo_fast, algo_slow], n_reps=2, synchronize_gpu=True, x=5)
         assert len(durations) == 2
         assert all(d >= 0 for d in durations)
 
     def test_benchmark_with_synchronize_gpu_false(self):
-        sorted_impls, durations = benchmark_algos_by_runtime(
-            [algo_fast], n_reps=1, synchronize_gpu=False, x=1
-        )
+        sorted_impls, durations = benchmark_algos_by_runtime([algo_fast], n_reps=1, synchronize_gpu=False, x=1)
         assert durations[0] >= 0
 
 
@@ -134,9 +116,7 @@ class TestSweepBackendCrossover:
     def test_single_variant_one_catchall_region(self):
         from pyutilz.dev.benchmarking import sweep_backend_crossover
 
-        regions = sweep_backend_crossover(
-            {"numpy": lambda x: x.sum()}, [10, 100, 1000], self._inp, "n", repeats=2
-        )
+        regions = sweep_backend_crossover({"numpy": lambda x: x.sum()}, [10, 100, 1000], self._inp, "n", repeats=2)
         assert len(regions) == 1
         assert regions[0]["n_max"] is None  # catch-all
         assert regions[0]["backend_choice"] == "numpy"

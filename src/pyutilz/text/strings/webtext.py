@@ -76,7 +76,7 @@ def parse_html(text: str, sep=". ") -> str:
 def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
     # replaces all kinds of quotations with simple APOSTROPHE
     if text:
-        for q in ("\u0022", "\u0060", "\u00B4", "\u2018", "\u2019", "\u201C", "\u201D"):
+        for q in ("\u0022", "\u0060", "\u00b4", "\u2018", "\u2019", "\u201c", "\u201d"):
             if q in text:
                 text = text.replace(q, common_quotation)
         return text

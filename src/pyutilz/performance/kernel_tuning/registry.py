@@ -193,9 +193,7 @@ def get_registry() -> dict:
     return dict(_REGISTRY)
 
 
-def discover_tuners(
-    package: str = "mlframe", warn_on_import_fail: bool = True
-) -> dict:
+def discover_tuners(package: str = "mlframe", warn_on_import_fail: bool = True) -> dict:
     """Import every module under ``package`` so each module-level
     ``kernel_tuner(...)`` call fires, then return the accumulated registry.
 
@@ -221,9 +219,7 @@ def discover_tuners(
     pkg_path = pkg.__path__ if hasattr(pkg, "__path__") else []
     collected = 0
 
-    for importer, modname, ispkg in pkgutil.walk_packages(
-        path=pkg_path, prefix=f"{package}.", onerror=lambda _: None
-    ):
+    for importer, modname, ispkg in pkgutil.walk_packages(path=pkg_path, prefix=f"{package}.", onerror=lambda _: None):
         try:
             importlib.import_module(modname)
             collected += 1
@@ -292,10 +288,7 @@ def retune_all(
     try:
         gpu_groups = _group_gpus_by_model()
     except ImportError:
-        logger.warning(
-            "GPUtil not available; skipping multi-GPU grouping. "
-            "Install with: pip install gputil"
-        )
+        logger.warning("GPUtil not available; skipping multi-GPU grouping. " "Install with: pip install gputil")
         gpu_groups = {}
 
     results = {}  # {(model, kernel_name): n_regions} -- keyed per (model, kernel), NOT clobbered
@@ -347,9 +340,7 @@ def _group_gpus_by_model() -> dict[str, list[int]]:
     return groups
 
 
-def _pick_least_loaded_device(
-    device_ids: list[int], idle_wait_tries: int, idle_wait_sec: float
-) -> Optional[int]:
+def _pick_least_loaded_device(device_ids: list[int], idle_wait_tries: int, idle_wait_sec: float) -> Optional[int]:
     """Pick the least-loaded GPU from a list, with idle-wait retry.
 
     If all devices are busy (load > 80%) after idle_wait_tries, return None.
@@ -366,8 +357,7 @@ def _pick_least_loaded_device(
     return None
 
 
-def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] = None,
-              hooks: Optional[Any] = None, skip_existing: bool = True) -> int:
+def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] = None, hooks: Optional[Any] = None, skip_existing: bool = True) -> int:
     """Tune a single registered spec (compute its code_version, run the sweep,
     persist) and return the number of regions now cached. The public single-spec
     entry point -- e.g. ``mlframe-tune-kernels refresh <kernel>``; ``retune_all``
@@ -378,12 +368,10 @@ def tune_spec(spec: TunerSpec, *, force: bool = True, device_id: Optional[int] =
     re-run of an offline benchmark doesn't redo finished work. ``force=True``
     overrides skip_existing (it evicts then re-sweeps unconditionally)."""
     code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
-    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id,
-                            force=force, hooks=hooks, skip_existing=skip_existing)
+    return _run_spec_tuning(KernelTuningCache(), spec, code_version, device_id=device_id, force=force, hooks=hooks, skip_existing=skip_existing)
 
 
-def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int],
-                     force: bool, hooks: Optional[Any], skip_existing: bool = True) -> int:
+def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optional[int], force: bool, hooks: Optional[Any], skip_existing: bool = True) -> int:
     """Tune one spec via get_or_tune; return the number of regions now cached.
 
     ``force`` evicts first so the sweep re-runs even on a cache hit. A GPU spec
@@ -403,8 +391,7 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
     if skip_existing and not force:
         # Already tuned at the live code_version on this hardware -> nothing to do.
         if cache.has(spec.kernel_name) and not cache.code_version_stale(spec.kernel_name, code_version):
-            logger.debug("skip_existing: %s already tuned at code_version %s; skipping sweep",
-                         spec.kernel_name, code_version)
+            logger.debug("skip_existing: %s already tuned at code_version %s; skipping sweep", spec.kernel_name, code_version)
             return len(cache.get_regions(spec.kernel_name) or [])
 
     def _tune():

@@ -57,23 +57,23 @@ class GeminiProvider(LLMProvider):
     # rates. Tier-2 prices documented in the comments next to each entry.
     _PRICING: dict[str, tuple[float, float]] = {
         # Tier-2 (>200K): ($4.00, $18.00) — 2x input, 1.5x output.
-        "gemini-3.1-pro-preview":        (2.00, 12.00),
+        "gemini-3.1-pro-preview": (2.00, 12.00),
         "gemini-3.1-flash-lite-preview": (0.25, 1.50),
-        "gemini-3-flash-preview":        (0.50, 3.00),
+        "gemini-3-flash-preview": (0.50, 3.00),
         # Tier-2 (>200K): ($2.50, $15.00).
-        "gemini-2.5-pro":               (1.25, 10.00),
-        "gemini-2.5-flash":             (0.30, 2.50),
-        "gemini-2.5-flash-lite":        (0.10, 0.40),
+        "gemini-2.5-pro": (1.25, 10.00),
+        "gemini-2.5-flash": (0.30, 2.50),
+        "gemini-2.5-flash-lite": (0.10, 0.40),
     }
     # Cached input prices per 1M tokens (90% discount on input miss).
     # Plus storage at $1-4.50/hour depending on model.
     _CACHE_HIT_COST: dict[str, float] = {
-        "gemini-3.1-pro-preview":        0.20,
+        "gemini-3.1-pro-preview": 0.20,
         "gemini-3.1-flash-lite-preview": 0.025,
-        "gemini-3-flash-preview":        0.05,
-        "gemini-2.5-pro":                0.125,
-        "gemini-2.5-flash":              0.03,
-        "gemini-2.5-flash-lite":         0.01,
+        "gemini-3-flash-preview": 0.05,
+        "gemini-2.5-pro": 0.125,
+        "gemini-2.5-flash": 0.03,
+        "gemini-2.5-flash-lite": 0.01,
     }
     _DEFAULT_PRICING = (0.25, 1.50)
 
@@ -89,11 +89,7 @@ class GeminiProvider(LLMProvider):
             raise ImportError("google-genai package not installed. Run: pip install google-genai")
 
         settings = get_llm_settings()
-        self.api_key = api_key or (
-            settings.gemini_api_key.get_secret_value()
-            if settings.gemini_api_key
-            else None
-        )
+        self.api_key = api_key or (settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None)
         if not self.api_key:
             raise ValueError("Gemini API key not provided")
 
@@ -192,9 +188,7 @@ class GeminiProvider(LLMProvider):
             )
 
             if response.candidates:
-                self._last_finish_reason = str(
-                    getattr(response.candidates[0], "finish_reason", "unknown")
-                )
+                self._last_finish_reason = str(getattr(response.candidates[0], "finish_reason", "unknown"))
             else:
                 self._last_finish_reason = "unknown"
 
@@ -209,9 +203,7 @@ class GeminiProvider(LLMProvider):
                     "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
                     "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
                     "reasoning_tokens": getattr(um, "thoughts_token_count", 0) or 0,
-                    "cached_content_token_count": (
-                        getattr(um, "cached_content_token_count", 0) or 0
-                    ),
+                    "cached_content_token_count": (getattr(um, "cached_content_token_count", 0) or 0),
                 }
                 self.last_cached_content_tokens = self._last_usage["cached_content_token_count"]
                 self.total_cached_content_tokens += self.last_cached_content_tokens
@@ -344,10 +336,7 @@ class GeminiProvider(LLMProvider):
         )
 
     async def check_account_limits(self) -> dict:
-        raise NotImplementedError(
-            "Gemini does not expose per-key rate limits via API. "
-            "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas."
-        )
+        raise NotImplementedError("Gemini does not expose per-key rate limits via API. " "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas.")
 
     async def _close(self) -> None:
         """Release the per-provider ThreadPoolExecutor.

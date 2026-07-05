@@ -86,7 +86,7 @@ def generate_combinations_recursive_njit(sequence, r):
 
     result = np.empty((without_first.shape[0] + with_first.shape[0], r), dtype=sequence.dtype)
 
-    result[:without_first.shape[0], :] = without_first
+    result[: without_first.shape[0], :] = without_first
     for i in range(with_first.shape[0]):
         result[i + without_first.shape[0], 0] = first
         result[i + without_first.shape[0], 1:] = with_first[i, :]

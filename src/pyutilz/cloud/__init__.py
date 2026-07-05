@@ -8,4 +8,4 @@ from .cloud import *  # noqa: F401,F403
 # under static analysis and lazy-import edge cases).
 from . import cloud  # noqa: F401
 
-__all__ = ['cloud']
+__all__ = ["cloud"]

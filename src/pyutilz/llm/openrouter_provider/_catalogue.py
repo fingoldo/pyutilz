@@ -49,13 +49,11 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             resp.raise_for_status()
             payload = resp.json()
             entries = payload.get("data") or payload.get("models") or []
-            catalogue = {
-                e["id"]: e for e in entries if isinstance(e, dict) and "id" in e
-            }
+            catalogue = {e["id"]: e for e in entries if isinstance(e, dict) and "id" in e}
         except Exception as exc:
             logger.warning(
-                "OpenRouter /models catalogue fetch failed (%s); "
-                "estimate_cost() will return 0 for this call. Next call retries.", exc,
+                "OpenRouter /models catalogue fetch failed (%s); " "estimate_cost() will return 0 for this call. Next call retries.",
+                exc,
             )
             return {}  # do NOT cache failure — retry on next call
         _pkg()._MODELS_CATALOGUE = catalogue

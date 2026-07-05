@@ -11,11 +11,7 @@ csr_matrix = scipy_sparse.csr_matrix
 coo_matrix = scipy_sparse.coo_matrix
 csc_matrix = scipy_sparse.csc_matrix
 
-from pyutilz.matrix import (
-    CsrIndPtrConstructor,
-    CsrRowColConstructor,
-    get_sparse_memory_usage
-)
+from pyutilz.matrix import CsrIndPtrConstructor, CsrRowColConstructor, get_sparse_memory_usage
 
 
 class TestCsrIndPtrConstructor:

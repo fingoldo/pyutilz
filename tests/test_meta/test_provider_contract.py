@@ -91,16 +91,9 @@ def test_every_provider_overrides_all_abstract_methods():
     for name, cls in _provider_classes():
         cls_abstract = set(getattr(cls, "__abstractmethods__", set()))
         if cls_abstract:
-            failures.append(
-                f"{name} ({cls.__name__}): still abstract "
-                f"(missing implementations of {sorted(cls_abstract)})"
-            )
+            failures.append(f"{name} ({cls.__name__}): still abstract " f"(missing implementations of {sorted(cls_abstract)})")
     if failures:
-        pytest.fail(
-            f"{len(failures)} provider(s) fail to override every abstract "
-            f"method — instantiation will raise TypeError:\n  "
-            + "\n  ".join(failures)
-        )
+        pytest.fail(f"{len(failures)} provider(s) fail to override every abstract " f"method — instantiation will raise TypeError:\n  " + "\n  ".join(failures))
 
 
 def test_every_provider_method_signature_is_compatible():
@@ -121,11 +114,9 @@ def test_every_provider_method_signature_is_compatible():
             continue
         # Required base params (no default), excluding ``self``.
         required_base = {
-            n for n, p in base_sig.parameters.items()
-            if n != "self"
-            and p.default is inspect.Parameter.empty
-            and p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                               inspect.Parameter.VAR_KEYWORD)
+            n
+            for n, p in base_sig.parameters.items()
+            if n != "self" and p.default is inspect.Parameter.empty and p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         }
         for name, cls in _provider_classes():
             override = getattr(cls, method_name, None)
@@ -137,20 +128,11 @@ def test_every_provider_method_signature_is_compatible():
             except (TypeError, ValueError):
                 continue
             ovr_params = set(ovr_sig.parameters)
-            has_var_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD
-                for p in ovr_sig.parameters.values()
-            )
+            has_var_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in ovr_sig.parameters.values())
             if has_var_kwargs:
                 continue  # ``**kwargs`` accepts anything.
             missing = required_base - ovr_params
             if missing:
-                failures.append(
-                    f"{name}.{method_name}: missing required base param(s) "
-                    f"{sorted(missing)}"
-                )
+                failures.append(f"{name}.{method_name}: missing required base param(s) " f"{sorted(missing)}")
     if failures:
-        pytest.fail(
-            f"{len(failures)} provider method(s) drop required base "
-            f"parameter(s):\n  " + "\n  ".join(failures)
-        )
+        pytest.fail(f"{len(failures)} provider method(s) drop required base " f"parameter(s):\n  " + "\n  ".join(failures))

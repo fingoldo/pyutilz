@@ -26,15 +26,14 @@ class TestMemMapArray:
 
         # Create a memory-mapped array
         test_array = np.array([1, 2, 3, 4, 5])
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
         temp_file.close()
 
         try:
-            result = mem_map_array(test_array, temp_file.name, mmap_mode='r+')
+            result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
 
             # Should have added temp directory to tracking list
-            assert len(_TEMP_DIRS) >= initial_count, \
-                   "Temp directory should be tracked for cleanup (resource leak fix)"
+            assert len(_TEMP_DIRS) >= initial_count, "Temp directory should be tracked for cleanup (resource leak fix)"
         except Exception as e:
             pytest.skip(f"mem_map_array failed: {e}")
         finally:
@@ -51,12 +50,10 @@ class TestMemMapArray:
         source = inspect.getsource(parallel_module)
 
         # Should have atexit.register decorator or call
-        assert '@atexit.register' in source or 'atexit.register' in source, \
-               "Should have atexit cleanup handler (resource leak fix)"
+        assert "@atexit.register" in source or "atexit.register" in source, "Should have atexit cleanup handler (resource leak fix)"
 
         # Should have cleanup function
-        assert '_cleanup_temp_dirs' in source or 'cleanup' in source.lower(), \
-               "Should have temp directory cleanup function"
+        assert "_cleanup_temp_dirs" in source or "cleanup" in source.lower(), "Should have temp directory cleanup function"
 
     def test_cleanup_function_removes_directories(self):
         """Test that cleanup function properly removes temp directories"""
@@ -76,8 +73,7 @@ class TestMemMapArray:
         _cleanup_temp_dirs()
 
         # Directory should be removed
-        assert not os.path.exists(test_temp_dir), \
-               "Cleanup function should remove temp directories"
+        assert not os.path.exists(test_temp_dir), "Cleanup function should remove temp directories"
 
     def test_cleanup_handles_missing_directories(self):
         """Test that cleanup doesn't crash on already-deleted directories"""
@@ -108,11 +104,11 @@ class TestMemoryMappedArrayOperations:
             pytest.skip("mem_map_array not available")
 
         test_array = np.array([10, 20, 30, 40, 50])
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
         temp_file.close()
 
         try:
-            result = mem_map_array(test_array, temp_file.name, mmap_mode='r+')
+            result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
 
             # Should be a numpy array
             assert isinstance(result, np.ndarray)
@@ -136,11 +132,11 @@ class TestMemoryMappedArrayOperations:
 
         for dtype in dtypes:
             test_array = np.array([1, 2, 3], dtype=dtype)
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
             temp_file.close()
 
             try:
-                result = mem_map_array(test_array, temp_file.name, mmap_mode='r+')
+                result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
                 assert result.dtype == dtype
                 np.testing.assert_array_equal(result, test_array)
             except Exception as e:
@@ -162,13 +158,12 @@ class TestGpuConfiguration:
             source = inspect.getsource(parallel_module)
 
             # Check if cuda.select_device is used
-            if 'cuda.select_device' in source:
+            if "cuda.select_device" in source:
                 # Should NOT have hardcoded select_device(3)
-                assert 'select_device(3)' not in source, \
-                       "GPU index should not be hardcoded to 3 (crashes on systems with <4 GPUs)"
+                assert "select_device(3)" not in source, "GPU index should not be hardcoded to 3 (crashes on systems with <4 GPUs)"
 
                 # Should use environment variable or configuration
-                if 'CUDA_VISIBLE_DEVICES' in source or 'getenv' in source:
+                if "CUDA_VISIBLE_DEVICES" in source or "getenv" in source:
                     # Good - uses environment
                     pass
                 else:
@@ -187,11 +182,11 @@ def test_mem_map_different_sizes(array_size):
         pytest.skip("mem_map_array not available")
 
     test_array = np.arange(array_size)
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
     temp_file.close()
 
     try:
-        result = mem_map_array(test_array, temp_file.name, mmap_mode='r+')
+        result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
         assert len(result) == array_size
         np.testing.assert_array_equal(result, test_array)
     except Exception as e:

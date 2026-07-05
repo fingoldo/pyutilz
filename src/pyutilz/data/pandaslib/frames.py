@@ -209,11 +209,7 @@ def showcase_df_columns(
             lq = df.lazy().select(pl.col(var))
             if dropna:
                 lq = lq.drop_nulls()
-            lq = (
-                lq.group_by(var)
-                .agg(pl.len().alias("count"))
-                .sort("count", descending=True)
-            )
+            lq = lq.group_by(var).agg(pl.len().alias("count")).sort("count", descending=True)
             lazy_queries.append(lq)
 
         # pl.collect_all runs all queries in parallel via the Polars thread pool

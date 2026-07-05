@@ -1,7 +1,6 @@
 """Region <-> dims matching for the kernel-tuning cache lookup (pure, no HW/disk deps)."""
 from __future__ import annotations
 
-
 # Region keys ending with one of these suffixes are interpreted as axis
 # CONSTRAINTS by the matcher; everything else in a region dict is opaque
 # decision payload. ``lookup`` strips exactly these suffixes from its return.

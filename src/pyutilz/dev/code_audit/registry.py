@@ -12,7 +12,6 @@ from .broad_except import scan_broad_except_swallows
 from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
 
-
 # --- registry -----------------------------------------------------------
 
 
@@ -38,9 +37,7 @@ def run_all(
     out: list[Finding] = []
     for name in selected:
         if name not in SCANNERS:
-            raise ValueError(
-                f"unknown check {name!r}; available: {sorted(SCANNERS)}"
-            )
+            raise ValueError(f"unknown check {name!r}; available: {sorted(SCANNERS)}")
         out.extend(SCANNERS[name](root, exclude_dirs=exclude_dirs))
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     out.sort(key=lambda f: (sev_order.get(f.severity, 99), f.check, f.file, f.line))

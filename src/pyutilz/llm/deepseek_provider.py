@@ -56,16 +56,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         max_concurrent: int = 10,
     ):
         settings = get_llm_settings()
-        resolved_key = api_key or (
-            settings.deepseek_api_key.get_secret_value()
-            if settings.deepseek_api_key
-            else None
-        )
+        resolved_key = api_key or (settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None)
         if not resolved_key:
-            raise ValueError(
-                "DeepSeek API key not provided. "
-                "Set DEEPSEEK_API_KEY in .env or pass api_key="
-            )
+            raise ValueError("DeepSeek API key not provided. " "Set DEEPSEEK_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
 
     def _get_timeout(self, model: str) -> float:
@@ -99,9 +92,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         if not self.model_name.startswith("deepseek-v4"):
             if thinking:
                 logger.warning(
-                    "DeepSeek %r does not support the thinking toggle "
-                    "(only deepseek-v4-* models do); thinking=%r ignored.",
-                    self.model_name, thinking,
+                    "DeepSeek %r does not support the thinking toggle " "(only deepseek-v4-* models do); thinking=%r ignored.",
+                    self.model_name,
+                    thinking,
                 )
             return None
         # DeepSeek V4 expects a hard on/off, not an effort string.
@@ -174,8 +167,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             return
         DeepSeekProvider._seen_unknown_models.add(model)
         logger.warning(
-            "DeepSeek pricing for %r is unknown; falling back to "
-            "deepseek-v4-flash rates. Cost estimates may be off.",
+            "DeepSeek pricing for %r is unknown; falling back to " "deepseek-v4-flash rates. Cost estimates may be off.",
             model,
         )
 

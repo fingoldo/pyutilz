@@ -130,7 +130,6 @@ def rpad(txt: str, n: int = 0, symbol: str = ".") -> str:
     return txt.ljust(n, symbol)
 
 
-
 def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", default: str = "", default_replacement: str = None) -> str:
     """
     Shortens out default values/parts prefixing string

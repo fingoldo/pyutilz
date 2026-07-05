@@ -7,7 +7,6 @@ from datetime import datetime, date
 from collections import Counter
 from xml.etree.ElementTree import Element
 
-
 # ---------------------------------------------------------------------------
 # camel_case_split
 # ---------------------------------------------------------------------------
@@ -402,7 +401,7 @@ from pyutilz.strings import fix_quotations
 
 
 def test_fix_quotations_curly():
-    assert fix_quotations("\u201Chello\u201D") == "'hello'"
+    assert fix_quotations("\u201chello\u201d") == "'hello'"
 
 
 def test_fix_quotations_none():

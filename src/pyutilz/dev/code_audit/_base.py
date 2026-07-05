@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-
 # --- public types --------------------------------------------------------
 
 
@@ -36,10 +35,7 @@ class Finding:
 
     def as_md_row(self) -> str:
         snip = self.snippet.replace("|", "\\|")
-        return (
-            f"| {self.severity} | {self.check} | {self.file}:{self.line} | "
-            f"`{snip}` | {self.detail} |"
-        )
+        return f"| {self.severity} | {self.check} | {self.file}:{self.line} | " f"`{snip}` | {self.detail} |"
 
 
 # --- helpers -------------------------------------------------------------

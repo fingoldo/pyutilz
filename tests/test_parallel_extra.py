@@ -2,8 +2,8 @@ import pytest
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-
 # ── split_list_into_chunks (lines 60-70) ──
+
 
 class TestSplitListIntoChunks:
     def test_basic(self):
@@ -146,9 +146,7 @@ class TestApplyfuncParallel:
         def add(a, b):
             return pd.DataFrame({"sum": [a + b]})
 
-        result = applyfunc_parallel(
-            [(1, 2), (3, 4)], add, n_cores=1, return_dataframe=True, use_threads=True
-        )
+        result = applyfunc_parallel([(1, 2), (3, 4)], add, n_cores=1, return_dataframe=True, use_threads=True)
         assert isinstance(result, pd.DataFrame)
         assert list(result["sum"]) == [3, 7]
 
@@ -158,9 +156,7 @@ class TestApplyfuncParallel:
         def identity(x):
             return x
 
-        result = applyfunc_parallel(
-            [(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True
-        )
+        result = applyfunc_parallel([(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True)
         assert result is not None
 
     def test_with_processes(self):
@@ -171,9 +167,7 @@ class TestApplyfuncParallel:
         def make_df(x):
             return pd.DataFrame({"val": [x]})
 
-        result = applyfunc_parallel(
-            [(10,), (20,)], make_df, n_cores=1, return_dataframe=True, use_threads=True
-        )
+        result = applyfunc_parallel([(10,), (20,)], make_df, n_cores=1, return_dataframe=True, use_threads=True)
         assert isinstance(result, pd.DataFrame)
         assert sorted(result["val"].tolist()) == [10, 20]
 

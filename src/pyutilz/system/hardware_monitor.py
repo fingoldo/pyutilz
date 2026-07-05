@@ -18,7 +18,6 @@ import numpy as np
 from pyutilz.system.system import get_own_memory_usage, get_nvidia_smi_info
 from pyutilz.core.pythonlib import to_float
 
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Hardware Utilization Monitor
 # ----------------------------------------------------------------------------------------------------------------------------

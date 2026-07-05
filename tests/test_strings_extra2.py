@@ -8,7 +8,6 @@ import pytest
 from unittest.mock import patch, MagicMock
 from collections import Counter
 
-
 # ---------------------------------------------------------------------------
 # jsonize_atrtributes — lines 83, 115-137
 # ---------------------------------------------------------------------------
@@ -62,10 +61,7 @@ from pyutilz.strings import extract_json_attribute
 
 
 def test_extract_json_attribute_list_with_item_str():
-    result = extract_json_attribute(
-        {"key1": "plain_string", "key2": [{"a": 1}]},
-        "a"
-    )
+    result = extract_json_attribute({"key1": "plain_string", "key2": [{"a": 1}]}, "a")
     assert result["key1"] == "plain_string"  # line 218
     assert result["key2"] == [1]  # line 220
 

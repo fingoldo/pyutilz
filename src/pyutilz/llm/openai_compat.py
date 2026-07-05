@@ -190,9 +190,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         pass
 
-    def _compute_billed_output(
-        self, completion_tokens: int, reasoning_tokens: int
-    ) -> int:
+    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
         """Return the number of output tokens that count toward billing.
 
         DeepSeek: reasoning ⊂ completion → return completion_tokens
@@ -244,10 +242,7 @@ class OpenAICompatibleProvider(LLMProvider):
             mapping = {k.lower(): v for k, v in dict(headers).items()}
         except Exception:  # noqa: BLE001
             return
-        captured = {
-            k: v for k, v in mapping.items()
-            if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")
-        }
+        captured = {k: v for k, v in mapping.items() if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")}
         if captured:
             self.last_rate_limits = captured
 
@@ -271,11 +266,7 @@ class OpenAICompatibleProvider(LLMProvider):
             )
         out: dict[str, Any] = {"raw": dict(rl)}
         for key, value in rl.items():
-            short = (
-                key.replace("x-ratelimit-", "")
-                .replace("ratelimit-", "")
-                .replace("-", "_")
-            )
+            short = key.replace("x-ratelimit-", "").replace("ratelimit-", "").replace("-", "_")
             out[short] = value
         return out
 
@@ -333,9 +324,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return {}
 
-    def _thinking_request_field(
-        self, thinking: bool | str
-    ) -> dict[str, Any] | None:
+    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:
         """Return the request-body fragment that toggles thinking mode.
 
         ``thinking`` accepts BOTH a plain bool (legacy) AND an effort
@@ -583,9 +572,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
                 except (ValueError, _JSONDecodeError):
                     detail = resp.text
-                raise LLMProviderError(
-                    f"{self._provider_name} API error {resp.status_code}: {detail}"
-                )
+                raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
             resp.raise_for_status()
             data = resp.json()
 
@@ -601,9 +588,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 compl_tok = usage.get("completion_tokens", 0)
                 cache_hit = usage.get("prompt_cache_hit_tokens", 0)
                 details = usage.get("completion_tokens_details", {})
-                reasoning_tok = (
-                    details.get("reasoning_tokens", 0) if details else 0
-                )
+                reasoning_tok = details.get("reasoning_tokens", 0) if details else 0
 
                 self.total_prompt_tokens += prompt_tok
                 self.total_completion_tokens += compl_tok
@@ -613,17 +598,14 @@ class OpenAICompatibleProvider(LLMProvider):
 
                 self._last_usage = {
                     "input_tokens": prompt_tok,
-                    "output_tokens": self._compute_billed_output(
-                        compl_tok, reasoning_tok
-                    ),
+                    "output_tokens": self._compute_billed_output(compl_tok, reasoning_tok),
                     "reasoning_tokens": reasoning_tok,
                 }
 
                 self._track_provider_specific_usage(usage)
 
                 logger.info(
-                    "%s [call #%d] %d prompt (%d cached) + %d completion"
-                    "%s | cumulative: %d in, %d out",
+                    "%s [call #%d] %d prompt (%d cached) + %d completion" "%s | cumulative: %d in, %d out",
                     self._provider_name,
                     self._call_count,
                     prompt_tok,
@@ -719,28 +701,18 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Estimate cost in USD (cache miss pricing)."""
-        input_cost = (input_tokens / 1_000_000) * self._input_cost_per_1m(
-            self.model_name
-        )
-        output_cost = (output_tokens / 1_000_000) * self._output_cost_per_1m(
-            self.model_name
-        )
+        input_cost = (input_tokens / 1_000_000) * self._input_cost_per_1m(self.model_name)
+        output_cost = (output_tokens / 1_000_000) * self._output_cost_per_1m(self.model_name)
         return input_cost + output_cost
 
     def get_session_cost(self) -> dict[str, Any]:
         """Return cumulative token usage and cost breakdown for this session."""
         cache_miss = self.total_prompt_tokens - self.total_cache_hit_tokens
-        input_cost = (
-            (cache_miss / 1_000_000) * self._input_cost_per_1m(self.model_name)
-            + (self.total_cache_hit_tokens / 1_000_000)
-            * self._cache_hit_cost_per_1m(self.model_name)
-        )
-        billed_output = self._compute_billed_output(
-            self.total_completion_tokens, self.total_reasoning_tokens
-        )
-        output_cost = (billed_output / 1_000_000) * self._output_cost_per_1m(
-            self.model_name
-        )
+        input_cost = (cache_miss / 1_000_000) * self._input_cost_per_1m(self.model_name) + (
+            self.total_cache_hit_tokens / 1_000_000
+        ) * self._cache_hit_cost_per_1m(self.model_name)
+        billed_output = self._compute_billed_output(self.total_completion_tokens, self.total_reasoning_tokens)
+        output_cost = (billed_output / 1_000_000) * self._output_cost_per_1m(self.model_name)
         return {
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,

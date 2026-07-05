@@ -55,9 +55,7 @@ def test_every_todo_marker_has_attribution():
             f"{len(bare)} {'/'.join(_MARKERS)} comment(s) without "
             f"attribution. Add an assignee in parens (``TODO(name): ...``) "
             f"or an ISO date (``TODO 2026-04-28: ...``). To grandfather, "
-            f"list ``<path>:<lineno>`` in _GRANDFATHERED:\n  "
-            + "\n  ".join(bare[:30])
-            + (f"\n  ... and {len(bare) - 30} more" if len(bare) > 30 else "")
+            f"list ``<path>:<lineno>`` in _GRANDFATHERED:\n  " + "\n  ".join(bare[:30]) + (f"\n  ... and {len(bare) - 30} more" if len(bare) > 30 else "")
         )
 
 

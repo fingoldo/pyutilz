@@ -14,13 +14,7 @@ class TestWebUtilities:
         """Test creating proxies dictionary"""
         from pyutilz.web import make_proxies_dict
 
-        result = make_proxies_dict(
-            proxy_user="user",
-            proxy_pass="pass",
-            proxy_server="proxy.com",
-            proxy_port=8080,
-            proxy_type="https"
-        )
+        result = make_proxies_dict(proxy_user="user", proxy_pass="pass", proxy_server="proxy.com", proxy_port=8080, proxy_type="https")
 
         assert isinstance(result, dict)
         assert "https" in result or "http" in result
@@ -78,15 +72,7 @@ class TestWebReporting:
 
         # Should not crash with basic params
         try:
-            report_params(
-                url="http://example.com",
-                proxies=None,
-                params=None,
-                data=None,
-                json=None,
-                headers_to_use=None,
-                timeout=30
-            )
+            report_params(url="http://example.com", proxies=None, params=None, data=None, json=None, headers_to_use=None, timeout=30)
         except Exception:
             # Expected if logger not configured
             pass

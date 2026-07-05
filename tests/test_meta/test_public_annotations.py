@@ -108,10 +108,7 @@ def test_no_new_unannotated_public_functions():
             json.dumps(sorted(current), indent=2),
             encoding="utf-8",
         )
-        pytest.skip(
-            f"annotation baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} unannotated function(s))"
-        )
+        pytest.skip(f"annotation baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} unannotated function(s))")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -132,7 +129,5 @@ def test_no_new_unannotated_public_functions():
         pytest.fail(
             f"{len(new)} new public function(s) without complete type "
             f"annotations. Add types to params + return, OR refresh the "
-            f"baseline if intentional:\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"baseline if intentional:\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

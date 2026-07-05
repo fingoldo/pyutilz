@@ -135,14 +135,11 @@ def get_linux_board_info():
         # Linux sysfs files are ASCII-only by spec, but explicit encoding
         # avoids the locale-dependent default that crashes on Windows
         # (cp1251) if this code path is ever exercised under WSL.
-        with open("/sys/devices/virtual/dmi/id/board_vendor", "r",
-                  encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_vendor", "r", encoding="utf-8") as f:
             board_info["Vendor"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_name", "r",
-                  encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_name", "r", encoding="utf-8") as f:
             board_info["Name"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_version", "r",
-                  encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_version", "r", encoding="utf-8") as f:
             board_info["Version"] = f.read().strip()
     except FileNotFoundError as e:
         logger.error(f"Error reading board information: {e}")
@@ -275,16 +272,12 @@ def summarize_system_info():
 
         res["RAM"] = summarize_devices(
             c.Win32_PhysicalMemory(),
-            exclude_pros=set(
-                "BankLabel DeviceLocator InstallDate SerialNumber SKU Tag CreationClassName Caption Description Name PositionInRow".split()
-            ),
+            exclude_pros=set("BankLabel DeviceLocator InstallDate SerialNumber SKU Tag CreationClassName Caption Description Name PositionInRow".split()),
         )
 
         res["PhysicalMemoryArray"] = summarize_devices(
             c.Win32_PhysicalMemoryArray(),
-            exclude_pros=set(
-                "BankLabel DeviceLocator InstallDate SerialNumber SKU Tag CreationClassName Caption Description Name PositionInRow".split()
-            ),
+            exclude_pros=set("BankLabel DeviceLocator InstallDate SerialNumber SKU Tag CreationClassName Caption Description Name PositionInRow".split()),
         )
 
         res["CACHE"] = summarize_devices(
@@ -303,9 +296,7 @@ def summarize_system_info():
 
         res["BIOS"] = summarize_devices(
             c.Win32_BIOS(),
-            exclude_pros=set(
-                "CreationClassName SystemCreationClassName DeviceID PNPDeviceID Status SystemName Caption Description Name Tag".split()
-            ),
+            exclude_pros=set("CreationClassName SystemCreationClassName DeviceID PNPDeviceID Status SystemName Caption Description Name Tag".split()),
         )
 
         res["OS"] = summarize_devices(
@@ -424,8 +415,7 @@ def get_linux_power_plan():
     try:
         for cpu in os.listdir("/sys/devices/system/cpu/"):
             if cpu.startswith("cpu") and cpu[3:].isdigit():
-                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", "r",
-                          encoding="utf-8") as f:
+                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", "r", encoding="utf-8") as f:
                     governors.append(f.read().strip())
         return sorted(list(Counter(governors).keys()))
     except Exception as e:
@@ -628,9 +618,7 @@ def get_nvidia_smi_info(
                 "fbc_stats": {"session_count": "0", "average_fps": "0", "average_latency": "0"},
             },
         )
-        remove_json_defaults(
-            gpu, {"gpu_virtualization_mode": {"virtualization_mode": "None", "host_vgpu_mode": "N/A"}}
-        )
+        remove_json_defaults(gpu, {"gpu_virtualization_mode": {"virtualization_mode": "None", "host_vgpu_mode": "N/A"}})
 
         remove_json_attributes(
             gpu,

@@ -380,10 +380,7 @@ class LLMProvider(ABC):
         Raises:
             NotImplementedError: provider doesn't expose balance via API.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not expose account balance via API. "
-            "Check the provider's web console."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not expose account balance via API. " "Check the provider's web console.")
 
     async def check_account_limits(self) -> dict[str, Any]:
         """Return account-level rate limit / quota / usage snapshot.
@@ -401,10 +398,7 @@ class LLMProvider(ABC):
         Raises:
             NotImplementedError: provider doesn't expose this via API.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not expose account limits via API. "
-            "Check the provider's web console."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not expose account limits via API. " "Check the provider's web console.")
 
     @abstractmethod
     async def count_tokens(self, text: str) -> int:

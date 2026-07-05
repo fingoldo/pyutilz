@@ -101,16 +101,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         routing_404_pause_sec: float = 60.0,
     ):
         settings = _pkg().get_llm_settings()
-        resolved_key = api_key or (
-            settings.openrouter_api_key.get_secret_value()
-            if settings.openrouter_api_key
-            else None
-        )
+        resolved_key = api_key or (settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None)
         if not resolved_key:
-            raise ValueError(
-                "OpenRouter API key not provided. "
-                "Set OPENROUTER_API_KEY in .env or pass api_key="
-            )
+            raise ValueError("OpenRouter API key not provided. " "Set OPENROUTER_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
 
         if app_name:
@@ -229,13 +222,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 return await super().generate(*args, **kwargs)
             except LLMProviderError as exc:
                 msg = str(exc).lower()
-                is_routing = (
-                    ("api error 404" in msg or "api error 405" in msg)
-                    and (
-                        "no endpoints found" in msg
-                        or "method not allowed" in msg
-                        or " not found" in msg
-                    )
+                is_routing = ("api error 404" in msg or "api error 405" in msg) and (
+                    "no endpoints found" in msg or "method not allowed" in msg or " not found" in msg
                 )
                 if not is_routing:
                     raise
@@ -340,9 +328,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             body["cache_control"] = {"type": "ephemeral"}
         return body
 
-    def _thinking_request_field(
-        self, thinking: bool | str
-    ) -> dict[str, Any] | None:
+    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:
         """OpenRouter's unified ``reasoning`` field.
 
         OR auto-routes the body fragment to the correct upstream-specific
@@ -593,10 +579,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         """
         gid = generation_id or self.last_generation_id
         if not gid:
-            raise ValueError(
-                "No generation_id passed and self.last_generation_id is unset — "
-                "call generate() first or pass a known ID."
-            )
+            raise ValueError("No generation_id passed and self.last_generation_id is unset — " "call generate() first or pass a known ID.")
         resp = await self._client.get("/generation", params={"id": gid})
         resp.raise_for_status()
         payload = resp.json()

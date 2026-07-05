@@ -65,14 +65,12 @@ def _patch_provider_resolution(monkeypatch):
     (which would require an API key)."""
     # Replace the canonical module mapping with one that resolves to
     # the fake provider for ``anthropic``.
-    fake_modules = {"anthropic": ("pyutilz.llm.factory",
-                                  "_CountingFakeProvider")}
+    fake_modules = {"anthropic": ("pyutilz.llm.factory", "_CountingFakeProvider")}
     monkeypatch.setattr(factory_module, "_PROVIDER_MODULES", fake_modules)
     monkeypatch.setattr(factory_module, "_ALIASES", {})
     # Stash the fake class on the factory module so importlib finds it
     # via the module-path lookup.
-    monkeypatch.setattr(factory_module, "_CountingFakeProvider",
-                        _CountingFakeProvider, raising=False)
+    monkeypatch.setattr(factory_module, "_CountingFakeProvider", _CountingFakeProvider, raising=False)
 
 
 def test_concurrent_callers_share_one_instance(monkeypatch, reset_factory_state):
@@ -83,19 +81,14 @@ def test_concurrent_callers_share_one_instance(monkeypatch, reset_factory_state)
     n_callers = 20
     instances: list = []
     with ThreadPoolExecutor(max_workers=n_callers) as ex:
-        futures = [
-            ex.submit(factory_module.get_llm_provider,
-                      provider_name="anthropic", model="test_model")
-            for _ in range(n_callers)
-        ]
+        futures = [ex.submit(factory_module.get_llm_provider, provider_name="anthropic", model="test_model") for _ in range(n_callers)]
         for f in as_completed(futures):
             instances.append(f.result())
 
     # All callers got the same instance (identity check, not equality).
     first = instances[0]
     assert all(inst is first for inst in instances), (
-        f"got {len(set(id(i) for i in instances))} distinct instances "
-        f"under contention — cache lookup not properly synchronised"
+        f"got {len(set(id(i) for i in instances))} distinct instances " f"under contention — cache lookup not properly synchronised"
     )
     # And the constructor ran exactly once.
     assert _CountingFakeProvider.instantiations == 1, (
@@ -106,33 +99,26 @@ def test_concurrent_callers_share_one_instance(monkeypatch, reset_factory_state)
     )
 
 
-def test_distinct_kwargs_produce_distinct_instances(monkeypatch,
-                                                    reset_factory_state):
+def test_distinct_kwargs_produce_distinct_instances(monkeypatch, reset_factory_state):
     """Different kwargs MUST yield distinct instances — caching by
     ``(name, kwargs)`` key. Catches a refactor that accidentally
     coalesces ``(name=anthropic, model=A)`` with ``(name=anthropic,
     model=B)``."""
     _patch_provider_resolution(monkeypatch)
 
-    a = factory_module.get_llm_provider(provider_name="anthropic",
-                                        model="model_a")
-    b = factory_module.get_llm_provider(provider_name="anthropic",
-                                        model="model_b")
+    a = factory_module.get_llm_provider(provider_name="anthropic", model="model_a")
+    b = factory_module.get_llm_provider(provider_name="anthropic", model="model_b")
     assert a is not b, "distinct model kwargs returned the same instance"
     assert _CountingFakeProvider.instantiations == 2
 
 
-def test_repeated_same_kwargs_dont_reinstantiate(monkeypatch,
-                                                 reset_factory_state):
+def test_repeated_same_kwargs_dont_reinstantiate(monkeypatch, reset_factory_state):
     """Sequential repeated calls with identical kwargs return the
     cached instance — no growth in instantiation count."""
     _patch_provider_resolution(monkeypatch)
 
-    a = factory_module.get_llm_provider(provider_name="anthropic",
-                                        model="model_x")
-    b = factory_module.get_llm_provider(provider_name="anthropic",
-                                        model="model_x")
-    c = factory_module.get_llm_provider(provider_name="anthropic",
-                                        model="model_x")
+    a = factory_module.get_llm_provider(provider_name="anthropic", model="model_x")
+    b = factory_module.get_llm_provider(provider_name="anthropic", model="model_x")
+    c = factory_module.get_llm_provider(provider_name="anthropic", model="model_x")
     assert a is b is c
     assert _CountingFakeProvider.instantiations == 1

@@ -115,17 +115,15 @@ def test_every_open_call_specifies_encoding_or_binary_mode():
                 continue
             bad.append(entry)
 
-    assert audited > 5, (
-        f"only {audited} open(...) calls audited — AST walk broken?"
-    )
+    assert audited > 5, f"only {audited} open(...) calls audited — AST walk broken?"
     if bad:
         pytest.fail(
             f"{len(bad)} ``open(...)`` call(s) in pyutilz production code "
             f"don't specify ``encoding=`` (and aren't binary-mode). On "
             f"Windows, default open() uses cp1251/cp1252 and "
             f"UnicodeDecodeError will happen on any non-ASCII file. "
-            f"Either add ``encoding=\"utf-8\"`` (or other appropriate "
-            f"encoding), OR use ``\"rb\"``/``\"wb\"`` mode for bytes. "
+            f'Either add ``encoding="utf-8"`` (or other appropriate '
+            f'encoding), OR use ``"rb"``/``"wb"`` mode for bytes. '
             f"Whitelist via _EXEMPT_FILES if intentional:\n  "
             + "\n  ".join(sorted(set(bad))[:30])
             + (f"\n  ... and {len(set(bad)) - 30} more" if len(set(bad)) > 30 else "")

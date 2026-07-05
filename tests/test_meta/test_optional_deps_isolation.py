@@ -39,20 +39,16 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     "pandas": ["pandas", "numpy", "pyarrow"],
     "polars": ["polars"],
     "database": ["sqlalchemy", "psycopg2", "pymysql"],
-    "web": ["selenium", "undetected_chromedriver", "requests", "grequests",
-            "fake_useragent", "curl_cffi"],
+    "web": ["selenium", "undetected_chromedriver", "requests", "grequests", "fake_useragent", "curl_cffi"],
     "cloud": ["google.cloud.storage", "boto3"],
     "nlp": ["spacy", "nltk", "jellyfish", "tiktoken"],
-    "llm": ["anthropic", "google.genai", "httpx", "tenacity",
-            "pydantic", "pydantic_settings"],
+    "llm": ["anthropic", "google.genai", "httpx", "tenacity", "pydantic", "pydantic_settings"],
 }
 
 # pyutilz sub-packages that should remain import-safe even when
 # the corresponding optional-dep group is missing. The user can still
 # touch unrelated sub-packages.
-_ALWAYS_IMPORTABLE_SUBPACKAGES = ["pyutilz",
-                                  "pyutilz.core",
-                                  "pyutilz.text"]
+_ALWAYS_IMPORTABLE_SUBPACKAGES = ["pyutilz", "pyutilz.core", "pyutilz.text"]
 
 
 def _mask_modules_script(deps_to_mask: list[str], imports_to_try: list[str]) -> str:

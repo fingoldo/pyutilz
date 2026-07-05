@@ -65,8 +65,7 @@ class S3Backend(RemoteBackend):
 
                     connect_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT", "3") or 3)
                     read_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_READ_TIMEOUT", "5") or 5)
-                    cfg = Config(connect_timeout=connect_t, read_timeout=read_t,
-                                 retries={"max_attempts": 1})
+                    cfg = Config(connect_timeout=connect_t, read_timeout=read_t, retries={"max_attempts": 1})
                     self._client = boto3.client("s3", config=cfg)
                 except Exception:
                     # botocore Config missing/odd -> still create a client (better
@@ -120,7 +119,7 @@ def get_remote_backend(spec: Optional[str] = None) -> Optional[RemoteBackend]:
         return None
     try:
         if spec.startswith("s3://"):
-            rest = spec[len("s3://"):]
+            rest = spec[len("s3://") :]
             bucket, _, prefix = rest.partition("/")
             if not bucket:
                 logger.warning("%s=%r has no bucket; ignoring", _REMOTE_ENV, spec)

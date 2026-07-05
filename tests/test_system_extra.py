@@ -16,8 +16,8 @@ from pyutilz.system.system import (
     run_from_ipython,
 )
 
-
 # -- remove_nas --
+
 
 def test_remove_nas_removes_na_values():
     assert remove_nas({"a": "N/A", "b": "ok"}) == {"b": "ok"}

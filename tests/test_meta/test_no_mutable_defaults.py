@@ -73,8 +73,7 @@ def _is_mutable_default(default: ast.expr) -> bool:
     return False
 
 
-def _audit_function(fn: ast.FunctionDef | ast.AsyncFunctionDef,
-                    rel: str) -> list[str]:
+def _audit_function(fn: ast.FunctionDef | ast.AsyncFunctionDef, rel: str) -> list[str]:
     out: list[str] = []
     args = fn.args
     # Walk every parameter slot that can have a default.
@@ -121,13 +120,8 @@ def test_no_new_mutable_default_arguments():
     current = _build_offending_set()
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
-        _BASELINE_PATH.write_text(
-            json.dumps(sorted(current), indent=2), encoding="utf-8"
-        )
-        pytest.skip(
-            f"mutable-defaults baseline refreshed at {_BASELINE_PATH.name} "
-            f"({len(current)} site(s))"
-        )
+        _BASELINE_PATH.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        pytest.skip(f"mutable-defaults baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} site(s))")
 
     baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
@@ -146,7 +140,5 @@ def test_no_new_mutable_default_arguments():
             f"{len(new)} new function(s) with a mutable default argument. "
             f"Replace with the sentinel pattern: ``def f(x=None): if x is None: "
             f"x = []`` — mutable defaults are shared across all calls and "
-            f"silently accumulate state:\n  "
-            + "\n  ".join(new[:30])
-            + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
+            f"silently accumulate state:\n  " + "\n  ".join(new[:30]) + (f"\n  ... and {len(new) - 30} more" if len(new) > 30 else "")
         )

@@ -34,19 +34,16 @@ try:
             random.seed(int(seed) % (2**32))
             np.random.seed(int(seed) % (2**32))
             warnings.warn(
-                f"thinc.util.fix_random_seed raised {_seed_err!r}; fell back to "
-                f"seeding python+numpy directly (cupy random state unset).",
-                RuntimeWarning, stacklevel=2,
+                f"thinc.util.fix_random_seed raised {_seed_err!r}; fell back to " f"seeding python+numpy directly (cupy random state unset).",
+                RuntimeWarning,
+                stacklevel=2,
             )
 
     _thinc_util.fix_random_seed = _thinc_clamped_fix_random_seed
     try:  # if pytest-randomly already cached the entry points, swap ours in
         import pytest_randomly as _pr  # noqa: E402
         if getattr(_pr, "entrypoint_reseeds", None):
-            _pr.entrypoint_reseeds = [
-                _thinc_clamped_fix_random_seed if r is _thinc_original_fix else r
-                for r in _pr.entrypoint_reseeds
-            ]
+            _pr.entrypoint_reseeds = [_thinc_clamped_fix_random_seed if r is _thinc_original_fix else r for r in _pr.entrypoint_reseeds]
     except Exception:  # pragma: no cover
         pass
 except (ImportError, OSError, RuntimeError) as exc:  # pragma: no cover
@@ -106,9 +103,7 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--run-live"):
         return
-    skip_live = pytest.mark.skip(
-        reason="live LLM-provider test -- pass --run-live to execute"
-    )
+    skip_live = pytest.mark.skip(reason="live LLM-provider test -- pass --run-live to execute")
     for item in items:
         if "live" in item.keywords:
             item.add_marker(skip_live)
@@ -197,11 +192,7 @@ def assert_under_budget():
 @pytest.fixture
 def sample_df():
     """Simple test DataFrame"""
-    return pd.DataFrame({
-        'int_col': [1, 2, 3, 4, 5],
-        'float_col': [1.1, 2.2, 3.3, 4.4, 5.5],
-        'str_col': ['a', 'b', 'c', 'd', 'e']
-    })
+    return pd.DataFrame({"int_col": [1, 2, 3, 4, 5], "float_col": [1.1, 2.2, 3.3, 4.4, 5.5], "str_col": ["a", "b", "c", "d", "e"]})
 
 
 @pytest.fixture
@@ -226,19 +217,10 @@ def temp_dir():
 @pytest.fixture
 def float_with_integers_df():
     """DataFrame with float columns that have no fractional part"""
-    return pd.DataFrame({
-        'float_int': [1.0, 2.0, 3.0, 4.0],
-        'float_real': [1.1, 2.2, 3.3, 4.4],
-        'float_with_nan': [1.0, 2.0, np.nan, 4.0]
-    })
+    return pd.DataFrame({"float_int": [1.0, 2.0, 3.0, 4.0], "float_real": [1.1, 2.2, 3.3, 4.4], "float_with_nan": [1.0, 2.0, np.nan, 4.0]})
 
 
 @pytest.fixture
 def constant_columns_df():
     """DataFrame with some constant columns"""
-    return pd.DataFrame({
-        'const1': [1, 1, 1, 1],
-        'const2': ['a', 'a', 'a', 'a'],
-        'varying': [1, 2, 3, 4],
-        'varying2': ['a', 'b', 'c', 'd']
-    })
+    return pd.DataFrame({"const1": [1, 1, 1, 1], "const2": ["a", "a", "a", "a"], "varying": [1, 2, 3, 4], "varying2": ["a", "b", "c", "d"]})

@@ -93,12 +93,7 @@ def _normalized_source(fn: Callable) -> str:
             deco_args += [_canonical(a) for a in deco.args]
             deco_args += [f"{kw.arg}={_canonical(kw.value)}" for kw in deco.keywords]
     target.decorator_list = []
-    if (
-        target.body
-        and isinstance(target.body[0], ast.Expr)
-        and isinstance(target.body[0].value, ast.Constant)
-        and isinstance(target.body[0].value.value, str)
-    ):
+    if target.body and isinstance(target.body[0], ast.Expr) and isinstance(target.body[0].value, ast.Constant) and isinstance(target.body[0].value.value, str):
         target.body = target.body[1:] or [ast.Pass()]
     target.name = "_k_"  # name-normalize: a pure rename / module move is not a logic change
     canonical = _canonical(target)

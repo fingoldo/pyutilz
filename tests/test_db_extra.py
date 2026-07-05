@@ -8,7 +8,6 @@ import tempfile
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # db.validate_sql_identifier  (regex hoisted to module level; behavior preserved)
 # ---------------------------------------------------------------------------

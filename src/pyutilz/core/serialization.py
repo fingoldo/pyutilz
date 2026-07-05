@@ -47,8 +47,8 @@ def str_to_class(classname: str) -> Any:
 
 def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compression: Optional[int] = 9) -> Union[bool, bytes, None]:
     """
-        If fname is passed, data will be persisted onto disk and success code will be returned
-        Otherwise, serialized representation of the obj in memory will be returned.
+    If fname is passed, data will be persisted onto disk and success code will be returned
+    Otherwise, serialized representation of the obj in memory will be returned.
     """
     if compression is not None:
         assert isinstance(compression, int)
@@ -75,9 +75,9 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
 
 def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9) -> Any:
     """
-        If fname is passed, data will be read from disk.
-        Otherwise, obj will be read from memory directl.
-        Unpacked data will be returned.
+    If fname is passed, data will be read from disk.
+    Otherwise, obj will be read from memory directl.
+    Unpacked data will be returned.
     """
     if compression is not None:
         assert isinstance(compression, int)

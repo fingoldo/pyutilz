@@ -35,18 +35,15 @@ class TestHeartbeatSql:
 
         if result:
             # Should return tuple (sql, params)
-            assert isinstance(result, tuple), \
-                   "Should return (sql, params) tuple for parameterized query"
+            assert isinstance(result, tuple), "Should return (sql, params) tuple for parameterized query"
 
             sql, params = result
 
             # SQL should use placeholders (%s), not direct string interpolation
-            assert '%s' in sql or '?' in sql, \
-                   "SQL should use placeholders for parameterized query (SQL injection fix)"
+            assert "%s" in sql or "?" in sql, "SQL should use placeholders for parameterized query (SQL injection fix)"
 
             # Should NOT have f-string or .format() in the SQL string itself
-            assert '{' not in sql, \
-                   "SQL should not use f-string formatting (SQL injection risk)"
+            assert "{" not in sql, "SQL should not use f-string formatting (SQL injection risk)"
 
     def test_heartbeat_sql_has_upsert_structure(self):
         """Test that heartbeat SQL has proper UPSERT structure"""
@@ -65,9 +62,8 @@ class TestHeartbeatSql:
             sql, params = result
 
             # Should have INSERT ... ON CONFLICT structure
-            assert 'INSERT' in sql.upper(), "Should have INSERT statement"
-            assert 'ON CONFLICT' in sql.upper() or 'ON DUPLICATE' in sql.upper(), \
-                   "Should have conflict handling (UPSERT)"
+            assert "INSERT" in sql.upper(), "Should have INSERT statement"
+            assert "ON CONFLICT" in sql.upper() or "ON DUPLICATE" in sql.upper(), "Should have conflict handling (UPSERT)"
 
     def test_heartbeat_sql_parameters_count_matches(self):
         """Test that number of placeholders matches number of parameters"""
@@ -86,12 +82,11 @@ class TestHeartbeatSql:
             sql, params = result
 
             # Count placeholders
-            placeholder_count = sql.count('%s') + sql.count('?')
+            placeholder_count = sql.count("%s") + sql.count("?")
 
             # Should match params length
             if params:
-                assert len(params) == placeholder_count, \
-                       f"Placeholder count ({placeholder_count}) should match params count ({len(params)})"
+                assert len(params) == placeholder_count, f"Placeholder count ({placeholder_count}) should match params count ({len(params)})"
 
 
 class TestModuleLevelVariables:
@@ -108,9 +103,9 @@ class TestModuleLevelVariables:
         source = inspect.getsource(distributed_module)
 
         # Check for module-level 'self ='
-        lines = source.split('\n')
+        lines = source.split("\n")
         for i, line in enumerate(lines):
-            if line.startswith('self =') and not line.startswith('    '):
+            if line.startswith("self =") and not line.startswith("    "):
                 # Found module-level 'self =' (not indented)
                 pytest.fail(f"Line {i+1}: Module-level variable should not be named 'self' (confusing)")
 
@@ -129,12 +124,13 @@ class TestVersioning:
         source = inspect.getsource(distributed_module)
 
         # Check if versioning/caching code exists
-        if 'version' in source.lower() or 'cache' in source.lower():
+        if "version" in source.lower() or "cache" in source.lower():
             # If using file-based versioning, should use hash not mtime
-            if 'getmtime' in source:
+            if "getmtime" in source:
                 # Should also have hash-based alternative
-                assert 'hashlib' in source or 'md5' in source or 'sha' in source, \
-                       "Should use content-based versioning (hash), not just mtime (clock skew issues)"
+                assert (
+                    "hashlib" in source or "md5" in source or "sha" in source
+                ), "Should use content-based versioning (hash), not just mtime (clock skew issues)"
 
 
 class TestDistributedManagerInstantiation:
@@ -162,8 +158,7 @@ class TestDistributedManagerInstantiation:
             pytest.skip("DistributedManager not available")
 
         # Check for expected methods
-        assert hasattr(DistributedManager, 'get_heartbeat_sql'), \
-               "Should have get_heartbeat_sql method"
+        assert hasattr(DistributedManager, "get_heartbeat_sql"), "Should have get_heartbeat_sql method"
 
 
 class TestSqlInjectionProtection:
@@ -180,15 +175,15 @@ class TestSqlInjectionProtection:
         source = inspect.getsource(distributed_module)
 
         # Look for SQL-related code
-        lines = source.split('\n')
+        lines = source.split("\n")
         for i, line in enumerate(lines):
             # Check for SQL keywords
-            if any(kw in line.upper() for kw in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']):
+            if any(kw in line.upper() for kw in ["SELECT", "INSERT", "UPDATE", "DELETE"]):
                 # If it's a SQL statement, check it's not using format() or %
-                if '= f"' in line or '= f\'' in line:
+                if '= f"' in line or "= f'" in line:
                     # f-string SQL - potential injection risk
                     # Should use parameterized queries instead
-                    if 'WHERE' in line.upper():
+                    if "WHERE" in line.upper():
                         pytest.fail(f"Line {i+1}: SQL with WHERE clause should use parameterized query, not f-string")
 
 

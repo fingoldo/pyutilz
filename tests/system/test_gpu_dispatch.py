@@ -12,7 +12,6 @@ import pytest
 
 from pyutilz.system import gpu_dispatch as gd
 
-
 # ---------------------------------------------------------------------------
 # CPU-only fallbacks
 # ---------------------------------------------------------------------------
@@ -37,12 +36,11 @@ class TestCPUOnlyHost:
     def test_select_best_gpu_rejects_unknown_strategy(self):
         # Re-enable CUDA detection so we hit the strategy switch, not the
         # CUDA-absent early-return.
-        with mock.patch.object(gd, "is_cuda_available", return_value=True), \
-             mock.patch.object(
-                 gd,
-                 "get_gpuutil_gpu_info",
-                 return_value=[{"id": 0, "memoryFree": 1.0, "load": 1.0}],
-             ):
+        with mock.patch.object(gd, "is_cuda_available", return_value=True), mock.patch.object(
+            gd,
+            "get_gpuutil_gpu_info",
+            return_value=[{"id": 0, "memoryFree": 1.0, "load": 1.0}],
+        ):
             gd.reset_cache()
             with pytest.raises(ValueError):
                 gd.select_best_gpu("nonsense-strategy")
@@ -80,8 +78,7 @@ class TestCPUOnlyHost:
 class TestSharedMemBudget:
     @pytest.mark.parametrize(
         "cc",
-        [(3, 0), (3, 5), (3, 7), (5, 0), (5, 2), (6, 0), (6, 1), (6, 2),
-         (7, 0), (7, 5), (8, 0), (8, 6), (8, 9), (9, 0)],
+        [(3, 0), (3, 5), (3, 7), (5, 0), (5, 2), (6, 0), (6, 1), (6, 2), (7, 0), (7, 5), (8, 0), (8, 6), (8, 9), (9, 0)],
     )
     def test_known_cc_returns_positive_budget(self, cc):
         major, minor = cc
@@ -97,14 +94,14 @@ class TestSharedMemBudget:
     @pytest.mark.parametrize(
         "cc,expected_opt_in",
         [
-            ((7, 0),  98304),   # Volta V100: 96 KB
-            ((7, 2),  98304),   # Xavier
-            ((7, 5),  65536),   # Turing: 64 KB
-            ((8, 0), 166912),   # A100: 163 KB (164 KB per-SM - 1 KB reserved)
-            ((8, 6), 101376),   # Ampere consumer: 99 KB
-            ((8, 7), 166912),   # Orin: 163 KB
-            ((8, 9), 101376),   # Ada Lovelace: 99 KB
-            ((9, 0), 232448),   # Hopper: 227 KB
+            ((7, 0), 98304),  # Volta V100: 96 KB
+            ((7, 2), 98304),  # Xavier
+            ((7, 5), 65536),  # Turing: 64 KB
+            ((8, 0), 166912),  # A100: 163 KB (164 KB per-SM - 1 KB reserved)
+            ((8, 6), 101376),  # Ampere consumer: 99 KB
+            ((8, 7), 166912),  # Orin: 163 KB
+            ((8, 9), 101376),  # Ada Lovelace: 99 KB
+            ((9, 0), 232448),  # Hopper: 227 KB
         ],
     )
     def test_opt_in_specific_values_per_cc(self, cc, expected_opt_in):
@@ -196,10 +193,8 @@ class TestSelectBestGpuStrategies:
     def _patch_env(self):
         gd.reset_cache()
         fake_gpus = [
-            {"id": 0, "memoryFree": 1.0, "memoryTotal": 4.0, "load": 80.0,
-             "name": "GTX 1050 Ti", "uuid": "u0"},
-            {"id": 1, "memoryFree": 16.0, "memoryTotal": 24.0, "load": 5.0,
-             "name": "RTX 3090", "uuid": "u1"},
+            {"id": 0, "memoryFree": 1.0, "memoryTotal": 4.0, "load": 80.0, "name": "GTX 1050 Ti", "uuid": "u0"},
+            {"id": 1, "memoryFree": 16.0, "memoryTotal": 24.0, "load": 5.0, "name": "RTX 3090", "uuid": "u1"},
         ]
         fake_caps = {
             0: {"COMPUTE_CAPABILITY_MAJOR": 6, "COMPUTE_CAPABILITY_MINOR": 1},
@@ -246,9 +241,9 @@ class TestGpuCapabilitySummaryHappyPath:
             "WARP_SIZE": 32,
         }
         fake_gpus = [{"id": 0, "name": "GTX 1660", "memoryFree": 5.0, "memoryTotal": 6.0}]
-        with mock.patch.object(gd, "is_cuda_available", return_value=True), \
-             mock.patch.object(gd, "get_gpu_cuda_capabilities", return_value=fake_caps), \
-             mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus):
+        with mock.patch.object(gd, "is_cuda_available", return_value=True), mock.patch.object(
+            gd, "get_gpu_cuda_capabilities", return_value=fake_caps
+        ), mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus):
             s = gd.gpu_capability_summary(device_id=0)
         assert s is not None
         assert s["cc_major"] == 7 and s["cc_minor"] == 5
