@@ -57,8 +57,23 @@ def run_black_stdin(src: str, config_path: str) -> str:
     return proc.stdout.decode("utf-8")
 
 
+def _swap_single_to_double_quotes(s: str) -> str:
+    """Best-effort normalize simple 'x' string literals to "x" so quote-style
+    changes (which Black applies independently of explosion/collapse) don't
+    mask an explosion/collapse comparison. Skips triple-quoted strings and
+    literals that already contain a double quote (Black wouldn't requote
+    those either, so leaving them alone is correct)."""
+    def repl(m):
+        inner = m.group(1)
+        if '"' in inner:
+            return m.group(0)
+        return '"' + inner + '"'
+
+    return re.sub(r"'((?:[^'\\]|\\.)*)'", repl, s)
+
+
 def norm(s: str) -> str:
-    return re.sub(r"[\s,()]+", "", s)
+    return re.sub(r"[\s,()]+", "", _swap_single_to_double_quotes(s))
 
 
 def is_all_blank(lines):
