@@ -1,8 +1,11 @@
 """Apply Black's reformatting to a file, EXCEPT for opcodes matching excluded
-classes: blank-line insertion (pure or amid other lines), and arg/import-list
-EXPLOSION (packed multi-item line -> one-item-per-line). Everything else
-Black wants to change (collapses, quote style, blank-line removal, docstring
-reflow, redundant-paren removal, whitespace reflow) is applied normally.
+classes: blank-line insertion (pure or amid other lines), arg/import-list
+EXPLOSION (packed multi-item line -> one-item-per-line), and semicolon-joined
+compound-statement splitting (``a = 1; b = 2`` -> one statement per line --
+project convention explicitly keeps these compact, see pyproject.toml's
+E701/E702 ignore comments). Everything else Black wants to change (collapses,
+quote style, blank-line removal, docstring reflow, redundant-paren removal,
+whitespace reflow) is applied normally.
 
 Usage:
     python black_filtered_apply.py --config pyproject.toml [--write] <file.py> [file2.py ...]
@@ -73,7 +76,11 @@ def _swap_single_to_double_quotes(s: str) -> str:
 
 
 def norm(s: str) -> str:
-    return re.sub(r"[\s,()]+", "", _swap_single_to_double_quotes(s))
+    # ';' is stripped too so semicolon-joined compound statements (``a = 1; b = 2``,
+    # explicitly kept as intentional compact style -- see pyproject.toml's E701/E702
+    # ignore comments) normalize the same as Black's one-statement-per-line split,
+    # and get caught by the explosion detector below like any other packed line.
+    return re.sub(r"[\s,();]+", "", _swap_single_to_double_quotes(s))
 
 
 def is_all_blank(lines):
@@ -120,12 +127,11 @@ def filtered_apply(orig: str, formatted: str) -> str:
             # non-blank deletion with nothing replacing it: accept Black's change
             continue
         if tag == "replace":
-            kind = looks_like_import_or_call_list(old_block, new_block)
-            if kind == "explode":
-                out.extend(old_block)  # reject explosion, keep original packed form
-                continue
-            # mixed replace containing a blank-line insertion bundled with other content:
-            # re-diff the sub-blocks at a finer grain so we only reject the blank part.
+            # Never short-circuit on the whole replace block: it may bundle an
+            # explosion-like change with an unrelated adjacent one (e.g. Black
+            # merges a semicolon-split and a nearby quote-style fix into one
+            # hunk because they're on consecutive lines). Always re-diff at a
+            # finer grain so only the excluded sub-part gets rejected.
             sub_sm = difflib.SequenceMatcher(None, old_block, new_block, autojunk=False)
             sub_out = []
             for stag, si1, si2, sj1, sj2 in sub_sm.get_opcodes():
@@ -166,7 +172,7 @@ def main():
     if "--config" in args:
         idx = args.index("--config")
         config_path = args[idx + 1]
-        args = args[:idx] + args[idx + 2 :]
+        args = args[:idx] + args[idx + 2:]
     if not config_path:
         raise SystemExit("--config <path-to-pyproject.toml> is required")
 
