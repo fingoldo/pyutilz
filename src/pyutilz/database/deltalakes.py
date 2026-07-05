@@ -2,7 +2,6 @@ import os
 import tempfile
 import logging
 from urllib.parse import urlparse
-from filelock import FileLock, Timeout
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +57,8 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
         safe_delta_write(MARKET_ADS_PATH, write_market_ads)
     """
     if is_local_path(path):
+        from filelock import FileLock, Timeout  # lazy: only local-path delta writes need file locking
+
         lock_file = os.path.join(tempfile.gettempdir(), f"{os.path.basename(path).replace('/', '_')}{lock_suffix}")
         lock = FileLock(lock_file)
 
