@@ -19,8 +19,8 @@ from pyutilz.core.pythonlib import ensure_installed
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from typing import Any, Dict, Iterable, Optional
+import json
 import pandas as pd
-import orjson
 
 from time import sleep
 from enum import Enum
@@ -410,11 +410,22 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                 elif ltypename in ["str", "string"]:
                     val = str(val)
                 elif ltypename in ["json", "jsonb"]:
+                    raw_val = val if isinstance(val, (str, bytes, bytearray)) else str(val)
                     try:
-                        val = orjson.loads(val if isinstance(val, (str, bytes, bytearray)) else str(val))
-                    except orjson.JSONDecodeError:
-                        # Leave non-JSON values untouched rather than crashing settings load.
-                        logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
+                        # orjson is faster than stdlib json; falls back if missing (kept optional -- core has no
+                        # hard requirements).
+                        import orjson  # type: ignore
+
+                        try:
+                            val = orjson.loads(raw_val)
+                        except orjson.JSONDecodeError:
+                            logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
+                    except ImportError:
+                        try:
+                            val = json.loads(raw_val)
+                        except json.JSONDecodeError:
+                            # Leave non-JSON values untouched rather than crashing settings load.
+                            logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
                 elif ltypename in ["bool", "boolean"]:
                     val = val.lower() in ["true", "1", "t", "y", "yes"]
             g[setting_name] = val

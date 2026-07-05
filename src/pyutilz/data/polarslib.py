@@ -658,7 +658,7 @@ def create_ts_features_polars(
 
     logger.info("create_ts_features_polars using %s engine, %s threads...", engine, pl.thread_pool_size())
     res = res.collect(engine=engine)
-    logger.info(f"Done.")
+    logger.info("Done.")
 
     return res
 

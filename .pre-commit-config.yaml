@@ -33,17 +33,17 @@ repos:
         # secret (defaults live in source, scanned there), so exclude it.
         exclude: '\.secrets\.baseline$|tests/test_meta/_api_snapshot\.json$'
 
-  # Real-bug gate: pyflakes + syntax errors block the commit. CLI --select
-  # bypasses the pyproject ignore list, so re-apply the taste-ignores
-  # (F401/F403/F405/F541/F841 = unused-import/star/empty-fstring/unused-var)
-  # which are warn-only via format-lint-warn. Genuine bugs still block:
-  # F811 (redefinition), F821 (undefined name), F822 (undefined export),
-  # F5xx (format), F6xx (comparison), E9 (syntax).
+  # Real-bug gate: pyflakes + syntax errors block the commit. Matches CI's
+  # ``ruff check . --select F,E9`` exactly (no ignore) -- previously re-applied
+  # a taste-ignore (F401/F403/F405/F541/F841) via CLI --ignore, which let
+  # unused-import / star-import / empty-fstring / unused-var slip past
+  # pre-commit while CI still caught them, a config drift that let real lint
+  # debt land on master between the two gates disagreeing.
   - repo: local
     hooks:
       - id: ruff-real-bugs
         name: "ruff (real bugs block)"
-        entry: python -m ruff check --select F,E9 --ignore F401,F403,F405,F541,F841
+        entry: python -m ruff check --select F,E9
         language: system
         types: [python]
         stages: [pre-commit]

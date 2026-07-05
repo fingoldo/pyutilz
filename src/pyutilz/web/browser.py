@@ -139,7 +139,7 @@ def start_selenium() -> object:
     logger.info("Starting Selenium for %s", target)
     kwargs={}
     if undetectable:
-        logger.info(f"Undetectable mode")
+        logger.info("Undetectable mode")
         try:
             import undetected_chromedriver as webdriver
             try:
@@ -160,7 +160,7 @@ def start_selenium() -> object:
             from selenium import webdriver
             options = webdriver.ChromeOptions()
     else:
-        logger.info(f"Standard mode")
+        logger.info("Standard mode")
         from selenium import webdriver
 
         options = webdriver.ChromeOptions()#webdriver.chrome.options.Options()
@@ -376,7 +376,7 @@ def LoginAndGetCookies(default_headers:bool=True,seconds_to_sleep_on_error:int=6
                     logger.error(f"Unexpected: required cookie {c} is missing when getting cookies from {target}. Sleeping {seconds_to_sleep_on_error} seconds...")
                     sleep(seconds_to_sleep_on_error)
                     if restart_on_no_cookie:
-                        logger.warning(f"Trying to restart Selenium...")
+                        logger.warning("Trying to restart Selenium...")
                         try:
                             browser.close()
                         except Exception:

@@ -208,11 +208,11 @@ def applyfunc_parallel(
         ) as pool:
             res = tqdmu(pool.starmap(func, iterable))
 
-    logger.info(f"Function applied.")
+    logger.info("Function applied.")
 
     if return_dataframe:
         res = pd.concat(res, ignore_index=True)
-        logger.info(f"Results Concatenated.")
+        logger.info("Results Concatenated.")
     return res
 
 

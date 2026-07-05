@@ -482,7 +482,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
     sess = requests.Session()
     num_ip_queries = 0
 
-    logger.debug(f"Created new web session")
+    logger.debug("Created new web session")
 
     headers = template_headers
     if b_random_ua:

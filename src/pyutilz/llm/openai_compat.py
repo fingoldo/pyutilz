@@ -12,7 +12,6 @@ from abc import abstractmethod
 from typing import Any, AsyncIterator
 
 import httpx
-import orjson
 from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError
@@ -20,6 +19,21 @@ from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+# orjson is faster than stdlib json for the per-chunk streaming parse below;
+# resolved once at import time (not per-call, this loop runs per token chunk)
+# and falls back to stdlib if missing (kept optional -- core has no hard
+# requirements).
+try:
+    import orjson as _json_backend  # type: ignore
+
+    _json_loads = _json_backend.loads
+    _JSONDecodeError = _json_backend.JSONDecodeError
+except ImportError:
+    import json as _json_backend
+
+    _json_loads = _json_backend.loads
+    _JSONDecodeError = _json_backend.JSONDecodeError
 
 
 _NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({
@@ -436,8 +450,8 @@ class OpenAICompatibleProvider(LLMProvider):
                             if data_part == "[DONE]":
                                 break
                             try:
-                                chunk = orjson.loads(data_part)
-                            except orjson.JSONDecodeError:
+                                chunk = _json_loads(data_part)
+                            except _JSONDecodeError:
                                 continue
                             last_chunk = chunk
                             # Usage block tends to arrive on a chunk with empty
@@ -567,7 +581,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 try:
                     err_body = resp.json()
                     detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
-                except (ValueError, orjson.JSONDecodeError):
+                except (ValueError, _JSONDecodeError):
                     detail = resp.text
                 raise LLMProviderError(
                     f"{self._provider_name} API error {resp.status_code}: {detail}"

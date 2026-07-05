@@ -265,7 +265,6 @@ try:
         offsets: int32 array of length (N_a + N_b) — start index of each word in buf
                  Word i has codepoints buf[offsets[i]:offsets[i+1]] (offsets has N_a+N_b+1 entries)
         """
-        total = N_a + N_b
         if N_a < 1 or N_b < 1:
             return -1.0
 

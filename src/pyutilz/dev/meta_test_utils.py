@@ -215,7 +215,6 @@ def capture_module_surface(mod: object) -> dict[str, str]:
     — they're reported as ``"<inaccessible-at-import-time>"`` rather
     than crashing the snapshot.
     """
-    mod_name = getattr(mod, "__name__", "")
     out: dict[str, str] = {}
     for name in dir(mod):
         if name.startswith("_"):

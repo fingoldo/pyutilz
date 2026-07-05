@@ -86,7 +86,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     exclude_dirs = frozenset(_DEFAULT_EXCLUDE_DIRS | set(args.exclude_dir or ()))
 
-    findings = run_all(root, checks=args.check)
+    findings = run_all(root, checks=args.check, exclude_dirs=exclude_dirs)
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     cutoff = sev_order[args.min_severity]
     findings = [f for f in findings if sev_order.get(f.severity, 99) <= cutoff]

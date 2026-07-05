@@ -15,7 +15,18 @@ class _FakeIFDRational:
 
 @pytest.fixture(autouse=True, scope="module")
 def _stub_pil():
-    """Temporarily stub PIL modules so image.py can be imported without Pillow."""
+    """Temporarily stub PIL modules so image.py can be imported without Pillow.
+
+    ``pyutilz.core.image`` binds ``IFDRational`` as a module-level name at import
+    time (``from PIL.TiffImagePlugin import IFDRational``); once imported, that
+    binding is cached in ``sys.modules`` for the rest of the process. If some
+    earlier test (in another module, order randomized by pytest-randomly)
+    already imported ``pyutilz.core.image`` against the REAL PIL, later imports
+    here would silently reuse that stale binding instead of ``_FakeIFDRational``,
+    making the isinstance-style check in ``ensure_bytes_converted`` never match.
+    Drop ``pyutilz.core.image`` from ``sys.modules`` too, so ``_get_func()``'s
+    import is always fresh against THIS module's stubs.
+    """
     _tiff_mod = MagicMock()
     _tiff_mod.IFDRational = _FakeIFDRational
 
@@ -28,6 +39,7 @@ def _stub_pil():
     }
 
     saved = {k: sys.modules.get(k) for k in stubs}
+    saved_image_mod = sys.modules.pop("pyutilz.core.image", None)
     sys.modules.update(stubs)
     yield
     # Restore originals
@@ -36,6 +48,9 @@ def _stub_pil():
             sys.modules.pop(k, None)
         else:
             sys.modules[k] = v
+    sys.modules.pop("pyutilz.core.image", None)
+    if saved_image_mod is not None:
+        sys.modules["pyutilz.core.image"] = saved_image_mod
 
 
 def _get_func():

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from ._base import Finding
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
 from .mutable_defaults import scan_mutable_defaults
 from .closures import scan_late_binding_closures
 from .default_via_or import scan_default_via_or_trap
@@ -16,7 +16,7 @@ from .mutation_during_iteration import scan_mutation_during_iteration
 # --- registry -----------------------------------------------------------
 
 
-SCANNERS: dict[str, Callable[[Path], list[Finding]]] = {
+SCANNERS: dict[str, Callable[..., list[Finding]]] = {
     "mutable_default": scan_mutable_defaults,
     "late_binding_closure": scan_late_binding_closures,
     "default_via_or": scan_default_via_or_trap,
@@ -26,7 +26,11 @@ SCANNERS: dict[str, Callable[[Path], list[Finding]]] = {
 }
 
 
-def run_all(root: Path, checks: Optional[Iterable[str]] = None) -> list[Finding]:
+def run_all(
+    root: Path,
+    checks: Optional[Iterable[str]] = None,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
     """Run every (or selected) scanner against ``root`` and return all
     findings in encounter order. Sort by (severity, check, file, line)
     for stable rendering at the call site."""
@@ -37,7 +41,7 @@ def run_all(root: Path, checks: Optional[Iterable[str]] = None) -> list[Finding]
             raise ValueError(
                 f"unknown check {name!r}; available: {sorted(SCANNERS)}"
             )
-        out.extend(SCANNERS[name](root))
+        out.extend(SCANNERS[name](root, exclude_dirs=exclude_dirs))
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     out.sort(key=lambda f: (sev_order.get(f.severity, 99), f.check, f.file, f.line))
     return out

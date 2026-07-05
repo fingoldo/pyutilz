@@ -84,10 +84,8 @@ def get_system_info(
 
     try:
         import numba
-        from numba import cuda
     except ImportError:
         numba = None
-        cuda = None
     try:
         from pyutilz.web import web
     except ImportError:

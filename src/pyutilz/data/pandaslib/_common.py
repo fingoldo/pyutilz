@@ -12,44 +12,46 @@ logger = logging.getLogger("pyutilz.data.pandaslib")
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from pyutilz.core.pythonlib import ensure_installed
+from pyutilz.core.pythonlib import ensure_installed  # noqa: F401
 
 # ensure_installed("pandas numpy pyarrow")
 
 # ----------------------------------------------------------------------------------------------------------------------------
-# Normal Imports
+# Normal Imports -- this module is a shared-imports hub: every name below is unused HERE but re-exported for
+# ``benchmarks.py`` / ``dtypes.py`` / ``frames.py`` / ``io_ops.py`` / ``__init__.py`` to import explicitly from
+# ``._common`` (see their ``from ._common import (...)`` blocks), so each import is a deliberate re-export, not dead code.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Union, Optional, Sequence, Dict, List, Tuple
+from typing import Union, Optional, Sequence, Dict, List, Tuple  # noqa: F401
 
-import gc
-import io
-import os
-import warnings
-import numpy as np
-import pandas as pd, polars as pl
-from pyutilz.text.strings import find_between
-from collections import defaultdict
-from pyarrow.dataset import dataset
-from pyutilz.pythonlib import to_float
+import gc  # noqa: F401
+import io  # noqa: F401
+import os  # noqa: F401
+import warnings  # noqa: F401
+import numpy as np  # noqa: F401
+import pandas as pd, polars as pl  # noqa: F401
+from pyutilz.text.strings import find_between  # noqa: F401
+from collections import defaultdict  # noqa: F401
+from pyarrow.dataset import dataset  # noqa: F401
+from pyutilz.pythonlib import to_float  # noqa: F401
 
-import ctypes
-from multiprocessing import Array
+import ctypes  # noqa: F401
+from multiprocessing import Array  # noqa: F401
 
 # Make IPython optional
 try:
-    from IPython.display import display, Markdown, Latex
+    from IPython.display import display, Markdown, Latex  # noqa: F401
     HAS_IPYTHON = True
 except ImportError:
     HAS_IPYTHON = False
 
-from pyutilz.system.system import tqdmu
-from os.path import join, sep
-import glob
+from pyutilz.system.system import tqdmu  # noqa: F401
+from os.path import join, sep  # noqa: F401
+import glob  # noqa: F401
 
-from os.path import basename, dirname, splitext, exists, getsize
-from pyutilz.system.system import ensure_dir_exists
-from timeit import default_timer as timer
-from itertools import chain
-import tempfile
-import shutil
+from os.path import basename, dirname, splitext, exists, getsize  # noqa: F401
+from pyutilz.system.system import ensure_dir_exists  # noqa: F401
+from timeit import default_timer as timer  # noqa: F401
+from itertools import chain  # noqa: F401
+import tempfile  # noqa: F401
+import shutil  # noqa: F401

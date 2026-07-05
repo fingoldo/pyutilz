@@ -21,7 +21,7 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = N
         schema_fpath = join("database", "schema.sql")
 
     if not exists(schema_fpath):
-        logger.error(f"DB Schema file not found.")
+        logger.error("DB Schema file not found.")
         return False
 
     with open(schema_fpath, encoding="utf-8") as f:
@@ -33,7 +33,7 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = N
 
         return True
     else:
-        logger.error(f"DB Schema empty.")
+        logger.error("DB Schema empty.")
         return False
 
 

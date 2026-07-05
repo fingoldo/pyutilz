@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from typing import Optional
-import orjson
+import json
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # SQL Injection Protection
@@ -54,8 +54,15 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
 
         if jsonize:
             if type(value) in (dict, list):
-                # OPT_SORT_KEYS gives stable serialization (stable hashing/dedup rule); decode to str for DB storage.
-                value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
+                # Sorted keys give stable serialization (stable hashing/dedup rule). orjson is ~5-10x faster than
+                # stdlib json on dumps; falls back to stdlib only if orjson missing (kept optional -- core has no
+                # hard requirements).
+                try:
+                    import orjson  # type: ignore
+
+                    value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
+                except ImportError:
+                    value = json.dumps(value, sort_keys=True)
 
         values.append(value)
         if mode == "insert":
