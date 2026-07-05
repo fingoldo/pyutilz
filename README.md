@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![Black (filtered)](https://github.com/fingoldo/pyutilz/workflows/Black%20(filtered)/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
-[![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/main/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
+[![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -12,16 +12,15 @@ A Python utilities library covering data-frame ops, databases, web/cloud, system
 ## Installation
 
 ```bash
+pip install pyutilz[all]              # full install
 pip install pyutilz                   # core only, no hard deps
-pip install pyutilz[pandas]           # pandas + numpy + pyarrow
-pip install pyutilz[polars]
+pip install pyutilz[dataframes]       # pandas + numpy + pyarrow + polars
 pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql
 pip install pyutilz[web]              # selenium, requests, undetected-chromedriver
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
 pip install pyutilz[nlp]              # spacy + nltk + tiktoken + jellyfish
 pip install pyutilz[llm]              # anthropic + google-genai + httpx + tenacity + pydantic
 pip install pyutilz[system]           # psutil + numba + GPUtil + tqdm + py-cpuinfo
-pip install pyutilz[all]              # everything above
 pip install pyutilz[dev]              # pytest, ruff, black, mypy, bandit
 ```
 

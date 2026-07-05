@@ -42,6 +42,12 @@ pandas = [
 ]
 polars = ["polars>=0.18"]
 
+# Combined dataframe stack (self-referential to avoid duplication/drift).
+# pandas/polars stay as individual extras too for callers who only need one.
+dataframes = [
+    "pyutilz[pandas,polars]",
+]
+
 # Database packages
 database = [
     "sqlalchemy>=1.4",
