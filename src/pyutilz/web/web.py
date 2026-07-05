@@ -2,6 +2,7 @@
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,12 @@ def get_external_ip(
 
 
 def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"):
-    import orjson
+    try:
+        import orjson
+
+        json_loads = orjson.loads
+    except ImportError:
+        json_loads = json.loads
 
     if use_urllib:
         try:
@@ -89,7 +95,7 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
             logger.exception(e)
         else:
             if resp.status == http.HTTPStatus.OK:
-                return orjson.loads(resp.read().decode("utf8").strip())
+                return json_loads(resp.read().decode("utf8").strip())
             else:
                 return {}
     else:

@@ -3,7 +3,14 @@ Jupyter notebook initialization utilities
 """
 import os
 import psutil
-from IPython import get_ipython
+
+try:
+    from IPython import get_ipython
+except ImportError:
+    # Outside a Jupyter/IPython environment real get_ipython() returns None too,
+    # so this dummy matches that contract exactly.
+    def get_ipython():
+        return None
 
 # Correct imports for display and HTML
 try:

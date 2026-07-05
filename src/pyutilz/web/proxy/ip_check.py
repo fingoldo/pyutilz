@@ -13,6 +13,22 @@ from typing import Any, Dict, Optional
 
 _log = logging.getLogger(__name__)
 
+# orjson is faster than stdlib json; resolved once so the fallback branch never
+# references the `orjson` name after a failed import (that raised UnboundLocalError
+# here previously -- the name is local to the function once ANY `import orjson`
+# appears in its body, so referencing `orjson.JSONDecodeError` in the except clause
+# blew up when the import itself had failed).
+try:
+    import orjson as _json_backend
+
+    _json_loads = _json_backend.loads
+    _JSONDecodeError = _json_backend.JSONDecodeError
+except ImportError:
+    import json as _json_backend
+
+    _json_loads = _json_backend.loads
+    _JSONDecodeError = _json_backend.JSONDecodeError
+
 __all__ = [
     "IP_CHECK_URLS",
     "parse_ip_response",
@@ -44,12 +60,10 @@ def parse_ip_response(text: str) -> str:
     body = text.strip()
     if body.startswith("{"):
         try:
-            import orjson
-
-            data = orjson.loads(body)
+            data = _json_loads(body)
             raw = data.get("origin") or data.get("ip") or body
             return raw.split(",")[0].strip() if isinstance(raw, str) else raw
-        except (orjson.JSONDecodeError, ValueError):
+        except (_JSONDecodeError, ValueError):
             return body
     return body.split(",")[0].strip()
 

@@ -60,7 +60,7 @@ class TestOrjsonSseBenchmark:
         See module docstring for the timeit benchmark (orjson 4.61x faster
         than json.loads on this chunk).
         """
-        import orjson
+        orjson = pytest.importorskip("orjson")
         chunk = '{"choices":[{"delta":{"content":"hello world"}}]}'
         parsed = orjson.loads(chunk)
         assert parsed["choices"][0]["delta"]["content"] == "hello world"

@@ -29,7 +29,10 @@ from pyutilz.text.strings import json_pg_dumps, suffixize
 from pyutilz.database.db import safe_execute_values
 
 EXTERNAL_IP = None
-logger: Logger = None
+# Sane default so calling log_loaded_rows()/_message() before init_logging()
+# doesn't crash with 'NoneType' object has no attribute 'info'; init_logging()
+# still reassigns this to a caller-named logger when called.
+logger: Logger = logging.getLogger(__name__)
 
 
 def init_logging(

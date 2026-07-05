@@ -161,7 +161,7 @@
       "log_result": "callable(results_log:any:0, key:any:0, value:any:0, verbose:any:1)",
       "log_results": "callable(results_log:any:0, results:any:0, verbose:any:1)",
       "logged": "callable(db_path:any:1, explicit_only:any:1, allowed_types:any:1, include_node_ip:any:1)",
-      "logger": "value:NoneType",
+      "logger": "value:Logger",
       "random": "callable()",
       "safe_execute_values": "callable(statement:any:0, data:any:0, auto_commit:any:1, cursor_factory:any:1, cursor_name:any:1, return_cursor:any:1, itersize:any:1, page_size:any:1)",
       "sep": "value:str",
@@ -182,7 +182,7 @@
       "log_result": "callable(results_log:any:0, key:any:0, value:any:0, verbose:any:1)",
       "log_results": "callable(results_log:any:0, results:any:0, verbose:any:1)",
       "logged": "callable(db_path:any:1, explicit_only:any:1, allowed_types:any:1, include_node_ip:any:1)",
-      "logger": "value:NoneType",
+      "logger": "value:Logger",
       "random": "callable()",
       "safe_execute_values": "callable(statement:any:0, data:any:0, auto_commit:any:1, cursor_factory:any:1, cursor_name:any:1, return_cursor:any:1, itersize:any:1, page_size:any:1)",
       "sep": "value:str",
@@ -383,7 +383,18 @@
       "unserialize": "callable(obj:any:0, compression:any:1)"
     },
     "similarity": {
-      "_import_error": "module fails to import"
+      "HAS_NUMBA": "value:bool",
+      "SentenceSimilarityIndex": "class:pyutilz.text.similarity.SentenceSimilarityIndex",
+      "contigous_strings_similarity": "callable(a:any:0, b:any:0)",
+      "levenshtein_strings_similarity": "callable(a:any:0, b:any:0)",
+      "logger": "value:Logger",
+      "normalize_sentence": "callable(sentence:any:0, bSports:any:1, replace_symbols:any:1, placeholder:any:1, abbreviations:any:1)",
+      "pack_sentence": "callable(words:any:0)",
+      "sentences_similarity": "callable(SentenceA:any:0, SentenceB:any:0, cMinLenTHreshold:any:1)",
+      "sentences_similarity_numba": "callable(SentenceA:any:0, SentenceB:any:0, cMinLenTHreshold:any:1)",
+      "sentences_similarity_numba_batch": "callable(query_words:any:0, candidates:any:0, cMinLenTHreshold:any:1, parallel:any:1)",
+      "sentences_similarity_numba_packed": "callable(packed_a:any:0, packed_b:any:0, cMinLenTHreshold:any:1)",
+      "strip_doubled_characters": "callable(text:any:0, char_list:any:0)"
     },
     "string": {
       "ascii_emojies": "value:NoneType",

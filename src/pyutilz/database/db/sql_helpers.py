@@ -62,7 +62,9 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
 
                     value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
                 except ImportError:
-                    value = json.dumps(value, sort_keys=True)
+                    # separators matches orjson's compact (no-space) output so the
+                    # stored/hashed string is stable regardless of which backend ran.
+                    value = json.dumps(value, sort_keys=True, separators=(",", ":"))
 
         values.append(value)
         if mode == "insert":
