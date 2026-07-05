@@ -8,6 +8,8 @@ Any auto-fixer or formatter run across the WHOLE repo (or a huge fraction of it)
 
 **How to apply:** when a project-wide formatter would fix a CI/lint failure, do NOT run it. Instead: report the scope (e.g. "N of M files need reformatting, that's a repo-wide rewrite"), and ask whether to (a) run it now, (b) turn the gate advisory/non-blocking, or (c) leave it for a deliberate separate pass. Small, scoped fixes to the specific files already being edited in the current task remain fine without asking — the line is "does this touch files/lines beyond what I'm already deliberately changing for a diagnosed reason".
 
+**Black repo-wide reformat — resolved (2026-07-05):** user decided to exclude exactly two Black behaviors from any run, project-wide (mirrored in mlframe): (1) arg/collection-list explosion (multi-item packed line -> one-item-per-line, including `from x import (...)` blocks) and (2) blank-line insertion. Neither is configurable via a stock Black flag. `scripts/black_filtered_apply.py` applies everything else Black wants while mechanically rejecting those two, validated via AST-equivalence + compile checks. Use `python scripts/black_filtered_apply.py --config pyproject.toml --write <files>` (or `--check .` for CI/dry-run) — never raw `black`/`black --fix` in place.
+
 ## Ruff `--fix` scope (mirrors mlframe)
 
 A broad / repo-wide / dir-wide pass is `ruff check` ONLY — no `--fix`, zero auto-edits. Read findings and fix anything worthwhile by hand. `--fix` is reserved for a narrow set of files just edited, and only for genuinely mechanical/safe rules (e.g. F541 empty f-strings) — never for rules that can change behavior or delete a re-export (F401).
