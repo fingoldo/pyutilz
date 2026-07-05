@@ -76,7 +76,6 @@ _AI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bstands as a testament\b", re.I), "shows"),
     (re.compile(r"\bunderscore[sd]?\s+(?:its?|the)\s+importance\b", re.I), "matters"),
     (re.compile(r"\bAs an AI(?:\s+language model)?,?\s*", re.I), ""),
-
     # --- Vocabulary downgrades ---
     (re.compile(r"\bdelve(?:s|d)?\s+into\b", re.I), "look into"),
     (re.compile(r"\bdelve\b", re.I), "dig"),
@@ -93,20 +92,17 @@ _AI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bmeticulous(?:ly)?\b", re.I), "careful"),
     (re.compile(r"\binnovative\b", re.I), "new"),
     (re.compile(r"\bcutting[- ]edge\b", re.I), "modern"),
-
     # --- Transition word downgrades ---
     (re.compile(r"\bFurthermore,?\s*", re.I), "Also, "),
     (re.compile(r"\bMoreover,?\s*", re.I), "Also, "),
     (re.compile(r"\bAdditionally,?\s*", re.I), "Also, "),
     (re.compile(r"\bConsequently,?\s*", re.I), "So, "),
     (re.compile(r"\bNevertheless,?\s*", re.I), "Still, "),
-
     # --- Enthusiasm / self-promotion downgrades ---
     (re.compile(r"\bI(?:'m| am) (?:thrilled|excited) to\b", re.I), "I'm glad to"),
     (re.compile(r"\bI(?:'d| would) love to\b", re.I), "I'd like to"),
     (re.compile(r"\bI bring (\d+)\s+years? of\b", re.I), r"I have \1 years of"),
     (re.compile(r"\bplay(?:s|ed)?\s+a\s+(?:vital|crucial|pivotal|key)\s+role\b", re.I), "is important"),
-
     # --- Filler adverbs ---
     (re.compile(r"\bspecifically,?\s*", re.I), ""),
     (re.compile(r"\bessentially,?\s*", re.I), ""),
@@ -130,13 +126,13 @@ def strip_ai_patterns(text: str) -> str:
 
 def fix_dashes(text: str) -> str:
     """Replace em/en-dashes with `` - `` and smart quotes with ASCII."""
-    text = text.replace("\u2014", " - ")   # em-dash
-    text = text.replace("\u2013", " - ")   # en-dash
-    text = text.replace(" -- ", " - ")     # double-dash (AI marker)
-    text = text.replace("\u201c", '"')     # left double smart quote
-    text = text.replace("\u201d", '"')     # right double smart quote
-    text = text.replace("\u2018", "'")     # left single smart quote
-    text = text.replace("\u2019", "'")     # right single smart quote
+    text = text.replace("\u2014", " - ")  # em-dash
+    text = text.replace("\u2013", " - ")  # en-dash
+    text = text.replace(" -- ", " - ")  # double-dash (AI marker)
+    text = text.replace("\u201c", '"')  # left double smart quote
+    text = text.replace("\u201d", '"')  # right double smart quote
+    text = text.replace("\u2018", "'")  # left single smart quote
+    text = text.replace("\u2019", "'")  # right single smart quote
     # Collapse runs of spaces around the replacement dashes.
     text = re.sub(r" {2,}", " ", text)
     return text
@@ -149,30 +145,30 @@ def fix_dashes(text: str) -> str:
 # Broad regex covering common emoji ranges + variation selectors + ZWJ.
 _EMOJI_RE = re.compile(
     "["
-    "\U0001F600-\U0001F64F"  # emoticons
-    "\U0001F300-\U0001F5FF"  # misc symbols & pictographs
-    "\U0001F680-\U0001F6FF"  # transport & map
-    "\U0001F900-\U0001F9FF"  # supplemental symbols
-    "\U0001FA00-\U0001FA6F"  # chess symbols
-    "\U0001FA70-\U0001FAFF"  # symbols extended-A
-    "\U00002600-\U000027BF"  # misc symbols + dingbats
-    "\U0000FE00-\U0000FE0F"  # variation selectors
-    "\U0000200D"             # ZWJ
-    "\U00002702-\U000027B0"
-    "\U0000231A-\U0000231B"
-    "\U000023E9-\U000023F3"
-    "\U000023F8-\U000023FA"
-    "\U000025AA-\U000025AB"
-    "\U000025B6"
-    "\U000025C0"
-    "\U000025FB-\U000025FE"
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # misc symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map
+    "\U0001f900-\U0001f9ff"  # supplemental symbols
+    "\U0001fa00-\U0001fa6f"  # chess symbols
+    "\U0001fa70-\U0001faff"  # symbols extended-A
+    "\U00002600-\U000027bf"  # misc symbols + dingbats
+    "\U0000fe00-\U0000fe0f"  # variation selectors
+    "\U0000200d"  # ZWJ
+    "\U00002702-\U000027b0"
+    "\U0000231a-\U0000231b"
+    "\U000023e9-\U000023f3"
+    "\U000023f8-\U000023fa"
+    "\U000025aa-\U000025ab"
+    "\U000025b6"
+    "\U000025c0"
+    "\U000025fb-\U000025fe"
     "\U00002934-\U00002935"
-    "\U00002B05-\U00002B07"
-    "\U00002B1B-\U00002B1C"
-    "\U00002B50"
-    "\U00002B55"
+    "\U00002b05-\U00002b07"
+    "\U00002b1b-\U00002b1c"
+    "\U00002b50"
+    "\U00002b55"
     "\U00003030"
-    "\U0000303D"
+    "\U0000303d"
     "\U00003297"
     "\U00003299"
     "]+",
@@ -192,10 +188,10 @@ def strip_emojis(text: str) -> str:
 # Typo types with weights (must sum to 1.0).
 _TYPO_TYPES: list[tuple[str, float]] = [
     ("adjacent_key", 0.30),
-    ("transpose",    0.20),
+    ("transpose", 0.20),
     ("double_letter", 0.15),
-    ("skip_letter",  0.10),
-    ("extra_space",  0.10),
+    ("skip_letter", 0.10),
+    ("extra_space", 0.10),
     ("missing_space_comma", 0.10),
     ("missing_space_period", 0.05),
 ]
@@ -267,13 +263,13 @@ def _apply_char_typo(
         if adj is None:
             return text
         new_char = rng.choice(adj)
-        new_word = word[:idx] + new_char + word[idx + 1:]
+        new_word = word[:idx] + new_char + word[idx + 1 :]
 
     elif typo_type == "transpose":
         if len(word) < 3:
             return text
         idx = rng.randint(1, len(word) - 2)
-        new_word = word[:idx] + word[idx + 1] + word[idx] + word[idx + 2:]
+        new_word = word[:idx] + word[idx + 1] + word[idx] + word[idx + 2 :]
 
     elif typo_type == "double_letter":
         idx = rng.randint(1, len(word) - 2)
@@ -281,12 +277,12 @@ def _apply_char_typo(
 
     elif typo_type == "skip_letter":
         idx = rng.randint(1, len(word) - 2)
-        new_word = word[:idx] + word[idx + 1:]
+        new_word = word[:idx] + word[idx + 1 :]
 
     else:
         return text
 
-    return text[:offset] + new_word + text[offset + len(word):]
+    return text[:offset] + new_word + text[offset + len(word) :]
 
 
 def _apply_space_typo(
@@ -303,7 +299,7 @@ def _apply_space_typo(
         if not gaps:
             return text
         pos = rng.choice(gaps)
-        return text[:pos] + "  " + text[pos + 1:]
+        return text[:pos] + "  " + text[pos + 1 :]
 
     elif typo_type == "missing_space_comma":
         # Find ", " patterns and remove the space.
@@ -312,7 +308,7 @@ def _apply_space_typo(
         if not hits:
             return text
         pos = rng.choice(hits)
-        return text[:pos + 1] + text[pos + 2:]  # remove space after comma
+        return text[: pos + 1] + text[pos + 2 :]  # remove space after comma
 
     elif typo_type == "missing_space_period":
         # Find ". X" patterns (sentence boundary) and remove the space.
@@ -321,7 +317,7 @@ def _apply_space_typo(
         if not hits:
             return text
         pos = rng.choice(hits)
-        return text[:pos + 1] + text[pos + 2:]  # remove space after period
+        return text[: pos + 1] + text[pos + 2 :]  # remove space after period
 
     return text
 
