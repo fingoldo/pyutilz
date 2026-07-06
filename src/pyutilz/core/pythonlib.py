@@ -647,7 +647,6 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     if not is_here:
         logger.warning(f"File {fpath} not found!")
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), fpath)
-        return None
     else:
         if fpath.lower().endswith(".joblib"):
             return joblib.load(fpath)

@@ -178,7 +178,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
 def get_max_affordable_workers_count(reservedCores=1):
     import psutil
 
-    n = psutil.cpu_count(logical=False) - 1
+    n = psutil.cpu_count(logical=False) - reservedCores
     if n < 1:
         n = 1
     return n

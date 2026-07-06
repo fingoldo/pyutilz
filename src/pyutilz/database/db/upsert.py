@@ -220,22 +220,12 @@ def build_upsert_query(
                 [f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields + timestamp_check_fields)]
             )
 
-            # need to figure out name of update field
+            the_join_condtion = f"where {join_condtion}" if join_condtion else ""
 
-            if True:
-                if join_condtion:
-                    the_join_condtion = f"where {join_condtion}"  # bug fix: this was a literal string missing the f-prefix
-                else:
-                    the_join_condtion = ""
+            # table_name/upd_fields_and_vals built from validated identifiers above
+            query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"  # nosec B608
 
-                # table_name/upd_fields_and_vals built from validated identifiers above
-                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"  # nosec B608
-            else:
-                # query += " select * from changed_data c left join test_agencies t on c.rid=t.rid"
-                # query += " update test_agencies as t set info_upd_ts='2021-07-01 00:00:00' from changed_data as c where c.rid=t.rid"
-                pass
-
-            query = "create temp table changed_data ON COMMIT DROP as (" + query  # BEGIN TRANSACTION; +" COMMIT;"
+            query = "create temp table changed_data ON COMMIT DROP as (" + query
         else:
             query += " select 1 from changed_data"
     else:

@@ -161,6 +161,11 @@ def test_max_workers_normal(mock_cpu):
     assert get_max_affordable_workers_count() == 7
 
 
+@patch("psutil.cpu_count", return_value=8)
+def test_max_workers_respects_reserved_cores(mock_cpu):
+    assert get_max_affordable_workers_count(reservedCores=3) == 5
+
+
 @patch("psutil.cpu_count", return_value=1)
 def test_max_workers_minimum(mock_cpu):
     assert get_max_affordable_workers_count() == 1
