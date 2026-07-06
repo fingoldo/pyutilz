@@ -80,6 +80,17 @@ jobs:
       run: mypy src/pyutilz
       continue-on-error: true
 
+    # Blocking: mirrors the pre-commit mypy hook's strict-mode beachhead (see
+    # [tool.mypy.overrides] in pyproject.toml) so a commit that passes locally
+    # cannot silently regress once pushed. numpy pinned <2.5: 2.5+'s bundled
+    # .pyi stubs use PEP 695 `type` statements that mypy rejects under
+    # python_version="3.10" ("Type statement is only supported in Python 3.12
+    # and greater").
+    - name: MyPy (strict-mode beachhead)
+      run: |
+        pip install "numpy<2.5"
+        mypy src/pyutilz/dev/code_audit src/pyutilz/stats
+
     - name: Bandit security scan
       run: bandit -r src -ll -f json -o bandit-report.json
       continue-on-error: true
