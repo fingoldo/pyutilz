@@ -37,7 +37,7 @@ from datetime import timezone, datetime
 
 def run_from_ipython():
     try:
-        return bool(__IPYTHON__)  # Check if running in IPython/Jupyter
+        return bool(__IPYTHON__)  # type: ignore[name-defined]  # IPython-injected global, only exists inside an IPython/Jupyter session
     except NameError:
         return False
 
@@ -242,7 +242,7 @@ def ensure_idle_devices(
     min_cpu_free_ram_gb: float = 1.0,
     max_gpu_load_percent: float = 15.0,
     min_gpu_free_ram_gb: float = 1.0,
-    gpu_ids: list = None,
+    gpu_ids: Optional[list] = None,
 ):
     """Ensure CPU and GPU devices are idle before running benchmarks.
 
@@ -366,7 +366,7 @@ def get_utc_unix_timestamp():
     return int(datetime.now(tz=timezone.utc).timestamp())
 
 
-def get_locale_settings(locale_name: str = "", only_fields: tuple = None) -> dict:
+def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = None) -> dict:
     """Return a dict of locale params.
 
     :param str locale_name: Desired locale name, or empty string for OS default locale.

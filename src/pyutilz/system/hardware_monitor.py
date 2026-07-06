@@ -17,6 +17,7 @@ import numpy as np
 
 from pyutilz.system.system import get_own_memory_usage, get_nvidia_smi_info
 from pyutilz.core.pythonlib import to_float
+from typing import Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Hardware Utilization Monitor
@@ -43,7 +44,7 @@ class UtilizationMonitor:
     def __init__(
         self,
         sleep_interval_seconds: float = 1.0,
-        gpu_ids: list = None,
+        gpu_ids: Optional[list] = None,
     ):
         """Initialize the utilization monitor.
 

@@ -25,6 +25,8 @@ ensure_installed("psycopg2 nltk spacy")
 # loaded by mlframe via the pyutilz.text re-export chain; not every consumer
 # needs the database stack just to use string utilities below.
 from pyutilz.database import db  # noqa: E402,F401  # used by call sites in this file
+from typing import Optional
+
 from pyutilz.text.strings import (
     merge_punctuation_signs,
     fix_broken_sentences,
@@ -162,7 +164,7 @@ class AdvancedTokenizer:
                 if last_word.isalpha() or last_word.isnumeric():
                     last_sentence_word = last_word
 
-    def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: str = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
+    def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
         # psycopg2 is the actual cursor backend - import lazily so the module
         # itself can be loaded without psycopg2 installed (only this DB-reading
         # method is gated on it).
@@ -217,7 +219,7 @@ class AdvancedTokenizer:
             if save_as:
                 self.save_tokens_to_file(file_name=save_as)
 
-    def save_tokens_to_file(self, file_name: str, desired_vars: list = None):
+    def save_tokens_to_file(self, file_name: str, desired_vars: Optional[list] = None):
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # Save computed data
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------

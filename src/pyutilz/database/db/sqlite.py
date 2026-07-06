@@ -10,14 +10,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 from os.path import join, exists
 
 from pyutilz.database.db.sql_helpers import validate_sql_identifier
 
 
-def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = None) -> bool:
+def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: Optional[str] = None) -> bool:
 
     if not schema_fpath:
         schema_fpath = join("database", "schema.sql")

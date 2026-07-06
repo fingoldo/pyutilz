@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Iterable
+from typing import Iterable, Optional
 import numpy as np
 
 
@@ -93,7 +93,7 @@ def compute_concentrations(
     sort_by_concentration: bool = True,
     add_mean_concentration: bool = True,
     dtype: object = pl.Float64,
-    fields_remap: dict = None,
+    fields_remap: Optional[dict] = None,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
     groupby_columns must include both group_byand index_column arguments pased to group_by_dynamic.
@@ -164,7 +164,7 @@ def compute_concentrations(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: dict = None) -> list:
+def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: Optional[dict] = None) -> list:
     """Computes weighted aggregates."""
     if not fields_remap:
         fields_remap = {}
@@ -183,45 +183,45 @@ def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterabl
 def build_aggregate_features_polars(
     df: pl.DataFrame,
     #
-    boolean_fields: list = None,
-    numerical_fields: list = None,
-    categorical_fields: list = None,
-    ts_diff_fields: list = None,
-    exclude_fields: list = None,
-    weighting_fields: list = None,
+    boolean_fields: Optional[list] = None,
+    numerical_fields: Optional[list] = None,
+    categorical_fields: Optional[list] = None,
+    ts_diff_fields: Optional[list] = None,
+    exclude_fields: Optional[list] = None,
+    weighting_fields: Optional[list] = None,
     #
-    subgroups: dict = None,
-    numaggs: list = None,
-    quantiles: list = None,
-    tds_quantiles: list = None,
+    subgroups: Optional[dict] = None,
+    numaggs: Optional[list] = None,
+    quantiles: Optional[list] = None,
+    tds_quantiles: Optional[list] = None,
     #
     engine: str = "cpu",
     dtype: object = pl.Float64,
-    fields_remap: dict = None,
+    fields_remap: Optional[dict] = None,
     nans_filler: float = 0.0,
     concentration_top_n: int = 3,
-    concentrations_params: dict = None,
+    concentrations_params: Optional[dict] = None,
     add_peaks_stats: bool = True,
-    custom_expressions: list = None,
+    custom_expressions: Optional[list] = None,
     #
     othersvals_at_extremums: bool = False,
-    othersvals_basic_fields: list = None,
-    othersvals_other_fields: list = None,
-    othersvals_excluded_fields: list = None,
+    othersvals_basic_fields: Optional[list] = None,
+    othersvals_other_fields: Optional[list] = None,
+    othersvals_excluded_fields: Optional[list] = None,
     #
-    ewm_spans: list = None,
-    ewm_timestamp: str = None,
-    ewm_time_half_lifes: list = None,
-    ewm_basic_funcs: list = None,
-    ewm_final_funcs: list = None,
+    ewm_spans: Optional[list] = None,
+    ewm_timestamp: Optional[str] = None,
+    ewm_time_half_lifes: Optional[list] = None,
+    ewm_basic_funcs: Optional[list] = None,
+    ewm_final_funcs: Optional[list] = None,
     # polars-ds features (work on AVX2+ only!)
-    pds_params: dict = None,
-    pds_numaggs: list = None,
-    corr_methods: list = None,
-    corr_fields: dict = None,
-    pds_fields: list = None,
-    linreg_fields: list = None,
-    linreg_timestamp_field: str = None,
+    pds_params: Optional[dict] = None,
+    pds_numaggs: Optional[list] = None,
+    corr_methods: Optional[list] = None,
+    corr_fields: Optional[dict] = None,
+    pds_fields: Optional[list] = None,
+    linreg_fields: Optional[list] = None,
+    linreg_timestamp_field: Optional[str] = None,
     use_parametrized_pds_features: bool = True,
 ) -> tuple:
 
@@ -582,11 +582,11 @@ def create_ts_features_polars(
     df: pl.DataFrame,
     index_column: str,
     period: str,
-    every: str = None,
-    offset: str = None,
-    closed: str = None,
+    every: Optional[str] = None,
+    offset: Optional[str] = None,
+    closed: Optional[str] = None,
     label: str = "left",
-    group_by: str = None,
+    group_by: Optional[str] = None,
     rolling: bool = False,
     include_boundaries: bool = False,
     clean_memory: bool = True,
@@ -683,12 +683,12 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
 def bin_numerical_columns(
     df: pl.DataFrame,
     target_columns: list,
-    binned_targets: pl.DataFrame = None,
+    binned_targets: Optional[pl.DataFrame] = None,
     clean_features: bool = True,
     clean_targets: bool = True,
     num_bins: int = 10,
     bin_dtype: object = pl.Int8,
-    exclude_columns: list = None,
+    exclude_columns: Optional[list] = None,
     min_nuniques_to_clip: int = 10,
     tukey_fences_multiplier: float = 3.0,
     fill_nulls: bool = True,

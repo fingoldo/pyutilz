@@ -5,23 +5,24 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from pyutilz.database.db.sql_helpers import validate_sql_identifier
+from typing import Optional
 
 
 def build_upsert_query(
     fields_names: list,
     table_name: str,
-    conflict_fields: list = None,
-    fields_types: dict = None,
-    skip_fields: list = None,
-    timestamp_check_fields: list = None,
-    timestamp_update_fields: list = None,
-    on_conflict_update_fields: list = None,
-    on_conflict_update_values: dict = None,
-    custom_onconflict: str = None,
-    returning_fields: list = None,
-    history_table_name: str = None,
-    history_fields: list = None,
-    history_fields_aliases: dict = None,
+    conflict_fields: Optional[list] = None,
+    fields_types: Optional[dict] = None,
+    skip_fields: Optional[list] = None,
+    timestamp_check_fields: Optional[list] = None,
+    timestamp_update_fields: Optional[list] = None,
+    on_conflict_update_fields: Optional[list] = None,
+    on_conflict_update_values: Optional[dict] = None,
+    custom_onconflict: Optional[str] = None,
+    returning_fields: Optional[list] = None,
+    history_table_name: Optional[str] = None,
+    history_fields: Optional[list] = None,
+    history_fields_aliases: Optional[dict] = None,
     hash_fields: str = "",
     default_timestamp: str = "now()",
 ) -> str:

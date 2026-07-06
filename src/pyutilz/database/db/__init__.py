@@ -77,6 +77,20 @@ from pyutilz.database.db.sqlite import ensure_db_tables_created, insert_sqllite_
 last_db_settings_read_at = None
 conn_alchemy = None
 PAGE_SIZE: int = 1_000_000
+# Bound for real by connect_to_db(); declared here so module-level references resolve
+# before that first call (and so static analysis can see these names exist at all).
+db_flavor = None
+conn = None
+cur = None
+cursors = None
+db_name = None
+db_host = None
+db_port = None
+db_schema = None
+username = None
+pwd = None
+init_params_fn = None
+db_sslmode = None
 # ----------------------------------------------------------------------------------------------------------------------------
 # sqlalchemy tricks
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -115,8 +129,8 @@ def connect_to_db(
     m_db_pwd,
     m_init_params_fn=None,
     m_db_flavor: str = "postgres",
-    m_db_schema: str = None,
-    m_db_sslmode: str = None,
+    m_db_schema: Optional[str] = None,
+    m_db_sslmode: Optional[str] = None,
 ):
     global db_flavor, conn, cur, cursors, conn_alchemy
     global db_name, db_host, db_port, db_schema, username, pwd, init_params_fn, db_sslmode
@@ -183,7 +197,7 @@ def connect_to_db(
             return
 
 
-def get_cursor_type(cursor_factory: object, cursor_name: str = None) -> str:
+def get_cursor_type(cursor_factory: object, cursor_name: Optional[str] = None) -> str:
     if cursor_factory is None:
         cursor_factory = psycopg2.extensions.cursor
     cursor_type = cursor_factory.__name__ + ("" if cursor_name is None else "_named")
@@ -191,7 +205,7 @@ def get_cursor_type(cursor_factory: object, cursor_name: str = None) -> str:
     return cursor_type
 
 
-def get_cursor(cursor_type: str, cursor_factory: object = None, cursor_name: str = None, itersize: int = None) -> object:
+def get_cursor(cursor_type: str, cursor_factory: object = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> object:
     global cursors
     if cursor_type in cursors and "_named" not in cursor_type:
         cur = cursors[cursor_type]
@@ -219,7 +233,7 @@ def basic_db_execute(
     cursor_factory=None,
     cursor_name=None,
     return_cursor=False,
-    itersize: int = None,
+    itersize: Optional[int] = None,
     page_size: int = PAGE_SIZE,
     max_retries: int = 5,
 ):
@@ -291,12 +305,12 @@ def basic_db_execute(
                     return []
 
 
-def safe_execute(statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: int = None):
+def safe_execute(statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: Optional[int] = None):
     return basic_db_execute("execute", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize)
 
 
 def safe_execute_values(
-    statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: int = None, page_size: int = PAGE_SIZE
+    statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: Optional[int] = None, page_size: int = PAGE_SIZE
 ):
     return basic_db_execute("execute_values", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize, page_size=page_size)
 
@@ -752,7 +766,7 @@ def create_enum_from_table(enum_name: str, table_name: str, id_field_name: str, 
     return Enum(enum_name, dct)
 
 
-def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: list = None, min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
+def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: Optional[list] = None, min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
     """
     Aim is to remove lengthy fields that mostly holds a default value from the JSON.
     Absense of some JSON field is interpreted as null in PostGres.

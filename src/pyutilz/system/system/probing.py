@@ -28,6 +28,7 @@ import os, subprocess  # nosec B404 - used throughout this module only to invoke
 
 
 from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, find_between
+from typing import Optional
 
 from ._common import remove_nas, summarize_devices, dict_to_tuple
 
@@ -147,8 +148,8 @@ def get_linux_board_info():
 
 
 def parse_dmidecode_info(
-    skip_keys: set = None,
-    skip_values: set = None,
+    skip_keys: Optional[set] = None,
+    skip_values: Optional[set] = None,
 ) -> dict:
     """Parse dmidecode output for hardware information (Linux only).
 

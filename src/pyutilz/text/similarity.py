@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 from jellyfish import levenshtein_distance
 from pyutilz.text.strings import strip_doubled_characters
+from typing import Optional
 
 
 def levenshtein_strings_similarity(a: str, b: str) -> float:
@@ -176,7 +177,7 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
 
 
 def normalize_sentence(
-    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: list = None
+    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: Optional[list] = None
 ) -> list:
     """
     Нормализуем предложение:

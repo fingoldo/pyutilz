@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -225,10 +226,10 @@ def dict_to_tuple(d: dict):
 
 def get_wmi_obj_as_dict(
     obj,
-    exclude_pros: set = None,
-    ensure_float: set = None,
-    ensure_int: set = None,
-    decode_dict: dict = None,
+    exclude_pros: Optional[set] = None,
+    ensure_float: Optional[set] = None,
+    ensure_int: Optional[set] = None,
+    decode_dict: Optional[dict] = None,
 ):
     """Convert WMI object to dictionary with type conversion.
 
@@ -273,10 +274,10 @@ def get_wmi_obj_as_dict(
 
 def summarize_devices(
     devices,
-    exclude_pros: set = None,
-    ensure_float: set = None,
-    ensure_int: set = None,
-    decode_dict: dict = None,
+    exclude_pros: Optional[set] = None,
+    ensure_float: Optional[set] = None,
+    ensure_int: Optional[set] = None,
+    decode_dict: Optional[dict] = None,
 ):
     """Aggregate identical hardware devices with counts.
 

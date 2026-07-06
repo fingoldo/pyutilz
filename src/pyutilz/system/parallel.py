@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 
@@ -160,7 +160,7 @@ def cpu_count_physical(fallback: int = 1) -> int:
 
 
 def parallel_run(
-    jobslist: Sequence, n_jobs: int = -1, backend: str = None, max_nbytes: int = 50_000, prefer_real_cores: bool = True, verbose: int = 0, **parallel_kwargs
+    jobslist: Sequence, n_jobs: int = -1, backend: Optional[str] = None, max_nbytes: int = 50_000, prefer_real_cores: bool = True, verbose: int = 0, **parallel_kwargs
 ):
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
     if n_jobs <= 0 and prefer_real_cores:
@@ -175,7 +175,7 @@ def parallel_run(
 def applyfunc_parallel(
     iterable: list,
     func: object,
-    n_cores: int = None,
+    n_cores: Optional[int] = None,
     return_dataframe: bool = True,
     logical: bool = False,
     initializer=None,

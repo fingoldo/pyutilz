@@ -52,6 +52,7 @@ last_session_updated_at = None
 version_main = None
 login, pwd = None, None
 browser, headers, proxy_server, target, home_page, user_agent = None, None, None, None, None, None
+TheCookies = None
 data_dir = None  # "chrome-data"
 logout_signs = "Sign-In"
 successful_login_signs = ()  # Define as empty tuple, to be overridden by user

@@ -19,6 +19,7 @@ from ._common import (
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection (see below)
 
 from .dtypes import optimize_dtypes
+from typing import Optional
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
@@ -33,7 +34,7 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
 
 
 def concat_and_flush_df_list(
-    lst: list, file_name: str, to_csv: bool = False, csv_cols: list = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: str = None
+    lst: list, file_name: str, to_csv: bool = False, csv_cols: Optional[list] = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: Optional[str] = None
 ) -> object:
 
     if len(lst) > 0:
@@ -58,14 +59,14 @@ def read_stats_from_multiple_files(
     folder: str = "features",
     max_files: int = 250,
     template: str = "*.pckl",
-    exclude: str = None,
+    exclude: Optional[str] = None,
     read_fcn: str = "read_pickle",
     write_fcn: str = "to_pickle",
     write_extension: str = "pckl",
     delete_after: bool = False,
-    sentinel_field: str = None,
+    sentinel_field: Optional[str] = None,
     sentinel_fcn: object = None,
-    set_index: str = None,
+    set_index: Optional[str] = None,
     optimize: bool = False,
     save_on_successful_optimization: bool = False,
     min_size_improvement_percent: float = 0.05,

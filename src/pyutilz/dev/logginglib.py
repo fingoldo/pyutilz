@@ -46,7 +46,7 @@ def init_logging(
     ),
     log_to_file: bool = True,
     maxBytes: int = 5_000_000,
-    forced_filename: str = None,
+    forced_filename: Optional[str] = None,
 ):
     """Configure the root logger with file (rotating) and stream handlers.
 
@@ -178,7 +178,7 @@ def _close_opened_activities(activities: dict) -> float:
     return last_activity_duration
 
 
-def finalize_function_log(results_log: dict, db_path: str = None, verbose: bool = False) -> dict:
+def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verbose: bool = False) -> dict:
     """
     db_path: shema.table. example: logging.api_calls
     fields: list of fields. example: module, function, params, results
@@ -230,7 +230,7 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
     return last_activity_duration
 
 
-def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: dict = None, lang: str = None, verbose: bool = False):
+def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False):
     if results_log is None:
         results_log = {}
     assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
@@ -260,7 +260,7 @@ def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", res
         _message(message)
 
 
-def logged(db_path: str = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
+def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
     def decorator_logged(func):
         @functools.wraps(func)
         def wrapper_logged(*args, **kwargs):

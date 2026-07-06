@@ -21,11 +21,12 @@ from pyutilz.web import graphql
 from pyutilz.text import strings
 from time import sleep
 import prefect
+from typing import Optional
 
 client = None
 
 
-def connect(prefect_key: str = None) -> None:
+def connect(prefect_key: Optional[str] = None) -> None:
     global client
     if prefect_key is None:
         strings.read_config_file(
@@ -45,7 +46,7 @@ def get_schema() -> dict:
     if client: return graphql.query_schema()
     return {}
 
-def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels,start_time",status:str=None) -> list:
+def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels,start_time",status:Optional[str]=None) -> list:
     variables={}
     if status: variables["status"]=status
     if client:
@@ -69,7 +70,7 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
         return flows
     return []
 
-def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id:str=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->list:
+def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=None,except_flowrun_id:Optional[str]=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->list:
     """
     flow_id - can be used to check if an instance of the same flow is already running.
     ie, no need to do inference if previous one is still running
@@ -107,9 +108,9 @@ def get_running_flows(flow_id:str=None,except_flow_id:str=None,except_flowrun_id
     return []
 
 def wait_for_absense_of_tasks(
-    flow_id: str = None,
-    except_flowrun_id: str = None,
-    labels: set = None,
+    flow_id: Optional[str] = None,
+    except_flowrun_id: Optional[str] = None,
+    labels: Optional[set] = None,
     sleep_seconds: int = 10,
     max_retries: int = 60,
     logger: object = None,

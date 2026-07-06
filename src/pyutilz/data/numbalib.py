@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numba
 import numpy as np
@@ -33,7 +33,7 @@ def set_numba_random_seed(random_seed: int):
     np.random.seed(random_seed)
 
 
-def set_random_seed(random_seed: int = None):
+def set_random_seed(random_seed: Optional[int] = None):
     """Convenience wrapper that handles None defaults before calling numba function."""
     if random_seed is None:
         random_seed = 42

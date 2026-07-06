@@ -19,6 +19,7 @@ import concurrent.futures
 from functools import wraps
 from datetime import datetime
 from timeit import default_timer as timer
+from typing import Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # INITS
@@ -38,7 +39,7 @@ atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 
 
 def job_completed(
-    job_id: str, status: int = 0, data: str = None, provider: str = "healthchecks.io", api_key: str = None, blocking: bool = True
+    job_id: str, status: int = 0, data: Optional[str] = None, provider: str = "healthchecks.io", api_key: Optional[str] = None, blocking: bool = True
 ):
     """Ping a dead-man's-switch monitoring provider (healthchecks.io / cronitor.io) that a job completed.
 
@@ -98,14 +99,14 @@ def job_completed(
 
 
 def monitored(
-    job_id: str = None,
+    job_id: Optional[str] = None,
     status: int = 0,
     log_data: bool = True,
     should_have_data: bool = False,
     duration_field: str = "duration",
     duration_rounding: int = 4,
     provider: str = "healthchecks.io",
-    api_key: str = None,
+    api_key: Optional[str] = None,
 ):
     def decorator_logged(func):
         @functools.wraps(func)

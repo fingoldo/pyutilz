@@ -105,7 +105,7 @@ def get_own_memory_usage() -> "Optional[float]":
     return memory_usage
 
 
-def trim_windows_process_memory(pid: int = None) -> bool:
+def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
     """Causes effect similar to malloc_trim on -nix."""
 
     # Define SIZE_T based on the platform (32-bit or 64-bit)

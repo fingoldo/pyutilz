@@ -44,6 +44,21 @@ cur_max_ip_queries = -1
 proxy_server = None
 was_blocked = False
 
+# Bound for real by init_vars() / set_proxy_credentials(); declared here so module-level
+# references resolve before the first call (and so static analysis can see these names exist).
+sess = None
+num_ip_queries = 0
+template_headers = None
+headers = None
+proxies = None
+timeout = 10
+proxy_user = None
+proxy_pass = None
+proxy_min_port = None
+proxy_max_port = None
+proxy_port = None
+proxy_type = None
+
 _ALLOWED_URL_SCHEMES = ("http", "https")
 
 
@@ -270,9 +285,9 @@ def get_new_smartproxy(
     proxy_min_port: int = 20001,
     proxy_max_port: int = 37960,
     job_desc: str = "",
-    last_used_dict: dict = None,
+    last_used_dict: Optional[dict] = None,
     min_idle_interval_minutes: float = 0,
-    failed_dict: dict = None,
+    failed_dict: Optional[dict] = None,
     min_failed_idle_interval_minutes: float = 60 * 24,
     warn_after_n_failures: int = 5,
     delay: int = 5,
@@ -343,8 +358,8 @@ def get_url(
     b_use_proxy=True,
     b_use_session=True,
     verbose=False,
-    custom_headers: dict = None,
-    inject_headers: dict = None,
+    custom_headers: Optional[dict] = None,
+    inject_headers: Optional[dict] = None,
     sort_headers: bool = True,
     lowercase_headers: bool = True,
     ratelimited_sleep_interval: int = 30,
@@ -561,7 +576,7 @@ def download_to_file(
     timeout: int = 100,
     chunk_size: int = 1024,
     max_attempts: int = 5,
-    headers: dict = None,
+    headers: Optional[dict] = None,
     exit_codes: tuple = (),
 ):
     """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long."""

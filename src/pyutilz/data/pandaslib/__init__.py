@@ -107,4 +107,4 @@ from .benchmarks import (
 # pre-split flat module exactly (only public symbols, no submodule attributes).
 # ----------------------------------------------------------------------------------------------------------------------------
 
-del dtypes, frames, io_ops, benchmarks  # noqa: F821
+del dtypes, frames, io_ops, benchmarks  # noqa: F821  # type: ignore[name-defined]  # submodule names bound implicitly by the `from .X import ...` imports above

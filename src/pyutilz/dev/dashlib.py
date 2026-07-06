@@ -21,6 +21,7 @@ from flask import session
 
 from dash import html
 import dash_bootstrap_components as dbc
+from typing import Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Inits
@@ -286,9 +287,9 @@ def create_tabs(
     content: str = "",
     prefix: str = "tab",
     roles_separator: str = ",",
-    tabsClassName: str = None,
-    contentClassName: str = None,
-    activeLabelClassName: str = None,
+    tabsClassName: Optional[str] = None,
+    contentClassName: Optional[str] = None,
+    activeLabelClassName: Optional[str] = None,
     use_cardstyle: bool = False,
 ):
     """

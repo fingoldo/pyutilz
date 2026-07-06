@@ -176,7 +176,7 @@ def get_attr(obj: dict, attr_name: str, default_value: object = None, unwanted_v
         return res
 
 
-def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 10.0, key_contains: str = None) -> bool:
+def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 10.0, key_contains: Optional[str] = None) -> bool:
     """Signals if numerical keys (optionally containing some value) of a dict-like object have changed by at least some percent.
     >>>keys_changed_enough(obj={"a": 100, "b": 180, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
     True
@@ -389,8 +389,8 @@ def utc_to_local(utc_dt):
 
 def utc_ts_2_locstr(
     inp_dt: str,
-    dst: int = None,
-    dst_names: dict = None,
+    dst: Optional[int] = None,
+    dst_names: Optional[dict] = None,
     input_date_format="%Y-%m-%dT%H:%M:%S.%f",
     output_date_format="%Y-%m-%d %H:%M:%S",
 ) -> str:
@@ -664,7 +664,7 @@ class ObjectsAndFilesProcessor:
 
     def process_objects(
         self,
-        objects_names: Union[str, Iterable] = None,
+        objects_names: Optional[Union[str, Iterable]] = None,
         container: Optional[dict] = None,
         names_sep: str = " ",
         path: str = "",
@@ -734,7 +734,7 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
         3
     """
 
-    def __init__(self, process_fcn: Callable = joblib.dump, process_kwargs: dict = None, rewrite_existing: bool = True):
+    def __init__(self, process_fcn: Callable = joblib.dump, process_kwargs: Optional[dict] = None, rewrite_existing: bool = True):
         if process_kwargs is None:
             process_kwargs = {"compress": 9}
         self.process_fcn = process_fcn
@@ -758,7 +758,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
         3
     """
 
-    def __init__(self, process_fcn: Callable = joblib.load, process_kwargs: dict = None, rewrite_existing: bool = False):
+    def __init__(self, process_fcn: Callable = joblib.load, process_kwargs: Optional[dict] = None, rewrite_existing: bool = False):
         if process_kwargs is None:
             process_kwargs = {}
         self.process_fcn = process_fcn

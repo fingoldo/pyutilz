@@ -10,6 +10,7 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from pyutilz.core.pythonlib import ensure_installed
+from typing import Optional
 ensure_installed("")
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -23,7 +24,7 @@ def connect(graphql_client:object)->None:
     global client
     client = graphql_client
 
-def execute(query:str,variables:dict=None)->dict:
+def execute(query:str,variables:Optional[dict]=None)->dict:
     """Runs a GraphQL query. Always returns a dict; returns an empty dict on error or when no client is connected."""
     if client:
         try:

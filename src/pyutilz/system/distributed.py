@@ -35,7 +35,7 @@ _container = Container()
 m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
 
 
-def register_scraper(scraper_name: str = None, version: str = None, app_name: str = None, ip: str = None) -> Optional[Any]:
+def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] = None, app_name: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
     """Register the current process as a scraper node and emit a starting heartbeat.
 
     Resolves node identity from system info, upserts it into the ``nodes`` table,
@@ -115,7 +115,7 @@ def register_scraper(scraper_name: str = None, version: str = None, app_name: st
             return _container.node_id
 
 
-def get_heartbeat_sql(status: str = "ok", ip: str = None) -> Tuple[str, Optional[tuple]]:
+def get_heartbeat_sql(status: str = "ok", ip: Optional[str] = None) -> Tuple[str, Optional[tuple]]:
     """Generate a parameterized heartbeat UPSERT SQL query.
 
     Args:
@@ -144,7 +144,7 @@ def get_heartbeat_sql(status: str = "ok", ip: str = None) -> Tuple[str, Optional
         return ("", None)
 
 
-def heartbeat_scraper(status: str = "ok", ip: str = None) -> None:
+def heartbeat_scraper(status: str = "ok", ip: Optional[str] = None) -> None:
     """Execute a heartbeat UPSERT for the currently registered scraper node.
 
     Args:

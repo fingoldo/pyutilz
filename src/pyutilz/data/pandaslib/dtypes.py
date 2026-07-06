@@ -226,7 +226,7 @@ def group_columns_by_dtype(df: pd.DataFrame) -> dict:
     return groups
 
 
-def classify_column_types(df: pd.DataFrame = None, col: str = None, dtype: object = None) -> tuple:
+def classify_column_types(df: pd.DataFrame = None, col: Optional[str] = None, dtype: object = None) -> tuple:
     """Return bunch of booleans: whether certain column is of particualr dtype."""
     if dtype is None:
         assert (df is not None) and (col)  # nosec B101 - internal API-misuse guard: caller must supply either an explicit dtype or both df+col; not a security boundary
