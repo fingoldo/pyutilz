@@ -39,6 +39,9 @@ jobs:
       # [nlp] pulls in spacy -> thinc>=8.3.12, which requires python>=3.10; drop it on
       # 3.8/3.9 legs (pre-existing gap: this was failing "Install dependencies" outright
       # on those legs, unrelated to python_version's own end of upstream support).
+      # shell: bash explicitly -- windows-latest runners default `run:` to pwsh, which
+      # doesn't understand this bash conditional syntax.
+      shell: bash
       run: |
         python -m pip install --upgrade pip
         if [[ "${{ matrix.python-version }}" == "3.8" || "${{ matrix.python-version }}" == "3.9" ]]; then
