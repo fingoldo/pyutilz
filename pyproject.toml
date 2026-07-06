@@ -125,6 +125,11 @@ dev = [
     "bandit>=1.7"
 ]
 
+# Documentation site (MkDocs Material). Build with `mkdocs build` / serve with `mkdocs serve`.
+docs = [
+    "mkdocs-material>=9.5",
+]
+
 [project.urls]
 Homepage = "https://github.com/fingoldo/pyutilz"
 Repository = "https://github.com/fingoldo/pyutilz.git"

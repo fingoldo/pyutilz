@@ -1,0 +1,66 @@
+name: docs
+
+# Build the MkDocs site on every PR (validation) and deploy it to GitHub Pages
+# on pushes to master. Enable Pages for the repo with "GitHub Actions" as the
+# source for the deploy job to publish.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install docs dependencies
+        run: |
+          pip install -e . --no-deps
+          pip install "mkdocs-material>=9.5"
+
+      - name: Build site
+        run: mkdocs build --site-dir site
+
+      - name: Upload Pages artifact
+        # Gated on the PUBLISH_DOCS repo variable alongside the deploy job below, so the
+        # artifact is only produced when publishing is actually enabled.
+        if: github.ref == 'refs/heads/master' && vars.PUBLISH_DOCS == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy to GitHub Pages
+    # Opt-in publish: the deploy step fails with "Ensure GitHub Pages has been enabled" until Pages is
+    # turned on for the repo (Settings -> Pages -> Source: GitHub Actions), which reds every push. Gate it
+    # on the PUBLISH_DOCS repo variable so it is SKIPPED (green) by default; to publish, enable Pages and set
+    # repo variable PUBLISH_DOCS=true. The build-site job above still validates the docs build on every run.
+    if: github.ref == 'refs/heads/master' && vars.PUBLISH_DOCS == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
