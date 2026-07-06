@@ -63,6 +63,27 @@ class TestSerialize:
             if os.path.exists(file_path):
                 os.remove(file_path)
 
+    def test_serialize_to_a_not_yet_existing_file_path(self, tmp_path):
+        """Bug: serialize() passed fname (the FILE path) to ensure_dir_exists(), which
+        os.makedirs()'d a DIRECTORY at that exact path whenever it didn't already exist --
+        the subsequent open(fname, "wb") then failed with PermissionError (can't open a
+        directory for writing). Every prior test used tempfile.mkstemp() (which pre-creates
+        the file), so os.path.exists(fname) was already True and the buggy makedirs() call
+        never fired -- this is the first test to serialize() straight to a path that doesn't
+        exist yet, the common "write a new file" case."""
+        p = tmp_path / "brand_new_file.pkl"
+        assert not p.exists()
+        assert serialize({"a": 1}, fname=str(p)) is True
+        assert p.is_file()
+        assert unserialize(str(p)) == {"a": 1}
+
+    def test_serialize_creates_missing_parent_directories(self, tmp_path):
+        """serialize() must also create intermediate directories that don't exist yet."""
+        p = tmp_path / "nested" / "subdir" / "file.pkl"
+        assert serialize({"a": 1}, fname=str(p)) is True
+        assert p.is_file()
+        assert unserialize(str(p)) == {"a": 1}
+
     def test_serialize_compression_levels(self):
         """Test different compression levels"""
         data = {"key": "value" * 100}  # Repetitive data compresses well
@@ -184,3 +205,44 @@ class TestEdgeCases:
         result = unserialize(raw, compression=9)
         # Either returns data or None (if decompression fails)
         assert result is None or isinstance(result, dict)
+
+
+class TestUnserializeSidecarVerification:
+    """verify_sidecar= is opt-in (default False) so existing callers are unaffected; when True
+    and obj is a file path, it requires a matching pyutilz.core.safe_pickle sidecar before
+    unpickling."""
+
+    def test_default_false_loads_without_a_sidecar(self, tmp_path):
+        p = tmp_path / "no_sidecar.pkl"
+        serialize({"a": 1}, fname=str(p))
+        assert unserialize(str(p)) == {"a": 1}
+
+    def test_verify_sidecar_true_without_sidecar_returns_none(self, tmp_path, caplog):
+        p = tmp_path / "no_sidecar.pkl"
+        serialize({"a": 1}, fname=str(p))
+        result = unserialize(str(p), verify_sidecar=True)
+        assert result is None
+
+    def test_verify_sidecar_true_with_matching_sidecar_loads(self, tmp_path):
+        from pyutilz.core.safe_pickle import write_sidecar
+
+        p = tmp_path / "with_sidecar.pkl"
+        serialize({"a": 1}, fname=str(p))
+        write_sidecar(str(p))
+        assert unserialize(str(p), verify_sidecar=True) == {"a": 1}
+
+    def test_verify_sidecar_true_with_stale_sidecar_returns_none(self, tmp_path):
+        from pyutilz.core.safe_pickle import write_sidecar
+
+        p = tmp_path / "stale_sidecar.pkl"
+        serialize({"a": 1}, fname=str(p))
+        write_sidecar(str(p))
+        # Overwrite the payload after the sidecar was written -- digest now stale.
+        serialize({"a": 2}, fname=str(p))
+        assert unserialize(str(p), verify_sidecar=True) is None
+
+    def test_verify_sidecar_has_no_effect_on_in_memory_bytes(self):
+        data = {"a": 1}
+        raw = serialize(data)
+        # No file path involved -- verify_sidecar is a no-op here, not an error.
+        assert unserialize(raw, verify_sidecar=True) == data
