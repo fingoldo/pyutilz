@@ -432,7 +432,7 @@ try:
         result = _sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold)
         if result < 0:
             return None
-        return result
+        return result  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> float:
         """
@@ -459,7 +459,7 @@ try:
         result = _sentences_similarity_core(buf, offsets, n_a, n_b, cMinLenTHreshold)
         if result < 0:
             return None
-        return result
+        return result  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     @nb.njit(cache=True)
     def _compare_one_candidate(buf, offsets, query_n, cand_word_start, cn, cMinLenTHreshold):

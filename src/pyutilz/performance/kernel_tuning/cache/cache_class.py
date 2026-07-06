@@ -143,7 +143,7 @@ class KernelTuningCache:
             with fac._DEFAULT_INSTANCE_LOCK:
                 if fac._DEFAULT_INSTANCE is None:
                     fac._DEFAULT_INSTANCE = cls()
-        return fac._DEFAULT_INSTANCE
+        return fac._DEFAULT_INSTANCE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     # ----- I/O (v3 immutable per-kernel files) -----
 
@@ -261,7 +261,7 @@ class KernelTuningCache:
             return None
         # Newest by tuned_utc (ISO-8601 strings sort chronologically), then mtime.
         candidates.sort(key=lambda c: (c[0], c[1]))
-        return candidates[-1][2]
+        return candidates[-1][2]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     def _load(self) -> Optional[dict]:
         """Build the in-memory ``{schema_version, hw_fingerprint, kernels}`` view

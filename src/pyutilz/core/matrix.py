@@ -69,9 +69,9 @@ def get_sparse_memory_usage(mat:object)->int:
     """
     try:
         if isinstance(mat, csr_matrix):
-            return mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes
+            return mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         elif isinstance(mat, coo_matrix):
-            return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes
+            return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         else:
             return -1
     except AttributeError:

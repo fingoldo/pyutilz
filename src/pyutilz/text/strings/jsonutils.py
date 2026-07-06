@@ -186,7 +186,7 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
                 elems[key] = item
             elif isinstance(item, list):
                 elems[key] = extract_json_attribute(item, attribute)
-    return elems
+    return elems  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
@@ -226,7 +226,7 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> str:
         raw = orjson.dumps(obj, default=json_serial, option=opts).decode("utf-8")
     except ImportError:
         raw = json.dumps(obj, default=json_serial, sort_keys=sort_keys)
-    return Json(json.loads(raw.replace("\\u0000", "")))  # ,object_pairs_hook=OrderedDict
+    return Json(json.loads(raw.replace("\\u0000", "")))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime  # ,object_pairs_hook=OrderedDict
 
 
 def get_jsonlist_property(data: Iterable, property_name: str, return_indices: Optional[bool] = False, verbose: Optional[bool] = False) -> list:

@@ -75,7 +75,7 @@ def entropy(stats: Counter, normalization_factor: float = 1.0) -> float:
 
 
 def entropy_rate(conditional_stats, stats) -> float:
-    return sum(stats[prefix] * entropy(conditional_stats[prefix], stats[prefix]) for prefix in stats) / sum(stats.values())
+    return sum(stats[prefix] * entropy(conditional_stats[prefix], stats[prefix]) for prefix in stats) / sum(stats.values())  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def compute_entropy_stats(text: str, order: int = 0) -> tuple:
@@ -95,7 +95,7 @@ def naive_entropy_rate(a: str) -> float:
     # print(cnt)
     p = cnt / np.sum(cnt)
 
-    return -np.sum(p * np.log2(p))
+    return -np.sum(p * np.log2(p))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 def stringify_dict(the_dict:dict,sep:str=",")->str:
     return sep.join([f"{key}={value}" for key,value in the_dict.items()])

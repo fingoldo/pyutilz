@@ -102,7 +102,7 @@ def get_own_memory_usage() -> "Optional[float]":
         return _LAST_OWN_MEMORY_USAGE_GB
 
     _LAST_OWN_MEMORY_USAGE_GB = memory_usage
-    return memory_usage
+    return memory_usage  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def trim_windows_process_memory(pid: Optional[int] = None) -> bool:

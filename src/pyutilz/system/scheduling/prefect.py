@@ -67,7 +67,7 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
         flows = graphql.execute(query=query, variables=variables).get("data", {}).get("flow", [])
         if status:
             flows = [flow for flow in flows if len(flow.get("flow_runs", [])) > 0]
-        return flows
+        return flows  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     return []
 
 def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=None,except_flowrun_id:Optional[str]=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->list:

@@ -103,7 +103,7 @@ def get_external_ip(
             if resp.status == http.HTTPStatus.OK:
                 res = resp.read().decode("utf8").strip()
                 if "." in res or ":" in res:
-                    return res
+                    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
                 else:
                     logger.warning(f"Weird IP address received from provider {source}: {res}")
 

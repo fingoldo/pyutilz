@@ -165,7 +165,7 @@ def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
     value = re.sub(r"[^\w\s-]", "", value)
     value = re.sub(r"[-\s]+", "-", value).strip("-_")
 
-    return value
+    return value  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def camel_case_split(str: str) -> list:

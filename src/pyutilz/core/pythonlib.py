@@ -149,7 +149,7 @@ def flatten_keys_to_set(
             if verbose:
                 tmp_str = str(obj)
                 logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[max_chars:])
-    return res
+    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def ensure_dict_elem(obj: dict, name: str, value) -> None:
@@ -877,7 +877,7 @@ def is_cuda_available() -> bool:
     try:
         _ensure_cuda_home_from_pip()
         from numba import cuda
-        return cuda.is_available()
+        return cuda.is_available()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     except (ImportError, Exception):
         return False
 

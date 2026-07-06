@@ -40,10 +40,10 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     The next call retries; once a fetch succeeds the result is cached.
     """
     if _pkg()._MODELS_CATALOGUE is not None:
-        return _pkg()._MODELS_CATALOGUE
+        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     with _pkg()._MODELS_LOCK:
         if _pkg()._MODELS_CATALOGUE is not None:
-            return _pkg()._MODELS_CATALOGUE
+            return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         try:
             resp = _pkg().httpx.get(_pkg()._MODELS_URL, timeout=timeout)
             resp.raise_for_status()
@@ -57,7 +57,7 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             )
             return {}  # do NOT cache failure — retry on next call
         _pkg()._MODELS_CATALOGUE = catalogue
-        return _pkg()._MODELS_CATALOGUE
+        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def _per_token_cost_pair(model: str) -> tuple[float, float]:

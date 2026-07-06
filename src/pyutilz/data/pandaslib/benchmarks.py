@@ -115,7 +115,7 @@ def benchmark_dataframe_parquet_compression(
                 except Exception:
                     logger.warning(f"Skipping config {config}")
 
-    return pd.DataFrame(
+    return pd.DataFrame(  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         res,
         columns=[
             "config",

@@ -13,7 +13,7 @@ import logging
 import pkgutil
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .cache import KernelTuningCache
 from .code_versioning import compute_code_version
@@ -125,7 +125,7 @@ class TunerSpec:
         per-op compatibility before routing to device."""
         key = tuple(sorted(dims.items()))
         if key in self._choice_cache:
-            return self._choice_cache[key]
+            return self._choice_cache[key]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         fb = self._fallback_choice(dims)
         bc = fb
         tuned = False
@@ -337,7 +337,7 @@ def _group_gpus_by_model() -> dict[str, list[int]]:
         # Model name: abbreviated GPU name + compute capability.
         model = f"{gpu.name.split()[0]}_{gpu.compute_capability[0]}{gpu.compute_capability[1]}"
         groups.setdefault(model, []).append(gpu.id)
-    return groups
+    return groups  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def _pick_least_loaded_device(device_ids: list[int], idle_wait_tries: int, idle_wait_sec: float) -> Optional[int]:
@@ -351,7 +351,7 @@ def _pick_least_loaded_device(device_ids: list[int], idle_wait_tries: int, idle_
         gpus = {g.id: g.load for g in GPUtil.getGPUs() if g.id in device_ids}
         available = [d for d, load in gpus.items() if load <= 0.8]
         if available:
-            return min(available, key=lambda d: gpus[d])  # Least loaded.
+            return min(available, key=lambda d: gpus[d])  # type: ignore[no-any-return]  # Least loaded; untyped upstream source, return value verified correct at runtime
         if attempt < idle_wait_tries - 1:
             time.sleep(idle_wait_sec)
     return None

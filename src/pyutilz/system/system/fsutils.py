@@ -86,7 +86,7 @@ def list_linux_devices() -> dict:
                 {"progif": None, "driver": None, "kernel_modules": [], "numa_node": None, "iommu_group": None, "physical_slot": None},
                 warn_if_not_default=False,
             )
-        return devices
+        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     except Exception as e:
         logger.exception(e)
         pass

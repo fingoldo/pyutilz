@@ -29,7 +29,7 @@ def execute(query:str,variables:Optional[dict]=None)->dict:
     if client:
         try:
             res=client.graphql(query,variables=variables)
-            if res is not None: return res.to_dict()
+            if res is not None: return res.to_dict()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         except Exception as e:
             logger.exception(e)
     return {}

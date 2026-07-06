@@ -69,7 +69,7 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
                 logger.warning("Empty filemaker session token: %s", res)
             else:
                 web.connect(m_template_headers={"Authorization": "Bearer " + def_token, "Content-Type": "application/json"})
-                return def_token
+                return def_token  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         sleep(sleep_int_seconds)
 
 

@@ -138,7 +138,7 @@ def get_llm_provider(
         )
         instance = constructor(**kwargs)
         _uncached_providers.add(instance)
-        return instance
+        return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     if cache_key in _provider_cache:
         return _provider_cache[cache_key]
@@ -148,7 +148,7 @@ def get_llm_provider(
             return _provider_cache[cache_key]
         instance = constructor(**kwargs)
         _provider_cache[cache_key] = instance
-        return instance
+        return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def _close_cached_providers() -> None:

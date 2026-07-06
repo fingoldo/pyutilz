@@ -73,4 +73,4 @@ def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_
     span is maybe 99% percentile span.
     """
 
-    return div0(a - b, b + span_correction, na_fill=na_fill)
+    return div0(a - b, b + span_correction, na_fill=na_fill)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime

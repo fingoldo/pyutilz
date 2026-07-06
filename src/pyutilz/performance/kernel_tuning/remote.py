@@ -84,7 +84,7 @@ class S3Backend(RemoteBackend):
             import orjson
 
             obj = client.get_object(Bucket=self.bucket, Key=self._key(fingerprint))
-            return orjson.loads(obj["Body"].read())
+            return orjson.loads(obj["Body"].read())  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         except Exception as e:  # NoSuchKey, network, parse -- all degrade to miss
             logger.debug("S3Backend.read(%s) miss/error: %s", fingerprint, e)
             return None

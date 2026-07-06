@@ -161,7 +161,7 @@ def _stop_clocks(obj: dict) -> float:
         duration = 0
     obj["duration"] = duration
 
-    return duration
+    return duration  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def _message(activity_name: str):

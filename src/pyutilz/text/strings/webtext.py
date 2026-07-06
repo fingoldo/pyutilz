@@ -4,7 +4,7 @@
 
 from ._logproxy import logger
 
-from typing import Optional
+from typing import List, Optional
 import string
 import pandas as pd
 
@@ -70,7 +70,7 @@ def parse_html(text: str, sep=". ") -> str:
     from bs4 import BeautifulSoup
 
     if not pd.isnull(text):
-        return sep.join(BeautifulSoup(text, "html.parser").findAll(text=True))
+        return sep.join(BeautifulSoup(text, "html.parser").findAll(string=True))  # type: ignore[call-arg, no-any-return]  # bs4's installed type stubs don't declare either text= or string=, but string= is the modern non-deprecated runtime kwarg
 
 
 def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
@@ -226,8 +226,13 @@ def fix_missed_space_between_sentences(text: str) -> str:
     return text
 
 
-def merge_punctuation_signs(sent: str) -> str:
-    merged: List[Any] = []
+def merge_punctuation_signs(sent: List[str]) -> List[str]:
+    """Merge consecutive end-of-sentence punctuation tokens (e.g. ["...", "!"]) into one.
+
+    ``sent`` is a list of word/punctuation tokens (e.g. ``nltk.word_tokenize()`` output),
+    not a raw string -- the original ``str -> str`` annotation was stale/incorrect.
+    """
+    merged: List[str] = []
     for i, word in enumerate(sent):
         if i > 0:
             if word in eos:

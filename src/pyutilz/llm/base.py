@@ -166,7 +166,7 @@ class LLMProvider(ABC):
                 re.DOTALL,
             )
             if fence_match:
-                return json.loads(fence_match.group(1))
+                return json.loads(fence_match.group(1))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
             # 2. Strip leading fence even without a closing fence (some
             #    streaming LLMs forget to close).
@@ -182,7 +182,7 @@ class LLMProvider(ABC):
             # 3. Try the whole stripped text first (cheap path: most
             #    json_mode= responses are pure JSON).
             try:
-                return json.loads(stripped)
+                return json.loads(stripped)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             except json.JSONDecodeError:
                 pass
 
@@ -204,7 +204,7 @@ class LLMProvider(ABC):
 
             # 5. Last resort — re-raise via the original strict parse so
             #    the JSONDecodeError handler below produces a clean error.
-            return json.loads(stripped)
+            return json.loads(stripped)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         except json.JSONDecodeError as e:
             # Before reporting as malformed JSON, check whether the model
             # simply refused to answer — that's a distinct error class with

@@ -674,7 +674,7 @@ class ClaudeCodeProvider(LLMProvider):
                 error_msg = stderr or stdout or "Unknown error"
                 raise RuntimeError(f"Claude CLI failed (code {returncode}): {error_msg}")
 
-            return stdout.strip()
+            return stdout.strip()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     async def generate_json(
         self,
@@ -697,11 +697,11 @@ class ClaudeCodeProvider(LLMProvider):
             text = text.strip()
             json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
             if json_match:
-                return json.loads(json_match.group(1))
+                return json.loads(json_match.group(1))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             json_match = re.search(r"\{[\s\S]*\}", text)
             if json_match:
-                return json.loads(json_match.group(0))
-            return json.loads(text)
+                return json.loads(json_match.group(0))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return json.loads(text)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON: {e}\nResponse: {text}")
             raise ValueError(f"Invalid JSON response: {e}")

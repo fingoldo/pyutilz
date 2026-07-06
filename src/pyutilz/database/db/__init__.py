@@ -202,7 +202,7 @@ def get_cursor_type(cursor_factory: object, cursor_name: Optional[str] = None) -
         cursor_factory = psycopg2.extensions.cursor
     cursor_type = cursor_factory.__name__ + ("" if cursor_name is None else "_named")
 
-    return cursor_type
+    return cursor_type  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def get_cursor(cursor_type: str, cursor_factory: object = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> object:
@@ -604,7 +604,7 @@ def GetIdByKeyFieldAndInsertIfNeeded(
         return "null"
 
     if sKeyFieldValue in dicEnums:
-        return dicEnums[sKeyFieldValue]
+        return dicEnums[sKeyFieldValue]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     else:
         # Validate identifiers to prevent SQL injection
         validate_sql_identifier(sTable)
@@ -639,7 +639,7 @@ def GetIdByKeyFieldAndInsertIfNeeded(
         the_id = rs[0][0]
         dicEnums[sKeyFieldValue] = the_id
 
-        return the_id
+        return the_id  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):

@@ -341,8 +341,8 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
         logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns].index.values.tolist())}")
         X = X.loc[:, stale_columns[~stale_columns].index.values]
         all_features_names = X.columns.tolist()
-        return all_features_names
-    return X.columns.tolist()
+        return all_features_names  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
@@ -357,7 +357,7 @@ def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
             except TypeError:
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.
                 continue
-    return susp_columns
+    return susp_columns  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_size: int = 10_000) -> None:

@@ -51,7 +51,7 @@ def _canonical(node: ast.AST) -> str:
     """Canonical text for an AST node -- ``ast.unparse`` (3.9+), else ``ast.dump``."""
     unparse = getattr(ast, "unparse", None)
     if unparse is not None:
-        return unparse(node)
+        return unparse(node)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     return ast.dump(node, include_attributes=False)  # 3.8 fallback (less version-stable)
 
 

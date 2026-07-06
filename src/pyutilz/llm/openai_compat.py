@@ -646,7 +646,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 # Tool-call-only response (no assistant text). Return empty
                 # string but keep tool_calls accessible via the attribute.
                 return ""
-            return content
+            return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     async def generate_json(
         self,

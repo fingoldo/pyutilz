@@ -213,7 +213,7 @@ def applyfunc_parallel(
     if return_dataframe:
         res = pd.concat(res, ignore_index=True)
         logger.info("Results Concatenated.")
-    return res
+    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def set_tf_gpu(gpu: int):

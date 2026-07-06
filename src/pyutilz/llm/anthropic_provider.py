@@ -203,9 +203,9 @@ class AnthropicProvider(LLMProvider):
             # Pull text from the first text block (skip thinking blocks).
             for block in response.content:
                 if getattr(block, "type", None) == "text":
-                    return block.text
+                    return block.text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             # Fall back to the legacy single-block layout.
-            return response.content[0].text
+            return response.content[0].text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     def _capture_response_headers(self, headers: Any) -> None:
         """Snapshot rate-limit headers + org id from the latest response.

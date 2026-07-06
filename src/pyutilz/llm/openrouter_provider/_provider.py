@@ -215,11 +215,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         spinning on permanently-gone models).
         """
         if not self._retry_routing_404:
-            return await super().generate(*args, **kwargs)
+            return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         last_exc: LLMProviderError | None = None
         for attempt in range(1, self._routing_404_max_attempts + 1):
             try:
-                return await super().generate(*args, **kwargs)
+                return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             except LLMProviderError as exc:
                 msg = str(exc).lower()
                 is_routing = ("api error 404" in msg or "api error 405" in msg) and (

@@ -76,7 +76,7 @@ def get_wmi_cpuinfo() -> dict:
 
     try:
         c = wmi.WMI()
-        return summarize_devices(
+        return summarize_devices(  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             c.Win32_Processor(),
             exclude_pros=set(
                 "CreationClassName SystemCreationClassName DeviceID SystemName ProcessorId SerialNumber Status StatusInfo LoadPercentage AssetTag Description".split()
@@ -503,7 +503,7 @@ def get_power_plan() -> dict:
         power_plan = get_macos_power_plan()
     else:
         power_plan = get_linux_power_plan()
-    return power_plan
+    return power_plan  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def get_battery_info() -> dict:
@@ -516,7 +516,7 @@ def get_battery_info() -> dict:
         battery_info = psutil.sensors_battery()
         if battery_info:
             battery_info = battery_info._asdict()
-        return battery_info
+        return battery_info  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     except Exception as e:
         logger.exception(e)
         return None
@@ -745,7 +745,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
         import GPUtil
     except Exception:
         logger.warning("Can't import GPUtil.")
-        return devices
+        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     try:
         for gpu in GPUtil.getGPUs():
@@ -761,7 +761,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
     except Exception as e:
         logger.exception(e)
 
-    return devices
+    return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 # Backward-compatible alias

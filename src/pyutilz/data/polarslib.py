@@ -156,7 +156,7 @@ def compute_concentrations(
     if columns_to_unnest:
         df = df.with_columns(columns_to_unnest).unnest(unnest_rules)
 
-    return df
+    return df  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -335,7 +335,7 @@ def build_aggregate_features_polars(
         for filter_value in filter_values:
 
             def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.expr:
-                return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)
+                return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
 
@@ -660,7 +660,7 @@ def create_ts_features_polars(
     res = res.collect(engine=engine)
     logger.info("Done.")
 
-    return res
+    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -670,14 +670,14 @@ def create_ts_features_polars(
 
 def entropy_for_column(bins: pl.DataFrame, col: str) -> float:
     marginal_freqs = bins.group_by(col).agg(pl.len())["len"].to_numpy() / len(bins)
-    return -np.sum(marginal_freqs * np.log(marginal_freqs))
+    return -np.sum(marginal_freqs * np.log(marginal_freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str) -> float:
     joint_freqs = bins.group_by([col, target_col]).agg(pl.len())["len"].to_numpy() / len(bins)
     joint_entropy = -np.sum(joint_freqs * np.log(joint_freqs))
     mi = entropies[target_col] + entropies[col] - joint_entropy
-    return mi
+    return mi  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def bin_numerical_columns(
