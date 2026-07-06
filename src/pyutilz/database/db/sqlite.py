@@ -14,6 +14,8 @@ from typing import Any, Dict, Iterable
 
 from os.path import join, exists
 
+from pyutilz.database.db.sql_helpers import validate_sql_identifier
+
 
 def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = None) -> bool:
 
@@ -40,10 +42,15 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: str = N
 def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: object, conn: object, verbose: int = 1):
     """Самый быстрый способ для массовых вставок"""
 
+    # Validate table/column names to prevent SQL injection
+    validate_sql_identifier(table_name)
+    for col in columns:
+        validate_sql_identifier(col)
+
     # Создаем SQL запрос
     placeholders = ", ".join(["?" for _ in columns])
     columns_str = ", ".join([f'"{col}"' if col == "GROUP" else col for col in columns])
-    sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"
+    sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"  # nosec B608 - table_name/columns validated above
 
     # Преобразуем словари в кортежи в правильном порядке
     values_list = []

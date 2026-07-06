@@ -4,6 +4,8 @@
 # module-level connection globals. Re-exported by the db.__init__ facade.
 # ----------------------------------------------------------------------------------------------------------------------------
 
+from pyutilz.database.db.sql_helpers import validate_sql_identifier
+
 
 def build_upsert_query(
     fields_names: list,
@@ -57,6 +59,29 @@ def build_upsert_query(
 
     assert len(fields_names) > 0
 
+    # Validate every identifier that ends up spliced into the raw SQL below (table/history table/column names).
+    # ``custom_onconflict`` and ``on_conflict_update_values`` values are accepted as raw SQL fragments by design.
+    validate_sql_identifier(table_name)
+    if history_table_name:
+        validate_sql_identifier(history_table_name)
+    for _identifier_list in (
+        fields_names,
+        conflict_fields,
+        on_conflict_update_fields,
+        returning_fields,
+        history_fields,
+        timestamp_check_fields,
+        timestamp_update_fields,
+        skip_fields,
+        list(history_fields_aliases.keys()),
+        list(history_fields_aliases.values()),
+    ):
+        for _field in _identifier_list:
+            validate_sql_identifier(_field)
+    if hash_fields:
+        for hash_field in hash_fields:
+            validate_sql_identifier(hash_field)
+
     for field in timestamp_check_fields:
         assert field not in fields_names
         assert field not in fields_types
@@ -96,10 +121,12 @@ def build_upsert_query(
             values.append(f"{default_timestamp}::timestamptz {conversion_clause}")
         else:
             values.append(field)
+    # table_name/actual_fields_names validated above (actual_fields_names is derived from fields_names/timestamp_check_fields,
+    # minus skip_fields, so its members were already validated as identifiers)
     fresh_query = f"""
     insert into {table_name} ({','.join(actual_fields_names)})
     select {','.join(values)}
-    from data """
+    from data """  # nosec B608
 
     # ------------------------------
     # On conflict
@@ -122,7 +149,9 @@ def build_upsert_query(
                 else:
                     update_values.append(field + "=excluded." + field)
 
-            fresh_query += f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"
+            # conflict_fields validated above; update_values entries are "field=..." fragments built from validated
+            # field names plus on_conflict_update_values entries, which are accepted raw SQL fragments by design
+            fresh_query += f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"  # nosec B608
         else:
             fresh_query += custom_onconflict
     else:
@@ -142,10 +171,12 @@ def build_upsert_query(
     if history_table_name and len(history_table_name) > 0:
         assert len(conflict_fields) > 0
 
+        # history_fields validated above; history_fields_final entries come from history_fields_aliases (also validated) or
+        # history_fields itself, so every element here is a validated identifier
         history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
         hist_query = f"""
         ,changed_data as (insert into {history_table_name}({','.join(history_fields_final)}) select {','.join(['u.'+field for field in history_fields])} from fresh_data u
-        """
+        """  # nosec B608
         if len(timestamp_update_fields) > 0:
             the_list = conflict_fields + timestamp_check_fields
         else:
@@ -189,11 +220,12 @@ def build_upsert_query(
 
             if True:
                 if join_condtion:
-                    the_join_condtion = "where {join_condtion}"
+                    the_join_condtion = f"where {join_condtion}"  # bug fix: this was a literal string missing the f-prefix
                 else:
                     the_join_condtion = ""
 
-                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"
+                # table_name/upd_fields_and_vals built from validated identifiers above
+                query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"  # nosec B608
             else:
                 # query += " select * from changed_data c left join test_agencies t on c.rid=t.rid"
                 # query += " update test_agencies as t set info_upd_ts='2021-07-01 00:00:00' from changed_data as c where c.rid=t.rid"

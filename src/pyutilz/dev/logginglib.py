@@ -27,6 +27,7 @@ from logging.handlers import RotatingFileHandler  # QueueHandler, TimedRotatingF
 from pyutilz.core.pythonlib import filter_elements_by_type, ensure_dict_elem
 from pyutilz.text.strings import json_pg_dumps, suffixize
 from pyutilz.database.db import safe_execute_values
+from pyutilz.database.db.sql_helpers import validate_sql_qualified_identifier
 
 EXTERNAL_IP = None
 # Sane default so calling log_loaded_rows()/_message() before init_logging()
@@ -188,9 +189,11 @@ def finalize_function_log(results_log: dict, db_path: str = None, verbose: bool 
     _stop_clocks(results_log["results"]["timing"])
 
     if db_path:
+        # Validate table/schema-qualified path to prevent SQL injection (db_fields is a fixed internal constant, not caller-controlled)
+        validate_sql_qualified_identifier(db_path)
         db_fields = "module,function,parameters,results,node,session"
         safe_execute_values(
-            f"insert into {db_path} ({db_fields}) values %s",
+            f"insert into {db_path} ({db_fields}) values %s",  # nosec B608 - db_path validated above; db_fields is a fixed internal constant
             [[field if not isinstance(field, dict) else json_pg_dumps(field) for field in [results_log.get(field) for field in db_fields.split(",")]]],
         )
     else:

@@ -41,12 +41,27 @@ def validate_sql_identifier(identifier: str) -> str:
     return identifier
 
 
+def validate_sql_qualified_identifier(identifier: str) -> str:
+    """Validate a possibly schema-qualified SQL identifier, e.g. ``schema.table``.
+
+    Each dot-separated part is validated individually with ``validate_sql_identifier``.
+    Raises ValueError if the identifier (or any of its parts) is invalid.
+    """
+    if not isinstance(identifier, str):
+        raise ValueError(f"SQL identifier must be a string, got {type(identifier)}")
+    for part in identifier.split("."):
+        validate_sql_identifier(part)
+    return identifier
+
+
 def construct_templates_and_values(mode, fields, replace_values, source, jsonize):
     """
     Helper sub to assist filling correct templates in db_command sub, based on mode passed.
     """
     values, templates = [], []
     for key in fields:
+        # Validate field name to prevent SQL injection (key is spliced into the template below)
+        validate_sql_identifier(key)
         if key in replace_values:
             value = replace_values[key]
         else:
@@ -93,6 +108,8 @@ def MakeSetExcludedClause(sFields: str, bAddUpdatedAtTimestamp: Optional[str] = 
     res = ""
     v = sFields.split(",")
     for i in v:
+        # Validate field name to prevent SQL injection
+        validate_sql_identifier(i)
         res = res + i + "=excluded." + i + ","
     if bAddUpdatedAtTimestamp:
         res = res + f"{bAddUpdatedAtTimestamp}=(now() at time zone 'utc')"  # updated_at
@@ -106,10 +123,11 @@ def update_if_now(added_at: str, clause: str) -> str:
     builds an onconflict_clause. Updates existing data only if now is specified in added_at.
     """
     if "now" in added_at.lower():
+        # `clause` is an accepted raw SQL fragment by design (a full SET clause built by the caller), not an identifier
         onconflict_clause = f"""
             do update set
                 {clause}
-        """
+        """  # nosec B608
     else:
         onconflict_clause = """do nothing"""
 

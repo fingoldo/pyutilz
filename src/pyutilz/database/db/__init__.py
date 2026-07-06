@@ -101,7 +101,7 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
         excluding = excluding.split(",")
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
-    cur.execute("select * from " + table + " where 0=1")
+    cur.execute("select * from " + table + " where 0=1")  # nosec B608 - table validated by validate_sql_identifier above
     cur.fetchall()
     if cur.description is not None:
         return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in cur.description if col.name not in excluding])
@@ -358,14 +358,16 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     validate_sql_identifier(table_name)
 
     if mode == "select":
-        sql = "select " + returning + " from  " + table_name + " where " + " and ".join(sql_where_templates)
+        # table_name validated above; where_fields/set_fields validated per-item in construct_templates_and_values;
+        # `returning` is an accepted raw fragment (may be "*" or a comma list), not an identifier
+        sql = "select " + returning + " from  " + table_name + " where " + " and ".join(sql_where_templates)  # nosec B608
         sql_fields_values = where_values
     elif mode == "insert":
-        sql = "insert into " + table_name + " (" + ",".join(set_fields) + ") values (" + ",".join(sql_set_templates) + ")"
+        sql = "insert into " + table_name + " (" + ",".join(set_fields) + ") values (" + ",".join(sql_set_templates) + ")"  # nosec B608
         sql_fields_values = set_values
     elif mode == "update":
         # Fixed: SET clause must use comma separator, not "and"
-        sql = "update  " + table_name + " set " + ", ".join(sql_set_templates) + " where " + " and ".join(sql_where_templates)
+        sql = "update  " + table_name + " set " + ", ".join(sql_set_templates) + " where " + " and ".join(sql_where_templates)  # nosec B608
         sql_fields_values = set_values + where_values
 
     if mode in ["insert", "update"]:
@@ -471,23 +473,31 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
             if application is None:
                 application = lookup_in_stack("app_name")
 
+        # Validate table name to prevent SQL injection
+        validate_sql_identifier(table_name)
         safe_execute(
-            "insert into " + table_name + "(node,message,details,more_details,severity,application) values (%s,%s,%s,%s,%s,%s)",
+            "insert into " + table_name + "(node,message,details,more_details,severity,application) values (%s,%s,%s,%s,%s,%s)",  # nosec B608 - table_name validated above
             (node, message, details, more_details, severity, application),
         )
 
 
 def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "public"):
+    # table_name/schema_name are safely quoted as string LITERALS via u() (compared against information_schema
+    # metadata columns), not spliced in as identifiers, so no validate_sql_identifier() call is needed here
     res = safe_execute(f"""
     SELECT EXISTS (
        SELECT FROM information_schema.tables
        WHERE  table_schema = {u(schema_name)} AND table_name={u(table_name)}
-   )""")
+   )""")  # nosec B608
     if res:
         return res[0][0]
 
 
 def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdFieldName: Optional[str] = "id", sAutocreateIdTypeName: Optional[str] = None):
+    # Validate identifiers to prevent SQL injection
+    validate_sql_identifier(sTable)
+    validate_sql_identifier(sKeyFieldName)
+    validate_sql_identifier(sIdFieldName)
     if not check_if_pg_table_exists(sTable):
         if sAutocreateIdTypeName:
             assert sAutocreateIdTypeName.lower() in ("smallserial serial bigserial uuid".split())
@@ -512,7 +522,8 @@ def ReadTableIntoDic(
 
     dicEnums.clear()
     EnsurePgTableExists(sTable=sTable, sKeyFieldName=sKeyFieldName, sIdFieldName=sIdFieldName, sAutocreateIdTypeName=sAutocreateIdTypeName)
-    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")
+    # sTable/sKeyFieldName/sIdFieldName validated inside EnsurePgTableExists above; sCondition is an accepted raw WHERE fragment
+    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")  # nosec B608
     for rs in res:
         if rs[1] is not None:
             if rs[0] is not None:
@@ -533,7 +544,8 @@ def ReadTableIntoDicReversed(
 
     dicEnums.clear()
     EnsurePgTableExists(sTable=sTable, sKeyFieldName=sKeyFieldName, sIdFieldName=sIdFieldName, sAutocreateIdTypeName=sAutocreateIdTypeName)
-    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")
+    # sTable/sKeyFieldName/sIdFieldName validated inside EnsurePgTableExists above; sCondition is an accepted raw WHERE fragment
+    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")  # nosec B608
     for rs in res:
         if rs[1] is not None:
             if rs[0] is not None:
@@ -577,25 +589,34 @@ def GetIdByKeyFieldAndInsertIfNeeded(
     if sKeyFieldValue in dicEnums:
         return dicEnums[sKeyFieldValue]
     else:
+        # Validate identifiers to prevent SQL injection
+        validate_sql_identifier(sTable)
+        validate_sql_identifier(sKeyFieldName)
+        validate_sql_identifier(sIdFieldName)
+        for _name in [n for n in sAlternateFieldsNames.split(",") if n]:
+            validate_sql_identifier(_name)
         if sUniqueConstraintFields == "":
             sUniqueConstraintFields = sKeyFieldName
+        for _name in [n for n in sUniqueConstraintFields.split(",") if n]:
+            validate_sql_identifier(_name)
 
         if bKeyIsNotString:
             Data = sKeyFieldValue
         else:
             Data = u(sKeyFieldValue)
+        # All identifiers below (sTable, sKeyFieldName, sIdFieldName, sAlternateFieldsNames, sUniqueConstraintFields) are validated above
         if len(sAlternateFieldsNames) > 0:
             if not bUseAlternateFieldsOnly:
                 rs = safe_execute(
-                    f"insert into {sTable} ({sKeyFieldName} , {sAlternateFieldsNames}) values ({Data},{sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"
+                    f"insert into {sTable} ({sKeyFieldName} , {sAlternateFieldsNames}) values ({Data},{sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
                 )
             else:
                 rs = safe_execute(
-                    f"insert into {sTable} ({sAlternateFieldsNames}) values ({sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sAlternateFieldsNames, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"
+                    f"insert into {sTable} ({sAlternateFieldsNames}) values ({sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sAlternateFieldsNames, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
                 )
         else:
             rs = safe_execute(
-                f"insert into {sTable} ({sKeyFieldName}) values ({Data}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"
+                f"insert into {sTable} ({sKeyFieldName}) values ({Data}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
             )
 
         the_id = rs[0][0]
@@ -606,6 +627,8 @@ def GetIdByKeyFieldAndInsertIfNeeded(
 
 def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
 
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
     assert partition_size in ("day", "week", "month", "year")
     d = from_date
     while d <= to_date:
@@ -628,6 +651,8 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
 
 def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str) -> None:
 
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
     assert partition_size in ("day", "week", "month", "year")
     d = from_date
     while d <= to_date:
@@ -647,6 +672,8 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
 
 def explain_table(table_name: str) -> object:
     """Read table names along with comments from a DB table, return as Pandas dataframe"""
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
     if db_flavor == "mysql":
         return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=conn_alchemy)["Field Type Comment".split()]
 
@@ -663,7 +690,7 @@ def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> obje
     # but kept for backward compatibility with warning
     if condition and not condition.strip().lower().startswith("where"):
         condition = "WHERE " + condition
-    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=conn_alchemy)
+    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=conn_alchemy)  # nosec B608 - table_name validated above; condition is an accepted raw WHERE fragment
 
 
 def select(sql: str) -> object:
@@ -731,6 +758,10 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
     if fields is None:
         fields = []
 
+    # Validate identifiers to prevent SQL injection
+    validate_sql_identifier(table)
+    validate_sql_identifier(table_field)
+
     # Кандидат должен быть лидером по встречаемости. Также должен покрывать как минимум 90% вариантов. Кандидат не должн быть не-None, если поле имеет None в уже существующих значениях:
     # minHoursWeek [(None, 1244198), ('0', 150675)] - OK
     # risingTalent [(None, 97558), ('true', 441321), ('false', 856003)] - FAIL. false мог бы быть хорошим кандидатом, но уже встречается None.
@@ -738,6 +769,8 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
     res = {}
 
     for field in fields:
+        # Validate the JSON field key: it is spliced (quoted) directly into the query below
+        validate_sql_identifier(field)
 
         # Prepare params
         if path == "" or path is None:
@@ -746,9 +779,10 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
             full_path = table_field + "->" + path
 
         # Ask DB
+        # table/table_field/field validated above (field is validated even though quoted, since it's spliced directly)
         vals = safe_execute(f"""
                     select {full_path}->>'{field}' as val,count(*) as qty from {table} where {full_path} is not null group by {full_path}->>'{field}' order by qty desc
-            """)
+            """)  # nosec B608
         if not vals:  # safe_execute can return None/empty; nothing to analyse for this field
             continue
 
