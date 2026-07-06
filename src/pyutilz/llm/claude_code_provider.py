@@ -5,6 +5,8 @@ Supports two backends:
 2. CLI fallback -- spawns `claude` CLI subprocess (breaks inside VSCode extension)
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

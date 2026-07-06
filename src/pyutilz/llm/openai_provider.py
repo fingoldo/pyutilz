@@ -1,5 +1,7 @@
 """OpenAI LLM provider via the official OpenAI-compatible chat/completions API."""
 
+from __future__ import annotations
+
 import logging
 
 import httpx

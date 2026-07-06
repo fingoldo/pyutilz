@@ -5,6 +5,8 @@ duplicated across deepseek_provider.py and xai_provider.py.
 Subclasses override a small set of hooks for provider-specific behaviour.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import random

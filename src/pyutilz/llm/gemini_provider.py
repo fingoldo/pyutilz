@@ -1,5 +1,7 @@
 """Google Gemini LLM provider using the new google.genai SDK."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor

@@ -5,6 +5,8 @@ combination returns the same instance, avoiding expensive re-initialization
 (SSL context loading, Anthropic client creation, etc.).
 """
 
+from __future__ import annotations
+
 import asyncio
 import atexit
 import logging

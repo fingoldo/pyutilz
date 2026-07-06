@@ -1,5 +1,7 @@
 """DeepSeek LLM provider using the OpenAI-compatible API."""
 
+from __future__ import annotations
+
 import logging
 
 import httpx

@@ -1,5 +1,7 @@
 """xAI (Grok) LLM provider using OpenAI-compatible chat/completions API."""
 
+from __future__ import annotations
+
 import logging
 
 from pyutilz.llm.config import get_llm_settings

@@ -5,6 +5,7 @@ Callers can also inject their own settings object into the factory.
 """
 
 from functools import lru_cache
+from typing import Optional
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,12 +20,12 @@ class LLMSettings(BaseSettings):
         extra="ignore",
     )
 
-    anthropic_api_key: SecretStr | None = None
-    gemini_api_key: SecretStr | None = None
-    deepseek_api_key: SecretStr | None = None
-    xai_api_key: SecretStr | None = None
-    openai_api_key: SecretStr | None = None
-    openrouter_api_key: SecretStr | None = None
+    anthropic_api_key: Optional[SecretStr] = None
+    gemini_api_key: Optional[SecretStr] = None
+    deepseek_api_key: Optional[SecretStr] = None
+    xai_api_key: Optional[SecretStr] = None
+    openai_api_key: Optional[SecretStr] = None
+    openrouter_api_key: Optional[SecretStr] = None
 
 
 @lru_cache()
