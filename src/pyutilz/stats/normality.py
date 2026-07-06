@@ -31,6 +31,7 @@ Reference:
 from __future__ import annotations
 
 import math
+from typing import Any, Callable
 
 import numpy as np
 
@@ -40,11 +41,11 @@ try:
 except Exception:
     _NUMBA_OK = False
 
-    def njit(*args, **kwargs):  # type: ignore[no-redef]
+    def njit(*args: Any, **kwargs: Any) -> Callable[..., Any]:  # type: ignore[no-redef]
         if args and callable(args[0]) and len(args) == 1 and not kwargs:
-            return args[0]
+            return args[0]  # type: ignore[no-any-return]
 
-        def deco(f):
+        def deco(f: Callable[..., Any]) -> Callable[..., Any]:
             return f
         return deco
 

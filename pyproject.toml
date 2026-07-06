@@ -239,7 +239,11 @@ ignore = [
 
 # MyPy type checker
 [tool.mypy]
-python_version = "3.8"
+# The project's minimum RUNTIME support may still be older; this is only the syntax-checking
+# target mypy 2.x type-checks against, and mypy 2.x dropped support for targets below 3.10
+# (raises "Python 3.8 is not supported" otherwise -- it silently fell back and kept checking,
+# but the declared target should match what mypy actually enforces).
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Too strict for now, enable gradually
@@ -249,3 +253,18 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 ignore_errors = true
+
+# Strict-mode beachhead (mirrors mlframe's approach): two small, cohesive, stable-surface
+# subpackages verified clean under strict mode as of 2026-07-06.
+# - dev.code_audit (11 files): a self-contained lint/audit CLI tool, already clean with no
+#   changes needed.
+# - stats (2 files): numba-jitted normality tests; fixed 2 real errors in the njit-fallback
+#   stub (missing annotations on the *args/**kwargs decorator pattern).
+# Expansion to other subpackages should follow only after each is independently verified
+# clean, same policy as mlframe.
+[[tool.mypy.overrides]]
+module = ["pyutilz.dev.code_audit.*", "pyutilz.stats.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+no_implicit_optional = true

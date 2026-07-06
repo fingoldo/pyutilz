@@ -83,3 +83,29 @@ repos:
         types: [python]
         verbose: true
         stages: [pre-commit]
+
+  # MyPy: scoped to the strict-mode beachhead (see [tool.mypy.overrides] in
+  # pyproject.toml) -- dev.code_audit and stats, both verified clean 2026-07-06.
+  # Expanding the files= regex is gated on a dedicated typing pass per subpackage,
+  # same policy as mlframe. numpy pinned <2.5: 2.5+'s bundled .pyi stubs use PEP 695
+  # `type` statements that mypy rejects under python_version="3.10".
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: '^src/pyutilz/(dev/code_audit|stats)/'
+        additional_dependencies: ['numpy<2.5']
+
+  # Warn-only security-lint gate: bandit -ll (medium+ severity), mirroring the
+  # advisory CI step (continue-on-error) so findings surface locally too, before
+  # only showing up later in the CI artifact. See scripts/bandit_warn.py.
+  - repo: local
+    hooks:
+      - id: bandit-warn
+        name: "bandit security scan (warn-only)"
+        entry: python scripts/bandit_warn.py
+        language: system
+        types: [python]
+        files: '^src/pyutilz/'
+        verbose: true
+        stages: [pre-commit]
