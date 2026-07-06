@@ -253,7 +253,15 @@ def capture_module_surface(mod: object) -> dict[str, str]:
         elif callable(obj):
             out[name] = "callable" + capture_signature(obj)
         else:
-            out[name] = f"value:{type(obj).__name__}"
+            # Plain values are captured WITHOUT their concrete type. Several pyutilz modules use a
+            # `_singleton = None` module global that a lazy-init function replaces with a real
+            # instance on first use (e.g. webtext.inflect_engine, webtext.nlp) -- whether that has
+            # happened yet depends on pytest's execution order within the process, so pinning
+            # "value:NoneType" vs "value:engine" produces an order-dependent flake, not a real API
+            # change. The test's own stated purpose is catching symbol REMOVAL/RENAME, not a
+            # value's type drifting, so dropping the type here is a deliberate narrowing of scope,
+            # not a loss of a guarantee this test ever meant to provide.
+            out[name] = "value"
     return out
 
 
