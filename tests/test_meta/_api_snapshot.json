@@ -165,7 +165,8 @@
       "random": "callable()",
       "safe_execute_values": "callable(statement:any:0, data:any:0, auto_commit:any:1, cursor_factory:any:1, cursor_name:any:1, return_cursor:any:1, itersize:any:1, page_size:any:1)",
       "sep": "value:str",
-      "suffixize": "callable(noun:any:0, qty:any:0)"
+      "suffixize": "callable(noun:any:0, qty:any:0)",
+      "validate_sql_qualified_identifier": "callable(identifier:any:0)"
     },
     "logginglib": {
       "EXTERNAL_IP": "value:NoneType",
@@ -186,7 +187,8 @@
       "random": "callable()",
       "safe_execute_values": "callable(statement:any:0, data:any:0, auto_commit:any:1, cursor_factory:any:1, cursor_name:any:1, return_cursor:any:1, itersize:any:1, page_size:any:1)",
       "sep": "value:str",
-      "suffixize": "callable(noun:any:0, qty:any:0)"
+      "suffixize": "callable(noun:any:0, qty:any:0)",
+      "validate_sql_qualified_identifier": "callable(identifier:any:0)"
     },
     "matrix": {
       "CsrIndPtrConstructor": "class:pyutilz.core.matrix.CsrIndPtrConstructor",
@@ -197,7 +199,7 @@
     },
     "monitoring": {
       "API_TIMEOUT_SEC": "value:int",
-      "job_completed": "callable(job_id:any:0, status:any:1, data:any:1, provider:any:1, api_key:any:1)",
+      "job_completed": "callable(job_id:any:0, status:any:1, data:any:1, provider:any:1, api_key:any:1, blocking:any:1)",
       "log_duration": "callable(threshold:any:1, logger_name:any:1, max_arg_size:any:1)",
       "logger": "value:Logger",
       "monitored": "callable(job_id:any:1, status:any:1, log_data:any:1, should_have_data:any:1, duration_field:any:1, duration_rounding:any:1, provider:any:1, api_key:any:1)",
@@ -380,7 +382,7 @@
       "logger": "value:Logger",
       "serialize": "callable(obj:any:0, fname:any:1, compression:any:1)",
       "str_to_class": "callable(classname:any:0)",
-      "unserialize": "callable(obj:any:0, compression:any:1)"
+      "unserialize": "callable(obj:any:0, compression:any:1, verify_sidecar:any:1)"
     },
     "similarity": {
       "HAS_NUMBA": "value:bool",

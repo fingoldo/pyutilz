@@ -240,7 +240,7 @@ class AdvancedTokenizer:
         import pickle, gzip
 
         with gzip.open(f"{name}.pickle", "rb") as handle:
-            whole = pickle.load(handle)
+            whole = pickle.load(handle)  # nosec B301 - round-trip of this class's own dump_tokens() output; name is caller-supplied, same trust level as the write side
 
         for var in vars:
             if var in whole:

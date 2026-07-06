@@ -653,7 +653,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
             return joblib.load(fpath)
         elif fpath.lower().endswith(".pckl"):
             if unpickle_to_pd:
-                return pd.read_pickle(fpath)
+                return pd.read_pickle(fpath)  # nosec B301 - fpath is caller-supplied (same trust level as the joblib.load branch above); this loader's whole purpose is deserializing a named local file
         elif fpath.lower().endswith(".bin"):
             # if "catboost" in fpath.lower():
             clf = CatBoostClassifier()
@@ -812,7 +812,7 @@ import portalocker
 def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False, timeout: int = 10):
 
     with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
-        yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)
+        yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)
         # flush and sync to filesystem
         fh.flush()
         os.fsync(fh.fileno())
