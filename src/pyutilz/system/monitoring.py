@@ -37,7 +37,22 @@ atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def job_completed(job_id: str, status: int = 0, data: str = None, provider: str = "healthchecks.io", api_key: str = None):
+def job_completed(
+    job_id: str, status: int = 0, data: str = None, provider: str = "healthchecks.io", api_key: str = None, blocking: bool = True
+):
+    """Ping a dead-man's-switch monitoring provider (healthchecks.io / cronitor.io) that a job completed.
+
+    ``blocking=True`` (default) sends the heartbeat inline and returns only after the request
+    finishes (or times out after ``API_TIMEOUT_SEC``) -- preserves the historical synchronous
+    contract every existing caller/test relies on. Pass ``blocking=False`` to submit the send to
+    the module's shared ``_TIMEOUT_EXECUTOR`` and return immediately without waiting on the
+    network round-trip; the request still fires (and still respects the same timeout + error
+    logging), just off the calling thread. Fire-and-forget is not free of risk: a process that
+    exits immediately after calling with ``blocking=False`` can beat the background send to the
+    wire and the heartbeat is lost -- use ``blocking=True`` (the default) for a last-call-before-exit
+    heartbeat, and ``blocking=False`` only when the caller keeps running long enough to let the
+    executor's worker thread finish.
+    """
 
     endpoint = ""
     params = None
@@ -61,16 +76,23 @@ def job_completed(job_id: str, status: int = 0, data: str = None, provider: str 
             params["msg"] = str(data)
 
     if endpoint:
-        try:
-            res = requests.post(endpoint, data=data, params=params)
 
-            if res.status_code not in (200, 403, 429):
-                # 403=blocked in your country
-                # 429=rate limit exceeded
-                logger.warning(f"Problem {res.status_code} while sending hearbeat to {provider} on job {job_id}: {res.text}")
+        def _send():
+            try:
+                res = requests.post(endpoint, data=data, params=params, timeout=API_TIMEOUT_SEC)
 
-        except Exception as e:
-            logger.warning(f"Error while sending hearbeat to {provider} on monitor {job_id}: {e}")
+                if res.status_code not in (200, 403, 429):
+                    # 403=blocked in your country
+                    # 429=rate limit exceeded
+                    logger.warning(f"Problem {res.status_code} while sending hearbeat to {provider} on job {job_id}: {res.text}")
+
+            except Exception as e:
+                logger.warning(f"Error while sending hearbeat to {provider} on monitor {job_id}: {e}")
+
+        if blocking:
+            _send()
+        else:
+            _TIMEOUT_EXECUTOR.submit(_send)
     else:
         logger.info("No endpoint established for job %s. Check if monitoring credentials are properly configured.", job_id)
 

@@ -79,6 +79,53 @@ class TestJobCompleted:
         call_kwargs = mock_req.post.call_args
         assert call_kwargs[1]["data"] == "12345" or call_kwargs.kwargs.get("data") == "12345"
 
+    @patch("pyutilz.system.monitoring.requests")
+    def test_heartbeat_post_has_a_timeout(self, mock_req):
+        """Bug: requests.post had no timeout=, so a dead endpoint could hang the caller
+        forever. Must use the module's own API_TIMEOUT_SEC constant (already applied
+        elsewhere in this file, e.g. timeout_wrapper's default), not a new magic number."""
+        from pyutilz.system.monitoring import API_TIMEOUT_SEC, job_completed
+        mock_req.post.return_value = MagicMock(status_code=200)
+        job_completed(job_id="j", status=0, provider="healthchecks.io")
+        assert mock_req.post.call_args.kwargs.get("timeout") == API_TIMEOUT_SEC
+
+    @patch("pyutilz.system.monitoring.requests")
+    def test_blocking_true_default_returns_only_after_post_completes(self, mock_req):
+        """Default (blocking=True) preserves the historical synchronous contract:
+        requests.post must already have been called by the time job_completed returns."""
+        from pyutilz.system.monitoring import job_completed
+        mock_req.post.return_value = MagicMock(status_code=200)
+        job_completed(job_id="j", status=0, provider="healthchecks.io")
+        mock_req.post.assert_called_once()
+
+    @patch("pyutilz.system.monitoring.requests")
+    def test_blocking_false_submits_to_shared_executor_instead_of_inline_call(self, mock_req):
+        """blocking=False must NOT call requests.post on the calling thread; it hands the
+        send off to the module's shared _TIMEOUT_EXECUTOR (submit() is patched here so the
+        test doesn't depend on background-thread scheduling to observe the dispatch)."""
+        from pyutilz.system.monitoring import job_completed
+        mock_req.post.return_value = MagicMock(status_code=200)
+        with patch("pyutilz.system.monitoring._TIMEOUT_EXECUTOR.submit") as mock_submit:
+            job_completed(job_id="j", status=0, provider="healthchecks.io", blocking=False)
+            mock_submit.assert_called_once()
+            mock_req.post.assert_not_called()
+            # The submitted callable is the real send -- invoking it here proves it does
+            # the actual POST (this is what the executor's worker thread would run).
+            mock_submit.call_args[0][0]()
+            mock_req.post.assert_called_once()
+
+    @patch("pyutilz.system.monitoring.requests")
+    def test_blocking_false_errors_are_still_logged(self, mock_req):
+        """A background-thread failure must still be logged, same as the blocking path."""
+        from pyutilz.system.monitoring import job_completed
+        mock_req.post.side_effect = ConnectionError("timeout")
+        with patch("pyutilz.system.monitoring.logger") as mock_logger, patch(
+            "pyutilz.system.monitoring._TIMEOUT_EXECUTOR.submit"
+        ) as mock_submit:
+            job_completed(job_id="j", status=0, provider="healthchecks.io", blocking=False)
+            mock_submit.call_args[0][0]()  # run the submitted send inline to observe its error handling
+            mock_logger.warning.assert_called_once()
+
 
 # ── monitored decorator (lines 85-115) ──
 
