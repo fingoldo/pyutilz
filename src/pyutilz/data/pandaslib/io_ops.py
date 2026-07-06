@@ -122,11 +122,11 @@ def read_stats_from_multiple_files(
                 for _i, filename in enumerate(fnames):
                     try:
                         os.remove(filename)
-                    except Exception:
-                        pass
+                    except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result
+                        logger.debug("Failed to remove source file %s after concat: %s", filename, e)
             return res
-        except Exception:
-            pass
+        except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller
+            logger.debug("Failed to concat and flush df list: %s", e)
 
 
 def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:

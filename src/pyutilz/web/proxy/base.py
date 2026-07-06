@@ -216,9 +216,9 @@ class PortHealthTracker:
         """
         with self._lock:
             if not self._banned:
-                return random.randint(1, port_range)
+                return random.randint(1, port_range)  # nosec B311 - non-cryptographic random selection of a sticky-session proxy port offset for load spreading, not a security control
             for _ in range(10):
-                candidate = random.randint(1, port_range)
+                candidate = random.randint(1, port_range)  # nosec B311 - same non-cryptographic port-offset selection, retried against the ban list
                 if not self._is_banned_unlocked(candidate):
                     return candidate
             # Expire stale bans
@@ -230,8 +230,8 @@ class PortHealthTracker:
                     "[PROXY] %d/%d ports banned -- using random port anyway",
                     len(self._banned), port_range,
                 )
-                return random.randint(1, port_range)
-            return random.randint(1, port_range)
+                return random.randint(1, port_range)  # nosec B311 - fallback random port pick when almost all ports are banned; still just load-spreading, not security-sensitive
+            return random.randint(1, port_range)  # nosec B311 - default-path random port-offset selection for proxy rotation, not security-sensitive
 
     def stats(self) -> Dict[str, Any]:
         """Return current health stats (for debugging / metrics)."""

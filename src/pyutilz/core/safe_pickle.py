@@ -43,7 +43,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import pickle
+import pickle  # nosec B403 - this module's whole purpose is guarding pickle.load behind sha256 sidecar verification (see safe_load below and the module-level THREAT MODEL CAVEAT docstring); callers needing tamper-resistance against a co-located attacker must layer keyed integrity on top
 from os.path import isfile
 from typing import Any, Optional
 

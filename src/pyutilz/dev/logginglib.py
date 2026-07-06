@@ -233,7 +233,7 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
 def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: dict = None, lang: str = None, verbose: bool = False):
     if results_log is None:
         results_log = {}
-    assert source_type in ("db_table", "file")
+    assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
     if lang is None:
         lang = globals().get("reports_language", "en")
 
@@ -331,7 +331,7 @@ class RedisHandler(Handler):
         msg = self.format(record)
         try:
             self.rc.lpush(self.LOG_DEST, msg)
-            if random() < 0.1:
+            if random() < 0.1:  # nosec B311 - probabilistic sampling to occasionally trim the redis log list, not a security/crypto use
                 self.rc.ltrim(self.LOG_DEST, 0, self.LOG_SIZE)
                 print("logging list trimmed!")
         except Exception:

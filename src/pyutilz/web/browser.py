@@ -56,7 +56,7 @@ data_dir = None  # "chrome-data"
 logout_signs = "Sign-In"
 successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
-password_input_name = "password"
+password_input_name = "password"  # nosec B105 - this is the HTML form field NAME/selector used to locate the password input element, not a literal credential value (the actual secret is the module-level `pwd` variable, supplied by the caller)
 use_real_useragent = True
 undetectable = False
 find_executable = False
@@ -98,7 +98,8 @@ def close_browser():
     global browser
     try:
         browser.close()
-    except Exception: pass
+    except Exception as e:  # nosec B110 - best-effort cleanup on a browser handle that may already be dead/closed; the function unconditionally sets browser=None on the next line regardless
+        logger.debug("Ignoring error while closing browser: %s", e)
     browser=None
 
 def browser_get(path:str)->None:
@@ -142,8 +143,8 @@ def start_selenium() -> object:
             import undetected_chromedriver as webdriver
             try:
                 webdriver.install()
-            except Exception:
-                pass
+            except Exception as e:  # nosec B110 - undetected_chromedriver.install() is a best-effort driver-binary fetch; if it fails (e.g. already installed, offline), webdriver.Chrome() below will still attempt to use whatever driver is on PATH
+                logger.debug("undetected_chromedriver install() failed, continuing: %s", e)
             options = webdriver.ChromeOptions()
             kwargs["version_main"] = version_main
             kwargs["use_subprocess"] = use_subprocess
@@ -151,8 +152,8 @@ def start_selenium() -> object:
             if find_executable:
                 try:
                     webdriver.find_chrome_executable = find_chrome_executable
-                except Exception:
-                    pass
+                except Exception as e:  # nosec B110 - optional monkeypatch of the driver's executable-finder only applied when find_executable=True; if the attribute assignment fails, the driver's own default lookup still applies
+                    logger.debug("Could not patch find_chrome_executable, using driver default: %s", e)
         except Exception as e:
             logger.exception(e)
             from selenium import webdriver
@@ -324,13 +325,13 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
             elem_login.send_keys(login)
             pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
             elem_login.send_keys(Ret)
-        except Exception:
-            pass
+        except Exception as e:  # nosec B110 - best-effort login-by-name-field attempt; the code below explicitly falls back to find_element_by_xpath, and if elem_login stays None it is logged and reported as an error a few lines down
+            logger.debug("find_element_by_name login attempt failed, will try xpath fallback: %s", e)
         if elem_login is None:
             try:
                 elem_login = find_element_by_xpath(browser, "//div[text()='" + login.lower() + "']")
-            except Exception:
-                pass
+            except Exception as e:  # nosec B110 - best-effort xpath fallback for locating the login element; if elem_login is still None afterward it is explicitly checked and logged as an error two lines below
+                logger.debug("find_element_by_xpath login fallback failed: %s", e)
         if elem_login is None:
             logger.error(f"Could not login to {target}: elem_login {login_input_name} not located.")
             return
@@ -342,8 +343,8 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
             elem_pwd.send_keys(Keys.CONTROL, "a")
             elem_pwd.send_keys(Keys.DELETE)
             elem_pwd.send_keys(pwd)
-        except Exception:
-            pass
+        except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
+            logger.debug("find_element_by_name password attempt failed: %s", e)
         if elem_pwd is None:
             logger.error(f"Could not login to {target}: elem_pwd {password_input_name} not located.")
             return
@@ -375,8 +376,8 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
                         logger.warning("Trying to restart Selenium...")
                         try:
                             browser.close()
-                        except Exception:
-                            pass
+                        except Exception as e:  # nosec B110 - best-effort cleanup before forcing a Selenium restart; the next line unconditionally sets browser=None regardless of whether close() succeeded
+                            logger.debug("Ignoring error while closing browser before restart: %s", e)
                         browser = None
                     return LoginAndGetCookies(default_headers=default_headers)
                 else:

@@ -237,7 +237,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                         self._routing_404_pause_sec, str(exc)[:120],
                     )
                     await asyncio.sleep(self._routing_404_pause_sec)
-        assert last_exc is not None
+        assert last_exc is not None  # nosec B101 - internal invariant (loop always sets last_exc before falling through); not a security check, and python -O stripping it just means last_exc could be None here, causing a TypeError instead of this assert
         raise last_exc
 
     @property

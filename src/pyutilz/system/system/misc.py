@@ -170,8 +170,8 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
             importlib.import_module(modulename)
             version = sys.modules[modulename].__version__
             res[modulename] = version
-        except Exception:
-            pass
+        except Exception as e:  # nosec B110 - best-effort version probe across an arbitrary list of libs; missing/unimportable/version-less modules are expected and skipped, not a hidden bug
+            logger.debug("Could not determine version for %s: %s", modulename, e)
     return res
 
 
@@ -197,7 +197,8 @@ def count_app_instances(processname=None, cmdline=None):
             try:
                 if cmdline not in proc.cmdline():
                     continue
-            except Exception:
+            except Exception as e:  # nosec B112 - transient psutil access errors (process exited / no access) on a single proc while iterating all processes; skip that proc and keep counting
+                logger.debug("Could not read cmdline for process %s: %s", proc, e)
                 continue
         n = n + 1
     return n
@@ -394,5 +395,5 @@ def beep():
         import winsound
 
         winsound.Beep(frequency, duration)
-    except Exception:
-        pass
+    except Exception as e:  # nosec B110 - best-effort audible notification; winsound is Windows-only/optional and beep failure must never break the caller
+        logger.debug("Could not play beep sound: %s", e)

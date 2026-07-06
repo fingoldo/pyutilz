@@ -100,7 +100,7 @@ def compute_concentrations(
 
     Ensuring sortedness after top_k_by is messy (requires zipping lists etc), so using sort+head instead."""
 
-    assert return_ids or return_values
+    assert return_ids or return_values  # nosec B101 - internal API-misuse guard: caller must request at least one output kind, not a security boundary
 
     if not fields_remap:
         fields_remap = {}
@@ -229,7 +229,7 @@ def build_aggregate_features_polars(
     # Checks
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    assert engine in ("cpu", "gpu")
+    assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
 
     if engine == "gpu" and not is_cuda_available():
         # logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailble on this system!")
@@ -322,11 +322,11 @@ def build_aggregate_features_polars(
     orig_categorical_fields = categorical_fields.copy()
     for filter_field, filter_values in subgroups.items():
 
-        assert isinstance(filter_values, list)
+        assert isinstance(filter_values, list)  # nosec B101 - internal invariant on the shape of the caller-supplied subgroups dict values, not a security boundary
 
         if not filter_field:
             num_no_filter += 1
-            assert num_no_filter <= 1
+            assert num_no_filter <= 1  # nosec B101 - internal invariant: at most one "no filter" (falsy filter_field) entry is expected in subgroups, not a security boundary
         else:
             categorical_fields = orig_categorical_fields.copy()
             if filter_field in categorical_fields:

@@ -130,7 +130,7 @@ def _read_hw_fingerprint_from_disk() -> Optional[str]:
     if age > _HW_FP_FRESHNESS_SECONDS:
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
@@ -331,11 +331,13 @@ def _build_provenance() -> dict:
         import cupy as cp  # type: ignore
         try:
             prov["cuda_runtime_version"] = int(cp.cuda.runtime.runtimeGetVersion())
-        except Exception:
+        except Exception as e:  # nosec B110 - best-effort provenance field; a missing/failing CUDA runtime query must not break cache save, provenance dict just omits the field
+            logger.debug("Could not read cuda_runtime_version for provenance: %s", e)
             pass
         try:
             prov["cuda_driver_version"] = int(cp.cuda.runtime.driverGetVersion())
-        except Exception:
+        except Exception as e:  # nosec B110 - best-effort provenance field; a missing/failing CUDA driver query must not break cache save, provenance dict just omits the field
+            logger.debug("Could not read cuda_driver_version for provenance: %s", e)
             pass
     except ImportError:
         pass
@@ -350,7 +352,8 @@ def _build_provenance() -> dict:
                 "total_vram_gb": summary.get("total_vram_gb"),
                 "sm_count": summary.get("sm_count"),
             }
-    except Exception:
+    except Exception as e:  # nosec B110 - best-effort provenance enrichment (GPU cc/vram/name summary); failure must not block cache save, provenance dict just omits gpu_summary
+        logger.debug("Could not build gpu_summary for provenance: %s", e)
         pass
     return prov
 

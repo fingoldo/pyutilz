@@ -262,7 +262,7 @@ def showcase_df_columns(
                 print(f"{var.upper()} {df[var].dtype}")
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
-                assert max_vars >= 0
+                assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
                 if max_vars > 0:
                     print(stats.head(max_vars))
                 else:

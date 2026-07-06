@@ -31,7 +31,7 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
             return s[p1:p2]
 
 
-def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token: Optional[str] = "]") -> list:
+def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token: Optional[str] = "]") -> list:  # nosec B107 - "[%clk " is a PGN chess-notation clock-annotation marker string (see docstring example), not a credential
     """
 
     >>> parse_tokens('1. Nf3 { [%clk 0:03:00] } g6 { [%clk 0:03:00] } 2. c4 { [%clk 0:03:00] } Bg7 { [%clk 0:03:01] } 3. Nc3 { [%clk 0:03:01] } Nf6 { [%clk 0:03:02] } ',start_token='[%clk ',end_token=']')

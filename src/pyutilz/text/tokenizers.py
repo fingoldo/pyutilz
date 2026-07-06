@@ -47,8 +47,8 @@ nlp = None
 try:
     import spacy as _spacy
     spacy = _spacy
-except Exception:
-    pass  # spacy not available or incompatible
+except Exception as e:  # nosec B110 - optional dependency probe; module must still be importable when spacy is absent/incompatible (e.g. Python 3.14 Pydantic issue noted above), and AdvancedTokenizer already fails loudly later if spacy is actually needed but unset
+    logger.debug("spacy unavailable or incompatible, AdvancedTokenizer will fail if used: %s", e)
 vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(
     ","
 )
@@ -221,7 +221,7 @@ class AdvancedTokenizer:
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # Save computed data
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        import pickle, gzip
+        import pickle, gzip  # nosec B403 - pickle is only used below to serialize this class's own in-memory stats dict to a local file; no untrusted data is ever unpickled here
 
         whole = dict()
 
@@ -237,7 +237,7 @@ class AdvancedTokenizer:
             pickle.dump(whole, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def load_tokens(self, name: str, tokens: dict):
-        import pickle, gzip
+        import pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
 
         with gzip.open(f"{name}.pickle", "rb") as handle:
             whole = pickle.load(handle)  # nosec B301 - round-trip of this class's own dump_tokens() output; name is caller-supplied, same trust level as the write side

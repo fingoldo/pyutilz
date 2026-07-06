@@ -118,7 +118,7 @@ def monitored(
             if should_have_data and not data:
                 return data
 
-            assert isinstance(data, (type(None), dict))
+            assert isinstance(data, (type(None), dict))  # nosec B101 - internal invariant on decorated func's own return type, not a security/permission gate
 
             if duration_field:
                 if data is None:

@@ -302,8 +302,10 @@ def create_tabs(
         user = current_user
         if not user.is_authenticated:
             return
-    except Exception:
-        pass
+    except Exception as e:
+        # Legitimate best-effort: flask_login may not be installed, or there may be no request/session
+        # context (e.g. called outside a Dash callback); tab rendering should proceed either way.
+        logger.debug("create_tabs: flask_login current_user check skipped (%s)", e)  # nosec B110
 
     varName = get_active_tab_var_name(tabsName, prefix=prefix)
 

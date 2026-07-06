@@ -42,7 +42,7 @@ import re
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-import importlib, subprocess
+import importlib, subprocess  # nosec B404 - only used below to shell out to the fixed "pip" executable for installing missing packages; no user/network input reaches argv
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
@@ -59,9 +59,9 @@ def ensure_installed(packages, sep: str = " ") -> None:
             logger.info(mes)
             for pkg in missing_packages:
                 try:
-                    subprocess.check_call(["pip", "install", pkg])
-                except Exception:
-                    pass
+                    subprocess.check_call(["pip", "install", pkg])  # nosec B603 B607 - "pip" is a fixed trusted executable resolved via PATH (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input
+                except Exception as e:
+                    logger.debug("Failed to install package %s: %s", pkg, e)
 
 
 # from pyutilz.core.pythonlib import ensure_installed  # lint: disable=ungrouped-imports,disable=wrong-import-order
@@ -479,10 +479,10 @@ def imitate_delay(
         max_delay_seconds = min_delay_seconds * 2
 
     if last_call_ts or b_force:
-        random_delay = uniform(min_delay_seconds, max_delay_seconds)
+        random_delay = uniform(min_delay_seconds, max_delay_seconds)  # nosec B311 - non-cryptographic use: picks a human-facing sleep delay to imitate pacing, not a security token
         if big_delay_prob:
             if big_delay_prob > 0:
-                if random() < big_delay_prob:
+                if random() < big_delay_prob:  # nosec B311 - non-cryptographic use: coin-flip to decide whether to lengthen the imitated delay, not security-sensitive
                     random_delay = random_delay * big_delay_multiplier
         if b_force and (last_call_ts is None):
             cur_delay = 0
@@ -642,8 +642,8 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     fpath = abspath(fpath)
     try:
         is_here = exists(fpath)
-    except Exception:
-        pass
+    except Exception as e:  # nosec B110 - best-effort existence check; any OS-level error (e.g. invalid path chars) is treated as "not found" via the is_here default below
+        logger.debug("Failed to check existence of %s: %s", fpath, e)
     if not is_here:
         logger.warning(f"File {fpath} not found!")
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), fpath)
@@ -803,7 +803,7 @@ class HashableDict(dict):
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-import shelve
+import shelve  # nosec B403 - open_safe_shelve below only opens a locally-supplied, lock-protected db_path; no untrusted/network data is ever unpickled from an unknown source
 import contextlib
 import portalocker
 
@@ -865,8 +865,8 @@ def _ensure_cuda_home_from_pip() -> None:
         if (cand / "nvvm").exists():
             _os.environ["CUDA_HOME"] = str(cand)
             _os.environ["CUDA_PATH"] = str(cand)
-    except Exception:
-        pass
+    except Exception as e:  # nosec B110 - best-effort optional CUDA env-var setup; failing here (e.g. nvidia package absent) just leaves CUDA_HOME unset, which is the pre-existing safe default
+        logger.debug("Failed to set CUDA_HOME/CUDA_PATH from pip nvidia package: %s", e)
 
 
 def is_cuda_available() -> bool:

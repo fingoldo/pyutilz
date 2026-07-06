@@ -60,7 +60,7 @@ def register_default_cache(path: str) -> bool:
     measure THIS host). Returns whether it loaded. A missing/unreadable file degrades silently to no defaults."""
     fac = _facade()
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             payload = json.load(f)
         c = KernelTuningCache(in_memory=True)
         with c._lock:
@@ -159,7 +159,7 @@ class KernelTuningCache:
         os.makedirs(os.path.dirname(final_path), exist_ok=True)
         last_err: Optional[Exception] = None
         for attempt in range(max(1, retries)):
-            tmp = f"{final_path}.{os.getpid()}.{random.randrange(1 << 30):x}.tmp"
+            tmp = f"{final_path}.{os.getpid()}.{random.randrange(1 << 30):x}.tmp"  # nosec B311 - unique-ish temp filename suffix to avoid concurrent-writer collisions, not security/cryptographic use
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=2, sort_keys=True)
@@ -199,7 +199,7 @@ class KernelTuningCache:
             logger.debug("kernel_tuning_cache: migration claim failed: %s", e)
             return
         try:
-            with open(legacy, "r", encoding="utf-8") as f:
+            with open(legacy, encoding="utf-8") as f:
                 data = json.load(f)
             # Only import kernels from a SCHEMA- and FINGERPRINT-compatible
             # monolith (v2 or v3 shape, matching host). A schema-999 / foreign /
@@ -237,7 +237,7 @@ class KernelTuningCache:
         candidates: list[tuple] = []  # (tuned_ts, mtime, entry)
         for p in files:
             try:
-                with open(p, "r", encoding="utf-8") as f:
+                with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue  # os.replace is atomic; a parse failure is a foreign/partial file -> skip
@@ -321,7 +321,7 @@ class KernelTuningCache:
         candidates: list[tuple] = []
         for p in files:
             try:
-                with open(p, "r", encoding="utf-8") as f:
+                with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue
@@ -360,7 +360,7 @@ class KernelTuningCache:
         cv = entry.get("code_version") or _NO_CODE_VERSION
         salt = entry.get("salt", 0)
         ts = time.time()
-        fname = f"{_slug(str(cv), maxlen=70)}.{int(salt)}.{os.getpid()}.{int(ts * 1000)}.{random.randrange(1 << 24):x}.json"
+        fname = f"{_slug(str(cv), maxlen=70)}.{int(salt)}.{os.getpid()}.{int(ts * 1000)}.{random.randrange(1 << 24):x}.json"  # nosec B311 - unique cache-record filename suffix to avoid collisions between concurrent writers, not security/cryptographic use
         kdir = _kernel_dir(self._path, kernel_name)
         final_path = os.path.join(kdir, fname)
         record = {
@@ -643,7 +643,8 @@ class KernelTuningCache:
                         d = dc.lookup(kernel_name, **dims)
                         if d is not None:
                             return d
-                except Exception:
+                except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
+                    logger.debug("DEFAULT-cache consult failed for kernel %s: %s", kernel_name, e)
                     pass
             return fallback() if callable(fallback) else fallback
 
@@ -875,7 +876,7 @@ class KernelTuningCache:
         re-create via O_EXCL; if a third process beats us to the recreate, we lose
         the claim (return False) -- correct, exactly one sweeper wins."""
         try:
-            with open(marker, "r", encoding="utf-8") as f:
+            with open(marker, encoding="utf-8") as f:
                 info = json.load(f)
         except (OSError, json.JSONDecodeError):
             info = {}

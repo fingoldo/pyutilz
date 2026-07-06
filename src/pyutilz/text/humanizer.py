@@ -343,7 +343,7 @@ def introduce_typos(
         modified (e.g. attention-check compliance phrases).
     """
     if rng is None:
-        rng = random.Random()
+        rng = random.Random()  # nosec B311 - non-cryptographic text-variation sampling (typo injection), not security-sensitive
     protected = list(protected_spans)
     for _ in range(count):
         typo_type = rng.choices(_TYPO_NAMES, weights=_TYPO_WEIGHTS, k=1)[0]

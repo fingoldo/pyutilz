@@ -41,12 +41,12 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                                 # Fallback
                                 try:
                                     val = b64decode(val).decode("utf-8")
-                                except Exception:
-                                    pass
+                                except Exception as e:  # nosec B110 - best-effort decode of a config value that may or may not be base64/xor-encoded; falling through to the raw string is the intended behavior, not an error to hide
+                                    logger.debug("Value for %s is not base64-encoded, using raw string: %s", var, e)
                     try:
                         val = ast.literal_eval(val)
-                    except Exception:
-                        pass
+                    except Exception as e:  # nosec B110 - best-effort literal-type coercion (int/float/bool/etc.) of a config string; falling back to the plain string is the intended behavior when it isn't a Python literal
+                        logger.debug("Value for %s is not a Python literal, keeping as string: %s", var, e)
                     if prepend_section_names:
                         object[next_section.lower() + "_" + var] = val
                     else:
@@ -72,7 +72,7 @@ def write_config_file(
             variables = variables.split(",")
         elif variables is None or variables == []:
             variables = list(object.keys())
-        assert isinstance(variables, list)
+        assert isinstance(variables, list)  # nosec B101 - internal type invariant on a locally-derived variable (already normalized above), not a security/permission gate
 
         config = configparser.ConfigParser()
 

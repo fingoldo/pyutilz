@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 import re
 import psutil
 import platform
-import os, subprocess
+import os, subprocess  # nosec B404 - used throughout this module only to invoke fixed trusted system-probing binaries (lscpu, dmidecode, nvidia-smi, vm_stat, pmset, powercfg) with hardcoded argv, never shell/user input
 
 
 from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, find_between
@@ -102,7 +102,7 @@ def get_lscpu_info():
 
     lscpu_dict = {}
     try:
-        output = subprocess.check_output(["lscpu"], text=True)
+        output = subprocess.check_output(["lscpu"], text=True)  # nosec B603 B607 - fixed trusted binary "lscpu" with no arguments, no shell, no external input
 
         for line in output.split("\n"):
             if ":" in line:
@@ -135,11 +135,11 @@ def get_linux_board_info():
         # Linux sysfs files are ASCII-only by spec, but explicit encoding
         # avoids the locale-dependent default that crashes on Windows
         # (cp1251) if this code path is ever exercised under WSL.
-        with open("/sys/devices/virtual/dmi/id/board_vendor", "r", encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_vendor", encoding="utf-8") as f:
             board_info["Vendor"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_name", "r", encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_name", encoding="utf-8") as f:
             board_info["Name"] = f.read().strip()
-        with open("/sys/devices/virtual/dmi/id/board_version", "r", encoding="utf-8") as f:
+        with open("/sys/devices/virtual/dmi/id/board_version", encoding="utf-8") as f:
             board_info["Version"] = f.read().strip()
     except FileNotFoundError as e:
         logger.error(f"Error reading board information: {e}")
@@ -173,7 +173,7 @@ def parse_dmidecode_info(
     from pyutilz.core.pythonlib import is_float, to_float
 
     try:
-        result = subprocess.run(["sudo", "dmidecode"], capture_output=True, text=True)
+        result = subprocess.run(["sudo", "dmidecode"], capture_output=True, text=True)  # nosec B603 B607 - fixed trusted binaries "sudo"/"dmidecode" with hardcoded argv, no shell, no external/user-controlled input
     except Exception as e:
         logger.error(f"dmidecode running problem: {e}")
         return None
@@ -315,7 +315,7 @@ def summarize_system_info():
 def get_nix_cpu_sockets_number():
     num_sockets = 1
     try:
-        res = subprocess.check_output("lscpu").decode()
+        res = subprocess.check_output("lscpu").decode()  # nosec B603 B607 - fixed trusted binary "lscpu", hardcoded string with no interpolation, no shell
         num_sockets = re.findall("Socket\\(s\\):(.+)\n", res)
         if len(num_sockets) > 0:
             num_sockets = int(str(num_sockets[0]).strip())
@@ -335,7 +335,7 @@ def check_huge_pages_linux():
         bool: True if huge pages are available
     """
     try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+        with open("/proc/meminfo", encoding="utf-8") as f:
             for line in f:
                 if "HugePages_Total" in line:
                     huge_pages_total = int(line.split()[1])
@@ -371,7 +371,7 @@ def check_huge_pages_macos():
         bool: True if THP is managed by OS
     """
     try:
-        output = subprocess.check_output(["vm_stat"]).decode()
+        output = subprocess.check_output(["vm_stat"]).decode()  # nosec B603 B607 - fixed trusted macOS binary "vm_stat" with no arguments, no shell, no external input
         for line in output.split("\n"):
             if "Pages free" in line or "Pages active" in line:
                 # If vm_stat is working and outputting memory pages, THP is managed by the OS
@@ -415,7 +415,7 @@ def get_linux_power_plan():
     try:
         for cpu in os.listdir("/sys/devices/system/cpu/"):
             if cpu.startswith("cpu") and cpu[3:].isdigit():
-                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", "r", encoding="utf-8") as f:
+                with open(f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor", encoding="utf-8") as f:
                     governors.append(f.read().strip())
         return sorted(list(Counter(governors).keys()))
     except Exception as e:
@@ -430,7 +430,7 @@ def get_macos_power_plan():
         dict: Power plan settings from pmset
     """
     try:
-        res = subprocess.run(["pmset", "-g", "custom"], capture_output=True, text=True).stdout
+        res = subprocess.run(["pmset", "-g", "custom"], capture_output=True, text=True).stdout  # nosec B603 B607 - fixed trusted macOS binary "pmset" with hardcoded argv, no shell, no external input
         if not res:
             return None
         return dict(plan_full_name=res)
@@ -450,7 +450,7 @@ def get_windows_power_plan_cmd():
         Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (HP Recommended)
     """
     try:
-        res = subprocess.run(["powercfg", "/getactivescheme"], capture_output=True, text=True).stdout
+        res = subprocess.run(["powercfg", "/getactivescheme"], capture_output=True, text=True).stdout  # nosec B603 B607 - fixed trusted Windows binary "powercfg" with hardcoded argv, no shell, no external input
         if not res:
             return None
 
@@ -572,7 +572,7 @@ def get_nvidia_smi_info(
     # drivers (real incident class on Windows after a GPU reset); without the
     # timeout an import of this module on a misbehaving host blocks forever.
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 - fixed trusted binary "nvidia-smi" with hardcoded argv, no shell, no external/user-controlled input
             ["nvidia-smi", "-q", "-x"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -656,7 +656,7 @@ def get_nvidia_smi_info(
     return res
 
 
-def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEVICE_ATTRIBUTE_") -> dict:
+def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEVICE_ATTRIBUTE_") -> dict:  # nosec B107 - "CU_DEVICE_ATTRIBUTE_" is a CUDA enum-name prefix used to strip it from numba's enums attribute names, not a credential
     """Get all CUDA capabilities for a GPU device using numba.
 
     Args:
@@ -736,7 +736,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
     """
     if isinstance(attrs, str):
         attrs = attrs.split(",")
-    assert "id" in attrs
+    assert "id" in attrs  # nosec B101 - internal precondition ("id" is used below to key devices), not a security/permission check
 
     devices = []
 

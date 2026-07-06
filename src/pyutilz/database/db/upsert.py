@@ -57,7 +57,7 @@ def build_upsert_query(
     # Checks!
     # ------------------------------
 
-    assert len(fields_names) > 0
+    assert len(fields_names) > 0  # nosec B101 - trivial arity guard against building a query with zero columns, not an identifier check
 
     # Validate every identifier that ends up spliced into the raw SQL below (table/history table/column names).
     # ``custom_onconflict`` and ``on_conflict_update_values`` values are accepted as raw SQL fragments by design.
@@ -83,12 +83,16 @@ def build_upsert_query(
             validate_sql_identifier(hash_field)
 
     for field in timestamp_check_fields:
-        assert field not in fields_names
-        assert field not in fields_types
+        assert field not in fields_names  # nosec B101 - both lists were already identifier-validated above; this only guards against duplicate columns in the generated SELECT list, not injection
+        assert field not in fields_types  # nosec B101 - same duplicate-column guard as above; fields_types keys are matched against already-validated fields_names
 
     for field_name, field_type in fields_types.items():
-        assert field_name in fields_names
-        assert field_type in "int bigint smallint float real numeric json jsonb text timestamp".split(" ")
+        assert field_name in fields_names  # nosec B101 - field_name is only ever used via membership tests below (loop iterates actual_fields_names, not fields_types keys), so a stray key here cannot reach the generated SQL
+        if field_type not in "int bigint smallint float real numeric json jsonb text timestamp".split(" "):
+            # field_type is spliced verbatim into the SQL as "field::<field_type>" below (line ~119/146); under
+            # `python -O` a skipped assert would let an unvalidated field_type inject arbitrary SQL, so this must
+            # be a real, non-disable-able check rather than an assert.
+            raise ValueError(f"Invalid field_type for {field_name!r}: {field_type!r}")
 
     rev_on_conflict_update_values = {}
     if len(on_conflict_update_values) > 0:
@@ -135,7 +139,7 @@ def build_upsert_query(
     if custom_onconflict or (conflict_fields is not None and len(conflict_fields) > 0 and len(on_conflict_update_fields) > 0):
         if not custom_onconflict:
             for field in conflict_fields:
-                assert field in fields_names
+                assert field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces that ON CONFLICT targets are also insert columns, a business-logic invariant
 
             update_values = []
             for field in on_conflict_update_fields:
@@ -161,7 +165,7 @@ def build_upsert_query(
         returning_fields = history_fields
         if hash_fields:
             for hash_field in hash_fields:
-                assert hash_field in fields_names
+                assert hash_field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces hash_fields is a subset of the insert columns, a business-logic invariant
                 if hash_field not in history_fields:
                     returning_fields += [hash_field]
         fresh_query += f" returning {','.join(returning_fields)}"
@@ -169,7 +173,7 @@ def build_upsert_query(
     query += ", fresh_data as (" + fresh_query + ")"
 
     if history_table_name and len(history_table_name) > 0:
-        assert len(conflict_fields) > 0
+        assert len(conflict_fields) > 0  # nosec B101 - arity guard: a history table needs a conflict key to join against, not an identifier check
 
         # history_fields validated above; history_fields_final entries come from history_fields_aliases (also validated) or
         # history_fields itself, so every element here is a validated identifier
@@ -210,7 +214,7 @@ def build_upsert_query(
         query += hist_query
 
         if len(timestamp_update_fields) > 0:
-            assert len(timestamp_update_fields) == len(timestamp_check_fields)
+            assert len(timestamp_update_fields) == len(timestamp_check_fields)  # nosec B101 - arity guard so the zip() below pairs fields 1:1; both lists were already identifier-validated above
 
             upd_fields_and_vals = ",".join(
                 [f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields + timestamp_check_fields)]

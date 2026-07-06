@@ -14,7 +14,7 @@ import os
 import queue
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
 import threading
 import time
@@ -87,7 +87,7 @@ try:
                 }
                 if self._cwd:
                     process_env["PWD"] = self._cwd
-                from subprocess import PIPE as _PIPE
+                from subprocess import PIPE as _PIPE  # nosec B404 - re-import of the same trusted-subprocess module for anyio.open_process's stdin/stdout/stderr pipe constants
                 self._process = await anyio.open_process(
                     cmd, stdin=_PIPE, stdout=_PIPE, stderr=_PIPE,
                     cwd=self._cwd, env=process_env, user=self._options.user,
@@ -130,7 +130,8 @@ try:
                             if len(chunks) > 100:
                                 break
                         real_stderr = "".join(chunks).strip()
-                    except Exception:
+                    except Exception as e:  # nosec B110 - best-effort stderr enrichment for a ProcessError we're already re-raising; failure here must not mask the original error
+                        logger.debug("Could not read real stderr for ProcessError enrichment: %s", e)
                         pass
                 if real_stderr:
                     raise _ProcessError(
@@ -566,7 +567,7 @@ class ClaudeCodeProvider(LLMProvider):
                     stderr=subprocess.PIPE,
                     text=True,
                     encoding="utf-8",
-                    shell=False,
+                    shell=False,  # nosec B603 - cmd is a fixed argv list: self._claude_path is resolved via shutil.which/known install paths (never attacker-controlled), remaining args are literal flags plus self.model/system (config/prompt content passed as discrete argv elements, not shell-interpreted)
                     env=sub_env,
                 )
 

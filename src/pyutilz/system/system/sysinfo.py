@@ -25,7 +25,7 @@ import uuid
 import re
 import socket, psutil
 import platform
-import subprocess
+import subprocess  # nosec B404 - used only to invoke fixed trusted OS-identity probes (wmic, cat, getprop, ioreg/grep, nvcc) with hardcoded/literal argv below, no shell, no external input
 
 
 from .misc import get_os_info
@@ -89,15 +89,6 @@ def get_system_info(
     except ImportError:
         web = None
 
-    try:
-        pass
-    except Exception:
-        pass
-    try:
-        pass
-    except Exception:
-        pass
-
     info = dict()
     try:
         current_system = platform.system()
@@ -124,7 +115,7 @@ def get_system_info(
                     os_serial = None
                     try:
                         # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
-                        os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()
+                        os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()  # nosec B603 B607 - fixed trusted Windows binary "wmic", hardcoded literal command, no shell, no external input
                         info["os_machine_guid"] = os_serial
                         info["os_serial"] = os_serial  # Also store as separate field for distributed.py
                     except Exception:
@@ -134,12 +125,12 @@ def get_system_info(
 
                 elif current_system == "Linux":
                     try:
-                        machine_id = subprocess.check_output(["cat", "/var/lib/dbus/machine-id"]).decode().strip()
+                        machine_id = subprocess.check_output(["cat", "/var/lib/dbus/machine-id"]).decode().strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
                         info["os_machine_guid"] = machine_id
                         info["os_serial"] = machine_id
                     except Exception:
                         try:
-                            machine_id = subprocess.check_output(["cat", "/etc/machine-id"]).decode().strip()
+                            machine_id = subprocess.check_output(["cat", "/etc/machine-id"]).decode().strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
                             info["os_machine_guid"] = machine_id
                             info["os_serial"] = machine_id
                         except Exception:
@@ -147,7 +138,7 @@ def get_system_info(
                             info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Android":
                     try:
-                        serial = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1].decode().strip()
+                        serial = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1].decode().strip()  # nosec B603 B607 - fixed trusted Android binary "getprop" with a hardcoded property name, no shell, no external input
                         info["os_machine_guid"] = serial
                         info["os_serial"] = serial
                     except Exception:
@@ -160,10 +151,10 @@ def get_system_info(
                         # cleanly on exit / exception (was a bare
                         # subprocess.Popen pair before, leaking processes
                         # if grep_proc.communicate() raised).
-                        with subprocess.Popen(
+                        with subprocess.Popen(  # nosec B603 B607 - fixed trusted macOS binary "ioreg" with hardcoded argv, no shell, no external input
                             ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
                             stdout=subprocess.PIPE,
-                        ) as ioreg_proc, subprocess.Popen(
+                        ) as ioreg_proc, subprocess.Popen(  # nosec B603 B607 - fixed trusted binary "grep" with hardcoded argv, piped from ioreg's stdout, no shell, no external input
                             ["grep", "-E", "(UUID)"],
                             stdin=ioreg_proc.stdout,
                             stdout=subprocess.PIPE,
@@ -246,7 +237,7 @@ def get_system_info(
         if numba is not None and "cuda" in dir(numba):
             if numba.cuda.is_available():
                 try:
-                    cuda_version = re.findall(", V(.+)\r\n", subprocess.check_output("nvcc --version").decode())
+                    cuda_version = re.findall(", V(.+)\r\n", subprocess.check_output("nvcc --version").decode())  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal command, no shell, no external input
                 except Exception:
                     cuda_version = [""]
 
@@ -260,14 +251,14 @@ def get_system_info(
                         gpu_stats = get_nvidia_smi_info(include_stats=True)
                         if gpu_stats:
                             info["gpu_current_stats_nvidia_smi"] = gpu_stats
-                    except Exception:
-                        pass
+                    except Exception as e:  # nosec B110 - best-effort GPU usage stats; absent/misbehaving nvidia-smi must not break overall system_info collection
+                        logger.debug("Could not get nvidia-smi GPU stats: %s", e)
 
                     # Keep legacy gpuutil for backward compatibility with usage stats
                     try:
                         info["gpu_current_stats"] = get_gpuutil_gpu_info()
-                    except Exception:
-                        pass
+                    except Exception as e:  # nosec B110 - best-effort legacy GPUtil stats; absent GPUtil/driver must not break overall system_info collection
+                        logger.debug("Could not get GPUtil GPU stats: %s", e)
 
         if return_hdd_info:
             (
@@ -300,8 +291,8 @@ def get_system_info(
                 # Linux devices list
                 try:
                     info["devices_list"] = list_linux_devices()
-                except Exception:
-                    pass
+                except Exception as e:  # nosec B110 - best-effort optional Linux devices listing (needs pylspci); must not break overall system_info collection
+                    logger.debug("Could not list Linux devices: %s", e)
         return info
     except Exception as e:
         logger.exception(e)

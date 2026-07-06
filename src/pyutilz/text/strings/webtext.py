@@ -23,7 +23,7 @@ def spacy_sent_tokenize(text: str) -> list:
     return list(nlp(text).sents)
 
 
-def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]"):
+def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]"):  # nosec B107 - "[[VIDEOID:" is a text placeholder marker delimiting embedded video references, not a credential
     if text:
         p = 0
         while True:
@@ -52,7 +52,7 @@ def fix_duplicate_tokens(text: str) -> str:
 
 
 def unescape_html(text: str) -> str:
-    from xml.sax import saxutils as su
+    from xml.sax import saxutils as su  # nosec B406 - saxutils.unescape() below only decodes HTML/XML entities in a plain string (no XML parsing/DTD resolution occurs), so there is no XXE parsing surface here
 
     return su.unescape(text)
 
@@ -99,7 +99,7 @@ def fix_spaces(text: str, tokens: Optional[list] = None) -> str:
         return text
 
 
-def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
+def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:  # nosec B107 - default "\n" is a literal newline delimiter used for text-normalization scanning, not a credential
     if text:
         punctuation, eos = string.punctuation, ("!", ".", "?")
         whitespaces = list(string.whitespace)
@@ -112,7 +112,7 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:
             new_text = ""
             s = 0
             # if token==' ': token='\r\n'
-            if token != " ":
+            if token != " ":  # nosec B105 - comparison against a literal space character used as a whitespace-token delimiter in text scanning, not a credential
                 # fixes cases where there is a newline in text, next symbol is a capital or number,
                 # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace). If such case is found, a dot (+opt whitespace)
                 # is inserted instead of newline.

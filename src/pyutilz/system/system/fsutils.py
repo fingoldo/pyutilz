@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 import json
 import psutil
-import os, subprocess
+import os, subprocess  # nosec B404 - used only to invoke the fixed trusted "pylspci" binary below with a hardcoded argv, no shell/user input
 
 
 from pyutilz.text.strings import remove_json_defaults
@@ -79,7 +79,7 @@ def list_linux_devices() -> dict:
     # ensure_installed("pylspci")
 
     try:
-        devices = json.loads(subprocess.check_output(["pylspci", "-nn"]).decode("utf-8"))
+        devices = json.loads(subprocess.check_output(["pylspci", "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
         for device in devices:
             remove_json_defaults(
                 device,

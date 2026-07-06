@@ -24,7 +24,7 @@ from typing import Any, Optional, Union
 
 import sys
 import io
-import pickle, zlib, os
+import pickle, zlib, os  # nosec B403 - pickle.dumps/loads here operate on caller-provided in-process objects/paths for serialize()/unserialize(); untrusted-path loading is additionally gated via the optional verify_sidecar path (see pyutilz.core.safe_pickle)
 from pyutilz.system import system
 
 
@@ -51,8 +51,8 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
     Otherwise, serialized representation of the obj in memory will be returned.
     """
     if compression is not None:
-        assert isinstance(compression, int)
-        assert compression >= -1 and compression <= 9
+        assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard on caller's zlib compression level arg, not a security boundary
+        assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
     try:
         data = pickle.dumps(obj)
         if compression is not None:
@@ -99,8 +99,8 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     sidecar against; that in-memory data was already produced within the same process/caller).
     """
     if compression is not None:
-        assert isinstance(compression, int)
-        assert compression >= -1 and compression <= 9
+        assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard mirroring serialize()'s compression arg check, not a security boundary
+        assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
     try:
         to = type(obj).__name__
         if to == "str":

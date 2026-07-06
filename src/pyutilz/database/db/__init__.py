@@ -130,7 +130,7 @@ def connect_to_db(
     init_params_fn = m_init_params_fn
     db_sslmode = m_db_sslmode
 
-    assert db_flavor in ("postgres", "mysql")
+    assert db_flavor in ("postgres", "mysql")  # nosec B101 - db_flavor only steers if/elif branching below, never spliced into SQL
 
     while True:
         try:
@@ -500,7 +500,10 @@ def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdF
     validate_sql_identifier(sIdFieldName)
     if not check_if_pg_table_exists(sTable):
         if sAutocreateIdTypeName:
-            assert sAutocreateIdTypeName.lower() in ("smallserial serial bigserial uuid".split())
+            if sAutocreateIdTypeName.lower() not in ("smallserial serial bigserial uuid".split()):
+                # sAutocreateIdTypeName is spliced verbatim into the CREATE TABLE statement below with no other
+                # validation, so under `python -O` a skipped assert would let arbitrary SQL be injected via this arg.
+                raise ValueError(f"Invalid sAutocreateIdTypeName: {sAutocreateIdTypeName!r}")
             default_gen = " default gen_random_uuid()" if sAutocreateIdTypeName == "uuid" else ""
             safe_execute(
                 f"create table {sTable} ({sIdFieldName} {sAutocreateIdTypeName} primary key {default_gen},{sKeyFieldName} text, added_at timestamp without time zone DEFAULT (now() at time zone 'utc'))"
@@ -629,7 +632,7 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
-    assert partition_size in ("day", "week", "month", "year")
+    assert partition_size in ("day", "week", "month", "year")  # nosec B101 - partition_size only selects a relativedelta branch below, never spliced into SQL
     d = from_date
     while d <= to_date:
         if partition_size == "day":
@@ -653,7 +656,7 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
-    assert partition_size in ("day", "week", "month", "year")
+    assert partition_size in ("day", "week", "month", "year")  # nosec B101 - partition_size only selects a relativedelta branch below, never spliced into SQL
     d = from_date
     while d <= to_date:
         if partition_size == "day":

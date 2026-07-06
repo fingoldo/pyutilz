@@ -291,7 +291,7 @@ def get_new_smartproxy(
         # Get random port
         # ----------------------------------------------------------------------------------------------------------------------------
         if proxy_port is None:
-            proxy_port = int(proxy_min_port) + int(random() * (int(proxy_max_port) - int(proxy_min_port)))
+            proxy_port = int(proxy_min_port) + int(random() * (int(proxy_max_port) - int(proxy_min_port)))  # nosec B311 - non-cryptographic random port pick within an allowed proxy port range, for load spreading, not security-sensitive
 
         proxies = make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port, proxy_type)
 
@@ -369,7 +369,7 @@ def get_url(
                 # If there is no session yet or we have downloaded too many items withing current session alrady
                 get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                 if max_ip_queries > 0:
-                    cur_max_ip_queries = int(max_ip_queries * (0.6 + 0.4 * random()))
+                    cur_max_ip_queries = int(max_ip_queries * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
                     logger.info("cur_max_ip_queries set to %d", cur_max_ip_queries)
             headers_to_use = custom_headers if custom_headers else headers
             if inject_headers:
@@ -446,7 +446,7 @@ def get_url(
                         if verbose:
                             logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
                         if ratelimited_proxy_sleep_interval:
-                            sleep(ratelimited_proxy_sleep_interval * random())
+                            sleep(ratelimited_proxy_sleep_interval * random())  # nosec B311 - random jitter on a rate-limit backoff sleep, not security-sensitive
                         proxies = get_new_smartproxy(
                             proxy_user,
                             proxy_pass,
@@ -487,7 +487,7 @@ def get_url(
                     was_blocked = False
                     break
     if delay:
-        sleep(delay * random())
+        sleep(delay * random())  # nosec B311 - random jitter on the inter-request delay to avoid a fixed request cadence, not security-sensitive
 
     if res is None:
         logger.warning(f"Could not get url {url}")
@@ -541,7 +541,7 @@ def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = T
     else:
         logger.warning("IP blocked.")
 
-    sleep(delay * random())
+    sleep(delay * random())  # nosec B311 - random jitter on the post-block backoff sleep before rotating session/proxy, not security-sensitive
     set_proxy_last_use_time(failed_dict, proxies)
     get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
 
@@ -577,7 +577,7 @@ def download_to_file(
             if request is not None and request.status_code in exit_codes:
                 return
             logger.exception(e)
-            sleep(10 * random())
+            sleep(10 * random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
             logger.info("Making another attempt")
             nattempts += 1
         else:
@@ -595,7 +595,7 @@ def download_to_file(
                     # Optionally we can check here if the download is taking too long
         except Exception as e:
             logger.exception(e)
-            sleep(10 * random())
+            sleep(10 * random())  # nosec B311 - random jitter on the file-write-retry backoff sleep, not security-sensitive
             logger.info("Making another attempt")
             nattempts += 1
         else:

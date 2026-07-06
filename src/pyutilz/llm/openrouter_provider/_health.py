@@ -70,7 +70,8 @@ def _resolve_or_api_key(explicit: str | None) -> str | None:
         s = _pkg().get_llm_settings()
         if s.openrouter_api_key:
             return s.openrouter_api_key.get_secret_value()
-    except Exception:
+    except Exception as e:  # nosec B110 - best-effort optional-settings lookup; absence of settings must fall through to the "no key configured" None return, not raise
+        logger.debug("Could not load OR API key from settings: %s", e)
         pass
     return None
 

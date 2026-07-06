@@ -475,7 +475,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     raise
                 # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
                 # (multiplier=2, min=5, max=300) plus random jitter [0,5).
-                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)
+                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
                 # Honour a server-supplied Retry-After when present on a 429,
                 # taking the larger of (server hint, exponential floor) so we
                 # never retry sooner than the server asked and re-trigger the

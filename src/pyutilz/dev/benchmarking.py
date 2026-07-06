@@ -44,8 +44,10 @@ def synchronize_gpu_if_available() -> None:
         import cupy as _cp
 
         _cp.cuda.Stream.null.synchronize()
-    except Exception:
-        pass
+    except Exception as e:
+        # Legitimate best-effort: cupy may not be installed, or there may be no pending device work;
+        # either way this is a no-op sync helper and must never fail the benchmark it's called from.
+        logger.debug("synchronize_gpu_if_available: no-op (%s)", e)  # nosec B110
 
 
 def benchmark_algos_by_runtime(

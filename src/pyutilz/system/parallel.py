@@ -118,7 +118,7 @@ def split_array(arr: object, step: int) -> list:
     a = 0
     b = a
     res = []
-    assert step > 0
+    assert step > 0  # nosec B101 - internal argument-validity invariant (positive chunk size), not a security check
     while True:
         b = a + step
         if b >= length:

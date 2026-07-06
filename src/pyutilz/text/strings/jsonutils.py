@@ -20,7 +20,7 @@ def json_serial(obj: Any) -> str:
 def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optional[dict] = None) -> object:
     if attribs is None:
         attribs = {}
-    from xml.etree.ElementTree import SubElement
+    from xml.etree.ElementTree import SubElement  # nosec B405 - only used to CREATE/write new XML elements below (sub_elem builds output, never parses external/untrusted XML), so no XXE parsing risk
 
     new_elem = SubElement(parent, tag, **attribs)
     if text:
@@ -195,8 +195,8 @@ def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
             try:
                 if len(json_obj[attr]) == 0:
                     del json_obj[attr]
-            except Exception:
-                pass
+            except Exception as e:  # nosec B110 - best-effort emptiness check; attr's value may be a non-sized type (int/bool/None) with no len(), which is expected and simply means "don't remove it"
+                logger.debug("Attribute %s has no len(), skipping empty-check: %s", attr, e)
 
 
 def remove_json_defaults(

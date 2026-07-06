@@ -65,7 +65,7 @@ def rexecute (method_name:str,*args,**kwargs) -> Any:
         except ConnectionError as e:
             # Transient: retry with backoff.
             logger.exception(e)
-            sleep(1 * random())
+            sleep(1 * random())  # nosec B311 - jitter for retry backoff timing, not a security/crypto use
         except Exception as e:
             # Permanent error: log and propagate instead of busy-looping forever.
             logger.exception(e)

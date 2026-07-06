@@ -145,7 +145,7 @@ def text_to_graphql(text: str) -> str:
     """
     return text.replace(r"\n", "\\" + "n")
 
-def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:
+def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:  # nosec B107 - "}\n}" is a GraphQL closing-brace text pattern used for query reformatting, not a credential
     """
     Get rid of comments in a graphql query
     """
