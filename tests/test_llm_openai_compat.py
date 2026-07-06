@@ -1,5 +1,7 @@
 """Tests for OpenAICompatibleProvider base class."""
 
+from __future__ import annotations
+
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
