@@ -19,7 +19,7 @@ ensure_installed("joblib grequests fake_useragent")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence
 
 import requests
 import urllib.request
@@ -46,18 +46,18 @@ was_blocked = False
 
 # Bound for real by init_vars() / set_proxy_credentials(); declared here so module-level
 # references resolve before the first call (and so static analysis can see these names exist).
-sess = None
-num_ip_queries = 0
-template_headers = None
-headers = None
-proxies = None
-timeout = 10
-proxy_user = None
-proxy_pass = None
-proxy_min_port = None
-proxy_max_port = None
-proxy_port = None
-proxy_type = None
+sess: Optional[Any] = None
+num_ip_queries: int = 0
+template_headers: Optional[dict] = None
+headers: Optional[dict] = None
+proxies: Optional[dict] = None
+timeout: int = 10
+proxy_user: Optional[str] = None
+proxy_pass: Optional[str] = None
+proxy_min_port: Optional[int] = None
+proxy_max_port: Optional[int] = None
+proxy_port: Optional[int] = None
+proxy_type: Optional[str] = None
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
 

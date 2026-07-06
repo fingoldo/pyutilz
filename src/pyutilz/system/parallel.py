@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 import numpy as np
 
@@ -32,7 +32,7 @@ from multiprocessing import Pool
 from joblib import Parallel, parallel_backend
 
 # Module-level tracking of temporary directories for cleanup
-_TEMP_DIRS = []
+_TEMP_DIRS: List[Any] = []
 
 @atexit.register
 def _cleanup_temp_dirs():
@@ -135,8 +135,8 @@ def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     """Distribute array workload into nworkers chunks of approximately same total size."""
     if nworkers <= 0:
         nworkers = psutil.cpu_count(logical=False)
-    planned_work_per_worker = [[] for _ in range(nworkers)]
-    workload_indices_per_worker = [[] for _ in range(nworkers)]
+    planned_work_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
+    workload_indices_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
     totals = [(0, i) for i in range(nworkers)]
     heapq.heapify(totals)
     for i, value in enumerate(workload):

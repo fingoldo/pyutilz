@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 # Global registry: kernel_name -> TunerSpec (kernel names are globally unique)
-_REGISTRY = {}
+_REGISTRY: Dict[Any, Any] = {}
 
 
 @dataclass
@@ -332,7 +332,7 @@ def _group_gpus_by_model() -> dict[str, list[int]]:
     import GPUtil
 
     gpus = GPUtil.getGPUs()
-    groups = {}
+    groups: Dict[Any, Any] = {}
     for gpu in gpus:
         # Model name: abbreviated GPU name + compute capability.
         model = f"{gpu.name.split()[0]}_{gpu.compute_capability[0]}{gpu.compute_capability[1]}"

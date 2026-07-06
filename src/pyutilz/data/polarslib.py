@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 import numpy as np
 
 
@@ -171,7 +171,7 @@ def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterabl
     wcols = []
     if weighting_columns:
         for wcol in weighting_columns:
-            all_other_num_cols = columns_selector - cs.by_name(wcol)
+            all_other_num_cols: Any = columns_selector - cs.by_name(wcol)
             weighted_mean = ((all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
             # !TODO causes error for now

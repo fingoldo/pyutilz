@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 import re
 import math
+from typing import Any, Dict
 import numpy as np
 from collections import defaultdict, deque, Counter
 
@@ -55,8 +56,9 @@ def get_entropy_stats(stream, model_order: int = 2) -> tuple:
         stats is a Counter that matches each key in model to its total number of occurrences
         model is a dictionary mapping (n−1)-character prefixes to a Counter; that Counter maps each possible nth character to the number of times this character followed the (n−1)-character prefix.
     """
-    conditional_stats, stats = defaultdict(Counter), Counter()
-    circular_buffer = deque(maxlen=model_order)
+    conditional_stats: Dict[Any, Counter] = defaultdict(Counter)
+    stats: Counter = Counter()
+    circular_buffer: Any = deque(maxlen=model_order)
 
     for token in stream:
         prefix = tuple(circular_buffer)

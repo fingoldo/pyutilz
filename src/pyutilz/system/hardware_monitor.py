@@ -54,21 +54,21 @@ class UtilizationMonitor:
         """
         if gpu_ids is None:
             gpu_ids = []
-        self.cpu_utilizaton = []
-        self.cpu_clocks = []
+        self.cpu_utilizaton: List[Any] = []
+        self.cpu_clocks: List[Any] = []
 
-        self.own_ram_used = []
-        self.total_ram_used = []
-        self.total_ram_free = []
+        self.own_ram_used: List[Any] = []
+        self.total_ram_used: List[Any] = []
+        self.total_ram_free: List[Any] = []
 
-        self.mean_gpu_ram_free = []
-        self.mean_gpu_ram_used = []
+        self.mean_gpu_ram_free: List[Any] = []
+        self.mean_gpu_ram_used: List[Any] = []
 
-        self.mean_gpu_clocks = []
-        self.mean_gpu_utilizaton = []
+        self.mean_gpu_clocks: List[Any] = []
+        self.mean_gpu_utilizaton: List[Any] = []
 
-        self.mean_gpu_power_draw = []
-        self.mean_gpu_temp = []
+        self.mean_gpu_power_draw: List[Any] = []
+        self.mean_gpu_temp: List[Any] = []
 
         self.gpu_ids = gpu_ids
         self.sleep_interval_seconds = sleep_interval_seconds

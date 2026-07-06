@@ -79,18 +79,18 @@ conn_alchemy = None
 PAGE_SIZE: int = 1_000_000
 # Bound for real by connect_to_db(); declared here so module-level references resolve
 # before that first call (and so static analysis can see these names exist at all).
-db_flavor = None
-conn = None
-cur = None
-cursors = None
-db_name = None
-db_host = None
-db_port = None
-db_schema = None
-username = None
-pwd = None
-init_params_fn = None
-db_sslmode = None
+db_flavor: Optional[str] = None
+conn: Optional[Any] = None
+cur: Optional[Any] = None
+cursors: Dict[str, Any] = {}
+db_name: Optional[str] = None
+db_host: Optional[str] = None
+db_port: Optional[int] = None
+db_schema: Optional[str] = None
+username: Optional[str] = None
+pwd: Optional[str] = None
+init_params_fn: Optional[Any] = None
+db_sslmode: Optional[str] = None
 # ----------------------------------------------------------------------------------------------------------------------------
 # sqlalchemy tricks
 # ----------------------------------------------------------------------------------------------------------------------------

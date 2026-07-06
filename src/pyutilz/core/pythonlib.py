@@ -116,7 +116,7 @@ def flatten_keys_to_set(
     max_chars: int = 10,
 ) -> dict:
     """Recursively walks content of an object, bringing all the key-value keys to the top level set."""
-    res = set()
+    res: Set[Any] = set()
     if isinstance(obj, dict):
         for key, value in obj.items():
             # print(key,value)

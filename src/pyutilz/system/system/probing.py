@@ -199,7 +199,7 @@ def parse_dmidecode_info(
                     key, value = map(str.strip, line.split(":", 1))
                     if value == "":
                         features_name = key
-                        features = []
+                        features: List[Any] = []
                     else:
                         if features_name and features:
                             section_dict[features_name] = tuple(sorted(features))
@@ -739,7 +739,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
         attrs = attrs.split(",")
     assert "id" in attrs  # nosec B101 - internal precondition ("id" is used below to key devices), not a security/permission check
 
-    devices = []
+    devices: List[Any] = []
 
     try:
         import GPUtil

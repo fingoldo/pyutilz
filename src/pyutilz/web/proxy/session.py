@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .base import ProxyProvider
@@ -37,7 +37,7 @@ def curl_session(
     """
     from curl_cffi import requests as cr
 
-    s = cr.Session(impersonate=impersonate, proxy=provider.proxy_url(port_offset))
+    s: Any = cr.Session(impersonate=impersonate, proxy=provider.proxy_url(port_offset))
     try:
         yield s
     finally:

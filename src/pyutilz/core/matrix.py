@@ -27,8 +27,8 @@ class CsrIndPtrConstructor:
     """
     def __init__(self) -> None:
         self.indptr = [0]
-        self.indices = []
-        self.data = []
+        self.indices: List[Any] = []
+        self.data: List[Any] = []
     def add_element(self, element, index: int) -> None:
         self.indices.append(index)
         self.data.append(element)
@@ -49,9 +49,9 @@ class CsrRowColConstructor:
     by scipy on build_matrix().
     """
     def __init__(self) -> None:
-        self.rows = []
-        self.cols = []
-        self.data = []
+        self.rows: List[Any] = []
+        self.cols: List[Any] = []
+        self.data: List[Any] = []
     def add_element(self, element, row: int, col: int) -> None:
         self.rows.append(row)
         self.cols.append(col)

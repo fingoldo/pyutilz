@@ -155,7 +155,7 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
     """
     if isinstance(attribute, str):
         attribute = [attribute]
-    elems = {}
+    elems: Dict[Any, Any] = {}
     if isinstance(json_obj, list):
 
         elems = []

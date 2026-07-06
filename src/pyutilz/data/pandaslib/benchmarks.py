@@ -66,7 +66,7 @@ def benchmark_dataframe_parquet_compression(
     skip_configs: tuple = ("parquet-fastparquet-brotli",),
     write_method: str = "to_parquet",
 ) -> list:
-    res = []
+    res: List[Any] = []
     file_format = "parquet"
     if write_method == "write_parquet":
         engines = ("main",)
@@ -248,7 +248,7 @@ def benchmark_dataframe_compression(
         ensure_dir_exists(benchmark_dir_path)
     temp_folder = tempfile.mkdtemp(dir=benchmark_dir_path)
 
-    res = []
+    res: List[Any] = []
 
     for func in (
         _facade.benchmark_dataframe_feather_compression,

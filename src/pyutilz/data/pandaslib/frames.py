@@ -193,8 +193,8 @@ def showcase_df_columns(
     excluded_set = set(excluded_cols)
     target_cols = [c for c in cols if c not in excluded_set]
 
-    rare_categories = {}
-    uninformative_features = {}
+    rare_categories: Dict[Any, Any] = {}
+    uninformative_features: Dict[Any, Any] = {}
 
     if not target_cols:
         return rare_categories, uninformative_features
@@ -294,8 +294,8 @@ class FeatureNamer:
 
     def __init__(self, initial_values: Optional[Sequence] = None):
         self.fnames_index = 0
-        self.fnames = {}
-        self.revfnames = {}
+        self.fnames: Dict[Any, Any] = {}
+        self.revfnames: Dict[Any, Any] = {}
         if initial_values is None:
             initial_values = []
         for name in initial_values:

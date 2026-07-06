@@ -26,7 +26,7 @@ import os
 # Typing
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Selenium connectivity
@@ -62,8 +62,8 @@ use_real_useragent = True
 undetectable = False
 find_executable = False
 use_subprocess = False
-required_cookies = tuple()
-fixed_cookies = {}
+required_cookies: Tuple[Any, ...] = tuple()
+fixed_cookies: Dict[str, Any] = {}
 basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en;q=0.9", "accept": "*/*"}
 headers = basic_headers
 
@@ -137,7 +137,7 @@ def start_selenium() -> object:
     # if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
 
     logger.info("Starting Selenium for %s", target)
-    kwargs = {}
+    kwargs: Dict[str, Any] = {}
     if undetectable:
         logger.info("Undetectable mode")
         try:

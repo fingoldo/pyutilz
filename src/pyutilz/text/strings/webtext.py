@@ -227,7 +227,7 @@ def fix_missed_space_between_sentences(text: str) -> str:
 
 
 def merge_punctuation_signs(sent: str) -> str:
-    merged = []
+    merged: List[Any] = []
     for i, word in enumerate(sent):
         if i > 0:
             if word in eos:
