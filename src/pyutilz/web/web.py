@@ -23,6 +23,7 @@ from typing import Callable, List, Optional, Sequence
 
 import requests
 import urllib.request
+import urllib.parse
 from random import random, shuffle
 from datetime import datetime
 from joblib import hash
@@ -42,6 +43,18 @@ IP_PROVIDERS = ["https://api.ipify.org/", "https://ident.me/", "http://icanhazip
 cur_max_ip_queries = -1
 proxy_server = None
 was_blocked = False
+
+_ALLOWED_URL_SCHEMES = ("http", "https")
+
+
+def _ensure_http_scheme(url: str) -> str:
+    """Raise ValueError unless ``url`` uses http(s) -- guards ``urllib.request.urlopen``
+    against a caller-supplied ``file:///etc/passwd``-style scheme (local file disclosure)
+    or other unexpected custom scheme."""
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise ValueError(f"Refusing to urlopen {url!r}: scheme {scheme!r} not in {_ALLOWED_URL_SCHEMES}")
+    return url
 
 
 def init_vars():
@@ -66,7 +79,7 @@ def get_external_ip(
 
     for source in IP_PROVIDERS:
         try:
-            resp = urllib.request.urlopen(source)
+            resp = urllib.request.urlopen(_ensure_http_scheme(source))  # nosec B310 - scheme validated above
         except ssl.SSLCertVerificationError:
             pass
         except Exception as e:
@@ -90,7 +103,7 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
 
     if use_urllib:
         try:
-            resp = urllib.request.urlopen(url)
+            resp = urllib.request.urlopen(_ensure_http_scheme(url))  # nosec B310 - scheme validated above
         except Exception as e:
             logger.exception(e)
         else:

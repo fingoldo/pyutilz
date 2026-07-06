@@ -76,3 +76,51 @@ class TestWebReporting:
         except Exception:
             # Expected if logger not configured
             pass
+
+
+class TestEnsureHttpScheme:
+    """Regression tests for the file:// URL-scheme guard on urlopen call sites.
+
+    Bug: get_ipinfo(url=...) and get_external_ip() passed their url/source
+    straight to urllib.request.urlopen with no scheme check, so a caller
+    passing a file:///etc/passwd-style URL would get local file contents
+    back (bandit B310)."""
+
+    def test_allows_http_and_https(self):
+        from pyutilz.web.web import _ensure_http_scheme
+
+        assert _ensure_http_scheme("http://example.com") == "http://example.com"
+        assert _ensure_http_scheme("https://example.com/path?q=1") == "https://example.com/path?q=1"
+
+    def test_rejects_file_scheme(self):
+        from pyutilz.web.web import _ensure_http_scheme
+
+        with pytest.raises(ValueError, match="file"):
+            _ensure_http_scheme("file:///etc/passwd")
+
+    def test_rejects_other_custom_schemes(self):
+        from pyutilz.web.web import _ensure_http_scheme
+
+        for scheme in ("ftp://example.com", "gopher://example.com", "data:text/plain,hi"):
+            with pytest.raises(ValueError):
+                _ensure_http_scheme(scheme)
+
+    def test_get_ipinfo_rejects_file_url_before_reading_it(self):
+        from pyutilz.web.web import get_ipinfo
+
+        with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+            result = get_ipinfo(use_urllib=True, url="file:///etc/passwd")
+            mock_urlopen.assert_not_called()
+        assert result is None
+
+    def test_get_external_ip_rejects_non_http_provider(self):
+        from pyutilz.web import web
+
+        original_providers = web.IP_PROVIDERS
+        try:
+            web.IP_PROVIDERS = ["file:///etc/passwd"]
+            with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+                web.get_external_ip()
+                mock_urlopen.assert_not_called()
+        finally:
+            web.IP_PROVIDERS = original_providers
