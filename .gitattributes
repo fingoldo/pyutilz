@@ -1,0 +1,4 @@
+# Force LF regardless of checkout platform for files where CRLF breaks execution
+# (a CRLF shebang line makes a script fail to run on Linux CI/dev boxes; shellcheck
+# SC1017 catches this class of bug). Mirrors mlframe's .gitattributes.
+*.sh text eol=lf

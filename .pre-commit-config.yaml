@@ -33,6 +33,25 @@ repos:
         # secret (defaults live in source, scanned there), so exclude it.
         exclude: '\.secrets\.baseline$|tests/test_meta/_api_snapshot\.json$'
 
+  # Actionlint: lints .github/workflows/*.yml for syntax AND semantic bugs
+  # (undefined contexts, bad expressions, unknown runner labels, duplicate keys,
+  # shell-syntax errors in `run:` blocks via its bundled shellcheck integration).
+  # Mirrors mlframe's setup, added 2026-07-06 after real bugs of this exact class
+  # were hand-debugged there (a duplicate continue-on-error: key that silently
+  # broke CI for days; a bash-conditional that broke on a Windows runner).
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.24
+    hooks:
+      - id: actionlint
+
+  # Shellcheck: lints standalone .sh scripts (actionlint above covers embedded
+  # `run:` blocks via its own shellcheck integration, since shellcheck-py's
+  # binary is on PATH in this repo's dev environment).
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
   # Real-bug gate: pyflakes + syntax errors block the commit. Matches CI's
   # ``ruff check . --select F,E9`` exactly (no ignore) -- previously re-applied
   # a taste-ignore (F401/F403/F405/F541/F841) via CLI --ignore, which let
@@ -104,6 +123,19 @@ repos:
       - id: bandit-warn
         name: "bandit security scan (warn-only)"
         entry: python scripts/bandit_warn.py
+        language: system
+        types: [python]
+        files: '^src/pyutilz/'
+        verbose: true
+        stages: [pre-commit]
+
+  # Warn-only dead-code gate: vulture --min-confidence 80, mirroring the advisory
+  # CI step (continue-on-error). See scripts/vulture_warn.py.
+  - repo: local
+    hooks:
+      - id: vulture-warn
+        name: "vulture dead-code scan (warn-only)"
+        entry: python scripts/vulture_warn.py
         language: system
         types: [python]
         files: '^src/pyutilz/'

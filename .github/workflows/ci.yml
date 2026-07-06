@@ -48,17 +48,22 @@ jobs:
       # test_llm_account_credits.py, test_llm_live.py), so they skip cleanly instead of
       # erroring, and every other provider's tests run unaffected.
       # shell: bash explicitly -- windows-latest runners default `run:` to pwsh, which
-      # doesn't understand this bash conditional syntax.
+      # doesn't understand this bash conditional syntax. PYVER is passed via env: rather
+      # than interpolated directly into the script (${{ }} inside a shell command is a
+      # documented anti-pattern -- shellcheck/actionlint flag it (SC2102) and it's a
+      # latent injection risk if the expression value were ever less trusted).
       shell: bash
+      env:
+        PYVER: ${{ matrix.python-version }}
       run: |
         python -m pip install --upgrade pip
-        if [[ "${{ matrix.python-version }}" == "3.8" ]]; then
-          pip install -e .[pandas,polars,database,system,cloud,dev]
+        if [[ "$PYVER" == "3.8" ]]; then
+          pip install -e ".[pandas,polars,database,system,cloud,dev]"
           pip install "anthropic>=0.40" "httpx>=0.25" "tenacity>=8.0" "pydantic>=2.0" "pydantic-settings>=2.0" "tiktoken>=0.5"
-        elif [[ "${{ matrix.python-version }}" == "3.9" ]]; then
-          pip install -e .[pandas,polars,database,system,llm,cloud,dev]
+        elif [[ "$PYVER" == "3.9" ]]; then
+          pip install -e ".[pandas,polars,database,system,llm,cloud,dev]"
         else
-          pip install -e .[pandas,polars,database,system,llm,nlp,cloud,dev]
+          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
         fi
 
     - name: Run tests with coverage
@@ -91,7 +96,7 @@ jobs:
     # scope) that mypy 2.1.0 does not raise. Pin for determinism between local dev
     # and CI until that's separately investigated.
     - name: Install linting tools
-      run: pip install ruff black "mypy==2.1.0" bandit
+      run: pip install ruff black "mypy==2.1.0" bandit actionlint-py shellcheck-py vulture pip-audit
 
     # Blocking gate: real-bug ruff codes (pyflakes + syntax errors) must pass.
     - name: Ruff (real bugs - blocking)
@@ -127,3 +132,30 @@ jobs:
       with:
         name: bandit-report
         path: bandit-report.json
+
+    # Blocking: mirrors the pre-commit actionlint hook so a workflow-file bug
+    # (bad expression, duplicate key, unknown runner label, shell-syntax error
+    # in a run: block) can't reach master even via --no-verify.
+    - name: Actionlint (workflow files)
+      run: actionlint
+
+    # Advisory: dead-code scan. Real false-positive rate on dynamic-dispatch
+    # code (lazy-import proxies, pydantic fields, pytest fixtures) makes this
+    # unsuitable as a blocking gate; mirrors the bandit step's posture.
+    - name: Vulture dead-code scan
+      run: vulture src/pyutilz --min-confidence 80
+      continue-on-error: true
+
+    # Advisory: known-vulnerability scan against installed dependency versions
+    # (bandit only checks code PATTERNS, not whether a pinned dependency has a
+    # published CVE -- a different and complementary risk class).
+    - name: pip-audit dependency vulnerability scan
+      run: pip-audit --desc -f json -o pip-audit-report.json || true
+      continue-on-error: true
+
+    - name: Upload pip-audit results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: pip-audit-report
+        path: pip-audit-report.json
