@@ -101,6 +101,8 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
     Gets an object from s3 or local filesystem (including zipped version).
     If not found even on s3, reports and starts waiting cycle until expected object is uploaded.
     """
+    if S3_BUCKET_NAME is None:
+        raise ValueError("pyutilz.cloud.cloud.S3_BUCKET_NAME must be configured before calling get_from_s3_or_cache()")
     while not exists(local_object_path):
         bDownload = True
         if s3_object_path.endswith(".zip"):

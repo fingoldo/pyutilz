@@ -193,7 +193,7 @@ def connect(
     m_proxy_server: Optional[str] = None,
     m_proxy_min_port: Optional[str] = None,
     m_proxy_max_port: Optional[str] = None,
-    m_template_headers: Optional[str] = None,
+    m_template_headers: Optional[Any] = None,
     m_timeout: Optional[int] = 10,
     m_proxy_port: Optional[str] = None,
     m_proxy_type: str = "http",

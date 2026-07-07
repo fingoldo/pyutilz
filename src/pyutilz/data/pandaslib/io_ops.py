@@ -35,7 +35,7 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
 
 def concat_and_flush_df_list(
     lst: list, file_name: str, to_csv: bool = False, csv_cols: Optional[list] = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: Optional[str] = None
-) -> object:
+) -> Optional[pd.DataFrame]:
 
     if len(lst) > 0:
         joined_df = pd.concat(lst, axis=0, ignore_index=True)
@@ -118,7 +118,8 @@ def read_stats_from_multiple_files(
     if len(lst) > 0:
         try:
             res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
-            logger.info("Final df size (%s rows)", len(res))
+            if res is not None:
+                logger.info("Final df size (%s rows)", len(res))
             if delete_after:
                 for _i, filename in enumerate(fnames):
                     try:

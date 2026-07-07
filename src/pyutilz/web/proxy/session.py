@@ -37,7 +37,7 @@ def curl_session(
     """
     from curl_cffi import requests as cr
 
-    s: Any = cr.Session(impersonate=impersonate, proxy=provider.proxy_url(port_offset))
+    s: Any = cr.Session(impersonate=impersonate, proxy=provider.proxy_url(port_offset))  # type: ignore[arg-type]  # impersonate is intentionally free-text str here; curl_cffi's stub pins it to a Literal enum that would need to be kept in sync with every curl_cffi release
     try:
         yield s
     finally:

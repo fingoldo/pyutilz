@@ -320,6 +320,8 @@ class GeminiProvider(LLMProvider):
                     contents=text,
                 ),
             )
+            if result.total_tokens is None:
+                raise ValueError("Gemini count_tokens returned no total_tokens")
             return int(result.total_tokens)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Gemini count_tokens API failed (%s); falling back to tiktoken.", exc)

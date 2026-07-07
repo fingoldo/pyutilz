@@ -70,6 +70,8 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
         import hashlib
         frame = inspect.stack()[1]
         module = inspect.getmodule(frame[0])
+        if module is None or module.__file__ is None:
+            raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
         with open(module.__file__, "rb") as f:
             file_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:8]
         version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"

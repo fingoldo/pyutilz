@@ -27,7 +27,7 @@ rc = None
 
 def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:str, decode_responses:bool=True):
     global rc
-    rc = redis.Redis(host=redis_host, port=redis_port, db=redis_db_name, password=redis_db_pwd, decode_responses=decode_responses)
+    rc = redis.Redis(host=redis_host, port=redis_port, db=int(redis_db_name), password=redis_db_pwd, decode_responses=decode_responses)
 
     return rc
 

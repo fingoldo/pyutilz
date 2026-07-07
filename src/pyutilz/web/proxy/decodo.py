@@ -330,7 +330,7 @@ class DecodoProvider(ProxyProvider):
         elif start is None or end is None:
             raise ValueError("Provide either days>0 or explicit start/end")
 
-        body = {
+        body: dict = {
             "proxyType": proxy_type,
             "startDate": start,
             "endDate": end,

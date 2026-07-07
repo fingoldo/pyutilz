@@ -291,6 +291,8 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
                     browser = None
             else:
                 break
+    if home_page is None:
+        raise ValueError("pyutilz.web.browser.home_page must be set (e.g. `browser.home_page = url`) before calling LoginAndGetCookies()")
     while True:
         try:
             browser_get(home_page)

@@ -182,7 +182,7 @@ def capture_signature(obj: object) -> str:
     ``"<no-signature>"``.
     """
     try:
-        sig = inspect.signature(obj)
+        sig = inspect.signature(obj)  # type: ignore[arg-type]  # obj is intentionally untyped object; non-callables are caught below and yield "<no-signature>"
     except (ValueError, TypeError, RuntimeError):
         return "<no-signature>"
     params = []

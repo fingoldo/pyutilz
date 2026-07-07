@@ -211,7 +211,7 @@ def get_script_file(file: Optional[str] = __file__) -> str:
     return os.path.basename(file)
 
 
-def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: object = None):
+def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None):
 
     report = "Large objects in RAM:"
     nbig = 0

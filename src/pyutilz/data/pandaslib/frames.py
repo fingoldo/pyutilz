@@ -10,6 +10,7 @@ from ._common import (
     Dict,
     Optional,
     Sequence,
+    Union,
     np,
     pd,
     pl,
@@ -63,7 +64,7 @@ def prefixize_columns(df: object, prefix: str, special_prefixes: Optional[dict] 
 
 
 def showcase_df_columns(
-    df: object,
+    df: Union[pd.DataFrame, pl.DataFrame],
     cols: Optional[list] = None,
     excluded_cols: Optional[list] = None,
     max_vars: Optional[int] = None,
