@@ -16,6 +16,8 @@ ensure_installed("numba scipy")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+from typing import Any, List
+
 import numpy as np
 from scipy.sparse import csr_matrix, coo_matrix
 
