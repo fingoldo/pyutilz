@@ -82,7 +82,7 @@ def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0)
 
 
 def compute_concentrations(
-    groupby_object: object,
+    groupby_object: Any,
     entity: str,
     entity_name: str,
     by: str,
@@ -334,7 +334,7 @@ def build_aggregate_features_polars(
 
         for filter_value in filter_values:
 
-            def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.expr:
+            def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.Expr:
                 return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
@@ -615,9 +615,9 @@ def create_ts_features_polars(
     expressions, columns_to_unnest, unnest_rules = build_aggregate_features_polars(df, dtype=dtype, **kwargs)
 
     if rolling:
-        res = df.rolling(index_column=index_column, period=period, offset=offset, closed=closed, group_by=group_by).agg(expressions)
+        res = df.lazy().rolling(index_column=index_column, period=period, offset=offset, closed=closed, group_by=group_by).agg(expressions)
     else:
-        res = df.group_by_dynamic(
+        res = df.lazy().group_by_dynamic(
             index_column=index_column,
             every=every if every is not None else period,
             period=period,
@@ -753,10 +753,11 @@ def bin_numerical_columns(
                 quantile_cols.quantile(0.75).name.suffix("_q3"),
             ]
         )
-    stats = df.select(stats_expr).collect()
+    stats_df = df.lazy().select(stats_expr).collect()
 
-    if len(stats) > 0:
-        stats = stats.row(0, named=True)
+    stats: dict
+    if len(stats_df) > 0:
+        stats = stats_df.row(0, named=True)
     else:
         stats = {}
     orig_stats = stats.copy()
@@ -823,7 +824,7 @@ def bin_numerical_columns(
         skipped_clips = []
         if min_nuniques_to_clip:
             # do not apply clipping if # of unique values is too low (under 10)
-            n_uniques_dict = df.select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
+            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
             for col, nuniques in n_uniques_dict.items():
                 if nuniques < min_nuniques_to_clip:
                     for field in "min max".split():
@@ -850,7 +851,7 @@ def bin_numerical_columns(
     bin_expressions = []
 
     if fill_nulls:
-        cols_with_nulls = [key for key, value in df.select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
+        cols_with_nulls = [key for key, value in df.lazy().select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
     if fill_nans:
         cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
 
@@ -886,7 +887,7 @@ def bin_numerical_columns(
         columns_to_drop.extend(dead_columns)
 
     # Apply all binning expressions in parallel
-    bins = df.select(bin_expressions).collect()
+    bins = df.lazy().select(bin_expressions).collect()
     clean_ram()
 
     if binned_targets is not None:
@@ -913,7 +914,7 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
         all_num_cols.max().name.suffix("_max"),
     ]
 
-    stats = df.select(stats_expr).collect().row(0, named=True)
+    stats = df.lazy().select(stats_expr).collect().row(0, named=True)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Deciding

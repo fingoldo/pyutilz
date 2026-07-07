@@ -475,6 +475,23 @@ class TestCreateTsFeaturesPolars:
         )
         assert isinstance(result, pl.DataFrame)
 
+    def test_accepts_eager_dataframe_not_only_lazyframe(self, mock_clean):
+        # Regression: df.rolling(...).agg(...) on a genuine eager pl.DataFrame
+        # returns a DataFrame (not a LazyFrame), which has no .collect() method.
+        # The function used to call res.collect(engine=...) unconditionally,
+        # so passing an actual DataFrame (the type its own signature declares)
+        # raised AttributeError on every call. Every other test in this class
+        # passes a LazyFrame (via ._make_ts_df()'s .lazy()), which happened to
+        # mask this because LazyFrame.rolling().agg() already returns a LazyFrame.
+        df = self._make_ts_df().collect()
+        assert isinstance(df, pl.DataFrame)
+        result = create_ts_features_polars(
+            df, index_column="ts", period="5h", rolling=True,
+            numaggs=["mean"], engine="cpu",
+        )
+        assert isinstance(result, pl.DataFrame)
+        assert result.height > 0
+
 
 # ============================================================
 # bin_numerical_columns — advanced paths (lines 714+)
