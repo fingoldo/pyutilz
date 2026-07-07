@@ -90,13 +90,8 @@ jobs:
         cache: pip
         cache-dependency-path: pyproject.toml
 
-    # mypy pinned: an unpinned resolve picked up a newer release that flagged a
-    # method-assign error in src/pyutilz/__init__.py's lazy-import-proxy machinery
-    # (pulled in transitively via import-following, outside the intended beachhead
-    # scope) that mypy 2.1.0 does not raise. Pin for determinism between local dev
-    # and CI until that's separately investigated.
     - name: Install linting tools
-      run: pip install ruff black "mypy==2.1.0" bandit actionlint-py shellcheck-py vulture pip-audit
+      run: pip install ruff black bandit actionlint-py shellcheck-py vulture pip-audit
 
     # Blocking gate: real-bug ruff codes (pyflakes + syntax errors) must pass.
     - name: Ruff (real bugs - blocking)
@@ -107,20 +102,9 @@ jobs:
       run: ruff check .
       continue-on-error: true
 
-    - name: mypy (advisory)
-      run: mypy src/pyutilz
-      continue-on-error: true
-
-    # Blocking: mirrors the pre-commit mypy hook's strict-mode beachhead (see
-    # [tool.mypy.overrides] in pyproject.toml) so a commit that passes locally
-    # cannot silently regress once pushed. numpy pinned <2.5: 2.5+'s bundled
-    # .pyi stubs use PEP 695 `type` statements that mypy rejects under
-    # python_version="3.10" ("Type statement is only supported in Python 3.12
-    # and greater").
-    - name: MyPy (strict-mode beachhead)
-      run: |
-        pip install "numpy<2.5"
-        mypy --follow-imports=silent src/pyutilz/dev/code_audit src/pyutilz/stats
+    # mypy (both the advisory full-repo pass and the strict-mode beachhead) moved to
+    # its own workflow (mypy.yml) so it gets an independent, honest badge instead of
+    # being buried as a step inside this combined lint job.
 
     - name: Bandit security scan
       run: bandit -r src -ll -f json -o bandit-report.json
