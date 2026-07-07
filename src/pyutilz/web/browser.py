@@ -101,7 +101,7 @@ def close_browser():
         browser.close()
     except Exception as e:  # nosec B110 - best-effort cleanup on a browser handle that may already be dead/closed; the function unconditionally sets browser=None on the next line regardless
         logger.debug("Ignoring error while closing browser: %s", e)
-    browser=None
+    browser = None
 
 def browser_get(path:str)->None:
     try:
