@@ -226,7 +226,6 @@ ignore = [
     "N803",  # argument name should be lowercase (camelCase, Hungarian notation in legacy code)
     "N806",  # variable name should be lowercase (legacy code)
     "B006",  # mutable default (fixing separately)
-    "F401",  # unused imports (cleaning up separately)
     "F541",  # f-string without placeholders (sometimes used for consistency)
     "UP031", # use format specifiers instead of percent format (legacy code, not urgent)
     "UP006", # list/dict over typing.List: project targets py38 (parity with mlframe)
