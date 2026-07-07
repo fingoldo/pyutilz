@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Literal, Optional
 import numpy as np
 
 
@@ -92,7 +92,7 @@ def compute_concentrations(
     return_values: bool = True,
     sort_by_concentration: bool = True,
     add_mean_concentration: bool = True,
-    dtype: object = pl.Float64,
+    dtype: Any = pl.Float64,
     fields_remap: Optional[dict] = None,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
@@ -196,7 +196,7 @@ def build_aggregate_features_polars(
     tds_quantiles: Optional[list] = None,
     #
     engine: str = "cpu",
-    dtype: object = pl.Float64,
+    dtype: Any = pl.Float64,
     fields_remap: Optional[dict] = None,
     nans_filler: float = 0.0,
     concentration_top_n: int = 3,
@@ -391,7 +391,7 @@ def build_aggregate_features_polars(
             # Weighting
             if weighting_fields:
                 wcols = add_weighted_aggregates(
-                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields)), weighting_columns=weighting_fields, fpref=fpref, fields_remap=fields_remap
+                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields or [])), weighting_columns=weighting_fields, fpref=fpref, fields_remap=fields_remap
                 )
                 feature_expressions.extend(wcols)
 
@@ -584,13 +584,13 @@ def create_ts_features_polars(
     period: str,
     every: Optional[str] = None,
     offset: Optional[str] = None,
-    closed: Optional[str] = None,
-    label: str = "left",
+    closed: Optional[Literal["left", "right", "both", "none"]] = None,
+    label: Literal["left", "right", "datapoint"] = "left",
     group_by: Optional[str] = None,
     rolling: bool = False,
     include_boundaries: bool = False,
     clean_memory: bool = True,
-    dtype: object = pl.Float64,
+    dtype: Any = pl.Float64,
     engine: str = "cpu",
     **kwargs,
 ) -> pl.DataFrame:
@@ -606,8 +606,9 @@ def create_ts_features_polars(
 
     if group_by:
         additional_exclude = [group_by] if isinstance(group_by, str) else group_by
-        if kwargs.get("exclude_fields"):
-            kwargs["exclude_fields"] = list(kwargs.get("exclude_fields")) + additional_exclude
+        existing_exclude_fields = kwargs.get("exclude_fields")
+        if existing_exclude_fields:
+            kwargs["exclude_fields"] = list(existing_exclude_fields) + additional_exclude
         else:
             kwargs["exclude_fields"] = additional_exclude
 
@@ -618,7 +619,7 @@ def create_ts_features_polars(
     else:
         res = df.group_by_dynamic(
             index_column=index_column,
-            every=every,
+            every=every if every is not None else period,
             period=period,
             offset=offset,
             closed=closed,
@@ -687,7 +688,7 @@ def bin_numerical_columns(
     clean_features: bool = True,
     clean_targets: bool = True,
     num_bins: int = 10,
-    bin_dtype: object = pl.Int8,
+    bin_dtype: Any = pl.Int8,
     exclude_columns: Optional[list] = None,
     min_nuniques_to_clip: int = 10,
     tukey_fences_multiplier: float = 3.0,
