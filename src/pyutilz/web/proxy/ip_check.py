@@ -18,6 +18,7 @@ _log = logging.getLogger(__name__)
 # here previously -- the name is local to the function once ANY `import orjson`
 # appears in its body, so referencing `orjson.JSONDecodeError` in the except clause
 # blew up when the import itself had failed).
+_json_backend: Any
 try:
     import orjson as _json_backend
 

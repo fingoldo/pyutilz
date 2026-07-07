@@ -1,8 +1,11 @@
 import os
 import tempfile
 import logging
+from typing import Any
 from urllib.parse import urlparse
 
+FileLock: Any
+Timeout: Any
 try:
     from filelock import FileLock, Timeout
 except ImportError:

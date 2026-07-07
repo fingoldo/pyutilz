@@ -696,12 +696,13 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
         d = n
 
 
-def explain_table(table_name: str) -> object:
+def explain_table(table_name: str) -> Optional[object]:
     """Read table names along with comments from a DB table, return as Pandas dataframe"""
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
     if db_flavor == "mysql":
-        return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=conn_alchemy)["Field Type Comment".split()]
+        return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=conn_alchemy)["Field Type Comment".split()]  # type: ignore[no-any-return]  # untyped upstream source (pandas read_sql); return value verified correct at runtime
+    return None
 
 
 def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> object:
@@ -724,7 +725,7 @@ def select(sql: str) -> object:
     return pd.read_sql(sql, con=conn_alchemy)
 
 
-def execute_alchemy(sql: str, max_retries: int = 3) -> object:
+def execute_alchemy(sql: str, max_retries: int = 3) -> None:
     """Execute arbitrary SQL against DB table using Alchemy directly"""
     assert conn_alchemy is not None, "execute_alchemy() requires conn_alchemy to be configured first"
     n = 0

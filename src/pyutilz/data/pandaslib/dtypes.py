@@ -162,6 +162,7 @@ def optimize_dtypes(
                 min_vals = stats.loc["min"]
                 max_vals = stats.loc["max"]
 
+                topvals: Any
                 if type_name in ("int", "uint"):
                     powers = [8, 16, 32, 64]
                     topvals = [np.iinfo(type_name + str(p)) for p in powers]

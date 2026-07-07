@@ -189,11 +189,13 @@ class AdvancedTokenizer:
 
                     res = ""
                     for text in (review.title, review.body):
+                        if not text:
+                            continue
                         if newlines:
                             text = text.replace(newlines, "\n")
 
-                        text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))
-                        if len(text) > 1:
+                        text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
+                        if text is not None and len(text) > 1:
                             # print(text)
                             res += ("" if len(res) == 0 else " ") + sentencize_text(text)
 

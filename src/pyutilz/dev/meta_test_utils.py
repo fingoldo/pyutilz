@@ -353,6 +353,7 @@ def count_user_deferred_entries(
             # Both ``X = {...}`` (Assign) and ``X: set[str] = {...}``
             # (AnnAssign) need to be matched — modern code typically
             # uses the annotated form for whitelists.
+            value: Optional[ast.expr]
             if isinstance(node, ast.Assign):
                 targets = node.targets
                 value = node.value

@@ -61,7 +61,7 @@ def _create_lazy_module(real_module_name, proxy_fullname):
         return getattr(real_mod, name)
 
     proxy_mod = types.ModuleType(proxy_fullname)
-    proxy_mod.__getattr__ = __getattr__
+    proxy_mod.__getattr__ = __getattr__  # type: ignore[method-assign]  # PEP 562 lazy-module-proxy pattern: instance-level __getattr__ on a ModuleType is the intended mechanism
     return proxy_mod
 
 # Register lazy proxy modules

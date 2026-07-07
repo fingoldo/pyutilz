@@ -6,6 +6,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
+from typing import Any as _Any
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +81,10 @@ def get_system_info(
         return_sensitive_info = True
         return_os_info = True  # Needed to trigger sensitive info collection
 
+    numba: _Any
+    web: _Any
     try:
-        import numba
+        import numba  # type: ignore[no-redef]  # mypy quirk: unaliased self-name import after a bare pre-declaration annotation
     except ImportError:
         numba = None
     try:

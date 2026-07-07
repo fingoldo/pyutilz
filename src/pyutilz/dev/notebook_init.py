@@ -3,6 +3,7 @@ Jupyter notebook initialization utilities
 """
 import os
 import psutil
+from typing import Any
 
 try:
     from IPython import get_ipython
@@ -13,6 +14,8 @@ except ImportError:
         return None
 
 # Correct imports for display and HTML
+display: Any
+HTML: Any
 try:
     from IPython.display import display, HTML
 except ImportError:

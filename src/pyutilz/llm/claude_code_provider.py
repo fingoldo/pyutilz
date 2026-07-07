@@ -130,8 +130,8 @@ try:
                             if len(chunks) > 100:
                                 break
                         real_stderr = "".join(chunks).strip()
-                    except Exception as e:  # nosec B110 - best-effort stderr enrichment for a ProcessError we're already re-raising; failure here must not mask the original error
-                        logger.debug("Could not read real stderr for ProcessError enrichment: %s", e)
+                    except Exception as stderr_read_error:  # nosec B110 - best-effort stderr enrichment for a ProcessError we're already re-raising; failure here must not mask the original error
+                        logger.debug("Could not read real stderr for ProcessError enrichment: %s", stderr_read_error)
                         pass
                 if real_stderr:
                     raise _ProcessError(

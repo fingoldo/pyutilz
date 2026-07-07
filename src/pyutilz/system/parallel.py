@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, List, Optional, Sequence, Sized
+from typing import Any, Callable, Iterator, List, Optional, Sequence, Sized
 
 import numpy as np
 
@@ -52,7 +52,7 @@ from joblib import load, dump
 from pyutilz.system.system import tqdmu
 
 
-def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
+def split_list_into_chunks(the_list: list, chunk_size: int) -> Iterator[list]:
     """
     >>>list(split_list_into_chunks(list(range(10)),3))
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
@@ -70,7 +70,7 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> list:
             yield the_list[left:r]
 
 
-def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> list:
+def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[tuple]:
     """
     >>>list(split_list_into_chunks(list(range(10)),3))
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
@@ -85,7 +85,7 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> list:
         yield left, r
 
 
-def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> list:
+def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tuple]:
     """
     >>>list(split_list_into_nchunks_indices(list(range(10)),3))
     [(0, 3), (3, 6), (6, 10)]

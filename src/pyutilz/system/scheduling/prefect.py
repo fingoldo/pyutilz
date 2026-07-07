@@ -21,7 +21,7 @@ from pyutilz.web import graphql
 from pyutilz.text import strings
 from time import sleep
 import prefect
-from typing import Optional
+from typing import Optional, Union
 
 client = None
 
@@ -70,7 +70,7 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
         return flows  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     return []
 
-def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=None,except_flowrun_id:Optional[str]=None,allof_labels:set=frozenset(),anyof_labels:set=frozenset())->list:
+def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=None,except_flowrun_id:Optional[str]=None,allof_labels:Union[set,frozenset]=frozenset(),anyof_labels:Union[set,frozenset]=frozenset())->list:
     """
     flow_id - can be used to check if an instance of the same flow is already running.
     ie, no need to do inference if previous one is still running

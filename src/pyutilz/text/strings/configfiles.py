@@ -4,11 +4,11 @@
 
 from ._logproxy import logger
 
-from typing import Optional
+from typing import Any, Optional
 
 from pyutilz.core.pythonlib import is_float
 
-def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Optional[str] = None, encryption: Optional[str] = "xor") -> None:
+def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Any = None, encryption: Optional[str] = "xor") -> Optional[bool]:
     import ast
     import configparser
     from base64 import b64decode
@@ -55,18 +55,21 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                     object[var] = None
     except Exception as e:
         logger.exception(e)
+        return None
     else:
         return True
 
 
 def write_config_file(
-    file: str, object: dict, section: Optional[str] = "MAIN", variables: Optional[str] = None, encryption: Optional[str] = "xor", mode="append"
-) -> None:
+    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode="append"
+) -> Optional[bool]:
     import os
     import configparser
     from base64 import b64encode
 
     try:
+        if section is None:
+            section = "MAIN"
 
         if isinstance(variables, str):
             variables = variables.split(",")
@@ -99,5 +102,6 @@ def write_config_file(
 
     except Exception as e:
         logger.error(str(e))
+        return None
     else:
         return True

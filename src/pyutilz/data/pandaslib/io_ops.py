@@ -19,7 +19,7 @@ from ._common import (
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection (see below)
 
 from .dtypes import optimize_dtypes
-from typing import Optional
+from typing import Callable, Optional
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
@@ -52,6 +52,7 @@ def concat_and_flush_df_list(
                 joined_df.set_index(set_index, inplace=True)
             getattr(joined_df, write_fcn)(f"{file_name}.{write_extension}")
             return joined_df
+    return None
 
 
 def read_stats_from_multiple_files(
@@ -65,7 +66,7 @@ def read_stats_from_multiple_files(
     write_extension: str = "pckl",
     delete_after: bool = False,
     sentinel_field: Optional[str] = None,
-    sentinel_fcn: object = None,
+    sentinel_fcn: Optional[Callable] = None,
     set_index: Optional[str] = None,
     optimize: bool = False,
     save_on_successful_optimization: bool = False,

@@ -37,7 +37,7 @@ logger: Logger = logging.getLogger(__name__)
 
 
 def init_logging(
-    custom_logger: object = None,
+    custom_logger: Optional[logging.Logger] = None,
     level=logging.INFO,
     default_caller_name: str = "app.py",
     format: str = (
@@ -134,11 +134,13 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
         params = inspect.getargvalues(current_frame).locals
         kwargs = params.get("kwargs", {})
         kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
+        assert isinstance(kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
         if explicit_only:
             params = kwargs
         else:
-            params = filter_elements_by_type(obj=params, allowed_types=allowed_types)
-            params = {**params, **kwargs}
+            filtered_params = filter_elements_by_type(obj=params, allowed_types=allowed_types)
+            assert isinstance(filtered_params, dict)
+            params = {**filtered_params, **kwargs}
     except (AttributeError, TypeError) as e:
         logging.exception(e)
 
@@ -162,7 +164,7 @@ def _stop_clocks(obj: dict) -> float:
     finished_at = datetime.now(timezone.utc)
     obj["finished_at"] = finished_at
 
-    duration = (finished_at - obj.get("started_at")).total_seconds()
+    duration = (finished_at - obj.get("started_at", finished_at)).total_seconds()
     if duration < 0:
         duration = 0
     obj["duration"] = duration
@@ -175,7 +177,7 @@ def _message(activity_name: str):
         logger.info("%s%s", activity_name, "" if activity_name.strip()[-1] in "!.?," else "...")
 
 
-def _close_opened_activities(activities: dict) -> float:
+def _close_opened_activities(activities: dict) -> Optional[float]:
     # let's close unclosed acts. returns duration of last closed activity.
     last_activity_duration = None
     for _, activity in activities.items():
@@ -221,7 +223,7 @@ def log_results(results_log: dict, results: dict, verbose: bool = True) -> None:
         _message(f"{results}")
 
 
-def log_activity(results_log: dict, activity_name: str, verbose: bool = True) -> float:
+def log_activity(results_log: dict, activity_name: str, verbose: bool = True) -> Optional[float]:
     ensure_dict_elem(obj=results_log["results"], name="activities", value={})
     activities = results_log["results"]["activities"]
     last_activity_duration = _close_opened_activities(activities)

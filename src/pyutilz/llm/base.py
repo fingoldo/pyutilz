@@ -256,7 +256,7 @@ class LLMProvider(ABC):
         OpenAI-compat). Resolve either so the shared ``_get_pricing`` works
         for both without per-provider overrides.
         """
-        return getattr(self, "model", None) or getattr(self, "model_name", "")
+        return str(getattr(self, "model", None) or getattr(self, "model_name", ""))
 
     def _get_pricing(self) -> tuple[float, float]:
         """Return ``(input_per_1m, output_per_1m)`` for the current model.

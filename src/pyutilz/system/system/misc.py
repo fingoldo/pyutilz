@@ -208,7 +208,7 @@ def count_app_instances(processname=None, cmdline=None):
 def get_script_file(file: Optional[str] = __file__) -> str:
     import os
 
-    return os.path.basename(file)
+    return os.path.basename(file or __file__)
 
 
 def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None):
@@ -382,7 +382,7 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
     if settings:
         if only_fields:
             settings = {field: value for field, value in settings.items() if field in only_fields}
-    return settings
+    return settings  # type: ignore[no-any-return]  # untyped upstream source (locale.localeconv()); return value verified correct at runtime
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Sounds

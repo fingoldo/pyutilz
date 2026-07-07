@@ -32,8 +32,8 @@ import warnings
 import http
 import ssl
 
-delay = 1
-max_ip_queries = 0
+delay: Optional[int] = 1
+max_ip_queries: Optional[int] = 0
 last_used_dict = None
 min_idle_interval_minutes = None
 failed_dict = None
@@ -55,7 +55,7 @@ num_ip_queries: int = 0
 template_headers: Optional[Any] = None
 headers: Optional[dict] = None
 proxies: Optional[dict] = None
-timeout: int = 10
+timeout: Optional[int] = 10
 proxy_user: Optional[str] = None
 proxy_pass: Optional[str] = None
 proxy_min_port: Optional[Any] = None
@@ -92,7 +92,7 @@ init_vars()
 
 def get_external_ip(
     proxy_user: Optional[str] = None, proxy_pass: Optional[str] = None, proxy_server: Optional[str] = None, proxy_port: Optional[int] = None
-) -> str:
+) -> Optional[str]:
     global IP_PROVIDERS
     shuffle(IP_PROVIDERS)
 
@@ -110,9 +110,11 @@ def get_external_ip(
                     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
                 else:
                     logger.warning(f"Weird IP address received from provider {source}: {res}")
+    return None
 
 
 def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"):
+    json_loads: Any
     try:
         import orjson
 
@@ -146,9 +148,9 @@ def download_in_parallel(
     import grequests
 
     if urls_to_process is None:
-        return
+        return None
     if len(urls_to_process) == 0:
-        return
+        return None
 
     n_processed = 0
     errored_urls = []
@@ -386,11 +388,11 @@ def get_url(
             # print("Getting url %s,headers=%s,params=%s,proxies=%s,timeout=%s,cookies=%s" % (url,headers,params,proxies,timeout,sess.cookies.get_dict()))
 
             # We are trying to fetch some url. Do we need to create new proxy session?
-            if sess is None or (max_ip_queries > 0 and num_ip_queries > cur_max_ip_queries):
+            if sess is None or ((max_ip_queries or 0) > 0 and num_ip_queries > cur_max_ip_queries):
                 # If there is no session yet or we have downloaded too many items withing current session alrady
                 get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
-                if max_ip_queries > 0:
-                    cur_max_ip_queries = int(max_ip_queries * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
+                if (max_ip_queries or 0) > 0:
+                    cur_max_ip_queries = int((max_ip_queries or 0) * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
                     logger.info("cur_max_ip_queries set to %d", cur_max_ip_queries)
             headers_to_use = custom_headers if custom_headers else headers
             if inject_headers:
@@ -562,17 +564,19 @@ def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = T
     else:
         logger.warning("IP blocked.")
 
-    sleep(delay * random())  # nosec B311 - random jitter on the post-block backoff sleep before rotating session/proxy, not security-sensitive
+    if delay:
+        sleep(delay * random())  # nosec B311 - random jitter on the post-block backoff sleep before rotating session/proxy, not security-sensitive
     set_proxy_last_use_time(failed_dict, proxies)
     get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
 
 
-def is_rotating_proxy(proxy_server: dict) -> bool:
+def is_rotating_proxy(proxy_server: dict) -> Optional[bool]:
     # {"PROXY_HOST": "gate.dc.smartproxy.com","PROXY_MIN_PORT": 20001,"PROXY_MAX_PORT": 37960}
     if proxy_server.get("PROXY_HOST", "").lower() == "gate.dc.smartproxy.com":
         if proxy_server.get("PROXY_MIN_PORT") == 20000:
             if proxy_server.get("PROXY_MAX_PORT") == 20000:
                 return True
+    return None
 
 
 def download_to_file(

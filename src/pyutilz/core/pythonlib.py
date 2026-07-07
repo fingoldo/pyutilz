@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, Iterable, Literal, Optional, Sequence, Set, Union
-from collections.abc import Sized as SizedABC
+from typing import Any, Callable, Iterable, Literal, Optional, Sequence, Set, Tuple, Union
+from collections.abc import Mapping as MappingABC, Sized as SizedABC
 
 import time
 import numbers
@@ -115,7 +115,7 @@ def flatten_keys_to_set(
     stringify: bool = False,
     verbose: bool = False,
     max_chars: int = 10,
-) -> dict:
+) -> set:
     """Recursively walks content of an object, bringing all the key-value keys to the top level set."""
     res: Set[Any] = set()
     if isinstance(obj, dict):
@@ -254,7 +254,11 @@ def filter_elements_by_type(obj: Union[dict, Sequence], allowed_types: tuple = (
     >>>filter_elems_by_type(obj={"a", 1, "test"}, allowed_types=(str,))
     ['test', 'a']
     """
-    if isinstance(obj, dict):
+    if isinstance(obj, MappingABC):
+        # Covers plain dict as well as Mapping-but-not-dict types such as
+        # FrameLocalsProxy (Python 3.13+'s frame.f_locals type per PEP 667) --
+        # isinstance(obj, dict) alone silently missed those and fell through
+        # to the list-of-keys branch below.
         return {key: value for key, value in obj.items() if isinstance(value, allowed_types)}
     else:
         return [value for value in obj if isinstance(value, allowed_types)]
@@ -316,7 +320,7 @@ def to_float(string):
 
 
 @njit()
-def integer_digits(n: int) -> set:
+def integer_digits(n: int) -> Tuple[int, set]:
     # Function to count digits in an integer
     digits = set()
     ntotal = 0
@@ -461,11 +465,11 @@ def get_utc_unix_ts_milliseconds() -> int:
 def imitate_delay(
     min_delay_seconds: float,
     max_delay_seconds: float,
-    last_call_ts: Optional[object] = None,
+    last_call_ts: Optional[datetime] = None,
     b_force: Optional[bool] = True,
     big_delay_prob: Optional[float] = None,
     big_delay_multiplier: Optional[float] = 10,
-) -> object:
+) -> datetime:
     """
     Waits random time interval (delay) since the last action.
     >>>last_call_ts=None;last_call_ts=imitate_delay(2,4,last_call_ts);last_call_ts=imitate_delay(2,4,last_call_ts);
@@ -484,10 +488,11 @@ def imitate_delay(
         if big_delay_prob:
             if big_delay_prob > 0:
                 if random() < big_delay_prob:  # nosec B311 - non-cryptographic use: coin-flip to decide whether to lengthen the imitated delay, not security-sensitive
-                    random_delay = random_delay * big_delay_multiplier
+                    random_delay = random_delay * (big_delay_multiplier if big_delay_multiplier is not None else 10)
         if b_force and (last_call_ts is None):
-            cur_delay = 0
+            cur_delay = 0.0
         else:
+            assert last_call_ts is not None  # guaranteed by the `if last_call_ts or b_force:` guard above combined with this branch
             cur_delay = (datetime.utcnow() - last_call_ts).total_seconds()
         if cur_delay < random_delay:
             logger.debug("Sleeping %.2f sec.", random_delay - cur_delay)
@@ -797,7 +802,7 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
 
 
 class HashableDict(dict):
-    def __hash__(self):
+    def __hash__(self):  # type: ignore[override]  # intentional: dict.__hash__ is None (unhashable); this recipe makes it hashable
         return hash(tuple(sorted(self.items())))
 
 

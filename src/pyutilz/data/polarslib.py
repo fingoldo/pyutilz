@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Any, Iterable, Literal, Optional
+from typing import Any, Iterable, Literal, Optional, Tuple, TypeVar, Union
 import numpy as np
 
 
@@ -66,7 +66,10 @@ def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
     return pl.when(expr.is_finite()).then(expr).otherwise(pl.lit(float(nans_filler)))
 
 
-def cast_f64_to_f32(df: pl.DataFrame) -> pl.DataFrame:
+_PlFrameT = TypeVar("_PlFrameT", pl.DataFrame, pl.LazyFrame)
+
+
+def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
     # Int128 was added in polars 0.19.0, make it optional for older versions
     int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
     if hasattr(pl, "Int128"):
@@ -260,9 +263,9 @@ def build_aggregate_features_polars(
         tds_quantiles = POLARS_DEFAULT_QUANTILES
 
     if not ewm_spans:
-        ewm_spans: list = []
+        ewm_spans = []
     if not ewm_time_half_lifes:
-        ewm_time_half_lifes: list = []
+        ewm_time_half_lifes = []
     if not ewm_basic_funcs:
         ewm_basic_funcs = "ewm_mean ewm_std".split()
     if not ewm_final_funcs:
@@ -279,21 +282,21 @@ def build_aggregate_features_polars(
     # Fields
 
     if boolean_fields is None:
-        boolean_fields = cs.expand_selector(df.head(), cs.by_dtype(pl.Boolean))
+        boolean_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Boolean)))
     if ts_diff_fields is None:
-        ts_diff_fields = cs.expand_selector(df.head(), cs.by_dtype(pl.Datetime))
+        ts_diff_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Datetime)))
     if numerical_fields is None:
-        numerical_fields = cs.expand_selector(df.head(), cs.numeric())
+        numerical_fields = list(cs.expand_selector(df.head(), cs.numeric()))
     if categorical_fields is None:
         categorical_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Categorical, pl.Utf8)))
 
     if exclude_fields:
         if boolean_fields:
-            boolean_fields = set(boolean_fields) - set(exclude_fields)
+            boolean_fields = list(set(boolean_fields) - set(exclude_fields))
         if ts_diff_fields:
-            ts_diff_fields = set(ts_diff_fields) - set(exclude_fields)
+            ts_diff_fields = list(set(ts_diff_fields) - set(exclude_fields))
         if numerical_fields:
-            numerical_fields = set(numerical_fields) - set(exclude_fields)
+            numerical_fields = list(set(numerical_fields) - set(exclude_fields))
         if categorical_fields:
             categorical_fields = list(set(categorical_fields) - set(exclude_fields))
 
@@ -664,7 +667,7 @@ def create_ts_features_polars(
         clean_ram()
 
     logger.info("create_ts_features_polars using %s engine, %s threads...", engine, pl.thread_pool_size())
-    res = res.collect(engine=engine)
+    res = res.collect(engine=engine)  # type: ignore[call-overload]  # "cpu" (this function's own documented default) works at runtime but isn't in polars' EngineType Literal
     logger.info("Done.")
 
     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
@@ -702,7 +705,7 @@ def bin_numerical_columns(
     fill_nans: bool = True,
     max_log_text_width: int = 300,
     verbose: int = 1,
-) -> pl.DataFrame:
+) -> Tuple[pl.DataFrame, Optional[pl.DataFrame], dict, list, dict]:
     """Computes min, max, and quantiles of all numerical columns in one go.
     Decides which are outliers and adds clipping.
     Converts values into integer uniform bin ids.
@@ -777,7 +780,7 @@ def bin_numerical_columns(
     dead_columns = []
     for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
+        if (min_val is None or max_val is None) or np.allclose(min_val, max_val):
             dead_columns.append(col)
     if dead_columns:
         if verbose:
@@ -804,6 +807,9 @@ def bin_numerical_columns(
 
             q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
             min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
+            assert q1 is not None and q3 is not None and min_val is not None and max_val is not None, (
+                f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
+            )
 
             iqr = q3 - q1
 
@@ -869,6 +875,7 @@ def bin_numerical_columns(
         # Calculate bin edges based on min and max values
         min_val = stats.get(f"{col}_min")
         max_val = stats.get(f"{col}_max")
+        assert min_val is not None and max_val is not None, f"stats missing min/max entries for column {col!r}"
 
         if min_val == max_val:
             dead_columns.append(col)
@@ -929,7 +936,7 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
     dead_columns = []
     for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None and max_val is None) or np.allclose(min_val, max_val):
+        if (min_val is None or max_val is None) or np.allclose(min_val, max_val):
             dead_columns.append(col)
     if dead_columns:
         if verbose:

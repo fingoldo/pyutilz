@@ -60,7 +60,7 @@ def contigous_strings_similarity(a: str, b: str) -> tuple:
     return max(best_l, best_r, best_m) / max(len(a), len(b)), root
 
 
-def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> float:
+def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
     """
     Улучшенный алгоритм распознавания одинаковых фраз, в т.ч. спортивных команд/игроков, адресов.
 
@@ -83,7 +83,7 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
     N_a = len(SentenceA)
     N_b = len(SentenceB)
     if N_a < 1 or N_b < 1:
-        return
+        return None
     if N_a < N_b:
         w_min = N_a
         w_max = N_b
@@ -392,7 +392,7 @@ try:
             buf = np.empty(0, dtype=np.int32)
         return buf, offsets, n
 
-    def pack_sentence(words: list) -> tuple:
+    def pack_sentence(words: list) -> Optional[tuple]:
         """Pre-pack a word list for repeated use with sentences_similarity_numba.
 
         Returns an opaque tuple that can be passed to sentences_similarity_numba_packed().
@@ -407,7 +407,7 @@ try:
         buf, offsets, n = _pack_words(words)
         return (buf, offsets, n)
 
-    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> float:
+    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
         """
         Numba-accelerated version of sentences_similarity.
 
@@ -434,7 +434,7 @@ try:
             return None
         return result  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
-    def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> float:
+    def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
         """
         Numba-accelerated sentences_similarity with pre-packed inputs.
 
@@ -689,23 +689,23 @@ try:
 except ImportError:
     HAS_NUMBA = False
 
-    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> float:
+    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
         """Fallback to pure-Python version when numba is not installed."""
         return sentences_similarity(SentenceA, SentenceB, cMinLenTHreshold)
 
-    def sentences_similarity_numba_packed(packed_a, packed_b, cMinLenTHreshold: int = 1) -> float:
+    def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
         """Fallback to pure-Python version when numba is not installed."""
-        return sentences_similarity(packed_a, packed_b, cMinLenTHreshold) if packed_a and packed_b else None
+        return sentences_similarity(list(packed_a), list(packed_b), cMinLenTHreshold) if packed_a and packed_b else None
 
     def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
         """Fallback to pure-Python version when numba is not installed."""
         return [sentences_similarity(query_words, c, cMinLenTHreshold) for c in candidates]
 
-    def pack_sentence(words: list) -> tuple:
+    def pack_sentence(words: list) -> Optional[tuple]:
         """Fallback — returns words as-is."""
         return tuple(words) if words else None
 
-    class SentenceSimilarityIndex:
+    class SentenceSimilarityIndex:  # type: ignore[no-redef]  # pure-Python fallback of the numba-accelerated class above; only one definition is ever live per process
         """Fallback without numba — uses pure Python."""
         def __init__(self, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False):
             self.candidates = candidates

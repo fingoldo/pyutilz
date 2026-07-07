@@ -28,7 +28,7 @@ import os, subprocess  # nosec B404 - used throughout this module only to invoke
 
 
 from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, find_between
-from typing import Any as _Any, List as _List, Optional
+from typing import Any as _Any, List as _List, Optional, Union
 
 from ._common import remove_nas, summarize_devices, dict_to_tuple
 
@@ -62,7 +62,7 @@ def get_cpu_info():
     return sort_dict_by_key(cpu_info)
 
 
-def get_wmi_cpuinfo() -> dict:
+def get_wmi_cpuinfo() -> Optional[dict]:
     """Get CPU information via Windows WMI.
 
     Returns:
@@ -107,7 +107,8 @@ def get_lscpu_info():
 
         for line in output.split("\n"):
             if ":" in line:
-                key, value = line.split(":", 1)
+                key, value_str = line.split(":", 1)
+                value: _Any = value_str
                 if "Vulnerability" not in key:
                     value = value.strip()
                     if isinstance(value, str) and is_float(value):
@@ -150,7 +151,7 @@ def get_linux_board_info():
 def parse_dmidecode_info(
     skip_keys: Optional[set] = None,
     skip_values: Optional[set] = None,
-) -> dict:
+) -> Optional[list]:
     """Parse dmidecode output for hardware information (Linux only).
 
     Args:
@@ -187,8 +188,8 @@ def parse_dmidecode_info(
     sections_to_avoid = "Memory Array Mapped Address;System Boot Information".split(";")
 
     summary = []
-    section_dict = {}
-    features_name = None
+    section_dict: dict = {}
+    features_name: _Any = None
     keep_section = False
     current_section = None
 
@@ -490,7 +491,7 @@ def get_windows_power_plan():
         return get_windows_power_plan_cmd()
 
 
-def get_power_plan() -> dict:
+def get_power_plan() -> Optional[dict]:
     """Get current power plan across all platforms.
 
     Returns:
@@ -506,7 +507,7 @@ def get_power_plan() -> dict:
     return power_plan  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def get_battery_info() -> dict:
+def get_battery_info() -> Optional[dict]:
     """Get battery information if available.
 
     Returns:
@@ -657,7 +658,7 @@ def get_nvidia_smi_info(
     return res
 
 
-def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEVICE_ATTRIBUTE_") -> dict:  # nosec B107 - "CU_DEVICE_ATTRIBUTE_" is a CUDA enum-name prefix used to strip it from numba's enums attribute names, not a credential
+def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEVICE_ATTRIBUTE_") -> Optional[dict]:  # nosec B107 - "CU_DEVICE_ATTRIBUTE_" is a CUDA enum-name prefix used to strip it from numba's enums attribute names, not a credential
     """Get all CUDA capabilities for a GPU device using numba.
 
     Args:
@@ -726,7 +727,7 @@ def get_cuda_gpu_details(cuda_gpu_info: dict) -> dict:
     return cuda_details
 
 
-def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,id,temperature,uuid") -> list:
+def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,load,driver,id,temperature,uuid") -> list:
     """Get GPU utilization stats using GPUtil (lightweight nvidia-smi wrapper).
 
     Args:

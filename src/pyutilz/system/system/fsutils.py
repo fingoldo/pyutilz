@@ -76,7 +76,7 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def list_linux_devices() -> dict:
+def list_linux_devices() -> Optional[dict]:
     # ensure_installed("pylspci")
 
     try:
@@ -90,4 +90,4 @@ def list_linux_devices() -> dict:
         return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     except Exception as e:
         logger.exception(e)
-        pass
+        return None

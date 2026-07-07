@@ -119,7 +119,7 @@ class AnthropicProvider(LLMProvider):
         ``generate_json()`` instead of passing ``json_mode=True``."""
         return False
 
-    @retry(
+    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception_type((
             anthropic.RateLimitError,
             anthropic.APIConnectionError,
@@ -158,7 +158,7 @@ class AnthropicProvider(LLMProvider):
 
             # ``with_raw_response`` exposes HTTP headers (rate-limit + org id)
             # alongside the parsed body. Without it the SDK swallows headers.
-            raw = await self.client.messages.with_raw_response.create(**kwargs)
+            raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]  # anthropic's create() overloads can't be resolved through a **dict unpack; correct at runtime
             response = raw.parse()
             self._capture_response_headers(raw.headers)
 

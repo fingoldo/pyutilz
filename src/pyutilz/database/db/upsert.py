@@ -199,12 +199,12 @@ def build_upsert_query(
         if hash_fields:
             join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
 
-            hash_changing_cond = []
+            hash_changing_conds = []
             for hash_field in hash_fields:
-                hash_changing_cond.append(
+                hash_changing_conds.append(
                     f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
                 )
-            hash_changing_cond = " OR ".join(hash_changing_cond)
+            hash_changing_cond = " OR ".join(hash_changing_conds)
 
             hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
         else:

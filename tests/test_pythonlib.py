@@ -400,6 +400,42 @@ class TestFilteringUtilities:
         assert None not in result
         assert [1, 2] not in result
 
+    def test_filter_elements_by_type_handles_mapping_that_is_not_a_dict_subclass(self):
+        """Regression: on Python 3.13+, frame.f_locals (and inspect.getargvalues(...).locals)
+        return a FrameLocalsProxy -- a Mapping but NOT a dict subclass. The old
+        `isinstance(obj, dict)` check missed it and silently fell through to the
+        list-of-keys branch, so pyutilz.dev.logginglib.initialize_function_log()
+        returned a list of local variable NAMES instead of the filtered locals dict
+        on every Python 3.13+ call. Pinned with a real (non-dict) Mapping, not a mock."""
+        from collections.abc import Mapping
+        from pyutilz.pythonlib import filter_elements_by_type
+
+        class _FakeFrameLocalsProxy(Mapping):
+            """Minimal non-dict Mapping, mirroring FrameLocalsProxy's shape."""
+
+            def __init__(self, data):
+                self._data = data
+
+            def __getitem__(self, key):
+                return self._data[key]
+
+            def __iter__(self):
+                return iter(self._data)
+
+            def __len__(self):
+                return len(self._data)
+
+            def items(self):
+                return self._data.items()
+
+        proxy = _FakeFrameLocalsProxy({"a": 1, "b": "text", "c": object(), "d": 3.14})
+        assert not isinstance(proxy, dict)  # confirms this exercises the Mapping-not-dict path
+
+        result = filter_elements_by_type(proxy, allowed_types=(int, str, float))
+
+        assert isinstance(result, dict), f"expected a dict, got {type(result)}: {result!r}"
+        assert result == {"a": 1, "b": "text", "d": 3.14}
+
 
 class TestObjectOperations:
     """Test object manipulation functions"""

@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 import re
 import math
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Iterator
 import numpy as np
 from collections import defaultdict, deque, Counter
 
@@ -18,7 +18,7 @@ from collections import defaultdict, deque, Counter
 _WORD_TOKEN_RE = re.compile(r"[a-zA-Z']+")
 
 
-def tokenize_text(source: str, tokenizer: object, lowercase: bool = True, strip: bool = True) -> str:
+def tokenize_text(source: str, tokenizer: Callable, lowercase: bool = True, strip: bool = True) -> Iterator[str]:
     if strip:
         source = source.strip()
     if lowercase:
@@ -26,7 +26,7 @@ def tokenize_text(source: str, tokenizer: object, lowercase: bool = True, strip:
     yield from tokenizer(source)
 
 
-def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lowercase: bool = True, strip: bool = True) -> str:
+def tokenize_source(source: str, tokenizer: Callable, is_file: bool = False, lowercase: bool = True, strip: bool = True) -> Iterator[str]:
     """
     source can be a filename or a string, depending on is_file flag
     """
@@ -38,14 +38,14 @@ def tokenize_source(source: str, tokenizer: object, is_file: bool = False, lower
         yield from tokenize_text(source=source, tokenizer=tokenizer, lowercase=lowercase, strip=strip)
 
 
-def tokenize_to_chars(source: str, is_file: bool = False) -> str:
+def tokenize_to_chars(source: str, is_file: bool = False) -> Iterator[str]:
     if is_file:
         return tokenize_source(source, lambda s: s + " ", is_file=True)
     else:
         return tokenize_source(source, lambda s: s, is_file=False)
 
 
-def tokenize_to_words(source, is_file: bool = False) -> str:
+def tokenize_to_words(source, is_file: bool = False) -> Iterator[str]:
     return tokenize_source(source, lambda s: _WORD_TOKEN_RE.findall(s), is_file=is_file)
 
 

@@ -236,6 +236,47 @@ class TestClaudeCodeRealUsage:
         assert out["cache_miss_tokens"] == 400
 
 
+class TestExceptAsVariableShadowingPattern:
+    """_patched_read_messages() in claude_code_provider.py had an outer
+    ``except _ProcessError as e:`` with an inner ``except Exception as e:`` (same
+    name) nested inside it for best-effort stderr enrichment. Python implicitly
+    ``del``s the ``as`` name at the end of ITS except block -- so if the inner
+    except ever fired, the outer ``e`` became unbound, and referencing
+    ``e.exit_code`` afterwards raised UnboundLocalError, masking the real
+    ProcessError entirely. Fixed by renaming the inner binding.
+
+    This test does not need claude_code_sdk installed -- it pins the general
+    variable-shadowing mechanism the fix relies on, independent of the SDK.
+    """
+
+    def test_reusing_the_same_except_as_name_deletes_the_outer_binding(self):
+        def buggy():
+            try:
+                raise ValueError("outer")
+            except ValueError as e:
+                try:
+                    raise KeyError("inner")
+                except Exception as e:  # noqa: F841 - intentionally shadows outer `e`, reproducing the bug
+                    pass
+                return e.args  # pre-fix pattern: UnboundLocalError here
+
+        with pytest.raises(UnboundLocalError):
+            buggy()
+
+    def test_renaming_the_inner_binding_avoids_the_collision(self):
+        def fixed():
+            try:
+                raise ValueError("outer")
+            except ValueError as e:
+                try:
+                    raise KeyError("inner")
+                except Exception as inner_e:
+                    del inner_e
+                return e.args  # post-fix pattern: `e` survives
+
+        assert fixed() == ("outer",)
+
+
 class TestGeminiSafetyAndMetadata:
     def _make(self):
         try:

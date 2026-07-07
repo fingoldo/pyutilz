@@ -53,7 +53,7 @@ def prefixize_columns(df: pd.DataFrame, prefix: str, special_prefixes: Optional[
     if special_prefixes is None:
         special_prefixes = {}
     if exclusions is None:
-        exclusions = set()
+        exclusions = ()
     # Build column mapping once instead of duplicating 3 times
     columns = {col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}
     if inplace:
@@ -329,7 +329,7 @@ def share_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     mparr = Array(ctypes.c_double, df.values.reshape(-1), lock=True)
 
     # create a new df based on the shared array
-    df_shared = pd.DataFrame(np.frombuffer(mparr.get_obj()).reshape(df.shape), columns=df.columns).astype(df_dtypes_dict)
+    df_shared = pd.DataFrame(np.frombuffer(mparr.get_obj()).reshape(df.shape), columns=df.columns).astype(df_dtypes_dict)  # type: ignore[call-overload]  # multiprocessing.Array's ctypes buffer is a standard np.frombuffer input; numpy's stub overloads don't cover it
 
     return df_shared
 

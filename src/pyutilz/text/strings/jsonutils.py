@@ -41,6 +41,8 @@ def jsonize_atrtributes(
     """
     if exclude is None:
         exclude = []
+    if recursion_level is None:
+        recursion_level = 0
     import numbers
 
     res: Any = None
@@ -103,7 +105,7 @@ def jsonize_atrtributes(
         except Exception as e:
             logger.exception(e)
             pass
-    return res
+    return res  # type: ignore[no-any-return]  # res is genuinely a dict on this path; typed Any to accommodate the str/dict/list branches elsewhere in this function
 
 
 def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
@@ -229,7 +231,9 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> str:
     return Json(json.loads(raw.replace("\\u0000", "")))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime  # ,object_pairs_hook=OrderedDict
 
 
-def get_jsonlist_property(data: Iterable, property_name: str, return_indices: Optional[bool] = False, verbose: Optional[bool] = False) -> list:
+def get_jsonlist_property(
+    data: Iterable, property_name: str, return_indices: Optional[bool] = False, verbose: Optional[bool] = False
+) -> Union[Any, list, tuple]:
     """
     >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]
@@ -254,7 +258,7 @@ def get_jsonlist_property(data: Iterable, property_name: str, return_indices: Op
         return res
 
 
-def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[bool] = False) -> list:
+def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[bool] = False) -> tuple:
     """
     >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]

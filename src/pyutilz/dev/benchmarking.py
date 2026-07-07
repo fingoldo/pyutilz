@@ -443,7 +443,7 @@ def sweep_backend_grid(
                 ms = timings[name]
                 if ms < best_ms:
                     best_name, best_ms, best_diff = name, ms, diffs[name]
-            region = {f"{d}_max": int(dims[d]) for d in dim_names}
+            region: dict = {f"{d}_max": int(dims[d]) for d in dim_names}
             if len(residencies) > 1:
                 region["location_eq"] = res
             region[decision_key] = best_name or ref

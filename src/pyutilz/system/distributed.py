@@ -101,7 +101,7 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
             if _container.node_id is None:
                 db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
             if _container.node_id is None:
-                return
+                return None
 
             db.db_command(
                 "insert",
@@ -115,6 +115,7 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
             logger.info("Registered as %s with node_id %s", m_scraper_name, _container.node_id)
             heartbeat_scraper(status="starting", ip=None)
             return _container.node_id
+    return _container.node_id
 
 
 def get_heartbeat_sql(status: str = "ok", ip: Optional[str] = None) -> Tuple[str, Optional[tuple]]:

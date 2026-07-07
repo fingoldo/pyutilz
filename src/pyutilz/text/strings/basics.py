@@ -13,7 +13,7 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
     """Finds a substring located in a text between the start and end strings, optionally from indices idx1 till idx2."""
 
     if not s:
-        return
+        return None
 
     if not idx2:
         idx2 = len(s)
@@ -29,6 +29,7 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
             p2 = s.find(end, p1, idx2)
         if p2 >= 0:
             return s[p1:p2]
+    return None
 
 
 def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token: Optional[str] = "]") -> list:  # nosec B107 - "[%clk " is a PGN chess-notation clock-annotation marker string (see docstring example), not a credential
@@ -132,7 +133,7 @@ def rpad(txt: str, n: int = 0, symbol: str = ".") -> str:
     return txt.ljust(n, symbol)
 
 
-def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", default: str = "", default_replacement: Optional[str] = None) -> str:
+def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", default: str = "", default_replacement: Optional[str] = None) -> Optional[str]:
     """
     Shortens out default values/parts prefixing string
 
@@ -145,6 +146,7 @@ def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", defa
             return default_replacement
         else:
             return path.replace(prefix, prefix_replacement)
+    return None
 
 
 def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:

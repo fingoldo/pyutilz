@@ -80,6 +80,7 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
             return data
     except Exception as e:
         logger.exception(e)
+        return None
 
 
 def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False) -> Any:

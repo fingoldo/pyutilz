@@ -50,7 +50,7 @@ def fix_duplicate_tokens(text: str) -> str:
         for token in "!.?":
             while token * 4 in text:
                 text = text.replace(token * 4, token * 3)
-        return text
+    return text
 
 
 def unescape_html(text: str) -> str:
@@ -59,14 +59,15 @@ def unescape_html(text: str) -> str:
     return su.unescape(text)
 
 
-def fix_html(text: str, common_linebreak: Optional[str] = "\n") -> str:
+def fix_html(text: Optional[str], common_linebreak: Optional[str] = "\n") -> Optional[str]:
     # replaces all kinds of brs with simple line break
-    if text:
-        common_linebreak = common_linebreak if common_linebreak is not None else "\n"
-        for q in ("<br />", "<br/>", "<br>", "<br >"):
-            if q in text:
-                text = text.replace(q, common_linebreak)
-        return text.strip()
+    if not text:
+        return text
+    common_linebreak = common_linebreak if common_linebreak is not None else "\n"
+    for q in ("<br />", "<br/>", "<br>", "<br >"):
+        if q in text:
+            text = text.replace(q, common_linebreak)
+    return text.strip()
 
 
 def parse_html(text: str, sep=". ") -> str:
@@ -74,22 +75,27 @@ def parse_html(text: str, sep=". ") -> str:
 
     if not pd.isnull(text):
         return sep.join(BeautifulSoup(text, "html.parser").findAll(string=True))  # type: ignore[call-arg, no-any-return]  # bs4's installed type stubs don't declare either text= or string=, but string= is the modern non-deprecated runtime kwarg
+    return ""
 
 
-def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
-    common_quotation = common_quotation if common_quotation is not None else "'"
+def fix_quotations(text: Optional[str], common_quotation: Optional[str] = "'") -> Optional[str]:
     # replaces all kinds of quotations with simple APOSTROPHE
+    if not text:
+        return text
+    common_quotation = common_quotation if common_quotation is not None else "'"
     if text:
         for q in ("\u0022", "\u0060", "\u00b4", "\u2018", "\u2019", "\u201c", "\u201d"):
             if q in text:
                 text = text.replace(q, common_quotation)
-        return text
+    return text
 
 
-def fix_spaces(text: str, tokens: Optional[list] = None) -> str:
+def fix_spaces(text: Optional[str], tokens: Optional[list] = None) -> Optional[str]:
     """
     Fixes whitespaces between commas
     """
+    if not text:
+        return text
     if tokens is None:
         tokens = [",", "."]
     if text:
@@ -100,10 +106,12 @@ def fix_spaces(text: str, tokens: Optional[list] = None) -> str:
                 if p < 0:
                     break
                 text = text.replace(find_token, token)
+    return text
+
+
+def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Optional[str]:  # nosec B107 - default "\n" is a literal newline delimiter used for text-normalization scanning, not a credential
+    if not text:
         return text
-
-
-def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:  # nosec B107 - default "\n" is a literal newline delimiter used for text-normalization scanning, not a credential
     if text:
         punctuation, eos = string.punctuation, ("!", ".", "?")
         whitespaces = list(string.whitespace)
@@ -203,7 +211,7 @@ def fix_broken_sentences(text: str, token: Optional[str] = "\n") -> str:  # nose
                 if text[-1] not in eos:
                     if text[-1].isalpha():
                         text = text + "."
-        return text
+    return text
 
 
 def fix_missed_space_between_sentences(text: str) -> str:
@@ -285,7 +293,7 @@ def clean_description(text: str, newlines: Optional[str] = None) -> str:
 
     text = text.replace("&", "and")
 
-    return ensure_space_after_comma(sentencize_text(fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))))
+    return ensure_space_after_comma(sentencize_text(fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))))  # type: ignore[arg-type]  # text is a required non-Optional str here, so every step in this chain returns a real str (each helper's Optional only covers explicit None input, which can't occur on this call path)
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -293,7 +301,7 @@ def clean_description(text: str, newlines: Optional[str] = None) -> str:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_ascii_emojies() -> None:
+def get_ascii_emojies() -> dict:
     """
     >>>get_ascii_emojies()
     {'</3': '💔',
@@ -322,7 +330,7 @@ def get_ascii_emojies() -> None:
     return res
 
 
-def get_unicode_emojies() -> None:
+def get_unicode_emojies() -> dict:
 
     import emoji_data_python
 

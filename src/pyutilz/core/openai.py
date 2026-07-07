@@ -13,6 +13,9 @@ as an estimate for anything past the 0613 snapshot.
 
 from __future__ import annotations
 
+from typing import Any
+
+tiktoken: Any
 try:
     import tiktoken
 except ImportError:

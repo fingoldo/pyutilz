@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Any as _Any, Optional
 
 import pandas as pd
 import psutil
@@ -110,7 +110,7 @@ def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
 
     # Define SIZE_T based on the platform (32-bit or 64-bit)
     if ctypes.sizeof(ctypes.c_void_p) == 4:
-        SIZE_T = ctypes.c_uint32
+        SIZE_T: _Any = ctypes.c_uint32
     else:
         SIZE_T = ctypes.c_uint64
 

@@ -28,7 +28,7 @@ import logging
 import os
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from pyutilz.core.pythonlib import is_cuda_available
 from pyutilz.system.system import (
@@ -360,7 +360,7 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
     cc_major = int(caps.get("COMPUTE_CAPABILITY_MAJOR", 0))
     cc_minor = int(caps.get("COMPUTE_CAPABILITY_MINOR", 0))
 
-    summary = {
+    summary: dict = {
         "cc_major": cc_major,
         "cc_minor": cc_minor,
         "sm_count": int(caps.get("MULTIPROCESSOR_COUNT", 0)),

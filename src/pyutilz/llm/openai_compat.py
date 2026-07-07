@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # resolved once at import time (not per-call, this loop runs per token chunk)
 # and falls back to stdlib if missing (kept optional -- core has no hard
 # requirements).
+_json_backend: Any
 try:
     import orjson as _json_backend  # type: ignore
 
@@ -514,7 +515,7 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         self._track_provider_specific_usage(usage)
 
-    @retry(
+    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception(_is_retryable_http_error),
         **INFINITE_RETRY_KWARGS,
     )

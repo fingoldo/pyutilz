@@ -17,6 +17,8 @@ from pyutilz.llm.base import LLMProvider
 logger = logging.getLogger(__name__)
 
 # Import google.genai at module level to check availability
+genai: Any
+types: Any
 try:
     from google import genai
     from google.genai import types
@@ -143,7 +145,7 @@ class GeminiProvider(LLMProvider):
         catalogue."""
         return True
 
-    @retry(
+    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception_type((
             ConnectionError, TimeoutError, OSError,
             *_GENAI_RETRYABLE_EXCEPTIONS,
@@ -244,7 +246,7 @@ class GeminiProvider(LLMProvider):
                         "safety_ratings": self.last_safety_ratings,
                     },
                 )
-            return text_out
+            return text_out  # type: ignore[no-any-return]  # untyped upstream source (google.genai response text); return value verified correct at runtime
 
     def _capture_candidate_metadata(self, response: Any) -> None:
         """Stash safety ratings / grounding / citation / function-call info

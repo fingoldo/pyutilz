@@ -28,7 +28,7 @@ from PIL import ImageFile
 from sys import getsizeof
 
 from pyutilz.text.strings import remove_json_defaults
-from typing import Optional
+from typing import Optional, Tuple
 
 
 def ensure_bytes_converted(obj: dict) -> dict:
@@ -46,7 +46,7 @@ def ensure_bytes_converted(obj: dict) -> dict:
     return obj
 
 
-def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[int] = None) -> dict:
+def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[int] = None) -> Tuple[Optional[bytes], Optional[dict]]:
     """
     For an image, uising PIL, read dimensions, info, exif data into a JSON-serializable dict
     """
