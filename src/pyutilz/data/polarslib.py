@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Any, Iterable, Literal, Optional, Tuple, TypeVar, Union
+from typing import Any, Iterable, Literal, Optional, Tuple, TypeVar
 import numpy as np
 
 
@@ -807,9 +807,9 @@ def bin_numerical_columns(
 
             q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
             min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-            assert q1 is not None and q3 is not None and min_val is not None and max_val is not None, (
-                f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
-            )
+            assert (
+                q1 is not None and q3 is not None and min_val is not None and max_val is not None
+            ), f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
 
             iqr = q3 - q1
 

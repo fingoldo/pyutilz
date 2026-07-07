@@ -28,7 +28,7 @@ import logging
 import os
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 from pyutilz.core.pythonlib import is_cuda_available
 from pyutilz.system.system import (

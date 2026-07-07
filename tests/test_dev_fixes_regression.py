@@ -234,9 +234,9 @@ class TestRegisterScraperAlreadyRegisteredReturnsNodeId:
         import pyutilz.system.distributed as dist
 
         dist._container.node_id = 42
-        with patch.object(dist.system, "get_system_info") as mock_get_info, patch.object(
-            dist.web, "get_external_ip", return_value="1.2.3.4"
-        ), patch.object(dist.pythonlib, "lookup_in_stack", return_value=None):
+        with patch.object(dist.system, "get_system_info") as mock_get_info, patch.object(dist.web, "get_external_ip", return_value="1.2.3.4"), patch.object(
+            dist.pythonlib, "lookup_in_stack", return_value=None
+        ):
             result = dist.register_scraper(scraper_name="s", version="v", app_name="a", ip="1.2.3.4")
         assert result == 42
         mock_get_info.assert_not_called()
