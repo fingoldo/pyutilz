@@ -24,7 +24,7 @@ import pyutilz.data.pandaslib as _facade  # patchable-name indirection for HAS_I
 
 
 def nullify_standard_values(
-    df: object, field: str, min_records: int = 300, persons_field: Optional[str] = None, min_persons: int = 0, placeholder=np.nan, verbose: bool = False
+    df: pd.DataFrame, field: str, min_records: int = 300, persons_field: Optional[str] = None, min_persons: int = 0, placeholder=np.nan, verbose: bool = False
 ):
     """
     Replaces (inplace) all standard responses with NaN to indicate it's not custom
@@ -46,7 +46,7 @@ def nullify_standard_values(
     df.loc[df[field].isin(top_values), field] = placeholder
 
 
-def prefixize_columns(df: object, prefix: str, special_prefixes: Optional[dict] = None, sep="_", exclusions: Optional[Sequence] = None, inplace: bool = True):
+def prefixize_columns(df: pd.DataFrame, prefix: str, special_prefixes: Optional[dict] = None, sep="_", exclusions: Optional[Sequence] = None, inplace: bool = True):
     """
     Prefix every column of a pandas dataframe (except clearly formulated exclusions) with some arbitrary prefix string - to identify variable's source
     """

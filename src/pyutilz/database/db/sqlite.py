@@ -11,13 +11,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 from typing import Any, Dict, Iterable, Optional
+import sqlite3
 
 from os.path import join, exists
 
 from pyutilz.database.db.sql_helpers import validate_sql_identifier
 
 
-def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: Optional[str] = None) -> bool:
+def ensure_db_tables_created(conn: sqlite3.Connection, cursor: sqlite3.Cursor, schema_fpath: Optional[str] = None) -> bool:
 
     if not schema_fpath:
         schema_fpath = join("database", "schema.sql")
@@ -39,7 +40,7 @@ def ensure_db_tables_created(conn: object, cursor: object, schema_fpath: Optiona
         return False
 
 
-def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: object, conn: object, verbose: int = 1):
+def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: sqlite3.Cursor, conn: sqlite3.Connection, verbose: int = 1):
     """Самый быстрый способ для массовых вставок"""
 
     # Validate table/column names to prevent SQL injection

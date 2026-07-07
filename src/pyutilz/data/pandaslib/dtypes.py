@@ -5,6 +5,7 @@ from the package ``__init__`` to preserve the public import surface.
 """
 
 from ._common import (
+    Any,
     Union,
     Optional,
     Sequence,
@@ -17,7 +18,7 @@ from ._common import (
 )
 
 
-def set_df_columns_types(df: object, types_dict: dict) -> None:
+def set_df_columns_types(df: pd.DataFrame, types_dict: dict) -> None:
     df_columns = set(df.columns)
     for the_type in types_dict.keys():
         for column in types_dict[the_type]:
@@ -25,7 +26,7 @@ def set_df_columns_types(df: object, types_dict: dict) -> None:
                 df[column] = df[column].astype(the_type)
 
 
-def get_categorical_columns_indices(ds: object) -> tuple:
+def get_categorical_columns_indices(ds: pd.DataFrame) -> tuple:
     categorical_features_indices = []
     non_categorical_features_indices = []
     unique_categorical_values = dict()
@@ -39,7 +40,7 @@ def get_categorical_columns_indices(ds: object) -> tuple:
     return non_categorical_features_indices, categorical_features_indices, unique_categorical_values
 
 
-def get_columns_of_type(df: object, type_names: Sequence) -> list:
+def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
     res = []
     for col, type_name in df.dtypes.to_dict().items():
         # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
@@ -226,7 +227,7 @@ def group_columns_by_dtype(df: pd.DataFrame) -> dict:
     return groups
 
 
-def classify_column_types(df: pd.DataFrame = None, col: Optional[str] = None, dtype: object = None) -> tuple:
+def classify_column_types(df: pd.DataFrame = None, col: Optional[str] = None, dtype: Any = None) -> tuple:
     """Return bunch of booleans: whether certain column is of particualr dtype."""
     if dtype is None:
         assert (df is not None) and (col)  # nosec B101 - internal API-misuse guard: caller must supply either an explicit dtype or both df+col; not a security boundary
