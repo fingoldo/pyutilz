@@ -48,15 +48,19 @@ was_blocked = False
 # references resolve before the first call (and so static analysis can see these names exist).
 sess: Optional[Any] = None
 num_ip_queries: int = 0
-template_headers: Optional[dict] = None
+# template_headers/proxy_min_port/proxy_max_port/proxy_port are genuinely inconsistently
+# typed across call sites in this file today (some pass str, some pass int, with defensive
+# int(...) casts at the point of use) -- Any reflects that honestly rather than picking a
+# specific type that would be wrong for half the callers.
+template_headers: Optional[Any] = None
 headers: Optional[dict] = None
 proxies: Optional[dict] = None
 timeout: int = 10
 proxy_user: Optional[str] = None
 proxy_pass: Optional[str] = None
-proxy_min_port: Optional[int] = None
-proxy_max_port: Optional[int] = None
-proxy_port: Optional[int] = None
+proxy_min_port: Optional[Any] = None
+proxy_max_port: Optional[Any] = None
+proxy_port: Optional[Any] = None
 proxy_type: Optional[str] = None
 
 _ALLOWED_URL_SCHEMES = ("http", "https")

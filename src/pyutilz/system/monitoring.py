@@ -19,7 +19,7 @@ import concurrent.futures
 from functools import wraps
 from datetime import datetime
 from timeit import default_timer as timer
-from typing import Optional
+from typing import Any, Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # INITS
@@ -67,6 +67,7 @@ def job_completed(
             endpoint = f"https://hc-ping.com/{job_id}/{status}"
     elif provider == "cronitor.io":
         endpoint = f"https://cronitor.link/p/{api_key}/{job_id}"
+        state: Any
         if status == 0:
             state = "complete"
         else:

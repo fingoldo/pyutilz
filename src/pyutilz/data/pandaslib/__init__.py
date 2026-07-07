@@ -105,6 +105,11 @@ from .benchmarks import (
 # ----------------------------------------------------------------------------------------------------------------------------
 # Hide the submodule names so ``dir(pyutilz.data.pandaslib)`` matches the
 # pre-split flat module exactly (only public symbols, no submodule attributes).
+# Explicit `from . import` here (rather than relying on the implicit submodule
+# binding the `from .X import name` statements above already produce) so mypy
+# sees a real binding to delete instead of needing an unreliable ignore comment.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-del dtypes, frames, io_ops, benchmarks  # noqa: F821  # type: ignore[name-defined]  # submodule names bound implicitly by the `from .X import ...` imports above
+from . import dtypes, frames, io_ops, benchmarks  # noqa: F401,F811
+
+del dtypes, frames, io_ops, benchmarks  # noqa: F821

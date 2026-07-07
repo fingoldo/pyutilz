@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+from typing import Any as _Any
 from typing import Optional, Sequence, Union
 
 import locale
@@ -133,7 +134,7 @@ def get_os_info() -> dict:
     info["version"] = platform.version()
     info["platform"] = platform.platform()
 
-    architecture = platform.architecture()
+    architecture: _Any = platform.architecture()
     if isinstance(architecture, tuple):
         architecture = ", ".join(architecture)
 
@@ -377,7 +378,7 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
 
     """
     locale.setlocale(locale.LC_ALL, locale_name)
-    settings = locale.localeconv()
+    settings: _Any = locale.localeconv()
     if settings:
         if only_fields:
             settings = {field: value for field, value in settings.items() if field in only_fields}
