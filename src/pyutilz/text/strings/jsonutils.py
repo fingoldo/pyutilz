@@ -4,7 +4,7 @@
 
 from ._logproxy import logger
 
-from typing import Any, Iterable, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 import json
 
 def json_serial(obj: Any) -> str:

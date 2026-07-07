@@ -28,7 +28,7 @@ import os, subprocess  # nosec B404 - used throughout this module only to invoke
 
 
 from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, find_between
-from typing import Optional
+from typing import Any as _Any, List as _List, Optional
 
 from ._common import remove_nas, summarize_devices, dict_to_tuple
 
@@ -199,7 +199,7 @@ def parse_dmidecode_info(
                     key, value = map(str.strip, line.split(":", 1))
                     if value == "":
                         features_name = key
-                        features: List[Any] = []
+                        features: _List[_Any] = []
                     else:
                         if features_name and features:
                             section_dict[features_name] = tuple(sorted(features))
@@ -739,7 +739,7 @@ def get_gpuutil_gpu_info(attrs: str = "name,memoryTotal,memoryFree,load,driver,i
         attrs = attrs.split(",")
     assert "id" in attrs  # nosec B101 - internal precondition ("id" is used below to key devices), not a security/permission check
 
-    devices: List[Any] = []
+    devices: _List[_Any] = []
 
     try:
         import GPUtil

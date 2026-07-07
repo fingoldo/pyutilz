@@ -17,7 +17,7 @@ import numpy as np
 
 from pyutilz.system.system import get_own_memory_usage, get_nvidia_smi_info
 from pyutilz.core.pythonlib import to_float
-from typing import Optional
+from typing import Any as _Any, List as _List, Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Hardware Utilization Monitor
@@ -54,21 +54,21 @@ class UtilizationMonitor:
         """
         if gpu_ids is None:
             gpu_ids = []
-        self.cpu_utilizaton: List[Any] = []
-        self.cpu_clocks: List[Any] = []
+        self.cpu_utilizaton: _List[_Any] = []
+        self.cpu_clocks: _List[_Any] = []
 
-        self.own_ram_used: List[Any] = []
-        self.total_ram_used: List[Any] = []
-        self.total_ram_free: List[Any] = []
+        self.own_ram_used: _List[_Any] = []
+        self.total_ram_used: _List[_Any] = []
+        self.total_ram_free: _List[_Any] = []
 
-        self.mean_gpu_ram_free: List[Any] = []
-        self.mean_gpu_ram_used: List[Any] = []
+        self.mean_gpu_ram_free: _List[_Any] = []
+        self.mean_gpu_ram_used: _List[_Any] = []
 
-        self.mean_gpu_clocks: List[Any] = []
-        self.mean_gpu_utilizaton: List[Any] = []
+        self.mean_gpu_clocks: _List[_Any] = []
+        self.mean_gpu_utilizaton: _List[_Any] = []
 
-        self.mean_gpu_power_draw: List[Any] = []
-        self.mean_gpu_temp: List[Any] = []
+        self.mean_gpu_power_draw: _List[_Any] = []
+        self.mean_gpu_temp: _List[_Any] = []
 
         self.gpu_ids = gpu_ids
         self.sleep_interval_seconds = sleep_interval_seconds

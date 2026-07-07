@@ -22,7 +22,7 @@ from pyutilz.core.pythonlib import ensure_installed  # noqa: F401
 # ``._common`` (see their ``from ._common import (...)`` blocks), so each import is a deliberate re-export, not dead code.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Union, Optional, Sequence, Dict, List, Tuple  # noqa: F401
+from typing import Any, Union, Optional, Sequence, Dict, List, Tuple  # noqa: F401
 
 import gc  # noqa: F401
 import io  # noqa: F401
