@@ -25,6 +25,8 @@ def spacy_sent_tokenize(text: str) -> list:
 
 def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]"):  # nosec B107 - "[[VIDEOID:" is a text placeholder marker delimiting embedded video references, not a credential
     if text:
+        token = token if token is not None else "[[VIDEOID:"
+        token2 = token2 if token2 is not None else "]]"
         p = 0
         while True:
             p = text.find(token, p)
@@ -60,6 +62,7 @@ def unescape_html(text: str) -> str:
 def fix_html(text: str, common_linebreak: Optional[str] = "\n") -> str:
     # replaces all kinds of brs with simple line break
     if text:
+        common_linebreak = common_linebreak if common_linebreak is not None else "\n"
         for q in ("<br />", "<br/>", "<br>", "<br >"):
             if q in text:
                 text = text.replace(q, common_linebreak)
@@ -74,6 +77,7 @@ def parse_html(text: str, sep=". ") -> str:
 
 
 def fix_quotations(text: str, common_quotation: Optional[str] = "'") -> str:
+    common_quotation = common_quotation if common_quotation is not None else "'"
     # replaces all kinds of quotations with simple APOSTROPHE
     if text:
         for q in ("\u0022", "\u0060", "\u00b4", "\u2018", "\u2019", "\u201c", "\u201d"):

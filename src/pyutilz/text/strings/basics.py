@@ -38,6 +38,8 @@ def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token
     ['0:03:00', '0:03:00', '0:03:00', '0:03:01', '0:03:01', '0:03:02']
 
     """
+    start_token = start_token if start_token is not None else "[%clk "
+    end_token = end_token if end_token is not None else "]"
     p1, p2 = 0, 0
     tokens = []
     while True:
@@ -87,7 +89,7 @@ def underscorize_variable(var: Sequence) -> str:
 def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, return_binary: Optional[bool] = False) -> Any:
     import hashlib, base64
 
-    hash = hashlib.new(algo)
+    hash = hashlib.new(algo if algo is not None else "md5")
     if isinstance(data, str):
         hash.update(data.encode("utf-8"))
     elif hasattr(data, "getquoted"):
