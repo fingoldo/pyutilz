@@ -133,7 +133,7 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
     else:
         res = get_url(url, target="ipinfo", inject_headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         try:
-            res = res.json()
+            res = res.json() if res is not None else None
         except Exception as e:
             logger.exception(e)
             res = None
@@ -372,7 +372,7 @@ def get_url(
     ratelimited_proxy_sleep_interval: int = 0,
     ratelimiting_statuses: Sequence = (429,),
     session_expired_statuses: Sequence = (),
-) -> object:
+) -> Optional[requests.Response]:
     global proxies
     global was_blocked
     global num_ip_queries, cur_max_ip_queries
