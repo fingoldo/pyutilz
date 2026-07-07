@@ -10,7 +10,7 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from pyutilz.core.pythonlib import ensure_installed
-from typing import Optional
+from typing import Any, Optional
 ensure_installed("")
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ ensure_installed("")
 
 client = None
 
-def connect(graphql_client:object)->None:
+def connect(graphql_client:Any)->None:
     global client
     client = graphql_client
 

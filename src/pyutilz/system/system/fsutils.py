@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 import json
 import psutil
+from typing import Optional
 import os, subprocess  # nosec B404 - used only to invoke the fixed trusted "pylspci" binary below with a hardcoded argv, no shell/user input
 
 
@@ -41,7 +42,7 @@ def ensure_dir_exists(directory: str):
     return existed
 
 
-def get_max_singledisk_free_space_gb(disk_partitions: object = None, required_filesystem=None):
+def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, required_filesystem=None):
     """
     Highest amount of free disk space on a single disk drive
     """

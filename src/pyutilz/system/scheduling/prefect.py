@@ -113,7 +113,7 @@ def wait_for_absense_of_tasks(
     labels: Optional[set] = None,
     sleep_seconds: int = 10,
     max_retries: int = 60,
-    logger: object = None,
+    logger: Optional[logging.Logger] = None,
 ):
     if labels is None:
         labels = set()

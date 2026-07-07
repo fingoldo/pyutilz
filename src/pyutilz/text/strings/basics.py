@@ -55,7 +55,7 @@ def parse_tokens(notation: str, start_token: Optional[str] = "[%clk ", end_token
     return tokens
 
 
-def make_text_from_inner_html_elements(elem: object) -> str:
+def make_text_from_inner_html_elements(elem: Any) -> str:
     """Useful for creating texts from beautiful Soup html with many elements. Renders stream of text from several elements properly, as opposed to dumb .text property"""
     tags = [tag.replace(r"\n", "").strip() for tag in elem.strings]
     return "\n".join([tag for tag in tags if len(tag) > 0])

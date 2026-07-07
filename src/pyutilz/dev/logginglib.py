@@ -325,7 +325,7 @@ class RedisHandler(Handler):
 
     def __init__(
         self,
-        rc: object,
+        rc: Any,
         LOG_DEST: Optional[str] = "Logs",
         LOG_SIZE: Optional[int] = 1000,
     ) -> None:

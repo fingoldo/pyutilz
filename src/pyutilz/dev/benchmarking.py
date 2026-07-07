@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import numpy as np
 from timeit import default_timer as timer
 
@@ -65,7 +65,7 @@ def benchmark_algos_by_runtime(
     separately when comparing a GPU backend: the optimal choice is
     residency-AND-HW-dependent (transfer cost vs on-device compute)."""
 
-    durations = []
+    durations: Any = []
     if verbose > 1:
         mes_parts = []
         logger.info("Benchmarking %s implementations...", algo_name)
