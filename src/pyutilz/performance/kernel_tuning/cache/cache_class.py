@@ -229,6 +229,8 @@ class KernelTuningCache:
         read, NO lock. Returns the kernel ENTRY dict (axes/regions/code_version/
         salt/tuned_utc) with a per-file provenance staleness check applied, or
         None on miss / stale."""
+        if self._path is None:
+            return None
         kdir = _kernel_dir(self._path, kernel_name)
         files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
         if not files:
@@ -270,7 +272,7 @@ class KernelTuningCache:
         (if any) and caches the pulled kernels locally as immutable files before
         resolving. Returns None when nothing is found (so ``_ensure_loaded``
         installs an empty stub)."""
-        if self._in_memory:
+        if self._in_memory or self._path is None:
             return None
         self._migrate_legacy()
         host_dir = self._path
@@ -779,7 +781,9 @@ class KernelTuningCache:
         return stored is not None and stored != code_version
 
     def _marker_path(self, kernel_name: str, code_version: Optional[str]) -> str:
-        """Path to the per-(kernel, code_version) INPROGRESS sweep marker."""
+        """Path to the per-(kernel, code_version) INPROGRESS sweep marker. Callers must have
+        already guarded on ``self._path is not None`` (in-memory caches have no marker path)."""
+        assert self._path is not None, "_marker_path() requires a non-in-memory cache"
         cv = _slug(str(code_version or _NO_CODE_VERSION), maxlen=70)
         return os.path.join(_kernel_dir(self._path, kernel_name), f"{cv}.INPROGRESS")
 

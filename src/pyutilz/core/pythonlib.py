@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
 from typing import Any, Callable, Iterable, Literal, Optional, Sequence, Set, Union
+from collections.abc import Sized as SizedABC
 
 import time
 import numbers
@@ -279,12 +280,12 @@ def batch(iterable, n=1):
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def list_is_non_increasing(lst: Iterable) -> bool:
+def list_is_non_increasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
     return all(lst[i] >= lst[i + 1] for i in range(len(lst) - 1))
 
 
-def list_is_non_decreasing(lst: Iterable) -> bool:
+def list_is_non_decreasing(lst: Sequence) -> bool:
     """Checks if a list is sorted."""
     return all(lst[i] <= lst[i + 1] for i in range(len(lst) - 1))
 
@@ -560,7 +561,10 @@ def lookup_in_stack(variable):
 def get_parent_func_args(skip_args: Sequence = ("self",)) -> dict:
     """Get arg-values of a caller func as a dict."""
 
-    previous_frame = inspect.currentframe().f_back
+    _this_frame = inspect.currentframe()
+    previous_frame = _this_frame.f_back if _this_frame is not None else None
+    if previous_frame is None:
+        return {}
     args_info = inspect.getargvalues(previous_frame)
 
     # Collecting args-values of my_func in a dictionary
@@ -770,7 +774,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
             if not self.rewrite_existing:
                 # Do not rewrite existing non-empty objects/keys, warn instead.
                 obj = container.get(obj_name)
-                proceed = obj is None or (isinstance(obj, Iterable) and len(obj) == 0)
+                proceed = obj is None or (isinstance(obj, SizedABC) and len(obj) == 0)
             else:
                 proceed = True
 

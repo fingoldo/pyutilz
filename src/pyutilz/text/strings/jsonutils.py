@@ -200,7 +200,7 @@ def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
 
 
 def remove_json_defaults(
-    json_obj: dict, attr_values: Optional[List[dict]] = None, warn_if_not_default: Optional[bool] = False, obj_id: Optional[str] = ""
+    json_obj: dict, attr_values: Optional[Dict[str, Any]] = None, warn_if_not_default: Optional[bool] = False, obj_id: Optional[str] = ""
 ) -> None:
     if json_obj is None or attr_values is None:
         return

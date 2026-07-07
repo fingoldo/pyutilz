@@ -103,7 +103,7 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
         assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
     try:
         to = type(obj).__name__
-        if to == "str":
+        if isinstance(obj, str):
             if not os.path.isfile(obj):
                 logger.error("File %s not found" % obj)
                 return

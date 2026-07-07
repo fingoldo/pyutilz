@@ -314,7 +314,7 @@ def summarize_system_info():
 
 
 def get_nix_cpu_sockets_number():
-    num_sockets = 1
+    num_sockets: _Any = 1
     try:
         res = subprocess.check_output("lscpu").decode()  # nosec B603 B607 - fixed trusted binary "lscpu", hardcoded string with no interpolation, no shell
         num_sockets = re.findall("Socket\\(s\\):(.+)\n", res)

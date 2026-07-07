@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, Sized
 
 import numpy as np
 
@@ -102,7 +102,7 @@ def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> list:
             yield step * chunk, (chunk + 1) * step
 
 
-def split_array(arr: object, step: int) -> list:
+def split_array(arr: Sized, step: int) -> list:
     """
     Returns list of (a,b) tuples of array split into chunks using certain step size.
     >>>split_array(np.random.uniform(0,1,5477),step=1000)
@@ -174,7 +174,7 @@ def parallel_run(
 
 def applyfunc_parallel(
     iterable: list,
-    func: object,
+    func: Callable,
     n_cores: Optional[int] = None,
     return_dataframe: bool = True,
     logical: bool = False,
