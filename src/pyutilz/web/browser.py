@@ -67,7 +67,7 @@ fixed_cookies: Dict[str, Any] = {}
 basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en;q=0.9", "accept": "*/*"}
 headers = basic_headers
 
-def find_element_by_xpath(browser:object,query:str)->object:
+def find_element_by_xpath(browser:Any,query:str)->object:
     try:
         res = browser.find_element(By.XPATH, query)
     except Exception:
@@ -75,7 +75,7 @@ def find_element_by_xpath(browser:object,query:str)->object:
 
     return res
 
-def find_element_by_name(browser:object,query:str)->object:
+def find_element_by_name(browser:Any,query:str)->object:
     try:
         res = browser.find_element(By.NAME, query)
     except Exception:
@@ -83,7 +83,7 @@ def find_element_by_name(browser:object,query:str)->object:
 
     return res
 
-def find_element_by_tag_name(browser:object,query:str)->object:
+def find_element_by_tag_name(browser:Any,query:str)->object:
     try:
         res = browser.find_element(By.TAG_NAME, query)
     except Exception:
@@ -98,13 +98,16 @@ def init(**params) -> None:
 def close_browser():
     global browser
     try:
-        browser.close()
+        if browser is not None:
+            browser.close()
     except Exception as e:  # nosec B110 - best-effort cleanup on a browser handle that may already be dead/closed; the function unconditionally sets browser=None on the next line regardless
         logger.debug("Ignoring error while closing browser: %s", e)
     browser = None
 
 def browser_get(path:str)->None:
     try:
+        if browser is None:
+            raise ValueError("pyutilz.web.browser.browser is not initialized; call start_selenium() first")
         browser.get(path)
     except Exception as e:
         if ("cannot determine loading status" in str(e)) or ("unexpected command response" in str(e)):
