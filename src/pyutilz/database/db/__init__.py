@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Union
 import json
 import pandas as pd
 
@@ -197,7 +197,7 @@ def connect_to_db(
             return
 
 
-def get_cursor_type(cursor_factory: object, cursor_name: Optional[str] = None) -> str:
+def get_cursor_type(cursor_factory: Any, cursor_name: Optional[str] = None) -> str:
     if cursor_factory is None:
         cursor_factory = psycopg2.extensions.cursor
     cursor_type = cursor_factory.__name__ + ("" if cursor_name is None else "_named")
@@ -205,7 +205,7 @@ def get_cursor_type(cursor_factory: object, cursor_name: Optional[str] = None) -
     return cursor_type  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def get_cursor(cursor_type: str, cursor_factory: object = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> object:
+def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> Any:
     global cursors
     if cursor_type in cursors and "_named" not in cursor_type:
         cur = cursors[cursor_type]
@@ -571,7 +571,7 @@ def ReadTableIntoDicReversed(
                 dicEnums[the_id] = key
 
 
-def read_unique_table_field(table_name: str, field_name: str, container: object, clear: bool = True, placeholder_value=None) -> object:
+def read_unique_table_field(table_name: str, field_name: str, container: Union[set, dict], clear: bool = True, placeholder_value=None) -> Union[set, dict]:
     if clear:
         container.clear()
     res = safe_execute(
