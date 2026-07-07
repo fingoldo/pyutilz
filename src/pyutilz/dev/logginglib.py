@@ -9,7 +9,7 @@
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Any, Dict, List, Optional, Sized
 
 from datetime import datetime, timezone
 from os.path import sep, basename
@@ -73,7 +73,7 @@ def init_logging(
         if "ipython-input-" in caller_name or "ipykernel" in caller_name:
             caller_name = default_caller_name
 
-    handlers = []
+    handlers: List[logging.Handler] = []
     if log_to_file:
         try:
             from concurrent_log_handler import ConcurrentRotatingFileHandler
@@ -119,12 +119,18 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
     current_frame = inspect.currentframe()
 
     try:
+        if current_frame is None:
+            raise TypeError("no current frame available (some Python implementations don't provide one)")
         current_frame = current_frame.f_back
+        if current_frame is None:
+            raise TypeError("no caller frame available")
         function_name = current_frame.f_code.co_name
         module_name = inspect.getfile(current_frame)
     except (AttributeError, TypeError) as e:
         logging.exception(e)
     try:
+        if current_frame is None:
+            raise TypeError("no caller frame available")
         params = inspect.getargvalues(current_frame).locals
         kwargs = params.get("kwargs", {})
         kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
@@ -136,7 +142,7 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
     except (AttributeError, TypeError) as e:
         logging.exception(e)
 
-    results_log = {}
+    results_log: Dict[str, Any] = {}
     results_log["module"] = basename(module_name) if module_name else ""
     results_log["function"] = function_name
     results_log["parameters"] = params
@@ -230,7 +236,7 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
     return last_activity_duration
 
 
-def log_loaded_rows(obj: object, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False):
+def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False):
     if results_log is None:
         results_log = {}
     assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
@@ -267,8 +273,9 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             special_vars = ("current_proxy", "current_proxy_resolved", "login")
 
             function_name = func.__name__
-            current_frame = inspect.currentframe().f_back
-            module_name = inspect.getfile(current_frame)
+            _this_frame = inspect.currentframe()
+            current_frame = _this_frame.f_back if _this_frame is not None else None
+            module_name = inspect.getfile(current_frame) if current_frame is not None else ""
 
             f_kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
             if explicit_only:
