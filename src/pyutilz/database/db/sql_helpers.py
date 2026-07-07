@@ -28,7 +28,7 @@ import re
 _SQL_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-def validate_sql_identifier(identifier: str) -> str:
+def validate_sql_identifier(identifier: Optional[str]) -> str:
     """Validate that an identifier (table name, column name) is safe to use in SQL.
 
     Raises ValueError if the identifier contains potentially malicious characters.

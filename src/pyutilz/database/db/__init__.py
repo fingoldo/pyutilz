@@ -270,7 +270,7 @@ def basic_db_execute(
                 m_db_username=username,
                 m_db_pwd=pwd,
                 m_init_params_fn=init_params_fn,
-                m_db_flavor=db_flavor,
+                m_db_flavor=db_flavor if db_flavor is not None else "postgres",
                 m_db_schema=db_schema,
                 m_db_sslmode=db_sslmode,
             )
@@ -606,6 +606,11 @@ def GetIdByKeyFieldAndInsertIfNeeded(
     if sKeyFieldValue in dicEnums:
         return dicEnums[sKeyFieldValue]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     else:
+        sKeyFieldName = sKeyFieldName if sKeyFieldName is not None else "name"
+        sAlternateFieldsNames = sAlternateFieldsNames if sAlternateFieldsNames is not None else ""
+        sUniqueConstraintFields = sUniqueConstraintFields if sUniqueConstraintFields is not None else ""
+        sIdFieldName = sIdFieldName if sIdFieldName is not None else "id"
+
         # Validate identifiers to prevent SQL injection
         validate_sql_identifier(sTable)
         validate_sql_identifier(sKeyFieldName)
