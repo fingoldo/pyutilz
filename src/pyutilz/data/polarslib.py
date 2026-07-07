@@ -321,6 +321,12 @@ def build_aggregate_features_polars(
     num_no_filter: int = 0
     orig_categorical_fields = categorical_fields.copy()
     for filter_field, filter_values in subgroups.items():
+        # mypy loses the None-narrowing established in the "Fields"/"Params" blocks above once
+        # inside this loop; re-assert here (all are genuinely guaranteed non-None by that point).
+        assert boolean_fields is not None and numerical_fields is not None and categorical_fields is not None and ts_diff_fields is not None
+        assert numaggs is not None and quantiles is not None
+        assert ewm_spans is not None and ewm_basic_funcs is not None and ewm_final_funcs is not None
+        assert pds_fields is not None and pds_numaggs is not None and linreg_fields is not None
 
         assert isinstance(filter_values, list)  # nosec B101 - internal invariant on the shape of the caller-supplied subgroups dict values, not a security boundary
 

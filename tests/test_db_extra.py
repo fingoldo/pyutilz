@@ -233,3 +233,35 @@ def test_db_connection_globals_live_in_parent_facade():
 
     assert pyutilz.db is db
     assert redislib.rc is None
+
+
+# ---------------------------------------------------------------------------
+# db.execute_alchemy  (Engine.execute() was removed in SQLAlchemy 2.0; the
+# function used to call conn_alchemy.execute(sql) directly on the Engine,
+# which raises AttributeError on every call with the installed SQLAlchemy
+# version. Fixed to open a Connection via conn_alchemy.connect() and commit.)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_alchemy_engine_has_no_execute_method():
+    # Pins the actual SQLAlchemy 2.0 API shape this bug depended on.
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite:///:memory:")
+    assert not hasattr(engine, "execute")
+
+
+def test_execute_alchemy_runs_sql_against_the_engine():
+    from sqlalchemy import create_engine
+    import pyutilz.database.db as db
+
+    engine = create_engine("sqlite:///:memory:")
+    db.conn_alchemy = engine
+    try:
+        db.execute_alchemy("CREATE TABLE t (x INTEGER)")
+        db.execute_alchemy("INSERT INTO t VALUES (1)")
+        with engine.connect() as conn:
+            rows = conn.exec_driver_sql("SELECT x FROM t").fetchall()
+        assert rows == [(1,)]
+    finally:
+        db.conn_alchemy = None

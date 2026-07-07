@@ -60,7 +60,9 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
     )
     for _ in range(max_retries):
         res = web.get_url(filemaker_url + "/sessions", b_random_ua=False, verb="post")
-        if res.status_code != HTTPStatus.OK:
+        if res is None:
+            logger.warning("No response while getting filemaker session token")
+        elif res.status_code != HTTPStatus.OK:
             logger.warning("Error %s while getting filemaker session token: %s", res.status_code, res.text)
         else:
             res = res.json()
@@ -100,6 +102,10 @@ def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attem
             last_error = e
             logger.error("Exception %s when inserting into filemaker object %s", e, data)
         else:
+            if res is None:
+                last_error = ValueError("web.get_url() returned no response")
+                logger.error("No response when inserting into filemaker object %s", data)
+                continue
             if res.status_code == HTTPStatus.OK:
                 return True
             else:

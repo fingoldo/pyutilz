@@ -115,6 +115,7 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
         excluding = excluding.split(",")
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
+    assert cur is not None, "get_table_fields() requires connect_to_db() to have been called first"
     cur.execute("select * from " + table + " where 0=1")  # nosec B608 - table validated by validate_sql_identifier above
     cur.fetchall()
     if cur.description is not None:
@@ -210,6 +211,7 @@ def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Option
     if cursor_type in cursors and "_named" not in cursor_type:
         cur = cursors[cursor_type]
     else:
+        assert conn is not None, "get_cursor() requires connect_to_db() to have been called first"
         cur = conn.cursor(cursor_factory=cursor_factory, name=cursor_name, withhold=(False if cursor_name is None else True))
         if itersize:
             if str(itersize).isnumeric():
@@ -288,7 +290,8 @@ def basic_db_execute(
             if "cursor" in str(e) and "already exists" in str(e):
                 if cursor_type in cursors:
                     del cursors[cursor_type]
-                cur.close()
+                if cur is not None:
+                    cur.close()
             else:
                 raise
         else:
@@ -320,6 +323,7 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
         fields = fields.split(",")
     if elements is not None:
         if fields == ["*"]:
+            assert cur is not None, "fetch_db_elements() requires connect_to_db() to have been called first"
             fields = [col.name for col in cur.description]
         if indices is None:
             indices = range(len(fields))
@@ -722,11 +726,14 @@ def select(sql: str) -> object:
 
 def execute_alchemy(sql: str, max_retries: int = 3) -> object:
     """Execute arbitrary SQL against DB table using Alchemy directly"""
+    assert conn_alchemy is not None, "execute_alchemy() requires conn_alchemy to be configured first"
     n = 0
     while n < max_retries:
         try:
             n += 1
-            conn_alchemy.execute(sql)
+            with conn_alchemy.connect() as connection:
+                connection.execute(sqlalchemy.text(sql))
+                connection.commit()
             break
         except Exception as e:
             logger.exception(e)
