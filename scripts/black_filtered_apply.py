@@ -172,7 +172,7 @@ def main():
     if "--config" in args:
         idx = args.index("--config")
         config_path = args[idx + 1]
-        args = args[:idx] + args[idx + 2:]
+        args = args[:idx] + args[idx + 2 :]
     if not config_path:
         raise SystemExit("--config <path-to-pyproject.toml> is required")
 

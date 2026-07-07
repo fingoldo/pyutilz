@@ -119,9 +119,7 @@ class TestJobCompleted:
         """A background-thread failure must still be logged, same as the blocking path."""
         from pyutilz.system.monitoring import job_completed
         mock_req.post.side_effect = ConnectionError("timeout")
-        with patch("pyutilz.system.monitoring.logger") as mock_logger, patch(
-            "pyutilz.system.monitoring._TIMEOUT_EXECUTOR.submit"
-        ) as mock_submit:
+        with patch("pyutilz.system.monitoring.logger") as mock_logger, patch("pyutilz.system.monitoring._TIMEOUT_EXECUTOR.submit") as mock_submit:
             job_completed(job_id="j", status=0, provider="healthchecks.io", blocking=False)
             mock_submit.call_args[0][0]()  # run the submitted send inline to observe its error handling
             mock_logger.warning.assert_called_once()
