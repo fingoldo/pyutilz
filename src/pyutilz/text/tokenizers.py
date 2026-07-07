@@ -66,6 +66,8 @@ class AdvancedTokenizer:
         global nlp
 
         if nlp is None:
+            if spacy is None:
+                raise ImportError("AdvancedTokenizer requires spacy, which failed to import (see earlier debug log for the reason)")
             nlp = spacy.load(language_model)
 
         self.NUM_AS_SEPARATE_WORD = defaultdict(int)
@@ -161,7 +163,7 @@ class AdvancedTokenizer:
                         if last_word not in self.NUM_PREV_SENTENCE_WORDS:
                             self.NUM_PREV_SENTENCE_WORDS[last_word] = defaultdict(int)
                         self.NUM_PREV_SENTENCE_WORDS[last_word][last_sentence_word] += 1
-                if last_word.isalpha() or last_word.isnumeric():
+                if last_word is not None and (last_word.isalpha() or last_word.isnumeric()):
                     last_sentence_word = last_word
 
     def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):

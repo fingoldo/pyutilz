@@ -159,6 +159,7 @@ def get_system_info(
                             stdin=ioreg_proc.stdout,
                             stdout=subprocess.PIPE,
                         ) as grep_proc:
+                            assert ioreg_proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
                             ioreg_proc.stdout.close()
                             output = grep_proc.communicate()[0]
                         guid = output.decode().split('"')[-2]

@@ -278,10 +278,12 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             module_name = inspect.getfile(current_frame) if current_frame is not None else ""
 
             f_kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
+            assert isinstance(f_kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
             if explicit_only:
                 params = f_kwargs
             else:
                 f_params = filter_elements_by_type(obj={i: val for i, val in enumerate(args)}, allowed_types=allowed_types)
+                assert isinstance(f_params, dict)
                 params = {**f_params, **f_kwargs}
 
             if "results_log" not in kwargs:

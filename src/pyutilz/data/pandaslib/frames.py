@@ -258,6 +258,7 @@ def showcase_df_columns(
                     if non_rare_unique <= 1:
                         uninformative_features[var] = 1 - non_rare_count / height if height > 0 else 0.0
     else:
+        assert isinstance(df, pd.DataFrame)
         for var in target_cols:
             if use_markdown and _facade.HAS_IPYTHON:
                 _facade.display(_facade.Markdown(f"**{var}** {df[var].dtype}"))

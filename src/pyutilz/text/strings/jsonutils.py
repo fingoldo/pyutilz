@@ -43,7 +43,7 @@ def jsonize_atrtributes(
         exclude = []
     import numbers
 
-    res = None
+    res: Any = None
     if isinstance(obj, str):
         if strip:
             res = obj.strip()

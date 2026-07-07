@@ -454,13 +454,13 @@ class KernelTuningCache:
         if salt:
             entry["salt"] = int(salt)
         with self._lock:
-            self._ensure_loaded()
+            loaded = self._ensure_loaded()
             # Update the in-memory snapshot, then persist ONLY this one kernel as
             # a new immutable file. No read-modify-write of a shared document ->
             # no lost update (D1 dissolved): a concurrent writer of a DIFFERENT
             # kernel writes a different directory, and a concurrent writer of the
             # SAME kernel writes a distinct file (newest wins), never clobbering.
-            self._loaded["kernels"][kernel_name] = entry
+            loaded["kernels"][kernel_name] = entry
             if hooks is not None:
                 hooks.persist(kernel_name, self._path, len(regions))
             self._persist_kernel(kernel_name, entry)
@@ -540,14 +540,14 @@ class KernelTuningCache:
         Deliberately NO auto-evict-on-read: a tuning is permanent for a given
         hw_fingerprint + provenance + code_version."""
         with self._lock:
-            self._ensure_loaded()
+            loaded = self._ensure_loaded()
             # Clear the once-per-process sweep guard so a subsequent get_or_tune
             # can actually re-tune this kernel (B11) instead of short-circuiting
             # to the fallback because "we already swept it this process".
             _TUNED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
-            present = kernel_name in self._loaded.get("kernels", {})
+            present = kernel_name in loaded.get("kernels", {})
             if present:
-                del self._loaded["kernels"][kernel_name]
+                del loaded["kernels"][kernel_name]
             self._delete_kernel_files(kernel_name)
             if present:
                 # Refresh the remote object so the eviction propagates (best-effort).

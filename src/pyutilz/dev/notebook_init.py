@@ -159,7 +159,10 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
         if inject_globals:
             try:
                 import inspect
-                frame = inspect.currentframe().f_back
+                _this_frame = inspect.currentframe()
+                frame = _this_frame.f_back if _this_frame is not None else None
+                if frame is None:
+                    raise RuntimeError("no caller frame available")
                 frame.f_globals.update(packages)
                 print("[*] Packages injected into global namespace")
             except Exception:

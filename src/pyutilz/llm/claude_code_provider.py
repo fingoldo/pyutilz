@@ -572,6 +572,7 @@ class ClaudeCodeProvider(LLMProvider):
                 )
 
                 try:
+                    assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
                     proc.stdin.write(prompt)
                     proc.stdin.close()
                 except BrokenPipeError:
@@ -582,6 +583,7 @@ class ClaudeCodeProvider(LLMProvider):
                 line_q: queue.Queue[str | None] = queue.Queue()
 
                 def _reader():
+                    assert proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
                     try:
                         for line in proc.stdout:
                             line_q.put(line)
