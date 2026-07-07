@@ -219,9 +219,9 @@ def set_proxy(
     m_proxy_user: Optional[str] = None,
     m_proxy_pass: Optional[str] = None,
     m_proxy_server: Optional[str] = None,
-    m_proxy_min_port: Optional[str] = None,
-    m_proxy_max_port: Optional[str] = None,
-    m_proxy_port: Optional[str] = None,
+    m_proxy_min_port: Optional[int] = None,
+    m_proxy_max_port: Optional[int] = None,
+    m_proxy_port: Optional[int] = None,
     m_proxy_type: str = "http",
 ) -> None:
     global proxies
@@ -244,11 +244,11 @@ def set_proxy(
         int(proxy_min_port) if proxy_min_port is not None else 20001,
         int(proxy_max_port) if proxy_max_port is not None else 37960,
         last_used_dict=last_used_dict,
-        min_idle_interval_minutes=min_idle_interval_minutes,
+        min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
         failed_dict=failed_dict,
-        min_failed_idle_interval_minutes=min_failed_idle_interval_minutes,
+        min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
         proxy_port=proxy_port,
-        proxy_type=proxy_type,
+        proxy_type=proxy_type if proxy_type is not None else "http",
     )
 
 
@@ -270,12 +270,12 @@ def set_params(
     min_failed_idle_interval_minutes = m_min_failed_idle_interval_minutes
 
 
-def set_proxy_last_use_time(last_used_dict: dict, proxies: dict) -> None:
+def set_proxy_last_use_time(last_used_dict: Optional[dict], proxies: Optional[dict]) -> None:
     if isinstance(last_used_dict, dict):
         last_used_dict[hash(proxies)] = datetime.utcnow()
 
 
-def make_proxies_dict(proxy_user: str, proxy_pass: str, proxy_server: str, proxy_port: int, proxy_type: str = "https") -> dict:
+def make_proxies_dict(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: str, proxy_port: int, proxy_type: str = "https") -> dict:
     if proxy_user and proxy_pass:
         proxy_url = "%s:%s@%s:%s" % (proxy_user, proxy_pass, proxy_server, proxy_port)
     else:
@@ -285,8 +285,8 @@ def make_proxies_dict(proxy_user: str, proxy_pass: str, proxy_server: str, proxy
 
 
 def get_new_smartproxy(
-    proxy_user: str,
-    proxy_pass: str,
+    proxy_user: Optional[str],
+    proxy_pass: Optional[str],
     proxy_server: str,
     proxy_min_port: int = 20001,
     proxy_max_port: int = 37960,
@@ -438,11 +438,11 @@ def get_url(
                             int(proxy_min_port) if proxy_min_port is not None else 20001,
                             int(proxy_max_port) if proxy_max_port is not None else 37960,
                             last_used_dict=last_used_dict,
-                            min_idle_interval_minutes=min_idle_interval_minutes,
+                            min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                             failed_dict=failed_dict,
-                            min_failed_idle_interval_minutes=min_failed_idle_interval_minutes,
+                            min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
                             proxy_port=proxy_port,
-                            proxy_type=proxy_type,
+                            proxy_type=proxy_type if proxy_type is not None else "http",
                         )
         else:
             if res.status_code not in (http.HTTPStatus.OK, http.HTTPStatus.PARTIAL_CONTENT):
@@ -475,11 +475,11 @@ def get_url(
                             int(proxy_min_port) if proxy_min_port is not None else 20001,
                             int(proxy_max_port) if proxy_max_port is not None else 37960,
                             last_used_dict=last_used_dict,
-                            min_idle_interval_minutes=min_idle_interval_minutes,
+                            min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                             failed_dict=failed_dict,
-                            min_failed_idle_interval_minutes=min_failed_idle_interval_minutes,
+                            min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
                             proxy_port=proxy_port,
-                            proxy_type=proxy_type,
+                            proxy_type=proxy_type if proxy_type is not None else "http",
                         )
                     else:
                         sleep(ratelimited_sleep_interval)
@@ -547,11 +547,11 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
                 int(proxy_min_port) if proxy_min_port is not None else 20001,
                 int(proxy_max_port) if proxy_max_port is not None else 37960,
                 last_used_dict=last_used_dict,
-                min_idle_interval_minutes=min_idle_interval_minutes,
+                min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                 failed_dict=failed_dict,
-                min_failed_idle_interval_minutes=min_failed_idle_interval_minutes,
+                min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
                 proxy_port=proxy_port,
-                proxy_type=proxy_type,
+                proxy_type=proxy_type if proxy_type is not None else "http",
             )
             logger.info("proxy_server=%s", proxy_server)
 
