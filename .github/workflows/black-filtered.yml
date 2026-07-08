@@ -1,4 +1,4 @@
-name: Black (filtered)
+name: Black
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  black-filtered:
+  black:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
