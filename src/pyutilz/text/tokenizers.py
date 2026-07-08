@@ -91,10 +91,10 @@ class AdvancedTokenizer:
         #    and are usually separated by space, comma, semicolon, hyphen (with spaces on each side)
 
         # Also count how many times each word starts with a capital being not a first word in the sentence, and how many times it's used with all capitals.
-        # 2) for every genuine word with number of occurences>1, count its consecutive symbols of length MIN_MORPHEME_LENGTH=2 to MAX_MORPHEME_LENGTH
-        # 3) after aggregating morpheme occurences over all words in corpus (irrelevant of frequencies of words themselves! jsut freqs of morphemes
+        # 2) for every genuine word with number of occurrences>1, count its consecutive symbols of length MIN_MORPHEME_LENGTH=2 to MAX_MORPHEME_LENGTH
+        # 3) after aggregating morpheme occurrences over all words in corpus (irrelevant of frequencies of words themselves! just freqs of morphemes
         #    in the list of unique words!),
-        # create morphemes as most long stable letters sequences occuring in different words. With such approach, morphemes must be capturing
+        # create morphemes as most long stable letters sequences occurring in different words. With such approach, morphemes must be capturing
         #   some meaning, like -ed in verbs for example... or ha[d],ha[s],ha[ve]
 
         # edge cases: word is the same as some of letters (i), morpheme is the same as some of words or letters

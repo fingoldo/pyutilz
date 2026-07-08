@@ -29,7 +29,7 @@ def levenshtein_strings_similarity(a: str, b: str) -> float:
 
 def contigous_strings_similarity(a: str, b: str) -> tuple:
     """
-    similarity of 2 strings measured in contigous blocks either from the left, from the right, or both (non-symmetrically).
+    similarity of 2 strings measured in contiguous blocks either from the left, from the right, or both (non-symmetrically).
     it's more strong than just levenshtein_distance.
 
     >>> contigous_strings_similarity("MeosureOIS21qwe", "MeasureOIS18qwe")

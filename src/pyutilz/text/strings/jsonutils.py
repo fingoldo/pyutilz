@@ -37,7 +37,7 @@ def jsonize_atrtributes(
     max_recursion_level: Optional[int] = None,
 ) -> dict:
     """
-    Puts all of the object's properties (ecxept starting with an underscore) into a dictionary
+    Puts all of the object's properties (except starting with an underscore) into a dictionary
     """
     if exclude is None:
         exclude = []

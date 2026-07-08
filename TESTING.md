@@ -78,3 +78,14 @@ tests and runs in ~5 s:
 ```bash
 pre-commit run --hook-stage=manual pyutilz-meta-tests-static-only
 ```
+
+## Local pip-audit on Windows
+
+`pip-audit --desc` (the default text formatter) crashes with `UnicodeEncodeError`
+on a Windows console using the cp1251 codepage -- some CVE descriptions contain
+Unicode arrows the console can't encode. CI is unaffected (runs on `ubuntu-latest`,
+UTF-8). For a local Windows run, write JSON instead of printing text:
+
+```bash
+pip-audit --desc -f json -o pip-audit-report.json
+```

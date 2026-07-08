@@ -28,7 +28,7 @@ class LLMSettings(BaseSettings):
     openrouter_api_key: Optional[SecretStr] = None
 
 
-@lru_cache()
+@lru_cache
 def get_llm_settings() -> LLMSettings:
     """Get cached LLM settings instance."""
     return LLMSettings()

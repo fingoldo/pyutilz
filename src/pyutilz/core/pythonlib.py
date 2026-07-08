@@ -682,7 +682,7 @@ class ObjectsAndFilesProcessor:
         file_extension: str = ".pckl",
         verbose: bool = True,
     ) -> int:
-        """Walks over all сontainer's (dict-like) objects assosiated with files (one file per object), applies subclass-specific processing.
+        """Walks over all сontainer's (dict-like) objects associated with files (one file per object), applies subclass-specific processing.
 
         If container is not specified, globals of the calling module are used.
         Objects names must be given exactly.
@@ -699,7 +699,7 @@ class ObjectsAndFilesProcessor:
             verbose: whether to show or hide warnings in the log.
 
         Returns:
-            number of succesfully processed files.
+            number of successfully processed files.
         """
         nprocessed = 0
         fpath = abspath(path)

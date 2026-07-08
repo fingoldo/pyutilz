@@ -86,10 +86,10 @@ def job_completed(
                 if res.status_code not in (200, 403, 429):
                     # 403=blocked in your country
                     # 429=rate limit exceeded
-                    logger.warning(f"Problem {res.status_code} while sending hearbeat to {provider} on job {job_id}: {res.text}")
+                    logger.warning(f"Problem {res.status_code} while sending heartbeat to {provider} on job {job_id}: {res.text}")
 
             except Exception as e:
-                logger.warning(f"Error while sending hearbeat to {provider} on monitor {job_id}: {e}")
+                logger.warning(f"Error while sending heartbeat to {provider} on monitor {job_id}: {e}")
 
         if blocking:
             _send()

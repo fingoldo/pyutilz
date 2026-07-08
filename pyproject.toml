@@ -240,6 +240,30 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports OK in __init__
+"src/pyutilz/__init__.py" = ["N807"]  # module-level __getattr__ (PEP 562) is a real dunder, not a naming violation
+"src/pyutilz/llm/claude_code_provider.py" = ["N814"]  # local import aliases (_TRS, _TSS) follow the project's underscore-prefixed-short-alias convention, not a "constant" naming
+
+# Deptry: unused / missing / transitive dependency scan, advisory only (CI step has
+# continue-on-error). ~102 findings on a first local run (2026-07-08), almost all
+# DEP001 on optional-dependency imports guarded by try/except (cupy, orjson, wmi,
+# GPUtil, etc.) that deptry's static scan can't trace through the isolation pattern
+# tests/test_meta already covers at the test level -- expected noise, not a defect.
+[tool.deptry]
+exclude = ["tests", "scripts", ".venv", "build", "dist"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["selenium", "undetected-chromedriver", "boto3", "google-cloud-storage"]
+
+# Interrogate: docstring coverage, advisory baseline only -- no --fail-under set until
+# a real baseline number is established. Docstrings are pyutilz's primary in-code
+# documentation surface (less inline-rationale-comment culture than mlframe).
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true
+ignore-private = true
+exclude = ["tests", "scripts", "docs", "build", "dist"]
+verbose = 1
 
 # MyPy type checker
 [tool.mypy]

@@ -214,7 +214,7 @@ class DecodoProvider(ProxyProvider):
         """
         missing = [v for v in [user_var, pass_var, host_var, port_var] if v not in os.environ]
         if missing:
-            raise EnvironmentError(f"Missing required env vars: {', '.join(missing)}")
+            raise OSError(f"Missing required env vars: {', '.join(missing)}")
 
         try:
             base_port = int(os.environ[port_var])

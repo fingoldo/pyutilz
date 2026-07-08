@@ -389,7 +389,7 @@ def get_url(
 
             # We are trying to fetch some url. Do we need to create new proxy session?
             if sess is None or ((max_ip_queries or 0) > 0 and num_ip_queries > cur_max_ip_queries):
-                # If there is no session yet or we have downloaded too many items withing current session alrady
+                # If there is no session yet or we have downloaded too many items within current session already
                 get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                 if (max_ip_queries or 0) > 0:
                     cur_max_ip_queries = int((max_ip_queries or 0) * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
@@ -589,7 +589,7 @@ def download_to_file(
     headers: Optional[dict] = None,
     exit_codes: tuple = (),
 ):
-    """Dropin replacement for urllib.request.urlretrieve(url, filename) taht can hand for indefinitely long."""
+    """Dropin replacement for urllib.request.urlretrieve(url, filename) that can hand for indefinitely long."""
     if headers is None:
         headers = {}
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory

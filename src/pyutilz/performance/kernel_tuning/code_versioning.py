@@ -122,9 +122,9 @@ def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: in
     sources = sorted(_normalized_source(fn) for fn in list(variant_fns) + list(extra_fns))
     h = hashlib.sha256()
     for src in sources:
-        h.update(src.encode("utf-8"))
+        h.update(src.encode())
         h.update(b"\x00")
-    h.update(f"salt={int(salt)}".encode("utf-8"))
+    h.update(f"salt={int(salt)}".encode())
     return h.hexdigest()
 
 

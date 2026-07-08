@@ -294,7 +294,7 @@ def create_tabs(
 ):
     """
     Used for easy creation of tabs in Dash, including nested tabs.
-    Expected tabs fomat: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)
+    Expected tabs format: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)
     """
     # print('In create_tabs of %s' % tabsName)
     try:

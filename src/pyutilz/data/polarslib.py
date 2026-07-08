@@ -99,7 +99,7 @@ def compute_concentrations(
     fields_remap: Optional[dict] = None,
 ) -> pl.DataFrame:
     """Computes within a group_by (dynamic or rolling), for example, concentrations of customers by total volume of their sales.
-    groupby_columns must include both group_byand index_column arguments pased to group_by_dynamic.
+    groupby_columns must include both group_byand index_column arguments passed to group_by_dynamic.
 
     Ensuring sortedness after top_k_by is messy (requires zipping lists etc), so using sort+head instead."""
 
@@ -235,7 +235,7 @@ def build_aggregate_features_polars(
     assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
 
     if engine == "gpu" and not is_cuda_available():
-        # logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailble on this system!")
+        # logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailable on this system!")
         pass
 
     # ----------------------------------------------------------------------------------------------------------------------------

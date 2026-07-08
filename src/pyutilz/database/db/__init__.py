@@ -743,7 +743,7 @@ def execute_alchemy(sql: str, max_retries: int = 3) -> None:
 
 def enable_tables_sizes_approximation():
     """
-    Example usage after the funciton is crated:
+    Example usage after the function is created:
 
     select table_name,nrows
         FROM
@@ -782,7 +782,7 @@ def create_enum_from_table(enum_name: str, table_name: str, id_field_name: str, 
 def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: Optional[list] = None, min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
     """
     Aim is to remove lengthy fields that mostly holds a default value from the JSON.
-    Absense of some JSON field is interpreted as null in PostGres.
+    Absence of some JSON field is interpreted as null in PostGres.
     Result will be an optimization of an existing table.
     """
     if fields is None:

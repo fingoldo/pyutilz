@@ -785,10 +785,10 @@ class ClaudeCodeProvider(LLMProvider):
         # versioned-stable so we always include the raw text.
         summary: dict[str, Any] = {}
         for line in text.splitlines():
-            l = line.strip()
-            if "session" in l.lower() and "remain" in l.lower():
-                summary["session_remaining_hint"] = l
-            elif "reset" in l.lower():
-                summary["reset_hint"] = l
+            ln = line.strip()
+            if "session" in ln.lower() and "remain" in ln.lower():
+                summary["session_remaining_hint"] = ln
+            elif "reset" in ln.lower():
+                summary["reset_hint"] = ln
 
         return {"raw_text": text, "session_summary": summary}

@@ -52,6 +52,15 @@ repos:
     hooks:
       - id: shellcheck
 
+  # Codespell: catches typos in source comments/docstrings and prose docs (README,
+  # CHANGELOG, CONTRIBUTING, TESTING, mkdocs site) -- proportionally more prose surface
+  # here than mlframe since docstrings are the primary documentation, not inline comments.
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        args: ['--ignore-words-list=coo']
+
   # Real-bug gate: pyflakes + syntax errors block the commit. Matches CI's
   # ``ruff check . --select F,E9`` exactly (no ignore) -- previously re-applied
   # a taste-ignore (F401/F403/F405/F541/F841) via CLI --ignore, which let

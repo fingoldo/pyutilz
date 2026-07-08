@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------------------------------------------------------
-# SQLLITE
+# SQLITE
 # ----------------------------------------------------------------------------------------------------------------------------
 # These helpers take conn/cursor as explicit arguments and do NOT read the
 # module-level Postgres connection globals; carved out of db.py and

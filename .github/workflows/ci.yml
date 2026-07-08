@@ -91,7 +91,7 @@ jobs:
         cache-dependency-path: pyproject.toml
 
     - name: Install linting tools
-      run: pip install ruff black bandit actionlint-py shellcheck-py vulture pip-audit
+      run: pip install ruff black bandit actionlint-py shellcheck-py vulture pip-audit codespell deptry interrogate yamllint
 
     # Blocking gate: real-bug ruff codes (pyflakes + syntax errors) must pass.
     - name: Ruff (real bugs - blocking)
@@ -100,6 +100,28 @@ jobs:
     # Non-blocking: full style pass while legacy debt is worked down.
     - name: Ruff (full - advisory)
       run: ruff check .
+      continue-on-error: true
+
+    # Advisory: prose typo scan (README/CHANGELOG/CONTRIBUTING/TESTING + docs are pyutilz's
+    # primary documentation surface, proportionally more prose per LOC than mlframe).
+    - name: Codespell (advisory)
+      run: codespell src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md --ignore-words-list=coo
+      continue-on-error: true
+
+    # Advisory: unused/missing/transitive dependency drift. dependencies=[] + 8 optional
+    # extras makes stale-extra drift a real risk; see [tool.deptry] for the exclude/ignore config.
+    - name: Deptry dependency check (advisory)
+      run: deptry .
+      continue-on-error: true
+
+    # Advisory baseline only (no --fail-under set yet -- see [tool.interrogate]).
+    - name: Interrogate docstring coverage (advisory, baseline only)
+      run: interrogate -v src/pyutilz
+      continue-on-error: true
+
+    # Advisory: general YAML style/schema hygiene, complementary to actionlint's semantic checks.
+    - name: yamllint workflow files (advisory)
+      run: yamllint .github/workflows .pre-commit-config.yaml
       continue-on-error: true
 
     # mypy (both the advisory full-repo pass and the strict-mode beachhead) moved to

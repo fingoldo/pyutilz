@@ -188,7 +188,7 @@ def _close_opened_activities(activities: dict) -> Optional[float]:
 
 def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verbose: bool = False) -> dict:
     """
-    db_path: shema.table. example: logging.api_calls
+    db_path: schema.table. example: logging.api_calls
     fields: list of fields. example: module, function, params, results
     """
     if "activities" in results_log["results"]:

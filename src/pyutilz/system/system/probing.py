@@ -576,8 +576,7 @@ def get_nvidia_smi_info(
     try:
         result = subprocess.run(  # nosec B603 B607 - fixed trusted binary "nvidia-smi" with hardcoded argv, no shell, no external/user-controlled input
             ["nvidia-smi", "-q", "-x"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=10,
         )

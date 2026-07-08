@@ -219,7 +219,7 @@ def discover_tuners(package: str = "mlframe", warn_on_import_fail: bool = True) 
     pkg_path = pkg.__path__ if hasattr(pkg, "__path__") else []
     collected = 0
 
-    for importer, modname, ispkg in pkgutil.walk_packages(path=pkg_path, prefix=f"{package}.", onerror=lambda _: None):
+    for _importer, modname, _ispkg in pkgutil.walk_packages(path=pkg_path, prefix=f"{package}.", onerror=lambda _: None):
         try:
             importlib.import_module(modname)
             collected += 1
