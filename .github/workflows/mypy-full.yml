@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   mypy-full:
-    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@main
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@master
     with:
       package-name: pyutilz
       mypy-version: "2.1.0"

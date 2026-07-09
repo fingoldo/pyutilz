@@ -11,7 +11,7 @@ on:
 # for the whole-project pass with real deps installed); this is just the strict-mode beachhead.
 jobs:
   mypy-beachhead:
-    uses: fingoldo/py-ci-shared/.github/workflows/mypy-beachhead.yml@main
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-beachhead.yml@master
     with:
       modules: |
         src/pyutilz/dev/code_audit
