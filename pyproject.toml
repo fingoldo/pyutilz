@@ -169,7 +169,10 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.0",
     "bandit>=1.7",
-    "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git"  # needed by .pre-commit-config.yaml's local hooks
+    # needed by .pre-commit-config.yaml's local hooks; py-ci-shared itself requires-python >=3.9,
+    # so the marker keeps `pip install .[dev]` installable on the py3.8 CI matrix cell (dev-only
+    # tooling, not a runtime dependency -- py3.8 CI coverage doesn't need pre-commit hooks to work).
+    "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'"
 ]
 
 # Documentation site (MkDocs Material). Build with `mkdocs build` / serve with `mkdocs serve`.

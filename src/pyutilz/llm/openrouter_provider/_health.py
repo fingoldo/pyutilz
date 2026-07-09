@@ -445,7 +445,7 @@ def list_openrouter_models(
 
     if max_input_per_1m is not None:
         def _input_per_1m(r: dict) -> float:
-            """Return `r`'s input price per 1M tokens (USD), or infinity if the pricing field is missing/unparseable."""
+            """Return `r`'s input price per 1M tokens (USD), or infinity if the pricing field is missing/unparsable."""
             try:
                 return float((r.get("pricing") or {}).get("prompt", "0") or "0") * 1_000_000
             except (TypeError, ValueError):
@@ -454,7 +454,7 @@ def list_openrouter_models(
 
     if max_output_per_1m is not None:
         def _output_per_1m(r: dict) -> float:
-            """Return `r`'s output price per 1M tokens (USD), or infinity if the pricing field is missing/unparseable."""
+            """Return `r`'s output price per 1M tokens (USD), or infinity if the pricing field is missing/unparsable."""
             try:
                 return float((r.get("pricing") or {}).get("completion", "0") or "0") * 1_000_000
             except (TypeError, ValueError):
