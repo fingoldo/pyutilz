@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -26,10 +29,12 @@ jobs:
             python-version: "3.12"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      with:
+        persist-credentials: false
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: pip
@@ -71,7 +76,7 @@ jobs:
         pytest --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=60
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
@@ -83,13 +88,13 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@v1.0.0
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@76f6606202f0db95dfa87d67010f64c9e6db8574  # v1.0.0
     with:
       ignore: "C901"
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@v1.0.0
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@76f6606202f0db95dfa87d67010f64c9e6db8574  # v1.0.0
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -97,10 +102,11 @@ jobs:
       interrogate-source-path: src/pyutilz
       interrogate-fail-under: 100
       deptry-install-command: pip install -e ".[all,dev]"
+      run-zizmor: true
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@v1.0.0
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@76f6606202f0db95dfa87d67010f64c9e6db8574  # v1.0.0
     with:
       source-path: src/pyutilz
 
@@ -111,9 +117,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      with:
+        persist-credentials: false
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
       with:
         python-version: "3.11"
         cache: pip

@@ -9,9 +9,12 @@ on:
 # Extracted to fingoldo/py-ci-shared (2026-07-09): identical logic to mlframe's own beachhead
 # workflow. The bare full-repo advisory pass was already removed 2026-07-09 (see mypy-full.yml
 # for the whole-project pass with real deps installed); this is just the strict-mode beachhead.
+permissions:
+  contents: read
+
 jobs:
   mypy-beachhead:
-    uses: fingoldo/py-ci-shared/.github/workflows/mypy-beachhead.yml@v1.0.0
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-beachhead.yml@76f6606202f0db95dfa87d67010f64c9e6db8574  # v1.0.0
     with:
       modules: |
         src/pyutilz/dev/code_audit
