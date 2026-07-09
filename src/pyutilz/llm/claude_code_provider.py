@@ -796,9 +796,7 @@ class ClaudeCodeProvider(LLMProvider):
             # Previously silently fell through to a best-effort parse of empty/garbage stdout on
             # failure -- the caller had no way to tell "no limit info in the output" apart from
             # "the CLI itself failed" (found 2026-07-09: stderr was captured but never read).
-            raise NotImplementedError(
-                f"claude /status exited with code {proc.returncode}: {(stderr or b'').decode(errors='replace').strip() or '(no stderr)'}"
-            )
+            raise NotImplementedError(f"claude /status exited with code {proc.returncode}: {(stderr or b'').decode(errors='replace').strip() or '(no stderr)'}")
         text = (stdout or b"").decode(errors="replace")
 
         # Best-effort parse of common markers; CLI output format isn't
