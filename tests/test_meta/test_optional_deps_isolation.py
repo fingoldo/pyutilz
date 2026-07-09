@@ -131,6 +131,31 @@ def test_system_subpackage_imports_without_web_group_deps():
         )
 
 
+def test_tokenizers_module_imports_without_nlp_group_deps():
+    """``pyutilz.text.tokenizers`` must import without nltk/spacy/etc installed.
+
+    Found 2026-07-09: unlike spacy just above it in the same file (already guarded with
+    ``try: import spacy ... except Exception: spacy = None``), ``nltk`` was imported at module
+    level, unguarded. Broke pyutilz's own CI: the py3.9 test leg doesn't install the [nlp] extra,
+    so ``tests/test_tokenizers_extra.py``'s ``from pyutilz.text.tokenizers import
+    AdvancedTokenizer`` raised ``ModuleNotFoundError: No module named 'nltk'`` at collection time,
+    aborting the whole test session (``Interrupted: 1 error during collection``) rather than just
+    that one file's tests.
+    """
+    deps = _OPTIONAL_DEP_GROUPS["nlp"]
+    script = _mask_modules_script(deps, ["pyutilz.text.tokenizers"])
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"``import pyutilz.text.tokenizers`` failed when the 'nlp' group deps ({deps}) were "
+            f"masked. AdvancedTokenizer may still fail when actually USED without nltk/spacy, "
+            f"but the IMPORT itself must be safe. stderr:\n{result.stderr}"
+        )
+
+
 @pytest.mark.parametrize("subpkg", _ALWAYS_IMPORTABLE_SUBPACKAGES)
 def test_safe_subpackages_import_with_all_optional_deps_masked(subpkg):
     """``pyutilz.core`` and friends must import cleanly with EVERYTHING

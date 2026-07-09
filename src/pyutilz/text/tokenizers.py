@@ -38,8 +38,6 @@ from pyutilz.text.strings import (
 )
 from collections import defaultdict
 
-import nltk
-
 # Lazy import spacy to avoid Python 3.14 Pydantic compatibility issues
 spacy = None
 nlp = None
@@ -49,6 +47,18 @@ try:
     spacy = _spacy
 except Exception as e:  # nosec B110 - optional dependency probe; module must still be importable when spacy is absent/incompatible (e.g. Python 3.14 Pydantic issue noted above), and AdvancedTokenizer already fails loudly later if spacy is actually needed but unset
     logger.debug("spacy unavailable or incompatible, AdvancedTokenizer will fail if used: %s", e)
+
+# nltk lives under the optional [nlp] extra, same as spacy above -- a module-level hard import
+# forced any caller of pyutilz.text.tokenizers (reached transitively via pyutilz.text's
+# re-export chain) to have nltk installed, even when they never touch AdvancedTokenizer's
+# sentence/word tokenization. Found 2026-07-09: broke pyutilz's own CI on the py3.9 leg, which
+# doesn't install [nlp]. AdvancedTokenizer fails loudly later if nltk is actually needed but unset.
+nltk = None
+try:
+    import nltk as _nltk
+    nltk = _nltk
+except Exception as e:  # nosec B110 - optional dependency probe, mirrors the spacy guard above
+    logger.debug("nltk unavailable, AdvancedTokenizer will fail if used: %s", e)
 vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(  # noqa: A001 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     ","
 )
@@ -94,6 +104,8 @@ class AdvancedTokenizer:
         counts, capitalization, in-word/in-sentence positions, first/last-word-in-sentence counts, and
         preceding-word/preceding-sentence-word co-occurrence) into this instance's stat dicts.
         """
+        if nltk is None:
+            raise ImportError("AdvancedTokenizer.tokenize requires nltk, which failed to import (see earlier debug log for the reason)")
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # 1) get full list of unique genuine words along with their frequencies. we know that genuine words should not contain punctuation (except -)
