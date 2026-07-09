@@ -17,6 +17,7 @@ import time
 import atexit
 import requests
 import functools
+import threading
 import concurrent.futures
 from functools import wraps
 from datetime import datetime
@@ -29,7 +30,9 @@ from typing import Any, Optional
 
 API_TIMEOUT_SEC = 15
 
-# Module-level ThreadPoolExecutor for timeout_wrapper to avoid creating new executors for each call
+# Shared pool for job_completed's bounded (requests-timeout-capped) fire-and-forget heartbeat
+# sends. NOT used by timeout_wrapper -- see that function's docstring for why a bounded shared
+# pool is unsafe for wrapping arbitrary, potentially-unbounded caller functions.
 _TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix="timeout_wrapper")
 
 # Shut the shared executor down at interpreter exit so its worker threads don't leak.
@@ -155,33 +158,51 @@ def monitored(
 # TIMEOUTS & DURATIONS LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
-def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
-    """Decorator to enforce timeout on function execution.
+def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bool = False):
+    """Decorator to enforce a timeout on function execution.
 
-    Uses module-level ThreadPoolExecutor to avoid creating new executor for each call.
+    Runs ``func`` on a dedicated per-call daemon thread, NOT the shared ``_TIMEOUT_EXECUTOR`` pool
+    (that pool is bounded and is used elsewhere for genuinely bounded-duration work -- see
+    ``job_completed``). A bounded pool is unsafe here: ``func`` is arbitrary caller code with no
+    internal time bound, and a Python thread can never be forcibly killed once it is running past
+    its timeout -- every real timeout permanently consumes one pool slot for the rest of that
+    thread's (unbounded) lifetime. Under sustained real timeouts this silently exhausts the pool,
+    so unrelated calls start queuing behind permanently-stuck workers and spuriously time out even
+    though their own function completes instantly (surfaced as CI flakes in
+    ``test_timeout_wrapper_parametrized`` / ``test_report_duration_logs``). A dedicated thread per
+    call still leaks its own thread on a genuine timeout (unavoidable without process isolation),
+    but that leak can never starve capacity for any OTHER call.
     """
     def decorator(func):
-        """Wraps func so calls execute on the shared executor and are aborted with a logged error past the timeout."""
+        """Wraps func so each call runs on its own timed daemon thread and is aborted (logged) past the timeout."""
         @wraps(func)
         def wrapper(*args, **kwargs):
-            """Runs func on the shared executor, returning its result, or None (logged) on timeout/exception."""
+            """Runs func on a dedicated daemon thread, returning its result, or None (logged) on timeout/exception."""
             start_ts = time.time()
-            # Use module-level executor instead of creating new one each call (performance)
-            future = _TIMEOUT_EXECUTOR.submit(func, *args, **kwargs)
-            try:
-                result = future.result(timeout=timeout)
-                if report_actual_duration:
-                    logger.info("%s completed in %.2fs", func.__name__, time.time() - start_ts)
-                return result
-            except concurrent.futures.TimeoutError:
+            outcome: dict[str, Any] = {}
+
+            def _run():
+                """Executes func in the dedicated thread, stashing its result or exception for the caller to collect."""
+                try:
+                    outcome["result"] = func(*args, **kwargs)
+                except Exception as e:
+                    outcome["error"] = e
+
+            thread = threading.Thread(target=_run, name=f"timeout_wrapper-{func.__name__}", daemon=True)
+            thread.start()
+            thread.join(timeout=timeout)
+            if thread.is_alive():
                 logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
-                # NOTE: future.cancel() cannot stop a thread that is already running
-                # (which is always the case here since we waited on result), so we don't
-                # attempt it; the worker thread keeps running until the wrapped call returns.
+                # NOTE: a Python thread cannot be forcibly stopped, so it keeps running until func
+                # returns; being a dedicated per-call thread (not shared pool capacity), it cannot
+                # cause any OTHER call to spuriously time out.
                 return None  # Or raise, depending on use case
-            except Exception as e:
-                logger.exception(f"Error in {func.__name__}: {e}")
+            if "error" in outcome:
+                logger.exception(f"Error in {func.__name__}: {outcome['error']}")
                 return None
+            if report_actual_duration:
+                logger.info("%s completed in %.2fs", func.__name__, time.time() - start_ts)
+            return outcome.get("result")
         return wrapper
     return decorator
 

@@ -213,6 +213,39 @@ class TestTimeoutWrapperExceptions:
             result = quick()
             assert result == 42
 
+    def test_genuine_timeouts_do_not_starve_unrelated_calls(self):
+        """Regression sensor: timeout_wrapper must not share a bounded worker pool across calls.
+
+        Pre-fix, every genuinely-timed-out call permanently consumed one slot of the shared
+        ``_TIMEOUT_EXECUTOR`` (max_workers=10) -- a Python thread can't be killed, so the worker
+        stayed occupied for its full (here: never-ending) run. After more genuine timeouts than
+        the pool had workers, an UNRELATED fast call would queue behind the leaked workers and
+        spuriously time out itself, returning None instead of its real result -- this is exactly
+        what caused the intermittent CI failures in test_timeout_wrapper_parametrized and
+        test_report_duration_logs (2026-07-09).
+        """
+        from pyutilz.system.monitoring import timeout_wrapper
+
+        @timeout_wrapper(timeout=0.2)
+        def hangs():
+            time.sleep(30)
+            return "should not reach here"
+
+        @timeout_wrapper(timeout=5)
+        def quick():
+            return 42
+
+        # Saturate more than the old shared pool's capacity (max_workers=10) with genuine timeouts.
+        for _ in range(15):
+            assert hangs() is None
+
+        # An unrelated fast call must still return its real result promptly, not None.
+        start = time.time()
+        result = quick()
+        elapsed = time.time() - start
+        assert result == 42, f"quick() should return 42 despite 15 outstanding leaked timeout threads, got {result!r}"
+        assert elapsed < 1.0, f"quick() should complete almost immediately, took {elapsed:.2f}s"
+
 
 # ── log_duration decorator (lines 157-183) ──
 

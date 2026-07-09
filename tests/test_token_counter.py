@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import textwrap
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -67,3 +70,35 @@ class TestCountTokensTiktoken:
         finally:
             mod._HAS_TIKTOKEN = orig_has
             mod._ENCODING = orig_enc
+
+
+def test_module_import_degrades_to_fallback_on_non_import_error():
+    """Regression sensor: a non-ImportError failure from tiktoken.get_encoding() (network/proxy/
+    interpreter-SSL issues -- e.g. the Python 3.8 stdlib SSLContext.verify_mode recursion bug hit
+    via urllib3 while tiktoken fetches its BPE file over the network) must degrade the module to
+    the len//4 fallback, not crash the import. Pre-fix, ``except ImportError`` only caught "tiktoken
+    not installed"; any other exception from the network-dependent get_encoding() call propagated
+    and crashed `import pyutilz.llm.token_counter` entirely -- breaking every test in this file,
+    including the ones that only exercise the no-tiktoken fallback path (observed in CI as
+    RecursionError on Python 3.8, 2026-07-09).
+
+    Run in a subprocess so patching tiktoken.get_encoding to raise happens before the module (whose
+    encoding-load side effect only runs on first import) is ever imported in this process.
+    """
+    script = textwrap.dedent("""
+        import sys
+        from unittest.mock import patch
+
+        import tiktoken
+
+        with patch.object(tiktoken, "get_encoding", side_effect=RecursionError("simulated 3.8 ssl bug")):
+            import pyutilz.llm.token_counter as mod
+
+        assert mod._HAS_TIKTOKEN is False, "should degrade to fallback, not propagate the exception"
+        assert mod._ENCODING is None
+        assert mod.count_tokens("hello world test") == len("hello world test") // 4
+        print("OK")
+        """)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert "OK" in result.stdout
