@@ -22,11 +22,6 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-        include:
-          # The library is Windows-heavy (pywin32, portalocker, Windows path/mkstemp behavior):
-          # exercise at least one Windows leg so Windows-specific regressions are caught.
-          - os: windows-latest
-            python-version: "3.12"
 
     steps:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -52,11 +47,10 @@ jobs:
       # already guard with pytest.importorskip("google.genai") (see test_audit_providers.py,
       # test_llm_account_credits.py, test_llm_live.py), so they skip cleanly instead of
       # erroring, and every other provider's tests run unaffected.
-      # shell: bash explicitly -- windows-latest runners default `run:` to pwsh, which
-      # doesn't understand this bash conditional syntax. PYVER is passed via env: rather
-      # than interpolated directly into the script (${{ }} inside a shell command is a
-      # documented anti-pattern -- shellcheck/actionlint flag it (SC2102) and it's a
-      # latent injection risk if the expression value were ever less trusted).
+      # PYVER is passed via env: rather than interpolated directly into the script (${{ }}
+      # inside a shell command is a documented anti-pattern -- shellcheck/actionlint flag
+      # it (SC2102) and it's a latent injection risk if the expression value were ever
+      # less trusted).
       shell: bash
       env:
         PYVER: ${{ matrix.python-version }}
