@@ -34,9 +34,7 @@ def test_optimize_dtypes_still_converts_genuine_integer_object_column():
 
 
 def test_classify_column_types_accepts_df_none_with_dtype():
-    col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric = classify_column_types(
-        df=None, dtype=np.dtype("float64")
-    )
+    col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric = classify_column_types(df=None, dtype=np.dtype("float64"))
     assert col_is_numeric is True
     assert col_is_boolean is False
     assert col_is_object is False

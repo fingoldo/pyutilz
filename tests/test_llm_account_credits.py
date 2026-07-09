@@ -273,9 +273,9 @@ class TestClaudeCodeCheckAccountLimitsReaping:
         fake_proc.wait = AsyncMock(return_value=0)
         fake_proc.communicate = AsyncMock(side_effect=_asyncio.TimeoutError())
 
-        with patch("pyutilz.llm.claude_code_provider._find_claude_executable", return_value="claude"), \
-             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)), \
-             patch("asyncio.wait_for", AsyncMock(side_effect=[_asyncio.TimeoutError(), 0])):
+        with patch("pyutilz.llm.claude_code_provider._find_claude_executable", return_value="claude"), patch(
+            "asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)
+        ), patch("asyncio.wait_for", AsyncMock(side_effect=[_asyncio.TimeoutError(), 0])):
             with pytest.raises(NotImplementedError, match="timed out"):
                 await p.check_account_limits()
 

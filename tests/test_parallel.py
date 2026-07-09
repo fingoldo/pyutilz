@@ -236,9 +236,7 @@ def test_applyfunc_parallel_returns_dataframe_by_default():
 def test_applyfunc_parallel_returns_list_when_return_dataframe_false():
     from pyutilz.system.parallel import applyfunc_parallel
 
-    result = applyfunc_parallel(
-        iterable=[([1, 2],), ([3, 4],)], func=_echo_list, n_cores=1, return_dataframe=False, use_threads=True
-    )
+    result = applyfunc_parallel(iterable=[([1, 2],), ([3, 4],)], func=_echo_list, n_cores=1, return_dataframe=False, use_threads=True)
     # not a DataFrame (that's the whole point of the annotation fix); tqdmu wraps the raw
     # pool.starmap() result in a tqdm progress iterator rather than returning a bare list,
     # but its contents are exactly the per-chunk results, list-like end to end.

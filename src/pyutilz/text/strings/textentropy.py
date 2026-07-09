@@ -126,4 +126,4 @@ def stringify_dict(the_dict:dict,sep:str=",")->str:
     """
     Renders a dict as a "key=value" string, joining entries with sep.
     """
-    return sep.join([f"{key}={value}" for key,value in the_dict.items()])
+    return sep.join([f"{key}={value}" for key, value in the_dict.items()])

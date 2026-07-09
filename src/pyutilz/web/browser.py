@@ -15,9 +15,6 @@ logger=logging.getLogger(__name__)
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from pyutilz.core.pythonlib import ensure_installed
-ensure_installed("undetected_chromedriver selenium")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -277,9 +274,9 @@ def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
 
 def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: int = 60, restart_on_no_cookie=False) -> bool:
     """
-        Ensures Selenium is started
-        Logins, if not logged in already (detected by opening a home page)
-        Extracts (or updates) desired cookies from Selenium browser instance into global headers dict.
+    Ensures Selenium is started
+    Logins, if not logged in already (detected by opening a home page)
+    Extracts (or updates) desired cookies from Selenium browser instance into global headers dict.
     """
     global browser, TheCookies, headers
     while True:

@@ -301,8 +301,7 @@ class TestIdentityRaceCondition:
         assert not errors
 
         valid_combinations = {
-            (identity["node_id"], identity["version"], identity["scraper_name"], identity["app_name"], identity["ip"])
-            for identity in identities
+            (identity["node_id"], identity["version"], identity["scraper_name"], identity["app_name"], identity["ip"]) for identity in identities
         }
 
         for params in captured:

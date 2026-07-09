@@ -280,9 +280,7 @@ def get_jsonlist_property(
         return res
 
 
-def get_jsonlist_properties(
-    data: list, property_names: list, verbose: Optional[bool] = False, return_indices: Optional[bool] = True
-) -> Union[list, tuple]:
+def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[bool] = False, return_indices: Optional[bool] = True) -> Union[list, tuple]:
     """
     >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]

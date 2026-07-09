@@ -306,9 +306,7 @@ def test_concurrent_async_sweep_threads_spawn_exactly_once(host_dir):
         for t in threads:
             t.join()
 
-    assert spawn_mock.call_count == 1, (
-        f"expected exactly one async sweep spawn across {n} racing threads, got {spawn_mock.call_count}"
-    )
+    assert spawn_mock.call_count == 1, f"expected exactly one async sweep spawn across {n} racing threads, got {spawn_mock.call_count}"
     assert all(r == {"backend": "FB"} for r in results)
 
 
