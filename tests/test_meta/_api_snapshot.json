@@ -16,7 +16,6 @@
       "browser_get": "callable(path:any:0)",
       "close_browser": "callable()",
       "data_dir": "value",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "ensure_session_is_valid": "callable(interval_minutes:any:1)",
       "find_chrome_executable": "callable()",
       "find_element_by_name": "callable(browser:any:0, query:any:0)",
@@ -119,7 +118,6 @@
     },
     "distributed": {
       "Container": "class:pyutilz.system.distributed.Container",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "get_heartbeat_sql": "callable(status:any:1, ip:any:1)",
       "heartbeat_scraper": "callable(status:any:1, ip:any:1)",
       "logger": "value",
@@ -146,7 +144,6 @@
       "beautify_gql_query": "callable(query:any:0, join_token_find:any:1, join_token_replace:any:1)",
       "client": "value",
       "connect": "callable(graphql_client:any:0)",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "execute": "callable(query:any:0, variables:any:1)",
       "logger": "value",
       "query_schema": "callable()",
@@ -206,7 +203,6 @@
     "matrix": {
       "CsrIndPtrConstructor": "class:pyutilz.core.matrix.CsrIndPtrConstructor",
       "CsrRowColConstructor": "class:pyutilz.core.matrix.CsrRowColConstructor",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "get_sparse_memory_usage": "callable(mat:any:0)",
       "logger": "value"
     },
@@ -292,7 +288,6 @@
       "applyfunc_parallel": "callable(iterable:any:0, func:any:0, n_cores:any:1, return_dataframe:any:1, logical:any:1, initializer:any:1, initargs:any:1, use_threads:any:1)",
       "cpu_count_physical": "callable(fallback:any:1)",
       "distribute_work": "callable(workload:any:0, nworkers:any:0)",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "logger": "value",
       "mem_map_array": "callable(obj:any:0, file_name:any:0, mmap_mode:any:1)",
       "parallel_run": "callable(jobslist:any:0, n_jobs:any:1, backend:any:1, max_nbytes:any:1, prefer_real_cores:any:1, verbose:any:1, parallel_kwargs:**kw:0)",
@@ -382,7 +377,6 @@
       "weekofmonth": "callable(date:any:0)"
     },
     "redislib": {
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "logger": "value",
       "random": "callable()",
       "rc": "value",
@@ -391,7 +385,6 @@
       "rexecute": "callable(method_name:any:0, args:*args:0, kwargs:**kw:0)"
     },
     "serialization": {
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "logger": "value",
       "serialize": "callable(obj:any:0, fname:any:1, compression:any:1)",
       "str_to_class": "callable(classname:any:0)",
@@ -538,7 +531,6 @@
     },
     "tokenizers": {
       "AdvancedTokenizer": "class:pyutilz.text.tokenizers.AdvancedTokenizer",
-      "ensure_installed": "callable(packages:any:0, sep:any:1)",
       "ensure_space_after_comma": "callable(text:any:0)",
       "fix_broken_sentences": "callable(text:any:0, token:any:1)",
       "fix_duplicate_tokens": "callable(text:any:0)",

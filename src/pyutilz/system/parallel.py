@@ -12,10 +12,6 @@ logger = logging.getLogger(__name__)
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from pyutilz.core.pythonlib import ensure_installed
-
-# ensure_installed("psutil pandas")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -227,8 +223,6 @@ def set_tf_gpu(gpu: int):
 
     Note: ``gpu`` is currently unused -- the visible device is hard-coded to ``gpus[3]``.
     """
-    ensure_installed("tensorflow")
-
     import tensorflow as tf
 
     gpus = tf.config.experimental.list_physical_devices("GPU")

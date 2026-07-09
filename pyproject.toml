@@ -52,7 +52,13 @@ dataframes = [
 database = [
     "sqlalchemy>=1.4",
     "psycopg2-binary>=2.9",
-    "pymysql>=1.0"
+    "pymysql>=1.0",
+    # database/__init__.py imports dateutil.relativedelta unconditionally at module level;
+    # redislib.py imports redis unconditionally at module level. Neither is guarded by
+    # try/except (unlike e.g. orjson elsewhere), so they're real requirements of this
+    # extra, not correctly-optional add-ons.
+    "python-dateutil>=2.8",
+    "redis>=4.0",
 ]
 
 # Web scraping packages
@@ -69,6 +75,26 @@ web = [
 cloud = [
     "google-cloud-storage>=2.0",
     "boto3>=1.26"
+]
+
+# dev/dashlib.py imports flask/dash/dash_bootstrap_components unconditionally at module
+# level (unlike flask_login a few lines down in the same file, which is try/except-guarded)
+# -- a real, currently-undeclared requirement for anyone importing this niche notebook-
+# dashboard helper module.
+dash = [
+    "flask>=2.0",
+    "dash>=2.0",
+    "dash-bootstrap-components>=1.0",
+]
+
+# system/scheduling/prefect.py imports prefect unconditionally at module level.
+prefect = [
+    "prefect>=2.0",
+]
+
+# system/parallel.py's set_tf_gpu() imports tensorflow.
+tensorflow = [
+    "tensorflow>=2.0",
 ]
 
 # NLP packages
@@ -105,11 +131,15 @@ system = [
     "pympler>=1.0",
     "joblib>=1.2",
     "portalocker>=2.0",
+    # core/image.py and core/matrix.py import Pillow/scipy unconditionally at module level;
+    # neither maps to an existing domain extra, so they'd otherwise be genuinely undeclared
+    # requirements for anyone importing those two core submodules directly.
+    "Pillow>=9.0",
+    "scipy>=1.9",
     # Hardware detection (migrated from ml_perf_test)
     "py-cpuinfo>=9.0",
     "GPUtil>=1.4",
     "xmltodict>=0.13",
-    "pypiwin32>=223; platform_system=='Windows'"
 ]
 
 # GPU acceleration (cupy). Every cupy import site in the codebase is already
@@ -268,7 +298,34 @@ ignore = [
 exclude = ["tests", "scripts", ".venv", "build", "dist"]
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["selenium", "undetected-chromedriver", "boto3", "google-cloud-storage"]
+# selenium/undetected-chromedriver/boto3/google-cloud-storage: real runtime deps, but
+# imported lazily inside deeply-nested functions (see cloud/cloud.py, web/browser.py,
+# performance/kernel_tuning/remote.py) -- deptry's AST usage scan misses some of these.
+# pytest*/black/ruff/mypy/bandit/mkdocs-material: dev-tool CLI packages, invoked as
+# commands (pytest, black, ruff, mypy, bandit, mkdocs) -- never `import`-ed by name, so
+# deptry's static-usage scan can never see them as "used" no matter how the code changes.
+# fake-useragent: referenced only via the dynamic `ensure_installed("... fake_useragent")`
+# runtime-install helper (web/web.py) and a commented-out future `from fake_useragent
+# import UserAgent`, not a static `import` deptry's scanner can detect.
+DEP002 = [
+    "selenium",
+    "undetected-chromedriver",
+    "boto3",
+    "google-cloud-storage",
+    "pytest",
+    "pytest-cov",
+    "pytest-benchmark",
+    "pytest-asyncio",
+    "pytest-instafail",
+    "pytest-progress",
+    "pytest-timeout",
+    "black",
+    "ruff",
+    "mypy",
+    "bandit",
+    "mkdocs-material",
+    "fake-useragent",
+]
 
 # Interrogate: docstring coverage, advisory baseline only -- no --fail-under set until
 # a real baseline number is established. Docstrings are pyutilz's primary in-code
