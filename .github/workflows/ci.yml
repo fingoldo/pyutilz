@@ -83,13 +83,13 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@master
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@v1.0.0
     with:
       ignore: "C901"
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@master
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@v1.0.0
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -100,7 +100,7 @@ jobs:
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@master
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@v1.0.0
     with:
       source-path: src/pyutilz
 

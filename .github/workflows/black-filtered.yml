@@ -14,6 +14,6 @@ concurrency:
 # workflow, script now lives in the shared py_ci_shared package instead of scripts/ here.
 jobs:
   black:
-    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@master
+    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@v1.0.0
     with:
       check-path: "."
