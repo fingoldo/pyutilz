@@ -110,6 +110,6 @@ from .benchmarks import (
 # sees a real binding to delete instead of needing an unreliable ignore comment.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from . import dtypes, frames, io_ops, benchmarks  # noqa: F401,F811
+from . import dtypes, frames, io_ops, benchmarks
 
-del dtypes, frames, io_ops, benchmarks  # noqa: F821
+del dtypes, frames, io_ops, benchmarks

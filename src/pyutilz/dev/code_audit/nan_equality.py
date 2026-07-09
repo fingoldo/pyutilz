@@ -59,7 +59,7 @@ def scan_nan_equality(root: Path,
                 continue
             # Walk every (op, comparator) pair plus the LHS to cover the
             # 'x == NaN' AND 'NaN == x' AND 'x != NaN' shapes.
-            operands = [node.left] + list(node.comparators)
+            operands = [node.left, *node.comparators]
             ops = node.ops
             for i, op in enumerate(ops):
                 if not isinstance(op, (ast.Eq, ast.NotEq)):

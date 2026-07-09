@@ -73,6 +73,6 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
             logger.info("Inserted %s row(s) into %s table.", n, table_name)
             return n
     except Exception as e:
-        logger.error(f"Could not insert data into {table_name} table: {e}.")
-        logger.error(f"Data sample: {values_list[-10:]}")
+        logger.error("Could not insert data into %s table: %s.", table_name, e)
+        logger.error("Data sample: %s", values_list[-10:])
         return 0

@@ -64,7 +64,7 @@ def _ancestor_chain(target: ast.AST, root: ast.stmt) -> list[ast.AST]:
             found[0] = True
             return
         for child in ast.iter_child_nodes(node):
-            _walk(child, stack + [node])
+            _walk(child, [*stack, node])
 
     _walk(root, [])
     return chain

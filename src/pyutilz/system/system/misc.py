@@ -182,7 +182,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
             importlib.import_module(modulename)
             version = sys.modules[modulename].__version__
             res[modulename] = version
-        except Exception as e:  # nosec B110 - best-effort version probe across an arbitrary list of libs; missing/unimportable/version-less modules are expected and skipped, not a hidden bug
+        except Exception as e:  # nosec B110 - best-effort version probe across an arbitrary list of libs; missing/unimportable/version-less modules are expected and skipped, not a hidden bug  # noqa: PERF203 -- per-iteration fault isolation is intentional
             logger.debug("Could not determine version for %s: %s", modulename, e)
     return res
 
@@ -250,8 +250,8 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Option
             try:
                 current_snapshot = tracemalloc.take_snapshot()
                 top_stats = current_snapshot.compare_to(initial_memory_snapshot, "lineno")
-                print("Top stats:\n")
-                print(top_stats)
+                logger.info("Top stats:\n")
+                logger.info("%s", top_stats)
             except Exception as e:
                 logger.exception(e)
 
@@ -295,16 +295,19 @@ def ensure_idle_devices(
 
     logger.info("Ensuring idle devices for %s seconds with the following conditions:", duration_seconds)
     logger.info(
-        f"  Max CPU load: {max_cpu_load_percent}%, Min CPU free RAM: {min_cpu_free_ram_gb} GB, "
-        f"Max GPU load: {max_gpu_load_percent}%, Min GPU free RAM: {min_gpu_free_ram_gb} GB. "
-        f"GPU IDs to check: {gpu_ids if gpu_ids else 'All'}."
+        "  Max CPU load: %s%%, Min CPU free RAM: %s GB, Max GPU load: %s%%, Min GPU free RAM: %s GB. GPU IDs to check: %s.",
+        max_cpu_load_percent,
+        min_cpu_free_ram_gb,
+        max_gpu_load_percent,
+        min_gpu_free_ram_gb,
+        gpu_ids if gpu_ids else "All",
     )
 
     def check_cpu_initial_conditions():
         """Verify the requested minimum free CPU RAM does not exceed total installed RAM."""
         total_cpu_ram_gb = psutil.virtual_memory().total / (1024**3)
         if min_cpu_free_ram_gb > total_cpu_ram_gb:
-            logger.warning(f"Requested CPU free RAM ({min_cpu_free_ram_gb} GB) exceeds total available RAM ({total_cpu_ram_gb:.2f} GB)")
+            logger.warning("Requested CPU free RAM (%s GB) exceeds total available RAM (%.2f GB)", min_cpu_free_ram_gb, total_cpu_ram_gb)
             return False
         return True
 
@@ -322,7 +325,7 @@ def ensure_idle_devices(
                 continue
             total_gpu_ram_gb = gpu.memoryTotal / 1024
             if min_gpu_free_ram_gb > total_gpu_ram_gb:
-                logger.warning(f"Requested GPU {gpu.id} free RAM ({min_gpu_free_ram_gb} GB) exceeds total available RAM ({total_gpu_ram_gb:.2f} GB)")
+                logger.warning("Requested GPU %s free RAM (%s GB) exceeds total available RAM (%.2f GB)", gpu.id, min_gpu_free_ram_gb, total_gpu_ram_gb)
                 return False
         return True
 

@@ -147,7 +147,7 @@ def read_stats_from_multiple_files(
                 for _i, filename in enumerate(fnames):
                     try:
                         os.remove(filename)
-                    except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result
+                    except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
                         logger.debug("Failed to remove source file %s after concat: %s", filename, e)
             return res
         except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller

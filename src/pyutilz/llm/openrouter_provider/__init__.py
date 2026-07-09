@@ -62,12 +62,12 @@ _HEALTH_CACHE_LOCK = threading.Lock()
 # ``import pyutilz.llm.openrouter_provider as _pkg`` at import time and would
 # otherwise race the globals (they only READ ``_pkg.X`` at call time, so the
 # partially-initialised module object is fine as long as the names exist).
-from pyutilz.llm.openrouter_provider._catalogue import (  # noqa: E402
+from pyutilz.llm.openrouter_provider._catalogue import (
     _fetch_models_catalogue,
     _per_token_cost_pair,
     _resolve_model_limits,
 )
-from pyutilz.llm.openrouter_provider._health import (  # noqa: E402
+from pyutilz.llm.openrouter_provider._health import (
     _enrich_with_health,
     _fetch_endpoints_for_model,
     _normalize_uptime,
@@ -77,7 +77,7 @@ from pyutilz.llm.openrouter_provider._health import (  # noqa: E402
     clear_openrouter_caches,
     list_openrouter_models,
 )
-from pyutilz.llm.openrouter_provider._provider import OpenRouterProvider  # noqa: E402
+from pyutilz.llm.openrouter_provider._provider import OpenRouterProvider
 
 __all__ = [
     "OpenRouterProvider",

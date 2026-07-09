@@ -282,6 +282,25 @@ class TestClaudeCodeCheckAccountLimitsReaping:
         fake_proc.kill.assert_called_once()
         fake_proc.wait.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_nonzero_returncode_raises_with_stderr(self):
+        """A failing `claude /status` (e.g. not logged in) must surface via
+        NotImplementedError with the CLI's stderr, not silently fall through
+        to parsing empty/garbage stdout as if there were no limit info."""
+        from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
+
+        p = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
+
+        fake_proc = MagicMock()
+        fake_proc.pid = 12345
+        fake_proc.returncode = 1
+
+        with patch("pyutilz.llm.claude_code_provider._find_claude_executable", return_value="claude"), patch(
+            "asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)
+        ), patch("asyncio.wait_for", AsyncMock(return_value=(b"", b"Error: not logged in"))):
+            with pytest.raises(NotImplementedError, match="not logged in"):
+                await p.check_account_limits()
+
 
 class TestUniformInterface:
     """Every provider exposes both methods (even if NotImplementedError) —

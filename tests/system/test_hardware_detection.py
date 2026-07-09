@@ -224,6 +224,26 @@ class TestSystemInfo:
         if "large_pages_support" in info:
             print(f"[OK] Large pages support: {info['large_pages_support']}")
 
+    def test_get_system_info_hdd_reports_best_disk(self):
+        """get_max_singledisk_free_space_gb() computes best_disk / usage_percent
+        alongside the already-surfaced aggregate free/total space, but
+        get_system_info() used to discard them (found 2026-07-09 deptry/vulture
+        triage). Confirm both now land in the returned dict."""
+        from unittest.mock import patch
+        from pyutilz.system.system import get_system_info
+
+        with patch(
+            "pyutilz.system.system.sysinfo.get_max_singledisk_free_space_gb",
+            return_value=(120.5, 42.0, "/dev/sda1", 500.0, 200.0),
+        ):
+            info = get_system_info(return_hdd_info=True)
+
+        assert info["hdd_max_singledisk_free_space_gb"] == 120.5
+        assert info["hdd_best_disk"] == "/dev/sda1"
+        assert info["hdd_best_disk_usage_percent"] == 42.0
+        assert info["hdd_total_space_gb"] == 500.0
+        assert info["hdd_free_space_gb"] == 200.0
+
     def test_get_system_info_os(self):
         """Test get_system_info() with return_os_info=True."""
         from pyutilz.system.system import get_system_info

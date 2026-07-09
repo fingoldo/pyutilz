@@ -84,7 +84,7 @@ class XAIProvider(OpenAICompatibleProvider):
     _provider_name = "xAI"
     _max_tokens_map = _MAX_TOKENS
     _default_max_tokens = 30000
-    _context_window_map = {
+    _context_window_map = {  # noqa: RUF012 -- intentional shared class-level lookup table (overrides base class default), not a per-instance mutable-default bug
         "grok-4": 256_000,
         "grok-4-0709": 256_000,
         "grok-3": 131_000,

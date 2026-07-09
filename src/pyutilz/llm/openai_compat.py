@@ -131,7 +131,7 @@ class OpenAICompatibleProvider(LLMProvider):
     # ── subclass configuration (override in subclass) ────────────────
     _base_url: str
     _provider_name: str
-    _max_tokens_map: dict[str, int] = {}
+    _max_tokens_map: dict[str, int] = {}  # noqa: RUF012 -- intentional shared class-level lookup table (subclasses override with their own), not a per-instance mutable-default bug
     _default_max_tokens: int = 8192
 
     def __init__(
@@ -243,7 +243,7 @@ class OpenAICompatibleProvider(LLMProvider):
             return
         try:
             mapping = {k.lower(): v for k, v in dict(headers).items()}
-        except Exception:  # noqa: BLE001
+        except Exception:
             return
         captured = {k: v for k, v in mapping.items() if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")}
         if captured:
@@ -295,7 +295,7 @@ class OpenAICompatibleProvider(LLMProvider):
         return self._max_tokens_map.get(self.model_name, self._default_max_tokens)
 
     # Subclasses override for per-model context windows
-    _context_window_map: dict[str, int] = {}
+    _context_window_map: dict[str, int] = {}  # noqa: RUF012 -- intentional shared class-level lookup table (subclasses override with their own), not a per-instance mutable-default bug
     _default_context_window: int = 128_000
 
     @property
@@ -474,7 +474,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         if last_chunk is not None:
                             self._track_provider_specific_response(last_chunk)
                 return
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Only the stream-open / pre-first-token phase is safely
                 # retryable. After we've yielded content, re-raise so the
                 # caller doesn't receive duplicated tokens.

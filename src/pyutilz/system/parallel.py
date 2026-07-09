@@ -39,8 +39,8 @@ def _cleanup_temp_dirs():
         try:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temp directory {temp_dir}: {e}")
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one dir failing to clean shouldn't skip the rest)
+            logger.warning("Failed to cleanup temp directory %s: %s", temp_dir, e)
 import contextlib
 
 import os
@@ -231,10 +231,10 @@ def set_tf_gpu(gpu: int):
         try:
             tf.config.experimental.set_visible_devices(gpus[3], "GPU")
             logical_gpus = tf.config.experimental.list_logical_devices("GPU")
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
+            logger.info("%s Physical GPUs, %s Logical GPU", len(gpus), len(logical_gpus))
         except RuntimeError as e:
             # Visible devices must be set before GPUs have been initialized
-            print(e)
+            logger.error(e)
 
 
 def mem_map_array(obj: np.ndarray, file_name: str, mmap_mode: str = "r") -> object:

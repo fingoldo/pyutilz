@@ -116,8 +116,7 @@ def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
     if json_obj is None:
         return
     for attr in attributes:
-        if attr in json_obj:
-            del json_obj[attr]
+        json_obj.pop(attr, None)
 
 
 def leave_json_attributes(json_obj: dict, attributes: Sequence) -> None:

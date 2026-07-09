@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # psycopg2 + pyutilz.database are deferred to call site - tokenizers.py is
 # loaded by mlframe via the pyutilz.text re-export chain; not every consumer
 # needs the database stack just to use string utilities below.
-from pyutilz.database import db  # noqa: E402,F401  # used by call sites in this file
+from pyutilz.database import db  # used by call sites in this file
 from typing import Optional
 
 from pyutilz.text.strings import (
@@ -49,7 +49,7 @@ try:
     spacy = _spacy
 except Exception as e:  # nosec B110 - optional dependency probe; module must still be importable when spacy is absent/incompatible (e.g. Python 3.14 Pydantic issue noted above), and AdvancedTokenizer already fails loudly later if spacy is actually needed but unset
     logger.debug("spacy unavailable or incompatible, AdvancedTokenizer will fail if used: %s", e)
-vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(
+vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(  # noqa: A001 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     ","
 )
 
@@ -185,14 +185,14 @@ class AdvancedTokenizer:
         # psycopg2 is the actual cursor backend - import lazily so the module
         # itself can be loaded without psycopg2 installed (only this DB-reading
         # method is gated on it).
-        import psycopg2.extras  # noqa: F401
+        import psycopg2.extras
         nchunks = 0
         nitems = 0
         cur = db.safe_execute(sql, cursor_factory=psycopg2.extras.NamedTupleCursor, cursor_name="test", return_cursor=True)
         pbar = tqdm(total=exp_length)
 
         if isinstance(cur, list):
-            print(cur)
+            logger.warning("%s", cur)
         else:
             try:
                 while True:

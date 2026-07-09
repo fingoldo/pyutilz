@@ -168,7 +168,8 @@ dev = [
     "black>=23.0",
     "ruff>=0.1",
     "mypy>=1.0",
-    "bandit>=1.7"
+    "bandit>=1.7",
+    "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git"  # needed by .pre-commit-config.yaml's local hooks
 ]
 
 # Documentation site (MkDocs Material). Build with `mkdocs build` / serve with `mkdocs serve`.
@@ -245,57 +246,54 @@ exclude = '''
 )/
 '''
 
-# Ruff linter
+# Ruff linter. Base select/ignore (E,W,F,I,N,UP,B,DTZ,A,T20,RUF,G,ISC,PERF,C90 + the generic
+# ignores) is pulled in from ../py-ci-shared/configs/ruff-base.toml via `extend` -- a real merge,
+# not copy-paste. See that file's header comment and https://github.com/fingoldo/py-ci-shared for
+# the full rationale. Everything below is pyutilz-specific: its own dir excludes, target-version
+# floor (py38, older than mlframe's py39), and its own MEASURED mccabe threshold (complexity
+# distributions differ per codebase; never copy another repo's number -- see the comment below).
 [tool.ruff]
-line-length = 160
+extend = "../py-ci-shared/configs/ruff-base.toml"
 target-version = "py38"
-exclude = ["tests", "scripts", ".git", "__pycache__", "build", "dist"]
+# _benchmarks added 2026-07-09 while wiring the blocking gate: its scripts print timing/identity
+# results to stdout by design (that IS the benchmark's interface, same exemption class as
+# py-ci-shared's own CLI scripts) -- T201/PERF401 findings there are noise, not bugs. Mirrors
+# mlframe's benchmarks/_benchmarks/profiling exclusion (found via the identical gap there).
+exclude = ["tests", "scripts", "_benchmarks", ".git", "__pycache__", "build", "dist"]
 
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "N",   # pep8-naming
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-]
-ignore = [
-    "E501",  # line too long (handled by black)
-    "E401",  # multiple imports on one line (legacy code style)
-    "E402",  # module level import not at top of file (our style uses comment blocks)
-    "E701",  # multiple statements on one line (colon) - legacy code style
-    "E702",  # multiple statements on one line (semicolon) - legacy code style
-    "I001",  # import block is un-sorted or un-formatted (not enforcing import sorting)
-    "N802",  # function name should be lowercase (legacy code, fixing separately)
-    "N803",  # argument name should be lowercase (camelCase, Hungarian notation in legacy code)
-    "N806",  # variable name should be lowercase (legacy code)
-    "B006",  # mutable default (fixing separately)
-    "F541",  # f-string without placeholders (sometimes used for consistency)
-    "UP031", # use format specifiers instead of percent format (legacy code, not urgent)
-    "UP006", # list/dict over typing.List: project targets py38 (parity with mlframe)
-    "UP007", # X|Y over Union: py38 concern (parity with mlframe)
-    "UP045", # X|None over Optional: py38 concern (parity with mlframe)
-    "UP037", # quoted annotation: forward refs in dataclass slots (parity with mlframe)
-    "F403",  # ``from x import *``: intentional in several namespace modules
-    "F405",  # name may be undefined / from star-import: consequence of intentional F403, not a bug
-    "B904",  # raise ... from inside except: stylistic, not a correctness issue
-    "B009",  # getattr(x, "const"): stylistic
-]
+# Measured 2026-07-09 when C90 was newly added via the shared base (pyutilz had never selected
+# it before): default threshold=10 flags 68 functions, median complexity among those 15, mean
+# 18.8, max 61. threshold=20 keeps 17 findings -- the genuine outliers (complexity 20-61) --
+# without flagging routine 10-20 dispatch/branching functions. Lower than mlframe's 40 because
+# pyutilz's overall complexity distribution is genuinely lower; this is pyutilz's own measured
+# number, not copied from mlframe.
+[tool.ruff.lint.mccabe]
+max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports OK in __init__
 "src/pyutilz/__init__.py" = ["N807"]  # module-level __getattr__ (PEP 562) is a real dunder, not a naming violation
 "src/pyutilz/llm/claude_code_provider.py" = ["N814"]  # local import aliases (_TRS, _TSS) follow the project's underscore-prefixed-short-alias convention, not a "constant" naming
+"src/pyutilz/dev/notebook_init.py" = ["T201"]  # entire module's job is printing interactive Jupyter-notebook-init status messages to stdout for the user to see; already excluded from coverage as a notebook-only utility
+"src/pyutilz/web/proxy/decodo.py" = ["T201"]  # all findings are in DecodoProvider.print_usage(), explicitly documented as "Print human-readable subscription + traffic summary to stdout"
 
-# Deptry: unused / missing / transitive dependency scan, advisory only (CI step has
-# continue-on-error). ~102 findings on a first local run (2026-07-08), almost all
-# DEP001 on optional-dependency imports guarded by try/except (cupy, orjson, wmi,
-# GPUtil, etc.) that deptry's static scan can't trace through the isolation pattern
-# tests/test_meta already covers at the test level -- expected noise, not a defect.
+# Deptry: unused / missing / transitive dependency scan. Made blocking 2026-07-09 after a real
+# triage pass (run with the [all,dev] extras actually installed -- deptry's DEP001/DEP002 are
+# both meaningless in a bare environment, see py-ci-shared/README). 70 raw findings reduced to 0
+# by [tool.deptry.package_module_name_map] (PyPI-name vs. import-name mismatches deptry can't
+# infer on its own) and the per_rule_ignores below (genuinely optional third-party libs behind
+# try/except ImportError guards, verified individually -- never a hard runtime requirement).
 [tool.deptry]
 exclude = ["tests", "scripts", ".venv", "build", "dist"]
+
+[tool.deptry.package_module_name_map]
+"psycopg2-binary" = "psycopg2"
+beautifulsoup4 = "bs4"
+"google-genai" = "google"
+Pillow = "PIL"
+"py-cpuinfo" = "cpuinfo"
+"python-dateutil" = "dateutil"
+GPUtil = "GPUtil"
 
 [tool.deptry.per_rule_ignores]
 # selenium/undetected-chromedriver/boto3/google-cloud-storage: real runtime deps, but
@@ -325,11 +323,49 @@ DEP002 = [
     "bandit",
     "mkdocs-material",
     "fake-useragent",
+    "py-ci-shared",  # invoked as `python -m py_ci_shared.*` CLI/pre-commit-hook commands, never `import py_ci_shared`
 ]
 
-# Interrogate: docstring coverage, advisory baseline only -- no --fail-under set until
-# a real baseline number is established. Docstrings are pyutilz's primary in-code
-# documentation surface (less inline-rationale-comment culture than mlframe).
+# DEP001 (import missing from declared deps): 35 findings from the 2026-07-09 full triage (run
+# with [all,dev] actually installed), each individually verified to be a genuinely optional
+# third-party import behind a try/except ImportError guard -- never a hard runtime requirement.
+# One real bug found and fixed along the way, not ignored: core/pythonlib.py's load_file() had
+# an UNGUARDED module-level `from catboost import CatBoostClassifier`, making catboost a hard
+# dependency for callers loading .joblib/.pckl files too; moved to a lazy import inside the
+# .bin-only branch that actually needs it (still unguarded there, since that branch always did
+# require catboost -- the bug was the import's SCOPE, not the absence of a try/except).
+DEP001 = [
+    "catboost",  # core/pythonlib.py load_file() -- lazy-imported only for the .bin/CatBoost branch
+    "IPython",  # core/pythonlib.py is_jupyter_notebook(), data/pandaslib/_common.py, dev/notebook_init.py -- notebook-only
+    "nvidia",  # core/pythonlib.py -- CUDA_HOME discovery from the nvidia pip package, guarded
+    "polars_ds",  # data/polarslib.py -- gated on check_cpu_flag("avx2")
+    "orjson",  # database/db, llm/openai_compat.py, performance/kernel_tuning/remote.py, text/strings/jsonutils.py, web/* -- faster-than-stdlib json, falls back if missing
+    "filelock",  # database/deltalakes.py -- guarded, FileLock/Timeout set to None on ImportError
+    "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature
+    "concurrent_log_handler",  # dev/logginglib.py -- guarded, falls back to stdlib RotatingFileHandler
+    "matplotlib",  # dev/notebook_init.py -- guarded, notebook-only
+    "seaborn",  # dev/notebook_init.py -- guarded, notebook-only
+    "claude_code_sdk",  # llm/claude_code_provider.py -- guarded SDK monkey-patch block
+    "anyio",  # llm/claude_code_provider.py -- inside the same guarded claude_code_sdk block
+    "botocore",  # performance/kernel_tuning/remote.py -- guarded, S3 remote-cache is opt-in
+    "wmi",  # system/system/probing.py -- guarded, Windows-only
+]
+
+# DEP003 (import used but declared as transitive, not direct): same soft-import names as DEP001
+# above, minus flask_login/concurrent_log_handler/claude_code_sdk/wmi (which stayed genuinely
+# absent in this environment). Whether deptry reports DEP001 or DEP003 for a given name depends
+# on whether something else's dependency resolution happens to pull it in transitively -- not
+# something this repo controls or wants to depend on staying stable, so both codes are ignored
+# for the same verified-optional names rather than re-triaging every time a transitive pin shifts.
+DEP003 = [
+    "catboost", "IPython", "nvidia", "polars_ds", "orjson", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
+]
+
+# Interrogate: docstring coverage. Blocking at --fail-under=100 since 2026-07-09 (see the CI
+# lint-blocking job and the .pre-commit-config.yaml interrogate-blocking hook) -- pyutilz was
+# already at 100% coverage (917/917) before this config was wired up to gate on it. `_benchmarks`
+# needs no explicit exclude here (unlike mlframe's) since it lives at the repo root, outside the
+# `src/pyutilz` path this scan is scoped to.
 [tool.interrogate]
 ignore-init-method = true
 ignore-init-module = true
@@ -337,6 +373,13 @@ ignore-magic = true
 ignore-private = true
 exclude = ["tests", "scripts", "docs", "build", "dist"]
 verbose = 1
+
+# Codespell. Moved from the CI/pre-commit CLI --ignore-words-list flag into structured config
+# (mirrors mlframe) so the ignore list lives in one place instead of being duplicated across
+# .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py),
+# the sole confirmed false positive as of the 2026-07-05 codespell setup.
+[tool.codespell]
+ignore-words-list = "coo"
 
 # MyPy type checker
 [tool.mypy]

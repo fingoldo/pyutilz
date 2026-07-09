@@ -132,9 +132,7 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
         punctuation, eos = string.punctuation, ("!", ".", "?")
         whitespaces = list(string.whitespace)
         whitespaces.remove(" ")
-        whitespaces = [
-            "\r\n",
-        ] + whitespaces
+        whitespaces = ["\r\n", *whitespaces]
         for token in whitespaces:
             text_len = len(text)
             new_text = ""
@@ -396,7 +394,7 @@ def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[boo
         res = first_char.upper() + res[1:]
     if was_processed:
         if verbose:
-            print(f"{desc} sentencized: {text}")
+            print(f"{desc} sentencized: {text}")  # noqa: T201 -- verbose=True is an explicit stdout-display contract, matching pyutilz's other verbose= flags (see nullify_standard_values, finalize_function_log)
     return res
 
 

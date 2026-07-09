@@ -166,7 +166,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             return _PRICING["deepseek-v4-flash"]
         return _PRICING[model]
 
-    _seen_unknown_models: set[str] = set()
+    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
 
     def _warn_unknown_model_once(self, model: str) -> None:
         """Log a one-time warning (per model name, across instances) that pricing is unknown and flash rates are used."""

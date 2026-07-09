@@ -101,7 +101,7 @@ def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attem
     for _ in range(num_attempts):
         try:
             res = web.get_url(filemaker_url + f"/layouts/{layout}/records/", verb="post", json=data)
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (retry next attempt)
             last_error = e
             logger.error("Exception %s when inserting into filemaker object %s", e, data)
         else:

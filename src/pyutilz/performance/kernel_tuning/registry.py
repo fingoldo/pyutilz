@@ -223,7 +223,7 @@ def discover_tuners(package: str = "mlframe", warn_on_import_fail: bool = True) 
         try:
             importlib.import_module(modname)
             collected += 1
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one broken module shouldn't stop the walk)
             if warn_on_import_fail:
                 logger.warning("Failed to import %r: %s", modname, e)
             # Continue; don't let one broken module stop the walk.

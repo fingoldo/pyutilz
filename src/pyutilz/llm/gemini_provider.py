@@ -59,7 +59,7 @@ class GeminiProvider(LLMProvider):
     # the higher tier. We bill at the lower tier here; callers issuing
     # >200K prompts should override via ``estimate_cost`` with explicit
     # rates. Tier-2 prices documented in the comments next to each entry.
-    _PRICING: dict[str, tuple[float, float]] = {
+    _PRICING: dict[str, tuple[float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
         # Tier-2 (>200K): ($4.00, $18.00) — 2x input, 1.5x output.
         "gemini-3.1-pro-preview": (2.00, 12.00),
         "gemini-3.1-flash-lite-preview": (0.25, 1.50),
@@ -71,7 +71,7 @@ class GeminiProvider(LLMProvider):
     }
     # Cached input prices per 1M tokens (90% discount on input miss).
     # Plus storage at $1-4.50/hour depending on model.
-    _CACHE_HIT_COST: dict[str, float] = {
+    _CACHE_HIT_COST: dict[str, float] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
         "gemini-3.1-pro-preview": 0.20,
         "gemini-3.1-flash-lite-preview": 0.025,
         "gemini-3-flash-preview": 0.05,
@@ -296,7 +296,7 @@ class GeminiProvider(LLMProvider):
             # Preserve raw additional candidates for callers that requested
             # multi-candidate generation.
             self.last_all_candidates = list(candidates)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Gemini candidate metadata capture failed: %s", exc)
 
     def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
@@ -328,7 +328,7 @@ class GeminiProvider(LLMProvider):
             if result.total_tokens is None:
                 raise ValueError("Gemini count_tokens returned no total_tokens")
             return int(result.total_tokens)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Gemini count_tokens API failed (%s); falling back to tiktoken.", exc)
             from pyutilz.llm.token_counter import count_tokens
             return count_tokens(text)

@@ -278,6 +278,12 @@ def get_system_info(
             info["hdd_free_space_gb"] = cumulative_disks_usage_free
             info["hdd_total_space_gb"] = cumulative_disks_usage_total
             info["hdd_max_singledisk_free_space_gb"] = max_singledisk_free_space
+            # Previously computed but silently discarded (found 2026-07-09 deptry/vulture
+            # triage): which mountpoint has the most free space, and what fraction of IT is
+            # free -- distinct from the aggregate hdd_max_singledisk_free_space_gb, which is
+            # capacity-in-GB with no per-disk usage-percent context.
+            info["hdd_best_disk"] = best_disk
+            info["hdd_best_disk_usage_percent"] = singledisk_usage_percent
 
         # psutil.boot_time() #1564925068.0
         # psutil.users() #[suser(name='TheLocalCommander', terminal=None, host='0.0.0.0', started=1564925062.0, pid=None)]

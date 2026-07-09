@@ -82,7 +82,7 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
             raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
         with open(module.__file__, "rb") as f:
             file_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:8]
-        version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"
+        version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"  # noqa: DTZ005 -- date-only (%Y.%m.%d) version tag, not a point-in-time value; local calendar date is intentional
     if app_name is None:
         app_name = pythonlib.lookup_in_stack("app_name")
 

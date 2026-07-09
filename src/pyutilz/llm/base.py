@@ -9,7 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
-from pyutilz.llm.exceptions import (  # noqa: F401 — re-export for backward compat
+from pyutilz.llm.exceptions import (
     JSONParsingError,
     LLMRefusalError,
 )
@@ -218,7 +218,7 @@ class LLMProvider(ABC):
                     f"{provider_name} refused to produce JSON",
                     raw_text=text,
                 )
-            logger.error(f"Failed to parse JSON from {provider_name}: {e}\nResponse: {text}")
+            logger.error("Failed to parse JSON from %s: %s\nResponse: %s", provider_name, e, text)
             raise JSONParsingError(f"Invalid JSON response from {provider_name}: {e}")
 
     @abstractmethod
@@ -245,7 +245,7 @@ class LLMProvider(ABC):
     # ── shared implementation hooks ──────────────────────────────────
     # Subclasses that use the default estimate_cost / _get_pricing below
     # supply a per-1M pricing table and default via these class attrs.
-    _PRICING: dict[str, tuple[float, float]] = {}
+    _PRICING: dict[str, tuple[float, float]] = {}  # noqa: RUF012 -- intentional shared class-level pricing table (subclasses override with their own), not a per-instance mutable-default bug
     _DEFAULT_PRICING: tuple[float, float] = (0.0, 0.0)
 
     def _pricing_model_id(self) -> str:
@@ -334,7 +334,7 @@ class LLMProvider(ABC):
                     max_tokens=req.get("max_tokens", 1024),
                 )
                 return {"id": request_id, "result": result}
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.error("Batch request %s failed: %s", request_id, e)
                 out = {"id": request_id, "error": str(e)}
                 extra = self._classify_batch_exception(e)

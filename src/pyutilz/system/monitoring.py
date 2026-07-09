@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 import time
 import atexit
-import requests
 import functools
 import threading
 import concurrent.futures
@@ -87,15 +86,20 @@ def job_completed(
         def _send():
             """Post the heartbeat to the endpoint, logging (not raising) on a non-OK status or request error."""
             try:
+                # Lazy: requests lives under pyutilz's optional [web] extra (found 2026-07-09 --
+                # the prior module-level import made ANY use of pyutilz.system require it, even
+                # monitoring helpers that never touch job-completion heartbeats).
+                import requests
+
                 res = requests.post(endpoint, data=data, params=params, timeout=API_TIMEOUT_SEC)
 
                 if res.status_code not in (200, 403, 429):
                     # 403=blocked in your country
                     # 429=rate limit exceeded
-                    logger.warning(f"Problem {res.status_code} while sending heartbeat to {provider} on job {job_id}: {res.text}")
+                    logger.warning("Problem %s while sending heartbeat to %s on job %s: %s", res.status_code, provider, job_id, res.text)
 
             except Exception as e:
-                logger.warning(f"Error while sending heartbeat to {provider} on monitor {job_id}: {e}")
+                logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
 
         if blocking:
             _send()
@@ -192,13 +196,13 @@ def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bo
             thread.start()
             thread.join(timeout=timeout)
             if thread.is_alive():
-                logger.error(f"{func.__name__} timed out after {timeout}s at {datetime.now()}")
+                logger.error("%s timed out after %ss at %s", func.__name__, timeout, datetime.now())  # noqa: DTZ005 -- intentional local wall-clock time for a human-facing log message
                 # NOTE: a Python thread cannot be forcibly stopped, so it keeps running until func
                 # returns; being a dedicated per-call thread (not shared pool capacity), it cannot
                 # cause any OTHER call to spuriously time out.
                 return None  # Or raise, depending on use case
             if "error" in outcome:
-                logger.exception(f"Error in {func.__name__}: {outcome['error']}")
+                logger.exception("Error in %s: %s", func.__name__, outcome["error"])
                 return None
             if report_actual_duration:
                 logger.info("%s completed in %.2fs", func.__name__, time.time() - start_ts)

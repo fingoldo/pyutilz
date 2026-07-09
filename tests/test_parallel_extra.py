@@ -176,10 +176,14 @@ class TestApplyfuncParallel:
 
 class TestSetTfGpu:
     def test_no_tensorflow(self):
+        """set_tf_gpu() must not crash uncaught when tensorflow isn't installed -- it's a plain
+        `import tensorflow as tf`, no ensure_installed() auto-install fallback (that helper lives
+        in pyutilz.core.pythonlib and was never wired into this function; a stale patch target
+        here previously masked whether this scenario was exercised at all -- AttributeError on
+        the patch itself, before set_tf_gpu ever ran)."""
         from pyutilz.system.parallel import set_tf_gpu
-        with patch("pyutilz.system.parallel.ensure_installed"):
-            with patch.dict("sys.modules", {"tensorflow": None}):
-                try:
-                    set_tf_gpu(0)
-                except Exception:
-                    pass  # expected when tf not available
+        with patch.dict("sys.modules", {"tensorflow": None}):
+            try:
+                set_tf_gpu(0)
+            except Exception:
+                pass  # expected when tf not available

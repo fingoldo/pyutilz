@@ -61,19 +61,28 @@ repos:
       - id: codespell
         args: ['--ignore-words-list=coo']
 
-  # Real-bug gate: pyflakes + syntax errors block the commit. Matches CI's
-  # ``ruff check . --select F,E9`` exactly (no ignore) -- previously re-applied
-  # a taste-ignore (F401/F403/F405/F541/F841) via CLI --ignore, which let
-  # unused-import / star-import / empty-fstring / unused-var slip past
-  # pre-commit while CI still caught them, a config drift that let real lint
-  # debt land on master between the two gates disagreeing.
+  # Real-bug gate: the project's FULL configured select/ignore (pyproject.toml), minus C901
+  # (complexity, advisory-only). Closed to 0 findings 2026-07-09 after the RUF/G/ISC/PERF/DTZ/A/
+  # T20 triage that came with adopting the shared ruff-base.toml select set -- previously this was
+  # scoped to just ``--select F,E9`` (pyflakes + syntax only) while CI's full-select advisory pass
+  # ran separately; now both gates check the identical rule set, matching mlframe's posture.
+  #
+  # CRITICAL: never use ``--select`` here. ``--select`` REPLACES the effective rule set instead of
+  # narrowing pyproject.toml's configured select, silently dropping the ``ignore`` list too
+  # (RUF001/002/003/022, ISC001, etc. would all reappear) and breaking RUF100's "is this noqa
+  # still needed" determination. ``--ignore`` only ADDS to the configured ignore list, so it is safe.
   - repo: local
     hooks:
       - id: ruff-real-bugs
         name: "ruff (real bugs block)"
-        entry: python -m ruff check --select F,E9
+        entry: python -m ruff check --ignore C901
         language: system
         types: [python]
+        # pre-commit passes matching files as explicit CLI args, which BYPASSES ruff's own
+        # top-level `exclude` list in pyproject.toml (explicit paths override `exclude`; only
+        # `force-exclude = true`, which this repo does not set, would apply it to explicit args
+        # too). Mirror that exclude list here at the pre-commit level, same fix as mlframe's.
+        exclude: (^|/)(tests|scripts|_benchmarks)/
         stages: [pre-commit]
 
   - repo: local
@@ -104,12 +113,13 @@ repos:
   # Format + lint WARNINGS only -- ruff format --check + ruff check, never
   # rewrites and never blocks (always exits 0). Auto-reformat is intentionally
   # off (would churn large diffs that collide with concurrent work); run
-  # ``ruff format`` / ``ruff check --fix`` manually to apply. Mirrors mlframe.
+  # ``ruff format`` / ``ruff check --fix`` manually to apply. Wrapper script lives in the
+  # shared py_ci_shared package (fingoldo/py-ci-shared) -- `pip install -e ".[dev]"` installs it.
   - repo: local
     hooks:
       - id: format-lint-warn
         name: "format + lint (WARN only — never rewrites or blocks)"
-        entry: python scripts/format_warn.py
+        entry: python -m py_ci_shared.format_warn
         language: system
         types: [python]
         verbose: true
@@ -127,29 +137,54 @@ repos:
         files: '^src/pyutilz/(dev/code_audit|stats)/'
         additional_dependencies: ['numpy<2.5']
 
-  # Warn-only security-lint gate: bandit -ll (medium+ severity), mirroring the
-  # advisory CI step (continue-on-error) so findings surface locally too, before
-  # only showing up later in the CI artifact. See scripts/bandit_warn.py.
+  # Security-lint gate: bandit -ll (medium+ severity). Blocking since 2026-07-09 -- triaged to 0
+  # findings (see the CI lint-blocking job), so this mirrors that CI gate exactly instead of only
+  # warning locally and failing later in CI. Called directly (not through a warn-only wrapper).
   - repo: local
     hooks:
-      - id: bandit-warn
-        name: "bandit security scan (warn-only)"
-        entry: python scripts/bandit_warn.py
+      - id: bandit-blocking
+        name: "bandit security scan (blocking)"
+        entry: python -m bandit -r src/pyutilz -ll
         language: system
         types: [python]
-        files: '^src/pyutilz/'
-        verbose: true
+        pass_filenames: false
         stages: [pre-commit]
 
-  # Warn-only dead-code gate: vulture --min-confidence 80, mirroring the advisory
-  # CI step (continue-on-error). See scripts/vulture_warn.py.
+  # Dead-code gate: vulture --min-confidence 80. Blocking since 2026-07-09 -- triaged to 0
+  # findings (see the CI lint-blocking job), so this mirrors that CI gate exactly.
   - repo: local
     hooks:
-      - id: vulture-warn
-        name: "vulture dead-code scan (warn-only)"
-        entry: python scripts/vulture_warn.py
+      - id: vulture-blocking
+        name: "vulture dead-code scan (blocking)"
+        entry: python -m vulture src/pyutilz scripts/vulture_whitelist.py --min-confidence 80
         language: system
         types: [python]
-        files: '^src/pyutilz/'
-        verbose: true
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # Docstring-coverage gate: 100% (see [tool.interrogate] in pyproject.toml). Blocking since
+  # 2026-07-09, mirroring the CI lint-blocking job -- a missing docstring on a new function
+  # fails the commit immediately instead of surfacing only in CI.
+  - repo: local
+    hooks:
+      - id: interrogate-blocking
+        name: "interrogate docstring coverage (blocking, 100%)"
+        entry: python -m interrogate --fail-under 100 src/pyutilz
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # Dependency-drift gate: deptry (unused/missing/transitive). Blocking since 2026-07-09,
+  # mirroring the CI lint-blocking job -- see [tool.deptry] for the package_module_name_map +
+  # per_rule_ignores this relies on. Assumes the local dev env has the [all,dev] extras
+  # installed (same assumption CI makes via its explicit install step); deptry's DEP001/DEP002
+  # are meaningless without a real environment to check imports against.
+  - repo: local
+    hooks:
+      - id: deptry-blocking
+        name: "deptry dependency check (blocking)"
+        entry: python -m deptry .
+        language: system
+        pass_filenames: false
         stages: [pre-commit]

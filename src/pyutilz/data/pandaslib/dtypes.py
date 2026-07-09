@@ -59,9 +59,7 @@ def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
     for col, type_name in df.dtypes.to_dict().items():
         # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
         type_name_str = str(type_name)
-        for the_type in type_names:
-            if the_type in type_name_str:
-                res.append(col)
+        res.extend([col for the_type in type_names if the_type in type_name_str])
     return res
 
 
@@ -137,7 +135,7 @@ def optimize_dtypes(
 
                         except Exception as e3:
                             if verbose:
-                                logger.warning(f"Could not convert to category column {col}: {str(e3)}")
+                                logger.warning(f"Could not convert to category column {col}: {e3}")
                             pass  # to avoid stumbling on lists like [1]
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Finds minimal size suitable to hold each variable of interest without loss of coverage

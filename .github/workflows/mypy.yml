@@ -6,41 +6,16 @@ on:
   pull_request:
     branches: [main, master]
 
+# Extracted to fingoldo/py-ci-shared (2026-07-09): identical logic to mlframe's own beachhead
+# workflow. The bare full-repo advisory pass was already removed 2026-07-09 (see mypy-full.yml
+# for the whole-project pass with real deps installed); this is just the strict-mode beachhead.
 jobs:
-  mypy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      # mypy pinned: an unpinned resolve picked up a newer release that flagged a
-      # method-assign error in src/pyutilz/__init__.py's lazy-import-proxy machinery
-      # (pulled in transitively via import-following, outside the intended beachhead
-      # scope) that mypy 2.1.0 does not raise. Pin for determinism between local dev
-      # and CI until that's separately investigated.
-      - name: Install mypy
-        run: pip install "mypy==2.1.0"
-
-      # The bare full-repo advisory pass was removed 2026-07-09: this job's environment
-      # has none of pyutilz's own extras (pandas/polars/database/system/llm/nlp/cloud)
-      # installed, so mypy collapsed those imports to Any and reported mostly-noise
-      # "Returning Any" / "Unused type:ignore" errors rather than real ones. The
-      # meaningful whole-project pass now lives in mypy-full.yml, which installs the
-      # real dependency graph first. Mirrors mlframe's mypy.yml / mypy-full.yml split.
-
-      # Mirrors the pre-commit mypy hook's strict-mode beachhead (see
-      # [tool.mypy.overrides] in pyproject.toml) so a commit that passes locally
-      # cannot silently regress once pushed. numpy pinned <2.5: 2.5+'s bundled
-      # .pyi stubs use PEP 695 `type` statements that mypy rejects under
-      # python_version="3.10" ("Type statement is only supported in Python 3.12
-      # and greater").
-      - name: MyPy (strict-mode beachhead)
-        run: |
-          pip install "numpy<2.5"
-          mypy --follow-imports=silent src/pyutilz/dev/code_audit src/pyutilz/stats
+  mypy-beachhead:
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-beachhead.yml@main
+    with:
+      modules: |
+        src/pyutilz/dev/code_audit
+        src/pyutilz/stats
+      mypy-version: "2.1.0"
+      extra-deps: |
+        numpy<2.5

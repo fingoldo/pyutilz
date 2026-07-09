@@ -30,8 +30,16 @@ from typing import Any, Dict, Optional, Tuple
 # ----------------------------------------------------------------------------------------------------------------------------
 # Selenium connectivity
 # ----------------------------------------------------------------------------------------------------------------------------
-
-from selenium.webdriver.common.by import By
+#
+# This module's other selenium/undetected_chromedriver imports (start_selenium(), Keys) are all
+# lazy, inside the functions that need them, so importing pyutilz.web.browser itself never forces
+# a hard selenium dependency -- callers who never touch a browser shouldn't need it installed
+# (selenium lives under pyutilz's optional [web] extra). The `By` import below used to be the one
+# module-level exception, which broke that contract: any transitive import of pyutilz.web (e.g.
+# pyutilz.system.distributed's `from pyutilz.web import web`, which pulls in the whole `web`
+# package's __init__) raised ModuleNotFoundError for selenium even when the caller never touches
+# a browser -- found 2026-07-09 via mlframe's CI failing ~1300 unrelated tests on exactly this
+# chain. Moved to a lazy import inside each of the three functions that actually use it.
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Utilz
@@ -39,7 +47,7 @@ from selenium.webdriver.common.by import By
 
 from pyutilz.core import pythonlib
 
-from datetime import datetime
+from datetime import datetime, timezone
 from time import sleep
 
 # ***************************************************************************************************************************
@@ -68,6 +76,8 @@ headers = basic_headers
 
 def find_element_by_xpath(browser:Any,query:str)->object:
     """Locates an element by XPath, falling back to the deprecated Selenium API for older driver versions."""
+    from selenium.webdriver.common.by import By
+
     try:
         res = browser.find_element(By.XPATH, query)
     except Exception:
@@ -77,6 +87,8 @@ def find_element_by_xpath(browser:Any,query:str)->object:
 
 def find_element_by_name(browser:Any,query:str)->object:
     """Locates an element by its `name` attribute, falling back to the deprecated Selenium API for older driver versions."""
+    from selenium.webdriver.common.by import By
+
     try:
         res = browser.find_element(By.NAME, query)
     except Exception:
@@ -86,6 +98,8 @@ def find_element_by_name(browser:Any,query:str)->object:
 
 def find_element_by_tag_name(browser:Any,query:str)->object:
     """Locates an element by its tag name, falling back to the deprecated Selenium API for older driver versions."""
+    from selenium.webdriver.common.by import By
+
     try:
         res = browser.find_element(By.TAG_NAME, query)
     except Exception:
@@ -264,12 +278,12 @@ def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
     if last_session_updated_at is None:
         do_update = True
     else:
-        now_time = datetime.utcnow()
+        now_time = datetime.now(timezone.utc)
         if (now_time - last_session_updated_at).total_seconds() / 60 >= interval_minutes:
             do_update = True
     if do_update:
         LoginAndGetCookies()
-        last_session_updated_at = datetime.utcnow()
+        last_session_updated_at = datetime.now(timezone.utc)
 
 
 def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: int = 60, restart_on_no_cookie=False) -> bool:
@@ -307,7 +321,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
         try:
             browser_get(home_page)
             pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=10, b_force=True)
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             ste = str(e)
             if "not reachable" in ste or "no such window" in ste:
                 logger.warning("Restarting Selenium instance")
@@ -325,7 +339,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
     Ret = Keys.RETURN
 
     if pythonlib.anyof_elements_in_string(("Cloudflare",), browser.title):
-        logger.warning(f"Ddos or captcha protection on {target}. Waiting for operator to solve it...")
+        logger.warning("Ddos or captcha protection on %s. Waiting for operator to solve it...", target)
         sleep(120)
 
     if pythonlib.anyof_elements_in_string(logout_signs, browser.title):
@@ -346,7 +360,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
             except Exception as e:  # nosec B110 - best-effort xpath fallback for locating the login element; if elem_login is still None afterward it is explicitly checked and logged as an error two lines below
                 logger.debug("find_element_by_xpath login fallback failed: %s", e)
         if elem_login is None:
-            logger.error(f"Could not login to {target}: elem_login {login_input_name} not located.")
+            logger.error("Could not login to %s: elem_login %s not located.", target, login_input_name)
             return False
 
         pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
@@ -359,7 +373,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
         except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
             logger.debug("find_element_by_name password attempt failed: %s", e)
         if elem_pwd is None:
-            logger.error(f"Could not login to {target}: elem_pwd {password_input_name} not located.")
+            logger.error("Could not login to %s: elem_pwd %s not located.", target, password_input_name)
             return False
 
         pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
@@ -369,7 +383,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
 
         title = browser.title
         if not pythonlib.anyof_elements_in_string(successful_login_signs, title):
-            logger.critical(f"Can't login to {target},got page {title}")
+            logger.critical("Can't login to %s,got page %s", target, title)
         else:
             logger.info("Logged in to %s", target)
             res = True
@@ -383,7 +397,12 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
             for c in required_cookies:
                 cook = browser.get_cookie(c)
                 if cook is None:
-                    logger.error(f"Unexpected: required cookie {c} is missing when getting cookies from {target}. Sleeping {seconds_to_sleep_on_error} seconds...")
+                    logger.error(
+                        "Unexpected: required cookie %s is missing when getting cookies from %s. Sleeping %s seconds...",
+                        c,
+                        target,
+                        seconds_to_sleep_on_error,
+                    )
                     sleep(seconds_to_sleep_on_error)
                     if restart_on_no_cookie:
                         logger.warning("Trying to restart Selenium...")

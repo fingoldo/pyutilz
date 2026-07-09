@@ -166,7 +166,7 @@ def _close_cached_providers() -> None:
     # cleanup — the OS will reclaim sockets at process exit anyway.
     try:
         loop = asyncio.new_event_loop()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return
     try:
         for provider in providers:
@@ -175,7 +175,7 @@ def _close_cached_providers() -> None:
                 continue
             try:
                 loop.run_until_complete(close())
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("Provider close error during shutdown: %s", exc)
     finally:
         loop.close()

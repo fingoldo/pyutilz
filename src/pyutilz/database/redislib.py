@@ -19,7 +19,7 @@ from typing import Any
 import redis
 from time import sleep
 from random import random
-from redis.exceptions import ConnectionError
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 rc = None
 
@@ -63,7 +63,7 @@ def rexecute (method_name:str,*args,**kwargs) -> Any:
     while True:
         try:
             res = method(*args, **kwargs)
-        except ConnectionError as e:
+        except RedisConnectionError as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             # Transient: retry with backoff.
             logger.exception(e)
             sleep(1 * random())  # nosec B311 - jitter for retry backoff timing, not a security/crypto use

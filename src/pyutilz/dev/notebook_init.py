@@ -70,7 +70,7 @@ def load_jupyter_extensions():
             # Use magic() method instead of % syntax
             ipython.magic(f"load_ext {ext}")
             loaded.append(ext)
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one extension failing shouldn't skip the rest)
             failed.append((ext, str(e)))
 
     # Set autoreload

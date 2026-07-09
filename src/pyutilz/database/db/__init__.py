@@ -30,7 +30,7 @@ from os.path import join, exists
 from pyutilz.core.pythonlib import weekofmonth, datetime_to_utc_timestamp, lookup_in_stack
 
 import sqlalchemy
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from dateutil.relativedelta import relativedelta
 
@@ -264,10 +264,10 @@ def basic_db_execute(
             # if '_named' not in cursor_type:
             # if auto_commit: conn.commit()
 
-        except (OperationalError, InterfaceError) as e:
+        except (OperationalError, InterfaceError) as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             retry_count += 1
             if retry_count >= max_retries:
-                logger.error(f"Max retries ({max_retries}) exceeded for database operation")
+                logger.error("Max retries (%s) exceeded for database operation", max_retries)
                 raise
             logger.exception(e)
             logger.info("Retrying database operation (%s/%s)...", retry_count, max_retries)
@@ -299,8 +299,7 @@ def basic_db_execute(
         except Exception as e:
             logger.exception(e)
             if "cursor" in str(e) and "already exists" in str(e):
-                if cursor_type in cursors:
-                    del cursors[cursor_type]
+                cursors.pop(cursor_type, None)
                 if cur is not None:
                     cur.close()
             else:
@@ -362,7 +361,7 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
         logger.error("Either where_fields or set_fields have to be defined")
         return
     if mode not in ["select", "insert", "update"]:
-        logger.error("Unknown mode: %s" % mode)
+        logger.error("Unknown mode: %s", mode)
         return
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -418,7 +417,7 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
     if last_db_settings_read_at is None:
         do_update = True
     else:
-        now_time = datetime.utcnow()
+        now_time = datetime.now(timezone.utc)
         if (now_time - last_db_settings_read_at).total_seconds() / 60 >= interval_minutes:
             do_update = True
     if do_update:
@@ -460,7 +459,7 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                 elif ltypename in ["bool", "boolean"]:
                     val = val.lower() in ["true", "1", "t", "y", "yes"]
             g[setting_name] = val
-        last_db_settings_read_at = datetime.utcnow()
+        last_db_settings_read_at = datetime.now(timezone.utc)
 
 
 def log_to_db(message, details=None, more_details=None, level="info", append_severity=False, application=None, table_name="logs"):
@@ -862,14 +861,19 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
 
         # Print native values, if not too many
         if len(vals) <= max_vals:
-            print(field, vals)
+            logger.info("%s %s", field, vals)
         else:
-            print(field, vals[:max_vals], "...")
+            logger.info("%s %s ...", field, vals[:max_vals])
 
         # Print opt suggestions for that field
         if total_occurences > 0 and max_occurences / total_occurences >= min_occurence_percent:
             if not (has_none and best_val is not None):
-                print(f"Suggestion: make {best_val} as default for {field}. That will save {max_occurences/total_occurences:.2%} of space.")
+                logger.info(
+                    "Suggestion: make %s as default for %s. That will save %.2f%% of space.",
+                    best_val,
+                    field,
+                    max_occurences / total_occurences * 100,
+                )
                 res[field] = best_val
 
     return res

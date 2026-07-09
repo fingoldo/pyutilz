@@ -138,7 +138,7 @@ def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
     if result == 0:
         # Retrieve the error code
         error_code = ctypes.windll.kernel32.GetLastError()
-        logger.error(f"SetProcessWorkingSetSizeEx failed with error code: {error_code}")
+        logger.error("SetProcessWorkingSetSizeEx failed with error code: %s", error_code)
         return False
     else:
         return True
@@ -194,7 +194,7 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
 
     clean_ram()
 
-    print(f"Own process RAM usage: {get_own_memory_usage():.2f} GB")
+    logger.info("Own process RAM usage: %.2f GB", get_own_memory_usage())
 
     # Start tracing memory allocations
     # tracemalloc.start()
@@ -204,8 +204,8 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
     for obj in session.values():
         try:
             size = sys.getsizeof(obj)
-        except Exception:
-            print(f"stumbled on object of type {type(obj)}")
+        except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this object, keep scanning the rest)
+            logger.warning("stumbled on object of type %s", type(obj))
             pass
         else:
             if size >= min_size_bytes:
@@ -226,9 +226,9 @@ def show_tracemalloc_snapshot(N: int = 10):
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics("lineno")
 
-        print(f"Top {N} memory-consuming lines:")
+        logger.info("Top %s memory-consuming lines:", N)
         for stat in top_stats[:N]:
-            print(stat)
+            logger.info("%s", stat)
 
         return snapshot
     finally:

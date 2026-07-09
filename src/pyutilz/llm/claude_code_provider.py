@@ -70,7 +70,7 @@ try:
             if not self._is_streaming and "--print" in cmd:
                 try:
                     idx = cmd.index("--print")
-                    cmd = cmd[:idx] + ["--print", "-"]
+                    cmd = [*cmd[:idx], "--print", "-"]
                 except ValueError:
                     pass
             return cmd
@@ -194,7 +194,7 @@ def _parse_reset_wait_seconds(error_text: str) -> int | None:
         except (ImportError, KeyError):
             logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
 
-    now = datetime.now(tz) if tz else datetime.now()
+    now = datetime.now(tz) if tz else datetime.now()  # noqa: DTZ005 -- error text has no explicit timezone; falls back to local wall-clock, consistent with reset_time being derived from the same `now` a few lines below
 
     month_str = m.group("month")
     day_str = m.group("day")
@@ -425,7 +425,7 @@ class ClaudeCodeProvider(LLMProvider):
                         wait_seconds,
                     )
                 else:
-                    reset_dt = datetime.now() + timedelta(seconds=wait_seconds)
+                    reset_dt = datetime.now() + timedelta(seconds=wait_seconds)  # noqa: DTZ005 -- intentional local time for a human-facing log message (logged as %H:%M:%S wall-clock, not compared/stored)
                     logger.warning(
                         "[RateLimit] Hit rate limit. Pausing until %s (%d seconds). "
                         "Will retry automatically. Error: %s",
@@ -790,8 +790,15 @@ class ClaudeCodeProvider(LLMProvider):
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             except Exception as reap_exc:
-                logger.warning(f"Failed to reap timed-out claude /status process (pid={proc.pid}): {reap_exc}")
+                logger.warning("Failed to reap timed-out claude /status process (pid=%s): %s", proc.pid, reap_exc)
             raise NotImplementedError("claude /status timed out; CLI may be hung.")
+        if proc.returncode != 0:
+            # Previously silently fell through to a best-effort parse of empty/garbage stdout on
+            # failure -- the caller had no way to tell "no limit info in the output" apart from
+            # "the CLI itself failed" (found 2026-07-09: stderr was captured but never read).
+            raise NotImplementedError(
+                f"claude /status exited with code {proc.returncode}: {(stderr or b'').decode(errors='replace').strip() or '(no stderr)'}"
+            )
         text = (stdout or b"").decode(errors="replace")
 
         # Best-effort parse of common markers; CLI output format isn't

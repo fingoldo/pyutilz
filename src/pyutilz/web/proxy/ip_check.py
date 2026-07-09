@@ -78,7 +78,7 @@ def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, ti
         try:
             r = session_or_requests.get(url, **kwargs)
             return parse_ip_response(r.text)
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError):  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
             continue
     return "?"
 

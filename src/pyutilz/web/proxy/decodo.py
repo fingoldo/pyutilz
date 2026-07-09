@@ -275,7 +275,7 @@ class DecodoProvider(ProxyProvider):
                 data = r.json()
                 items = data if isinstance(data, list) else [data]
                 return [DecodoSubscription.from_api(item) for item in items]
-            except requests.HTTPError:
+            except requests.HTTPError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next endpoint)
                 continue
         raise RuntimeError("Could not fetch subscriptions from any Decodo API endpoint")
 

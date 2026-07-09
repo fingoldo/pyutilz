@@ -67,7 +67,7 @@ def ensure_installed(packages, sep: str = " ") -> None:
             for pkg in missing_packages:
                 try:
                     subprocess.check_call(["pip", "install", pkg])  # nosec B603 B607 - "pip" is a fixed trusted executable resolved via PATH (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input
-                except Exception as e:
+                except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one failed install shouldn't abort the rest)
                     logger.debug("Failed to install package %s: %s", pkg, e)
 
 
@@ -229,9 +229,7 @@ def unpack_counter(cntr: list) -> list:
     Makes plain list of tokens out of Counter() result (which is a list of tuples:
     [('surgery', 252),('operating_room', 251),('operating_theatre', 251),)...
     """
-    res = []
-    for item in cntr:
-        res.append(item[0])
+    res = [item[0] for item in cntr]
     return res
 
 
@@ -438,14 +436,14 @@ def utc_ts_2_locstr(
         }
     if inp_dt is None or inp_dt == "":
         return ""
-    utc_dt = datetime.strptime(inp_dt, input_date_format)
+    utc_dt = datetime.strptime(inp_dt, input_date_format)  # noqa: DTZ007 -- inp_dt has no tz component (input_date_format has no %z); result is treated as naive-UTC by utc_to_local() below
     res = f"{utc_to_local(utc_dt).strftime(output_date_format)}"
 
     if dst:
         if isinstance(dst, int):
             if dst > 0:
                 if dst in dst_names:
-                    utc_now = datetime.utcnow()
+                    utc_now = datetime.utcnow()  # noqa: DTZ003 -- must stay naive to subtract against utc_dt (naive-UTC from strptime above); switching to an aware value would raise offset-naive/-aware TypeError
                     res += f" ({(utc_now - utc_dt).total_seconds() // dst:.0f} {dst_names.get(dst)}. тому назад)"
     return res
 
@@ -473,7 +471,7 @@ def datetime_to_unix_ts(dt):
     """Converts a naive datetime (treated as UTC) into a whole-second Unix timestamp."""
     from datetime import datetime
 
-    return int((dt - datetime(1970, 1, 1)).total_seconds())
+    return int((dt - datetime(1970, 1, 1)).total_seconds())  # noqa: DTZ001 -- epoch reference must stay naive to match `dt`, which is documented/treated as a naive-UTC datetime
 
 
 def get_utc_unix_ts_seconds() -> int:
@@ -504,7 +502,7 @@ def imitate_delay(
     from time import sleep
 
     if min_delay_seconds >= max_delay_seconds:
-        logger.warning(f"min_delay_seconds of {min_delay_seconds} >= max_delay_seconds of {max_delay_seconds}!")
+        logger.warning("min_delay_seconds of %s >= max_delay_seconds of %s!", min_delay_seconds, max_delay_seconds)
         max_delay_seconds = min_delay_seconds * 2
 
     if last_call_ts or b_force:
@@ -517,11 +515,11 @@ def imitate_delay(
             cur_delay = 0.0
         else:
             assert last_call_ts is not None  # guaranteed by the `if last_call_ts or b_force:` guard above combined with this branch
-            cur_delay = (datetime.utcnow() - last_call_ts).total_seconds()
+            cur_delay = (datetime.utcnow() - last_call_ts).total_seconds()  # noqa: DTZ003 -- last_call_ts is a caller-supplied naive-UTC datetime (public API contract, see tests); must stay naive to subtract
         if cur_delay < random_delay:
             logger.debug("Sleeping %.2f sec.", random_delay - cur_delay)
             sleep(random_delay - cur_delay)
-    return datetime.utcnow()
+    return datetime.utcnow()  # noqa: DTZ003 -- return value feeds back into this function's own last_call_ts (naive-UTC contract, see tests); must stay naive
 
 
 def weekofmonth(date: date):
@@ -542,7 +540,7 @@ def datetime_to_utc_timestamp(dt):
 
 def age(dob: date) -> int:
     """Returns the whole number of years elapsed between `dob` and today."""
-    today = date.today()
+    today = date.today()  # noqa: DTZ011 -- age is a calendar-date-only computation (no time-of-day), naive date is the correct type here
     years = today.year - dob.year
     if today.month < dob.month or (today.month == dob.month and today.day < dob.day):
         years -= 1
@@ -558,7 +556,7 @@ def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
     """Returns `obj[field]` if present, else logs a warning naming `target` and returns None."""
     desired = obj.get(field)
     if desired is None:
-        logger.warning(f"No {field} field in {target} {obj}")
+        logger.warning("No %s field in %s %s", field, target, obj)
     return desired
 
 
@@ -618,7 +616,7 @@ def store_params_in_object(obj: object, params: dict, postfix: str = ""):
         setattr(obj, param_name + postfix, param_value)
 
 
-def load_object_params_into_func(obj: object, locals: dict, postfix: str = "_param_"):
+def load_object_params_into_func(obj: object, locals: dict, postfix: str = "_param_"):  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Contrary action to store_params_in_object, but does not work with locals (())."""
     if obj is None:
         return
@@ -677,7 +675,6 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     """
     Load plicked object, dataframe, Catboost model, based on file presence and name.
     """
-    from catboost import CatBoostClassifier
     import pandas as pd
 
     is_here = False
@@ -687,7 +684,7 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     except Exception as e:  # nosec B110 - best-effort existence check; any OS-level error (e.g. invalid path chars) is treated as "not found" via the is_here default below
         logger.debug("Failed to check existence of %s: %s", fpath, e)
     if not is_here:
-        logger.warning(f"File {fpath} not found!")
+        logger.warning("File %s not found!", fpath)
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), fpath)
     else:
         if fpath.lower().endswith(".joblib"):
@@ -696,7 +693,11 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
             if unpickle_to_pd:
                 return pd.read_pickle(fpath)  # nosec B301 - fpath is caller-supplied (same trust level as the joblib.load branch above); this loader's whole purpose is deserializing a named local file
         elif fpath.lower().endswith(".bin"):
-            # if "catboost" in fpath.lower():
+            # Lazy import: catboost is only needed for this branch, not for .joblib/.pckl
+            # callers, who should not be forced to have it installed (found 2026-07-09 deptry
+            # triage: the module-level import made catboost a hard dependency of this function).
+            from catboost import CatBoostClassifier
+
             clf = CatBoostClassifier()
             return clf.load_model(fpath)
 
@@ -760,7 +761,7 @@ class ObjectsAndFilesProcessor:
                 nprocessed += 1
             else:
                 if verbose:
-                    logger.warning(f"Skipped object {obj_name}.")
+                    logger.warning("Skipped object %s.", obj_name)
         return nprocessed
 
     def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):

@@ -122,7 +122,7 @@ def get_lscpu_info():
         if "Flags" in lscpu_dict:
             lscpu_dict["Flags"] = " ".join(sorted(lscpu_dict["Flags"].split(" ")))
     except Exception as e:
-        logger.warning(f"An error occurred while running lscpu: {e}")
+        logger.warning("An error occurred while running lscpu: %s", e)
         return None
 
     return sort_dict_by_key(lscpu_dict)
@@ -146,7 +146,7 @@ def get_linux_board_info():
         with open("/sys/devices/virtual/dmi/id/board_version", encoding="utf-8") as f:
             board_info["Version"] = f.read().strip()
     except FileNotFoundError as e:
-        logger.error(f"Error reading board information: {e}")
+        logger.error("Error reading board information: %s", e)
     return board_info
 
 
@@ -179,7 +179,7 @@ def parse_dmidecode_info(
     try:
         result = subprocess.run(["sudo", "dmidecode"], capture_output=True, text=True)  # nosec B603 B607 - fixed trusted binaries "sudo"/"dmidecode" with hardcoded argv, no shell, no external/user-controlled input
     except Exception as e:
-        logger.error(f"dmidecode running problem: {e}")
+        logger.error("dmidecode running problem: %s", e)
         return None
 
     output = result.stdout
@@ -346,7 +346,7 @@ def check_huge_pages_linux():
                     huge_pages_total = int(line.split()[1])
                     return huge_pages_total > 0
     except Exception as e:
-        logger.warning(f"Error checking huge pages: {e}")
+        logger.warning("Error checking huge pages: %s", e)
     return False
 
 
@@ -365,7 +365,7 @@ def check_large_pages_windows():
         large_page_size = GetLargePageMinimum()
         return large_page_size > 0
     except Exception as e:
-        logger.warning(f"Error checking large pages: {e}")
+        logger.warning("Error checking large pages: %s", e)
     return False
 
 
@@ -382,7 +382,7 @@ def check_huge_pages_macos():
                 # If vm_stat is working and outputting memory pages, THP is managed by the OS
                 return True
     except Exception as e:
-        logger.warning(f"Error checking transparent huge pages: {e}")
+        logger.warning("Error checking transparent huge pages: %s", e)
     return False
 
 
@@ -400,7 +400,7 @@ def check_large_pages_support():
     elif current_system == "Darwin":
         return check_huge_pages_macos()
     else:
-        logger.warning(f"Unsupported operating system: {current_system}")
+        logger.warning("Unsupported operating system: %s", current_system)
         return None
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -424,7 +424,7 @@ def get_linux_power_plan():
                     governors.append(f.read().strip())
         return sorted(list(Counter(governors).keys()))
     except Exception as e:
-        logger.warning(f"Error getting Linux power plan: {e}")
+        logger.warning("Error getting Linux power plan: %s", e)
         return None
 
 
@@ -440,7 +440,7 @@ def get_macos_power_plan():
             return None
         return dict(plan_full_name=res)
     except Exception as e:
-        logger.warning(f"Error getting macOS power plan: {e}")
+        logger.warning("Error getting macOS power plan: %s", e)
         return None
 
 
@@ -467,7 +467,7 @@ def get_windows_power_plan_cmd():
         else:
             return dict(plan_full_name=res)
     except Exception as e:
-        logger.warning(f"Error getting Windows power plan via cmd: {e}")
+        logger.warning("Error getting Windows power plan via cmd: %s", e)
         return None
 
 
@@ -490,7 +490,7 @@ def get_windows_power_plan():
                 return dict(plan_guid=plan.InstanceID, plan_name=plan.ElementName)
         return None
     except Exception as e:
-        logger.warning(f"WMI power plan query failed: {e}, falling back to powercfg")
+        logger.warning("WMI power plan query failed: %s, falling back to powercfg", e)
         return get_windows_power_plan_cmd()
 
 
@@ -592,7 +592,7 @@ def get_nvidia_smi_info(
 
     # Check if command executed successfully
     if result.returncode != 0:
-        logger.error(f"Error running nvidia-smi: {result.stdout} {result.stderr}")
+        logger.error("Error running nvidia-smi: %s %s", result.stdout, result.stderr)
         return None
 
     res = xmltodict.parse(result.stdout, force_list=["gpu"])

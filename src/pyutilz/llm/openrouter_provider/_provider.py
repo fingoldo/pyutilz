@@ -220,7 +220,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         for attempt in range(1, self._routing_404_max_attempts + 1):
             try:
                 return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-            except LLMProviderError as exc:
+            except LLMProviderError as exc:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
                 msg = str(exc).lower()
                 is_routing = ("api error 404" in msg or "api error 405" in msg) and (
                     "no endpoints found" in msg or "method not allowed" in msg or " not found" in msg
@@ -653,7 +653,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             raw_key = key_info.get("raw") or key_info
             if isinstance(raw_key, dict) and "is_free_tier" in raw_key:
                 is_free_tier = bool(raw_key["is_free_tier"])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("OR /key lookup for is_free_tier failed: %s", exc)
 
         is_available = (balance is not None and balance > 0) or is_free_tier is True

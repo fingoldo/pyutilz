@@ -78,101 +78,31 @@ jobs:
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
 
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-    - uses: actions/checkout@v4
+  # Blocking gate + two lint bundles, all extracted to fingoldo/py-ci-shared reusable workflows
+  # (2026-07-09) since their logic is identical across mlframe/pyutilz -- see
+  # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
+  ruff-blocking:
+    name: Ruff (real bugs - blocking)
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@main
+    with:
+      ignore: "C901"
 
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-        cache: pip
-        cache-dependency-path: pyproject.toml
+  lint-blocking:
+    name: lint + security (blocking, triaged clean)
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@main
+    with:
+      source-path: src/pyutilz
+      codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
+      vulture-whitelist-path: scripts/vulture_whitelist.py
+      interrogate-source-path: src/pyutilz
+      interrogate-fail-under: 100
+      deptry-install-command: pip install -e ".[all,dev]"
 
-    - name: Install linting tools
-      run: pip install ruff black bandit actionlint-py shellcheck-py vulture pip-audit codespell deptry interrogate yamllint
-
-    # Blocking gate: real-bug ruff codes (pyflakes + syntax errors) must pass.
-    - name: Ruff (real bugs - blocking)
-      run: ruff check . --select F,E9
-
-    # Non-blocking: full style pass while legacy debt is worked down.
-    - name: Ruff (full - advisory)
-      run: ruff check .
-      continue-on-error: true
-
-    # Advisory: cyclomatic-complexity scan, ported from mlframe's ci.yml. C901 is excluded
-    # from the blocking real-bugs select above (complexity is a design-taste signal, not a
-    # correctness bug), but tracking it separately surfaces the worst offenders without
-    # gating the build.
-    - name: Ruff mccabe complexity (advisory)
-      run: ruff check src/pyutilz --select C90 --statistics
-      continue-on-error: true
-
-    # Advisory: prose typo scan (README/CHANGELOG/CONTRIBUTING/TESTING + docs are pyutilz's
-    # primary documentation surface, proportionally more prose per LOC than mlframe).
-    - name: Codespell (advisory)
-      run: codespell src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md --ignore-words-list=coo
-      continue-on-error: true
-
-    # Advisory: unused/missing/transitive dependency drift. dependencies=[] + 8 optional
-    # extras makes stale-extra drift a real risk; see [tool.deptry] for the exclude/ignore config.
-    - name: Deptry dependency check (advisory)
-      run: deptry .
-      continue-on-error: true
-
-    # Advisory baseline only (no --fail-under set yet -- see [tool.interrogate]).
-    - name: Interrogate docstring coverage (advisory, baseline only)
-      run: interrogate -v src/pyutilz
-      continue-on-error: true
-
-    # Advisory: general YAML style/schema hygiene, complementary to actionlint's semantic checks.
-    - name: yamllint workflow files (advisory)
-      run: yamllint .github/workflows .pre-commit-config.yaml
-      continue-on-error: true
-
-    # mypy (both the advisory full-repo pass and the strict-mode beachhead) moved to
-    # its own workflow (mypy.yml) so it gets an independent, honest badge instead of
-    # being buried as a step inside this combined lint job.
-
-    - name: Bandit security scan
-      run: bandit -r src -ll -f json -o bandit-report.json
-      continue-on-error: true
-
-    - name: Upload bandit results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: bandit-report
-        path: bandit-report.json
-
-    # Blocking: mirrors the pre-commit actionlint hook so a workflow-file bug
-    # (bad expression, duplicate key, unknown runner label, shell-syntax error
-    # in a run: block) can't reach master even via --no-verify.
-    - name: Actionlint (workflow files)
-      run: actionlint
-
-    # Advisory: dead-code scan. Real false-positive rate on dynamic-dispatch
-    # code (lazy-import proxies, pydantic fields, pytest fixtures) makes this
-    # unsuitable as a blocking gate; mirrors the bandit step's posture.
-    - name: Vulture dead-code scan
-      run: vulture src/pyutilz scripts/vulture_whitelist.py --min-confidence 80
-      continue-on-error: true
-
-    # Advisory: known-vulnerability scan against installed dependency versions
-    # (bandit only checks code PATTERNS, not whether a pinned dependency has a
-    # published CVE -- a different and complementary risk class).
-    - name: pip-audit dependency vulnerability scan
-      run: pip-audit --desc -f json -o pip-audit-report.json || true
-      continue-on-error: true
-
-    - name: Upload pip-audit results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: pip-audit-report
-        path: pip-audit-report.json
+  lint-advisory:
+    name: lint (advisory)
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@main
+    with:
+      source-path: src/pyutilz
 
   build:
     # Packaging sanity check on every push/PR, not just at release-tag time (publish.yml

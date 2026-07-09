@@ -205,18 +205,15 @@ def build_upsert_query(
             for field in timestamp_check_fields:
                 new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
                 if new_field not in f_:
-                    f_ = f_ + [
-                        new_field,
-                    ]
+                    f_ = [*f_, new_field]
 
         if hash_fields:
             join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
 
-            hash_changing_conds = []
-            for hash_field in hash_fields:
-                hash_changing_conds.append(
-                    f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
-                )
+            hash_changing_conds = [
+                f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
+                for hash_field in hash_fields
+            ]
             hash_changing_cond = " OR ".join(hash_changing_conds)
 
             hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"

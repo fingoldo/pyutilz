@@ -100,26 +100,26 @@ def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, r
     """
     import hashlib, base64
 
-    hash = hashlib.new(algo if algo is not None else "md5")
+    digest_obj = hashlib.new(algo if algo is not None else "md5")
     if isinstance(data, str):
-        hash.update(data.encode("utf-8"))
+        digest_obj.update(data.encode("utf-8"))
     elif hasattr(data, "getquoted"):
-        hash.update(data.getquoted())
+        digest_obj.update(data.getquoted())
     else:
-        hash.update(data)
+        digest_obj.update(data)
 
     if base:
         encoder_method = f"b{base}encode"
         encoder = getattr(base64, encoder_method)
         if return_binary:
-            return encoder(hash.digest())
+            return encoder(digest_obj.digest())
         else:
-            return encoder(hash.digest()).decode("utf-8")
+            return encoder(digest_obj.digest()).decode("utf-8")
     else:
         if return_binary:
-            return hash.digest()
+            return digest_obj.digest()
         else:
-            return hash.hexdigest()  # same as base16
+            return digest_obj.hexdigest()  # same as base16
 
 
 def strip_characters(text: str, char_list: Sequence) -> str:
@@ -184,7 +184,7 @@ def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
     return value  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def camel_case_split(str: str) -> list:
+def camel_case_split(str: str) -> list:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Splits camelcased sentence into individual words.
 
     >>>camel_case_split("ThisIsInCamelCase")

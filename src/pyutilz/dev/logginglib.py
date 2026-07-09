@@ -42,7 +42,7 @@ def init_logging(
     custom_logger: Optional[logging.Logger] = None,
     level=logging.INFO,
     default_caller_name: str = "app.py",
-    format: str = (
+    format: str = (  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
         "%(asctime)s - %(levelname)s - %(processName)s[%(process)d]-%(threadName)s[%(thread)d]"
         "-%(filename)s-%(name)s - %(funcName)s-line:%(lineno)d - %(message)s"
     ),
@@ -189,7 +189,7 @@ def _close_opened_activities(activities: dict) -> Optional[float]:
     """
     # let's close unclosed acts. returns duration of last closed activity.
     last_activity_duration = None
-    for _, activity in activities.items():
+    for activity in activities.values():
         if not activity.get("finished_at"):
             last_activity_duration = _stop_clocks(activity)
     return last_activity_duration
@@ -215,7 +215,7 @@ def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verb
         )
     else:
         if verbose:
-            print(results_log)
+            print(results_log)  # noqa: T201 -- verbose=True is an explicit stdout-display contract (see test_finalize_function_log_verbose), not a log-volume toggle
     return results_log
 
 
@@ -375,7 +375,7 @@ class RedisHandler(Handler):
             self.rc.lpush(self.LOG_DEST, msg)
             if random() < 0.1:  # nosec B311 - probabilistic sampling to occasionally trim the redis log list, not a security/crypto use
                 self.rc.ltrim(self.LOG_DEST, 0, self.LOG_SIZE)
-                print("logging list trimmed!")
+                print("logging list trimmed!")  # noqa: T201 -- inside logging.Handler.emit(); calling back into the logging module here risks re-entrant recursion if this handler is attached broadly (e.g. root logger)
         except Exception:
             self.handleError(record)
 
@@ -403,7 +403,7 @@ def debugged(max_retries: int = 3):
             while True:
                 try:
                     return func(*args, **kwargs)
-                except Exception as e:
+                except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
                     if logger is not None:
                         logger.exception(e)
                     attempts += 1

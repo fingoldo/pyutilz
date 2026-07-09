@@ -343,7 +343,7 @@ def create_tabs(
 
         if (tabUsers is None) or (user.role in tabUsers):
 
-            print(f"tabLabel={tabLabel}, tabId={tabId}, tabUsers={tabUsers}")
+            logger.debug("tabLabel=%s, tabId=%s, tabUsers=%s", tabLabel, tabId, tabUsers)
 
             tabs.append(
                 dbc.Tab(

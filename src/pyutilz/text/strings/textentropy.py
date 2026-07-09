@@ -115,8 +115,8 @@ def naive_entropy_rate(a: str) -> float:
     """
     Computes zeroth-order (character-frequency-based) Shannon entropy of the string a, ignoring any sequential/conditional structure.
     """
-    m, cnt = np.unique(np.array(list(a)), return_counts=True)
-    # print(m)
+    _, cnt = np.unique(np.array(list(a)), return_counts=True)
+    # print(_)  # unique chars themselves, unused: only their counts matter for entropy
     # print(cnt)
     p = cnt / np.sum(cnt)
 

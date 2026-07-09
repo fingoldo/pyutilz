@@ -40,7 +40,7 @@ def connect(prefect_key: Optional[str] = None) -> None:
         graphql.connect(client)
     else:
         client = None
-    print(f"prefect_key={prefect_key}")
+    logger.info("prefect_key=%s", prefect_key)
 
 def get_schema() -> dict:
     """Return the Prefect GraphQL schema via the connected client, or ``{}`` if no client is connected."""
@@ -127,7 +127,7 @@ def wait_for_absense_of_tasks(
             if n > max_retries:
                 return False
             if logger:
-                logger.warning(f"Sleeping for {sleep_seconds} seconds ({n}/{max_retries})...")
+                logger.warning("Sleeping for %s seconds (%s/%s)...", sleep_seconds, n, max_retries)
             sleep(sleep_seconds)
         else:
             return True

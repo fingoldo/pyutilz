@@ -31,7 +31,7 @@ class AnthropicProvider(LLMProvider):
     # ``claude-opus-4-7-YYYYMMDD`` form. Use the unsuffixed canonical ID
     # for any model whose date is not pinned in the official pricing
     # table; pin the suffix only when the snapshot is the public API ID.
-    _PRICING: dict[str, tuple[float, float]] = {
+    _PRICING: dict[str, tuple[float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
         # Opus 4.5+: dropped from $15/$75 to $5/$25 (3x cheaper than legacy 4/4.1).
         "claude-opus-4-7": (5.00, 25.00),
         "claude-opus-4-6-20250610": (5.00, 25.00),
@@ -219,7 +219,7 @@ class AnthropicProvider(LLMProvider):
         """
         try:
             mapping = dict(headers) if headers is not None else {}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Anthropic response-header capture failed: %s", exc)
             return
         # Lower-case the keys for case-insensitive lookup downstream.
@@ -253,7 +253,7 @@ class AnthropicProvider(LLMProvider):
                 kwargs["system"] = system
             result = await self.client.messages.count_tokens(**kwargs)
             return int(result.input_tokens)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Anthropic count_tokens API failed (%s); falling back to tiktoken.", exc)
             from pyutilz.llm.token_counter import count_tokens
             return count_tokens(text)

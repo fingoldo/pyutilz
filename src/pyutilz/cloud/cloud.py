@@ -46,7 +46,7 @@ def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name
 
     blob.upload_from_filename(source_file_name)
 
-    print(f"File {source_file_name} uploaded to {destination_blob_name}.")
+    logger.info("File %s uploaded to %s.", source_file_name, destination_blob_name)
 
 
 def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_name, acc_file):
@@ -68,7 +68,7 @@ def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_na
     blob = bucket.blob(source_blob_name)
     blob.download_to_filename(destination_file_name)
 
-    print(f"Blob {source_blob_name} downloaded to {destination_file_name}.")
+    logger.info("Blob %s downloaded to %s.", source_blob_name, destination_file_name)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -126,11 +126,11 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     else:
                         s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path)
                 except Exception as e:
-                    logger.error(f"Error while downloading model {s3_object_path} from bucket {S3_BUCKET_NAME}: {e}")
+                    logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
                 else:
                     logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
             else:
-                logger.warning(f"Model {s3_object_path} not found in bucket {S3_BUCKET_NAME}")
+                logger.warning("Model %s not found in bucket %s", s3_object_path, S3_BUCKET_NAME)
                 sleep(10)
         else:
             if s3_object_path.endswith(".zip"):
@@ -140,7 +140,7 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     try:
                         shutil.unpack_archive(local_object_path + ".zip", temp_dir)
                     except Exception as e:
-                        logger.error(f"Error while unpacking model from bucket {local_object_path+'.zip'}: {e}")
+                        logger.error("Error while unpacking model from bucket %s: %s", local_object_path + ".zip", e)
                     else:
                         logger.info("Unzipped model from archive %s", local_object_path + ".zip")
                         os.remove(local_object_path + ".zip")

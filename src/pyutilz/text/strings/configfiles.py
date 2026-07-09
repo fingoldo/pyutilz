@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from pyutilz.core.pythonlib import is_float
 
-def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Any = None, encryption: Optional[str] = "xor") -> Optional[bool]:
+def read_config_file(file: str, object: dict, section: Optional[str] = None, variables: Any = None, encryption: Optional[str] = "xor") -> Optional[bool]:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Read values from an INI-style config file into ``object`` (mutated in place).
 
     For each requested variable, attempts base64 decoding (if ``encryption="xor"`` and the
@@ -60,7 +60,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                         object[next_section.lower() + "_" + var] = val
                     else:
                         object[var] = val
-                except Exception:
+                except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this variable, continue with the rest)
                     object[var] = None
     except Exception as e:
         logger.exception(e)
@@ -70,7 +70,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
 
 
 def write_config_file(
-    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode="append"
+    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode="append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
 ) -> Optional[bool]:
     """Write values from ``object`` into an INI-style config file under ``section``.
 

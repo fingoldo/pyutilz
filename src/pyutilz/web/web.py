@@ -24,7 +24,7 @@ import urllib.request
 import urllib.parse
 from random import random, shuffle
 from datetime import datetime
-from joblib import hash
+from joblib import hash as joblib_hash
 from time import sleep
 import warnings
 import http
@@ -106,7 +106,7 @@ def get_external_ip(
     for source in IP_PROVIDERS:
         try:
             resp = urllib.request.urlopen(_ensure_http_scheme(source))  # nosec B310 - scheme validated above
-        except ssl.SSLCertVerificationError:
+        except ssl.SSLCertVerificationError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this provider, try the next)
             pass
         except Exception as e:
             logger.exception(e)
@@ -116,7 +116,7 @@ def get_external_ip(
                 if "." in res or ":" in res:
                     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
                 else:
-                    logger.warning(f"Weird IP address received from provider {source}: {res}")
+                    logger.warning("Weird IP address received from provider %s: %s", source, res)
     return None
 
 
@@ -182,13 +182,13 @@ def download_in_parallel(
                     func(resp, sub_url)
                 except Exception as e:
                     errored_urls.append(sub_url)
-                    logger.error("Error processing url %s: %s" % (sub_url, e))
+                    logger.error("Error processing url %s: %s", sub_url, e)
             else:
                 errored_urls.append(sub_url)
-                logger.error("Error fetching url %s: status_code=%s" % (sub_url, final_status_code))
+                logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
         else:
             errored_urls.append(sub_url)
-            logger.error("Response is None for url %s" % sub_url)
+            logger.error("Response is None for url %s", sub_url)
         if (n_processed % report_each) == 0:
             # pbar.update(report_each)
             logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))
@@ -300,7 +300,7 @@ def set_params(
 def set_proxy_last_use_time(last_used_dict: Optional[dict], proxies: Optional[dict]) -> None:
     """Record the current UTC time as the last-use timestamp for ``proxies`` (keyed by its joblib hash) in ``last_used_dict``, if it's a dict."""
     if isinstance(last_used_dict, dict):
-        last_used_dict[hash(proxies)] = datetime.utcnow()
+        last_used_dict[joblib_hash(proxies)] = datetime.utcnow()  # noqa: DTZ003 -- naive-UTC is this module's public dict-timestamp convention (see get_new_smartproxy/tests, which store/compare naive datetime.utcnow() values); switching to aware would break subtraction against caller-supplied entries
 
 
 def make_proxies_dict(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: str, proxy_port: int, proxy_type: str = "https") -> dict:
@@ -342,7 +342,7 @@ def get_new_smartproxy(
     if last_used_dict is None:
         last_used_dict = {}
     n = 0
-    now_time = datetime.utcnow()
+    now_time = datetime.utcnow()  # noqa: DTZ003 -- must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
     while True:
         # ----------------------------------------------------------------------------------------------------------------------------
         # Get random port
@@ -352,7 +352,7 @@ def get_new_smartproxy(
 
         proxies = make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port, proxy_type)
 
-        proxy_key = hash(proxies)
+        proxy_key = joblib_hash(proxies)
         # ----------------------------------------------------------------------------------------------------------------------------
         # Check if it's allowed for immediate use by the policies
         # ----------------------------------------------------------------------------------------------------------------------------
@@ -475,7 +475,7 @@ def get_url(
             with _state_lock:
                 num_ip_queries = num_ip_queries + 1
 
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             se = str(e)
             if verbose:
                 logger.exception(e)
@@ -484,7 +484,7 @@ def get_url(
                 if b_use_proxy:
                     if proxy_server:
                         if verbose:
-                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
+                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
                         proxies = get_new_smartproxy(
                             proxy_user,
                             proxy_pass,
@@ -516,10 +516,10 @@ def get_url(
                     break
                 elif res.status_code in ratelimiting_statuses:
                     if verbose:
-                        logger.warning("Ratelimited [%s] while getting url %s: %s" % (res.status_code, url, res.text))
+                        logger.warning("Ratelimited [%s] while getting url %s: %s", res.status_code, url, res.text)
                     if proxy_server:
                         if verbose:
-                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s" % target)
+                            logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
                         if ratelimited_proxy_sleep_interval:
                             sleep(ratelimited_proxy_sleep_interval * random())  # nosec B311 - random jitter on a rate-limit backoff sleep, not security-sensitive
                         proxies = get_new_smartproxy(
@@ -538,7 +538,7 @@ def get_url(
                     else:
                         sleep(ratelimited_sleep_interval)
                 else:
-                    logger.warning("Error %s while getting url %s: %s" % (res.status_code, url, res.text))
+                    logger.warning("Error %s while getting url %s: %s", res.status_code, url, res.text)
 
                     # if blocking or exit satuses are specified, we keep retrying on any error (after small pause)
 
@@ -565,7 +565,7 @@ def get_url(
         sleep(delay * random())  # nosec B311 - random jitter on the inter-request delay to avoid a fixed request cadence, not security-sensitive
 
     if res is None:
-        logger.warning(f"Could not get url {url}")
+        logger.warning("Could not get url %s", url)
     return res
 
 
@@ -624,7 +624,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
     """Log that ``target`` got blocked, mark the current proxy as failed, sleep the configured jittered delay, then obtain a fresh session/proxy."""
     if proxies is not None:
-        logger.warning("IP %s blocked. Receiving new proxy/session for %s" % (proxies["https"].split("@")[1], target))
+        logger.warning("IP %s blocked. Receiving new proxy/session for %s", proxies["https"].split("@")[1], target)
     else:
         logger.warning("IP blocked.")
 
@@ -664,7 +664,7 @@ def download_to_file(
     while nattempts < max_attempts:
         try:
             request = requests.get(url, timeout=timeout, headers=headers, stream=True)
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             if request is not None and request.status_code in exit_codes:
                 return
             logger.exception(e)
@@ -688,7 +688,7 @@ def download_to_file(
                         # Write the chunk to the file
                         fh.write(chunk)
                         # Optionally we can check here if the download is taking too long
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
                 logger.exception(e)
                 sleep(10 * random())  # nosec B311 - random jitter on the file-write-retry backoff sleep, not security-sensitive
                 logger.info("Making another attempt")

@@ -177,7 +177,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
             "or check platform.openai.com/account/limits."
         )
 
-    _seen_unknown_models: set[str] = set()
+    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
 
     def _warn_unknown_model_once(self, model: str) -> None:
         """Log a one-time warning that pricing for `model` is unknown and gpt-5-mini rates are used as a fallback."""

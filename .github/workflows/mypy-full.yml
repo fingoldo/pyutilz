@@ -1,15 +1,11 @@
 name: MyPy-full
 
-# Whole-project mypy check, separate from the fast mypy.yml strict-mode beachhead. The
-# beachhead step in mypy.yml runs against a bare `pip install mypy` environment with none of
-# pyutilz's own extras installed, which is fast but meaningless for files outside the beachhead:
-# their imports (pandas/polars/database/system/llm/nlp/cloud dependencies) aren't installed
-# there, so mypy collapses those expressions to Any and reports false "Returning Any" /
-# "Unused type:ignore" noise rather than real errors. This job installs the real
-# [pandas,polars,database,system,llm,nlp,cloud,dev] dependency graph (mirrors ci.yml's `test`
-# job) so mypy has genuine type info everywhere and the result is meaningful for the whole
-# src/pyutilz tree, not just the beachhead. Mirrors mlframe's mypy-full.yml (same false-Any-
-# noise problem, same fix), ported 2026-07-09.
+# Whole-project mypy check, separate from the fast mypy.yml strict-mode beachhead. Extracted to
+# fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
+# install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow], which have no
+# current type-checked consumer). `advisory: true` (the reusable workflow's default) because this
+# backlog is NOT yet closed to 0, unlike mlframe's -- see the reusable workflow's header comment
+# for why that's a per-repo choice, never a hardcoded blocking default.
 
 on:
   push:
@@ -24,23 +20,10 @@ concurrency:
 
 jobs:
   mypy-full:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install pyutilz with all runtime extras + mypy
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
-          pip install "mypy==2.1.0"
-
-      - name: MyPy (whole project, advisory)
-        run: mypy src/pyutilz
-        continue-on-error: true
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@main
+    with:
+      package-name: pyutilz
+      mypy-version: "2.1.0"
+      advisory: true
+      install-command: |
+        uv pip install --system -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"

@@ -480,7 +480,7 @@ def build_aggregate_features_polars(
                         field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
                         # Validate field_concentration_top_n
                         if not isinstance(field_concentration_top_n, int) or field_concentration_top_n <= 0:
-                            print(f"Skipping field {field}: invalid top_n={field_concentration_top_n}")
+                            logger.warning("Skipping field %s: invalid top_n=%s", field, field_concentration_top_n)
                             continue
                         alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
                         feature_expressions.append(
@@ -744,7 +744,7 @@ def bin_numerical_columns(
     if len(existing_target_columns) < len(target_columns):
         missing = set(target_columns) - set(existing_target_columns)
         if verbose:
-            logger.warning(f"Ignoring {len(missing)} target columns not found in dataframe: {missing}")
+            logger.warning("Ignoring %s target columns not found in dataframe: %s", len(missing), missing)
 
     all_num_cols = cs.numeric()
     if exclude_columns:
@@ -800,7 +800,11 @@ def bin_numerical_columns(
             dead_columns.append(col)
     if dead_columns:
         if verbose:
-            logger.warning(f"Dropping {len(dead_columns):_} columns with no change: {textwrap.shorten(', '.join(dead_columns), width=max_log_text_width)}")
+            logger.warning(
+                "Dropping %s columns with no change: %s",
+                format(len(dead_columns), "_"),
+                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
+            )
         df = df.drop(dead_columns)
         columns_to_drop.extend(dead_columns)
 
@@ -862,10 +866,17 @@ def bin_numerical_columns(
                     del clips[col]
         if verbose:
             if clips:
-                logger.warning(f"Clipping {len(clips):_} columns with outliers: {textwrap.shorten(', '.join(clips.keys()), width=max_log_text_width)}")
+                logger.warning(
+                    "Clipping %s columns with outliers: %s",
+                    format(len(clips), "_"),
+                    textwrap.shorten(", ".join(clips.keys()), width=max_log_text_width),
+                )
             if skipped_clips:
                 logger.warning(
-                    f"Clipping of {len(skipped_clips):_} columns skipped due to nuniques<{min_nuniques_to_clip:_}: {textwrap.shorten(', '.join(skipped_clips), width=max_log_text_width)}"
+                    "Clipping of %s columns skipped due to nuniques<%s: %s",
+                    format(len(skipped_clips), "_"),
+                    format(min_nuniques_to_clip, "_"),
+                    textwrap.shorten(", ".join(skipped_clips), width=max_log_text_width),
                 )
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -911,7 +922,11 @@ def bin_numerical_columns(
 
     if dead_columns:
         if verbose:
-            logger.warning(f"Dropping {len(dead_columns):_} columns with no change: {textwrap.shorten(', '.join(dead_columns), width=max_log_text_width)}")
+            logger.warning(
+                "Dropping %s columns with no change: %s",
+                format(len(dead_columns), "_"),
+                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
+            )
         df = df.drop(dead_columns)
         columns_to_drop.extend(dead_columns)
 
@@ -957,7 +972,11 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
             dead_columns.append(col)
     if dead_columns:
         if verbose:
-            logger.warning(f"Dropping {len(dead_columns):_} columns with no change: {textwrap.shorten(', '.join(dead_columns), width=max_log_text_width)}")
+            logger.warning(
+                "Dropping %s columns with no change: %s",
+                format(len(dead_columns), "_"),
+                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
+            )
         df = df.drop(dead_columns)
 
     return df

@@ -236,7 +236,7 @@ def _replace_with_retry(src: str, dst: str, *, attempts: int = 10, base_delay: f
         try:
             os.replace(src, dst)
             return
-        except PermissionError:
+        except PermissionError:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             if attempt == attempts - 1:
                 raise
             time.sleep(base_delay * (attempt + 1))

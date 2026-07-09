@@ -12,12 +12,12 @@ resolving unchanged. Submodules:
   sysinfo  - get_system_info orchestrator (preserves the Windows os_serial fallback)
 """
 
-from ._common import *  # noqa: F401,F403
-from .probing import *  # noqa: F401,F403
-from .memory import *  # noqa: F401,F403
-from .fsutils import *  # noqa: F401,F403
-from .misc import *  # noqa: F401,F403
-from .sysinfo import *  # noqa: F401,F403
+from ._common import *
+from .probing import *
+from .memory import *
+from .fsutils import *
+from .misc import *
+from .sysinfo import *
 
 # The five ``from . import *`` lines above also bind the submodule objects
 # themselves (``_common``, ``probing``, ``memory``, ``fsutils``, ``misc``,

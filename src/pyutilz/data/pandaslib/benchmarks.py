@@ -134,8 +134,8 @@ def benchmark_dataframe_parquet_compression(
         res,
         columns=[
             "config",
-        ]
-        + "mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","),
+            *"mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","),
+        ],
     )
 
 
@@ -279,7 +279,7 @@ def benchmark_dataframe_compression(
     ):
         try:
             func(res, temp_folder, df, nrepeats)
-        except Exception as e:
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one benchmark failing shouldn't skip the rest)
             logger.error(e)
 
     # Parquet has different signature, handle separately
@@ -293,7 +293,7 @@ def benchmark_dataframe_compression(
         shutil.rmtree(temp_folder)
 
     res = (
-        pd.DataFrame(res, columns=["config"] + list(chain(*[("mean_" + arr, "std_" + arr) for arr in "read_time write_time read_size write_size".split()])))
+        pd.DataFrame(res, columns=["config", *chain(*[("mean_" + arr, "std_" + arr) for arr in "read_time write_time read_size write_size".split()])])
         .set_index("config")
         .sort_values(sort_by, ascending=True)
     )

@@ -37,10 +37,10 @@ def nullify_standard_values(
         top_values = person_counts[person_counts > min_persons].index.tolist()
 
         if verbose and top_values:
-            print(f"Field {field}")
+            print(f"Field {field}")  # noqa: T201 -- verbose=True is an explicit stdout-display contract (see test_verbose_output), not a log-volume toggle
             for val in top_values:
                 qty = person_counts[val]
-                print(f"\t: value {val} is not custom, as used by {qty} persons")
+                print(f"\t: value {val} is not custom, as used by {qty} persons")  # noqa: T201 -- same verbose=True stdout contract
     else:
         top_values = standard_values
     df.loc[df[field].isin(top_values), field] = placeholder
@@ -227,23 +227,23 @@ def showcase_df_columns(
             if use_markdown and _facade.HAS_IPYTHON:
                 _facade.display(_facade.Markdown(f"**{var}** {dtype}"))
             if use_print or not _facade.HAS_IPYTHON:
-                print(f"{var.upper()} {dtype}")
+                print(f"{var.upper()} {dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
             if max_vars is not None and max_vars == 0:
-                print("")
+                print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             elif vc.height == 0:
                 stats = pd.Series([], name="count", dtype="int64")
                 stats.index.name = var
-                print(stats)
+                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             else:
                 vals = vc.get_column(var).to_list()
                 counts = vc.get_column("count").to_list()
                 stats = pd.Series(counts, index=vals, name="count")
                 stats.index.name = var
                 if max_vars is not None and max_vars > 0:
-                    print(stats.head(max_vars))
+                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
                 else:
-                    print(stats)
+                    print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
             # Rare/uninformative analysis
             n_unique = nuniq_df.item(0, 0)
@@ -263,16 +263,16 @@ def showcase_df_columns(
             if use_markdown and _facade.HAS_IPYTHON:
                 _facade.display(_facade.Markdown(f"**{var}** {df[var].dtype}"))
             if use_print or not _facade.HAS_IPYTHON:
-                print(f"{var.upper()} {df[var].dtype}")
+                print(f"{var.upper()} {df[var].dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             stats = df[var].value_counts(dropna=dropna)
             if max_vars is not None:
                 assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
                 if max_vars > 0:
-                    print(stats.head(max_vars))
+                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
                 else:
-                    print("")
+                    print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             else:
-                print(stats)
+                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
             # Rare/uninformative analysis
             n_unique = df[var].nunique(dropna=False)
@@ -366,7 +366,7 @@ def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
             try:
                 if ref_df[col].nunique() <= 1:
                     susp_columns.append(col)
-            except TypeError:
+            except TypeError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this column, check the rest)
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.
                 continue
     return susp_columns  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime

@@ -80,14 +80,14 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
                 logger.debug("Acquired lock for local Delta path: %s", path)
                 return delta_op_func()
         except Timeout:
-            logger.warning(f"Timeout while waiting for lock on {path}. Skipping operation.")
+            logger.warning("Timeout while waiting for lock on %s. Skipping operation.", path)
         except Exception as e:
-            logger.exception(f"Delta operation failed on {path}: {e}")
+            logger.exception("Delta operation failed on %s: %s", path, e)
             raise (e)
     else:
-        logger.warning(f"Delta operation on non-local path: {path}. Proceeding without lock.")
+        logger.warning("Delta operation on non-local path: %s. Proceeding without lock.", path)
         try:
             return delta_op_func()
         except Exception as e:
-            logger.exception(f"Delta operation failed on {path}: {e}")
+            logger.exception("Delta operation failed on %s: %s", path, e)
             raise

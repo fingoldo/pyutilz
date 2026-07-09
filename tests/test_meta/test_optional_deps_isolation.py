@@ -102,6 +102,35 @@ def test_top_level_pyutilz_imports_when_optional_group_missing(group_name):
         )
 
 
+def test_system_subpackage_imports_without_web_group_deps():
+    """``pyutilz.system`` must import without selenium/undetected_chromedriver/etc installed.
+
+    Found 2026-07-09: ``pyutilz.system.distributed`` does ``from pyutilz.web import web``,
+    which triggers ``pyutilz/web/__init__.py``'s ``from . import browser, graphql, proxy, web``
+    -- eagerly importing ALL FOUR web submodules, including ``browser.py``, which (before the
+    fix) had an unguarded module-level ``from selenium.webdriver.common.by import By``. Any
+    caller of ``pyutilz.system`` (a name with no obvious web-scraping connotation) was forced to
+    have selenium installed, even though selenium lives under the separate, optional [web]
+    extra. This broke mlframe's CI: it installs pyutilz's [system] extra but not [web], and
+    ``mlframe.metrics._gpu_metrics`` -> ``pyutilz.performance.kernel_tuning...`` ->
+    ``pyutilz.system.gpu_dispatch`` -> ``pyutilz.system`` (package init) -> ``.distributed`` ->
+    ``pyutilz.web`` -> ``pyutilz.web.browser`` -> ``ModuleNotFoundError: No module named
+    'selenium'``, failing ~1300 unrelated feature_selection/calibration tests at collection time.
+    """
+    deps = _OPTIONAL_DEP_GROUPS["web"]
+    script = _mask_modules_script(deps, ["pyutilz.system"])
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"``import pyutilz.system`` failed when the 'web' group deps ({deps}) were masked. "
+            f"pyutilz.system has nothing to do with web scraping and must not require selenium "
+            f"et al. to be installed. stderr:\n{result.stderr}"
+        )
+
+
 @pytest.mark.parametrize("subpkg", _ALWAYS_IMPORTABLE_SUBPACKAGES)
 def test_safe_subpackages_import_with_all_optional_deps_masked(subpkg):
     """``pyutilz.core`` and friends must import cleanly with EVERYTHING
