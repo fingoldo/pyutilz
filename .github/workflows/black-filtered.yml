@@ -17,6 +17,6 @@ permissions:
 # workflow, script now lives in the shared py_ci_shared package instead of scripts/ here.
 jobs:
   black:
-    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@76f6606202f0db95dfa87d67010f64c9e6db8574  # v1.0.0
+    uses: fingoldo/py-ci-shared/.github/workflows/black-filtered.yml@4e821c3982aa3a3f24d3026e7a77fab872819c0a  # v1.0.0
     with:
       check-path: "."
