@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from unittest import mock
 
@@ -309,6 +310,7 @@ class TestV2Matcher:
 class TestV2GetOrTune:
     def _fresh(self):
         ktc._TUNED_THIS_PROCESS.clear()
+        ktc._INVALIDATION_LOGGED_THIS_PROCESS.clear()
         return ktc.KernelTuningCache(in_memory=True)
 
     def test_miss_then_hit_one_sweep(self):
@@ -354,6 +356,23 @@ class TestV2GetOrTune:
         ktc._TUNED_THIS_PROCESS.clear()
         got = c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v2"}], axes=["n"], fallback="FB", code_version="B")
         assert got == {"backend": "v2"}
+
+    def test_invalidation_logged_once_per_process_while_stale(self, caplog):
+        """A kernel that STAYS stale across repeated get_or_tune calls (e.g. a no-op tuner that
+        never persists a fresh entry) must log the INFO invalidation banner at most ONCE per
+        process, not on every call -- the once-per-process guard only stops a second SWEEP from
+        spawning, it must not let the stale-check + log re-fire on every call that lands before
+        a fresh entry is (or isn't) persisted."""
+        c = self._fresh()
+        # Seed a code_version="A" entry: first call is a MISS (not yet stale), so no invalidation log.
+        c.get_or_tune("g", dims={"n": 1}, tuner=lambda: [{"backend": "v1"}], axes=["n"], fallback="FB", code_version="A")
+        with caplog.at_level(logging.INFO):
+            for _ in range(3):
+                # code_version="B" != stored "A" -> stale on every call; the no-op tuner never
+                # persists a fresh entry, so the kernel stays stale for all 3 calls.
+                c.get_or_tune("g", dims={"n": 1}, tuner=lambda: None, axes=["n"], fallback="FB", code_version="B")
+        invalidation_records = [r for r in caplog.records if "invalidated" in r.message and "g" in r.message]
+        assert len(invalidation_records) == 1, f"expected exactly 1 invalidation log, got {[r.message for r in invalidation_records]}"
 
 
 class TestV2EquivGate:

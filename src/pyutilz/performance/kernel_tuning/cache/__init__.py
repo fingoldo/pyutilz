@@ -90,6 +90,7 @@ from pyutilz.core.pythonlib import is_cuda_available
 
 from .cache_base import (
     SCHEMA_VERSION,
+    _INVALIDATION_LOGGED_THIS_PROCESS,
     _NO_CODE_VERSION,
     _TUNED_THIS_PROCESS,
     _async_sweep_hw_busy,

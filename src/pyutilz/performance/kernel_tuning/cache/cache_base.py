@@ -437,3 +437,12 @@ _TUNED_THIS_PROCESS: set = set()
 # racing for the same (kernel, cache-path) can both observe "not yet tuned" and both spawn a
 # redundant async sweep thread (or both proceed into the synchronous sweep-claim path).
 _tuned_guard_lock = threading.Lock()
+
+# Process-scoped "already logged the invalidation banner for this kernel" guard, keyed
+# exactly like _TUNED_THIS_PROCESS on (kernel_name, cache_path). get_or_tune re-evaluates
+# code_version staleness on EVERY call (so a fresh entry an async sweep lands mid-process is
+# picked up immediately -- once_per_process only gates the SWEEP), but while a kernel stays
+# stale (e.g. a no-op tuner that never persists a fresh entry) that would otherwise fire the
+# INFO "invalidated...will re-tune" log on every single call. Log it at most once per kernel
+# per process instead; the staleness re-check itself stays unconditional (a cheap dict lookup).
+_INVALIDATION_LOGGED_THIS_PROCESS: set = set()

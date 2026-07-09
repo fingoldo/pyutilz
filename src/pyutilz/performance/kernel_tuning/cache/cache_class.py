@@ -16,6 +16,7 @@ from typing import Callable, Optional
 from .cache_base import (
     SCHEMA_VERSION,
     _NO_CODE_VERSION,
+    _INVALIDATION_LOGGED_THIS_PROCESS,
     _TUNED_THIS_PROCESS,
     _async_sweep_idle_max_wait,
     _async_sweep_start_delay,
@@ -547,6 +548,9 @@ class KernelTuningCache:
             # can actually re-tune this kernel (B11) instead of short-circuiting
             # to the fallback because "we already swept it this process".
             _TUNED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
+            # Same for the once-per-process invalidation-log guard: an explicit evict is a fresh start,
+            # so a future staleness detection for this kernel should log again.
+            _INVALIDATION_LOGGED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
             present = kernel_name in loaded.get("kernels", {})
             if present:
                 del loaded["kernels"][kernel_name]
@@ -658,15 +662,20 @@ class KernelTuningCache:
             if forced:
                 hk.env_override(kernel_name, forced)
                 return forced
+        # guard_key computed up-front: reused both for the once-per-process sweep guard below AND the
+        # once-per-process invalidation-log guard, so a kernel stuck stale (e.g. a no-op tuner that never
+        # persists a fresh entry) logs the INFO invalidation banner at most once per process, not on every call.
+        guard_key = (kernel_name, self._path or id(self))
         if self._code_version_stale(kernel_name, code_version):
-            hk.invalidation(kernel_name, "code_version changed")
+            if guard_key not in _INVALIDATION_LOGGED_THIS_PROCESS:
+                _INVALIDATION_LOGGED_THIS_PROCESS.add(guard_key)
+                hk.invalidation(kernel_name, "code_version changed")
         else:
             hit = self.lookup(kernel_name, **dims)
             if hit is not None:
                 hk.cache_hit(kernel_name, dims, hit)
                 return hit
         hk.cache_miss(kernel_name, dims)
-        guard_key = (kernel_name, self._path or id(self))
         with _tuned_guard_lock:
             if once_per_process and guard_key in _TUNED_THIS_PROCESS:
                 return _fb()
