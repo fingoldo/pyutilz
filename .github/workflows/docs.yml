@@ -16,8 +16,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# The reusable workflow's own `deploy` job declares `permissions: pages: write, id-token: write`
+# internally, but a job calling a reusable workflow is capped at whatever the CALLING workflow
+# grants here -- job-level permissions inside the callee cannot exceed this ceiling regardless of
+# what they ask for. Found 2026-07-09: contents:read-only here failed every push with "The nested
+# job 'deploy' is requesting 'pages: write, id-token: write', but is only allowed 'pages: none,
+# id-token: none'" -- deploy is skipped by its own PUBLISH_DOCS gate by default, so granting these
+# unconditionally is safe (unused permissions on a skipped job, not a live escalation).
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   docs:
