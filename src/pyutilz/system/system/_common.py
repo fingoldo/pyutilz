@@ -263,7 +263,16 @@ def get_wmi_obj_as_dict(
                 pass
         elif prop in ensure_int:
             try:
-                value = int(value)
+                float_value = float(value)
+                int_value = int(float_value)
+                if float_value != int_value:
+                    logger.debug(
+                        "ensure_int truncated a fractional value for property %r: %r -> %r (precision loss)",
+                        prop,
+                        value,
+                        int_value,
+                    )
+                value = int_value
             except (ValueError, TypeError):
                 pass
         elif prop in decode_dict:

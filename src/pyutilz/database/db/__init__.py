@@ -148,6 +148,7 @@ def connect_to_db(
     assert db_flavor in ("postgres", "mysql")  # nosec B101 - db_flavor only steers if/elif branching below, never spliced into SQL
 
     while True:
+        conn_opened_this_iteration = False
         try:
             logger.info("Connecting to the DB %s...", db_name)
 
@@ -161,6 +162,7 @@ def connect_to_db(
                     params["options"] = f"--search_path={db_schema},public"
 
                 conn = psycopg2.connect(**params)
+                conn_opened_this_iteration = True
                 conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
                 conn_string = "postgresql+psycopg2://%s:%s@%s:%s/%s?" % (username, pwd, db_host, db_port, db_name)
@@ -192,6 +194,11 @@ def connect_to_db(
                 init_params_fn()
         except Exception as e:
             logger.exception(e)
+            if conn_opened_this_iteration and conn is not None:
+                try:
+                    conn.close()
+                except Exception as close_exc:
+                    logger.exception(close_exc)
             sleep(5)
         else:
             logger.info("Connected to the DB %s", db_name)
@@ -285,6 +292,10 @@ def basic_db_execute(
             logger.exception(e)
             # logger.warning("rolling back operation...")
             # conn.rollback()
+            # InternalError indicates real corruption/state issues; do not silently
+            # fall through to an implicit None (indistinguishable from "no rows") or
+            # spin forever in the retry loop - propagate it to the caller.
+            raise
         except Exception as e:
             logger.exception(e)
             if "cursor" in str(e) and "already exists" in str(e):
@@ -561,7 +572,13 @@ def ReadTableIntoDicReversed(
     sIdFieldName: Optional[str] = "id",
     sAutocreateIdTypeName: Optional[str] = None,
 ) -> None:
-    """Reads value->id mapping into a dictionary"""
+    """Reads value->id mapping into a dictionary.
+
+    WARNING: sCondition is spliced verbatim into the SQL statement (raw WHERE fragment,
+    unvalidated). This function executes raw, unvalidated SQL - sCondition must NEVER
+    be built from external/user-controlled input directly; only pass trusted, hard-coded
+    or internally-constructed condition strings.
+    """
 
     dicEnums.clear()
     EnsurePgTableExists(sTable=sTable, sKeyFieldName=sKeyFieldName, sIdFieldName=sIdFieldName, sAutocreateIdTypeName=sAutocreateIdTypeName)
@@ -708,8 +725,10 @@ def explain_table(table_name: str) -> Optional[object]:
 def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> object:
     """Read a sample from a DB table, return as Pandas dataframe.
 
-    WARNING: The 'condition' parameter should be a safe WHERE clause expression.
-    For user input, use parameterized queries instead of passing raw SQL conditions.
+    WARNING: This function executes raw, unvalidated SQL. The 'condition' parameter is
+    spliced verbatim into the query and must NEVER be built from external/user-controlled
+    input directly - only pass trusted, hard-coded or internally-constructed condition
+    strings. For user input, use parameterized queries instead of passing raw SQL conditions.
     """
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
@@ -721,12 +740,24 @@ def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> obje
 
 
 def select(sql: str) -> object:
-    """Execute arbitrary SQL against DB table, return results as Pandas dataframe"""
+    """Execute arbitrary SQL against DB table, return results as Pandas dataframe.
+
+    WARNING: `sql` is executed verbatim, with zero validation or parameterization.
+    This function is an intentional raw-SQL escape hatch - `sql` must NEVER be built
+    from external/user-controlled input directly; only pass trusted, hard-coded or
+    internally-constructed statements.
+    """
     return pd.read_sql(sql, con=conn_alchemy)
 
 
 def execute_alchemy(sql: str, max_retries: int = 3) -> None:
-    """Execute arbitrary SQL against DB table using Alchemy directly"""
+    """Execute arbitrary SQL against DB table using Alchemy directly.
+
+    WARNING: `sql` is executed verbatim, with zero validation or parameterization.
+    This function is an intentional raw-SQL escape hatch - `sql` must NEVER be built
+    from external/user-controlled input directly; only pass trusted, hard-coded or
+    internally-constructed statements.
+    """
     assert conn_alchemy is not None, "execute_alchemy() requires conn_alchemy to be configured first"
     n = 0
     while n < max_retries:

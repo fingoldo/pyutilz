@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from functools import lru_cache
 from typing import Optional
@@ -428,3 +429,8 @@ def _async_sweep_hw_busy() -> bool:
 # get_or_tune sweeps at most once per kernel per process (tests that switch
 # PYUTILZ_KERNEL_CACHE_DIR get a different path -> a fresh re-tune).
 _TUNED_THIS_PROCESS: set = set()
+
+# Guards the check-then-add on _TUNED_THIS_PROCESS in get_or_tune(): without it, two threads
+# racing for the same (kernel, cache-path) can both observe "not yet tuned" and both spawn a
+# redundant async sweep thread (or both proceed into the synchronous sweep-claim path).
+_tuned_guard_lock = threading.Lock()

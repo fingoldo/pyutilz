@@ -338,6 +338,9 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
     """
     Removes columns with values that do not change
     """
+    if len(X) == 0:
+        return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
     stale_columns = ~(X != X.iloc[0]).any()
 
     num_stale = stale_columns.sum()
@@ -370,9 +373,12 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
         susp_columns = get_suspiciously_constant_columns(df)
     else:
         susp_columns = get_suspiciously_constant_columns(df.head(prewarm_size))
-        for col in tqdmu(susp_columns.copy(), desc="cnst col", leave=False):
+        cols_to_drop: set = set()
+        for col in tqdmu(susp_columns, desc="cnst col", leave=False):
             if df[col].nunique() > 1:
-                susp_columns.remove(col)
+                cols_to_drop.add(col)
+        if cols_to_drop:
+            susp_columns = [c for c in susp_columns if c not in cols_to_drop]
 
     if susp_columns:
         if verbose:

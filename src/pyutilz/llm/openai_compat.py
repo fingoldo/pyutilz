@@ -431,9 +431,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     async with self._client.stream(
                         "POST", "/chat/completions", json=body,
                     ) as resp:
+                        self._capture_rate_limit_headers(resp.headers)
                         self._handle_special_status(resp)
                         resp.raise_for_status()
-                        self._capture_rate_limit_headers(resp.headers)
                         last_chunk: dict[str, Any] | None = None
                         async for line in resp.aiter_lines():
                             if not line or not line.startswith("data:"):
@@ -490,30 +490,58 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
                 await asyncio.sleep(wait_s)
 
-    def _track_streaming_usage(self, usage: dict[str, Any]) -> None:
-        """Mirror of the non-streaming usage path, for streaming responses.
+    def _record_usage(self, usage: dict[str, Any]) -> None:
+        """Shared token-usage accounting for both ``generate()`` and
+        ``generate_stream()``.
 
-        Called when an SSE chunk's ``usage`` field is non-empty (OpenAI-
-        compat upstreams send it on the final chunk when
-        ``stream_options.include_usage=true``). Updates the same totals /
-        last_usage / provider-specific hooks that ``generate()`` does.
+        Updates cumulative totals, ``_last_usage``, invokes the
+        provider-specific usage hook, and logs the same cumulative-usage
+        message from both call paths — this used to be duplicated
+        (``generate()`` inline vs. ``_track_streaming_usage()``) and had
+        drifted (only the non-streaming path logged; the cache_hit/
+        reasoning-token default computation differed in style).
         """
         prompt_tok = usage.get("prompt_tokens", 0)
         compl_tok = usage.get("completion_tokens", 0)
         cache_hit = usage.get("prompt_cache_hit_tokens", 0)
         details = usage.get("completion_tokens_details", {}) or {}
         reasoning_tok = details.get("reasoning_tokens", 0) or 0
+
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += compl_tok
         self.total_cache_hit_tokens += cache_hit
         self.total_reasoning_tokens += reasoning_tok
         self._call_count += 1
+
         self._last_usage = {
             "input_tokens": prompt_tok,
             "output_tokens": self._compute_billed_output(compl_tok, reasoning_tok),
             "reasoning_tokens": reasoning_tok,
         }
+
         self._track_provider_specific_usage(usage)
+
+        logger.info(
+            "%s [call #%d] %d prompt (%d cached) + %d completion" "%s | cumulative: %d in, %d out",
+            self._provider_name,
+            self._call_count,
+            prompt_tok,
+            cache_hit,
+            compl_tok,
+            f" ({reasoning_tok} reasoning)" if reasoning_tok else "",
+            self.total_prompt_tokens,
+            self.total_completion_tokens,
+        )
+
+    def _track_streaming_usage(self, usage: dict[str, Any]) -> None:
+        """Mirror of the non-streaming usage path, for streaming responses.
+
+        Called when an SSE chunk's ``usage`` field is non-empty (OpenAI-
+        compat upstreams send it on the final chunk when
+        ``stream_options.include_usage=true``). Delegates to
+        ``_record_usage`` so both paths stay in sync.
+        """
+        self._record_usage(usage)
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception(_is_retryable_http_error),
@@ -566,6 +594,11 @@ class OpenAICompatibleProvider(LLMProvider):
 
             resp = await self._client.post("/chat/completions", json=body)
 
+            # Snapshot rate-limit headers before any status check, so a
+            # 429/5xx error response's headers are captured too — that's
+            # exactly when they matter most for backoff/quota decisions.
+            self._capture_rate_limit_headers(resp.headers)
+
             # Provider-specific status handling (e.g. DeepSeek 402)
             self._handle_special_status(resp)
 
@@ -579,45 +612,10 @@ class OpenAICompatibleProvider(LLMProvider):
             resp.raise_for_status()
             data = resp.json()
 
-            # Snapshot rate-limit headers — providers don't expose a
-            # dedicated introspection endpoint for free, but they all
-            # send these on every response.
-            self._capture_rate_limit_headers(resp.headers)
-
             # Token usage tracking
             usage = data.get("usage", {})
             if usage:
-                prompt_tok = usage.get("prompt_tokens", 0)
-                compl_tok = usage.get("completion_tokens", 0)
-                cache_hit = usage.get("prompt_cache_hit_tokens", 0)
-                details = usage.get("completion_tokens_details", {})
-                reasoning_tok = details.get("reasoning_tokens", 0) if details else 0
-
-                self.total_prompt_tokens += prompt_tok
-                self.total_completion_tokens += compl_tok
-                self.total_cache_hit_tokens += cache_hit
-                self.total_reasoning_tokens += reasoning_tok
-                self._call_count += 1
-
-                self._last_usage = {
-                    "input_tokens": prompt_tok,
-                    "output_tokens": self._compute_billed_output(compl_tok, reasoning_tok),
-                    "reasoning_tokens": reasoning_tok,
-                }
-
-                self._track_provider_specific_usage(usage)
-
-                logger.info(
-                    "%s [call #%d] %d prompt (%d cached) + %d completion" "%s | cumulative: %d in, %d out",
-                    self._provider_name,
-                    self._call_count,
-                    prompt_tok,
-                    cache_hit,
-                    compl_tok,
-                    f" ({reasoning_tok} reasoning)" if reasoning_tok else "",
-                    self.total_prompt_tokens,
-                    self.total_completion_tokens,
-                )
+                self._record_usage(usage)
 
             self._track_provider_specific_response(data)
 

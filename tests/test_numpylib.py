@@ -121,6 +121,15 @@ class TestGetTopKIndices:
         print(f"\nget_topk_indices bench (50 iters): 1D(100k)={t1d*1e3:.2f}ms  2D(1000x100)={t2d*1e3:.2f}ms")
         assert t1d >= 0 and t2d >= 0
 
+    def test_get_topk_zero_k(self):
+        """Regression: k=0 used to pass kth=n to np.argpartition (out of valid 0..n-1 range)."""
+        arr = np.array([3, 1, 4, 1, 5, 9, 2, 6])
+        result = get_topk_indices(arr, k=0, highest=True)
+        assert result.shape == (0,)
+
+        result_low = get_topk_indices(arr, k=0, highest=False)
+        assert result_low.shape == (0,)
+
     def test_get_topk_negative_values(self):
         """Test with negative values"""
         arr = np.array([-5, -2, -8, -1, -10])

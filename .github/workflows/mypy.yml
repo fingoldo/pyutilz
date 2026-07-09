@@ -27,9 +27,12 @@ jobs:
       - name: Install mypy
         run: pip install "mypy==2.1.0"
 
-      - name: mypy (advisory)
-        run: mypy src/pyutilz
-        continue-on-error: true
+      # The bare full-repo advisory pass was removed 2026-07-09: this job's environment
+      # has none of pyutilz's own extras (pandas/polars/database/system/llm/nlp/cloud)
+      # installed, so mypy collapsed those imports to Any and reported mostly-noise
+      # "Returning Any" / "Unused type:ignore" errors rather than real ones. The
+      # meaningful whole-project pass now lives in mypy-full.yml, which installs the
+      # real dependency graph first. Mirrors mlframe's mypy.yml / mypy-full.yml split.
 
       # Mirrors the pre-commit mypy hook's strict-mode beachhead (see
       # [tool.mypy.overrides] in pyproject.toml) so a commit that passes locally

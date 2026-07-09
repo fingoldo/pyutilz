@@ -37,6 +37,11 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     if k > n:
         raise ValueError(f"k={k} exceeds array length {n} along axis {axis}")
 
+    if k == 0:
+        empty_shape = list(arr.shape)
+        empty_shape[axis] = 0
+        return np.empty(empty_shape, dtype=np.int64)
+
     if highest:
         # Partition so the k largest end up in the last k positions along axis.
         part = np.argpartition(arr, n - k, axis=axis)

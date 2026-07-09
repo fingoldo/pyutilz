@@ -269,6 +269,49 @@ def test_lookup_never_blocks_during_inprogress_sweep(host_dir):
         os.remove(marker)
 
 
+def test_concurrent_async_sweep_threads_spawn_exactly_once(host_dir):
+    """B11-style race: N threads call ``get_or_tune`` for the SAME kernel with
+    ``async_sweep=True`` at (near) the same instant. Pre-fix, the once-per-process
+    guard (``guard_key in _TUNED_THIS_PROCESS`` -> ... -> ``.add(guard_key)``) was a
+    plain check-then-act with no lock, so multiple racing threads could all observe
+    "not yet tuned" and each spawn its own background sweep thread. The fix makes
+    the check-and-claim atomic under ``_tuned_guard_lock``, so exactly one thread
+    may spawn the async sweep; the rest must short-circuit straight to the
+    fallback without ever calling ``_spawn_async_sweep``."""
+    cache = ktc.KernelTuningCache()
+    n = 16
+    barrier = threading.Barrier(n)
+    results = [None] * n
+
+    def tuner():  # pragma: no cover - must never actually run in this test
+        raise AssertionError("tuner should never run: the async sweep is mocked out")
+
+    def worker(i):
+        barrier.wait()
+        results[i] = cache.get_or_tune(
+            "racey_async",
+            dims={"n": 1},
+            tuner=tuner,
+            axes=["n"],
+            fallback={"backend": "FB"},
+            code_version="cv1",
+            once_per_process=True,
+            async_sweep=True,
+        )
+
+    with mock.patch.object(ktc.KernelTuningCache, "_spawn_async_sweep") as spawn_mock:
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert spawn_mock.call_count == 1, (
+        f"expected exactly one async sweep spawn across {n} racing threads, got {spawn_mock.call_count}"
+    )
+    assert all(r == {"backend": "FB"} for r in results)
+
+
 def test_concurrent_claim_threads_single_owner(host_dir):
     """Many threads racing the O_EXCL claim for one (kernel, code_version):
     exactly ONE wins ownership; the rest give up (in-process analog of the

@@ -15,6 +15,14 @@ from jellyfish import levenshtein_distance
 from pyutilz.text.strings import strip_doubled_characters
 from typing import Optional
 
+# Above this many tokens per sentence, the O(w_min * N_a * N_b) greedy matching pass
+# (a full rescan of the similarity matrix for each of the w_min greedy picks, on top of the
+# O(N_a * N_b) matrix fill) starts to dominate. Benchmarked: N=10 -> ~0.3ms, N=80 -> ~25-30ms
+# per call (pure-Python path). Not severe enough to justify a heap-based rewrite (which would
+# need a differential-correctness test against the current tie-breaking to avoid behavior
+# drift), but callers feeding longer inputs should be aware of the quadratic-ish cost.
+SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD = 50
+
 
 def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
@@ -23,7 +31,12 @@ def levenshtein_strings_similarity(a: str, b: str) -> float:
     >>> levenshtein_strings_similarity("MeasureOIS21", "MeasureOIS18")
     0.8333333333333334
 
+    >>> levenshtein_strings_similarity("", "")
+    1.0
+
     """
+    if not a and not b:
+        return 1.0
     return 1 - levenshtein_distance(a, b) / max(len(a), len(b))
 
 
@@ -37,7 +50,13 @@ def contigous_strings_similarity(a: str, b: str) -> tuple:
 
     >>> contigous_strings_similarity("MeosureOIS21qwe", "MeosureOIS21qwe")
     (1.0, 'MeosureOIS21qwe')
+
+    >>> contigous_strings_similarity("", "")
+    (1.0, '')
     """
+    if not a and not b:
+        return 1.0, ""
+
     best_l, best_r, best_m = 0, 0, 0
 
     min_length = min(len(a), len(b))
@@ -79,11 +98,26 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
 
         >>> sentences_similarity([], ["TEST"])
 
+    Complexity: O(N_a * N_b) to fill the similarity matrix, plus O(w_min * N_a * N_b) for the
+    greedy best-pair matching pass (a full matrix rescan per pick) — effectively O(w * N^2)
+    for near-square inputs. This is fine for the documented use case (short phrases, team/player
+    names, addresses — typically 3-10 tokens); on longer inputs it degrades quadratically-ish
+    (benchmarked ~25-30ms at N=80 per call on the pure-Python path). Avoid using this function
+    on sentences longer than ~20-30 tokens; a warning is logged past
+    SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD (50) tokens.
     """
     N_a = len(SentenceA)
     N_b = len(SentenceB)
     if N_a < 1 or N_b < 1:
         return None
+    if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
+        logger.warning(
+            "sentences_similarity called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
+            "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
+            N_a,
+            N_b,
+            SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
+        )
     if N_a < N_b:
         w_min = N_a
         w_max = N_b
@@ -339,8 +373,8 @@ try:
                     sim_res[i, j] = 0.5 * (sim_max + sim_min)
 
         # Greedy best-pair matching
-        excluded_a = np.zeros(N_a, dtype=nb.boolean)
-        excluded_b = np.zeros(N_b, dtype=nb.boolean)
+        excluded_a = np.zeros(N_a, dtype=np.bool_)
+        excluded_b = np.zeros(N_b, dtype=np.bool_)
         res = 0.0
 
         for _ in range(w_min):
@@ -419,11 +453,22 @@ try:
 
             >>> sentences_similarity_numba([], ["TEST"])
 
+        Same O(w * N^2) greedy-matching complexity as sentences_similarity (compiled, so much
+        faster in absolute terms, but the same asymptotic shape) — a warning is logged past
+        SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD (50) tokens.
         """
         N_a = len(SentenceA)
         N_b = len(SentenceB)
         if N_a < 1 or N_b < 1:
             return None
+        if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
+            logger.warning(
+                "sentences_similarity_numba called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
+                "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
+                N_a,
+                N_b,
+                SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
+            )
 
         # Fast packing via utf-32-le bulk conversion
         all_words = SentenceA + SentenceB
@@ -432,7 +477,10 @@ try:
         result = _sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold)
         if result < 0:
             return None
-        return result  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        # float(...) keeps the return type identical whether numba actually JIT-compiled this
+        # (native Python float, auto-unboxed) or NUMBA_DISABLE_JIT=1 is set (plain numpy call,
+        # which would otherwise leak a np.float64 scalar and break reprs/doctests downstream).
+        return float(result)
 
     def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
         """
@@ -459,7 +507,9 @@ try:
         result = _sentences_similarity_core(buf, offsets, n_a, n_b, cMinLenTHreshold)
         if result < 0:
             return None
-        return result  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        # float(...): see sentences_similarity_numba's identical comment -- keeps the return
+        # type stable regardless of whether numba actually JIT-compiled this call.
+        return float(result)
 
     @nb.njit(cache=True)
     def _compare_one_candidate(buf, offsets, query_n, cand_word_start, cn, cMinLenTHreshold):
@@ -529,8 +579,8 @@ try:
                     sim_max = 1.0 - best_gliding / s_len
                     sim_res[i, j] = 0.5 * (sim_max + sim_min)
 
-        excluded_a = np.zeros(N_a, dtype=nb.boolean)
-        excluded_b = np.zeros(N_b, dtype=nb.boolean)
+        excluded_a = np.zeros(N_a, dtype=np.bool_)
+        excluded_b = np.zeros(N_b, dtype=np.bool_)
         res = 0.0
         for _ in range(w_min):
             best_perf = 0.0

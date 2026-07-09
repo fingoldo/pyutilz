@@ -172,11 +172,28 @@ class OpenAIProvider(OpenAICompatibleProvider):
             "or check platform.openai.com/account/limits."
         )
 
+    _seen_unknown_models: set[str] = set()
+
+    def _warn_unknown_model_once(self, model: str) -> None:
+        if model in OpenAIProvider._seen_unknown_models:
+            return
+        OpenAIProvider._seen_unknown_models.add(model)
+        logger.warning(
+            "OpenAI pricing for %r is unknown; falling back to " "gpt-5-mini rates. Cost estimates may be off.",
+            model,
+        )
+
     def _input_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, (1.25, 10.00))[0]
+        if model not in _PRICING:
+            self._warn_unknown_model_once(model)
+        return _PRICING.get(model, _PRICING["gpt-5-mini"])[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
-        return _PRICING.get(model, (1.25, 10.00))[1]
+        if model not in _PRICING:
+            self._warn_unknown_model_once(model)
+        return _PRICING.get(model, _PRICING["gpt-5-mini"])[1]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
-        return _CACHE_HIT_COST.get(model, 0.125)
+        if model not in _CACHE_HIT_COST:
+            self._warn_unknown_model_once(model)
+        return _CACHE_HIT_COST.get(model, _CACHE_HIT_COST["gpt-5-mini"])

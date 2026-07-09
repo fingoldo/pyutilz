@@ -77,4 +77,5 @@ def get_sparse_memory_usage(mat:object)->int:
         else:
             return -1
     except AttributeError:
+        logger.warning("get_sparse_memory_usage: AttributeError while reading memory-usage attributes of a %s instance", type(mat).__name__)
         return -1

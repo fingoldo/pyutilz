@@ -84,12 +84,12 @@ def jsonize_atrtributes(
         else:
             res = obj
     else:
-        try:
-            attribslist = dir(obj)
-            res = dict()
-            for attr in attribslist:
-                if attr not in exclude:
-                    if not attr.startswith("_"):
+        attribslist = dir(obj)
+        res = dict()
+        for attr in attribslist:
+            if attr not in exclude:
+                if not attr.startswith("_"):
+                    try:
                         val = getattr(obj, attr)
                         if skip_functions:
                             if type(val).__name__ == "builtin_function_or_method":
@@ -102,9 +102,9 @@ def jsonize_atrtributes(
                             recursion_level=recursion_level + 1,
                             max_recursion_level=max_recursion_level,
                         )
-        except Exception as e:
-            logger.exception(e)
-            pass
+                    except Exception as e:
+                        logger.exception("Failed to jsonize attribute %r of %r: %s", attr, obj, e)
+                        continue
     return res  # type: ignore[no-any-return]  # res is genuinely a dict on this path; typed Any to accommodate the str/dict/list branches elsewhere in this function
 
 
@@ -237,12 +237,18 @@ def get_jsonlist_property(
     """
     >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]
+
+    For dict ``data``, there is no positional-index concept (a dict lookup has no "position"),
+    so when ``return_indices=True`` the indices slot is ``None`` rather than an empty/positional list.
     """
     res = []
     indices = []
 
     if isinstance(data, dict):
-        return data.get(property_name)
+        value = data.get(property_name)
+        if return_indices:
+            return value, None
+        return value
 
     for i, elem in enumerate(data):
         if property_name in elem:
@@ -258,10 +264,18 @@ def get_jsonlist_property(
         return res
 
 
-def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[bool] = False) -> tuple:
+def get_jsonlist_properties(
+    data: list, property_names: list, verbose: Optional[bool] = False, return_indices: Optional[bool] = True
+) -> Union[list, tuple]:
     """
     >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]
+
+    Note: unlike the singular ``get_jsonlist_property`` (which defaults ``return_indices=False`` and
+    returns a bare list), this function defaults ``return_indices=True`` and returns the ``(list,
+    indices)`` tuple form for backward compatibility — existing callers unpack the result positionally
+    as ``result, indices = get_jsonlist_properties(...)`` and would silently break if the default here
+    were flipped to match the singular function's contract.
     """
     res = []
     indices = []
@@ -276,4 +290,6 @@ def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[
         if new_elem:
             res.append(new_elem)
             indices.append(i)
-    return res, indices
+    if return_indices:
+        return res, indices
+    return res

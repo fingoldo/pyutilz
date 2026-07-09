@@ -782,13 +782,15 @@ class TestDownloadToFile:
 
     @patch("pyutilz.web.web.sleep")
     @patch("pyutilz.web.web.requests.get")
-    def test_request_exception_on_first_attempt_raises(self, mock_get, mock_sleep, tmp_path):
-        """Source has a bug: `request` is unbound on first exception. Verify it raises."""
+    def test_request_exception_on_all_attempts_returns_none(self, mock_get, mock_sleep, tmp_path):
+        """When every requests.get() attempt raises, `request` stays None and the
+        function returns without ever attempting to iter_content/write."""
         from pyutilz.web import web as mod
         mock_get.side_effect = Exception("fail")
         out = tmp_path / "out.bin"
-        with pytest.raises(UnboundLocalError):
-            mod.download_to_file("http://x.com/f", str(out), max_attempts=3)
+        result = mod.download_to_file("http://x.com/f", str(out), max_attempts=3)
+        assert result is None
+        assert not out.exists()
 
     @patch("pyutilz.web.web.sleep")
     @patch("pyutilz.web.web.requests.get")
@@ -807,3 +809,34 @@ class TestDownloadToFile:
         out = tmp_path / "out.bin"
         mod.download_to_file("http://x.com/f", str(out), max_attempts=3)
         assert out.read_bytes() == b"ok"
+        mock_resp.close.assert_called_once()
+
+    @patch("pyutilz.web.web.sleep")
+    @patch("pyutilz.web.web.requests.get")
+    def test_response_closed_on_success(self, mock_get, mock_sleep, tmp_path):
+        from pyutilz.web import web as mod
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.iter_content.return_value = [b"data"]
+        mock_get.return_value = mock_resp
+        out = tmp_path / "out.bin"
+        mod.download_to_file("http://x.com/f", str(out))
+        mock_resp.close.assert_called_once()
+
+    @patch("pyutilz.web.web.sleep")
+    @patch("pyutilz.web.web.requests.get")
+    def test_response_closed_even_when_write_raises_unhandled(self, mock_get, mock_sleep, tmp_path):
+        """The response must be closed even if an exception propagates all the
+        way out of the write loop (e.g. a bug unrelated to the download retry
+        logic, or open() itself failing on every attempt)."""
+        from pyutilz.web import web as mod
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.iter_content.side_effect = RuntimeError("boom")
+        mock_get.return_value = mock_resp
+
+        # Force every retry attempt to also fail so the exception surfaces
+        # instead of being swallowed by the retry loop's own except/else.
+        out = tmp_path / "out.bin"
+        mod.download_to_file("http://x.com/f", str(out), max_attempts=1)
+        mock_resp.close.assert_called_once()

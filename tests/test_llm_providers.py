@@ -159,6 +159,16 @@ class TestMaxOutputTokens:
         p.model_name = "gemini-2.0-flash"
         assert p.max_output_tokens == 8192
 
+    def test_gemini_max_tokens_dashed_gemini3(self):
+        # Regression: "gemini-3-flash-preview" (dashed, no dot after "3")
+        # must match the same "gemini-3" prefix bucket as "gemini-3.1-*"
+        # dotted models, not silently fall back to the 8192 default.
+        from pyutilz.llm.gemini_provider import GeminiProvider
+        p = GeminiProvider.__new__(GeminiProvider)
+        p.model_name = "gemini-3-flash-preview"
+        assert p.max_output_tokens == 65536
+        assert p.context_window == 1_048_576
+
     def test_gemini_context_window(self):
         from pyutilz.llm.gemini_provider import GeminiProvider
         p = GeminiProvider.__new__(GeminiProvider)
@@ -315,6 +325,21 @@ class TestAnthropicProvider:
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = "claude-opus-4-20250514"
         assert p.max_output_tokens == 32000
+
+
+class TestOpenAIProvider:
+    def test_pricing_unknown_falls_back_to_gpt5_mini(self, caplog):
+        from pyutilz.llm.openai_provider import OpenAIProvider
+
+        p = OpenAIProvider.__new__(OpenAIProvider)
+        with caplog.at_level("WARNING"):
+            inp = p._input_cost_per_1m("gpt-5-typo-does-not-exist")
+            out = p._output_cost_per_1m("gpt-5-typo-does-not-exist")
+            cache = p._cache_hit_cost_per_1m("gpt-5-typo-does-not-exist")
+        assert inp == 0.25
+        assert out == 2.00
+        assert cache == 0.025
+        assert any("unknown" in rec.message.lower() for rec in caplog.records)
 
 
 class TestGeminiProvider:

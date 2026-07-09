@@ -24,6 +24,7 @@ from .cache_base import (
     _pid_alive,
     _slug,
     _sweep_budget_seconds,
+    _tuned_guard_lock,
     cache_path,
     host_cache_dir,
     hw_fingerprint,
@@ -664,8 +665,14 @@ class KernelTuningCache:
                 return hit
         hk.cache_miss(kernel_name, dims)
         guard_key = (kernel_name, self._path or id(self))
-        if once_per_process and guard_key in _TUNED_THIS_PROCESS:
-            return _fb()
+        with _tuned_guard_lock:
+            if once_per_process and guard_key in _TUNED_THIS_PROCESS:
+                return _fb()
+            if once_per_process:
+                # Claim the guard immediately, atomically with the check above, so a second
+                # thread racing for the same kernel can never observe "not yet tuned" and
+                # spawn a duplicate async sweep / duplicate synchronous sweep-claim attempt.
+                _TUNED_THIS_PROCESS.add(guard_key)
 
         _sweep_disabled = os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False")
 

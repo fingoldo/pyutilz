@@ -132,7 +132,7 @@ class GeminiProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
-        for prefix, limit in [("gemini-3.", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)]:
+        for prefix, limit in [("gemini-3", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)]:
             if self.model_name.startswith(prefix):
                 return limit
         return 8192

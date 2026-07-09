@@ -9,7 +9,13 @@ This verifies that refactored code is actually faster than the original.
 import pandas as pd
 import numpy as np
 import time
-from pyutilz.pandaslib import optimize_dtypes, nullify_standard_values, get_df_memory_consumption, ensure_dataframe_float32_convertability
+from pyutilz.pandaslib import (
+    optimize_dtypes,
+    nullify_standard_values,
+    get_df_memory_consumption,
+    ensure_dataframe_float32_convertability,
+    remove_constant_columns,
+)
 
 
 def benchmark_optimize_dtypes_min_max():
@@ -131,6 +137,82 @@ def benchmark_ensure_dataframe_float32_convertability():
     print("[OK] PASS: Performance acceptable (single-pass optimization working)")
 
 
+def _build_prewarm_df(n_const: int, n_varying: int, prewarm_size: int, n_rows: int) -> pd.DataFrame:
+    """Build a df where first `n_varying` of the "constant-looking" columns are actually
+    only constant within the first `prewarm_size` rows (false positives that must be pruned)."""
+    data = {}
+    for i in range(n_const - n_varying):
+        data[f"const_{i}"] = [1] * n_rows
+    for i in range(n_varying):
+        vals = [1] * prewarm_size + list(range(n_rows - prewarm_size))
+        data[f"tricky_{i}"] = vals
+    data["var"] = list(range(n_rows))
+    return pd.DataFrame(data)
+
+
+def _remove_constant_columns_old(df: pd.DataFrame, prewarm_size: int = 10_000) -> None:
+    """Pre-fix O(k^2) implementation, kept here only for benchmarking comparison."""
+    from pyutilz.data.pandaslib.frames import get_suspiciously_constant_columns
+
+    if len(df) <= prewarm_size:
+        susp_columns = get_suspiciously_constant_columns(df)
+    else:
+        susp_columns = get_suspiciously_constant_columns(df.head(prewarm_size))
+        for col in susp_columns.copy():
+            if df[col].nunique() > 1:
+                susp_columns.remove(col)
+
+    if susp_columns:
+        if len(susp_columns) > 20:
+            df.drop(columns=susp_columns, inplace=True)
+        else:
+            for var in susp_columns:
+                del df[var]
+
+
+def benchmark_remove_constant_columns_prune():
+    """
+    Benchmark: remove_constant_columns prune step (susp_columns.remove(col) in a loop)
+    was O(k^2) in the number of candidate constant columns (list.remove is O(k) scan).
+    Fixed to O(k) via a single set-filtered rebuild.
+    """
+    print("\n" + "=" * 70)
+    print("BENCHMARK: remove_constant_columns prune-step optimization")
+    print("=" * 70)
+
+    n_rows = 15_000
+    prewarm_size = 10_000
+    n_const_candidates = 3_000
+    n_false_positives = 3_000  # all candidates are "tricky" -> worst case for old O(k^2) removal
+
+    repeats = 3
+
+    old_times = []
+    for _ in range(repeats):
+        df = _build_prewarm_df(n_const_candidates, n_false_positives, prewarm_size, n_rows)
+        start = time.perf_counter()
+        _remove_constant_columns_old(df, prewarm_size=prewarm_size)
+        old_times.append(time.perf_counter() - start)
+
+    new_times = []
+    for _ in range(repeats):
+        df = _build_prewarm_df(n_const_candidates, n_false_positives, prewarm_size, n_rows)
+        start = time.perf_counter()
+        remove_constant_columns(df, prewarm_size=prewarm_size)
+        new_times.append(time.perf_counter() - start)
+
+    old_best = min(old_times)
+    new_best = min(new_times)
+
+    print(f"Candidates: {n_const_candidates}, false positives to prune: {n_false_positives}")
+    print(f"[OLD O(k^2)] best of {repeats}: {old_best:.3f}s  (all: {[f'{t:.3f}' for t in old_times]})")
+    print(f"[NEW O(k)]   best of {repeats}: {new_best:.3f}s  (all: {[f'{t:.3f}' for t in new_times]})")
+    print(f"Speedup: {old_best / new_best:.2f}x")
+
+    assert new_best < old_best, f"Regression: new ({new_best:.3f}s) not faster than old ({old_best:.3f}s)"
+    print("[OK] PASS: new implementation is faster")
+
+
 def run_all_benchmarks():
     """Run all performance benchmarks"""
     print("\n" + "=" * 70)
@@ -143,6 +225,7 @@ def run_all_benchmarks():
         benchmark_nullify_standard_values_groupby,
         benchmark_get_df_memory_consumption,
         benchmark_ensure_dataframe_float32_convertability,
+        benchmark_remove_constant_columns_prune,
     ]
 
     failed = []

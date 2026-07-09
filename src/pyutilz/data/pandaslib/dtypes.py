@@ -97,7 +97,12 @@ def optimize_dtypes(
 
                 # first try to int64, then to float64, then to category
                 try:
-                    df[col] = df[col].astype(np.int64)
+                    candidate = df[col].astype(np.int64)
+                    # np.int64 cast silently truncates fractional floats (3.5 -> 3) instead of raising,
+                    # so verify the round-trip is exactly equal to the original values before accepting it.
+                    if not (candidate.astype(np.float64) == df[col].astype(np.float64)).all():
+                        raise ValueError(f"Column {col} contains fractional values; cannot be int64")
+                    df[col] = candidate
                     old_dtypes[col] = "int64"
                     int_fields.append(col)
                 except Exception:
@@ -228,7 +233,7 @@ def group_columns_by_dtype(df: pd.DataFrame) -> dict:
     return groups
 
 
-def classify_column_types(df: pd.DataFrame = None, col: Optional[str] = None, dtype: Any = None) -> tuple:
+def classify_column_types(df: Optional[pd.DataFrame] = None, col: Optional[str] = None, dtype: Any = None) -> tuple:
     """Return bunch of booleans: whether certain column is of particular dtype."""
     if dtype is None:
         assert (df is not None) and (col)  # nosec B101 - internal API-misuse guard: caller must supply either an explicit dtype or both df+col; not a security boundary

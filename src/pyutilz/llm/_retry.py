@@ -21,7 +21,11 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 # Configurable via environment variable; 0 means infinite.
-MAX_RETRY_ATTEMPTS: int = int(os.environ.get("PYUTILZ_LLM_MAX_RETRIES", "50"))
+_DEFAULT_MAX_RETRY_ATTEMPTS = 50
+try:
+    MAX_RETRY_ATTEMPTS: int = int(os.environ.get("PYUTILZ_LLM_MAX_RETRIES", str(_DEFAULT_MAX_RETRY_ATTEMPTS)))
+except ValueError:
+    MAX_RETRY_ATTEMPTS = _DEFAULT_MAX_RETRY_ATTEMPTS
 
 
 def log_retry(retry_state) -> None:

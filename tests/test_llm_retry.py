@@ -45,6 +45,31 @@ class TestLogRetry:
         assert "attempt 1" in caplog.text
 
 
+class TestMaxRetryAttemptsEnvFallback:
+    """Malformed PYUTILZ_LLM_MAX_RETRIES must fall back to the default (50), not crash."""
+
+    def _reload_retry_module(self):
+        import importlib
+        import pyutilz.llm._retry as retry_module
+
+        return importlib.reload(retry_module)
+
+    def test_invalid_env_value_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_LLM_MAX_RETRIES", "not-a-number")
+        retry_module = self._reload_retry_module()
+        assert retry_module.MAX_RETRY_ATTEMPTS == 50
+
+    def test_valid_env_value_is_respected(self, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_LLM_MAX_RETRIES", "7")
+        retry_module = self._reload_retry_module()
+        assert retry_module.MAX_RETRY_ATTEMPTS == 7
+
+    def test_missing_env_value_defaults_to_50(self, monkeypatch):
+        monkeypatch.delenv("PYUTILZ_LLM_MAX_RETRIES", raising=False)
+        retry_module = self._reload_retry_module()
+        assert retry_module.MAX_RETRY_ATTEMPTS == 50
+
+
 class TestRetryConfiguration:
     def test_infinite_retry_kwargs_keys(self):
         assert "wait" in INFINITE_RETRY_KWARGS

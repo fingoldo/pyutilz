@@ -105,7 +105,7 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     try:
         if isinstance(obj, str):
             if not os.path.isfile(obj):
-                logger.error("File %s not found" % obj)
+                logger.error("File %s not found", obj)
                 return
             else:
                 if verify_sidecar:
@@ -136,6 +136,6 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
             # in-memory bytes/file-like input is the caller's own data, produced within the same process
             return data
         else:
-            logger.warning("Unexpected input data type: %s" % type(obj))
+            logger.warning("Unexpected input data type: %s", type(obj))
     except Exception as e:
         logger.exception(e)

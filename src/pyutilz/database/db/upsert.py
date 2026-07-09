@@ -5,7 +5,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from pyutilz.database.db.sql_helpers import validate_sql_identifier
-from typing import Optional
+from typing import Iterable, Optional
 
 
 def build_upsert_query(
@@ -23,7 +23,7 @@ def build_upsert_query(
     history_table_name: Optional[str] = None,
     history_fields: Optional[list] = None,
     history_fields_aliases: Optional[dict] = None,
-    hash_fields: str = "",
+    hash_fields: Optional[Iterable[str]] = "",
     default_timestamp: str = "now()",
 ) -> str:
     """
@@ -54,6 +54,14 @@ def build_upsert_query(
         timestamp_check_fields = []
     if timestamp_update_fields is None:
         timestamp_update_fields = []
+    if isinstance(hash_fields, str):
+        # A bare str would otherwise be iterated character-by-character below (for hash_field in
+        # hash_fields), silently corrupting the generated SQL. "" (the default/no-op) stays as-is;
+        # any other bare str is treated as a single field name, matching the pre-fix behavior most
+        # callers actually relied on when they passed a single hash column.
+        hash_fields = [hash_fields] if hash_fields else []
+    else:
+        hash_fields = list(hash_fields) if hash_fields is not None else []
     # ------------------------------
     # Checks!
     # ------------------------------

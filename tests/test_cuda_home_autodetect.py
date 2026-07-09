@@ -10,7 +10,9 @@ import pathlib
 
 import pytest
 
-from pyutilz.core.pythonlib import _ensure_cuda_home_from_pip
+import logging
+
+from pyutilz.core.pythonlib import _ensure_cuda_home_from_pip, is_cuda_available, check_cpu_flag
 
 
 def _save():
@@ -63,3 +65,28 @@ def test_graceful_no_raise_when_unset():
         _ensure_cuda_home_from_pip()  # must never raise, whatever the environment
     finally:
         _restore(saved)
+
+
+def test_is_cuda_available_returns_false_and_logs_on_probe_failure(monkeypatch, caplog):
+    """A driver/runtime error inside numba.cuda.is_available() must be swallowed, not raised, and logged."""
+    import numba.cuda as numba_cuda
+
+    def _raise(*args, **kwargs):
+        raise AttributeError("simulated driver failure")
+
+    monkeypatch.setattr(numba_cuda, "is_available", _raise)
+    with caplog.at_level(logging.DEBUG, logger="pyutilz.core.pythonlib"):
+        result = is_cuda_available()
+    assert result is False
+    assert any("CUDA" in record.message for record in caplog.records)
+
+
+def test_check_cpu_flag_returns_false_and_logs_on_missing_flags_key(monkeypatch, caplog):
+    """A cpuinfo payload missing the 'flags' key must be swallowed, not raised, and logged."""
+    import cpuinfo
+
+    monkeypatch.setattr(cpuinfo, "get_cpu_info", lambda: {"brand_raw": "fake cpu"})
+    with caplog.at_level(logging.DEBUG, logger="pyutilz.core.pythonlib"):
+        result = check_cpu_flag("avx2")
+    assert result is False
+    assert any("avx2" in record.message for record in caplog.records)

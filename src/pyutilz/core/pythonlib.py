@@ -444,7 +444,7 @@ def read_timezoned_ts(inp):
         if len(parts) >= 2:
             return token.join((token.join(parts[:-1]), parts[-1].replace(":", "")))
         else:
-            logger.error("Unexpected: split by %s of ts %s returned less than 2 results" % (token, inp))
+            logger.error("Unexpected: split by %s of ts %s returned less than 2 results", token, inp)
             return inp
 
 
@@ -887,7 +887,8 @@ def is_cuda_available() -> bool:
         _ensure_cuda_home_from_pip()
         from numba import cuda
         return cuda.is_available()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-    except (ImportError, Exception):
+    except (ImportError, Exception) as e:  # nosec B110 - best-effort optional CUDA probe; failing here (e.g. numba absent or no driver) just reports no CUDA support
+        logger.debug("Failed to probe CUDA availability: %s", e)
         return False
 
 
@@ -904,5 +905,6 @@ def check_cpu_flag(flag: str = "avx2") -> bool:
         import cpuinfo
         info = cpuinfo.get_cpu_info()
         return flag in info["flags"]
-    except (ImportError, Exception):
+    except (ImportError, Exception) as e:  # nosec B110 - best-effort optional CPU-flag probe; failing here (e.g. py-cpuinfo absent or unexpected info shape) just reports flag unsupported
+        logger.debug("Failed to probe CPU flag %r: %s", flag, e)
         return False

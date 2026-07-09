@@ -31,6 +31,13 @@ from time import sleep
 import warnings
 import http
 import ssl
+import threading
+
+# Guards read-then-mutate access to the module-level scraping state below (sess, proxies,
+# headers, num_ip_queries, cur_max_ip_queries, was_blocked, proxy_* fields) when this module
+# is driven from multiple threads. Only the shared-state read/mutate sections are locked --
+# actual network I/O (the HTTP request itself) happens outside the lock.
+_state_lock = threading.Lock()
 
 delay: Optional[int] = 1
 max_ip_queries: Optional[int] = 0
@@ -228,30 +235,36 @@ def set_proxy(
 ) -> None:
     global proxies
     global proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, proxy_port, proxy_type
-    proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, proxy_port, proxy_type = (
-        m_proxy_user,
-        m_proxy_pass,
-        m_proxy_server,
-        m_proxy_min_port,
-        m_proxy_max_port,
-        m_proxy_port,
-        m_proxy_type,
-    )
-    if proxy_user is None or proxy_pass is None or proxy_server is None:
-        raise ValueError("set_proxy: proxy_user, proxy_pass and proxy_server are required (got None)")
-    proxies = get_new_smartproxy(
-        proxy_user,
-        proxy_pass,
-        proxy_server,
-        int(proxy_min_port) if proxy_min_port is not None else 20001,
-        int(proxy_max_port) if proxy_max_port is not None else 37960,
+    with _state_lock:
+        proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, proxy_port, proxy_type = (
+            m_proxy_user,
+            m_proxy_pass,
+            m_proxy_server,
+            m_proxy_min_port,
+            m_proxy_max_port,
+            m_proxy_port,
+            m_proxy_type,
+        )
+        if proxy_user is None or proxy_pass is None or proxy_server is None:
+            raise ValueError("set_proxy: proxy_user, proxy_pass and proxy_server are required (got None)")
+        local_proxy_user, local_proxy_pass, local_proxy_server = proxy_user, proxy_pass, proxy_server
+        local_proxy_min_port, local_proxy_max_port, local_proxy_port, local_proxy_type = proxy_min_port, proxy_max_port, proxy_port, proxy_type
+
+    new_proxies = get_new_smartproxy(
+        local_proxy_user,
+        local_proxy_pass,
+        local_proxy_server,
+        int(local_proxy_min_port) if local_proxy_min_port is not None else 20001,
+        int(local_proxy_max_port) if local_proxy_max_port is not None else 37960,
         last_used_dict=last_used_dict,
         min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
         failed_dict=failed_dict,
         min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
-        proxy_port=proxy_port,
-        proxy_type=proxy_type if proxy_type is not None else "http",
+        proxy_port=local_proxy_port,
+        proxy_type=local_proxy_type if local_proxy_type is not None else "http",
     )
+    with _state_lock:
+        proxies = new_proxies
 
 
 def set_params(
@@ -388,13 +401,20 @@ def get_url(
             # print("Getting url %s,headers=%s,params=%s,proxies=%s,timeout=%s,cookies=%s" % (url,headers,params,proxies,timeout,sess.cookies.get_dict()))
 
             # We are trying to fetch some url. Do we need to create new proxy session?
-            if sess is None or ((max_ip_queries or 0) > 0 and num_ip_queries > cur_max_ip_queries):
+            with _state_lock:
+                need_new_session = sess is None or ((max_ip_queries or 0) > 0 and num_ip_queries > cur_max_ip_queries)
+            if need_new_session:
                 # If there is no session yet or we have downloaded too many items within current session already
                 get_new_session(b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                 if (max_ip_queries or 0) > 0:
-                    cur_max_ip_queries = int((max_ip_queries or 0) * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
+                    with _state_lock:
+                        cur_max_ip_queries = int((max_ip_queries or 0) * (0.6 + 0.4 * random()))  # nosec B311 - randomizes the per-session IP-query budget to avoid a fixed rotation pattern; non-cryptographic jitter, not a security control
                     logger.info("cur_max_ip_queries set to %d", cur_max_ip_queries)
-            headers_to_use = custom_headers if custom_headers else headers
+            with _state_lock:
+                sess_snapshot = sess
+                proxies_snapshot = proxies
+                headers_snapshot = headers
+            headers_to_use = custom_headers if custom_headers else headers_snapshot
             if inject_headers:
                 if headers_to_use:
                     headers_to_use = headers_to_use.copy()
@@ -410,18 +430,19 @@ def get_url(
                     headers_to_use = {key.lower(): value for key, value in headers_to_use.items()}
 
             if verbose:
-                report_params(url, proxies, params, data, json, headers_to_use, timeout)
+                report_params(url, proxies_snapshot, params, data, json, headers_to_use, timeout)
 
             if b_use_session:
-                obj = sess
+                obj = sess_snapshot
             else:
                 obj = requests
 
             method = getattr(obj, verb)
 
-            res = method(url, headers=headers_to_use, params=params, data=data, json=json, proxies=proxies, timeout=timeout)
+            res = method(url, headers=headers_to_use, params=params, data=data, json=json, proxies=proxies_snapshot, timeout=timeout)
 
-            num_ip_queries = num_ip_queries + 1
+            with _state_lock:
+                num_ip_queries = num_ip_queries + 1
 
         except Exception as e:
             se = str(e)
@@ -521,15 +542,12 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
     global sess, proxies, headers
     global num_ip_queries
 
-    sess = requests.Session()
-    num_ip_queries = 0
+    new_sess = requests.Session()
 
-    logger.debug("Created new web session")
-
-    headers = template_headers
+    new_headers = template_headers
     if b_random_ua:
-        if headers is None:
-            headers = dict()
+        if new_headers is None:
+            new_headers = dict()
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore")
@@ -538,24 +556,37 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
             # ua = UserAgent(verify_ssl=False)
             # headers['user-agent']=ua.random
 
-            headers["user-agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2762.73 Safari/537.36"
+            new_headers["user-agent"] = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2762.73 Safari/537.36"
+            )
+
+    with _state_lock:
+        sess = new_sess
+        num_ip_queries = 0
+        headers = new_headers
+        local_proxy_user, local_proxy_pass, local_proxy_server = proxy_user, proxy_pass, proxy_server
+        local_proxy_min_port, local_proxy_max_port, local_proxy_port, local_proxy_type = proxy_min_port, proxy_max_port, proxy_port, proxy_type
+
+    logger.debug("Created new web session")
 
     if b_use_proxy:
-        if proxy_server:
-            proxies = get_new_smartproxy(
-                proxy_user,
-                proxy_pass,
-                proxy_server,
-                int(proxy_min_port) if proxy_min_port is not None else 20001,
-                int(proxy_max_port) if proxy_max_port is not None else 37960,
+        if local_proxy_server:
+            new_proxies = get_new_smartproxy(
+                local_proxy_user,
+                local_proxy_pass,
+                local_proxy_server,
+                int(local_proxy_min_port) if local_proxy_min_port is not None else 20001,
+                int(local_proxy_max_port) if local_proxy_max_port is not None else 37960,
                 last_used_dict=last_used_dict,
                 min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                 failed_dict=failed_dict,
                 min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
-                proxy_port=proxy_port,
-                proxy_type=proxy_type if proxy_type is not None else "http",
+                proxy_port=local_proxy_port,
+                proxy_type=local_proxy_type if local_proxy_type is not None else "http",
             )
-            logger.info("proxy_server=%s", proxy_server)
+            with _state_lock:
+                proxies = new_proxies
+            logger.info("proxy_server=%s", local_proxy_server)
 
 
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
@@ -594,6 +625,7 @@ def download_to_file(
         headers = {}
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
 
+    request: Optional[requests.Response] = None
     nattempts = 0
     while nattempts < max_attempts:
         try:
@@ -608,20 +640,26 @@ def download_to_file(
         else:
             break
 
-    nattempts = 0
-    while nattempts < max_attempts:
-        try:
-            # Open the output file and make sure we write in binary mode
-            with open(filename, "wb") as fh:
-                # Walk through the request response in chunks of chunk_size * 1024 bytes
-                for chunk in request.iter_content(chunk_size * 1024):
-                    # Write the chunk to the file
-                    fh.write(chunk)
-                    # Optionally we can check here if the download is taking too long
-        except Exception as e:
-            logger.exception(e)
-            sleep(10 * random())  # nosec B311 - random jitter on the file-write-retry backoff sleep, not security-sensitive
-            logger.info("Making another attempt")
-            nattempts += 1
-        else:
-            break
+    if request is None:
+        return
+
+    try:
+        nattempts = 0
+        while nattempts < max_attempts:
+            try:
+                # Open the output file and make sure we write in binary mode
+                with open(filename, "wb") as fh:
+                    # Walk through the request response in chunks of chunk_size * 1024 bytes
+                    for chunk in request.iter_content(chunk_size * 1024):
+                        # Write the chunk to the file
+                        fh.write(chunk)
+                        # Optionally we can check here if the download is taking too long
+            except Exception as e:
+                logger.exception(e)
+                sleep(10 * random())  # nosec B311 - random jitter on the file-write-retry backoff sleep, not security-sensitive
+                logger.info("Making another attempt")
+                nattempts += 1
+            else:
+                break
+    finally:
+        request.close()

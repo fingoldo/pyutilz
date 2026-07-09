@@ -705,7 +705,7 @@ class ClaudeCodeProvider(LLMProvider):
                 return json.loads(json_match.group(0))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
             return json.loads(text)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {e}\nResponse: {text}")
+            logger.error("Failed to parse JSON: %s\nResponse: %s", e, text)
             raise ValueError(f"Invalid JSON response: {e}")
 
     async def generate_batch(
@@ -724,7 +724,7 @@ class ClaudeCodeProvider(LLMProvider):
                 )
                 yield {"id": request_id, "result": result}
             except Exception as e:
-                logger.error(f"Batch request {request_id} failed: {e}")
+                logger.error("Batch request %s failed: %s", request_id, e)
                 yield {"id": request_id, "error": str(e)}
 
     def estimate_cost(
@@ -778,6 +778,10 @@ class ClaudeCodeProvider(LLMProvider):
             )
         except asyncio.TimeoutError:
             proc.kill()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except Exception as reap_exc:
+                logger.warning(f"Failed to reap timed-out claude /status process (pid={proc.pid}): {reap_exc}")
             raise NotImplementedError("claude /status timed out; CLI may be hung.")
         text = (stdout or b"").decode(errors="replace")
 

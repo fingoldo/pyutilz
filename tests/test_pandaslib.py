@@ -83,6 +83,12 @@ class TestRemoveStaleColumns:
         assert "var" in result
         assert "const" not in result
 
+    def test_empty_dataframe_no_rows(self):
+        """Regression: 0-row DataFrame used to raise IndexError from X.iloc[0]."""
+        df = pd.DataFrame({"a": pd.Series(dtype=int), "b": pd.Series(dtype=int)})
+        result = remove_stale_columns(df)
+        assert result == ["a", "b"]
+
 
 class TestConcatAndFlushDfList:
     """Test concat_and_flush_df_list function"""

@@ -204,3 +204,43 @@ def test_parallel_module_imports_successfully():
     except ImportError as e:
         # Some dependencies might be missing, but import should not crash
         pytest.skip(f"parallel module dependencies not available: {e}")
+
+
+# ---------------------------------------------------------------------------
+# applyfunc_parallel — return type genuinely depends on return_dataframe.
+# Was annotated "-> list" but with the default return_dataframe=True it
+# actually returns a pd.DataFrame (via pd.concat). Fixed the annotation to
+# Union[list, pd.DataFrame]; these tests pin the ACTUAL runtime return types
+# for both branches so the annotation can never silently drift from reality again.
+# ---------------------------------------------------------------------------
+
+import pandas as pd
+
+
+def _echo_df(chunk):
+    return pd.DataFrame({"x": chunk})
+
+
+def _echo_list(chunk):
+    return list(chunk)
+
+
+def test_applyfunc_parallel_returns_dataframe_by_default():
+    from pyutilz.system.parallel import applyfunc_parallel
+
+    result = applyfunc_parallel(iterable=[([1, 2],), ([3, 4],)], func=_echo_df, n_cores=1, use_threads=True)
+    assert isinstance(result, pd.DataFrame)
+    assert list(result["x"]) == [1, 2, 3, 4]
+
+
+def test_applyfunc_parallel_returns_list_when_return_dataframe_false():
+    from pyutilz.system.parallel import applyfunc_parallel
+
+    result = applyfunc_parallel(
+        iterable=[([1, 2],), ([3, 4],)], func=_echo_list, n_cores=1, return_dataframe=False, use_threads=True
+    )
+    # not a DataFrame (that's the whole point of the annotation fix); tqdmu wraps the raw
+    # pool.starmap() result in a tqdm progress iterator rather than returning a bare list,
+    # but its contents are exactly the per-chunk results, list-like end to end.
+    assert not isinstance(result, pd.DataFrame)
+    assert list(result) == [[1, 2], [3, 4]]

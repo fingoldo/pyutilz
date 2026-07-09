@@ -307,7 +307,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
                 browser = start_selenium()
             else:
                 logger.exception(e)
-                return
+                return False
         else:
             break
     res = False
@@ -340,7 +340,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
                 logger.debug("find_element_by_xpath login fallback failed: %s", e)
         if elem_login is None:
             logger.error(f"Could not login to {target}: elem_login {login_input_name} not located.")
-            return
+            return False
 
         pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
         elem_pwd = None
@@ -353,7 +353,7 @@ def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: 
             logger.debug("find_element_by_name password attempt failed: %s", e)
         if elem_pwd is None:
             logger.error(f"Could not login to {target}: elem_pwd {password_input_name} not located.")
-            return
+            return False
 
         pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
         elem_pwd.send_keys(Ret)

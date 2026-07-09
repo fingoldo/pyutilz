@@ -18,7 +18,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, Iterator, List, Optional, Sequence, Sized
+from typing import Any, Callable, Iterator, List, Optional, Sequence, Sized, Union
 
 import numpy as np
 
@@ -181,8 +181,12 @@ def applyfunc_parallel(
     initializer=None,
     initargs=(),
     use_threads: bool = False,
-) -> list:
-    """Runs function in parallel using the multiprocessing Pool."""
+) -> Union[list, pd.DataFrame]:
+    """Runs function in parallel using the multiprocessing Pool.
+
+    Returns a ``pd.DataFrame`` (via ``pd.concat``) when ``return_dataframe=True`` (the default),
+    or a bare ``list`` of per-chunk results when ``return_dataframe=False``.
+    """
     if n_cores is None:
         n_cores = min(psutil.cpu_count(logical=logical), len(iterable))
     try:

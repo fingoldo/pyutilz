@@ -219,3 +219,95 @@ def test_distributed_module_imports_successfully():
     except ImportError as e:
         # Some dependencies might be missing
         pytest.skip(f"distributed module dependencies not available: {e}")
+
+
+class TestIdentityRaceCondition:
+    """Regression test for a concurrent register_scraper/heartbeat_scraper identity race.
+
+    register_scraper() mutates the module-level scraper-identity globals
+    (_container.node_id, pid, m_app_name, m_scraper_name, m_version, m_ip) and
+    get_heartbeat_sql()/heartbeat_scraper() read all of them together to build one
+    SQL payload. Without a lock, a heartbeat running concurrently with a
+    re-registration could observe a torn mix of old and new identity fields
+    (e.g. the new node_id paired with the old scraper name). This test drives
+    both from multiple threads (with all DB calls mocked out) and asserts every
+    captured heartbeat payload is one of the exact identities that was ever
+    registered, never a mixed/impossible combination.
+    """
+
+    def test_concurrent_register_and_heartbeat_never_mix_identities(self, monkeypatch):
+        import threading
+
+        import pyutilz.system.distributed as distributed_module
+
+        # Two distinct, fully self-consistent identities that will be registered
+        # from different threads. A correct implementation must never produce a
+        # heartbeat payload that mixes fields from both.
+        identities = [
+            {"node_id": 111, "scraper_name": "scraperA", "version": "v1", "app_name": "appA", "ip": "10.0.0.1"},
+            {"node_id": 222, "scraper_name": "scraperB", "version": "v2", "app_name": "appB", "ip": "10.0.0.2"},
+        ]
+
+        def fake_db_command(action, table, *args, **kwargs):
+            # Simulate the "select"/"insert" against "nodes" setting node_id on
+            # the fetch_into container, driven by whichever identity is currently
+            # being registered (tracked via a thread-local set just before the call).
+            fetch_into = kwargs.get("fetch_into")
+            if fetch_into is not None and table == "nodes":
+                fetch_into.node_id = _current_identity.node_id
+
+        def fake_get_system_info(only_stats=False):
+            return {"host_name": "h", "os_machine_guid": "g", "os_serial": "s"}
+
+        def fake_safe_execute(sql_params):
+            sql, params = sql_params
+            if sql:
+                captured.append(params)
+
+        captured = []
+        _current_identity = threading.local()
+
+        monkeypatch.setattr(distributed_module.db, "db_command", fake_db_command)
+        monkeypatch.setattr(distributed_module.db, "safe_execute", fake_safe_execute)
+        monkeypatch.setattr(distributed_module.system, "get_system_info", fake_get_system_info)
+        monkeypatch.setattr(distributed_module.pythonlib, "lookup_in_stack", lambda *_a, **_k: None)
+        monkeypatch.setattr(distributed_module.web, "get_external_ip", lambda: "0.0.0.0")
+
+        # Reset shared container so each run starts unregistered.
+        distributed_module._container.node_id = None
+
+        errors = []
+
+        def worker(identity):
+            _current_identity.node_id = identity["node_id"]
+            try:
+                for _ in range(20):
+                    with distributed_module._identity_lock:
+                        distributed_module.m_app_name = identity["app_name"]
+                        distributed_module.m_scraper_name = identity["scraper_name"]
+                        distributed_module.m_version = identity["version"]
+                        distributed_module.m_ip = identity["ip"]
+                        distributed_module._container.node_id = identity["node_id"]
+                    distributed_module.heartbeat_scraper(status="ok")
+            except Exception as e:  # pragma: no cover - surfaced via errors list
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(identity,)) for identity in identities]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
+
+        valid_combinations = {
+            (identity["node_id"], identity["version"], identity["scraper_name"], identity["app_name"], identity["ip"])
+            for identity in identities
+        }
+
+        for params in captured:
+            if params is None:
+                continue
+            node_id_seen, pid_seen, version_seen, scraper_name_seen, status_seen, ip_seen, app_name_seen = params
+            combo = (node_id_seen, version_seen, scraper_name_seen, app_name_seen, ip_seen)
+            assert combo in valid_combinations, f"Torn/mixed identity in heartbeat payload: {params}"

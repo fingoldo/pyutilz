@@ -19,6 +19,7 @@ from pyutilz.strings import camel_case_split
     ("HTMLParser", ["HTMLParser"]),  # all-upper prefix not split
     ("a", ["a"]),
     ("alreadylower", ["alreadylower"]),
+    ("", []),
 ])
 def test_camel_case_split(inp, expected):
     assert camel_case_split(inp) == expected

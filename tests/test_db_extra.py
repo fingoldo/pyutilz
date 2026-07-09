@@ -265,3 +265,177 @@ def test_execute_alchemy_runs_sql_against_the_engine():
         assert rows == [(1,)]
     finally:
         db.conn_alchemy = None
+
+
+# ---------------------------------------------------------------------------
+# db.basic_db_execute  (InternalError branch used to log-and-fall-through with
+# no return/raise/retry-increment, so callers got an implicit None indistinguishable
+# from "no rows" - or, inside a caller-added retry wrapper, an infinite silent loop.
+# Fixed to re-raise InternalError so it propagates to the caller.)
+# ---------------------------------------------------------------------------
+
+
+def test_basic_db_execute_reraises_internal_error(monkeypatch):
+    from psycopg2 import InternalError
+    import pyutilz.database.db as db
+
+    def fake_get_cursor(*args, **kwargs):
+        raise InternalError("current transaction is aborted")
+
+    monkeypatch.setattr(db, "get_cursor", fake_get_cursor)
+
+    with pytest.raises(InternalError):
+        db.basic_db_execute("execute", "select 1")
+
+
+# ---------------------------------------------------------------------------
+# db.connect_to_db  (retry loop leaked the just-opened psycopg2 connection
+# when a later step in the same try block - set_isolation_level, create_engine,
+# init_params_fn() - raised after psycopg2.connect() had already succeeded.
+# Fixed to close() the freshly-opened conn before sleeping/retrying.)
+# ---------------------------------------------------------------------------
+
+
+def test_connect_to_db_closes_leaked_conn_on_later_failure(monkeypatch):
+    import pyutilz.database.db as db
+
+    closed = {"n": 0}
+
+    class FakeConn:
+        def __init__(self):
+            self.closed_flag = False
+
+        def set_isolation_level(self, level):
+            # simulate a failure AFTER the connection was already opened
+            raise RuntimeError("isolation level failed")
+
+        def close(self):
+            closed["n"] += 1
+            self.closed_flag = True
+
+    attempts = {"n": 0}
+
+    def fake_psycopg2_connect(**params):
+        attempts["n"] += 1
+        if attempts["n"] >= 3:
+            # stop the infinite retry loop by making the whole connect succeed
+            # on the 3rd attempt (no set_isolation_level failure this time)
+            class WorkingConn(FakeConn):
+                def set_isolation_level(self, level):
+                    pass
+
+                def cursor(self):
+                    return object()
+
+            return WorkingConn()
+        return FakeConn()
+
+    monkeypatch.setattr(db.psycopg2, "connect", fake_psycopg2_connect)
+    monkeypatch.setattr(db.sqlalchemy, "create_engine", lambda *a, **k: object())
+    monkeypatch.setattr(db, "sleep", lambda *_: None)
+
+    db.connect_to_db(
+        m_db_name="testdb",
+        m_db_host="localhost",
+        m_db_port=5432,
+        m_db_username="u",
+        m_db_pwd="p",
+        m_db_flavor="postgres",
+    )
+
+    # Both failed attempts must have had their leaked connection closed.
+    assert closed["n"] == 2
+    assert attempts["n"] == 3
+
+
+def test_connect_to_db_close_failure_does_not_prevent_retry(monkeypatch):
+    """If conn.close() itself raises (broken connection), the retry loop must
+    still continue rather than propagating that secondary exception."""
+    import pyutilz.database.db as db
+
+    class BrokenCloseConn:
+        def set_isolation_level(self, level):
+            raise RuntimeError("isolation level failed")
+
+        def close(self):
+            raise RuntimeError("close also failed")
+
+    attempts = {"n": 0}
+
+    def fake_psycopg2_connect(**params):
+        attempts["n"] += 1
+        if attempts["n"] >= 2:
+            class WorkingConn:
+                def set_isolation_level(self, level):
+                    pass
+
+                def close(self):
+                    pass
+
+                def cursor(self):
+                    return object()
+
+            return WorkingConn()
+        return BrokenCloseConn()
+
+    monkeypatch.setattr(db.psycopg2, "connect", fake_psycopg2_connect)
+    monkeypatch.setattr(db.sqlalchemy, "create_engine", lambda *a, **k: object())
+    monkeypatch.setattr(db, "sleep", lambda *_: None)
+
+    # Must not raise, despite close() itself failing on the first attempt.
+    db.connect_to_db(
+        m_db_name="testdb",
+        m_db_host="localhost",
+        m_db_port=5432,
+        m_db_username="u",
+        m_db_pwd="p",
+        m_db_flavor="postgres",
+    )
+
+
+# ---------------------------------------------------------------------------
+# upsert.build_upsert_query  hash_fields contract (was type-hinted str with
+# default '', but iterated element-by-element in several places; a caller
+# passing a single str got it split character-by-character into the SQL).
+# ---------------------------------------------------------------------------
+
+from pyutilz.database.db.upsert import build_upsert_query
+
+
+def test_build_upsert_query_hash_fields_bare_str_treated_as_single_field():
+    """A bare str hash_fields must be treated as ONE field name, not iterated
+    char-by-char (pre-fix: 'md5hash' -> validate_sql_identifier('m'), ('d'), ...
+    which either raises on the first single-char token or corrupts the SQL)."""
+    query = build_upsert_query(
+        fields_names=["id", "name", "md5hash"],
+        table_name="mytable",
+        conflict_fields=["id"],
+        history_table_name="mytable_history",
+        history_fields=["id", "name"],
+        hash_fields="md5hash",
+    )
+    # the whole field name must appear intact in the generated hash-changed condition
+    assert "c.md5hash" in query and "u.md5hash" in query
+    # and must NOT have been shredded into single-character conditions
+    assert "c.m " not in query and "u.m<" not in query
+
+
+def test_build_upsert_query_hash_fields_list_still_works():
+    query = build_upsert_query(
+        fields_names=["id", "name", "hash_a", "hash_b"],
+        table_name="mytable",
+        conflict_fields=["id"],
+        history_table_name="mytable_history",
+        history_fields=["id", "name"],
+        hash_fields=["hash_a", "hash_b"],
+    )
+    assert "c.hash_a" in query and "c.hash_b" in query
+
+
+def test_build_upsert_query_hash_fields_default_empty_still_works():
+    query = build_upsert_query(
+        fields_names=["id", "name"],
+        table_name="mytable",
+        conflict_fields=["id"],
+    )
+    assert "insert into mytable" in query

@@ -97,3 +97,77 @@ def test_mixed_types():
 
 def test_empty_dict():
     assert _get_func()({}) == {}
+
+
+def _get_properties_func():
+    from pyutilz.core.image import get_image_properties
+    return get_image_properties
+
+
+def test_get_image_properties_closes_handle_on_success(tmp_path):
+    """When given a path string, get_image_properties() must close the PIL handle it opened."""
+    fake_img = MagicMock()
+    fake_img.getexif.return_value = {}
+    fake_img.size = (10, 10)
+    fake_img.info = {}
+    fake_img.tobytes.return_value = b"\x00" * 100
+
+    import pyutilz.core.image as image_mod
+    image_mod.PIL.Image.open.return_value = fake_img
+
+    fpath = tmp_path / "fake.png"
+    fpath.write_bytes(b"not a real image, just needs to exist for getsize()")
+
+    get_image_properties = _get_properties_func()
+    image_bytes, res = get_image_properties(str(fpath))
+
+    assert image_bytes == b"\x00" * 100
+    fake_img.close.assert_called_once()
+
+
+def test_get_image_properties_closes_handle_on_exception(tmp_path):
+    """The file handle must be closed even when processing (e.g. tobytes()) raises."""
+    fake_img = MagicMock()
+    fake_img.getexif.return_value = {}
+    fake_img.size = (10, 10)
+    fake_img.info = {}
+    fake_img.tobytes.side_effect = OSError("corrupt image data")
+
+    import pyutilz.core.image as image_mod
+    image_mod.PIL.Image.open.return_value = fake_img
+
+    fpath = tmp_path / "corrupt.png"
+    fpath.write_bytes(b"corrupt bytes")
+
+    get_image_properties = _get_properties_func()
+    with pytest.raises(OSError):
+        get_image_properties(str(fpath))
+
+    fake_img.close.assert_called_once()
+
+
+def test_get_image_properties_does_not_close_caller_provided_image():
+    """If caller passes an already-open Image object, this function must not close it."""
+    fake_img = MagicMock()
+    fake_img.getexif.return_value = {}
+    fake_img.size = (10, 10)
+    fake_img.info = {}
+    fake_img.tobytes.return_value = b"\x00" * 100
+
+    get_image_properties = _get_properties_func()
+    image_bytes, res = get_image_properties(fake_img)
+
+    assert image_bytes == b"\x00" * 100
+    fake_img.close.assert_not_called()
+
+
+def test_invalid_bytes_logs_warning(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="pyutilz.core.image"):
+        result = _get_func()({"a": b"\x80\x81\x82"})
+
+    assert "a" not in result
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert "a" in caplog.records[0].message

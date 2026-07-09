@@ -197,6 +197,31 @@ class TestRemoveConstantColumnsPrewarm:
         assert "var" in df.columns
         assert len(df.columns) == 1
 
+    def test_prewarm_prune_many_false_positives_O_k_fix(self):
+        # Regression test for the O(k^2) susp_columns.remove(col) bug: many candidate
+        # columns are constant only within the prewarm window and must all be pruned,
+        # while genuinely constant columns and varying columns must be handled correctly.
+        n = 15_000
+        prewarm_size = 10_000
+        n_true_const = 5
+        n_false_positive = 50
+        data = {}
+        for i in range(n_true_const):
+            data[f"true_const_{i}"] = [7] * n
+        for i in range(n_false_positive):
+            data[f"tricky_{i}"] = [1] * prewarm_size + list(range(n - prewarm_size))
+        data["var"] = list(range(n))
+        df = pd.DataFrame(data)
+
+        remove_constant_columns(df, prewarm_size=prewarm_size)
+
+        for i in range(n_true_const):
+            assert f"true_const_{i}" not in df.columns
+        for i in range(n_false_positive):
+            assert f"tricky_{i}" in df.columns
+        assert "var" in df.columns
+        assert len(df.columns) == n_false_positive + 1
+
 
 # ---------------------------------------------------------------------------
 # classify_column_types — dtype parameter

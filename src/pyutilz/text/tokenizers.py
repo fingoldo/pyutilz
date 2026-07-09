@@ -179,46 +179,48 @@ class AdvancedTokenizer:
         if isinstance(cur, list):
             print(cur)
         else:
-            while True:
-                chunk = cur.fetchmany(size=chunk_size)
-                chunksize = len(chunk)
-                if chunksize == 0:
-                    break
+            try:
+                while True:
+                    chunk = cur.fetchmany(size=chunk_size)
+                    chunksize = len(chunk)
+                    if chunksize == 0:
+                        break
 
-                for review in chunk:
+                    for review in chunk:
 
-                    res = ""
-                    for text in (review.title, review.body):
-                        if not text:
-                            continue
-                        if newlines:
-                            text = text.replace(newlines, "\n")
+                        res = ""
+                        for text in (review.title, review.body):
+                            if not text:
+                                continue
+                            if newlines:
+                                text = text.replace(newlines, "\n")
 
-                        text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
-                        if text is not None and len(text) > 1:
-                            # print(text)
-                            res += ("" if len(res) == 0 else " ") + sentencize_text(text)
+                            text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
+                            if text is not None and len(text) > 1:
+                                # print(text)
+                                res += ("" if len(res) == 0 else " ") + sentencize_text(text)
 
-                    if len(res) > 0:
-                        res = ensure_space_after_comma(res)
-                        # print(res)
-                        self.tokenize(res)
+                        if len(res) > 0:
+                            res = ensure_space_after_comma(res)
+                            # print(res)
+                            self.tokenize(res)
 
-                # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
-                # Update stats
-                # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                    # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                    # Update stats
+                    # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-                nitems = nitems + chunksize
-                pbar.update(nitems)
-                if nitems > exp_length:
-                    pbar.total = nitems * 1.1
-                    pbar.refresh()
-                nchunks = nchunks + 1
-                logger.info("nchunks=%s,nitems=%s", nchunks, nitems)
-            pbar.total = nitems
-            pbar.refresh()
-            pbar.close()
-            cur.close()
+                    nitems = nitems + chunksize
+                    pbar.update(nitems)
+                    if nitems > exp_length:
+                        pbar.total = nitems * 1.1
+                        pbar.refresh()
+                    nchunks = nchunks + 1
+                    logger.info("nchunks=%s,nitems=%s", nchunks, nitems)
+                pbar.total = nitems
+                pbar.refresh()
+            finally:
+                pbar.close()
+                cur.close()
 
             if save_as:
                 self.save_tokens_to_file(file_name=save_as)

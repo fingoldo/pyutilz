@@ -38,6 +38,24 @@ class TestGetWmiObjAsDict:
         result = get_wmi_obj_as_dict(obj, ensure_int={"cores"})
         assert result["cores"] is None
 
+    def test_ensure_int_truncation_logs_precision_loss(self, caplog):
+        """Fractional values in an ensure_int field are still truncated (documented
+        intent) but the precision loss must be logged, not silently dropped."""
+        import logging
+        from pyutilz.system.system import get_wmi_obj_as_dict
+
+        obj = MagicMock()
+        obj.properties = ["free_space_mb"]
+        obj.free_space_mb = "1023.9"
+
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.system.system._common"):
+            result = get_wmi_obj_as_dict(obj, ensure_int={"free_space_mb"})
+
+        assert result["free_space_mb"] == 1023
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("free_space_mb" in msg for msg in messages)
+        assert any("precision" in msg.lower() for msg in messages)
+
     def test_decode_dict(self):
         from pyutilz.system.system import get_wmi_obj_as_dict
         obj = MagicMock()

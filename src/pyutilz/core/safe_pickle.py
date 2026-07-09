@@ -44,6 +44,8 @@ import hashlib
 import logging
 import os
 import pickle  # nosec B403 - this module's whole purpose is guarding pickle.load behind sha256 sidecar verification (see safe_load below and the module-level THREAT MODEL CAVEAT docstring); callers needing tamper-resistance against a co-located attacker must layer keyed integrity on top
+import threading
+import time
 from os.path import isfile
 from typing import Any, Optional
 
@@ -166,18 +168,25 @@ def safe_load(path: str, *, allow_unverified: Optional[bool] = None, env_var: st
 def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -> None:
     """``pickle.dump`` to ``path`` ATOMICALLY and auto-write the matching ``.sha256`` sidecar.
 
-    Writes to a per-process temp file, fsyncs, then ``os.replace`` onto ``path`` (atomic rename on POSIX and
-    Windows for a same-dir target), so a crash mid-dump leaves the previous file intact instead of a truncated
-    one, and two concurrent same-key writers never interleave into a corrupt file (last full writer wins). The
-    sidecar is written AFTER the pickle is on disk so the hash matches the final bytes.
+    Writes to a per-process-and-thread temp file, fsyncs, then ``os.replace`` onto ``path`` (atomic rename on
+    POSIX and Windows for a same-dir target), so a crash mid-dump leaves the previous file intact instead of a
+    truncated one, and two concurrent same-key writers -- even two threads in the same process -- never
+    interleave into a corrupt file (last full writer wins). The sidecar is written AFTER the pickle is on disk
+    so the hash matches the final bytes.
+
+    On Windows, ``os.replace`` onto a target that a second thread is renaming onto in the same instant can
+    transiently raise ``PermissionError`` (sharing violation, WinError 5) even though each writer has its own
+    temp file -- this is an OS-level race in ``MoveFileEx`` itself, not a corruption. That transient error is
+    retried with a short backoff so "last full writer wins" holds without a spurious raise; a still-failing
+    replace after the retry budget is a real error and propagates.
     """
-    tmp = f"{path}.tmp.{os.getpid()}"
+    tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
     try:
         with open(tmp, "wb") as f:
             pickle.dump(obj, f, protocol=protocol)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except Exception:
         try:
             os.remove(tmp)
@@ -185,3 +194,19 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
             pass
         raise
     write_sidecar(path)
+
+
+def _replace_with_retry(src: str, dst: str, *, attempts: int = 10, base_delay: float = 0.01) -> None:
+    """``os.replace(src, dst)`` retrying transient Windows sharing-violation ``PermissionError``.
+
+    Only ``PermissionError`` is retried (the concurrent-replace race); any other exception propagates
+    immediately on the first attempt.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(base_delay * (attempt + 1))

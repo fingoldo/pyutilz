@@ -271,6 +271,24 @@ class TestGetSparseMemoryUsage:
         # Float64 should use more memory than float32
         assert memory_f64 > memory_f32
 
+    def test_broken_csr_matrix_logs_warning(self, caplog):
+        """Test that a genuinely broken csr_matrix (missing expected attribute)
+        still returns -1, but distinguishably logs a warning (unlike the
+        unsupported-type case, which is silent)."""
+        data = np.array([1, 2, 3, 4], dtype=np.int32)
+        indices = np.array([0, 2, 1, 0], dtype=np.int32)
+        indptr = np.array([0, 2, 3, 4], dtype=np.int32)
+
+        matrix = csr_matrix((data, indices, indptr), shape=(3, 3))
+        del matrix.__dict__["data"]
+
+        with caplog.at_level("WARNING"):
+            memory = get_sparse_memory_usage(matrix)
+
+        assert memory == -1
+        assert any("AttributeError" in record.message or "get_sparse_memory_usage" in record.message for record in caplog.records)
+        assert len(caplog.records) > 0
+
     def test_empty_matrix_memory(self):
         """Test memory calculation for empty sparse matrix"""
         matrix = csr_matrix((0, 0), dtype=np.int32)

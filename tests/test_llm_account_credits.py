@@ -256,6 +256,33 @@ class TestProviderStubMessages:
             await p.get_account_credits()
 
 
+class TestClaudeCodeCheckAccountLimitsReaping:
+    """check_account_limits() must reap the child process (await proc.wait())
+    after killing it on timeout, not just fire-and-forget proc.kill()."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_reaps_killed_process(self):
+        import asyncio as _asyncio
+        from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
+
+        p = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
+
+        fake_proc = MagicMock()
+        fake_proc.pid = 12345
+        fake_proc.kill = MagicMock()
+        fake_proc.wait = AsyncMock(return_value=0)
+        fake_proc.communicate = AsyncMock(side_effect=_asyncio.TimeoutError())
+
+        with patch("pyutilz.llm.claude_code_provider._find_claude_executable", return_value="claude"), \
+             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)), \
+             patch("asyncio.wait_for", AsyncMock(side_effect=[_asyncio.TimeoutError(), 0])):
+            with pytest.raises(NotImplementedError, match="timed out"):
+                await p.check_account_limits()
+
+        fake_proc.kill.assert_called_once()
+        fake_proc.wait.assert_called_once()
+
+
 class TestUniformInterface:
     """Every provider exposes both methods (even if NotImplementedError) —
     callers can write `await provider.get_account_credits()` polymorphically

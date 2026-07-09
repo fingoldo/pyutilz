@@ -114,8 +114,7 @@ class TestLevenshteinStringsSimilarity:
         assert 0 < result < 1
 
     def test_empty_both(self):
-        with pytest.raises(ZeroDivisionError):
-            levenshtein_strings_similarity("", "")
+        assert levenshtein_strings_similarity("", "") == 1.0
 
     def test_one_empty(self):
         assert levenshtein_strings_similarity("hello", "") == 0.0
@@ -175,6 +174,11 @@ class TestContigousStringsSimilarity:
     def test_no_common(self):
         sim, root = contigous_strings_similarity("abc", "xyz")
         assert sim == 0.0
+
+    def test_empty_both(self):
+        sim, root = contigous_strings_similarity("", "")
+        assert sim == 1.0
+        assert root == ""
 
     def test_left_only(self):
         sim, root = contigous_strings_similarity("abcXXX", "abcYYY")
@@ -583,3 +587,35 @@ class TestEdgeCases:
         result = sim_fn(["CAT"], ["CATEGORY"])
         assert result is not None
         assert result > 0.5  # prefix match bonus
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Long-input safety warning (documented O(w*N^2) complexity guard)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestLongInputWarning:
+    """sentences_similarity/_numba log a warning above SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD
+    tokens, since the greedy matching pass is O(w_min * N_a * N_b) and degrades quadratically-ish
+    on long inputs (benchmarked: N=10 -> ~0.3ms, N=80 -> ~25-30ms per call, pure-Python path)."""
+
+    @pytest.mark.parametrize("sim_fn", [sentences_similarity, sentences_similarity_numba])
+    def test_warns_above_threshold(self, sim_fn, caplog):
+        from pyutilz.text.similarity import SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD
+
+        n = SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD + 1
+        a = [f"WORD{i}" for i in range(n)]
+        b = [f"WORD{i}" for i in range(n)]
+        with caplog.at_level("WARNING"):
+            sim_fn(a, b)
+        assert any("exceeding the safe threshold" in r.message for r in caplog.records)
+
+    @pytest.mark.parametrize("sim_fn", [sentences_similarity, sentences_similarity_numba])
+    def test_no_warning_below_threshold(self, sim_fn, caplog):
+        from pyutilz.text.similarity import SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD
+
+        n = SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD - 1
+        a = [f"WORD{i}" for i in range(n)]
+        b = [f"WORD{i}" for i in range(n)]
+        with caplog.at_level("WARNING"):
+            sim_fn(a, b)
+        assert not any("exceeding the safe threshold" in r.message for r in caplog.records)

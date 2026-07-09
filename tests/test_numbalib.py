@@ -6,8 +6,16 @@ Tests cover:
 - Mutable default argument fix in python_dict_2_numba_dict
 """
 
+import os
+
 import pytest
 import numpy as np
+
+# Under NUMBA_DISABLE_JIT=1 (used by the nightly numba-coverage workflow to make @njit
+# kernel bodies visible to coverage.py), numba.typed.Dict() itself falls back to returning
+# a plain dict -- this is numba's own documented debug-mode behavior, not a pyutilz bug.
+# Assertions that pin the exact container type need to expect a plain dict in that mode.
+_NUMBA_JIT_DISABLED = os.environ.get("NUMBA_DISABLE_JIT") == "1"
 
 
 class TestSetNumbaRandomSeed:
@@ -135,8 +143,9 @@ class TestPythonDict2NumbaDict:
         result2 = python_dict_2_numba_dict(python_dict2)
 
         # Should be independent
-        assert isinstance(result1, numba.typed.Dict)
-        assert isinstance(result2, numba.typed.Dict)
+        expected_type = dict if _NUMBA_JIT_DISABLED else numba.typed.Dict
+        assert isinstance(result1, expected_type)
+        assert isinstance(result2, expected_type)
 
         # Should have correct values
         assert len(result1) == 2
@@ -150,9 +159,21 @@ class TestPythonDict2NumbaDict:
         python_dict = {"x": 10, "y": 20}
         result = python_dict_2_numba_dict(python_dict)
 
-        assert isinstance(result, numba.typed.Dict)
+        assert isinstance(result, dict if _NUMBA_JIT_DISABLED else numba.typed.Dict)
         assert "x" in result
         assert result["x"] == 10
+
+    def test_explicit_none_default(self):
+        """Test that passing numba_dict=None explicitly (Optional[...] annotation) still works"""
+        from pyutilz.numbalib import python_dict_2_numba_dict
+        import numba
+
+        python_dict = {"p": 1, "q": 2}
+        result = python_dict_2_numba_dict(python_dict, numba_dict=None)
+
+        assert isinstance(result, dict if _NUMBA_JIT_DISABLED else numba.typed.Dict)
+        assert result["p"] == 1
+        assert result["q"] == 2
 
     def test_accepts_existing_numba_dict(self):
         """Test that function can accept existing numba_dict parameter"""

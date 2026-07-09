@@ -16,6 +16,7 @@ ensure_installed("")
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import threading
 from typing import Any, Optional, Tuple
 
 from pyutilz.database import db
@@ -33,6 +34,11 @@ pid = None
 node_id = None
 _container = Container()
 m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
+
+# Guards concurrent reads/writes of the scraper-node identity globals above
+# (_container, pid, m_app_name, m_scraper_name, m_version, m_ip) so a heartbeat
+# built from them is always a consistent snapshot, never a mix of old/new fields.
+_identity_lock = threading.Lock()
 
 
 def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] = None, app_name: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
@@ -62,7 +68,8 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     import inspect
     from datetime import datetime
 
-    pid = os.getpid()
+    with _identity_lock:
+        pid = os.getpid()
 
     frame = None
     if version is None:
@@ -83,7 +90,8 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     if ip is None:
         ip = web.get_external_ip()
 
-    m_app_name, m_scraper_name, m_version, m_ip = app_name, scraper_name, version, ip
+    with _identity_lock:
+        m_app_name, m_scraper_name, m_version, m_ip = app_name, scraper_name, version, ip
 
     if _container.node_id is None:
         try:
@@ -129,7 +137,11 @@ def get_heartbeat_sql(status: str = "ok", ip: Optional[str] = None) -> Tuple[str
         A ``(sql, params)`` tuple for safe parameterized execution. When the node
         has not been registered yet, returns ``("", None)``.
     """
-    if _container.node_id:
+    with _identity_lock:
+        node_id_snapshot = _container.node_id
+        pid_snapshot, version_snapshot, scraper_name_snapshot, app_name_snapshot, ip_snapshot = pid, m_version, m_scraper_name, m_app_name, m_ip
+
+    if node_id_snapshot:
         sql = """
             INSERT INTO scrapers(node, pid, last_ping_at, version, name, status, ip, application)
             VALUES (%s, %s, (now() at time zone 'utc'), %s, %s, %s, %s, %s)
@@ -141,7 +153,7 @@ def get_heartbeat_sql(status: str = "ok", ip: Optional[str] = None) -> Tuple[str
                 ip=excluded.ip,
                 application=excluded.application
         """
-        params = (_container.node_id, pid, m_version, m_scraper_name, status, ip if ip else m_ip, m_app_name)
+        params = (node_id_snapshot, pid_snapshot, version_snapshot, scraper_name_snapshot, status, ip if ip else ip_snapshot, app_name_snapshot)
         return (sql, params)
     else:
         return ("", None)

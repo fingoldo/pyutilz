@@ -102,6 +102,14 @@ jobs:
       run: ruff check .
       continue-on-error: true
 
+    # Advisory: cyclomatic-complexity scan, ported from mlframe's ci.yml. C901 is excluded
+    # from the blocking real-bugs select above (complexity is a design-taste signal, not a
+    # correctness bug), but tracking it separately surfaces the worst offenders without
+    # gating the build.
+    - name: Ruff mccabe complexity (advisory)
+      run: ruff check src/pyutilz --select C90 --statistics
+      continue-on-error: true
+
     # Advisory: prose typo scan (README/CHANGELOG/CONTRIBUTING/TESTING + docs are pyutilz's
     # primary documentation surface, proportionally more prose per LOC than mlframe).
     - name: Codespell (advisory)
@@ -165,3 +173,33 @@ jobs:
       with:
         name: pip-audit-report
         path: pip-audit-report.json
+
+  build:
+    # Packaging sanity check on every push/PR, not just at release-tag time (publish.yml
+    # already builds+twine-checks on tag push, but that's too late to catch a packaging bug --
+    # by then it's the actual release). Mirrors mlframe's ci.yml build-verification job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+        cache-dependency-path: pyproject.toml
+
+    - name: Build distributions
+      run: |
+        python -m pip install --upgrade pip build
+        python -m build
+
+    - name: Verify distributions with twine
+      run: |
+        pip install twine
+        twine check dist/*
+
+    - name: Install wheel + smoke import
+      run: |
+        pip install dist/*.whl
+        python -c "import pyutilz; print('pyutilz', pyutilz.__version__)"

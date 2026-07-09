@@ -177,7 +177,13 @@ def camel_case_split(str: str) -> list:
 
     >>>camel_case_split("ThisIsInCamelCase")
     ['This', 'Is', 'In', 'Camel', 'Case']
+
+    >>> camel_case_split("")
+    []
     """
+    if not str:
+        return []
+
     words = [[str[0]]]
 
     for c in str[1:]:

@@ -38,6 +38,7 @@ def ensure_bytes_converted(obj: dict) -> dict:
             try:
                 obj[field] = value.decode("UTF-8")
             except Exception:
+                logger.warning(f"Error when decoding byte property {field}: {value!r}")
                 del obj[field]
         elif isinstance(value, dict):
             ensure_bytes_converted(value)
@@ -57,80 +58,83 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[i
 
     # filesize
 
+    opened_here = False
     if isinstance(img, str):
         filesize = getsize(img)
         try:
             img = PIL.Image.open(img)
+            opened_here = True
         except Exception as e:
             logger.exception(e)
             return None, None
 
-    # get exif
-
     try:
-        exifdata = img.getexif()
-    except Exception as e:
-        logger.exception(e)
-        exifdata = {}
+        # get exif
 
-    # decode exif
+        try:
+            exifdata = img.getexif()
+        except Exception as e:
+            logger.exception(e)
+            exifdata = {}
 
-    decoded_exif = {}
-    for tag_id, tag_value in exifdata.items():
-        if type(tag_value) in (tuple, IFDRational):
-            tag_value = str(tag_value)
-        # get the tag name, instead of human unreadable tag id
-        tag = TAGS.get(tag_id)
-        if tag:
-            exifdata.get(tag_id)
-            # decode bytes
-            if isinstance(tag_value, bytes):
-                try:
-                    tag_value = tag_value.decode("UTF-8")
-                except Exception:
-                    logger.warning(f"Error when decoding byte property {tag}: {tag_value} in image {orig_img if isinstance(orig_img, str) else ''}")
-                    continue
+        # decode exif
 
-            decoded_exif[tag] = tag_value
-        else:
-            if not skip_empty_exif:
-                decoded_exif[tag_id] = tag_value
+        decoded_exif = {}
+        for tag_id, tag_value in exifdata.items():
+            if type(tag_value) in (tuple, IFDRational):
+                tag_value = str(tag_value)
+            # get the tag name, instead of human unreadable tag id
+            tag = TAGS.get(tag_id)
+            if tag:
+                exifdata.get(tag_id)
+                # decode bytes
+                if isinstance(tag_value, bytes):
+                    try:
+                        tag_value = tag_value.decode("UTF-8")
+                    except Exception:
+                        logger.warning(f"Error when decoding byte property {tag}: {tag_value} in image {orig_img if isinstance(orig_img, str) else ''}")
+                        continue
 
-    width, height = img.size
+                decoded_exif[tag] = tag_value
+            else:
+                if not skip_empty_exif:
+                    decoded_exif[tag_id] = tag_value
 
-    info = img.info
+        width, height = img.size
 
-    if info:
-        ensure_bytes_converted(info)
+        info = img.info
 
-        remove_json_defaults(info, {"jfif": 257, "jfif_version": "(1, 1)", "jfif_density": "(1, 1)"}, warn_if_not_default=False)
+        if info:
+            ensure_bytes_converted(info)
 
-        if "exif" in info:
-            if not decoded_exif:
-                decoded_exif = info["exif"].copy()
-            del info["exif"]
+            remove_json_defaults(info, {"jfif": 257, "jfif_version": "(1, 1)", "jfif_density": "(1, 1)"}, warn_if_not_default=False)
 
-    # convert to bytes
+            if "exif" in info:
+                if not decoded_exif:
+                    decoded_exif = info["exif"].copy()
+                del info["exif"]
 
-    try:
+        # convert to bytes
+
         image_bytes = img.tobytes()
-    except Exception as e:
-        raise (e)
 
-    # construct response object
+        # construct response object
 
-    if width == 0 and height == 0:
-        res = {"height": height, "width": width, "size": 0}
-    else:
-        res = {"height": height, "width": width, "size": getsizeof(image_bytes)}
+        if width == 0 and height == 0:
+            res = {"height": height, "width": width, "size": 0}
+        else:
+            res = {"height": height, "width": width, "size": getsizeof(image_bytes)}
 
-    if filesize:
-        res["filesize"] = filesize
+        if filesize:
+            res["filesize"] = filesize
 
-    if decoded_exif:
-        res["exif"] = decoded_exif
+        if decoded_exif:
+            res["exif"] = decoded_exif
 
-    if info:
-        res["info"] = info
+        if info:
+            res["info"] = info
 
-    return image_bytes, res
+        return image_bytes, res
+    finally:
+        if opened_here:
+            img.close()

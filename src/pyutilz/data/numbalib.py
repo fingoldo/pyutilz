@@ -55,7 +55,7 @@ def arr2str(arr: Sequence) -> str:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def python_dict_2_numba_dict(python_dict: dict, numba_dict: numba.typed.Dict = None) -> numba.typed.Dict:
+def python_dict_2_numba_dict(python_dict: dict, numba_dict: Optional[numba.typed.Dict] = None) -> numba.typed.Dict:
     """THe only way for now is just to copy key-values: https://github.com/numba/numba/issues/4728"""
     if numba_dict is None:
         numba_dict = numba.typed.Dict()
