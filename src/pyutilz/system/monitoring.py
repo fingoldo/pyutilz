@@ -23,6 +23,18 @@ from datetime import datetime
 from timeit import default_timer as timer
 from typing import Any, Optional
 
+# requests lives under pyutilz's optional [web] extra -- a plain module-level `import requests`
+# forced ANY use of pyutilz.system.monitoring (even functions that never touch job-completion
+# heartbeats) to have it installed. Guarded like this file's other optional deps instead of a
+# lazy per-call import: tests/test_monitoring_extra.py patches `pyutilz.system.monitoring.requests`
+# directly, which needs a real module-level attribute to target.
+requests = None
+try:
+    import requests as _requests
+    requests = _requests
+except Exception as e:  # nosec B110 - optional dependency probe; job_completed already fails loudly later if requests is actually needed but unset
+    logger.debug("requests unavailable, job_completed's heartbeat send will fail if used: %s", e)
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # INITS
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -86,11 +98,8 @@ def job_completed(
         def _send():
             """Post the heartbeat to the endpoint, logging (not raising) on a non-OK status or request error."""
             try:
-                # Lazy: requests lives under pyutilz's optional [web] extra (found 2026-07-09 --
-                # the prior module-level import made ANY use of pyutilz.system require it, even
-                # monitoring helpers that never touch job-completion heartbeats).
-                import requests
-
+                if requests is None:
+                    raise ImportError("job_completed's heartbeat send requires requests, which failed to import (see earlier debug log for the reason)")
                 res = requests.post(endpoint, data=data, params=params, timeout=API_TIMEOUT_SEC)
 
                 if res.status_code not in (200, 403, 429):
