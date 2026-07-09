@@ -47,6 +47,12 @@ import importlib, subprocess  # nosec B404 - only used below to shell out to the
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
+    """Installs any packages from `packages` that are not importable yet, via pip.
+
+    `packages` can be a single package name, a `sep`-separated string of names, or an
+    iterable of names. Known import-name/package-name mismatches (e.g. scikit-learn/sklearn)
+    are resolved before checking. Installation failures are logged, not raised.
+    """
     known_abbreviations = {"scikit-learn": "sklearn", "imbalanced-learn": "imblearn"}
     if packages:
         if isinstance(packages, str):
@@ -75,6 +81,10 @@ def ensure_installed(packages, sep: str = " ") -> None:
 
 
 def show_methods(obj, uppercased=False):
+    """Lists non-dunder attribute names of `obj`.
+
+    If `uppercased` is True, only names starting with an uppercase letter are kept.
+    """
     return [a for a in dir(obj) if "__" not in a and (uppercased is False or a[0].isupper())]
 
 
@@ -226,6 +236,7 @@ def unpack_counter(cntr: list) -> list:
 
 
 def ensure_list_set_tuple(obj):
+    """Returns `obj` unchanged if it's already a list/set/frozenset/tuple, else wraps it in a single-element list."""
     if type(obj).__name__ in ("list", "set", "frozenset", "tuple"):
         return obj
     else:
@@ -295,10 +306,12 @@ def list_is_non_decreasing(lst: Sequence) -> bool:
 
 
 def sort_dict_by_value(dct: dict, reverse: bool = False) -> dict:
+    """Returns a new dict with `dct`'s items sorted by value."""
     return {k: v for k, v in sorted(dct.items(), key=lambda item: item[1], reverse=reverse)}
 
 
 def sort_dict_by_key(dct: dict, reverse: bool = False) -> dict:
+    """Returns a new dict with `dct`'s items sorted by key."""
     return dict(sorted(dct.items(), reverse=reverse))
 
 
@@ -308,6 +321,7 @@ def sort_dict_by_key(dct: dict, reverse: bool = False) -> dict:
 
 
 def is_float(string):
+    """Checks if `string` (with thousands-separator commas stripped) can be parsed as a float."""
     try:
         float(str(string).replace(",", ""))
         return True
@@ -316,11 +330,17 @@ def is_float(string):
 
 
 def to_float(string):
+    """Parses `string` as a float, stripping thousands-separator commas first."""
     return float(str(string).replace(",", ""))
 
 
 @njit()
 def integer_digits(n: int) -> Tuple[int, set]:
+    """Counts the digits of a non-negative integer `n` and collects the set of distinct digit values it contains.
+
+    Returns:
+        Tuple of (total digit count, set of distinct digits).
+    """
     # Function to count digits in an integer
     digits = set()
     ntotal = 0
@@ -389,6 +409,7 @@ def count_trailing_zeros(number: float, precision: int = 5):
 
 
 def utc_to_local(utc_dt):
+    """Converts a naive UTC datetime to a timezone-aware datetime in the local system timezone."""
     return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
 
@@ -449,16 +470,19 @@ def read_timezoned_ts(inp):
 
 
 def datetime_to_unix_ts(dt):
+    """Converts a naive datetime (treated as UTC) into a whole-second Unix timestamp."""
     from datetime import datetime
 
     return int((dt - datetime(1970, 1, 1)).total_seconds())
 
 
 def get_utc_unix_ts_seconds() -> int:
+    """Returns the current UTC Unix timestamp, in whole seconds."""
     return int(time.time())
 
 
 def get_utc_unix_ts_milliseconds() -> int:
+    """Returns the current UTC Unix timestamp, in whole milliseconds."""
     return int(time.time() * 1000)
 
 
@@ -501,6 +525,7 @@ def imitate_delay(
 
 
 def weekofmonth(date: date):
+    """Returns the 1-based week-of-month number for `date` (7-day buckets starting at day 1)."""
     return date.day // 7 + 1
 
 
@@ -516,6 +541,7 @@ def datetime_to_utc_timestamp(dt):
 
 
 def age(dob: date) -> int:
+    """Returns the whole number of years elapsed between `dob` and today."""
     today = date.today()
     years = today.year - dob.year
     if today.month < dob.month or (today.month == dob.month and today.day < dob.day):
@@ -529,6 +555,7 @@ def age(dob: date) -> int:
 
 
 def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
+    """Returns `obj[field]` if present, else logs a warning naming `target` and returns None."""
     desired = obj.get(field)
     if desired is None:
         logger.warning(f"No {field} field in {target} {obj}")
@@ -536,6 +563,8 @@ def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
 
 
 class CustomError(Exception):
+    """Exception carrying a numeric `code` alongside its `message`, rendered as "Error #<code>: <message>"."""
+
     def __init__(self, code, message):
         self.code = code
         self.message = message
@@ -553,6 +582,10 @@ STRUCTURED_FORMAT_PARSING_ERROR = 100
 
 
 def lookup_in_stack(variable):
+    """Searches the call stack (innermost frame first) for a global named `variable` and returns its value.
+
+    Returns None if no calling frame's globals define a truthy value for it.
+    """
 
     st = inspect.stack()
     for i in range(len(st)):
@@ -731,6 +764,7 @@ class ObjectsAndFilesProcessor:
         return nprocessed
 
     def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
+        """Processes a single object/file pair. Must be overridden in subclasses."""
         # This method should be overridden in the subclasses
         raise NotImplementedError
 
@@ -751,6 +785,7 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
         self.rewrite_existing = rewrite_existing
 
     def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
+        """Dumps `container[obj_name]` to `file_name` via `process_fcn`, if the object is truthy and (rewrite_existing or the file doesn't already exist)."""
         # Do not rewrite existing non-empty objects/keys, warn instead.
         obj = container.get(obj_name)
         if obj:
@@ -775,6 +810,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
         self.rewrite_existing = rewrite_existing
 
     def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
+        """Loads `file_name` via `process_fcn` into `container[obj_name]` if the file exists and the target is either absent, empty, or rewrite_existing is set."""
         if exists(file_name):
             if not self.rewrite_existing:
                 # Do not rewrite existing non-empty objects/keys, warn instead.
@@ -802,6 +838,8 @@ def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
 
 
 class HashableDict(dict):
+    """A dict subclass that is hashable, based on its sorted (key, value) items. The dict must not be mutated while used as a hash key."""
+
     def __hash__(self):  # type: ignore[override]  # intentional: dict.__hash__ is None (unhashable); this recipe makes it hashable
         return hash(tuple(sorted(self.items())))
 
@@ -818,6 +856,10 @@ import portalocker
 
 @contextlib.contextmanager
 def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False, timeout: int = 10):
+    """Context manager opening `db_path` as a shelve db, guarded by a file lock to prevent concurrent access.
+
+    On exit, flushes the lock file and fsyncs it to disk before releasing the lock.
+    """
 
     with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
         yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)
@@ -828,6 +870,7 @@ def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", prot
 
 @contextmanager
 def suppress_stdout_stderr():
+    """Context manager that redirects stdout and stderr to os.devnull for the duration of the block, restoring them afterwards."""
     with open(os.devnull, "w", encoding="utf-8") as devnull:
         old_stdout = sys.stdout
         old_stderr = sys.stderr
@@ -841,6 +884,7 @@ def suppress_stdout_stderr():
 
 
 def is_jupyter_notebook():
+    """Detects whether the code is currently running inside a Jupyter notebook/JupyterLab kernel."""
     try:
         from IPython import get_ipython
 

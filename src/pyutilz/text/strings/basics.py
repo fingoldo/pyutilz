@@ -1,3 +1,5 @@
+"""Basic string manipulation helpers: substring extraction, hashing, padding, slugifying, case conversion."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -63,6 +65,7 @@ def make_text_from_inner_html_elements(elem: Any) -> str:
 
 
 def underscorize_variable(var: Sequence) -> str:
+    """Converts a camelCase/PascalCase identifier to snake_case (e.g. 'ProdLangName' -> 'prod_lang_name')."""
     new = ""
     p = None
     for char in var:
@@ -88,6 +91,13 @@ def underscorize_variable(var: Sequence) -> str:
 
 
 def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, return_binary: Optional[bool] = False) -> Any:
+    """Hashes str/bytes-like `data` with `algo` and returns it base-N encoded (or as a hex/raw digest when base is falsy).
+
+    Args:
+        algo: hashlib algorithm name (e.g. "md5", "sha256").
+        base: base to encode the digest in via base64 module ("b64encode"/"b32encode"/...); if falsy, returns hex digest (or raw digest bytes when return_binary).
+        return_binary: if True, returns raw encoded bytes instead of a decoded str.
+    """
     import hashlib, base64
 
     hash = hashlib.new(algo if algo is not None else "md5")
@@ -113,12 +123,14 @@ def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, r
 
 
 def strip_characters(text: str, char_list: Sequence) -> str:
+    """Removes every occurrence of each character/substring in `char_list` from `text`."""
     for char in char_list:
         text = text.replace(char, "")
     return text
 
 
 def strip_doubled_characters(text: str, char_list: Sequence) -> str:
+    """Collapses consecutive repeats of each character in `char_list` down to a single occurrence (e.g. "aa" -> "a")."""
     for char in char_list:
         while char * 2 in text:
             text = text.replace(char * 2, char)

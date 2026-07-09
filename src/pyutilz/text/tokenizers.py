@@ -1,3 +1,5 @@
+"""Morpheme/word-frequency tokenizer built on spacy/nltk, with helpers to build its stats from a DB-backed corpus and persist them."""
+
 # tokenize_dataset(sql="select id,details->>'title' as title,details->>'text' as body from amazon_users_reviews limit 400 --where added_at<='2020-03-06 19:58:34.422863'",name='amazon_users_reviews_till_2020-03-06 19_58_34.422863',size=1000,exp_length=19_400_000)
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -62,6 +64,12 @@ except Exception:
 
 
 class AdvancedTokenizer:
+    """
+    Builds morpheme/word-level frequency and positional statistics (capitalization, in-word/in-sentence
+    position, preceding-word co-occurrence) over a text corpus, for use as embedding features. Requires
+    spacy's language model to be loadable (only the associated nlp global's loading is spacy-gated; nltk
+    is used directly for sentence/word tokenization).
+    """
     def __init__(self, language_model="en_core_web_sm"):
         global nlp
 
@@ -85,6 +93,11 @@ class AdvancedTokenizer:
         self.NUM_PREV_SENTENCE_WORDS = dict()  # defaultdict(lambda: defaultdict(int))
 
     def tokenize(self, text):
+        """
+        Sentence- and word-tokenizes text (via nltk) and accumulates per-morpheme statistics (occurrence
+        counts, capitalization, in-word/in-sentence positions, first/last-word-in-sentence counts, and
+        preceding-word/preceding-sentence-word co-occurrence) into this instance's stat dicts.
+        """
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # 1) get full list of unique genuine words along with their frequencies. we know that genuine words should not contain punctuation (except -)
@@ -167,6 +180,12 @@ class AdvancedTokenizer:
                     last_sentence_word = last_word
 
     def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
+        """
+        Streams review rows (title, body) from the database via sql in chunks of chunk_size, cleans and
+        sentencizes each review's text, and feeds it to tokenize() to accumulate corpus statistics.
+        Progress is shown against exp_length via a tqdm bar; if save_as is given, save_tokens_to_file()
+        is called at the end. newlines, if given, is replaced with an actual newline before processing.
+        """
         # psycopg2 is the actual cursor backend - import lazily so the module
         # itself can be loaded without psycopg2 installed (only this DB-reading
         # method is gated on it).
@@ -226,6 +245,10 @@ class AdvancedTokenizer:
                 self.save_tokens_to_file(file_name=save_as)
 
     def save_tokens_to_file(self, file_name: str, desired_vars: Optional[list] = None):
+        """
+        Pickles the named stat attributes (desired_vars, or all of module-level vars by default) of this
+        instance into a gzip-compressed "{file_name}.pickle" file.
+        """
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # Save computed data
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -245,6 +268,10 @@ class AdvancedTokenizer:
             pickle.dump(whole, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def load_tokens(self, name: str, tokens: dict):
+        """
+        Loads stat variables previously saved by save_tokens_to_file() from "{name}.pickle" and copies
+        each present module-level var into the given tokens dict.
+        """
         import pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
 
         with gzip.open(f"{name}.pickle", "rb") as handle:

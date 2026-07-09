@@ -69,13 +69,16 @@ class DecodoSubscription:
 
     @property
     def remaining_gb(self) -> float:
+        """Remaining traffic allowance in GB (limit minus used)."""
         return self.traffic_limit_gb - self.traffic_used_gb
 
     @property
     def usage_pct(self) -> float:
+        """Percentage of the traffic limit used so far (0.0 if the limit is 0)."""
         return (self.traffic_used_gb / self.traffic_limit_gb * 100) if self.traffic_limit_gb > 0 else 0.0
 
     def summary(self) -> str:
+        """Render a human-readable multi-line summary with a progress bar of usage."""
         bar_len = 30
         filled = int(bar_len * self.usage_pct / 100)
         bar = "#" * filled + "-" * (bar_len - filled)
@@ -90,6 +93,7 @@ class DecodoSubscription:
 
     @classmethod
     def from_api(cls, data: Dict[str, Any]) -> "DecodoSubscription":
+        """Build a :class:`DecodoSubscription` from a raw ``/v2/subscriptions`` API response item."""
         return cls(
             service_type=data.get("service_type", "unknown"),
             traffic_limit_gb=_safe_float(data.get("traffic_limit")),
@@ -112,6 +116,7 @@ class DecodoTrafficRow:
 
     @property
     def traffic_gb(self) -> float:
+        """Traffic for this row converted from bytes to GB."""
         return self.traffic_bytes / (1024**3)
 
 
@@ -125,9 +130,11 @@ class DecodoTrafficReport:
 
     @property
     def total_gb(self) -> float:
+        """Total traffic across all rows converted from bytes to GB."""
         return self.total_bytes / (1024**3)
 
     def summary(self, group_by: str = "day") -> str:
+        """Render a human-readable table of the traffic rows plus a totals line."""
         lines = [
             f"  {'Group':<25} {'Requests':>12} {'Traffic':>12}",
             f"  {'-' * 25} {'-' * 12} {'-' * 12}",
@@ -144,6 +151,7 @@ class DecodoTrafficReport:
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _safe_float(val: Any) -> float:
+    """Coerce ``val`` to float, returning 0.0 on any conversion failure."""
     try:
         return float(val)
     except (TypeError, ValueError):
@@ -151,6 +159,7 @@ def _safe_float(val: Any) -> float:
 
 
 def _safe_int(val: Any, default: int = 0) -> int:
+    """Coerce ``val`` to int, returning ``default`` on any conversion failure."""
     try:
         return int(val)
     except (TypeError, ValueError):
@@ -158,6 +167,7 @@ def _safe_int(val: Any, default: int = 0) -> int:
 
 
 def _fmt_gb(gb: float) -> str:
+    """Format ``gb`` as a human-readable string, in GB if >=1.0 else in MB."""
     if gb >= 1.0:
         return f"{gb:,.2f} GB"
     return f"{gb * 1024:,.1f} MB"
@@ -244,6 +254,7 @@ class DecodoProvider(ProxyProvider):
     # ── Decodo API ──────────────────────────────────────────────────────────
 
     def _api_headers(self) -> Dict[str, str]:
+        """Build the Authorization/Content-Type headers for Decodo API requests; raises if ``api_key`` is unset."""
         if not self.api_key:
             raise RuntimeError("DECODO_API_KEY not set. " "Get it from: dashboard.decodo.com -> Settings -> API Keys")
         return {"Authorization": self.api_key, "Content-Type": "application/json"}

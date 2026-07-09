@@ -19,6 +19,10 @@ from ._common import (
 
 
 def set_df_columns_types(df: pd.DataFrame, types_dict: dict) -> None:
+    """Cast ``df`` columns to the dtypes given in ``types_dict`` (mapping dtype -> list of column names), in place.
+
+    Columns listed under a dtype that are not present in ``df`` are silently skipped.
+    """
     df_columns = set(df.columns)
     for the_type in types_dict.keys():
         for column in types_dict[the_type]:
@@ -27,6 +31,15 @@ def set_df_columns_types(df: pd.DataFrame, types_dict: dict) -> None:
 
 
 def get_categorical_columns_indices(ds: pd.DataFrame) -> tuple:
+    """Split ``ds`` columns into categorical vs non-categorical, by positional index.
+
+    Returns
+    -------
+    tuple
+        ``(non_categorical_features_indices, categorical_features_indices, unique_categorical_values)``
+        where the first two are lists of column positions and the third maps each
+        categorical column's name to the list of its unique category values.
+    """
     categorical_features_indices = []
     non_categorical_features_indices = []
     unique_categorical_values = dict()
@@ -41,6 +54,7 @@ def get_categorical_columns_indices(ds: pd.DataFrame) -> tuple:
 
 
 def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
+    """Return names of ``df`` columns whose dtype string contains any of ``type_names`` as a substring."""
     res = []
     for col, type_name in df.dtypes.to_dict().items():
         # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
@@ -226,6 +240,7 @@ def optimize_dtypes(
 
 
 def group_columns_by_dtype(df: pd.DataFrame) -> dict:
+    """Group ``df`` column names by their dtype name, returning a dict mapping dtype name -> set of column names."""
     groups = defaultdict(set)
     for var_name, var_type in df.dtypes.items():
         groups[var_type.name].add(var_name)

@@ -52,6 +52,7 @@ _FACADE_NAME = "pyutilz.performance.kernel_tuning.cache"
 
 
 def _facade():
+    """Return the facade package module, so reads observe any test/registration rebinds of its singletons."""
     return sys.modules[_FACADE_NAME]
 
 
@@ -635,6 +636,7 @@ class KernelTuningCache:
         hk = hooks if hooks is not None else _DEFAULT_HOOKS
 
         def _fb():
+            """Consult the project-shipped DEFAULT-cache layer before falling back to ``fallback``."""
             # DEFAULT-cache layer: a project-shipped anonymized (hw-agnostic) tuning, consulted on a local per-host
             # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
             # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
@@ -736,6 +738,7 @@ class KernelTuningCache:
         if another process is already sweeping this kernel -> a crashed/killed sweep can never wedge a fresh fit
         (the stale marker is steal-able), and there is at most one sweep per (kernel, code_version) across processes."""
         def _run():
+            """Background-thread body: debounce, wait for idle hardware, run the sweep, and persist its result."""
             try:
                 # Debounce: wait before starting so the triggering fit gets past its bursty start, then the
                 # busy-check sees the real device load (and we never grab the device the instant it's needed).

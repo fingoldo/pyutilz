@@ -42,10 +42,15 @@ except Exception:
     _NUMBA_OK = False
 
     def njit(*args: Any, **kwargs: Any) -> Callable[..., Any]:  # type: ignore[no-redef]
+        """No-op stand-in for ``numba.njit`` when numba isn't installed: returns the function unchanged.
+
+        Supports both bare-decorator (``@njit``) and call-with-kwargs (``@njit(cache=True, ...)``) forms.
+        """
         if args and callable(args[0]) and len(args) == 1 and not kwargs:
             return args[0]  # type: ignore[no-any-return]
 
         def deco(f: Callable[..., Any]) -> Callable[..., Any]:
+            """Return ``f`` unchanged (no-op JIT decorator)."""
             return f
         return deco
 

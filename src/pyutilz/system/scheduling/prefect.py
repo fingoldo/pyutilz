@@ -1,3 +1,5 @@
+"""Thin wrapper over the Prefect GraphQL API for querying flow/flow-run state and coordinating concurrent ML flows."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -27,6 +29,7 @@ client = None
 
 
 def connect(prefect_key: Optional[str] = None) -> None:
+    """Create the module-level Prefect ``client`` from ``prefect_key`` (or from ``settings.ini``'s ``[PREFECT] prefect_key`` if not given) and hook it into the graphql helper; sets ``client`` to None if no key is available."""
     global client
     if prefect_key is None:
         strings.read_config_file(
@@ -43,10 +46,12 @@ def connect(prefect_key: Optional[str] = None) -> None:
     print(f"prefect_key={prefect_key}")
 
 def get_schema() -> dict:
+    """Return the Prefect GraphQL schema via the connected client, or ``{}`` if no client is connected."""
     if client: return graphql.query_schema()
     return {}
 
 def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels,start_time",status:Optional[str]=None) -> list:
+    """Query Prefect for flows and their flow runs, optionally filtered by run ``status``; when ``status`` is given, drops flows left with no matching runs. Returns ``[]`` if no client is connected."""
     variables={}
     if status: variables["status"]=status
     if client:
@@ -115,6 +120,7 @@ def wait_for_absense_of_tasks(
     max_retries: int = 60,
     logger: Optional[logging.Logger] = None,
 ):
+    """Poll (sleeping ``sleep_seconds`` between attempts, up to ``max_retries`` times) until no flow run with both the "ml" and "gpu" labels is running; returns True once clear, False if retries are exhausted."""
     if labels is None:
         labels = set()
     n = 0

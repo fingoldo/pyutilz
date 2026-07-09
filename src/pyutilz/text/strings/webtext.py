@@ -1,3 +1,5 @@
+"""Cleanup/normalization helpers for scraped web text: HTML, quotations, broken sentences, emojies."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -16,6 +18,7 @@ punctuation, eos = string.punctuation, ("!", ".", "?")
 
 
 def spacy_sent_tokenize(text: str) -> list:
+    """Split ``text`` into sentences using spaCy's English small model (loaded lazily, cached globally)."""
     global nlp
     if nlp is None:
         import spacy
@@ -24,6 +27,7 @@ def spacy_sent_tokenize(text: str) -> list:
 
 
 def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]"):  # nosec B107 - "[[VIDEOID:" is a text placeholder marker delimiting embedded video references, not a credential
+    """Strip every ``token...token2`` embedded video-reference span (e.g. ``[[VIDEOID:...]]``) out of ``text``."""
     if text:
         token = token if token is not None else "[[VIDEOID:"
         token2 = token2 if token2 is not None else "]]"
@@ -43,6 +47,7 @@ def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Option
 
 
 def fix_duplicate_tokens(text: str) -> str:
+    """Collapse repeated whitespace/comma/dash runs to a single occurrence, and 4+ repeated "!.?" runs to 3."""
     if text:
         for token in string.whitespace + ",-":
             while token + token in text:
@@ -54,12 +59,14 @@ def fix_duplicate_tokens(text: str) -> str:
 
 
 def unescape_html(text: str) -> str:
+    """Decode HTML/XML entities (e.g. ``&amp;`` -> ``&``) in ``text``."""
     from xml.sax import saxutils as su  # nosec B406 - saxutils.unescape() below only decodes HTML/XML entities in a plain string (no XML parsing/DTD resolution occurs), so there is no XXE parsing surface here
 
     return su.unescape(text)
 
 
 def fix_html(text: Optional[str], common_linebreak: Optional[str] = "\n") -> Optional[str]:
+    """Replace every ``<br>``-style tag variant with ``common_linebreak`` and strip surrounding whitespace."""
     # replaces all kinds of brs with simple line break
     if not text:
         return text
@@ -71,6 +78,7 @@ def fix_html(text: Optional[str], common_linebreak: Optional[str] = "\n") -> Opt
 
 
 def parse_html(text: str, sep=". ") -> str:
+    """Strip HTML markup from ``text``, joining the extracted text nodes with ``sep``. Returns "" for null input."""
     from bs4 import BeautifulSoup
 
     if not pd.isnull(text):
@@ -79,6 +87,7 @@ def parse_html(text: str, sep=". ") -> str:
 
 
 def fix_quotations(text: Optional[str], common_quotation: Optional[str] = "'") -> Optional[str]:
+    """Replace every kind of quotation mark (double, backtick, acute, curly single/double) with ``common_quotation``."""
     # replaces all kinds of quotations with simple APOSTROPHE
     if not text:
         return text
@@ -110,6 +119,13 @@ def fix_spaces(text: Optional[str], tokens: Optional[list] = None) -> Optional[s
 
 
 def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Optional[str]:  # nosec B107 - default "\n" is a literal newline delimiter used for text-normalization scanning, not a credential
+    """Heuristically repair sentences broken by stray linebreaks/whitespace.
+
+    Scans for whitespace runs (newlines etc.) that split what looks like one sentence into two
+    (e.g. a linebreak followed by a capitalized word or digit with no preceding end-of-sentence
+    mark) and inserts a period and/or space as appropriate, or removes a spurious linebreak that
+    follows a genuine sentence end. Also appends a trailing period if the text ends on a letter.
+    """
     if not text:
         return text
     if text:
@@ -287,7 +303,8 @@ def ensure_space_after_comma(text: str) -> str:
 
 
 def clean_description(text: str, newlines: Optional[str] = None) -> str:
-
+    """Run the full webtext normalization pipeline: newline unification, "&"->"and", HTML/quote/space
+    fixes, video-tag removal, broken-sentence repair, and comma spacing."""
     if newlines:
         text = text.replace(newlines, "\n")
 
@@ -331,6 +348,7 @@ def get_ascii_emojies() -> dict:
 
 
 def get_unicode_emojies() -> dict:
+    """Build a mapping from unicode emoji character to its ASCII text name (inverse of get_ascii_emojies)."""
 
     import emoji_data_python
 

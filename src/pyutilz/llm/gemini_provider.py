@@ -125,6 +125,7 @@ class GeminiProvider(LLMProvider):
 
     @property
     def context_window(self) -> int:
+        """Maximum input context size in tokens for the configured model."""
         for prefix, limit in [("gemini-2.5", 1_048_576), ("gemini-2.0", 1_048_576), ("gemini-3", 1_048_576)]:
             if self.model_name.startswith(prefix):
                 return limit
@@ -132,6 +133,7 @@ class GeminiProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
+        """Maximum number of output tokens supported by the configured model."""
         for prefix, limit in [("gemini-3", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)]:
             if self.model_name.startswith(prefix):
                 return limit
@@ -298,6 +300,7 @@ class GeminiProvider(LLMProvider):
             logger.debug("Gemini candidate metadata capture failed: %s", exc)
 
     def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
+        """Tag safety-block exceptions with an ``error_type`` so batch callers can branch without parsing error strings; returns None for other exception types."""
         # Safety blocks are the single most common Gemini failure mode.
         # Tag them so batch callers can branch on ``error_type`` without
         # re-parsing the error string.
@@ -331,6 +334,7 @@ class GeminiProvider(LLMProvider):
             return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
+        """Not supported for Gemini: always raises NotImplementedError since account balance lives in GCP Cloud Billing, not the Gemini API."""
         # Gemini billing rides on Google Cloud — credit / spend lives in the
         # Cloud Billing API, which uses GCP service-account auth, not the
         # Gemini API key we're holding. Mixing the two would expand scope
@@ -342,6 +346,7 @@ class GeminiProvider(LLMProvider):
         )
 
     async def check_account_limits(self) -> dict:
+        """Not supported for Gemini: always raises NotImplementedError since per-key rate limits are managed via GCP quotas, not exposed by the API."""
         raise NotImplementedError("Gemini does not expose per-key rate limits via API. " "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas.")
 
     async def _close(self) -> None:

@@ -76,7 +76,14 @@ nlp = [
     "spacy>=3.0",
     "nltk>=3.8",
     "jellyfish>=0.9",
-    "tiktoken>=0.5"
+    "tiktoken>=0.5",
+    # text/strings/webtext.py imports these three unconditionally (no try/except
+    # fallback, unlike orjson elsewhere in the codebase), so they must be real
+    # declared dependencies rather than relying on some other extra's transitive
+    # pull -- deptry DEP003 flagged all three as used-but-undeclared.
+    "beautifulsoup4>=4.0",
+    "inflect>=6.0",
+    "emoji-data-python>=1.6",
 ]
 
 # LLM providers
@@ -103,6 +110,15 @@ system = [
     "GPUtil>=1.4",
     "xmltodict>=0.13",
     "pypiwin32>=223; platform_system=='Windows'"
+]
+
+# GPU acceleration (cupy). Every cupy import site in the codebase is already
+# try/except-guarded (kernel_tuning device probing, gpu_dispatch.py) -- this extra
+# exists purely for discoverability (`pip install pyutilz[gpu]`) rather than to make
+# cupy required. Deliberately excluded from `all` (mirrors mlframe's [gpu] extra):
+# cupy's cudaXX-specific wheel resolution doesn't belong in a default "everything" install.
+gpu = [
+    "cupy>=12.0",
 ]
 
 # All optional dependencies (self-referential to avoid duplication/drift)

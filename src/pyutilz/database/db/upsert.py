@@ -1,3 +1,8 @@
+"""Pure upsert / history query builder carved out of db.py.
+
+``build_upsert_query`` constructs a SQL string; it does NOT touch the
+module-level connection globals. Re-exported by the db.__init__ facade.
+"""
 # ----------------------------------------------------------------------------------------------------------------------------
 # Pure upsert / history query builder carved out of db.py.
 # build_upsert_query constructs a SQL string; it does NOT touch the

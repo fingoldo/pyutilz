@@ -23,6 +23,7 @@ def _has_log_call(stmts: list[ast.stmt]) -> bool:
 
 
 def _has_raise(stmts: list[ast.stmt]) -> bool:
+    """True if ``stmts`` contains a ``raise`` statement (including a bare re-raise)."""
     for s in stmts:
         for n in ast.walk(s):
             if isinstance(n, ast.Raise):

@@ -274,10 +274,14 @@ class OpenAICompatibleProvider(LLMProvider):
         return out
 
     @abstractmethod
-    def _input_cost_per_1m(self, model: str) -> float: ...
+    def _input_cost_per_1m(self, model: str) -> float:
+        """Return USD cost per 1M input tokens for ``model``. Implemented by subclasses per their pricing table."""
+        ...
 
     @abstractmethod
-    def _output_cost_per_1m(self, model: str) -> float: ...
+    def _output_cost_per_1m(self, model: str) -> float:
+        """Return USD cost per 1M output tokens for ``model``. Implemented by subclasses per their pricing table."""
+        ...
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
         """Override for providers with cache-hit pricing."""
@@ -287,6 +291,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
+        """Max output tokens for the current model, from ``_max_tokens_map`` or ``_default_max_tokens``."""
         return self._max_tokens_map.get(self.model_name, self._default_max_tokens)
 
     # Subclasses override for per-model context windows
@@ -295,6 +300,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def context_window(self) -> int:
+        """Context window size for the current model, from ``_context_window_map`` or ``_default_context_window``."""
         return self._context_window_map.get(self.model_name, self._default_context_window)
 
     def supports_json_mode(self) -> bool:
@@ -306,6 +312,7 @@ class OpenAICompatibleProvider(LLMProvider):
         return True
 
     async def _close(self):
+        """Close the underlying httpx client."""
         await self._client.aclose()
 
     def _build_messages(
@@ -313,6 +320,7 @@ class OpenAICompatibleProvider(LLMProvider):
         prompt: str,
         system: str | None = None,
     ) -> list[dict[str, str]]:
+        """Build the OpenAI-compatible chat ``messages`` list from a ``prompt`` and optional ``system`` message."""
         messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -680,6 +688,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """Generate responses in batch using concurrent requests."""
 
         async def process_request(req: dict) -> dict[str, Any]:
+            """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
             request_id = req.get("id", "unknown")
             try:
                 result = await self.generate(

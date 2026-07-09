@@ -14,6 +14,7 @@ from .registry import SCANNERS, run_all
 
 
 def _render_markdown(findings: list[Finding]) -> str:
+    """Renders findings as a Markdown table (severity/check/location/snippet/detail), or a "no findings" note if empty."""
     if not findings:
         return "_No findings._\n"
     lines = [
@@ -25,6 +26,7 @@ def _render_markdown(findings: list[Finding]) -> str:
 
 
 def _render_json(findings: list[Finding]) -> str:
+    """Renders findings as a sorted-keys, indented JSON array of dataclass dicts."""
     return json.dumps([asdict(f) for f in findings], indent=2, sort_keys=True)
 
 

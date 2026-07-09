@@ -50,9 +50,11 @@ class S3Backend(RemoteBackend):
         self._unavailable = False
 
     def _key(self, fingerprint: str) -> str:
+        """Build the S3 object key for ``fingerprint``, prefixed by ``self.prefix`` when set."""
         return f"{self.prefix}/{fingerprint}.json" if self.prefix else f"{fingerprint}.json"
 
     def _get_client(self):
+        """Lazily create and cache the boto3 S3 client; return None (and latch ``_unavailable``) if boto3/credentials/config setup fails."""
         if self._client is None and not self._unavailable:
             try:
                 import boto3  # lazy: not a hard dependency
@@ -77,6 +79,7 @@ class S3Backend(RemoteBackend):
         return self._client
 
     def read(self, fingerprint: str) -> Optional[dict]:
+        """Fetch and JSON-decode the object for ``fingerprint``; return None on any miss/error (client unavailable, missing key, network, parse failure)."""
         client = self._get_client()
         if client is None:
             return None
@@ -90,6 +93,7 @@ class S3Backend(RemoteBackend):
             return None
 
     def write(self, fingerprint: str, payload: dict) -> bool:
+        """JSON-encode and upload ``payload`` for ``fingerprint``; return False on any failure (client unavailable, network, etc.) instead of raising."""
         client = self._get_client()
         if client is None:
             return False

@@ -1,3 +1,5 @@
+"""Process/session memory-usage measurement and cleanup helpers (RAM reporting, working-set trim, tracemalloc)."""
+
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 

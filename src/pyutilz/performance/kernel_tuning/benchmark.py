@@ -49,6 +49,7 @@ _HW_BUSY_TTL = 1.0
 
 
 def _busy_threshold(threshold: Optional[float]) -> float:
+    """Resolve the effective busy threshold: `threshold` if given, else the ``PYUTILZ_KERNEL_SWEEP_HW_BUSY`` env var, else the default."""
     if threshold is not None:
         return float(threshold)
     try:
@@ -168,6 +169,7 @@ def time_backend(
     concurrency = max(1, int(concurrency))
 
     def _prebuild(count: int) -> list:
+        """Build `count` argument tuples via `make_inputs`: fresh per entry, or one shared tuple repeated, per `fresh_inputs_per_call`."""
         if fresh_inputs_per_call:
             return [tuple(make_inputs()) for _ in range(count)]
         shared = tuple(make_inputs())
@@ -177,6 +179,7 @@ def time_backend(
         fn(*make_inputs())
 
     def _run(inputs_list: list, out: list) -> None:
+        """Time `fn(*args)` for each prebuilt `args` in `inputs_list` (optionally gating on idle hardware first) and append the elapsed seconds to `out`."""
         local = []
         for args in inputs_list:
             # Don't START the next iteration while the device we need is busy: a contended

@@ -1,3 +1,5 @@
+"""Miscellaneous system utilities: IPython detection, progress bars, OS/Python/library version info, process counting, resource-idle monitoring, locale settings, and audible beeps."""
+
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 
@@ -37,6 +39,7 @@ from datetime import timezone, datetime
 
 
 def run_from_ipython():
+    """Return True if the current process is running inside an IPython/Jupyter session, False otherwise."""
     try:
         return bool(__IPYTHON__)  # type: ignore[name-defined]  # IPython-injected global, only exists inside an IPython/Jupyter session
     except NameError:
@@ -49,6 +52,7 @@ def run_from_ipython():
 
 
 def tqdmu(*args, **kwargs):
+    """Create a tqdm progress bar, using the notebook widget variant (``tqdm_notebook``) when running under IPython/Jupyter and falling back to the plain console bar otherwise."""
 
     if run_from_ipython():
         try:
@@ -160,7 +164,14 @@ def get_python_info() -> dict:
 
 
 def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: str = " ") -> dict:
+    """Return a dict mapping each requested module name to its ``__version__`` string.
 
+    Modules that fail to import or lack a ``__version__`` attribute are silently skipped.
+
+    Args:
+        libs: Space-separated string (or sequence) of module names to check.
+        sep: Separator used to split ``libs`` when it is a string.
+    """
     if isinstance(libs, str):
         libs = libs.split(sep)
 
@@ -177,6 +188,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
 
 
 def get_max_affordable_workers_count(reservedCores=1):
+    """Return the number of physical CPU cores available for parallel workers, reserving ``reservedCores`` for other use (minimum 1)."""
     import psutil
 
     n = psutil.cpu_count(logical=False) - reservedCores
@@ -186,6 +198,12 @@ def get_max_affordable_workers_count(reservedCores=1):
 
 
 def count_app_instances(processname=None, cmdline=None):
+    """Count currently running processes matching the given name and/or command-line substring.
+
+    Args:
+        processname: If given, only count processes whose name equals this exactly.
+        cmdline: If given, only count processes whose command line contains this string.
+    """
     import psutil
 
     n = 0
@@ -206,13 +224,18 @@ def count_app_instances(processname=None, cmdline=None):
 
 
 def get_script_file(file: Optional[str] = __file__) -> str:
+    """Return the base filename (no directory) of the given path, defaulting to this module's own file."""
     import os
 
     return os.path.basename(file or __file__)
 
 
 def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None):
+    """Log any module-level global object whose deep size exceeds ``min_size_mb``.
 
+    If ``initial_memory_snapshot`` is given, also computes and prints a ``tracemalloc``
+    comparison between the current memory state and that snapshot to help locate growth.
+    """
     report = "Large objects in RAM:"
     nbig = 0
     for name, obj in globals().items():
@@ -278,6 +301,7 @@ def ensure_idle_devices(
     )
 
     def check_cpu_initial_conditions():
+        """Verify the requested minimum free CPU RAM does not exceed total installed RAM."""
         total_cpu_ram_gb = psutil.virtual_memory().total / (1024**3)
         if min_cpu_free_ram_gb > total_cpu_ram_gb:
             logger.warning(f"Requested CPU free RAM ({min_cpu_free_ram_gb} GB) exceeds total available RAM ({total_cpu_ram_gb:.2f} GB)")
@@ -285,6 +309,7 @@ def ensure_idle_devices(
         return True
 
     def check_gpu_initial_conditions():
+        """Verify the requested minimum free GPU RAM does not exceed each monitored GPU's total RAM."""
         try:
             import GPUtil
         except ImportError:
@@ -305,6 +330,7 @@ def ensure_idle_devices(
         return False
 
     def check_cpu_conditions():
+        """Return True if current CPU load and free RAM satisfy the configured thresholds, logging a debug message when they don't."""
         cpu_load_percent = psutil.cpu_percent(percpu=False)
         cpu_free_ram_gb = psutil.virtual_memory().available / (1024**3)
         mes = ""
@@ -319,6 +345,7 @@ def ensure_idle_devices(
         return cpu_load_percent <= max_cpu_load_percent and cpu_free_ram_gb >= min_cpu_free_ram_gb
 
     def check_gpu_conditions():
+        """Return True if current GPU load and free RAM satisfy the configured thresholds for every monitored GPU, logging a debug message when they don't."""
         try:
             import GPUtil
         except ImportError:
@@ -363,7 +390,7 @@ def ensure_idle_devices(
 
 
 def get_utc_unix_timestamp():
-
+    """Return the current UTC time as a Unix timestamp (integer seconds since epoch)."""
     return int(datetime.now(tz=timezone.utc).timestamp())
 
 
@@ -390,6 +417,7 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
 
 
 def beep():
+    """Play a short audible beep on Windows via ``winsound``; silently does nothing if unavailable."""
     frequency = 2500  # Set Frequency To 2500 Hertz
     duration = 1000  # Set Duration To 1000 ms == 1 second
     try:

@@ -99,6 +99,7 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
         return None
 
     def _cc_tuple(dev_id: int) -> tuple[int, int]:
+        """Returns the (major, minor) CUDA compute capability of `dev_id`, or (0, 0) if unavailable."""
         caps = get_gpu_cuda_capabilities(device_id=dev_id) or {}
         return (
             int(caps.get("COMPUTE_CAPABILITY_MAJOR", 0)),
@@ -113,6 +114,7 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
         best = max(gpus, key=lambda g: _cc_tuple(int(g["id"])))
     elif strategy == "auto":
         def _score(g: dict) -> float:
+            """Scores a GPU info dict as free VRAM (bytes) times compute capability (major.minor)."""
             cc_major, cc_minor = _cc_tuple(int(g["id"]))
             cc = cc_major + cc_minor / 10.0
             return float(g.get("memoryFree", 0.0)) * cc
@@ -233,6 +235,10 @@ def optimal_threads_per_block(
 # ---------------------------------------------------------------------------
 
 def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
+    """Returns free GPU memory in bytes for `device_id` (or the current device if None) via cupy, or None if cupy is unavailable or the query fails transiently.
+
+    Re-raises on an invalid-device CUDA error (status 101).
+    """
     try:
         import cupy as cp
         from cupy.cuda.runtime import CUDARuntimeError
@@ -258,6 +264,7 @@ def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
 
 
 def _free_bytes_via_gputil(device_id: Optional[int]) -> Optional[int]:
+    """Returns free GPU memory in bytes for `device_id` (or the first listed device if None) via GPUtil, or None if unavailable."""
     gpus = get_gpuutil_gpu_info(attrs="id,memoryFree,memoryTotal")
     if not gpus:
         return None

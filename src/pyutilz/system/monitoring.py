@@ -1,3 +1,5 @@
+"""Dead-man's-switch job monitoring (healthchecks.io / cronitor.io heartbeats) plus timeout and duration-logging decorators."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -80,6 +82,7 @@ def job_completed(
     if endpoint:
 
         def _send():
+            """Post the heartbeat to the endpoint, logging (not raising) on a non-OK status or request error."""
             try:
                 res = requests.post(endpoint, data=data, params=params, timeout=API_TIMEOUT_SEC)
 
@@ -109,9 +112,16 @@ def monitored(
     provider: str = "healthchecks.io",
     api_key: Optional[str] = None,
 ):
+    """Decorator factory that runs the wrapped function, times it, logs and reports its dict result as a job_completed heartbeat.
+
+    The wrapped function must return either ``None`` or a ``dict``. When ``duration_field`` is set,
+    the elapsed wall-clock time is added to that key of the result dict before logging/reporting.
+    """
     def decorator_logged(func):
+        """Wraps func so each call is timed, logged, and reported via job_completed."""
         @functools.wraps(func)
         def wrapper_logged(*args, **kwargs):
+            """Calls func, augments its dict result with duration, logs it, and pings the monitoring provider."""
 
             if duration_field:
                 start_time = timer()
@@ -151,8 +161,10 @@ def timeout_wrapper(timeout=API_TIMEOUT_SEC,report_actual_duration:bool=False,):
     Uses module-level ThreadPoolExecutor to avoid creating new executor for each call.
     """
     def decorator(func):
+        """Wraps func so calls execute on the shared executor and are aborted with a logged error past the timeout."""
         @wraps(func)
         def wrapper(*args, **kwargs):
+            """Runs func on the shared executor, returning its result, or None (logged) on timeout/exception."""
             start_ts = time.time()
             # Use module-level executor instead of creating new one each call (performance)
             future = _TIMEOUT_EXECUTOR.submit(func, *args, **kwargs)
@@ -184,8 +196,10 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
         max_arg_size (int): Max characters in repr() before truncating (default: 1000).
     """
     def decorator(func):
+        """Wraps func so its execution time (and args/kwargs, if it exceeds threshold) is logged."""
         @wraps(func)
         def wrapper(*args, **kwargs):
+            """Calls func, timing it, and logs a message with args/kwargs if the call exceeds threshold seconds."""
             start = timer()
             result = func(*args, **kwargs)
             dur = timer() - start

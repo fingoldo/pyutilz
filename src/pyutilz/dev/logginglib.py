@@ -1,3 +1,5 @@
+"""Logging setup, structured function-call logging, and a Redis log handler."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -157,10 +159,12 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
 
 
 def _init_clocks(obj: dict) -> None:
+    """Stamp ``obj["started_at"]`` with the current UTC timestamp."""
     obj["started_at"] = datetime.now(timezone.utc)
 
 
 def _stop_clocks(obj: dict) -> float:
+    """Stamp ``obj["finished_at"]`` and compute/store the elapsed ``duration`` in seconds since ``started_at``."""
     finished_at = datetime.now(timezone.utc)
     obj["finished_at"] = finished_at
 
@@ -173,11 +177,16 @@ def _stop_clocks(obj: dict) -> float:
 
 
 def _message(activity_name: str):
+    """Log ``activity_name`` at INFO level, appending "..." unless it already ends in punctuation."""
     if activity_name:
         logger.info("%s%s", activity_name, "" if activity_name.strip()[-1] in "!.?," else "...")
 
 
 def _close_opened_activities(activities: dict) -> Optional[float]:
+    """Stop the clock on every activity in ``activities`` that hasn't been finalized yet.
+
+    Returns the duration of the last activity closed this way, or None if none were open.
+    """
     # let's close unclosed acts. returns duration of last closed activity.
     last_activity_duration = None
     for _, activity in activities.items():
@@ -211,12 +220,14 @@ def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verb
 
 
 def log_result(results_log: dict, key: str, value, verbose: bool = True) -> None:
+    """Store ``value`` under ``key`` in ``results_log["results"]``, optionally logging a message."""
     results_log["results"][key] = value
     if verbose:
         _message(f"{key}: {value}")
 
 
 def log_results(results_log: dict, results: dict, verbose: bool = True) -> None:
+    """Merge ``results`` into ``results_log["results"]``, optionally logging the merged dict."""
     for key, value in results.items():
         results_log["results"][key] = value
     if verbose:
@@ -224,6 +235,10 @@ def log_results(results_log: dict, results: dict, verbose: bool = True) -> None:
 
 
 def log_activity(results_log: dict, activity_name: str, verbose: bool = True) -> Optional[float]:
+    """Close any currently-open activity and start timing a new one named ``activity_name``.
+
+    Returns the duration of the previously open activity that got closed, if any.
+    """
     ensure_dict_elem(obj=results_log["results"], name="activities", value={})
     activities = results_log["results"]["activities"]
     last_activity_duration = _close_opened_activities(activities)
@@ -239,6 +254,10 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
 
 
 def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False):
+    """Record the number of rows loaded from ``source`` into ``results_log["results"]["loaded"]``.
+
+    Optionally logs a human-readable (English or Russian) message about how many rows were loaded.
+    """
     if results_log is None:
         results_log = {}
     assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
@@ -269,9 +288,20 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
 
 
 def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
+    """Decorator factory that logs a function call's parameters, timing, and result.
+
+    Builds a ``results_log`` dict (injected into the decorated function's kwargs if not
+    already present), records the caller's module/function name and filtered arguments,
+    starts a timing clock, runs the wrapped function, then finalizes the log (optionally
+    persisting it to ``db_path`` via :func:`finalize_function_log`).
+    """
+
     def decorator_logged(func):
+        """Wrap ``func`` so each call is logged; see :func:`logged`."""
+
         @functools.wraps(func)
         def wrapper_logged(*args, **kwargs):
+            """Log call parameters/timing, invoke ``func``, finalize the log, and return its result."""
             special_vars = ("current_proxy", "current_proxy_resolved", "login")
 
             function_name = func.__name__
@@ -339,6 +369,7 @@ class RedisHandler(Handler):
         self.LOG_SIZE = LOG_SIZE
 
     def emit(self, record):
+        """Push the formatted log record onto the Redis list, occasionally trimming it to ``LOG_SIZE``."""
         msg = self.format(record)
         try:
             self.rc.lpush(self.LOG_DEST, msg)
@@ -360,8 +391,11 @@ def debugged(max_retries: int = 3):
     import sys
 
     def decorator_debugged(func):
+        """Wrap ``func`` with the debug-on-exception/retry behavior; see :func:`debugged`."""
+
         @functools.wraps(func)
         def wrapper_debugged(*args, **kwargs):
+            """Call ``func``, dropping into pdb and retrying on exception (interactive sessions only)."""
             import pdb
 
             interactive = bool(getattr(sys, "stdin", None)) and sys.stdin.isatty()

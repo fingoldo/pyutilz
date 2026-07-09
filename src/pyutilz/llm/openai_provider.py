@@ -135,6 +135,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
 
     def _get_timeout(self, model: str) -> float:
+        """Return the request timeout (seconds) for a given model, scaled up for slow reasoning models."""
         # Reasoning models (o-series, gpt-5-pro / 5.5-pro) need long timeouts.
         if model.startswith(("o1", "o3", "o4")):
             return 1200.0
@@ -143,10 +144,12 @@ class OpenAIProvider(OpenAICompatibleProvider):
         return 240.0
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
+        """Log a warning when the response signals an OpenAI rate limit (HTTP 429)."""
         if resp.status_code == 429:
             logger.warning("OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop.")
 
     def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
+        """Return the output token count OpenAI actually bills for (completion_tokens already includes reasoning_tokens)."""
         # OpenAI bills reasoning tokens as part of output for o-series
         # (verified in API response payload's ``usage.completion_tokens``
         # which already includes reasoning_tokens). Return completion
@@ -154,6 +157,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
         return completion_tokens
 
     async def get_account_credits(self) -> dict:
+        """Always raise: OpenAI has no public API endpoint to fetch remaining account credit."""
         # OpenAI dropped the only "remaining balance" endpoint
         # (/v1/dashboard/billing/credit_grants) for regular user keys. The
         # modern Usage API reports SPEND under an admin/org-key, not the
@@ -164,6 +168,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
         )
 
     async def check_account_limits(self) -> dict:
+        """Always raise: OpenAI does not expose per-key rate limits via a standalone API endpoint."""
         # Per-key rate limits are returned in ``x-ratelimit-*`` response
         # headers on real calls; no standalone endpoint exists.
         raise NotImplementedError(
@@ -175,6 +180,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
     _seen_unknown_models: set[str] = set()
 
     def _warn_unknown_model_once(self, model: str) -> None:
+        """Log a one-time warning that pricing for `model` is unknown and gpt-5-mini rates are used as a fallback."""
         if model in OpenAIProvider._seen_unknown_models:
             return
         OpenAIProvider._seen_unknown_models.add(model)
@@ -184,16 +190,19 @@ class OpenAIProvider(OpenAICompatibleProvider):
         )
 
     def _input_cost_per_1m(self, model: str) -> float:
+        """Return USD cost per 1M input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
         if model not in _PRICING:
             self._warn_unknown_model_once(model)
         return _PRICING.get(model, _PRICING["gpt-5-mini"])[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
+        """Return USD cost per 1M output tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
         if model not in _PRICING:
             self._warn_unknown_model_once(model)
         return _PRICING.get(model, _PRICING["gpt-5-mini"])[1]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
+        """Return USD cost per 1M cache-hit input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
         if model not in _CACHE_HIT_COST:
             self._warn_unknown_model_once(model)
         return _CACHE_HIT_COST.get(model, _CACHE_HIT_COST["gpt-5-mini"])

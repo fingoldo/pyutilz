@@ -1,3 +1,5 @@
+"""Web scraping helpers: proxy rotation, session/header management, retrying URL fetches and parallel/streaming downloads."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -84,6 +86,7 @@ def _ensure_http_scheme(url: str) -> str:
 
 
 def init_vars():
+    """Reset the module-level session state (session, IP-query counter, headers, proxies, timeout) to defaults."""
     global sess, num_ip_queries, template_headers, headers, proxies, timeout
     sess = None
     num_ip_queries = 0
@@ -100,6 +103,7 @@ init_vars()
 def get_external_ip(
     proxy_user: Optional[str] = None, proxy_pass: Optional[str] = None, proxy_server: Optional[str] = None, proxy_port: Optional[int] = None
 ) -> Optional[str]:
+    """Return this machine's external IP by querying ``IP_PROVIDERS`` (shuffled) until one responds with a plausible address, or None if all fail."""
     global IP_PROVIDERS
     shuffle(IP_PROVIDERS)
 
@@ -121,6 +125,7 @@ def get_external_ip(
 
 
 def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"):
+    """Fetch JSON IP info from ``url``, either directly via ``urllib`` (``use_urllib=True``) or via the module's ``get_url`` (session/proxy-aware) fetcher."""
     json_loads: Any
     try:
         import orjson
@@ -152,6 +157,11 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
 def download_in_parallel(
     urls_to_process: Sequence, func: Callable, headers: Optional[dict] = None, nparallel_downloads: int = 3, report_each: int = 10
 ) -> Optional[List]:
+    """Fetch ``urls_to_process`` concurrently via ``grequests`` and call ``func(response, url)`` on each successful (HTTP 200) response.
+
+    Returns the list of URLs that errored (non-200 status, exception in ``func``, or None
+    response), or None if ``urls_to_process`` is None/empty.
+    """
     import grequests
 
     if urls_to_process is None:
@@ -208,6 +218,7 @@ def connect(
     m_proxy_type: str = "http",
     **kwargs,
 ) -> None:
+    """Reset session state and set the module-level proxy/header/timeout config from the ``m_*`` arguments (used to configure proxy credentials before fetching)."""
     global proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, template_headers, timeout, proxy_port, proxy_type
 
     init_vars()
@@ -233,6 +244,10 @@ def set_proxy(
     m_proxy_port: Optional[int] = None,
     m_proxy_type: str = "http",
 ) -> None:
+    """Set module-level proxy credentials/port range and immediately obtain a fresh proxy from ``get_new_smartproxy``, storing it in the module-level ``proxies`` dict.
+
+    Raises ValueError if ``m_proxy_user``, ``m_proxy_pass`` or ``m_proxy_server`` is None.
+    """
     global proxies
     global proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, proxy_port, proxy_type
     with _state_lock:
@@ -275,6 +290,7 @@ def set_params(
     m_failed_dict: Optional[dict] = None,
     m_min_failed_idle_interval_minutes: Optional[int] = None,
 ) -> None:
+    """Set module-level rate-limiting/throttling parameters: inter-request delay, max IP queries per session, and the proxy-touched/proxy-failed tracking dicts and idle intervals."""
     global delay, max_ip_queries, last_used_dict, min_idle_interval_minutes, failed_dict, min_failed_idle_interval_minutes
 
     delay = m_delay
@@ -286,11 +302,13 @@ def set_params(
 
 
 def set_proxy_last_use_time(last_used_dict: Optional[dict], proxies: Optional[dict]) -> None:
+    """Record the current UTC time as the last-use timestamp for ``proxies`` (keyed by its joblib hash) in ``last_used_dict``, if it's a dict."""
     if isinstance(last_used_dict, dict):
         last_used_dict[hash(proxies)] = datetime.utcnow()
 
 
 def make_proxies_dict(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: str, proxy_port: int, proxy_type: str = "https") -> dict:
+    """Build a ``requests``-style ``{"http": ..., "https": ...}`` proxy URL dict from the given credentials/server/port/scheme."""
     if proxy_user and proxy_pass:
         proxy_url = "%s:%s@%s:%s" % (proxy_user, proxy_pass, proxy_server, proxy_port)
     else:
@@ -316,6 +334,13 @@ def get_new_smartproxy(
     proxy_type: str = "http",
     verbose=False,
 ) -> dict:
+    """Pick a proxy (random port within ``[proxy_min_port, proxy_max_port]`` unless ``proxy_port`` is fixed) that hasn't been touched recently per ``last_used_dict``/``failed_dict``.
+
+    Keeps re-rolling a random port and sleeping ``delay`` seconds every ``warn_after_n_failures``
+    attempts until an eligible (not recently used/failed within ``min_idle_interval_minutes``)
+    proxy dict is found, then returns it. Blocks indefinitely if no proxy in the range is ever
+    eligible.
+    """
     if failed_dict is None:
         failed_dict = {}
     if last_used_dict is None:
@@ -359,6 +384,7 @@ def get_new_smartproxy(
 
 
 def report_params(url, proxies, params, data, json, headers_to_use, timeout):
+    """Log a request's url/proxies/params/data/json/headers/timeout at INFO level, for debugging a fetch."""
     logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s", url, str(proxies), params, data, json, headers_to_use, timeout)
 
 
@@ -388,6 +414,15 @@ def get_url(
     ratelimiting_statuses: Sequence = (429,),
     session_expired_statuses: Sequence = (),
 ) -> Optional[requests.Response]:
+    """Fetch ``url`` (GET/POST/etc per ``verb``) with retries, proxy rotation and rate-limit/blocking handling.
+
+    Manages the module-level session/proxy/header state (creating a new session when needed,
+    merging/sorting/lowercasing headers), retries up to ``max_retries`` times on network errors
+    or retryable statuses, rotates to a new proxy on proxy-related errors or when a status in
+    ``blocking_statuses``/``ratelimiting_statuses`` is seen, and stops early on statuses in
+    ``exit_statuses`` or ``session_expired_statuses``. Sleeps ``delay`` seconds (jittered)
+    between attempts. Returns the final ``requests.Response`` (or None if nothing was fetched).
+    """
     global proxies
     global was_blocked
     global num_ip_queries, cur_max_ip_queries
@@ -539,6 +574,7 @@ def get_url(
 
 
 def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
+    """Create a fresh ``requests.Session``, reset the IP-query counter, optionally set a random user-agent header, and (if ``b_use_proxy``) obtain a new proxy -- storing all of it in module-level state."""
     global sess, proxies, headers
     global num_ip_queries
 
@@ -590,6 +626,7 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
 
 
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
+    """Log that ``target`` got blocked, mark the current proxy as failed, sleep the configured jittered delay, then obtain a fresh session/proxy."""
     if proxies is not None:
         logger.warning("IP %s blocked. Receiving new proxy/session for %s" % (proxies["https"].split("@")[1], target))
     else:
@@ -602,6 +639,7 @@ def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = T
 
 
 def is_rotating_proxy(proxy_server: dict) -> Optional[bool]:
+    """Return True if ``proxy_server`` config identifies Smartproxy's DC gateway with a fixed (non-range) port, i.e. a server-side auto-rotating proxy; otherwise None."""
     # {"PROXY_HOST": "gate.dc.smartproxy.com","PROXY_MIN_PORT": 20001,"PROXY_MAX_PORT": 37960}
     if proxy_server.get("PROXY_HOST", "").lower() == "gate.dc.smartproxy.com":
         if proxy_server.get("PROXY_MIN_PORT") == 20000:

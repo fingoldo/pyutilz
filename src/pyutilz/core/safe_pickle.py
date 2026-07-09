@@ -47,7 +47,7 @@ import pickle  # nosec B403 - this module's whole purpose is guarding pickle.loa
 import threading
 import time
 from os.path import isfile
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,28 @@ __all__ = [
 
 DEFAULT_ALLOW_UNVERIFIED_ENV_VAR = "PYUTILZ_ALLOW_UNVERIFIED_PICKLE"
 
+# Per-path locks so a (payload replace + sidecar write) pair is atomic AS A UNIT across threads
+# in this process. Without this, two threads writing the same path can interleave such that the
+# temporally-earlier thread's write_sidecar() call (which re-reads the CURRENT on-disk payload,
+# not necessarily its own) lands its file write AFTER the later thread's, leaving a sidecar that
+# describes a payload no longer on disk -- observed intermittently on Linux CI (safe_load then
+# raises PickleVerificationError: sidecar mismatch). The lock only covers this process; it is not
+# a cross-process guarantee (same scope the module already limits itself to -- see safe_dump's
+# docstring on os.replace being the cross-process-safe primitive).
+_path_locks: Dict[str, threading.Lock] = {}
+_path_locks_guard = threading.Lock()
+
+
+def _get_path_lock(path: str) -> threading.Lock:
+    """Return a process-wide lock keyed by the normalized absolute path, creating it on first use."""
+    key = os.path.abspath(path)
+    with _path_locks_guard:
+        lock = _path_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _path_locks[key] = lock
+        return lock
+
 
 class PickleVerificationError(RuntimeError):
     """Raised when a pickle file fails its sha256 sidecar verification.
@@ -72,15 +94,18 @@ class PickleVerificationError(RuntimeError):
 
 
 def _truthy(value: str) -> bool:
+    """Return True if ``value`` (stripped, lowercased) is one of "1", "true", "yes", "on"."""
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _allow_unverified(env_var: str = DEFAULT_ALLOW_UNVERIFIED_ENV_VAR) -> bool:
+    """Check whether ``env_var`` is set in the environment to a truthy value."""
     raw = os.environ.get(env_var, "")
     return bool(raw) and _truthy(raw)
 
 
 def _sha256_of_file(path: str, chunk: int = 1 << 20) -> str:
+    """Compute the lowercase hex sha256 digest of the file at ``path``, reading in ``chunk``-byte blocks."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(chunk), b""):
@@ -171,8 +196,12 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
     Writes to a per-process-and-thread temp file, fsyncs, then ``os.replace`` onto ``path`` (atomic rename on
     POSIX and Windows for a same-dir target), so a crash mid-dump leaves the previous file intact instead of a
     truncated one, and two concurrent same-key writers -- even two threads in the same process -- never
-    interleave into a corrupt file (last full writer wins). The sidecar is written AFTER the pickle is on disk
-    so the hash matches the final bytes.
+    interleave into a corrupt file (last full writer wins). The whole payload-replace + sidecar-write sequence
+    is additionally serialized per-path (see :func:`_get_path_lock`) so the sidecar written by one thread can
+    never be overwritten by a stale digest from another thread that started earlier but finishes writing later
+    -- without this, "last full writer wins" held for the payload file alone but not for the (payload, sidecar)
+    pair together, since each writer's sidecar step re-reads whatever payload happens to be on disk at that
+    moment.
 
     On Windows, ``os.replace`` onto a target that a second thread is renaming onto in the same instant can
     transiently raise ``PermissionError`` (sharing violation, WinError 5) even though each writer has its own
@@ -181,19 +210,20 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
     replace after the retry budget is a real error and propagates.
     """
     tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
-    try:
-        with open(tmp, "wb") as f:
-            pickle.dump(obj, f, protocol=protocol)
-            f.flush()
-            os.fsync(f.fileno())
-        _replace_with_retry(tmp, path)
-    except Exception:
+    with _get_path_lock(path):
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-    write_sidecar(path)
+            with open(tmp, "wb") as f:
+                pickle.dump(obj, f, protocol=protocol)
+                f.flush()
+                os.fsync(f.fileno())
+            _replace_with_retry(tmp, path)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        write_sidecar(path)
 
 
 def _replace_with_retry(src: str, dst: str, *, attempts: int = 10, base_delay: float = 0.01) -> None:

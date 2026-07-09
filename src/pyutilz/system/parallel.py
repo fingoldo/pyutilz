@@ -1,3 +1,5 @@
+"""Parallelism helpers: workload chunking/distribution across workers, joblib/multiprocessing wrappers, and memory-mapped array support."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -221,6 +223,10 @@ def applyfunc_parallel(
 
 
 def set_tf_gpu(gpu: int):
+    """Restrict TensorFlow's visible GPUs to a single physical device.
+
+    Note: ``gpu`` is currently unused -- the visible device is hard-coded to ``gpus[3]``.
+    """
     ensure_installed("tensorflow")
 
     import tensorflow as tf

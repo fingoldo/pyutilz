@@ -1,3 +1,5 @@
+"""Helpers for working with JSON-like dicts/lists: serialization, attribute filtering, and extraction."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -8,9 +10,9 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Union
 import json
 
 def json_serial(obj: Any) -> str:
-    from datetime import datetime, date
-
     """JSON serializer for objects not serializable by default json code. Sample: json.dumps(oProduct,default=json_serial)"""
+
+    from datetime import datetime, date
 
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
@@ -18,6 +20,7 @@ def json_serial(obj: Any) -> str:
 
 
 def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optional[dict] = None) -> object:
+    """Create and append a new XML SubElement under ``parent`` with the given tag, text, and attributes."""
     if attribs is None:
         attribs = {}
     from xml.etree.ElementTree import SubElement  # nosec B405 - only used to CREATE/write new XML elements below (sub_elem builds output, never parses external/untrusted XML), so no XXE parsing risk
@@ -109,6 +112,7 @@ def jsonize_atrtributes(
 
 
 def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
+    """Delete the given ``attributes`` (if present) from ``json_obj`` in place."""
     if json_obj is None:
         return
     for attr in attributes:
@@ -117,6 +121,7 @@ def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
 
 
 def leave_json_attributes(json_obj: dict, attributes: Sequence) -> None:
+    """Delete every key of ``json_obj`` NOT in ``attributes``, in place (inverse of remove_json_attributes)."""
     if json_obj is None:
         return
     for attr in list(json_obj.keys()):
@@ -192,6 +197,7 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
 
 
 def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
+    """Delete each of ``attributes`` from ``json_obj`` in place when its value has length 0 (e.g. empty list/str/dict)."""
     for attr in attributes:
         if attr in json_obj:
             try:
@@ -204,6 +210,11 @@ def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
 def remove_json_defaults(
     json_obj: dict, attr_values: Optional[Dict[str, Any]] = None, warn_if_not_default: Optional[bool] = False, obj_id: Optional[str] = ""
 ) -> None:
+    """Delete each attribute in ``json_obj`` whose current value equals its default in ``attr_values``, in place.
+
+    When ``warn_if_not_default`` is set, logs a warning for attributes present but not equal to their default
+    (instead of deleting them).
+    """
     if json_obj is None or attr_values is None:
         return
     for attr, default_value in attr_values.items():
@@ -216,6 +227,11 @@ def remove_json_defaults(
 
 
 def json_pg_dumps(obj: object, sort_keys: bool = False) -> str:
+    """Serialize ``obj`` to a psycopg2 ``Json`` wrapper suitable for insertion into a jsonb column.
+
+    Uses orjson (falling back to stdlib json if unavailable) and strips literal NUL escapes
+    (``\\u0000``), which postgres rejects inside jsonb text.
+    """
     # json.loads(json.dumps(obj, default=json_serial).replace(r"\u0000", "").replace("NaN", "null"))
     # orjson is ~5-10x faster than stdlib json on dumps; emits UTF-8 bytes so we
     # decode once before the literal-six-char backslash-u-0000 escape strip (postgres

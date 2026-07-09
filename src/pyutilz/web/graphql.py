@@ -1,3 +1,5 @@
+"""Thin module-level wrapper around a GraphQL client: connect, execute queries, and query helpers."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -21,6 +23,7 @@ ensure_installed("")
 client = None
 
 def connect(graphql_client:Any)->None:
+    """Register the module-level GraphQL client instance used by execute()/query_schema()."""
     global client
     client = graphql_client
 
@@ -35,6 +38,7 @@ def execute(query:str,variables:Optional[dict]=None)->dict:
     return {}
 
 def query_schema()->dict:
+    """Run the standard GraphQL introspection query against the connected endpoint and return its schema."""
     return execute("""
         query IntrospectionQuery {
           __schema {

@@ -23,6 +23,7 @@ def _loop_target_names(node: ast.For | ast.AsyncFor) -> set[str]:
     """Names bound by a for-loop target (handles tuple unpacking)."""
     names: set[str] = set()
     def _walk(t: ast.AST) -> None:
+        """Recursively collect Name ids bound by a (possibly nested/starred) for-loop target into the enclosing ``names`` set."""
         if isinstance(t, ast.Name):
             names.add(t.id)
         elif isinstance(t, (ast.Tuple, ast.List)):
@@ -55,6 +56,7 @@ def _ancestor_chain(target: ast.AST, root: ast.stmt) -> list[ast.AST]:
     found = [False]
 
     def _walk(node: ast.AST, stack: list[ast.AST]) -> None:
+        """Depth-first search from ``node`` for ``target``; when found, records the accumulated ``stack`` of ancestors into the enclosing ``chain`` and sets ``found[0]``."""
         if found[0]:
             return
         if node is target:

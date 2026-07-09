@@ -91,7 +91,10 @@ repos:
     hooks:
       - id: pyutilz-meta-tests-static-only
         name: "pyutilz meta-tests (static checks only — skip subprocess)"
-        entry: pytest tests/test_meta/ --no-cov -p no:randomly -q -x --deselect tests/test_meta/test_optional_deps_isolation.py --deselect tests/test_meta/test_no_top_level_side_effects.py
+        entry: >-
+          pytest tests/test_meta/ --no-cov -p no:randomly -q -x
+          --deselect tests/test_meta/test_optional_deps_isolation.py
+          --deselect tests/test_meta/test_no_top_level_side_effects.py
         language: system
         types: [python]
         pass_filenames: false

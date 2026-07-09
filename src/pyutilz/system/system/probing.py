@@ -1,3 +1,5 @@
+"""System/hardware probing helpers: CPU, memory, GPU, OS and BIOS info via psutil, WMI, lscpu, nvidia-smi, etc."""
+
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 
@@ -315,6 +317,7 @@ def summarize_system_info():
 
 
 def get_nix_cpu_sockets_number():
+    """Returns the number of physical CPU sockets on Linux by parsing `lscpu` output; falls back to 1 on any failure."""
     num_sockets: _Any = 1
     try:
         res = subprocess.check_output("lscpu").decode()  # nosec B603 B607 - fixed trusted binary "lscpu", hardcoded string with no interpolation, no shell

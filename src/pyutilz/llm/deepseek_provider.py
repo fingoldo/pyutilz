@@ -64,10 +64,12 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
 
     def _get_timeout(self, model: str) -> float:
+        """Return the request timeout in seconds for ``model`` (longer for reasoning/"pro" models)."""
         # V4 models support thinking via parameter; reasoner is the legacy thinking alias
         return 300.0 if "reasoner" in model or "pro" in model else 120.0
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
+        """Log a warning when the response indicates insufficient account balance (HTTP 402)."""
         if resp.status_code == 402:
             logger.warning(
                 "DeepSeek account has insufficient balance (HTTP 402). "
@@ -87,6 +89,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     # https://api-docs.deepseek.com/api/create-chat-completion
 
     def _thinking_request_field(self, thinking: bool | str) -> dict | None:
+        """Build the request-body ``thinking`` field for V4 models, or None for legacy aliases that don't support it."""
         # Only V4 models support this toggle; legacy aliases (chat/reasoner)
         # are fixed-mode server-side and reject the field. Log a warning
         # so a caller passing thinking= to a legacy alias notices the
@@ -131,6 +134,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         )
 
         def _to_float(v) -> float | None:
+            """Coerce ``v`` to float, returning None if it's missing or not coercible."""
             if v is None:
                 return None
             try:
@@ -165,6 +169,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     _seen_unknown_models: set[str] = set()
 
     def _warn_unknown_model_once(self, model: str) -> None:
+        """Log a one-time warning (per model name, across instances) that pricing is unknown and flash rates are used."""
         if model in DeepSeekProvider._seen_unknown_models:
             return
         DeepSeekProvider._seen_unknown_models.add(model)
@@ -174,10 +179,13 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         )
 
     def _input_cost_per_1m(self, model: str) -> float:
+        """Return the USD cost per 1M input tokens (cache miss) for ``model``."""
         return self._resolve_pricing(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
+        """Return the USD cost per 1M output tokens for ``model``."""
         return self._resolve_pricing(model)[2]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
+        """Return the USD cost per 1M input tokens on a cache hit for ``model``."""
         return self._resolve_pricing(model)[1]

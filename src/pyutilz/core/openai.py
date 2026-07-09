@@ -23,6 +23,7 @@ except ImportError:
 
 
 def _require_tiktoken() -> None:
+    """Raise ImportError with an install hint if the optional ``tiktoken`` dependency is not available."""
     if tiktoken is None:
         raise ImportError("tiktoken is required: pip install pyutilz[nlp]")
 

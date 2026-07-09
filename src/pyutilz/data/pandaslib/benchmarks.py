@@ -32,6 +32,12 @@ from .frames import remove_constant_columns
 
 
 def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: str, read_params: dict, write_method: str, write_params: dict, nrepeats: int):
+    """Write & read ``df`` to/from ``fname`` ``nrepeats`` times using the given pandas methods.
+
+    Returns 4 ``np.ndarray`` arrays (read_times, write_times, read_sizes, write_sizes),
+    one value per repeat; sizes are in megabytes (write: on-disk file size, read: in-memory
+    dataframe size).
+    """
     read_times, write_times, read_sizes, write_sizes = [], [], [], []
     for _ in range(nrepeats):
         # write
@@ -56,6 +62,7 @@ def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: st
 
 
 def pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes):
+    """Append a summary row (config name + mean/std of each timing/size array) to ``res`` in place."""
     res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
 
 
@@ -68,6 +75,12 @@ def benchmark_dataframe_parquet_compression(
     skip_configs: tuple = ("parquet-fastparquet-brotli",),
     write_method: str = "to_parquet",
 ) -> pd.DataFrame:
+    """Benchmark parquet read/write across engines, compression codecs and (for supported codecs) compression levels.
+
+    Returns a dataframe with one row per ``{engine}-{codec}[-{level}]`` config and mean/std
+    read/write time & size columns. Configs listed in ``skip_configs`` are skipped; per-level
+    configs that error out are logged and skipped rather than aborting the whole benchmark.
+    """
     res: List[Any] = []
     file_format = "parquet"
     if write_method == "write_parquet":
@@ -127,6 +140,7 @@ def benchmark_dataframe_parquet_compression(
 
 
 def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
+    """Benchmark pickle read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "pickle"
 
     # for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
@@ -148,6 +162,7 @@ def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
 
 
 def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
+    """Benchmark HDF5 read/write across compression libraries (zlib/lzo/bzip2/blosc) and compression levels, appending each config's results to ``res`` in place."""
     file_format = "hdf"
 
     for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
@@ -169,6 +184,7 @@ def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
 
 
 def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
+    """Benchmark CSV read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "csv"
 
     for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
@@ -189,6 +205,7 @@ def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
 
 
 def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
+    """Benchmark ORC read/write (single default config), appending the results to ``res`` in place."""
     file_format = "orc"
 
     config = f"{file_format}"
@@ -208,6 +225,7 @@ def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
 
 
 def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
+    """Benchmark feather read/write (single default config), appending the results to ``res`` in place."""
     file_format = "feather"
 
     config = f"{file_format}"

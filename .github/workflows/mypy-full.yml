@@ -1,4 +1,4 @@
-name: MyPy (full)
+name: MyPy-full
 
 # Whole-project mypy check, separate from the fast mypy.yml strict-mode beachhead. The
 # beachhead step in mypy.yml runs against a bare `pip install mypy` environment with none of

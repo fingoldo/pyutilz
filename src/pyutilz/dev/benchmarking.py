@@ -382,6 +382,7 @@ def sweep_backend_grid(
     _max_combo = tuple(axes[d][-1] for d in dim_names)
 
     def _default_to_device(args):
+        """Move any numpy-array arguments to a CuPy device array, leaving other argument types unchanged."""
         import cupy as cp
 
         return tuple(cp.asarray(a) if isinstance(a, np.ndarray) else a for a in args)

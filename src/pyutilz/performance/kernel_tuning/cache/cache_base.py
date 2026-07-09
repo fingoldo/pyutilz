@@ -1,3 +1,4 @@
+"""Core on-disk kernel-tuning cache: hardware fingerprinting, cache-dir resolution, and provenance tracking."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -37,6 +38,7 @@ def _slug(s: str, maxlen: int = 40) -> str:
 
 @lru_cache(maxsize=1)
 def _cpu_model_slug() -> str:
+    """Filename-safe slug of the CPU's brand string (e.g. "unknown" on probe failure), cached for the process lifetime."""
     # cpuinfo.get_cpu_info() runs a ~2s WMI/CPUID probe on Windows (and can
     # stall under load); the CPU model is invariant, so cache it for the process
     # lifetime. This lru survives hw_fingerprint.cache_clear() (which tests call
@@ -397,6 +399,7 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
 # fit get past its bursty start (kernel launches, H2D) so the busy-check below sees the real load, and
 # avoids stealing the device the instant the caller needs it. Env-overridable; 0 disables the delay.
 def _async_sweep_start_delay() -> float:
+    """Seconds to wait after deciding an async sweep is needed before starting it (env ``PYUTILZ_KERNEL_SWEEP_START_DELAY``, default 10s)."""
     try:
         return max(0.0, float(os.environ.get("PYUTILZ_KERNEL_SWEEP_START_DELAY", "10.0")))
     except ValueError:

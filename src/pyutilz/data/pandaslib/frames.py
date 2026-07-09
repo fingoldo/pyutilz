@@ -313,6 +313,7 @@ class FeatureNamer:
         return self.fnames[name]
 
     def rev(self, key: int):
+        """Return the original feature name previously mapped to the numeric ``key``, or None if unknown."""
         return self.revfnames.get(key)
 
 
@@ -353,6 +354,10 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
 
 
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
+    """
+    Return names of columns in ``ref_df`` that have at most one distinct value (constant or all-NaN).
+    Falls back to a per-column loop, skipping columns whose values raise TypeError (e.g. unhashable), if the vectorized ``nunique()`` call fails.
+    """
     try:
         susp_columns = ref_df.columns[ref_df.nunique() <= 1].tolist()
     except Exception:
@@ -368,7 +373,12 @@ def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
 
 
 def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_size: int = 10_000) -> None:
+    """
+    Drop constant (single-unique-value) columns from ``df`` in place.
 
+    For large dataframes (more rows than ``prewarm_size``), constancy is first screened on a ``prewarm_size``-row
+    head sample for speed, then any false positives are rejected by checking the full column before dropping.
+    """
     if len(df) <= prewarm_size:
         susp_columns = get_suspiciously_constant_columns(df)
     else:

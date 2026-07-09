@@ -292,6 +292,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         return True
 
     def _get_timeout(self, model: str) -> float:
+        """Return the request timeout in seconds for ``model``: 1200.0 for known slow reasoning-class models, else 240.0."""
         # Reasoning-class upstream models may need long timeouts; same heuristic
         # as the per-provider classes — if we route through OR to a known slow
         # tier (o-series, gpt-5-pro, claude-opus, deepseek-reasoner), bump it.
@@ -304,6 +305,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         return 240.0
 
     def _extra_request_body(self, model: str) -> dict[str, Any]:
+        """Build the OpenRouter-specific extra request-body fields (``provider`` routing options, model fallback list) for ``model``."""
         body: dict[str, Any] = {}
         provider_field: dict[str, Any] = {}
         if self._provider_order:
@@ -357,6 +359,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         return {"reasoning": {"effort": effort or "medium"}}
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
+        """Log a warning when ``resp`` signals HTTP 402 (OpenRouter account out of credits)."""
         if resp.status_code == 402:
             logger.warning(
                 "OpenRouter account out of credits (HTTP 402). "
@@ -469,9 +472,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             self.last_response_cache_source_id = cache_src
 
     def _input_cost_per_1m(self, model: str) -> float:
+        """Return the USD cost per 1M input tokens for ``model``."""
         return _per_token_cost_pair(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
+        """Return the USD cost per 1M output tokens for ``model``."""
         return _per_token_cost_pair(model)[1]
 
     async def fetch_model_parameters(
@@ -627,6 +632,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         data = payload.get("data", payload) if isinstance(payload, dict) else {}
 
         def _to_float(v) -> float | None:
+            """Coerce ``v`` to float, returning None for None or unconvertible values."""
             if v is None:
                 return None
             try:

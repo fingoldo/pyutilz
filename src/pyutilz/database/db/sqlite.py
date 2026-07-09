@@ -1,9 +1,10 @@
+"""SQLite helpers that take conn/cursor as explicit arguments.
+
+These do NOT read the module-level Postgres connection globals; carved out of db.py and
+re-exported by the db.__init__ facade.
+"""
 # ----------------------------------------------------------------------------------------------------------------------------
 # SQLITE
-# ----------------------------------------------------------------------------------------------------------------------------
-# These helpers take conn/cursor as explicit arguments and do NOT read the
-# module-level Postgres connection globals; carved out of db.py and
-# re-exported by the db.__init__ facade.
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
@@ -19,6 +20,10 @@ from pyutilz.database.db.sql_helpers import validate_sql_identifier
 
 
 def ensure_db_tables_created(conn: sqlite3.Connection, cursor: sqlite3.Cursor, schema_fpath: Optional[str] = None) -> bool:
+    """Create DB tables by executing the SQL script at ``schema_fpath`` (default ``database/schema.sql``).
+
+    Returns True on success, False if the schema file is missing or empty (logging an error in either case).
+    """
 
     if not schema_fpath:
         schema_fpath = join("database", "schema.sql")

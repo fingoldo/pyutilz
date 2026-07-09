@@ -324,6 +324,7 @@ class LLMProvider(ABC):
             Response dicts with ``id`` and either ``result`` or ``error``.
         """
         async def process_request(req: dict) -> dict[str, Any]:
+            """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
             request_id = req.get("id", "unknown")
             try:
                 result = await self.generate(

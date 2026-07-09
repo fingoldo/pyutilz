@@ -117,6 +117,7 @@ class XAIProvider(OpenAICompatibleProvider):
         self._return_citations = return_citations
 
     def _extra_request_body(self, model: str) -> dict:
+        """Extend the base request body with xAI's ``search_parameters`` block when live search is enabled."""
         body: dict = super()._extra_request_body(model)
         if self._live_search:
             mode = self._live_search if isinstance(self._live_search, str) else "on"
@@ -127,6 +128,7 @@ class XAIProvider(OpenAICompatibleProvider):
         return body
 
     def _get_timeout(self, model: str) -> float:
+        """Return the request timeout in seconds, using a longer timeout for reasoning-mode models whose chain-of-thought generation can be slow."""
         # Reasoning-mode variants need long timeout (chain-of-thought can be slow).
         # Note: substring check would mistakenly match "non-reasoning" to reasoning,
         # so explicitly exclude that suffix first.
@@ -137,24 +139,30 @@ class XAIProvider(OpenAICompatibleProvider):
         return 240.0
 
     def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
+        """Return the total output tokens billed by xAI, which combines completion and reasoning tokens."""
         return completion_tokens + reasoning_tokens
 
     async def get_account_credits(self) -> dict:
+        """Not supported for xAI: always raises NotImplementedError since credit balance is only available via the console.x.ai dashboard, not a public API."""
         # As of May 2026, the public xAI REST docs (api.x.ai + management-api.x.ai)
         # don't list any endpoint for remaining credit; the management API
         # only handles key/ACL CRUD. Balance is dashboard-only.
         raise NotImplementedError("xAI has no public API to fetch remaining credit. " "Check console.x.ai for credit balance and usage.")
 
     async def check_account_limits(self) -> dict:
+        """Not supported for xAI: always raises NotImplementedError since per-key rate limits are tier-based and not exposed via the API."""
         raise NotImplementedError(
             "xAI does not expose per-key rate limits via API. " "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
         )
 
     def _input_cost_per_1m(self, model: str) -> float:
+        """Return the input token price per 1M tokens for the given model, falling back to the fast-tier default if unlisted."""
         return _PRICING.get(model, (0.20, 0.50))[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
+        """Return the output token price per 1M tokens for the given model, falling back to the fast-tier default if unlisted."""
         return _PRICING.get(model, (0.20, 0.50))[1]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
+        """Return the cached-input token price per 1M tokens for the given model, falling back to a default rate if unlisted."""
         return _CACHE_HIT_COST.get(model, 0.05)

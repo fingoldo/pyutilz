@@ -395,6 +395,7 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
             return len(cache.get_regions(spec.kernel_name) or [])
 
     def _tune():
+        """Evicts the cached kernel entry when force is set, then runs the (synchronous, persisting) tuning sweep."""
         if force:
             cache.evict(spec.kernel_name)
         # dims={} just drives the tuner + persist; the return is ignored (we

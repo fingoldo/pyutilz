@@ -1,3 +1,5 @@
+"""Text entropy utilities: tokenizers and Markov-model-based entropy/entropy-rate computations."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -19,6 +21,9 @@ _WORD_TOKEN_RE = re.compile(r"[a-zA-Z']+")
 
 
 def tokenize_text(source: str, tokenizer: Callable, lowercase: bool = True, strip: bool = True) -> Iterator[str]:
+    """
+    Optionally strips and lowercases source, then delegates tokenization to the given tokenizer callable.
+    """
     if strip:
         source = source.strip()
     if lowercase:
@@ -39,6 +44,9 @@ def tokenize_source(source: str, tokenizer: Callable, is_file: bool = False, low
 
 
 def tokenize_to_chars(source: str, is_file: bool = False) -> Iterator[str]:
+    """
+    Tokenizes source into individual characters (appending a trailing space per line when is_file).
+    """
     if is_file:
         return tokenize_source(source, lambda s: s + " ", is_file=True)
     else:
@@ -46,6 +54,9 @@ def tokenize_to_chars(source: str, is_file: bool = False) -> Iterator[str]:
 
 
 def tokenize_to_words(source, is_file: bool = False) -> Iterator[str]:
+    """
+    Tokenizes source into words (sequences of letters and apostrophes) using the module's pre-compiled regex.
+    """
     return tokenize_source(source, lambda s: _WORD_TOKEN_RE.findall(s), is_file=is_file)
 
 
@@ -71,14 +82,25 @@ def get_entropy_stats(stream, model_order: int = 2) -> tuple:
 
 
 def entropy(stats: Counter, normalization_factor: float = 1.0) -> float:
+    """
+    Computes Shannon entropy (in bits) of the counts in stats, normalizing each count by normalization_factor before treating it as a probability.
+    """
     return -sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values())
 
 
 def entropy_rate(conditional_stats, stats) -> float:
+    """
+    Computes the conditional (Markov) entropy rate: the prefix-count-weighted average of entropy(conditional_stats[prefix]) over all prefixes in stats.
+    """
     return sum(stats[prefix] * entropy(conditional_stats[prefix], stats[prefix]) for prefix in stats) / sum(stats.values())  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def compute_entropy_stats(text: str, order: int = 0) -> tuple:
+    """
+    Tokenizes text into characters and computes an order-th order Markov model's raw entropy and entropy rate.
+    Returns:
+        (sample_raw_entropy, sample_entropy_rate), or (None, None) if no stats could be gathered.
+    """
     conditional_stats, stats = get_entropy_stats(tokenize_to_chars(text), order)
     if len(stats) == 0:
         return None, None
@@ -90,6 +112,9 @@ def compute_entropy_stats(text: str, order: int = 0) -> tuple:
 
 
 def naive_entropy_rate(a: str) -> float:
+    """
+    Computes zeroth-order (character-frequency-based) Shannon entropy of the string a, ignoring any sequential/conditional structure.
+    """
     m, cnt = np.unique(np.array(list(a)), return_counts=True)
     # print(m)
     # print(cnt)
@@ -98,4 +123,7 @@ def naive_entropy_rate(a: str) -> float:
     return -np.sum(p * np.log2(p))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 def stringify_dict(the_dict:dict,sep:str=",")->str:
+    """
+    Renders a dict as a "key=value" string, joining entries with sep.
+    """
     return sep.join([f"{key}={value}" for key,value in the_dict.items()])

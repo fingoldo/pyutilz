@@ -1,3 +1,5 @@
+"""Helpers for safely reading/writing Delta Lake tables, including local-path detection and file-locked writes."""
+
 import os
 import tempfile
 import logging
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_local_path(path: str) -> bool:
+    """Determine whether a path points to a local filesystem location rather than a remote store (e.g. s3://, azure://)."""
     parsed = urlparse(path)
     # If there's no scheme or it's explicitly "file"
     if parsed.scheme in ("", "file"):

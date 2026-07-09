@@ -97,6 +97,7 @@ class AnthropicProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
+        """Maximum output tokens for ``self.model``, looked up from the known per-family limits (Opus/Sonnet/Haiku)."""
         # Source: https://platform.claude.com/docs/en/docs/about-claude/models
         #   Opus 4.6: 128K, Opus 4/4.1: 32K, Sonnet 4.6: 64K, Haiku 4.5: 64K
         if self.model.startswith("claude-opus"):
@@ -109,6 +110,7 @@ class AnthropicProvider(LLMProvider):
 
     @property
     def context_window(self) -> int:
+        """Total context window size (input + output tokens) of the underlying Anthropic model."""
         return 200_000
 
     def supports_json_mode(self) -> bool:
@@ -257,6 +259,7 @@ class AnthropicProvider(LLMProvider):
             return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
+        """Always raise ``NotImplementedError``: Anthropic exposes no public API for remaining balance on regular API keys."""
         # Anthropic publishes balance only via the web console — there is no
         # public API endpoint for regular ``sk-ant-api03-...`` keys. The
         # Admin API (``/v1/organizations/cost_report``) requires a separate

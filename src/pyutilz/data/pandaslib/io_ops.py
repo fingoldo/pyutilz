@@ -23,6 +23,12 @@ from typing import Callable, Optional
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
+    """
+    Load a pickled dataframe from ``fpath``, optionally keeping only the last ``tail`` rows.
+
+    Args:
+        tail: if a positive int, the dataframe is truncated to its last ``tail`` rows; falsy/None leaves it untouched.
+    """
     logger.info("Loading data from file %s...", fpath)
 
     df = pd.read_pickle(fpath)
@@ -36,7 +42,13 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
 def concat_and_flush_df_list(
     lst: list, file_name: str, to_csv: bool = False, csv_cols: Optional[list] = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: Optional[str] = None
 ) -> Optional[pd.DataFrame]:
+    """
+    Concatenate all dataframes in ``lst`` into one, clear ``lst`` in place to free memory, then write and return the result.
 
+    If ``to_csv`` is True the joined dataframe is written as CSV (header+overwrite when ``csv_cols`` is None,
+    else appending only ``csv_cols`` without header); otherwise it is optionally indexed by ``set_index`` and
+    written via ``getattr(joined_df, write_fcn)`` to ``f"{file_name}.{write_extension}"``. Returns None if ``lst`` is empty.
+    """
     if len(lst) > 0:
         joined_df = pd.concat(lst, axis=0, ignore_index=True)
         lst.clear()
@@ -73,7 +85,17 @@ def read_stats_from_multiple_files(
     min_size_improvement_percent: float = 0.05,
     min_size_improvement: float = 5.0,
 ):
+    """
+    Read and merge dataframes from files matching ``template`` in ``folder`` (up to ``max_files``), then flush the merge to disk.
 
+    Each matching file (read via ``read_fcn``, skipping any whose name contains ``exclude``) is optionally dtype-optimized
+    via ``optimize_dtypes`` and re-saved with ``write_fcn``/``write_extension`` when the optimization shrinks it by at least
+    ``min_size_improvement_percent`` or ``min_size_improvement`` GB (only if ``save_on_successful_optimization``). If
+    ``sentinel_field`` is given, a column with that name (auto-suffixed with "1" if already present) is added to each
+    frame, holding either the source filename or ``sentinel_fcn(filename)``. Collected frames are merged via
+    ``concat_and_flush_df_list`` into ``joint_file_name`` (optionally indexed by ``set_index``); source files are
+    deleted afterwards if ``delete_after`` is True. Returns the merged dataframe, or None if nothing was merged.
+    """
     lst = []
     fnames = []
     for _i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
@@ -133,7 +155,11 @@ def read_stats_from_multiple_files(
 
 
 def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:
+    """
+    Read a parquet dataset at ``path`` via pyarrow and return it as a pandas dataframe.
 
+    If ``nrows`` is truthy, only the first ``nrows`` rows are scanned and returned; otherwise the whole dataset is read.
+    """
     if nrows:
         df = _facade.dataset(path).scanner().head(nrows).to_pandas()
     else:

@@ -1,3 +1,5 @@
+"""String and sentence similarity metrics: Levenshtein-based string similarity, word-overlap sentence similarity (with numba-accelerated variants), and a batched candidate-matching index."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -762,4 +764,5 @@ except ImportError:
             self.cMinLenTHreshold = cMinLenTHreshold
             self.n_candidates = len(candidates)
         def query(self, query_words: list) -> list:
+            """Compare query against all indexed candidates. Returns list of similarities."""
             return [sentences_similarity(query_words, c, self.cMinLenTHreshold) for c in self.candidates]

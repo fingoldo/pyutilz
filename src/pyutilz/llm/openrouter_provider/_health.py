@@ -217,6 +217,7 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
         })
 
     def _best(field: str, op):
+        """Apply `op` (e.g. min/max) over the numeric values of `field` across normalized endpoints, or None if none numeric."""
         vals = [n[field] for n in norm if isinstance(n[field], (int, float))]
         return op(vals) if vals else None
 
@@ -444,6 +445,7 @@ def list_openrouter_models(
 
     if max_input_per_1m is not None:
         def _input_per_1m(r: dict) -> float:
+            """Return `r`'s input price per 1M tokens (USD), or infinity if the pricing field is missing/unparseable."""
             try:
                 return float((r.get("pricing") or {}).get("prompt", "0") or "0") * 1_000_000
             except (TypeError, ValueError):
@@ -452,6 +454,7 @@ def list_openrouter_models(
 
     if max_output_per_1m is not None:
         def _output_per_1m(r: dict) -> float:
+            """Return `r`'s output price per 1M tokens (USD), or infinity if the pricing field is missing/unparseable."""
             try:
                 return float((r.get("pricing") or {}).get("completion", "0") or "0") * 1_000_000
             except (TypeError, ValueError):
@@ -473,6 +476,7 @@ def list_openrouter_models(
 
     if sort_by:
         def _key(r: dict):
+            """Build the sort key tuple-like dict for `r`, selecting the field named by the enclosing `sort_by`."""
             pricing = r.get("pricing") or {}
             try:
                 in_price = float(pricing.get("prompt", "0") or "0")

@@ -1,3 +1,5 @@
+"""Dash (Plotly) helper utilities: AG Grid Russian localization and role-aware nested-tab construction."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -277,6 +279,7 @@ AG_GRID_LOCALE_RU = {
 
 
 def get_active_tab_var_name(tabsName: str, prefix: str = "tab"):
+    """Build the Flask session key used to remember the active tab id for a given tab group."""
     return prefix + "s" + tabsName + "ActiveTab"
 
 

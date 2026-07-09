@@ -43,12 +43,14 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 
 def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
+    """Return a DataFrame keeping only the numeric columns that contain at least one NaN value."""
     meta = df.select(cs.numeric().is_nan().any())
     true_cols = meta.row(0)
     return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
 
 def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
+    """Return a DataFrame keeping only the numeric columns that contain at least one infinite value."""
     meta = df.select(cs.numeric().is_infinite().any())
     true_cols = meta.row(0)
     return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
@@ -70,6 +72,7 @@ _PlFrameT = TypeVar("_PlFrameT", pl.DataFrame, pl.LazyFrame)
 
 
 def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
+    """Downcast Float64 and the common integer dtypes to Float32/Int32 to shrink memory usage."""
     # Int128 was added in polars 0.19.0, make it optional for older versions
     int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
     if hasattr(pl, "Int128"):
@@ -78,6 +81,7 @@ def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
 
 
 def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0) -> pl.Expr:
+    """Apply :func:`clean_numeric` to ``expr`` when ``func_name`` is a stat prone to NaN (skew/kurtosis on near-constant data), otherwise return ``expr`` unchanged."""
     if func_name in ["skew", "kurtosis"]:
         return clean_numeric(expr, nans_filler=nans_filler)
     else:
@@ -227,6 +231,14 @@ def build_aggregate_features_polars(
     linreg_timestamp_field: Optional[str] = None,
     use_parametrized_pds_features: bool = True,
 ) -> tuple:
+    """Build the list of polars aggregate-feature expressions used by ``create_ts_features_polars`` (numaggs, quantiles,
+    weighted/EWM aggregates, categorical concentrations, peaks/lziv, polars-ds stats, correlations, linregs, etc.),
+    optionally split by ``subgroups`` filters.
+
+    Returns:
+        A tuple ``(feature_expressions, columns_to_unnest, unnest_rules)`` to be passed to a ``group_by(...).agg(...)``
+        call followed by ``.with_columns(columns_to_unnest).unnest(unnest_rules)``.
+    """
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Checks
@@ -344,6 +356,7 @@ def build_aggregate_features_polars(
         for filter_value in filter_values:
 
             def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.Expr:
+                """Wrap ``expr`` with a ``.filter(col == value)`` for the current subgroup, or leave it unfiltered if there is no active filter field."""
                 return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
@@ -679,11 +692,14 @@ def create_ts_features_polars(
 
 
 def entropy_for_column(bins: pl.DataFrame, col: str) -> float:
+    """Compute the Shannon entropy (in nats) of the discrete (already-binned) values in ``bins[col]``."""
     marginal_freqs = bins.group_by(col).agg(pl.len())["len"].to_numpy() / len(bins)
     return -np.sum(marginal_freqs * np.log(marginal_freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str) -> float:
+    """Compute the mutual information between binned columns ``col`` and ``target_col``, using precomputed marginal entropies
+    from ``entropies`` and the joint entropy of the two columns (mi = H(col) + H(target) - H(col, target))."""
     joint_freqs = bins.group_by([col, target_col]).agg(pl.len())["len"].to_numpy() / len(bins)
     joint_entropy = -np.sum(joint_freqs * np.log(joint_freqs))
     mi = entropies[target_col] + entropies[col] - joint_entropy
@@ -912,6 +928,7 @@ def bin_numerical_columns(
 
 
 def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: int = 1) -> pl.DataFrame:
+    """Drop numeric columns whose min and max are equal (or missing/NaN), i.e. columns with no informative variation."""
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -947,6 +964,7 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
 
 
 def polars_df_info(df: pl.DataFrame) -> str:
+    """Build a pandas-``.info()``-style multi-line summary string for a polars DataFrame (shape, columns, dtype counts, estimated memory usage)."""
     lines = []
     lines.append(f"{type(df)}")
     lines.append(f"RangeIndex: {df.height} entries, 0 to {df.height - 1 if df.height > 0 else 0}")

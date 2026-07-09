@@ -50,6 +50,7 @@ try:
         from claude_code_sdk._internal import client as _cc_client
         _orig_parse = _mp.parse_message
         def _patched_parse(data):
+            """Wrap ``message_parser.parse_message`` so unknown SDK message types (e.g. ``rate_limit_event``) return None instead of raising ``MessageParseError``."""
             try:
                 return _orig_parse(data)
             except _mp.MessageParseError:
@@ -64,6 +65,7 @@ try:
         _orig_build = _sc.SubprocessCLITransport._build_command
 
         def _patched_build(self):
+            """Wrap ``SubprocessCLITransport._build_command`` to pass the prompt via ``--print -`` (stdin) instead of an inline argv element, avoiding Windows' command-line length limit for non-streaming calls."""
             cmd = _orig_build(self)
             if not self._is_streaming and "--print" in cmd:
                 try:
@@ -76,6 +78,7 @@ try:
 
         # -- PATCH 3: Stdin prompt delivery + stderr capture --
         async def _patched_connect(self):
+            """Wrap ``SubprocessCLITransport.connect`` to spawn the CLI subprocess, write the prompt to stdin (rather than argv) for non-streaming calls, and capture stderr into a readable stream for error enrichment."""
             if self._process:
                 return
             cmd = self._build_command()
@@ -116,6 +119,7 @@ try:
         from claude_code_sdk._errors import ProcessError as _ProcessError
 
         async def _patched_read_messages(self):
+            """Wrap ``SubprocessCLITransport._read_messages_impl`` to re-raise ``ProcessError`` with the process's real captured stderr text (up to 2000 chars) instead of the SDK's generic message."""
             try:
                 async for msg in _orig_read_messages(self):
                     yield msg
@@ -307,10 +311,12 @@ class ClaudeCodeProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
+        """Maximum output tokens supported by the underlying Claude Code model."""
         return 32000
 
     @property
     def context_window(self) -> int:
+        """Total context window size (input + output tokens) of the underlying Claude Code model."""
         return 200_000
 
     def supports_json_mode(self) -> bool:
@@ -553,6 +559,7 @@ class ClaudeCodeProvider(LLMProvider):
             sub_env = {k: v for k, v in os.environ.items() if k not in self._NESTED_BLOCK_VARS}
 
             def run_cli():
+                """Spawn the ``claude`` CLI as a subprocess, stream its stdout via a background reader thread, and parse the stream-json events until a ``result`` event, timeout, or EOF; returns ``(returncode, result_text, stderr_text)``."""
                 # NOTE: This Popen is NOT wrapped in a ``with`` block
                 # because the surrounding logic already has a ``try /
                 # finally`` (line below) that runs ``proc.kill()`` +
@@ -583,6 +590,7 @@ class ClaudeCodeProvider(LLMProvider):
                 line_q: queue.Queue[str | None] = queue.Queue()
 
                 def _reader():
+                    """Drain ``proc.stdout`` line-by-line into ``line_q``, pushing ``None`` as a sentinel once the pipe closes."""
                     assert proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
                     try:
                         for line in proc.stdout:
@@ -741,6 +749,7 @@ class ClaudeCodeProvider(LLMProvider):
         return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
+        """Always raise ``NotImplementedError``: Claude Code runs on a Max subscription with no per-token credit balance to fetch."""
         # Claude Code uses the Max subscription rather than per-token credits —
         # there is no "balance" concept. Usage is rate-limited within the
         # subscription's session windows (5h / weekly), surfaced by the CLI

@@ -1,3 +1,4 @@
+"""Filesystem & hardware-device introspection helpers (disk space, directory creation, Linux PCI device listing)."""
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 
@@ -35,6 +36,7 @@ from pyutilz.text.strings import remove_json_defaults
 
 
 def ensure_dir_exists(directory: str):
+    """Create ``directory`` (and any missing parents) if it doesn't already exist. Return True if it already existed, False if it was just created."""
     # directory = os.path.dirname(file_path)
     existed = os.path.exists(directory)
     if not existed:
@@ -77,6 +79,7 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
 
 
 def list_linux_devices() -> Optional[dict]:
+    """List PCI devices on Linux via the ``pylspci`` CLI tool, stripping default/empty fields from each entry. Return None on any error (e.g. tool missing, non-Linux host)."""
     # ensure_installed("pylspci")
 
     try:

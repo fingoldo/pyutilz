@@ -1,3 +1,5 @@
+"""Register the current process as a distributed scraper node and send periodic heartbeats to the DB."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -26,6 +28,8 @@ from pyutilz.web import web
 
 
 class Container:
+    """Mutable holder for the current process's resolved node id."""
+
     def __init__(self,):
         self.node_id = None
 

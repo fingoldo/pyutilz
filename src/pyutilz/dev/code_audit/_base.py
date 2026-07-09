@@ -34,6 +34,7 @@ class Finding:
     detail: str
 
     def as_md_row(self) -> str:
+        """Render this finding as one Markdown table row (``| severity | check | file:line | snippet | detail |``), escaping pipe characters in the snippet."""
         snip = self.snippet.replace("|", "\\|")
         return f"| {self.severity} | {self.check} | {self.file}:{self.line} | " f"`{snip}` | {self.detail} |"
 
@@ -50,6 +51,7 @@ _DEFAULT_EXCLUDE_DIRS = frozenset({
 
 
 def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
+    """Yield every ``.py`` file under ``root``, skipping files that have any path component matching ``exclude_dirs``."""
     for p in root.rglob("*"):
         if p.suffix not in _PY_EXTS or not p.is_file():
             continue
@@ -60,6 +62,7 @@ def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
 
 
 def _safe_parse(path: Path) -> Optional[ast.Module]:
+    """Read and ``ast.parse`` ``path`` as UTF-8, returning None on read failure (I/O, decode) or a syntax error instead of raising."""
     try:
         src = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -71,6 +74,7 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
 
 
 def _line_text(src_lines: list[str], lineno: int) -> str:
+    """Return the stripped text of 1-based line ``lineno`` from ``src_lines``, or ``""`` if out of range."""
     if 1 <= lineno <= len(src_lines):
         return src_lines[lineno - 1].strip()
     return ""

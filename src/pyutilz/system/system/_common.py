@@ -1,3 +1,5 @@
+"""Common system/hardware-introspection helpers: dict/dataclass cleanup and WMI device summarization."""
+
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 

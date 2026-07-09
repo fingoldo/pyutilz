@@ -11,6 +11,7 @@ except ImportError:
     # Outside a Jupyter/IPython environment real get_ipython() returns None too,
     # so this dummy matches that contract exactly.
     def get_ipython():
+        """Fallback used when IPython is unavailable; matches real get_ipython()'s behavior outside a notebook (returns None)."""
         return None
 
 # Correct imports for display and HTML
@@ -26,8 +27,10 @@ except ImportError:
     except ImportError:
         # Create dummy functions if IPython not available
         def display(*args, **kwargs):
+            """No-op fallback used when IPython.display is unavailable."""
             pass
         def HTML(data):
+            """No-op fallback used when IPython.display is unavailable; returns data unchanged."""
             return data
 
 def setup_polars_config():

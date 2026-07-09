@@ -1,3 +1,5 @@
+"""Pure, stateless SQL/identifier helpers (quoting, identifier validation, ON CONFLICT clause building) shared by db.py."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -90,6 +92,9 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
 
 
 def u(str_val, symb="'"):
+    """
+    Quotes str_val as a SQL string literal with symb (doubling any embedded symb to escape it), or returns "null" if str_val is None.
+    """
     if str_val is None:
         return "null"
     else:
@@ -97,6 +102,9 @@ def u(str_val, symb="'"):
 
 
 def nu(str_val, symb="'"):
+    """
+    Like u(), but also returns "null" for an empty string (not just None).
+    """
     if str_val is None or len(str_val) == 0:
         return "null"
     else:
@@ -104,6 +112,11 @@ def nu(str_val, symb="'"):
 
 
 def MakeSetExcludedClause(sFields: str, bAddUpdatedAtTimestamp: Optional[str] = None) -> str:
+    """
+    Builds an "ON CONFLICT DO UPDATE SET" body from a comma-separated field list sFields, mapping each
+    field to excluded.field. If bAddUpdatedAtTimestamp is given, appends "{bAddUpdatedAtTimestamp}=(now() at time zone 'utc')"
+    as the final clause instead of a trailing comma.
+    """
 
     res = ""
     v = sFields.split(",")

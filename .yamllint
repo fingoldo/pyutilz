@@ -1,0 +1,25 @@
+---
+# yamllint config for pyutilz. Line-length mirrors [tool.black] / [tool.ruff] in
+# pyproject.toml (line-length = 160), so the advisory yamllint CI/pre-commit step
+# stops flagging every workflow-comment line as an "error" under yamllint's 80-char
+# default and instead surfaces genuine YAML style/schema issues.
+extends: default
+
+rules:
+  line-length:
+    max: 160
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    check-keys: false
+  # ci.yml itself mixes two valid sequence-indent styles (steps: items at the
+  # SAME indent as their parent key; matrix `include:` items at +2) -- pre-
+  # existing, not something introduced here. Neither style is a bug (actionlint
+  # and GitHub Actions both parse it fine); reformatting ~150 lines of a working
+  # CI file to unify pure style would be needless churn/risk for zero functional
+  # gain, so this rule is disabled rather than forcing one style repo-wide.
+  indentation: disable
+  # Line endings are mixed by design across the repo (.github/workflows/*.yml are
+  # LF, .pre-commit-config.yaml is CRLF) -- not a single project-wide convention
+  # yamllint's new-lines rule could pin to, and not a bug in either file.
+  new-lines: disable

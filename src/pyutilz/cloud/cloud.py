@@ -1,3 +1,5 @@
+"""Helpers for uploading/downloading files to/from Google Cloud Storage and Amazon S3."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -34,9 +36,9 @@ S3_BUCKET_NAME = None  # To be configured by user
 
 
 def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name, acc_file):
+    """Upload a local file to a GCS bucket using a service-account JSON key file."""
     from google.cloud import storage
 
-    """Uploads a file to the bucket."""
     # bucket_name = "your-bucket-name"
     # source_file_name = "local/path/to/file"
     # destination_blob_name = "storage-object-name"
@@ -51,9 +53,9 @@ def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name
 
 
 def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_name, acc_file):
+    """Download a blob from a GCS bucket to a local file using a service-account JSON key file."""
     from google.cloud import storage
 
-    """Downloads a blob from the bucket."""
     # bucket_name = "your-bucket-name"
     # source_blob_name = "storage-object-name"
     # destination_file_name = "local/path/to/file"
@@ -77,6 +79,11 @@ def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_na
 # --------------------------------------------------------------------------------------------------------------
 
 def connect_to_s3(file: str = "settings.ini"):
+    """Read AWS credentials from the ``[S3]`` section of a config file and open an S3 resource.
+
+    Sets the module-level ``s3`` global to the created boto3 S3 resource and returns it.
+    Returns None (leaving ``s3`` unset) if credentials could not be read from the file.
+    """
     global s3
     import boto3
     from pyutilz.text.strings import read_config_file
@@ -90,6 +97,7 @@ def connect_to_s3(file: str = "settings.ini"):
 
 
 def s3_file_exists(key: str, bucket: str) -> bool:
+    """Check whether an object with the given key exists in an S3 bucket (via a HEAD request)."""
     try:
         s3.meta.client.head_object(Bucket=bucket, Key=key)
     except Exception:

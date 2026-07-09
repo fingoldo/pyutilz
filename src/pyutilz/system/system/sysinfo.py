@@ -1,3 +1,5 @@
+"""Cross-platform collection of system/hardware information (OS, CPU, GPU, RAM, disk, network)."""
+
 #!$ pip install pympler psutil gpu-info pylspci gputil py-cpuinfo
 #!$ pip install pycuda
 

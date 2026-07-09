@@ -1,3 +1,7 @@
+"""Incremental builders and utilities for scipy sparse (CSR/COO) matrices."""
+
+"""Incremental builders and memory-usage helpers for scipy sparse (CSR/COO) matrices."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -32,13 +36,21 @@ class CsrIndPtrConstructor:
         self.indices: List[Any] = []
         self.data: List[Any] = []
     def add_element(self, element, index: int) -> None:
+        """Append a non-zero value and its column index to the current (still open) row."""
         self.indices.append(index)
         self.data.append(element)
 
     def add_row(self) -> None:
+        """Close the current row by recording the current element count as the next indptr boundary."""
         self.indptr.append(len(self.indices))
 
     def build_matrix(self, dtype: np.dtype, clear_source: bool = True) -> csr_matrix:
+        """Materialise the accumulated (data, indices, indptr) triple into a scipy csr_matrix.
+
+        Args:
+            dtype: dtype of the resulting matrix's data array.
+            clear_source: if True, free the internal buffers after building.
+        """
         matrix = csr_matrix((self.data, self.indices, self.indptr), dtype=dtype)
         if clear_source:
             del self.data, self.indices, self.indptr
@@ -55,11 +67,20 @@ class CsrRowColConstructor:
         self.cols: List[Any] = []
         self.data: List[Any] = []
     def add_element(self, element, row: int, col: int) -> None:
+        """Append a non-zero value at the given (row, col) coordinate, in any order."""
         self.rows.append(row)
         self.cols.append(col)
         self.data.append(element)
 
     def build_matrix(self, dtype: np.dtype, clear_source: bool = True) -> csr_matrix:
+        """Materialise the accumulated (row, col, data) triples into a scipy csr_matrix.
+
+        Duplicate (row, col) entries are summed by scipy during construction.
+
+        Args:
+            dtype: dtype of the resulting matrix's data array.
+            clear_source: if True, free the internal buffers after building.
+        """
         matrix = csr_matrix((self.data, (self.rows, self.cols)), dtype=dtype)
         if clear_source:
             del self.data, self.rows, self.cols

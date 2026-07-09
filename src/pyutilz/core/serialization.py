@@ -1,3 +1,5 @@
+"""Everything related to persisting objects into memory or disk."""
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Everything related to persisting objects into memory or disk!
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -29,6 +31,12 @@ from pyutilz.system import system
 
 
 def str_to_class(classname: str) -> Any:
+    """Instantiates a class given its fully-qualified dotted name, optionally with an inline constructor argument.
+
+    `classname` may include a trailing `(...)` segment (e.g. "module.sub.ClassName(some_arg)"), whose
+    contents (including the parentheses) are passed as the single positional argument to the class's
+    constructor. If `classname` has no module prefix, the class is looked up in this module's namespace.
+    """
     pos1 = classname.find("(")
     init_data = ""
     if pos1 > 0:

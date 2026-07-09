@@ -42,21 +42,26 @@ class _PortStats:
         self.outcomes: List[tuple] = []
 
     def record(self, now: float, is_error: bool) -> None:
+        """Append an outcome ``(now, is_error)`` to the sliding-window history."""
         self.outcomes.append((now, is_error))
 
     def trim(self, cutoff: float) -> None:
+        """Drop outcomes recorded at or before ``cutoff``, keeping only entries within the window."""
         self.outcomes = [o for o in self.outcomes if o[0] > cutoff]
 
     @property
     def total(self) -> int:
+        """Number of outcomes currently in the window."""
         return len(self.outcomes)
 
     @property
     def errors(self) -> int:
+        """Number of error outcomes currently in the window."""
         return sum(1 for _, e in self.outcomes if e)
 
     @property
     def error_rate(self) -> float:
+        """Fraction of outcomes in the window that were errors (0.0 if the window is empty)."""
         n = len(self.outcomes)
         return self.errors / n if n > 0 else 0.0
 
@@ -282,11 +287,14 @@ class ProxyProvider(ABC):
         return self.health.pick_port(self.config.port_range)
 
     def report_error(self, port_offset: int) -> None:
+        """Record a connection error for ``port_offset`` in the health tracker."""
         self.health.report_error(port_offset)
 
     def report_success(self, port_offset: int) -> None:
+        """Record a successful request for ``port_offset`` in the health tracker."""
         self.health.report_success(port_offset)
 
     @property
     def name(self) -> str:
+        """Provider name, defaulting to the concrete subclass's class name."""
         return self.__class__.__name__

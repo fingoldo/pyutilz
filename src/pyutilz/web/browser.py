@@ -1,3 +1,5 @@
+"""Selenium/undetected_chromedriver browser automation helpers: driver startup, element lookup, login, and cookie extraction."""
+
 # ***************************************************************************************************************************
 # IMPORTS
 # ***************************************************************************************************************************
@@ -68,6 +70,7 @@ basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en
 headers = basic_headers
 
 def find_element_by_xpath(browser:Any,query:str)->object:
+    """Locates an element by XPath, falling back to the deprecated Selenium API for older driver versions."""
     try:
         res = browser.find_element(By.XPATH, query)
     except Exception:
@@ -76,6 +79,7 @@ def find_element_by_xpath(browser:Any,query:str)->object:
     return res
 
 def find_element_by_name(browser:Any,query:str)->object:
+    """Locates an element by its `name` attribute, falling back to the deprecated Selenium API for older driver versions."""
     try:
         res = browser.find_element(By.NAME, query)
     except Exception:
@@ -84,6 +88,7 @@ def find_element_by_name(browser:Any,query:str)->object:
     return res
 
 def find_element_by_tag_name(browser:Any,query:str)->object:
+    """Locates an element by its tag name, falling back to the deprecated Selenium API for older driver versions."""
     try:
         res = browser.find_element(By.TAG_NAME, query)
     except Exception:
@@ -92,10 +97,12 @@ def find_element_by_tag_name(browser:Any,query:str)->object:
     return res
 
 def init(**params) -> None:
+    """Sets module-level configuration variables (e.g. target, home_page, login, pwd) from keyword arguments."""
 
     globals().update(params)
 
 def close_browser():
+    """Closes the active Selenium browser instance if any, swallowing errors, and clears the module-level `browser` reference."""
     global browser
     try:
         if browser is not None:
@@ -105,6 +112,7 @@ def close_browser():
     browser = None
 
 def browser_get(path:str)->None:
+    """Navigates the module-level `browser` to `path`, retrying once after a short sleep on transient loading-status errors."""
     try:
         if browser is None:
             raise ValueError("pyutilz.web.browser.browser is not initialized; call start_selenium() first")
@@ -133,6 +141,7 @@ def find_chrome_executable():
     return None
 
 def start_selenium() -> object:
+    """Launches a Chrome Selenium webdriver (undetected or standard), applying module-level config (proxy, user agent, data dir), and stores it in the module-level `browser`."""
     import zipfile
 
     global browser
@@ -252,6 +261,7 @@ def start_selenium() -> object:
 
 
 def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
+    """Re-runs LoginAndGetCookies() if the session was never updated or is older than `interval_minutes`."""
     global last_session_updated_at
     do_update = False
     if last_session_updated_at is None:
@@ -266,12 +276,12 @@ def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
 
 
 def LoginAndGetCookies(default_headers: bool = True, seconds_to_sleep_on_error: int = 60, restart_on_no_cookie=False) -> bool:
-    global browser, TheCookies, headers
     """
         Ensures Selenium is started
         Logins, if not logged in already (detected by opening a home page)
         Extracts (or updates) desired cookies from Selenium browser instance into global headers dict.
     """
+    global browser, TheCookies, headers
     while True:
         if browser is None:
             browser = start_selenium()
