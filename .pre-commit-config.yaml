@@ -188,3 +188,56 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+
+  # Workflow-YAML style gate: yamllint. Blocking since 2026-07-11, mirroring the CI
+  # lint-blocking job -- catches the SHA-pin comment-spacing / indentation class of nit before
+  # it ever reaches a push, on the same two paths CI checks. Same pattern as mlframe's hook.
+  - repo: local
+    hooks:
+      - id: yamllint-blocking
+        name: "yamllint workflow files (blocking)"
+        entry: python -m yamllint .github/workflows .pre-commit-config.yaml
+        language: system
+        pass_filenames: false
+        files: '^(\.github/workflows/.*\.ya?ml|\.pre-commit-config\.yaml)$'
+        stages: [pre-commit]
+
+  # Workflow-security gate: zizmor (unpinned actions, template-injection, excessive
+  # permissions, credential persistence in .github/workflows/*.yml). Blocking since 2026-07-11
+  # -- this repo's own workflows were triaged to 0 findings alongside mlframe's (see ci.yml's
+  # lint-blocking call, run-zizmor: true); mirrors that CI gate exactly.
+  - repo: local
+    hooks:
+      - id: zizmor-blocking
+        name: "zizmor workflow security scan (blocking)"
+        entry: uvx zizmor .
+        language: system
+        pass_filenames: false
+        files: '^\.github/workflows/.*\.ya?ml$'
+        stages: [pre-commit]
+
+  # Advisory-taste warn-only gate: unrestricted-select ruff (surfaces everything the blocking
+  # gate's --ignore C901 hides) + mccabe complexity (C90) + pip-audit (dependency CVE feed).
+  # Mirrors lint-advisory.yml's own posture exactly -- everything here is continue-on-error in CI
+  # (design taste / a feed whose fix isn't always on your own timeline, not a correctness bug),
+  # so this hook never blocks either; it just surfaces the same signal locally instead of only
+  # in CI. Same pattern as mlframe's hook.
+  - repo: local
+    hooks:
+      - id: lint-advisory-warn
+        name: "ruff (full-select) + mccabe complexity + pip-audit (advisory, warn-only)"
+        entry: python -m py_ci_shared.advisory_warn --src-path src/pyutilz
+        language: system
+        types: [python]
+        verbose: true
+        stages: [pre-commit]
+
+  # Whole-project mypy, MANUAL stage only (heavier than the fast beachhead hook above -- see
+  # py-ci-shared's own .pre-commit-hooks.yaml for the full rationale). Mirrors CI's
+  # mypy-full.yml, which is advisory here (backlog not yet closed to 0, unlike mlframe) -- still
+  # useful to run on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
+  - repo: https://github.com/fingoldo/py-ci-shared
+    rev: v1.0.0
+    hooks:
+      - id: mypy-full-manual
+        args: ['src/pyutilz']
