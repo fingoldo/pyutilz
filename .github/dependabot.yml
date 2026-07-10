@@ -9,10 +9,18 @@ updates:
     cooldown:
       default-days: 7
 
+  # Temporarily disabled 2026-07-10 (open-pull-requests-limit: 0): every PR/branch this
+  # ecosystem opens triggers the repo's own CI matrix (ci.yml/Black/MyPy) on push, which was
+  # contributing to the account's Actions-minutes exhaustion (see mlframe's ci.yml matrix
+  # comment for the full accounting -- mlframe's Windows/macOS legs were the dominant cost,
+  # but every repo on the account shares the same monthly quota). github-actions above stays
+  # active since it's the priority ecosystem and opens far fewer PRs. Raise back to 1-3 once
+  # the Actions-minutes budget allows.
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     commit-message:
       prefix: deps
     # Group minor/patch bumps into a single PR to reduce noise.
