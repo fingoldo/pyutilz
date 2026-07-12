@@ -115,6 +115,12 @@ repos:
   # off (would churn large diffs that collide with concurrent work); run
   # ``ruff format`` / ``ruff check --fix`` manually to apply. Wrapper script lives in the
   # shared py_ci_shared package (fingoldo/py-ci-shared) -- `pip install -e ".[dev]"` installs it.
+  #
+  # NOTE: this wrapper also runs a filtered-Black --check pass, but ALWAYS exits 0 like every
+  # other check bundled in it -- that made filtered-Black drift invisible locally even though
+  # CI's Black workflow (black-filtered.yml) is a genuinely blocking gate (no continue-on-error).
+  # The dedicated ``black-filtered-blocking`` hook right below is the real gate; this one is kept
+  # only for its ruff-format/ruff-check taste warnings.
   - repo: local
     hooks:
       - id: format-lint-warn
@@ -123,6 +129,24 @@ repos:
         language: system
         types: [python]
         verbose: true
+        stages: [pre-commit]
+
+  # Black (filtered) -- BLOCKING. Mirrors black-filtered.yml (CI job has no continue-on-error,
+  # confirmed by reading fingoldo/py-ci-shared's black-filtered.yml reusable workflow: the
+  # `black_filtered_apply --check` step is a plain `run:` with no continue-on-error, so any
+  # non-excluded-class Black finding fails the CI job and blocks merge). Previously the ONLY
+  # local Black signal was buried inside format-lint-warn above, which always exits 0 -- so
+  # filtered-Black drift landed in commits with zero local blocking and only surfaced later in
+  # CI (see format-lint-warn's own comment, confirmed 2026-07-11: 5 files landed un-filtered-
+  # Black-clean across several commits with zero local signal). This hook runs the EXACT command
+  # CI runs and actually blocks the commit on any finding.
+  - repo: local
+    hooks:
+      - id: black-filtered-blocking
+        name: "black --check, filtered (blocking)"
+        entry: python -m py_ci_shared.black_filtered_apply --config pyproject.toml --check
+        language: system
+        types: [python]
         stages: [pre-commit]
 
   # MyPy: scoped to the strict-mode beachhead (see [tool.mypy.overrides] in
@@ -234,10 +258,31 @@ repos:
 
   # Whole-project mypy, MANUAL stage only (heavier than the fast beachhead hook above -- see
   # py-ci-shared's own .pre-commit-hooks.yaml for the full rationale). Mirrors CI's
-  # mypy-full.yml, which is advisory here (backlog not yet closed to 0, unlike mlframe) -- still
-  # useful to run on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
+  # mypy-full.yml exactly (same `mypy src/pyutilz` invocation) -- still useful to run in full
+  # on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
   - repo: https://github.com/fingoldo/py-ci-shared
     rev: v1.0.0
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']
+
+  # Whole-project mypy, WARN-only, runs on every commit. Verified 2026-07-12: mypy-full.yml's
+  # reusable workflow does `continue-on-error: ${{ inputs.advisory }}` and pyutilz's mypy-full.yml
+  # sets `advisory: true` because the whole-project backlog is not yet closed to 0 (unlike
+  # mlframe, which sets `advisory: false` and is a real blocking gate there) -- so this is
+  # genuinely NOT a hard-blocking CI gate for pyutilz right now, and making it a local hard
+  # blocker would be STRICTER than CI itself, not matching it. It was previously stages:[manual]
+  # only, i.e. it never ran automatically at all, so mypy errors were invisible locally until
+  # someone ran it by hand or CI's advisory annotation surfaced them after the fact. This hook
+  # makes it run on every commit like CI does, printing findings as warnings, without blocking --
+  # once the backlog is triaged to 0, flip `advisory: false` in mypy-full.yml AND swap this for a
+  # real blocking hook (mirroring the black-filtered-blocking pattern above).
+  - repo: local
+    hooks:
+      - id: mypy-full-warn
+        name: "mypy (whole project, WARN only — mirrors CI's advisory: true)"
+        entry: python scripts/mypy_full_warn.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
