@@ -1,6 +1,6 @@
-name: MyPy-full
+name: MyPy
 
-# Whole-project mypy check, separate from the fast mypy.yml strict-mode beachhead. Extracted to
+# Whole-project mypy check (the fast strict-mode beachhead workflow was retired). Extracted to
 # fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
 # install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow], which have no
 # current type-checked consumer). `advisory: true` (the reusable workflow's default) because this

@@ -1,11 +1,10 @@
 # pyutilz
 
 [![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
-[![MyPy](https://github.com/fingoldo/pyutilz/workflows/MyPy/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy.yml)
+[![MyPy](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml)
 [![Black](https://github.com/fingoldo/pyutilz/workflows/Black/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
-[![codecov-full](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg?flag=numba-disabled)](https://codecov.io/gh/fingoldo/pyutilz/flags)
-[![MyPy-full](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml)
+[![codecov-numba](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg?flag=numba-disabled)](https://codecov.io/gh/fingoldo/pyutilz/flags)
 [![numba coverage](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
