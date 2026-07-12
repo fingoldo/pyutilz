@@ -26,8 +26,7 @@ def main() -> int:
     result = subprocess.run([sys.executable, "-m", "mypy", "src/pyutilz"])
     if result.returncode != 0:
         print(
-            "\n[mypy-full-warn] Findings above are WARNINGS ONLY (mirrors mypy-full.yml's "
-            "advisory: true in CI) -- the commit is NOT blocked.",
+            "\n[mypy-full-warn] Findings above are WARNINGS ONLY (mirrors mypy-full.yml's " "advisory: true in CI) -- the commit is NOT blocked.",
             file=sys.stderr,
         )
     return 0
