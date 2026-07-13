@@ -41,6 +41,107 @@ def test_construct_templates_jsonize_sorts_keys():
     assert templates == ["%s"]
 
 
+def test_construct_templates_select_mode_builds_assignment_clauses():
+    values, templates = construct_templates_and_values(
+        mode="select",
+        fields=["a", "b"],
+        replace_values={"a": 1},
+        source={"b": 2},
+        jsonize=False,
+    )
+    assert values == [1, 2]
+    assert templates == ["a=%s", "b=%s"]
+
+
+def test_construct_templates_jsonize_false_leaves_dict_value_untouched():
+    values, _ = construct_templates_and_values(
+        mode="insert",
+        fields=["payload"],
+        replace_values={"payload": {"a": 1}},
+        source={},
+        jsonize=False,
+    )
+    assert values == [{"a": 1}]
+
+
+# ---------------------------------------------------------------------------
+# db.validate_sql_qualified_identifier
+# ---------------------------------------------------------------------------
+
+from pyutilz.database.db import validate_sql_qualified_identifier
+
+
+def test_validate_sql_qualified_identifier_valid():
+    assert validate_sql_qualified_identifier("schema.table") == "schema.table"
+    assert validate_sql_qualified_identifier("table") == "table"
+
+
+def test_validate_sql_qualified_identifier_rejects_invalid_part():
+    for bad in ["schema.bad-name", "bad-name.table", "a..b", "a.", "1abc.table"]:
+        with pytest.raises(ValueError):
+            validate_sql_qualified_identifier(bad)
+
+
+def test_validate_sql_qualified_identifier_rejects_non_string():
+    with pytest.raises(ValueError):
+        validate_sql_qualified_identifier(123)
+
+
+# ---------------------------------------------------------------------------
+# db.u / db.nu  (SQL string-literal quoting helpers)
+# ---------------------------------------------------------------------------
+
+from pyutilz.database.db import u, nu
+
+
+def test_u_quotes_and_escapes():
+    assert u(None) == "null"
+    assert u("abc") == "'abc'"
+    assert u("a'b") == "'a''b'"
+
+
+def test_nu_treats_empty_string_as_null():
+    assert nu(None) == "null"
+    assert nu("") == "null"
+    assert nu("abc") == "'abc'"
+
+
+# ---------------------------------------------------------------------------
+# db.MakeSetExcludedClause / db.update_if_now
+# ---------------------------------------------------------------------------
+
+from pyutilz.database.db import MakeSetExcludedClause, update_if_now
+
+
+def test_make_set_excluded_clause_basic():
+    assert MakeSetExcludedClause("a,b") == "a=excluded.a,b=excluded.b"
+
+
+def test_make_set_excluded_clause_with_updated_at_timestamp():
+    clause = MakeSetExcludedClause("a,b", bAddUpdatedAtTimestamp="updated_at")
+    assert clause == "a=excluded.a,b=excluded.b,updated_at=(now() at time zone 'utc')"
+
+
+def test_make_set_excluded_clause_rejects_invalid_field():
+    with pytest.raises(ValueError):
+        MakeSetExcludedClause("good,bad-name")
+
+
+def test_update_if_now_do_update_branch():
+    result = update_if_now("2026-07-13 now()", "a=excluded.a")
+    assert "do update set" in result
+    assert "a=excluded.a" in result
+
+
+def test_update_if_now_do_nothing_branch():
+    assert update_if_now("2026-07-13", "a=excluded.a") == "do nothing"
+
+
+def test_update_if_now_case_insensitive():
+    result = update_if_now("NOW()", "a=excluded.a")
+    assert "do update set" in result
+
+
 # ---------------------------------------------------------------------------
 # deltalakes.safe_delta_write  (#6: no hardcoded /tmp on Windows; non-local re-raises)
 # ---------------------------------------------------------------------------

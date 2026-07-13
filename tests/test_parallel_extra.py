@@ -44,9 +44,7 @@ class TestSplitListIntoChunksIndices:
     def test_exact_division(self):
         from pyutilz.system.parallel import split_list_into_chunks_indices
         result = list(split_list_into_chunks_indices(list(range(6)), 3))
-        # The function yields an extra (6,6) chunk; filter zero-width
-        non_empty = [(a, b) for a, b in result if b > a]
-        assert non_empty == [(0, 3), (3, 6)]
+        assert result == [(0, 3), (3, 6)]
 
 
 # ── split_list_into_nchunks_indices (lines 93-102) ──
@@ -187,3 +185,28 @@ class TestSetTfGpu:
                 set_tf_gpu(0)
             except Exception:
                 pass  # expected when tf not available
+
+    def test_selects_requested_gpu_index(self):
+        """The requested index must actually be used (previously hard-coded to gpus[3]
+        regardless of the ``gpu`` argument)."""
+        from pyutilz.system.parallel import set_tf_gpu
+
+        fake_gpus = [MagicMock(name=f"gpu{i}") for i in range(2)]
+        fake_tf = MagicMock()
+        fake_tf.config.experimental.list_physical_devices.return_value = fake_gpus
+        fake_tf.config.experimental.list_logical_devices.return_value = fake_gpus
+        with patch.dict("sys.modules", {"tensorflow": fake_tf}):
+            set_tf_gpu(1)
+        fake_tf.config.experimental.set_visible_devices.assert_called_once_with(fake_gpus[1], "GPU")
+
+    def test_out_of_range_index_does_not_raise(self):
+        """Requesting an index >= the number of available GPUs must be a logged no-op,
+        not an uncaught IndexError (previously gpus[3] on a <4-GPU box would crash)."""
+        from pyutilz.system.parallel import set_tf_gpu
+
+        fake_gpus = [MagicMock(name="gpu0")]
+        fake_tf = MagicMock()
+        fake_tf.config.experimental.list_physical_devices.return_value = fake_gpus
+        with patch.dict("sys.modules", {"tensorflow": fake_tf}):
+            set_tf_gpu(3)
+        fake_tf.config.experimental.set_visible_devices.assert_not_called()

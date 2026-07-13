@@ -62,6 +62,7 @@ import re
 from pyutilz.database.db.sql_helpers import (
     _SQL_IDENTIFIER_RE,
     validate_sql_identifier,
+    validate_sql_qualified_identifier,
     construct_templates_and_values,
     u,
     nu,

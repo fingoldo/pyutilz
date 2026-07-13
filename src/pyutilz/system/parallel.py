@@ -80,7 +80,8 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[
         r = left + chunk_size
         if r > t:
             r = t
-        yield left, r
+        if r > left:
+            yield left, r
 
 
 def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tuple]:
@@ -219,17 +220,16 @@ def applyfunc_parallel(
 
 
 def set_tf_gpu(gpu: int):
-    """Restrict TensorFlow's visible GPUs to a single physical device.
-
-    Note: ``gpu`` is currently unused -- the visible device is hard-coded to ``gpus[3]``.
-    """
+    """Restrict TensorFlow's visible GPUs to a single physical device, selected by index."""
     import tensorflow as tf
 
     gpus = tf.config.experimental.list_physical_devices("GPU")
     if gpus:
-        # Restrict TensorFlow to only use the first GPU
+        if not 0 <= gpu < len(gpus):
+            logger.error("Requested GPU index %s is out of range for %s available GPU(s)", gpu, len(gpus))
+            return
         try:
-            tf.config.experimental.set_visible_devices(gpus[3], "GPU")
+            tf.config.experimental.set_visible_devices(gpus[gpu], "GPU")
             logical_gpus = tf.config.experimental.list_logical_devices("GPU")
             logger.info("%s Physical GPUs, %s Logical GPU", len(gpus), len(logical_gpus))
         except RuntimeError as e:

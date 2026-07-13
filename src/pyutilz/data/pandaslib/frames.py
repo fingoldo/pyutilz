@@ -342,7 +342,10 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
     if len(X) == 0:
         return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
-    stale_columns = ~(X != X.iloc[0]).any()
+    # nunique(dropna=False) treats NaN as its own value, so an all-NaN column (nunique==1)
+    # is correctly flagged stale -- unlike ``X != X.iloc[0]``, which is always True for NaN
+    # vs NaN and so never flags an all-NaN column as stale.
+    stale_columns = X.nunique(dropna=False) <= 1
 
     num_stale = stale_columns.sum()
     if num_stale > 0:
