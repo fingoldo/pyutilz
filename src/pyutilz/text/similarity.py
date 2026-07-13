@@ -400,6 +400,180 @@ try:
 
         return res
 
+    # Threshold (N_a*N_b product) above which the sort-once-then-scan greedy matcher
+    # (_greedy_match_sorted, via _sentences_similarity_core_sorted) is used instead of the
+    # plain O(w_min*N_a*N_b) rescan in _sentences_similarity_core. Full end-to-end benchmark
+    # (matrix fill + greedy matching together, both paths JIT-warmed, best-of-15 perf_counter
+    # reps, square N_a=N_b=N random-word matrices):
+    #
+    #   N      scan (ms)   sort (ms)   speedup (scan/sort)
+    #     5       0.021       0.021          0.97x  (sort slower)
+    #    10       0.078       0.080          0.97x  (sort slower)
+    #    20       0.361       0.382          0.95x  (sort slower)
+    #    50       2.767       2.898          0.95x  (sort slower)
+    #   100      11.708      12.289          0.95x  (sort slower)
+    #   200      46.597      56.756          0.82x  (sort slower)
+    #   300      120.181     122.989          0.98x  (sort slower)
+    #   500      358.745     365.884          0.98x  (~parity, noisy)
+    #   550      550.133     516.094          1.07x  (sort faster)
+    #   600      598.452     571.145          1.05x  (sort faster)
+    #   650      682.300     636.695          1.07x  (sort faster)
+    #   700      869.070     792.789          1.10x  (sort faster)
+    #   800      994.418     894.832          1.11x  (sort faster)
+    #  1000     1831.074    1510.506          1.21x  (sort faster)
+    #
+    # The sort variant loses (or is at best noise-level even) at every N up to ~500, and pulls
+    # ahead from ~N=550 up -- np.argsort's fixed per-call overhead only pays for itself once the
+    # O(N^2) matrix-fill + O(w*N^2) rescan cost is large enough. This is far above
+    # SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD (50 tokens, N_a*N_b <= 2500 for the documented
+    # use case), so the sort path essentially never fires for intended callers -- it only helps
+    # the rare caller who deliberately exceeds the safety warning with a large near-square input.
+    # Threshold set at N_a*N_b >= 550*550, safely past the noisy ~500 crossover zone measured above.
+    #
+    # A first attempt at _greedy_match_sorted quantized value+(i,j) into one int64 key (see
+    # _greedy_match_sorted's docstring) and was WRONG: it silently collapsed real (non-tied)
+    # float64 ULP-level differences into false ties, picking a different (and lower-scoring)
+    # greedy match than _sentences_similarity_core on ~1.7% of random trials (8/480 in a
+    # differential test across N=3..80, mixed and tie-heavy word sets). Fixed by sorting the
+    # raw float64 bit pattern (exact, order-preserving for non-negative values) with a stable
+    # sort instead of a lossy composite key -- see _greedy_match_sorted.
+    _SORTED_MATCH_THRESHOLD = 550 * 550  # N_a*N_b product; see benchmark table above
+
+    @nb.njit(cache=True)
+    def _greedy_match_sorted(sim_res, N_a, N_b, w_min):
+        """
+        Sort-once-then-linear-scan greedy best-pair matcher.
+
+        First attempt quantized value+(i,j) into a single int64 key (2**40 fractional bits for
+        the value, low bits for i*N_b+j). That FAILED the differential test: two matrix cells can
+        differ by a single float64 ULP (e.g. 0.33333333333333337 vs 0.3333333333333333, a ~5.5e-17
+        gap from unrelated formulas both approximating 1/3) — real, not synthetic, since it showed
+        up on random 5x8 word matrices. 2**40 quantization (~9e-13 granularity) collapses that into
+        a false tie, so the (i, j) tie-break wins instead of the true (larger) value — wrong pick,
+        and greedy matching cascades that into a materially different final score. Fixed by keeping
+        the value comparison EXACT instead of quantized:
+
+        sim_res is >= 0 everywhere (see _fill_sim_matrix), so reinterpreting each float64's raw
+        bit pattern as int64 (`.view(np.int64)`) is order-preserving and lossless (IEEE-754: for
+        non-negative floats, bit pattern compared as a non-negative integer matches float order
+        exactly). Sorting those bit-pattern keys with a STABLE sort (kind='mergesort') ascending
+        keeps exactly-tied cells in their original i-then-j enumeration order; reversing that order
+        for the descending walk then visits the LAST-enumerated (largest i, then largest j) member
+        of each tied group first — exactly the tie-break the original ascending `>=` rescan produces.
+        No composite key, no quantization, no precision loss.
+        """
+        flat = sim_res.reshape(N_a * N_b)
+        keys = flat.view(np.int64)
+        order = np.argsort(keys, kind="mergesort")  # ascending, stable
+        excluded_a = np.zeros(N_a, dtype=np.bool_)
+        excluded_b = np.zeros(N_b, dtype=np.bool_)
+        res = 0.0
+        picked = 0
+        for k in range(N_a * N_b - 1, -1, -1):  # walk descending
+            if picked == w_min:
+                break
+            cell = order[k]
+            i = cell // N_b
+            j = cell % N_b
+            if excluded_a[i] or excluded_b[j]:
+                continue
+            excluded_a[i] = True
+            excluded_b[j] = True
+            res += sim_res[i, j]
+            picked += 1
+        return res
+
+    @nb.njit(cache=True)
+    def _fill_sim_matrix(buf, offsets, N_a, N_b, cMinLenTHreshold):
+        """Shared similarity-matrix fill, factored out of _sentences_similarity_core so both
+        the plain-scan and sort-based greedy matchers can reuse it (used by _sentences_similarity_core_sorted)."""
+        sim_res = np.zeros((N_a, N_b), dtype=np.float64)
+
+        for i in range(N_a):
+            a_start = offsets[i]
+            cur_a_len = offsets[i + 1] - a_start
+            if cur_a_len == 0:
+                continue
+
+            for j in range(N_b):
+                bj = N_a + j
+                b_start = offsets[bj]
+                cur_b_len = offsets[bj + 1] - b_start
+                if cur_b_len == 0:
+                    continue
+
+                t = max(cur_a_len, cur_b_len)
+                lmin_len = min(cur_a_len, cur_b_len)
+
+                # Exact match
+                if cur_a_len == cur_b_len:
+                    match = True
+                    for c in range(cur_a_len):
+                        if buf[a_start + c] != buf[b_start + c]:
+                            match = False
+                            break
+                    if match:
+                        sim_res[i, j] = 1.0
+                        continue
+
+                # Prefix match
+                prefix_match = True
+                for c in range(lmin_len):
+                    if buf[a_start + c] != buf[b_start + c]:
+                        prefix_match = False
+                        break
+                if prefix_match:
+                    sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
+                    continue
+
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                # Full Levenshtein
+                sim_min = 1.0 - _lev_dist_flat(buf, a_start, cur_a_len, b_start, cur_b_len) / t
+                if cur_a_len == cur_b_len:
+                    sim_res[i, j] = sim_min
+                else:
+                    # Sliding window
+                    if cur_a_len < cur_b_len:
+                        s_start, s_len = a_start, cur_a_len
+                        l_start, l_len = b_start, cur_b_len
+                    else:
+                        s_start, s_len = b_start, cur_b_len
+                        l_start, l_len = a_start, cur_a_len
+
+                    best_gliding = s_len
+                    for k in range(l_len - s_len):
+                        d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
+                        if d < best_gliding:
+                            best_gliding = d
+                            if d == 0:
+                                break
+
+                    sim_max = 1.0 - best_gliding / s_len
+                    sim_res[i, j] = 0.5 * (sim_max + sim_min)
+
+        return sim_res
+
+    @nb.njit(cache=True)
+    def _sentences_similarity_core_sorted(buf, offsets, N_a, N_b, cMinLenTHreshold):
+        """Same result as _sentences_similarity_core, but the greedy best-pair matching pass
+        uses _greedy_match_sorted (sort-once-then-scan) instead of the O(w_min*N_a*N_b) rescan.
+        Only wins for large N — see _SORTED_MATCH_THRESHOLD and the benchmark note above it."""
+        if N_a < 1 or N_b < 1:
+            return -1.0
+
+        w_min = min(N_a, N_b)
+        w_max = max(N_a, N_b)
+
+        sim_res = _fill_sim_matrix(buf, offsets, N_a, N_b, cMinLenTHreshold)
+        res = _greedy_match_sorted(sim_res, N_a, N_b, w_min)
+
+        if w_min > 0:
+            res = res / w_min * (1.0 - (w_max - w_min) / (w_max + w_min) / 5.0)
+
+        return res
+
     def _pack_words(words: list) -> tuple:
         """Pack a list of strings into (buf: int32[], offsets: int32[]) for numba.
 
@@ -427,6 +601,13 @@ try:
         else:
             buf = np.empty(0, dtype=np.int32)
         return buf, offsets, n
+
+    def _run_sentences_similarity_core(buf: "np.ndarray", offsets: "np.ndarray", N_a: int, N_b: int, cMinLenTHreshold: int) -> float:
+        """Dispatch to the sort-based greedy matcher above _SORTED_MATCH_THRESHOLD (N_a*N_b),
+        else the plain rescan -- see the benchmark table above _SORTED_MATCH_THRESHOLD for why."""
+        if N_a * N_b >= _SORTED_MATCH_THRESHOLD:
+            return float(_sentences_similarity_core_sorted(buf, offsets, N_a, N_b, cMinLenTHreshold))
+        return float(_sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold))
 
     def pack_sentence(words: list) -> Optional[tuple]:
         """Pre-pack a word list for repeated use with sentences_similarity_numba.
@@ -476,7 +657,7 @@ try:
         all_words = SentenceA + SentenceB
         buf, offsets, _ = _pack_words(all_words)
 
-        result = _sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold)
+        result = _run_sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold)
         if result < 0:
             return None
         # float(...) keeps the return type identical whether numba actually JIT-compiled this
@@ -506,7 +687,7 @@ try:
         total_a_chars = off_a[n_a]
         offsets = np.concatenate((off_a[:n_a], off_b[:n_b] + total_a_chars, np.array([off_b[n_b] + total_a_chars], dtype=np.int32)))
 
-        result = _sentences_similarity_core(buf, offsets, n_a, n_b, cMinLenTHreshold)
+        result = _run_sentences_similarity_core(buf, offsets, n_a, n_b, cMinLenTHreshold)
         if result < 0:
             return None
         # float(...): see sentences_similarity_numba's identical comment -- keeps the return

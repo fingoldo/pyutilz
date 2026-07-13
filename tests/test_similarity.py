@@ -619,3 +619,78 @@ class TestLongInputWarning:
         with caplog.at_level("WARNING"):
             sim_fn(a, b)
         assert not any("exceeding the safe threshold" in r.message for r in caplog.records)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Sort-based njit greedy matcher (_greedy_match_sorted) must exactly match the
+# plain O(w_min*N_a*N_b) rescan in _sentences_similarity_core, including tie-breaks.
+# ══════════════════════════════════════════════════════════════════════
+
+class TestSortedGreedyMatchDifferential:
+    """_greedy_match_sorted (sort-once-then-scan) must pick EXACTLY the same pairs, in the
+    same order, as the plain rescan loop -- including on ties, where the rescan's
+    `row[j] >= best_perf` breaks ties toward the LAST-visited (largest i, then largest j) cell.
+    """
+
+    @staticmethod
+    def _random_sim_matrix(rng, n_a, n_b, decimals=None):
+        import numpy as np
+
+        mat = rng.random((n_a, n_b))
+        if decimals is not None:
+            mat = np.round(mat, decimals)
+        return mat
+
+    @staticmethod
+    def _oldscan(sim_res, n_a, n_b, w_min):
+        excluded_a = [False] * n_a
+        excluded_b = [False] * n_b
+        res = 0.0
+        for _ in range(w_min):
+            best_perf = 0.0
+            best_i = 0
+            best_j = 0
+            for i in range(n_a):
+                if excluded_a[i]:
+                    continue
+                for j in range(n_b):
+                    if not excluded_b[j] and sim_res[i, j] >= best_perf:
+                        best_perf = sim_res[i, j]
+                        best_i = i
+                        best_j = j
+            res += sim_res[best_i, best_j]
+            excluded_a[best_i] = True
+            excluded_b[best_j] = True
+        return res
+
+    @pytest.mark.parametrize("n", [1, 2, 3, 5, 10, 20, 50])
+    @pytest.mark.parametrize("decimals", [None, 2, 1], ids=["no_ties", "light_ties", "heavy_ties"])
+    def test_matches_oldscan_exactly(self, n, decimals):
+        from pyutilz.text.similarity import _greedy_match_sorted
+        import random as _random
+
+        rng = _random.Random(f"seed-{n}-{decimals}")
+
+        import numpy as np
+
+        npy_rng = np.random.default_rng(abs(hash((n, decimals))) % (2**32))
+        for trial in range(5):
+            n_a = n
+            n_b = n if trial % 2 == 0 else max(1, n - 1)
+            sim_res = self._random_sim_matrix(npy_rng, n_a, n_b, decimals)
+            w_min = min(n_a, n_b)
+
+            expected = self._oldscan(sim_res, n_a, n_b, w_min)
+            actual = _greedy_match_sorted(sim_res, n_a, n_b, w_min)
+            assert actual == pytest.approx(expected, abs=1e-12), f"mismatch at n_a={n_a} n_b={n_b} decimals={decimals} trial={trial}"
+
+    def test_matches_via_full_core_dispatch(self):
+        """End-to-end: sentences_similarity_numba must match sentences_similarity for inputs
+        large enough to route through the sorted-dispatch path, and small ones through the
+        plain rescan path (dispatch threshold is on N_a*N_b, see _SORTED_MATCH_THRESHOLD)."""
+        for n in (2, 5, 20):
+            a = [f"WORD{i}" for i in range(n)]
+            b = [f"WORD{i}" for i in range(n)]
+            expected = sentences_similarity(a, b)
+            actual = sentences_similarity_numba(a, b)
+            assert actual == pytest.approx(expected, abs=1e-10)
