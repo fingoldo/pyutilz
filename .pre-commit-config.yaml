@@ -266,22 +266,18 @@ repos:
       - id: mypy-full-manual
         args: ['src/pyutilz']
 
-  # Whole-project mypy, WARN-only, runs on every commit. Verified 2026-07-12: mypy-full.yml's
-  # reusable workflow does `continue-on-error: ${{ inputs.advisory }}` and pyutilz's mypy-full.yml
-  # sets `advisory: true` because the whole-project backlog is not yet closed to 0 (unlike
-  # mlframe, which sets `advisory: false` and is a real blocking gate there) -- so this is
-  # genuinely NOT a hard-blocking CI gate for pyutilz right now, and making it a local hard
-  # blocker would be STRICTER than CI itself, not matching it. It was previously stages:[manual]
-  # only, i.e. it never ran automatically at all, so mypy errors were invisible locally until
-  # someone ran it by hand or CI's advisory annotation surfaced them after the fact. This hook
-  # makes it run on every commit like CI does, printing findings as warnings, without blocking --
-  # once the backlog is triaged to 0, flip `advisory: false` in mypy-full.yml AND swap this for a
-  # real blocking hook (mirroring the black-filtered-blocking pattern above).
+  # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
+  # verified clean (0 errors, 113 source files), so mypy-full.yml's reusable workflow now sets
+  # `advisory: false` in CI (a real blocking gate there, matching mlframe's posture) -- this hook
+  # mirrors that exactly, same pattern as black-filtered-blocking above. Previously this was a
+  # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
+  # local warn-only hook would be LOOSER than CI, letting a broken commit land locally and only
+  # fail later in CI.
   - repo: local
     hooks:
-      - id: mypy-full-warn
-        name: "mypy (whole project, WARN only — mirrors CI's advisory: true)"
-        entry: python scripts/mypy_full_warn.py
+      - id: mypy-full-blocking
+        name: "mypy (whole project, blocking)"
+        entry: python -m mypy src/pyutilz
         language: system
         types: [python]
         pass_filenames: false

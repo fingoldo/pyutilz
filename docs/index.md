@@ -1,7 +1,7 @@
 # pyutilz
 
 [![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
-[![Black (filtered)](https://github.com/fingoldo/pyutilz/workflows/Black%20(filtered)/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
+[![Black](https://github.com/fingoldo/pyutilz/workflows/Black/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
@@ -51,9 +51,9 @@ df = optimize_dtypes(df)
 ```
 
 **Unified LLM interface across 7 providers** — same `generate()` /
-`generate_json()` / `generate_stream()` surface; switch by changing one
-string. See the [LLM providers guide](guides/llm_providers.md) for the
-full picture.
+`generate_json()` surface (plus `generate_stream()` on the
+OpenAI-compatible providers); switch by changing one string. See the
+[LLM providers guide](guides/llm_providers.md) for the full picture.
 
 ```python
 from pyutilz.llm import get_llm_provider
@@ -89,8 +89,8 @@ model = safe_load("model.pkl")  # verifies the sidecar before unpickling
 - Database operations use parameterised queries; `validate_sql_identifier`
   rejects identifiers that don't match `^[A-Za-z_][A-Za-z0-9_]*$`.
 - `subprocess` calls never pass `shell=True`.
-- Bandit security scans run on every CI build with zero HIGH-severity
-  findings.
+- Bandit (`bandit -ll`) and Vulture dead-code scans run as blocking
+  gates both locally (pre-commit) and in CI, triaged to zero findings.
 - LLM API keys are read from `.env` via `pydantic-settings`; the file is
   gitignored and a [detect-secrets](https://github.com/Yelp/detect-secrets)
   pre-commit hook blocks accidental in-source commits.

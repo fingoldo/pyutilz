@@ -3,9 +3,10 @@ name: MyPy
 # Whole-project mypy check (the fast strict-mode beachhead workflow was retired). Extracted to
 # fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
 # install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow], which have no
-# current type-checked consumer). `advisory: true` (the reusable workflow's default) because this
-# backlog is NOT yet closed to 0, unlike mlframe's -- see the reusable workflow's header comment
-# for why that's a per-repo choice, never a hardcoded blocking default.
+# current type-checked consumer). `advisory: false` (real blocking gate) as of 2026-07-13:
+# `mypy src/pyutilz` verified clean (0 errors, 113 source files) -- backlog is closed, same
+# posture as mlframe's mypy-full.yml. Flip back to advisory only if a future dependency-version
+# bump reopens the backlog wider than a same-PR fix.
 
 on:
   push:
@@ -27,6 +28,6 @@ jobs:
     with:
       package-name: pyutilz
       mypy-version: "2.1.0"
-      advisory: true
+      advisory: false
       install-command: |
         uv pip install --system -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"

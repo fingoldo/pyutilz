@@ -45,14 +45,15 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 
 | Sub-package          | Purpose                                              |
 | -------------------- | ---------------------------------------------------- |
-| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata |
-| `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib`, `matrix` |
+| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata, matrix utilities, FileMaker integration, sidecar-verified `safe_pickle` |
+| `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib` |
 | `pyutilz.database`   | PostgreSQL/MySQL helpers, parameterised queries, identifier validation, Redis, Delta Lake |
 | `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, statistical proxy health-tracking |
 | `pyutilz.cloud`      | S3 and Google Cloud Storage helpers                  |
 | `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination |
+| `pyutilz.performance`| Per-host `KernelTuningCache` for dispatching CUDA/numba/cupy kernel variants |
 | `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers |
-| `pyutilz.dev`        | Logging, benchmarking, dashboards, FileMaker, Jupyter helpers, meta-test utilities |
+| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities |
 | `pyutilz.llm`        | Unified async interface across Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code |
 
 ## Quick examples
@@ -85,8 +86,9 @@ showcase_df_columns(df, max_cat_uniq_qty=50, dropna=False)
 ```
 
 **Unified LLM interface across 7 providers** — same `generate()` /
-`generate_json()` / `generate_stream()` / `get_account_credits()` /
-`check_account_limits()` surface; switch by changing one string:
+`generate_json()` / `get_account_credits()` / `check_account_limits()`
+surface (plus `generate_stream()` on the OpenAI-compatible providers);
+switch by changing one string:
 
 ```python
 from pyutilz.llm import get_llm_provider
@@ -217,6 +219,20 @@ launch_kernel(variant=region["variant"], block=region["block_size"])
 
 Immutable per-`(host, kernel, code_version)` JSON files under `~/.pyutilz/kernel_tuning/` (override via `$PYUTILZ_KERNEL_CACHE_DIR`) — no `filelock`, no read-modify-write, so concurrent writers can never revert each other's fresher entry. Provenance (CUDA driver/runtime, cupy/numba/numpy versions, GPU summary) auto-stamped; stale entries from upgraded libs are detected via `provenance_changed()`. Concrete consumer: [mlframe MRMR](https://github.com/fingoldo/mlframe) feature selection uses this for joint-histogram CUDA RawKernel dispatch (shared-mem vs global-atomic vs numba.cuda), measured 2.6× cumulative speedup at N=1M, p=30.
 
+**Sidecar-verified pickle load** — a crashed job that gets interrupted
+mid-`pickle.dump` leaves a silently-truncated file that loads without
+error and fails later, far from the cause. `safe_dump`/`safe_load`
+write a SHA-256 sidecar next to every pickle and refuse to load if it's
+missing or doesn't match, with an atomic, Windows-safe write path. See
+the [safe pickle guide](docs/guides/safe_pickle.md):
+
+```python
+from pyutilz.core.safe_pickle import safe_dump, safe_load
+
+safe_dump(model, "model.pkl")   # writes model.pkl + model.pkl.sha256
+model = safe_load("model.pkl")  # verifies the sidecar before unpickling
+```
+
 **Synchronous timeouts and slow-call alerting:**
 
 ```python
@@ -243,8 +259,8 @@ rows = safe_execute("SELECT * FROM {} WHERE id = %s", (table, user_id))
 - Database operations use parameterised queries; `validate_sql_identifier`
   rejects identifiers that don't match `^[A-Za-z_][A-Za-z0-9_]*$`.
 - `subprocess` calls never pass `shell=True`.
-- Bandit security scans run on every CI build with zero HIGH-severity
-  findings.
+- Bandit (`bandit -ll`) and Vulture dead-code scans run as blocking
+  gates both locally (pre-commit) and in CI, triaged to zero findings.
 - LLM API keys are read from `.env` via `pydantic-settings`; the file is
   gitignored and a [detect-secrets](https://github.com/Yelp/detect-secrets)
   pre-commit hook blocks accidental in-source commits.

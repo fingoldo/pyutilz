@@ -4,11 +4,11 @@ One paragraph per sub-package: what it's for and a motivating example. For the e
 
 ## `pyutilz.core`
 
-Core Python helpers with zero hard dependencies: type handling, object loading, a lazy-import proxy (so an optional-dependency module can be imported unconditionally and only fails when a member is actually used), version metadata, and the [`safe_pickle`](guides/safe_pickle.md) sidecar-verified load/dump pair. Example: `from pyutilz.core.safe_pickle import safe_dump, safe_load` gives every project the same corruption-checked pickle primitive instead of five projects re-implementing sha256 sidecars independently.
+Core Python helpers with zero hard dependencies: type handling, object loading, a lazy-import proxy (so an optional-dependency module can be imported unconditionally and only fails when a member is actually used), version metadata, matrix utilities, FileMaker integration, and the [`safe_pickle`](guides/safe_pickle.md) sidecar-verified load/dump pair. Example: `from pyutilz.core.safe_pickle import safe_dump, safe_load` gives every project the same corruption-checked pickle primitive instead of five projects re-implementing sha256 sidecars independently.
 
 ## `pyutilz.data`
 
-DataFrame tooling across `pandaslib`, `polarslib`, `numpylib`, `numbalib`, and `matrix`: dtype optimisation (`optimize_dtypes` typically shrinks a frame 50-80%), on-disk format/compression benchmarking (`benchmark_dataframe_compression`), and column profiling (`showcase_df_columns`, works on both pandas and polars). This is the module reached for first whenever a pipeline needs to inspect or shrink a real-world tabular dataset before training.
+DataFrame tooling across `pandaslib`, `polarslib`, `numpylib`, and `numbalib`: dtype optimisation (`optimize_dtypes` typically shrinks a frame 50-80%), on-disk format/compression benchmarking (`benchmark_dataframe_compression`), and column profiling (`showcase_df_columns`, works on both pandas and polars). This is the module reached for first whenever a pipeline needs to inspect or shrink a real-world tabular dataset before training.
 
 ## `pyutilz.database`
 
@@ -32,7 +32,7 @@ String processing, Numba-accelerated similarity search (`SentenceSimilarityIndex
 
 ## `pyutilz.dev`
 
-Logging setup, benchmarking helpers, dashboards, FileMaker integration, Jupyter notebook helpers, and meta-test utilities used by the project's own static test suite. This is the "developer experience" layer — tooling that supports building and testing pyutilz itself and downstream projects, rather than runtime application logic.
+Logging setup, benchmarking helpers, dashboards, Jupyter notebook helpers, and meta-test utilities used by the project's own static test suite. This is the "developer experience" layer — tooling that supports building and testing pyutilz itself and downstream projects, rather than runtime application logic.
 
 ## `pyutilz.llm`
 

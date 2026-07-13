@@ -5,18 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyutilz"
 version = "1.0.0"
-description = "Comprehensive Python utilities for data science, databases, and system operations"
+description = "Modular utilities for dataframes, databases, web scraping, cloud storage, system introspection, parallelism, and a unified async LLM-provider interface (Anthropic, OpenAI, Gemini, and more) — zero hard dependencies, install only what you need"
 authors = [{name = "Anatoly Alexeev"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.8"
-keywords = ["utilities", "pandas", "database", "web-scraping", "data-science", "polars", "numpy", "numba"]
+keywords = [
+    "utilities", "pandas", "polars", "numpy", "numba", "data-science", "dataframe",
+    "database", "web-scraping", "cloud-storage", "s3", "gcs",
+    "llm", "anthropic", "openai", "gemini", "async",
+    "gpu", "cuda", "cupy", "parallelism", "system-monitoring",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -24,6 +31,8 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Framework :: AsyncIO",
+    "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering",
     "Topic :: Database",
@@ -182,6 +191,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/fingoldo/pyutilz"
+Documentation = "https://fingoldo.github.io/pyutilz/"
 Repository = "https://github.com/fingoldo/pyutilz.git"
 Issues = "https://github.com/fingoldo/pyutilz/issues"
 Changelog = "https://github.com/fingoldo/pyutilz/blob/main/CHANGELOG.md"

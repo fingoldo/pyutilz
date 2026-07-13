@@ -20,12 +20,13 @@ print(p.last_call_summary())
 #  'native_finish_reason': 'end_turn', 'is_byok': False, ...}
 ```
 
-Every provider exposes the same surface:
+Every provider exposes the same core surface:
 
 - `generate(prompt, system=None, **kwargs)` — a single completion.
 - `generate_json(...)` — schema-constrained JSON output where the upstream API supports it.
-- `generate_stream(...)` — token streaming; usage tracking is preserved across the stream, not just on the final chunk.
 - `get_account_credits()` / `check_account_limits()` — works natively where the upstream exposes it (OpenRouter, DeepSeek); other providers fall back to capturing `anthropic-ratelimit-*` / `x-ratelimit-*` response headers automatically, so the caller gets *some* signal even when the vendor has no dedicated billing endpoint.
+
+`generate_stream(...)` — token streaming with usage tracking preserved across the stream, not just on the final chunk — is available on the OpenAI-compatible providers (`openai`, `deepseek`, `xai`, `openrouter`). `anthropic`, `gemini`, and `claude-code` don't implement it yet.
 
 ## Instance caching
 
