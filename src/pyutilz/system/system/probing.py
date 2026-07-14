@@ -360,7 +360,7 @@ def check_large_pages_windows():
 
     try:
         # Get the minimum size for large pages
-        GetLargePageMinimum = ctypes.windll.kernel32.GetLargePageMinimum
+        GetLargePageMinimum = ctypes.windll.kernel32.GetLargePageMinimum  # type: ignore[attr-defined]
         GetLargePageMinimum.restype = ctypes.c_size_t
         large_page_size = GetLargePageMinimum()
         return large_page_size > 0

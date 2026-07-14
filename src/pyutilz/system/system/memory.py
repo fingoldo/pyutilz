@@ -118,26 +118,26 @@ def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
 
     # Get a handle to the current process
     if not pid:
-        pid = ctypes.windll.kernel32.GetCurrentProcess()
+        pid = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
 
     # Define argument and return types for SetProcessWorkingSetSizeEx
-    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.argtypes = [
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.argtypes = [  # type: ignore[attr-defined]
         ctypes.wintypes.HANDLE,  # Process handle
         SIZE_T,  # Minimum working set size
         SIZE_T,  # Maximum working set size
         ctypes.wintypes.DWORD,  # Flags
     ]
-    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.restype = ctypes.wintypes.BOOL
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.restype = ctypes.wintypes.BOOL  # type: ignore[attr-defined]
 
     # Define constants for SetProcessWorkingSetSizeEx
     QUOTA_LIMITS_HARDWS_MIN_DISABLE = 0x00000002
 
     # Attempt to set the working set size
-    result = ctypes.windll.kernel32.SetProcessWorkingSetSizeEx(pid, SIZE_T(-1), SIZE_T(-1), QUOTA_LIMITS_HARDWS_MIN_DISABLE)
+    result = ctypes.windll.kernel32.SetProcessWorkingSetSizeEx(pid, SIZE_T(-1), SIZE_T(-1), QUOTA_LIMITS_HARDWS_MIN_DISABLE)  # type: ignore[attr-defined]
 
     if result == 0:
         # Retrieve the error code
-        error_code = ctypes.windll.kernel32.GetLastError()
+        error_code = ctypes.windll.kernel32.GetLastError()  # type: ignore[attr-defined]
         logger.error("SetProcessWorkingSetSizeEx failed with error code: %s", error_code)
         return False
     else:

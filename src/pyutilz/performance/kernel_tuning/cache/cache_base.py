@@ -281,12 +281,12 @@ def _pid_alive(pid: int) -> bool:
             # marker owned by a crashed process was never stolen (the sweep wedged).
             import ctypes
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
             if not handle:
                 # ERROR_INVALID_PARAMETER (87) => no such pid (dead). Any other failure
                 # (e.g. ERROR_ACCESS_DENIED 5 => alive but not ours) => assume alive.
-                return ctypes.get_last_error() not in (87,)
+                return ctypes.get_last_error() not in (87,)  # type: ignore[attr-defined]
             try:
                 exit_code = ctypes.c_ulong()
                 if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):

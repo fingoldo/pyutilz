@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 FileLock: Any
 Timeout: Any
 try:
-    from filelock import FileLock, Timeout
+    from filelock import FileLock, Timeout  # type: ignore[no-redef]
 except ImportError:
     FileLock = None
     Timeout = None

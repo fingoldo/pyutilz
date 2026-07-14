@@ -808,7 +808,7 @@ try:
     def _sentences_similarity_batch_parallel(buf, offsets, word_counts, cand_starts, n_candidates, query_n, cMinLenTHreshold):
         """Compare one query against multiple candidates in parallel threads."""
         results = np.empty(n_candidates, dtype=np.float64)
-        for c in nb.prange(n_candidates):
+        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]
             cn = word_counts[c + 1]
             if cn < 1:
                 results[c] = -1.0

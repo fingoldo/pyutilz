@@ -25,7 +25,7 @@ try:
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError
 except ImportError:
-    import json as _json_backend
+    import json as _json_backend  # type: ignore[no-redef]
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError

@@ -18,7 +18,7 @@ except ImportError:
 display: Any
 HTML: Any
 try:
-    from IPython.display import display, HTML
+    from IPython.display import display, HTML  # type: ignore[no-redef]
 except ImportError:
     # Fallback for older IPython versions or when not in notebook
     try:
