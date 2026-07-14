@@ -25,6 +25,7 @@ from pyutilz.dev.code_audit import (
     scan_dead_cli_flags,
     scan_log_only_except,
     scan_sql_migration_idempotency,
+    scan_duplicate_conditions,
 )
 
 
@@ -345,6 +346,182 @@ def f(cfg):
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1, "assignment-shape `or` must still be flagged after the boolean-context fix"
+
+
+# ---- default_via_or: 2026-07 precision round 2 --------------------------
+
+
+def test_default_via_or_inert_falsy_constant_skipped(tmp_path: Path):
+    """`x or 0` / `x or ""` cannot corrupt anything: substituting the
+    type's own falsy value for a falsy input is observably a no-op.
+    233 findings of this shape in a downstream triage -- all benign."""
+    _write(tmp_path, "ok.py", """
+def f(row, s):
+    count = row.get("count") or 0
+    score = row.get("score") or 0.0
+    label = s or ""
+    flag = row.get("flag") or False
+    return count, score, label, flag
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_alias_key_get_chain_skipped(tmp_path: Path):
+    """`d.get("notes") or d.get("note")` -- substring-related keys are a
+    schema-drift alias idiom (canonical vs legacy spelling), not a trap."""
+    _write(tmp_path, "ok.py", """
+def f(d):
+    notes = d.get("notes") or d.get("note")
+    ptype = d.get("prosody_type") or d.get("type")
+    return notes, ptype
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_non_alias_get_chain_still_flagged(tmp_path: Path):
+    """Two DIFFERENT fields chained with `or` must stay flagged -- this
+    exact shape (effective vs actual cost) was a confirmed real bug: a
+    legitimate $0.00 cached cost silently replaced by the uncached one."""
+    _write(tmp_path, "bad.py", """
+def f(bundle):
+    cost = bundle.get("effective_cost_usd") or bundle.get("actual_cost_usd")
+    return cost
+""")
+    assert scan_default_via_or_trap(tmp_path), "non-alias .get() chain must stay flagged"
+
+
+def test_default_via_or_constructor_rhs_downgraded_to_low(tmp_path: Path):
+    """`x or ClassName()` -- LHS is almost always an `X | None` object
+    param (instances always truthy), so this is Low, not P2."""
+    _write(tmp_path, "ok.py", """
+def f(schedule):
+    schedule = schedule or HalvingSchedule()
+    return schedule
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"
+
+
+def test_default_via_or_lowercase_call_rhs_stays_p2(tmp_path: Path):
+    """`x or float("inf")` must stay P2 -- lowercase callables CAN return
+    falsy values, and this exact shape was a confirmed real bug (a 0ms
+    latency ranked as the worst endpoint)."""
+    _write(tmp_path, "bad.py", """
+def f(ep):
+    latency = ep.get("latency_p50_ms") or float("inf")
+    return latency
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings and findings[0].severity == "P2"
+
+
+def test_default_via_or_negative_int_rhs_still_flagged(tmp_path: Path):
+    """`scalar() or -1` (UnaryOp RHS) must stay flagged -- this exact
+    shape clobbered a legitimate MAX(sense_rank)==0 into -1 in a
+    confirmed real bug."""
+    _write(tmp_path, "bad.py", """
+def f(rank_result):
+    next_rank = (rank_result.scalar() or -1) + 1
+    return next_rank
+""")
+    assert scan_default_via_or_trap(tmp_path), "`or -1` must stay flagged"
+
+
+# ---- duplicate_condition -------------------------------------------------
+
+
+def test_duplicate_or_operand_flags(tmp_path: Path):
+    """The exact confirmed-real-bug shape: same endswith suffix twice, the
+    intended second suffix silently never checked."""
+    _write(tmp_path, "bad.py", """
+def f(form):
+    if form.endswith('ssions') or form.endswith('ssions'):
+        return True
+    return False
+""")
+    findings = scan_duplicate_conditions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P2"
+
+
+def test_duplicate_and_operand_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(a, b):
+    return a > 1 and a > 1
+""")
+    assert len(scan_duplicate_conditions(tmp_path)) == 1
+
+
+def test_distinct_operands_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(form):
+    if form.endswith('ssions') or form.endswith('ssiez'):
+        return True
+    return form == "a" or form == "b" or form == "c"
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
+def test_duplicate_elif_test_flags(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(x):
+    if x == 1:
+        return "a"
+    elif x == 2:
+        return "b"
+    elif x == 1:
+        return "dead"
+    return "c"
+""")
+    findings = scan_duplicate_conditions(tmp_path)
+    assert len(findings) == 1
+    assert "unreachable" in findings[0].detail
+
+
+def test_distinct_elif_chain_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x):
+    if x == 1:
+        return "a"
+    elif x == 2:
+        return "b"
+    elif x == 3:
+        return "c"
+    return "d"
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
+def test_duplicate_elif_not_double_counted_mid_chain(tmp_path: Path):
+    """ast.walk visits every If including the elif branches themselves;
+    a duplicate between branches 2 and 3 must be reported exactly once
+    (only the chain HEAD starts a walk)."""
+    _write(tmp_path, "bad.py", """
+def f(x):
+    if x == 1:
+        return "a"
+    elif x == 2:
+        return "b"
+    elif x == 2:
+        return "dead"
+    return "c"
+""")
+    assert len(scan_duplicate_conditions(tmp_path)) == 1
+
+
+def test_separate_if_statements_with_same_test_clean(tmp_path: Path):
+    """Two INDEPENDENT if statements (not an elif chain) with the same
+    test are legitimate -- state may change between them."""
+    _write(tmp_path, "ok.py", """
+def f(x, items):
+    if x == 1:
+        items.append(1)
+    if x == 1:
+        items.append(2)
+    return items
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
 
 
 # ---- broad_except_swallow: precision refinements ----------------------
@@ -1222,6 +1399,7 @@ def test_facade_reexports_are_same_objects():
     from pyutilz.dev.code_audit.dead_cli_flags import scan_dead_cli_flags as _sdcf
     from pyutilz.dev.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _dea
     from pyutilz.dev.code_audit.sql_migrations import scan_sql_migration_idempotency as _ssmi
+    from pyutilz.dev.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
     from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _sc
     from pyutilz.dev.code_audit.cli import main as _main
 
@@ -1238,6 +1416,7 @@ def test_facade_reexports_are_same_objects():
     assert facade.scan_log_only_except is _sloe
     assert facade.DEFAULT_ESCALATION_ATTRS is _dea
     assert facade.scan_sql_migration_idempotency is _ssmi
+    assert facade.scan_duplicate_conditions is _sdc
     assert facade.run_all is _ra
     assert facade.SCANNERS is _sc
     assert facade.main is _main

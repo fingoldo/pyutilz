@@ -67,6 +67,13 @@ list[Finding]):
   re-apply after a partial failure) is a routine operational event, not
   an edge case.
 
+- ``scan_duplicate_conditions``: the same operand repeated inside one
+  ``and``/``or`` expression (``x.endswith('a') or x.endswith('a')``), or
+  an ``elif`` whose test is identical to a preceding branch's test.
+  Both are near-certain copy-paste typos: the code runs, but the
+  intended SECOND check is silently never performed (or the later
+  branch is dead). Confirmed in the wild during a large-scale triage.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -109,6 +116,7 @@ from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_paginatio
 from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
+from .duplicate_conditions import scan_duplicate_conditions
 from .registry import SCANNERS, run_all
 from .cli import main
 
@@ -129,6 +137,7 @@ __all__ = [
     "scan_log_only_except",
     "DEFAULT_ESCALATION_ATTRS",
     "scan_sql_migration_idempotency",
+    "scan_duplicate_conditions",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -139,6 +148,7 @@ for _submod in (
     "_base", "mutable_defaults", "closures", "default_via_or",
     "broad_except", "nan_equality", "mutation_during_iteration",
     "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
+    "duplicate_conditions",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

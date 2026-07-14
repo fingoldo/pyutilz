@@ -51,9 +51,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             "AST audit: mutable defaults, late-binding closures, "
             "default-via-or trap, silent broad-except swallows, "
             "logged-but-not-escalated excepts, SQL LIMIT-without-ORDER-BY, "
-            "OFFSET-pagination advisories, dead CLI flags, and "
-            "non-idempotent SQL migrations. Designed to be run against "
-            "any Python source tree, not just pyutilz."
+            "OFFSET-pagination advisories, dead CLI flags, "
+            "non-idempotent SQL migrations, and duplicate conditions "
+            "(copy-paste typos in and/or chains and elif branches). "
+            "Designed to be run against any Python source tree, not "
+            "just pyutilz."
         ),
     )
     parser.add_argument("root", type=Path, help="source-tree root to scan (e.g. ./src)")

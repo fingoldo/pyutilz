@@ -10,14 +10,73 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 
 
 def _is_trivial_default(value: ast.AST) -> bool:
-    """A trivial default is ``None`` / ``True`` / ``False`` / ``{}`` /
-    ``[]`` -- callers can't pass a falsy variant that would conflict
-    with the intent of these defaults, so ``or DEFAULT`` is safe."""
-    if isinstance(value, ast.Constant) and value.value is None:
+    """A trivial default is one whose substitution cannot corrupt a
+    legitimately falsy input:
+
+    - ``None`` / empty ``{}`` / ``[]`` / ``set()`` literals -- nothing
+      meaningful to clobber.
+    - Any FALSY constant (``0``, ``0.0``, ``""``, ``False``, ``b""``) --
+      the trap only bites when the fallback DIFFERS from the value being
+      replaced; ``count or 0`` maps a legitimate 0 to ... 0, so the
+      result is observably identical whether the trap "fires" or not.
+      (Confirmed at scale in a 2026-07 triage: every ``or 0`` / ``or ""``
+      finding reviewed was a no-op None-coercion, not a bug.)
+    """
+    if isinstance(value, ast.Constant) and not value.value:
         return True
     if isinstance(value, (ast.Dict, ast.List, ast.Set)) and not getattr(value, "elts", None) and not getattr(value, "keys", None):
         return True
     return False
+
+
+def _get_call_key(node: ast.AST) -> str | None:
+    """The string key of a ``<obj>.get("key")`` / ``<obj>.get("key", d)``
+    call, or None when ``node`` isn't that shape."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.args[0].value
+    return None
+
+
+def _is_alias_key_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """True for ``d.get("notes") or d.get("note")``-style dual-key reads
+    where the two keys are obvious ALIASES of one field (one is a
+    substring of the other, e.g. ``note``/``notes``,
+    ``type``/``prosody_type``). This is a pervasive schema-drift compat
+    idiom, not a defaulting trap: an empty value under one alias has no
+    meaning distinct from absence, and the intent is precisely "try the
+    other spelling". Keys that are NOT substring-related (e.g.
+    ``effective_cost_usd`` vs ``actual_cost_usd`` -- two different
+    fields with different meanings, a confirmed real bug) stay flagged.
+    """
+    lhs_key = _get_call_key(lhs)
+    rhs_key = _get_call_key(rhs)
+    if lhs_key is None or rhs_key is None or lhs_key == rhs_key:
+        return False
+    a, b = lhs_key.lower(), rhs_key.lower()
+    return a in b or b in a
+
+
+def _is_constructor_call(node: ast.AST) -> bool:
+    """True when ``node`` is a call to a CamelCase-named callable
+    (``HalvingSchedule()``, ``Path("x")``, ``AsyncAnthropic()``) -- by
+    Python convention a class constructor. The matching LHS is then
+    almost always an ``X | None`` parameter, and instances without a
+    custom ``__bool__``/``__len__`` are always truthy, so only ``None``
+    can trigger the fallback. Lowercase callables (``float("inf")``,
+    ``compute_default()``) keep their P2 -- their returns CAN be falsy.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else (func.attr if isinstance(func, ast.Attribute) else "")
+    return bool(name) and name[0].isupper()
 
 
 # Documented-safe LHS callables whose ``or DEFAULT`` cannot mask caller intent
@@ -185,6 +244,9 @@ def scan_default_via_or_trap(root: Path,
             lhs = node.values[0]
             if _lhs_is_documented_safe(lhs):
                 continue
+            # Skip alias-key dual reads: d.get("notes") or d.get("note").
+            if _is_alias_key_fallback(lhs, rhs):
+                continue
             # Also skip when the LHS is wrapped in a non-mutating expression
             # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
             # `max(1, os.cpu_count() or 1)`). The BoolOp here is the `or`
@@ -206,6 +268,14 @@ def scan_default_via_or_trap(root: Path,
             elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
                 sev = "Low"
                 detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."
+            elif isinstance(rhs, ast.Call) and _is_constructor_call(rhs):
+                sev = "Low"
+                detail = (
+                    "`or ClassName(...)`: constructor default -- LHS is "
+                    "almost certainly an `X | None` parameter and instances "
+                    "are always truthy, so only None triggers the fallback. "
+                    "Verify the class has no custom __bool__/__len__."
+                )
             elif isinstance(rhs, ast.Call):
                 sev = "P2"
                 detail = (
