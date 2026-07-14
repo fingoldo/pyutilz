@@ -67,12 +67,18 @@ list[Finding]):
   re-apply after a partial failure) is a routine operational event, not
   an edge case.
 
-- ``scan_duplicate_conditions``: the same operand repeated inside one
-  ``and``/``or`` expression (``x.endswith('a') or x.endswith('a')``), or
-  an ``elif`` whose test is identical to a preceding branch's test.
-  Both are near-certain copy-paste typos: the code runs, but the
-  intended SECOND check is silently never performed (or the later
-  branch is dead). Confirmed in the wild during a large-scale triage.
+- ``scan_duplicate_conditions``: three copy-paste-typo shapes, all
+  emitted under this one scanner (distinct ``Finding.check`` values --
+  ``"duplicate_condition"`` for the first two, ``"duplicate_dict_key"``
+  for the third):
+  (1) the same operand repeated inside one ``and``/``or`` expression
+  (``x.endswith('a') or x.endswith('a')``);
+  (2) an ``elif`` whose test is identical to a preceding branch's test
+  (the later branch is dead);
+  (3) a dict literal with the same constant key twice -- Python keeps
+  only the LAST value, silently discarding whatever the earlier entry
+  encoded. All three were confirmed in the wild during a large-scale
+  triage, including a correction-table dict that silently lost a rule.
 
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown

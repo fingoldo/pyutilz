@@ -32,16 +32,24 @@ def _operand_key(node: ast.AST) -> str:
 def scan_duplicate_conditions(root: Path,
                               exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                               ) -> list[Finding]:
-    """Find structurally identical repeated conditions:
+    """Find structurally identical repeated conditions and dict-literal
+    keys:
 
     1. The same operand appearing twice in one ``and``/``or`` BoolOp
        (``a == 1 or a == 1``) -- the duplicate contributes nothing, and the
        author almost certainly meant a different second value.
     2. An ``elif`` whose test is identical to the test of a preceding
        branch in the same if/elif chain -- the later branch is dead.
+    3. A dict literal with the same constant key twice (``{"a": 1, "a": 2}``)
+       -- Python keeps only the LAST value, so the earlier entry (and
+       whatever it encoded -- a correction rule, a config override) is
+       silently dropped with no error. Confirmed in the wild: a 2026-07
+       Russian-lemma correction table redefined "испёк" with a different
+       (wrong_lemma, correct_lemma) pair 82 lines later in the same dict,
+       silently discarding the first rule.
 
-    Severity: P2 (the code runs, but an intended check is silently missing
-    or an intended branch is silently unreachable).
+    Severity: P2 (the code runs, but an intended check/entry is silently
+    missing or a branch is silently unreachable).
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -104,4 +112,26 @@ def scan_duplicate_conditions(root: Path,
                         ))
                     else:
                         chain_tests[key] = current.test.lineno
+            elif isinstance(node, ast.Dict):
+                seen_keys: dict[object, int] = {}
+                for k in node.keys:
+                    if k is None:
+                        continue  # ``**spread`` entry has key=None; not comparable
+                    if not (isinstance(k, ast.Constant) and isinstance(k.value, (str, int, float, bool))):
+                        continue  # only literal keys are reliably comparable
+                    if k.value in seen_keys:
+                        findings.append(Finding(
+                            check="duplicate_dict_key",
+                            severity="P2",
+                            file=rel,
+                            line=k.lineno,
+                            snippet=_line_text(src_lines, k.lineno),
+                            detail=(
+                                f"key {k.value!r} already set at line {seen_keys[k.value]} "
+                                f"in this dict literal -- Python keeps only the LAST value, "
+                                f"so the earlier entry is silently discarded with no error."
+                            ),
+                        ))
+                    else:
+                        seen_keys[k.value] = k.lineno
     return findings

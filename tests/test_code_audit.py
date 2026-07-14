@@ -524,6 +524,71 @@ def f(x, items):
     assert scan_duplicate_conditions(tmp_path) == []
 
 
+def test_duplicate_dict_key_flags(tmp_path: Path):
+    """The exact confirmed-real-bug shape: a correction-table dict
+    redefines the same key with a different value 82 lines later,
+    silently discarding the first entry (Python keeps only the last)."""
+    _write(tmp_path, "bad.py", """
+FIXES = {
+    "испёк": ("печь", "испечь"),
+    "other": ("x", "y"),
+    "испёк": ("искать", "испечь"),
+}
+""")
+    findings = scan_duplicate_conditions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "duplicate_dict_key"
+    assert findings[0].severity == "P2"
+
+
+def test_duplicate_dict_key_int_and_bool_alias_flags(tmp_path: Path):
+    """1 == True and 0 == False in Python, and they hash equal, so a real
+    dict literal collides them too -- the scanner must match that."""
+    _write(tmp_path, "bad.py", """
+d = {1: "a", True: "b"}
+""")
+    findings = scan_duplicate_conditions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "duplicate_dict_key"
+
+
+def test_distinct_dict_keys_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+d = {"a": 1, "b": 2, "c": 3}
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
+def test_dict_key_with_spread_not_crashed(tmp_path: Path):
+    """``{**other, "a": 1}`` has a key=None entry for the spread -- must
+    not crash comparing None."""
+    _write(tmp_path, "ok.py", """
+def f(other):
+    return {**other, "a": 1, "b": 2}
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
+def test_dict_key_non_literal_not_flagged(tmp_path: Path):
+    """A computed key (``{x: 1, y: 1}`` where x/y are variables) can't be
+    reliably compared statically -- must not false-positive."""
+    _write(tmp_path, "ok.py", """
+def f(x, y):
+    return {x: 1, y: 2}
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
+def test_dict_key_separate_dict_literals_not_conflated(tmp_path: Path):
+    """Two separate dict literals reusing the same key are unrelated --
+    must not be flagged as a collision within one literal."""
+    _write(tmp_path, "ok.py", """
+d1 = {"a": 1}
+d2 = {"a": 2}
+""")
+    assert scan_duplicate_conditions(tmp_path) == []
+
+
 # ---- broad_except_swallow: precision refinements ----------------------
 
 
