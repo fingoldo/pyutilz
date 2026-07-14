@@ -96,9 +96,11 @@ def pytest_addoption(parser):
         "--refresh-debt-baseline",
         "--refresh-mutable-defaults-baseline",
         "--refresh-resource-handle-baseline",
-        "--refresh-code-audit-baseline",
     ):
         parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
+    from py_ci_shared.code_audit_meta import register_refresh_option
+
+    register_refresh_option(parser)  # --refresh-code-audit-baseline, shared with every other consumer
 
 
 def pytest_collection_modifyitems(config, items):
