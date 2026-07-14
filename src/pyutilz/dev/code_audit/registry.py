@@ -16,6 +16,7 @@ from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
+from .missed_await import scan_missed_await
 
 # --- registry -----------------------------------------------------------
 
@@ -33,6 +34,7 @@ SCANNERS: dict[str, Callable[..., list[Finding]]] = {
     "log_only_except": scan_log_only_except,
     "sql_migration_not_idempotent": scan_sql_migration_idempotency,
     "duplicate_condition": scan_duplicate_conditions,
+    "missed_await": scan_missed_await,
 }
 
 

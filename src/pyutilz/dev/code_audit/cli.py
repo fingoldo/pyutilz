@@ -52,8 +52,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             "default-via-or trap, silent broad-except swallows, "
             "logged-but-not-escalated excepts, SQL LIMIT-without-ORDER-BY, "
             "OFFSET-pagination advisories, dead CLI flags, "
-            "non-idempotent SQL migrations, and duplicate conditions "
-            "(copy-paste typos in and/or chains and elif branches). "
+            "non-idempotent SQL migrations, duplicate conditions "
+            "(copy-paste typos in and/or chains, elif branches, dict "
+            "keys), and discarded coroutines (missed await). "
             "Designed to be run against any Python source tree, not "
             "just pyutilz."
         ),

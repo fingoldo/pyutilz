@@ -26,6 +26,7 @@ from pyutilz.dev.code_audit import (
     scan_log_only_except,
     scan_sql_migration_idempotency,
     scan_duplicate_conditions,
+    scan_missed_await,
 )
 
 
@@ -587,6 +588,107 @@ d1 = {"a": 1}
 d2 = {"a": 2}
 """)
     assert scan_duplicate_conditions(tmp_path) == []
+
+
+# ---- missed_await ----------------------------------------------------------
+
+
+def test_missed_await_discarded_coroutine_flags(tmp_path: Path):
+    """The true-positive shape: a bare-statement call to a same-module
+    async def -- the coroutine is created and discarded, the body never
+    runs, and the caller carries on as if the save happened."""
+    _write(tmp_path, "bad.py", """
+async def do_save(item):
+    ...
+
+async def process(item):
+    do_save(item)
+    return True
+""")
+    findings = scan_missed_await(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+    assert "do_save" in findings[0].detail
+
+
+def test_missed_await_from_sync_caller_also_flags(tmp_path: Path):
+    """Discarding a coroutine from a SYNC function is the same bug."""
+    _write(tmp_path, "bad.py", """
+async def notify(msg):
+    ...
+
+def handler(msg):
+    notify(msg)
+""")
+    assert scan_missed_await(tmp_path), "sync caller discarding a coroutine must be flagged"
+
+
+def test_missed_await_awaited_call_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+async def do_save(item):
+    ...
+
+async def process(item):
+    await do_save(item)
+""")
+    assert scan_missed_await(tmp_path) == []
+
+
+def test_missed_await_gather_list_pattern_clean(tmp_path: Path):
+    """FP shape #1 from corpus validation: coroutines collected into a
+    list and gathered later -- assignment-level calls are never flagged."""
+    _write(tmp_path, "ok.py", """
+import asyncio
+
+async def work(x):
+    ...
+
+async def run(xs):
+    tasks = [work(x) for x in xs]
+    return await asyncio.gather(*tasks)
+""")
+    assert scan_missed_await(tmp_path) == []
+
+
+def test_missed_await_local_import_shadow_clean(tmp_path: Path):
+    """FP shape #2 from corpus validation: a function-local import of a
+    SYNC function that shares its name with a module-level async def."""
+    _write(tmp_path, "ok.py", """
+async def count_tokens(text):
+    ...
+
+def fallback(text):
+    from other_module import count_tokens
+    count_tokens(text)
+""")
+    assert scan_missed_await(tmp_path) == []
+
+
+def test_missed_await_local_assignment_shadow_clean(tmp_path: Path):
+    """FP shape #3: the name is locally rebound to something else."""
+    _write(tmp_path, "ok.py", """
+async def refresh():
+    ...
+
+def run(callbacks):
+    refresh = callbacks["refresh"]
+    refresh()
+""")
+    assert scan_missed_await(tmp_path) == []
+
+
+def test_missed_await_attribute_call_not_flagged(tmp_path: Path):
+    """Attribute calls (self.method(), obj.fn()) are out of scope -- no
+    reliable static resolution to a same-module async def."""
+    _write(tmp_path, "ok.py", """
+class Svc:
+    async def ping(self):
+        ...
+
+    def run(self):
+        self.ping()
+""")
+    assert scan_missed_await(tmp_path) == []
 
 
 # ---- broad_except_swallow: precision refinements ----------------------
@@ -1465,6 +1567,7 @@ def test_facade_reexports_are_same_objects():
     from pyutilz.dev.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _dea
     from pyutilz.dev.code_audit.sql_migrations import scan_sql_migration_idempotency as _ssmi
     from pyutilz.dev.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
+    from pyutilz.dev.code_audit.missed_await import scan_missed_await as _sma
     from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _sc
     from pyutilz.dev.code_audit.cli import main as _main
 
@@ -1482,6 +1585,7 @@ def test_facade_reexports_are_same_objects():
     assert facade.DEFAULT_ESCALATION_ATTRS is _dea
     assert facade.scan_sql_migration_idempotency is _ssmi
     assert facade.scan_duplicate_conditions is _sdc
+    assert facade.scan_missed_await is _sma
     assert facade.run_all is _ra
     assert facade.SCANNERS is _sc
     assert facade.main is _main
