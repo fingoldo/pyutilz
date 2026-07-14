@@ -98,9 +98,16 @@ def pytest_addoption(parser):
         "--refresh-resource-handle-baseline",
     ):
         parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
-    from py_ci_shared.code_audit_meta import register_refresh_option
+    try:
+        # py-ci-shared itself requires python>=3.9 (see the dev-dependency marker in
+        # pyproject.toml), so it's absent on the 3.8 CI leg -- without this guard the
+        # import breaks conftest loading for the WHOLE test suite on that leg, not just
+        # the code-audit test.
+        from py_ci_shared.code_audit_meta import register_refresh_option
 
-    register_refresh_option(parser)  # --refresh-code-audit-baseline, shared with every other consumer
+        register_refresh_option(parser)  # --refresh-code-audit-baseline, shared with every other consumer
+    except ImportError:
+        pass
 
 
 def pytest_collection_modifyitems(config, items):

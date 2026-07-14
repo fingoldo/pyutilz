@@ -21,7 +21,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from py_ci_shared.code_audit_meta import assert_no_new_code_audit_findings
+import pytest
+
+# py-ci-shared requires python>=3.9 (pyproject.toml dev-dependency marker), so it's not
+# installed on the 3.8 CI leg -- skip cleanly there instead of erroring at collection.
+py_ci_shared_code_audit_meta = pytest.importorskip("py_ci_shared.code_audit_meta")
+assert_no_new_code_audit_findings = py_ci_shared_code_audit_meta.assert_no_new_code_audit_findings
 
 import pyutilz
 
