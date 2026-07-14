@@ -95,6 +95,59 @@ def _lhs_is_documented_safe(lhs: ast.AST) -> bool:
     return False
 
 
+# --- boolean-context exclusion ------------------------------------------
+#
+# ``expr1 or expr2`` used as an ``if``/``while``/``assert``/ternary TEST, or
+# as a comprehension filter clause, is ordinary logical-OR control flow
+# (e.g. ``if not line or line.startswith("#"): continue``) -- it never
+# produces a "default value" that could clobber a caller-supplied falsy
+# input, because the BoolOp's result is consumed only as a bool, not
+# assigned/returned/passed as data. Confirmed via a large-scale manual
+# triage (2026-07) across a downstream consumer's codebase: this shape
+# accounted for the overwhelming majority of this scanner's findings and
+# every single one triaged was a false positive.
+_BOOLEAN_CONTEXT_FIELDS: frozenset[tuple[type, str]] = frozenset({
+    (ast.If, "test"),
+    (ast.While, "test"),
+    (ast.Assert, "test"),
+    (ast.IfExp, "test"),
+    (ast.comprehension, "ifs"),
+})
+
+
+def _build_parent_field_map(tree: ast.AST) -> dict[int, tuple[ast.AST, str]]:
+    """Map ``id(child) -> (parent_node, field_name)`` for every AST node,
+    so a BoolOp can look up which field of which parent it occupies."""
+    parent_map: dict[int, tuple[ast.AST, str]] = {}
+    for node in ast.walk(tree):
+        for field_name, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                parent_map[id(value)] = (node, field_name)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        parent_map[id(item)] = (node, field_name)
+    return parent_map
+
+
+def _is_in_boolean_context(node: ast.AST, parent_map: dict[int, tuple[ast.AST, str]]) -> bool:
+    """Walk up through nested BoolOp/``not`` wrappers (e.g. ``(a or b) and
+    c``, ``not (a or b)``) to the first "real" parent field, and check
+    whether that field is a pure boolean-test position."""
+    current: ast.AST = node
+    while True:
+        entry = parent_map.get(id(current))
+        if entry is None:
+            return False
+        parent, field = entry
+        if any(isinstance(parent, ptype) and field == pfield for ptype, pfield in _BOOLEAN_CONTEXT_FIELDS):
+            return True
+        if isinstance(parent, ast.BoolOp) or (isinstance(parent, ast.UnaryOp) and isinstance(parent.op, ast.Not)):
+            current = parent
+            continue
+        return False
+
+
 def scan_default_via_or_trap(root: Path,
                              exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                              ) -> list[Finding]:
@@ -113,10 +166,16 @@ def scan_default_via_or_trap(root: Path,
             continue
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         rel = py.relative_to(root).as_posix()
+        parent_map = _build_parent_field_map(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
                 continue
             if len(node.values) != 2:
+                continue
+            # Skip ordinary logical-OR control flow (if/while/assert/ternary
+            # tests, comprehension filters) -- the result is consumed only
+            # as a bool, never assigned/returned/passed as a "default value".
+            if _is_in_boolean_context(node, parent_map):
                 continue
             rhs = node.values[-1]
             # Skip when RHS is itself "trivial" (None/empty/falsy).

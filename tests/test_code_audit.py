@@ -248,6 +248,105 @@ def f(cfg):
     assert p1, "user-attribute LHS must still be flagged"
 
 
+# ---- default_via_or: boolean-context exclusion (2026-07 large-scale FP fix) ----
+
+
+def test_default_via_or_if_test_skipped(tmp_path: Path):
+    """`if not line or line.startswith(...):` is ordinary control flow,
+    not a default-value substitution -- this shape was the single largest
+    false-positive class found in a downstream large-scale triage."""
+    _write(tmp_path, "ok.py", """
+def f(line):
+    if not line or line.startswith("#"):
+        return None
+    return 1
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_elif_test_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x):
+    if x == 1:
+        return "a"
+    elif x == 2 or x == 3:
+        return "b"
+    return "c"
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_while_test_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x, y):
+    while x < 10 or y < 10:
+        x += 1
+        y += 1
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_assert_test_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x):
+    assert x is None or isinstance(x, str)
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_ternary_test_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x, y):
+    return "yes" if x == 1 or y == 1 else "no"
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_comprehension_filter_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(items):
+    return [i for i in items if i.startswith("a") or i.startswith("b")]
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_nested_boolop_in_if_test_skipped(tmp_path: Path):
+    """`(a or b) and c` inside an if-test: the inner Or must still resolve
+    to the outer If.test boolean context by climbing through the And."""
+    _write(tmp_path, "ok.py", """
+def f(a, b, c):
+    if (a == 1 or b == 1) and c == 1:
+        return 1
+    return 0
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_not_wrapped_in_if_test_skipped(tmp_path: Path):
+    """`not (a or b)` inside an if-test: the Or must resolve through the
+    UnaryOp(Not) wrapper to the outer If.test boolean context."""
+    _write(tmp_path, "ok.py", """
+def f(a, b):
+    if not (a == 1 or b == 1):
+        return 1
+    return 0
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_assignment_still_flagged_despite_boolean_fix(tmp_path: Path):
+    """The boolean-context exclusion must not eat genuine assignment-shape
+    findings -- only test/filter positions are exempt."""
+    _write(tmp_path, "bad.py", """
+def f(cfg):
+    x = cfg.get("n") or 7
+    return x
+""")
+    findings = scan_default_via_or_trap(tmp_path)
+    p1 = [f for f in findings if f.severity == "P1"]
+    assert p1, "assignment-shape `or` must still be flagged after the boolean-context fix"
+
+
 # ---- broad_except_swallow: precision refinements ----------------------
 
 
@@ -565,6 +664,39 @@ def f():
     assert findings == []
 
 
+def test_broad_except_debug_only_log_clean(tmp_path: Path):
+    """A best-effort feature probe that logs at debug level is a genuine
+    signal (visible the moment someone enables debug logging) -- not
+    equivalent to a truly silent ``except: pass``. This shape was the
+    single largest source of false positives in a downstream large-scale
+    triage (2026-07): 13 handlers that DID log, just at debug level."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def f():
+    try:
+        install_optional_filter()
+    except Exception as exc:
+        logger.debug("Could not install optional filter: %s", exc)
+""")
+    assert scan_broad_except_swallows(tmp_path) == []
+
+
+def test_broad_except_no_log_at_all_still_flagged(tmp_path: Path):
+    """The debug-only exemption must not widen into a blanket exemption --
+    a handler with NO log call whatsoever (any level) is still flagged."""
+    _write(tmp_path, "bad.py", """
+def f():
+    try:
+        do_thing()
+    except Exception:
+        pass
+""")
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings, "truly silent except: pass must still be flagged"
+
+
 def test_narrow_except_not_flagged(tmp_path: Path):
     _write(tmp_path, "ok.py", """
 def f():
@@ -802,6 +934,121 @@ def save(result):
         pass
 """)
     assert scan_log_only_except(tmp_path) == []
+
+
+# ---- log_only_except: alternate escalation conventions (2026-07 FP fix) ----
+
+
+def test_log_only_except_error_counter_increment_is_clean(tmp_path: Path):
+    """``stats["errors"] += 1`` / ``total_errors += len(batch)`` is a
+    legitimate escalation convention this scanner didn't originally
+    recognise -- the file's OWN naming (``validation_errors`` elsewhere)
+    triggers the file-level scope gate, but the actual handler escalates
+    via a differently-shaped counter."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def process(items):
+    validation_errors = []
+    stats = {"errors": 0}
+    for item in items:
+        try:
+            do_thing(item)
+        except Exception as e:
+            logger.warning("failed: %s", e)
+            stats["errors"] += 1
+    return stats
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_return_false_sentinel_is_clean(tmp_path: Path):
+    """A Phase0-style ``return False`` on failure is a caller-visible
+    escalation contract even though nothing gets appended to a list."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run_test(errors):
+    try:
+        do_check()
+        return True
+    except Exception as e:
+        logger.warning("check failed: %s", e)
+        return False
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_return_error_dict_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run(errors):
+    try:
+        return {"result": do_thing()}
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        return {"error": str(e)}
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_warn_method_call_is_clean(tmp_path: Path):
+    """``results.warn(...)`` -- a distinct object-method escalation
+    convention -- is recognised regardless of the base object's name."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run(errors, results):
+    try:
+        do_thing()
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        results.warn(f"skipped: {e}")
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_local_error_var_assignment_is_clean(tmp_path: Path):
+    """Stashing the failure into a local ``error_message``-named variable
+    (persisted after the loop) is a real escalation path even without an
+    immediate append/return."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run(errors):
+    error_message = None
+    try:
+        do_thing()
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        error_message = str(e)
+    return error_message
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_no_escalation_at_all_still_flagged(tmp_path: Path):
+    """None of the recognised escalation conventions apply -- must still
+    be flagged (the fix must not become a blanket exemption)."""
+    _write(tmp_path, "bad.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def save(result):
+    result.validation_errors = []
+    try:
+        do_write()
+    except Exception as e:
+        logger.warning("write failed: %s", e)
+""")
+    findings = scan_log_only_except(tmp_path)
+    assert findings, "handler with no escalation path at all must still be flagged"
 
 
 # ---- sql_migration_not_idempotent ------------------------------------------

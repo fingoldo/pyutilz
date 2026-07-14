@@ -31,10 +31,28 @@ def _has_raise(stmts: list[ast.stmt]) -> bool:
     return False
 
 
+def _has_debug_only_log_call(stmts: list[ast.stmt]) -> bool:
+    """True if ``stmts`` contains a ``logger.debug(...)`` call and no
+    warning/error/critical/exception/warn call. Debug is off by default in
+    production, so operators still get no signal from it -- but it's a
+    materially different (weaker, downgradeable) signal than TRUE silence
+    (``except: pass``), since it's visible the moment someone turns debug
+    logging on for diagnosis."""
+    if _has_log_call(stmts):
+        return False
+    for s in stmts:
+        for n in ast.walk(s):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "debug":
+                return True
+    return False
+
+
 def _is_silent_swallow(handler: ast.ExceptHandler) -> bool:
     """True if the handler body is silent: only pass/continue/return/break
-    AND has no log call AND has no re-raise."""
+    AND has no log call (of any level, including debug) AND has no re-raise."""
     if _has_log_call(handler.body):
+        return False
+    if _has_debug_only_log_call(handler.body):
         return False
     if _has_raise(handler.body):
         return False
@@ -45,13 +63,6 @@ def _is_silent_swallow(handler: ast.ExceptHandler) -> bool:
             continue
         if isinstance(s, ast.Return):
             continue
-        # Augment: bare ``logger.debug(...)`` should also classify as silent
-        # at WARN level (debug logs are off by default).
-        if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call):
-            call = s.value
-            if isinstance(call.func, ast.Attribute) and call.func.attr == "debug":
-                continue
-            return False  # other side-effecting call -> not silent
         return False
     return True
 
