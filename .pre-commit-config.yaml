@@ -240,12 +240,11 @@ repos:
         files: '^\.github/workflows/.*\.ya?ml$'
         stages: [pre-commit]
 
-  # Advisory-taste warn-only gate: unrestricted-select ruff (surfaces everything the blocking
-  # gate's --ignore C901 hides) + mccabe complexity (C90) + pip-audit (dependency CVE feed).
-  # Mirrors lint-advisory.yml's own posture exactly -- everything here is continue-on-error in CI
-  # (design taste / a feed whose fix isn't always on your own timeline, not a correctness bug),
-  # so this hook never blocks either; it just surfaces the same signal locally instead of only
-  # in CI. Same pattern as mlframe's hook.
+  # Advisory-taste gate: unrestricted-select ruff (surfaces everything the blocking gate's
+  # --ignore C901 hides) + mccabe complexity (C90) + pip-audit (dependency CVE feed, network-bound
+  # against pypi.org -- ~2-3 min per commit, no local value since it never blocks). Mirrors
+  # lint-advisory.yml's own posture (continue-on-error in CI); CI is this hook's real venue.
+  # manual-only locally: ``pre-commit run --hook-stage=manual lint-advisory-warn``.
   - repo: local
     hooks:
       - id: lint-advisory-warn
@@ -254,7 +253,7 @@ repos:
         language: system
         types: [python]
         verbose: true
-        stages: [pre-commit]
+        stages: [manual]
 
   # Whole-project mypy, MANUAL stage only (heavier than the fast beachhead hook above -- see
   # py-ci-shared's own .pre-commit-hooks.yaml for the full rationale). Mirrors CI's
