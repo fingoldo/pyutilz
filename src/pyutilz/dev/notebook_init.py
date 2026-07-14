@@ -22,8 +22,8 @@ try:
 except ImportError:
     # Fallback for older IPython versions or when not in notebook
     try:
-        from IPython.core.display import HTML
-        from IPython.display import display
+        from IPython.core.display import HTML  # type: ignore[no-redef]
+        from IPython.display import display  # type: ignore[no-redef]
     except ImportError:
         # Create dummy functions if IPython not available
         def display(*args, **kwargs):
