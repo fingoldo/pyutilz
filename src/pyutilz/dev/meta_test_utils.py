@@ -37,6 +37,7 @@ import dataclasses
 import importlib
 import inspect
 import re
+import types
 import typing
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -468,8 +469,13 @@ def sentinel_for_type(tp: Any) -> Optional[object]:
     instance, so no such precedence bug applies -- the ordering just
     keeps the common case first for readability.
     """
+    # `X | None` (PEP 604) produces a `types.UnionType`, not `typing.Union` -- distinct origins on
+    # python<3.14 (3.14 unified the two representations, which masked this exact gap when tested only
+    # under 3.14: `typing.get_origin(bool | None) is typing.Union` is True there but False on 3.10-3.13).
+    # `types.UnionType` itself doesn't exist before python 3.10 (no `X | None` syntax to produce it then).
+    _union_type = getattr(types, "UnionType", None)
     origin = typing.get_origin(tp)
-    if origin is typing.Union:
+    if origin is typing.Union or (_union_type is not None and origin is _union_type):
         candidates = [a for a in typing.get_args(tp) if a is not type(None)]
     else:
         candidates = [tp]
