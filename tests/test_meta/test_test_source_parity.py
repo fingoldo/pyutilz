@@ -77,6 +77,10 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "broad_except": "code_audit scanner; covered by test_code_audit.py",
     "nan_equality": "code_audit scanner; covered by test_code_audit.py",
     "mutation_during_iteration": "code_audit scanner; covered by test_code_audit.py",
+    "sql_lint": "code_audit scanner; covered by test_code_audit.py",
+    "dead_cli_flags": "code_audit scanner; covered by test_code_audit.py",
+    "silent_escalation": "code_audit scanner; covered by test_code_audit.py",
+    "sql_migrations": "code_audit scanner; covered by test_code_audit.py",
     "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by

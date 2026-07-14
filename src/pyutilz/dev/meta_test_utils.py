@@ -33,11 +33,13 @@ AST so the count survives reformatting.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import importlib
 import inspect
 import re
+import typing
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 __all__ = [
     "consumer_corpus",
@@ -50,6 +52,9 @@ __all__ = [
     "count_user_deferred_entries",
     "snake_case_variants_of",
     "safe_import",
+    "sentinel_for_type",
+    "optional_scalar_fields",
+    "assert_fields_roundtrip",
     "MARKER_LINE_RE",
     "ATTRIBUTION_RE",
 ]
@@ -423,3 +428,110 @@ def safe_import(module_path: str) -> Optional[object]:
         return importlib.import_module(module_path)
     except ImportError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Field-harvesting round-trip harness (verdict / DTO parser parity)
+# ---------------------------------------------------------------------------
+#
+# Recurring bug class: a dataclass declares an optional field the producer
+# (an LLM prompt, an API response schema, an upstream config) is meant to
+# populate, but the field is never actually extracted by whatever parses the
+# raw payload into that dataclass -- a missing key in a hand-written
+# field-name map, an allowlist that forgot the new field, a post-hook that
+# claims some fields but not this one. The dataclass, the schema, and the
+# call site can all look complete on review; only feeding a payload through
+# the real parser and checking the field survived catches the gap.
+#
+# These three helpers factor out the MECHANISM (pick a sentinel value for a
+# field's type; compare a batch of expected sentinels against actual
+# attribute values) so a project only has to supply the payload-shape glue
+# (what JSON key(s) a field maps to, which parser function to call) that IS
+# inherently specific to its own producer/parser contract.
+
+
+def sentinel_for_type(tp: Any) -> Optional[object]:
+    """Best-effort sentinel value for a resolved type annotation.
+
+    Handles ``bool`` / ``str`` / ``float`` / ``int``, each optionally
+    wrapped in ``X | None`` / ``Optional[X]`` (the ``Union`` is unwrapped
+    to find the first recognised member). Returns ``None`` for anything
+    else (``list[...]``, ``dict[...]``, a nested dataclass, ``Literal``,
+    an unresolved ``TypeVar``, ...) -- callers should read that as "skip
+    this field, provide your own value" rather than "the sentinel is
+    ``None``" (``bool``/``str``/``float``/``int`` never legitimately
+    produce a ``None`` sentinel here, so the return value is unambiguous).
+
+    ``bool`` is checked before ``int`` deliberately: ``bool`` is a
+    subclass of ``int`` in Python, but ``isinstance``/type-identity checks
+    here compare the annotation object itself (``tp is bool``), not an
+    instance, so no such precedence bug applies -- the ordering just
+    keeps the common case first for readability.
+    """
+    origin = typing.get_origin(tp)
+    if origin is typing.Union:
+        candidates = [a for a in typing.get_args(tp) if a is not type(None)]
+    else:
+        candidates = [tp]
+    for cand in candidates:
+        if cand is bool:
+            return True
+        if cand is str:
+            return "__sentinel_str__"
+        if cand is float:
+            return 0.5
+        if cand is int:
+            return 7
+    return None
+
+
+def optional_scalar_fields(cls: type, skip: Iterable[str] = ()) -> dict[str, object]:
+    """``{field_name: sentinel_value}`` for every ``dataclasses.field`` of
+    ``cls`` whose resolved type is a scalar (``bool``/``str``/``float``/
+    ``int``, optionally ``| None``), excluding names in ``skip``.
+
+    Resolves annotations via ``typing.get_type_hints`` rather than reading
+    ``field.type`` directly -- under ``from __future__ import annotations``
+    (PEP 563) ``field.type`` is a bare string, not the actual type object,
+    and ``get_type_hints`` is what correctly evaluates it against the
+    defining module's globals either way.
+
+    Fields of non-scalar type (``list[str] | None``, a nested dataclass,
+    etc.) are silently omitted -- the caller decides how (or whether) to
+    populate those; this helper only covers the shapes it can generate an
+    unambiguous, comparable sentinel for.
+    """
+    hints = typing.get_type_hints(cls)
+    out: dict[str, object] = {}
+    for f in dataclasses.fields(cls):
+        if f.name in skip:
+            continue
+        tp = hints.get(f.name)
+        if tp is None:
+            continue
+        value = sentinel_for_type(tp)
+        if value is not None:
+            out[f.name] = value
+    return out
+
+
+def assert_fields_roundtrip(
+    sentinels: dict[str, object],
+    get_actual: Callable[[str], object],
+) -> list[str]:
+    """For each ``(field_name, sentinel)`` in ``sentinels``, call
+    ``get_actual(field_name)`` (typically ``lambda name: getattr(parsed_obj,
+    name)``) and compare against the sentinel.
+
+    Returns the list of field names whose actual value did NOT match the
+    expected sentinel -- an empty list means every field made the full
+    round trip (payload -> parser -> dataclass instance) intact. Pure
+    comparison helper; building the payload and invoking the parser is the
+    caller's job, since that's the part that's genuinely project-specific.
+    """
+    mismatches: list[str] = []
+    for name, expected in sentinels.items():
+        actual = get_actual(name)
+        if actual != expected:
+            mismatches.append(name)
+    return mismatches

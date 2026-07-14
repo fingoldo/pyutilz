@@ -1,0 +1,133 @@
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+
+# --- SQL-literal heuristics -----------------------------------------------
+
+# A string literal "looks like SQL" if it contains a standalone SELECT
+# keyword. Deliberately narrow (one keyword, word-boundaried) to keep the
+# false-positive rate on unrelated string literals low.
+_SELECT_RE = re.compile(r"\bSELECT\b", re.IGNORECASE)
+
+# ``LIMIT`` followed by either a bind-param placeholder (``:name`` / ``%s`` /
+# ``$1`` / ``?``) or an integer literal. Captures the literal value (if any)
+# so ``LIMIT 1`` can be exempted as the ubiquitous "fetch one row" idiom.
+_LIMIT_RE = re.compile(r"\bLIMIT\s+(?::\w+|%\(?\w*\)?s|\$\d+|\?|(\d+))", re.IGNORECASE)
+_ORDER_BY_RE = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
+_OFFSET_RE = re.compile(r"\bOFFSET\b", re.IGNORECASE)
+
+
+def _string_constants(tree: ast.Module) -> list[tuple[ast.Constant, str]]:
+    """Every ``ast.Constant`` string literal in the module, in traversal
+    order, paired with its string value (mypy can't narrow
+    ``Constant.value``'s union type through an isinstance filter inside
+    a comprehension, so the str is captured alongside the node)."""
+    out: list[tuple[ast.Constant, str]] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            out.append((n, n.value))  # noqa: PERF401 -- a comprehension loses mypy's isinstance narrowing here
+    return out
+
+
+def scan_sql_limit_without_order_by(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find SQL string literals with a ``LIMIT`` clause but no ``ORDER BY``.
+
+    Without an explicit ordering, which rows survive the cap is whatever
+    physical/plan order the database happens to return that run --
+    arbitrary and non-reproducible, and any code that assumes a
+    "top N by some criterion" semantic is silently wrong. ``LIMIT 1``
+    (the ubiquitous "does at least one row exist" / "fetch a single
+    row" idiom) is exempted -- flagging every occurrence of that pattern
+    would be pure noise.
+
+    Severity: P2 (silently non-deterministic results, not a crash).
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for node, sql in _string_constants(tree):
+            if not _SELECT_RE.search(sql):
+                continue
+            limit_match = _LIMIT_RE.search(sql)
+            if not limit_match:
+                continue
+            if limit_match.group(1) == "1":
+                continue
+            if _ORDER_BY_RE.search(sql):
+                continue
+            findings.append(Finding(
+                check="sql_limit_without_order_by",
+                severity="P2",
+                file=rel,
+                line=node.lineno,
+                snippet=_line_text(src_lines, node.lineno),
+                detail=(
+                    "SQL literal has a LIMIT clause with no ORDER BY -- which "
+                    "rows survive the cap is arbitrary DB physical order, not "
+                    "reproducible across runs. Add an ORDER BY matching the "
+                    "intended selection criterion, or LIMIT 1 if any single "
+                    "row is acceptable."
+                ),
+            ))
+    return findings
+
+
+def scan_sql_offset_pagination(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find SQL string literals combining ``LIMIT`` and ``OFFSET``.
+
+    OFFSET pagination is only correct when the filtered result set is
+    stable across batches. A common bug: the same query loop both SELECTs
+    rows via ``WHERE some_flag IS NULL`` and UPDATEs that flag for
+    processed rows -- each batch's UPDATE removes rows from the very set
+    OFFSET is walking, so the next OFFSET skips over rows that shifted
+    into the just-vacated positions. Keyset pagination (``WHERE id > :last_id
+    ORDER BY id LIMIT :n``) is immune to this because it never depends on
+    the filtered set's size staying constant between batches.
+
+    This is advisory only -- OFFSET pagination over a genuinely static
+    result set (no concurrent mutation of the filter columns) is fine.
+    Severity: Low.
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for node, sql in _string_constants(tree):
+            if not _SELECT_RE.search(sql):
+                continue
+            if not (_LIMIT_RE.search(sql) and _OFFSET_RE.search(sql)):
+                continue
+            findings.append(Finding(
+                check="sql_offset_pagination",
+                severity="Low",
+                file=rel,
+                line=node.lineno,
+                snippet=_line_text(src_lines, node.lineno),
+                detail=(
+                    "SQL literal paginates via LIMIT+OFFSET. Verify the "
+                    "filtered result set is stable across batches -- if this "
+                    "query's own loop also mutates a column referenced in "
+                    "its WHERE clause between batches, OFFSET will silently "
+                    "skip rows. Prefer keyset pagination (WHERE id > "
+                    ":last_id ORDER BY id LIMIT :n) when in doubt."
+                ),
+            ))
+    return findings

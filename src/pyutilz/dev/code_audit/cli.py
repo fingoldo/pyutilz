@@ -49,9 +49,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         prog="python -m pyutilz.dev.code_audit",
         description=(
             "AST audit: mutable defaults, late-binding closures, "
-            "default-via-or trap, silent broad-except swallows. "
-            "Designed to be run against any Python source tree, "
-            "not just pyutilz."
+            "default-via-or trap, silent broad-except swallows, "
+            "logged-but-not-escalated excepts, SQL LIMIT-without-ORDER-BY, "
+            "OFFSET-pagination advisories, dead CLI flags, and "
+            "non-idempotent SQL migrations. Designed to be run against "
+            "any Python source tree, not just pyutilz."
         ),
     )
     parser.add_argument("root", type=Path, help="source-tree root to scan (e.g. ./src)")

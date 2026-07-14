@@ -33,6 +33,40 @@ list[Finding]):
   "silent data drop" pattern (a column failed to encode, the row got
   skipped, the operator sees fewer features and no log line).
 
+- ``scan_log_only_except``: complements the above -- an ``except``
+  handler that DOES log but never appends to a caller-visible
+  ``errors``/``validation_errors``-style collection and never re-raises.
+  The operator sees a log line; a caller reading only the return value
+  (or a persisted "was this successful" flag derived from it) has no
+  way to learn anything failed. Only applies within files that use that
+  collect-and-report naming convention somewhere; the attribute-name set
+  is configurable via the ``escalation_attrs`` kwarg.
+
+- ``scan_sql_limit_without_order_by``: a SQL ``SELECT ... LIMIT`` string
+  literal with no ``ORDER BY`` -- which rows survive the cap is
+  arbitrary DB physical order, not reproducible across runs. ``LIMIT 1``
+  is exempted (the ubiquitous "fetch a single row" idiom).
+
+- ``scan_sql_offset_pagination``: a SQL literal combining ``LIMIT`` and
+  ``OFFSET``. Advisory -- flags the pattern so a reviewer can confirm
+  the filtered result set is stable across batches; a loop that both
+  SELECTs via ``WHERE flag IS NULL`` and UPDATEs that flag between
+  batches silently skips rows under OFFSET (keyset pagination on a
+  stable id column is immune).
+
+- ``scan_dead_cli_flags``: an ``argparse`` ``add_argument(...)`` whose
+  bound attribute (``args.<name>``) is never referenced anywhere in the
+  scanned tree -- either dead code or a flag that silently does nothing.
+
+- ``scan_sql_migration_idempotency``: raw ``.sql`` file scan (not
+  Python) for statements that fail on a second run instead of no-op'ing
+  -- ``DROP CONSTRAINT``/``DROP COLUMN``/``DROP TABLE`` without
+  ``IF EXISTS``, ``ADD COLUMN`` without ``IF NOT EXISTS``, and
+  ``ADD PRIMARY KEY`` with no ``DO $$ ... END $$`` guard block. A
+  migration re-run (deploy retry, multi-environment rollout, manual
+  re-apply after a partial failure) is a routine operational event, not
+  an edge case.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -71,6 +105,10 @@ from .default_via_or import scan_default_via_or_trap
 from .broad_except import scan_broad_except_swallows
 from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
+from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination
+from .dead_cli_flags import scan_dead_cli_flags
+from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
+from .sql_migrations import scan_sql_migration_idempotency
 from .registry import SCANNERS, run_all
 from .cli import main
 
@@ -85,6 +123,12 @@ __all__ = [
     "scan_broad_except_swallows",
     "scan_nan_equality",
     "scan_mutation_during_iteration",
+    "scan_sql_limit_without_order_by",
+    "scan_sql_offset_pagination",
+    "scan_dead_cli_flags",
+    "scan_log_only_except",
+    "DEFAULT_ESCALATION_ATTRS",
+    "scan_sql_migration_idempotency",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -94,6 +138,7 @@ __all__ = [
 for _submod in (
     "_base", "mutable_defaults", "closures", "default_via_or",
     "broad_except", "nan_equality", "mutation_during_iteration",
+    "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
     "registry", "cli",
 ):
     globals().pop(_submod, None)
