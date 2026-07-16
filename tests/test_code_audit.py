@@ -7,7 +7,10 @@ directory; no cross-test bleed.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from pyutilz.dev.code_audit import (
     Finding,
@@ -1551,6 +1554,7 @@ def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
 # ---- redundant_test_fit_call ---------------------------------------------
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_identical_fit_call_across_two_tests_flags(tmp_path: Path):
     """The exact confirmed-real-bug shape (mlframe MRMR biz_value suite): two sibling
     test functions each independently call the SAME deterministic helper with the SAME
@@ -1578,6 +1582,7 @@ def test_b():
     assert all(f.severity == "Low" for f in findings)
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_different_seeds_not_flagged(tmp_path: Path):
     """Different literal args -> genuinely different computations, not a duplicate."""
     _write(tmp_path, "test_ok.py", """
@@ -1595,6 +1600,7 @@ def test_b():
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_same_test_not_flagged(tmp_path: Path):
     """The SAME call appearing twice within one test function (e.g. a sanity re-check)
     is not a cross-test duplication -- only 2+ DIFFERENT test functions count."""
@@ -1610,6 +1616,7 @@ def test_a():
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_already_cached_not_flagged(tmp_path: Path):
     """A helper already decorated with @cache/@lru_cache has already been fixed."""
     _write(tmp_path, "test_ok.py", """

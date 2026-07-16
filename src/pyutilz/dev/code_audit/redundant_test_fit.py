@@ -48,9 +48,12 @@ def _call_signature(call: ast.Call) -> str | None:
     those are method calls, not the module-level helper pattern this scanner targets)."""
     if not isinstance(call.func, ast.Name) or not call.func.id.startswith("_"):
         return None
+    _unparse = getattr(ast, "unparse", None)  # ast.unparse needs python>=3.9; degrade to a no-op scan on 3.8
+    if _unparse is None:
+        return None
     try:
-        args_repr = ", ".join(ast.unparse(a) for a in call.args)
-        kwargs_repr = ", ".join(f"{kw.arg}={ast.unparse(kw.value)}" for kw in call.keywords)
+        args_repr = ", ".join(_unparse(a) for a in call.args)
+        kwargs_repr = ", ".join(f"{kw.arg}={_unparse(kw.value)}" for kw in call.keywords)
     except (ValueError, RecursionError):
         # ast.unparse raises ValueError on a handful of unsupported/exotic node shapes; a
         # pathologically deep expression could hit RecursionError. Neither is a scanner bug --

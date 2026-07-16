@@ -30,8 +30,11 @@ def _target_name(node: ast.AST) -> str | None:
         return node.id
     if isinstance(node, ast.Attribute):
         return node.attr
-    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-        return node.slice.value
+    if isinstance(node, ast.Subscript):
+        # python 3.8 wraps a simple subscript key in ast.Index; 3.9+ exposes the value directly.
+        _slice = node.slice.value if isinstance(node.slice, ast.Index) else node.slice  # type: ignore[attr-defined]
+        if isinstance(_slice, ast.Constant) and isinstance(_slice.value, str):
+            return _slice.value
     return None
 
 
