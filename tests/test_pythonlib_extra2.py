@@ -226,6 +226,40 @@ def test_get_parent_func_args():
     assert result == {"a": 1, "b": 2}
 
 
+def test_get_parent_func_args_ignores_incidental_locals():
+    """Regression: the dict(args_info.locals) materialisation (perf fix, 2026-07-17) must not
+    leak non-parameter local variables into the returned dict -- only names in the caller's
+    OWN signature (``args_info.args``) may appear, matching the pre-fix per-key .get() filter."""
+    def my_func(a, b, self=None):
+        incidental_local = a + b  # noqa: F841 -- deliberately unused; this name must NOT leak into the result
+        another_one = "not a param"  # noqa: F841
+        return get_parent_func_args()
+    result = my_func(1, 2)
+    assert result == {"a": 1, "b": 2}
+    assert "incidental_local" not in result
+    assert "another_one" not in result
+
+
+def test_get_parent_func_args_many_params_reflects_reassigned_values():
+    """Regression: a caller with a large parameter surface (mirroring MRMR's ~300-parameter
+    __init__, the motivating case for the perf fix) must still resolve every parameter to its
+    CURRENT (possibly reassigned-in-body) value, matching the pre-fix per-key .get() behaviour."""
+    params = ", ".join(f"p{i}=0" for i in range(300))
+    ns: dict = {"get_parent_func_args": get_parent_func_args}
+    exec(
+        f"def many_params_func(self, {params}):\n"
+        "    p0 = 'reassigned'\n"  # mirrors MRMR's n_jobs=-1 -> resolved-value pattern
+        "    return get_parent_func_args()\n",
+        ns,
+    )
+    result = ns["many_params_func"](None)
+    assert len(result) == 300
+    assert result["p0"] == "reassigned"
+    assert result["p1"] == 0
+    assert result["p299"] == 0
+    assert "self" not in result
+
+
 # ---------------------------------------------------------------------------
 # store_params_in_object / load_object_params_into_func — lines 571-584
 # ---------------------------------------------------------------------------
