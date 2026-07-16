@@ -201,6 +201,9 @@ where = ["src"]
 include = ["pyutilz*"]
 exclude = ["tests*", "scripts*", "docs*"]
 
+[tool.setuptools.package-data]
+pyutilz = ["py.typed"]
+
 # Pytest configuration
 [tool.pytest.ini_options]
 testpaths = ["tests"]
