@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from pyutilz.dev.code_audit import (
     Finding,
     run_all,
@@ -27,6 +25,7 @@ from pyutilz.dev.code_audit import (
     scan_sql_migration_idempotency,
     scan_duplicate_conditions,
     scan_missed_await,
+    scan_redundant_test_fit_calls,
 )
 
 
@@ -1549,6 +1548,123 @@ def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
 # ---- subpackage facade sensor ------------------------------------------
 
 
+# ---- redundant_test_fit_call ---------------------------------------------
+
+
+def test_redundant_identical_fit_call_across_two_tests_flags(tmp_path: Path):
+    """The exact confirmed-real-bug shape (mlframe MRMR biz_value suite): two sibling
+    test functions each independently call the SAME deterministic helper with the SAME
+    literal seed to check a different assertion on the identical fit result."""
+    _write(tmp_path, "test_bad.py", """
+def _build_data(seed):
+    return seed
+
+def _fit_model(X, seed):
+    return X + seed
+
+def test_a():
+    X = _build_data(seed=101)
+    sel = _fit_model(X, seed=101)
+    assert sel
+
+def test_b():
+    X = _build_data(seed=101)
+    sel = _fit_model(X, seed=101)
+    assert sel
+""")
+    findings = scan_redundant_test_fit_calls(tmp_path)
+    checks = {f.check for f in findings}
+    assert "redundant_test_fit_call" in checks
+    assert all(f.severity == "Low" for f in findings)
+
+
+def test_redundant_call_different_seeds_not_flagged(tmp_path: Path):
+    """Different literal args -> genuinely different computations, not a duplicate."""
+    _write(tmp_path, "test_ok.py", """
+def _build_data(seed):
+    return seed
+
+def test_a():
+    X = _build_data(seed=101)
+    assert X
+
+def test_b():
+    X = _build_data(seed=202)
+    assert X
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
+def test_redundant_call_same_test_not_flagged(tmp_path: Path):
+    """The SAME call appearing twice within one test function (e.g. a sanity re-check)
+    is not a cross-test duplication -- only 2+ DIFFERENT test functions count."""
+    _write(tmp_path, "test_ok.py", """
+def _build_data(seed):
+    return seed
+
+def test_a():
+    X1 = _build_data(seed=101)
+    X2 = _build_data(seed=101)
+    assert X1 == X2
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
+def test_redundant_call_already_cached_not_flagged(tmp_path: Path):
+    """A helper already decorated with @cache/@lru_cache has already been fixed."""
+    _write(tmp_path, "test_ok.py", """
+from functools import cache
+
+@cache
+def _build_data(seed):
+    return seed
+
+def test_a():
+    X = _build_data(seed=101)
+    assert X
+
+def test_b():
+    X = _build_data(seed=101)
+    assert X
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
+def test_redundant_call_non_test_file_not_scanned(tmp_path: Path):
+    """This scanner only applies to test_*.py / *_test.py files."""
+    _write(tmp_path, "helpers.py", """
+def _build_data(seed):
+    return seed
+
+def test_a():
+    X = _build_data(seed=101)
+    assert X
+
+def test_b():
+    X = _build_data(seed=101)
+    assert X
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
+def test_redundant_call_public_function_not_flagged(tmp_path: Path):
+    """Only underscore-prefixed local helpers are tracked -- repeated identical calls to a
+    public/third-party-style function (no leading underscore) are a normal, cheap pattern."""
+    _write(tmp_path, "test_ok.py", """
+def build_data(seed):
+    return seed
+
+def test_a():
+    X = build_data(seed=101)
+    assert X
+
+def test_b():
+    X = build_data(seed=101)
+    assert X
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
 def test_facade_reexports_are_same_objects():
     """After the >1000-LOC split into a subpackage, the ``code_audit``
     facade must re-export every public symbol as the SAME object the
@@ -1564,11 +1680,12 @@ def test_facade_reexports_are_same_objects():
     from pyutilz.dev.code_audit.mutation_during_iteration import scan_mutation_during_iteration as _smdi
     from pyutilz.dev.code_audit.sql_lint import scan_sql_limit_without_order_by as _sslwob, scan_sql_offset_pagination as _ssop
     from pyutilz.dev.code_audit.dead_cli_flags import scan_dead_cli_flags as _sdcf
-    from pyutilz.dev.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _dea
+    from pyutilz.dev.code_audit.silent_escalation import scan_log_only_except as _sloe, DEFAULT_ESCALATION_ATTRS as _DEA
     from pyutilz.dev.code_audit.sql_migrations import scan_sql_migration_idempotency as _ssmi
     from pyutilz.dev.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
     from pyutilz.dev.code_audit.missed_await import scan_missed_await as _sma
-    from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _sc
+    from pyutilz.dev.code_audit.redundant_test_fit import scan_redundant_test_fit_calls as _srtfc
+    from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _SCANNERS_CONST
     from pyutilz.dev.code_audit.cli import main as _main
 
     assert facade.Finding is _Finding
@@ -1582,15 +1699,16 @@ def test_facade_reexports_are_same_objects():
     assert facade.scan_sql_offset_pagination is _ssop
     assert facade.scan_dead_cli_flags is _sdcf
     assert facade.scan_log_only_except is _sloe
-    assert facade.DEFAULT_ESCALATION_ATTRS is _dea
+    assert facade.DEFAULT_ESCALATION_ATTRS is _DEA
     assert facade.scan_sql_migration_idempotency is _ssmi
     assert facade.scan_duplicate_conditions is _sdc
     assert facade.scan_missed_await is _sma
+    assert facade.scan_redundant_test_fit_calls is _srtfc
     assert facade.run_all is _ra
-    assert facade.SCANNERS is _sc
+    assert facade.SCANNERS is _SCANNERS_CONST
     assert facade.main is _main
     # Every scanner in the registry is the facade-level attribute of the same name.
-    for name, fn in facade.SCANNERS.items():
+    for fn in facade.SCANNERS.values():
         assert callable(fn)
 
 

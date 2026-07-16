@@ -83,6 +83,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "sql_migrations": "code_audit scanner; covered by test_code_audit.py",
     "duplicate_conditions": "code_audit scanner; covered by test_code_audit.py",
     "missed_await": "code_audit scanner; covered by test_code_audit.py",
+    "redundant_test_fit": "code_audit scanner; covered by test_code_audit.py",
     "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by

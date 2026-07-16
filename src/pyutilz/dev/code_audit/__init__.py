@@ -88,6 +88,17 @@ list[Finding]):
   positive during corpus validation; the shipped heuristic had zero
   false positives across three repos.
 
+- ``scan_redundant_test_fit_calls``: within a ``test_*.py`` file, an
+  identical call to an underscore-prefixed local helper (``_build_x(seed)``,
+  ``_fit_y(X, y, seed)``) made from 2+ different ``test_*`` functions --
+  since the call is deterministic, every occurrence after the first
+  recomputes the same result. Confirmed in the wild as a 7-14x wall-clock
+  cost on real MRMR biz_value test suites (mlframe, 2026-07-16), where
+  several sibling test functions each independently re-ran the same
+  expensive model fit to check a different assertion on the identical
+  result. A helper already decorated with ``@cache``/``@lru_cache`` is
+  skipped (already fixed).
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -132,6 +143,7 @@ from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
 from .missed_await import scan_missed_await
+from .redundant_test_fit import scan_redundant_test_fit_calls
 from .registry import SCANNERS, run_all
 from .cli import main
 
@@ -154,6 +166,7 @@ __all__ = [
     "scan_sql_migration_idempotency",
     "scan_duplicate_conditions",
     "scan_missed_await",
+    "scan_redundant_test_fit_calls",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -164,7 +177,7 @@ for _submod in (
     "_base", "mutable_defaults", "closures", "default_via_or",
     "broad_except", "nan_equality", "mutation_during_iteration",
     "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
-    "duplicate_conditions", "missed_await",
+    "duplicate_conditions", "missed_await", "redundant_test_fit",
     "registry", "cli",
 ):
     globals().pop(_submod, None)
