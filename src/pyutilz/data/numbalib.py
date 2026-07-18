@@ -30,7 +30,7 @@ def set_numba_random_seed(random_seed: int):
     Note: This function requires a seed value. For convenience with None defaults,
     use the wrapper function set_random_seed() instead.
     """
-    np.random.seed(random_seed)
+    np.random.seed(random_seed)  # noqa: NPY002 -- this is a @njit kernel; np.random.Generator is not nopython-mode compatible, same as mlframe's identical numba-interop exception
 
 
 def set_random_seed(random_seed: Optional[int] = None):
