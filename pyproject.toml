@@ -174,7 +174,12 @@ dev = [
     "pytest-instafail>=0.5",
     "pytest-progress>=1.3",
     "pytest-timeout>=2.1",
-    "black==26.5.1",               # pinned exact, matching CI's uvx black==26.5.1 (black-filtered.yml)
+    # black==26.5.1 requires Python >=3.10 (found 2026-07-19: installing dev-extras on the py3.8/
+    # py3.9 CI matrix cells hard-failed the whole `pip install -e ".[dev]"` step, since pip can't
+    # satisfy an unconditional exact pin against an interpreter the release doesn't support). The
+    # marker keeps `pip install .[dev]` installable there -- those cells don't need black to run
+    # pytest, matching the identical py-ci-shared marker below.
+    "black==26.5.1 ; python_version >= '3.10'",   # pinned exact, matching CI's uvx black==26.5.1 (black-filtered.yml)
     "ruff==0.15.20",                # pinned exact, matching CI's uvx ruff==0.15.20 (ruff-blocking.yml) --
                                     # an open range here is exactly how mlframe's prior v0.8.6 pre-commit-
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
