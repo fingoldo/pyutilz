@@ -9,6 +9,8 @@ messages.count_tokens API instead of this module for that reason).
 from __future__ import annotations
 
 import logging
+import os
+from collections import OrderedDict
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -30,23 +32,32 @@ except Exception as e:
     _HAS_TIKTOKEN = False
     logger.debug("tiktoken unavailable (%s: %s) -- using len//4 fallback for token counting", type(e).__name__, e)
 
-_encoding_cache: dict[str, "tiktoken.Encoding"] = {}  # tiktoken may be unimported; forward-ref string annotation only
+# Bounded LRU, not a plain unbounded dict: a long-running process resolving encodings for many
+# distinct model-name strings over its lifetime (e.g. OpenRouter's 200+ catalogue entries) would
+# otherwise grow this cache forever with no eviction -- the same unbounded-cache shape fixed
+# elsewhere this round (see llm.factory._provider_cache). Unlike a lock cache, evicting a cached
+# Encoding is always safe: the next call for that model just re-resolves it via tiktoken.
+_encoding_cache: "OrderedDict[str, tiktoken.Encoding]" = OrderedDict()  # tiktoken may be unimported; forward-ref string annotation only
+_ENCODING_CACHE_MAX_SIZE = int(os.environ.get("PYUTILZ_TOKEN_ENCODING_CACHE_MAX_SIZE", "256"))
 
 
 def _encoding_for_model(model: Optional[str]):
     """Resolve the correct tiktoken encoding for ``model`` (e.g. gpt-4o/o1 -> o200k_base, not
     cl100k_base -- verified against the installed tiktoken package), falling back to cl100k_base
     for unrecognized/legacy model names. Cached per model name (encoding objects are expensive to
-    construct)."""
+    construct), bounded LRU (see ``_ENCODING_CACHE_MAX_SIZE``)."""
     if model is None:
         return _DEFAULT_ENCODING
     if model in _encoding_cache:
+        _encoding_cache.move_to_end(model)
         return _encoding_cache[model]
     try:
         enc = tiktoken.encoding_for_model(model)
     except Exception:
         enc = _DEFAULT_ENCODING
     _encoding_cache[model] = enc
+    if len(_encoding_cache) > _ENCODING_CACHE_MAX_SIZE:
+        _encoding_cache.popitem(last=False)
     return enc
 
 

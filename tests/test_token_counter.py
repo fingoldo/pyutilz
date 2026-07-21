@@ -102,3 +102,58 @@ def test_module_import_degrades_to_fallback_on_non_import_error():
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
     assert "OK" in result.stdout
+
+
+class TestEncodingCacheBounded:
+    """Regression (meta-test-driven finding, proactive-cache-audit pass): ``_encoding_cache`` used
+    to be a plain unbounded dict -- one entry per distinct model-name string ever resolved, kept
+    forever with no eviction. A long-running process resolving many distinct models over its
+    lifetime (e.g. iterating an OpenRouter catalogue with 200+ entries) would grow this cache
+    without bound. Fixed with the same OrderedDict + LRU-eviction pattern used elsewhere this
+    round (llm.factory._provider_cache)."""
+
+    def _reset(self, mod):
+        mod._encoding_cache.clear()
+
+    def test_cache_evicts_least_recently_used_beyond_max_size(self):
+        import pyutilz.llm.token_counter as mod
+
+        pytest.importorskip("tiktoken")
+        self._reset(mod)
+        orig_max = mod._ENCODING_CACHE_MAX_SIZE
+        try:
+            mod._ENCODING_CACHE_MAX_SIZE = 2
+            mod._encoding_for_model("gpt-4o")
+            mod._encoding_for_model("gpt-4o-mini")
+            assert list(mod._encoding_cache.keys()) == ["gpt-4o", "gpt-4o-mini"]
+
+            # A third distinct model pushes the cache over its bound -- the LEAST recently
+            # used entry ("gpt-4o", not touched since insertion) must be evicted, not the
+            # most-recently-inserted one.
+            mod._encoding_for_model("gpt-3.5-turbo")
+            assert len(mod._encoding_cache) == 2
+            assert "gpt-4o" not in mod._encoding_cache, "least-recently-used entry should have been evicted"
+            assert "gpt-3.5-turbo" in mod._encoding_cache
+        finally:
+            mod._ENCODING_CACHE_MAX_SIZE = orig_max
+            self._reset(mod)
+
+    def test_repeated_lookup_moves_entry_to_most_recently_used(self):
+        import pyutilz.llm.token_counter as mod
+
+        pytest.importorskip("tiktoken")
+        self._reset(mod)
+        orig_max = mod._ENCODING_CACHE_MAX_SIZE
+        try:
+            mod._ENCODING_CACHE_MAX_SIZE = 2
+            mod._encoding_for_model("gpt-4o")
+            mod._encoding_for_model("gpt-4o-mini")
+            # Re-touch "gpt-4o" so it becomes the most-recently-used entry instead.
+            mod._encoding_for_model("gpt-4o")
+            mod._encoding_for_model("gpt-3.5-turbo")
+
+            assert "gpt-4o" in mod._encoding_cache, "recently re-touched entry should survive eviction"
+            assert "gpt-4o-mini" not in mod._encoding_cache, "the now-least-recently-used entry should be evicted instead"
+        finally:
+            mod._ENCODING_CACHE_MAX_SIZE = orig_max
+            self._reset(mod)

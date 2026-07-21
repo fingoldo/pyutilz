@@ -117,16 +117,36 @@ class TestGetIpinfo:
 
     @patch("pyutilz.web.web.urllib.request.urlopen")
     def test_urllib_non_ok(self, mock_urlopen):
+        """Regression (2026-07-21 audit round 2, LOW): a non-200 response used to return `{}`
+        while an exception returned None -- two different failure values for the same "the
+        request failed" outcome. Both must now return None, matching get_external_ip."""
         from pyutilz.web import web as mod
         resp = Mock()
         resp.status = http.HTTPStatus.FORBIDDEN
         mock_urlopen.return_value = resp
-        assert mod.get_ipinfo(use_urllib=True) == {}
+        assert mod.get_ipinfo(use_urllib=True) is None
 
     @patch("pyutilz.web.web.urllib.request.urlopen", side_effect=Exception("fail"))
     def test_urllib_exception(self, mock_urlopen):
         from pyutilz.web import web as mod
         assert mod.get_ipinfo(use_urllib=True) is None
+
+    def test_urllib_non_ok_and_exception_use_the_same_failure_convention(self):
+        """Both use_urllib=True failure modes (non-200, exception) must return the identical
+        sentinel (None) -- matching get_external_ip's single-convention contract and this
+        function's own use_urllib=False branch, which already returns None uniformly."""
+        from pyutilz.web import web as mod
+
+        with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+            resp = Mock()
+            resp.status = http.HTTPStatus.FORBIDDEN
+            mock_urlopen.return_value = resp
+            non_ok_result = mod.get_ipinfo(use_urllib=True)
+
+        with patch("pyutilz.web.web.urllib.request.urlopen", side_effect=Exception("fail")):
+            exception_result = mod.get_ipinfo(use_urllib=True)
+
+        assert non_ok_result is exception_result is None
 
     @patch("pyutilz.web.web.get_url")
     def test_requests_path_ok(self, mock_get_url):

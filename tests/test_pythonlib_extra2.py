@@ -515,10 +515,15 @@ def test_float_distinct_digits_percent_negative_matches_positive():
 
 def test_float_distinct_digits_percent_rounding_carry_stays_within_precision():
     """Regression: round(0.99999996, 5) rounds up to exactly 1.0, and frac_part*10**precision
-    then produced 10**precision (a precision+1-digit number), silently inflating ntotal."""
+    then produced 10**precision (a precision+1-digit number: 100000, digits {0,1}), silently
+    inflating ntotal to 6 and yielding 2/6 = 0.3333... The fix clamps frac_part to
+    1 - 10**-precision (0.99999 here), so frac_digits stays a precision-digit number (99999,
+    digit {9} only): ntotal=5, unique_digits={9}, giving exactly 1/5 = 0.2. A weak
+    `0.0 <= result <= 1.0` bound (as this test used to assert) passes for BOTH the buggy 0.3333...
+    and the correct 0.2, so it would not catch a regression back to the unclamped carry bug --
+    this asserts the exact expected value instead."""
     result = float_distinct_digits_percent(0.99999996, precision=5)
-    assert isinstance(result, float)
-    assert 0.0 <= result <= 1.0
+    assert result == pytest.approx(0.2), f"expected exactly 1/5 = 0.2 (clamped carry), got {result} -- 0.3333... would indicate the unclamped-carry bug is back"
 
 
 def test_hashable_dict_mixed_key_types_does_not_crash():

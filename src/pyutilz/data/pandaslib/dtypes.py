@@ -30,8 +30,8 @@ def set_df_columns_types(df: pd.DataFrame, types_dict: dict) -> None:
                 df[column] = df[column].astype(the_type)
 
 
-def get_categorical_columns_indices(ds: pd.DataFrame) -> tuple:
-    """Split ``ds`` columns into categorical vs non-categorical, by positional index.
+def get_categorical_columns_indices(df: pd.DataFrame) -> tuple:
+    """Split ``df`` columns into categorical vs non-categorical, by positional index.
 
     Returns
     -------
@@ -43,11 +43,11 @@ def get_categorical_columns_indices(ds: pd.DataFrame) -> tuple:
     categorical_features_indices = []
     non_categorical_features_indices = []
     unique_categorical_values = dict()
-    for i, (col, thetype) in enumerate(ds.dtypes.items()):
+    for i, (col, thetype) in enumerate(df.dtypes.items()):
         if isinstance(thetype, pd.CategoricalDtype):
             # print(i,col,thetype,type(thetype))
             categorical_features_indices.append(i)
-            unique_categorical_values[col] = list(ds[col].cat.categories.values)
+            unique_categorical_values[col] = list(df[col].cat.categories.values)
         else:
             non_categorical_features_indices.append(i)
     return non_categorical_features_indices, categorical_features_indices, unique_categorical_values

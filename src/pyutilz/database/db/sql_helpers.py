@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from typing import Optional
 import json
+import warnings
 
 from pyutilz.database.exceptions import SQLValidationError
 
@@ -132,31 +133,45 @@ def nu(str_val, symb="'"):
         return u(str_val, symb)
 
 
-def MakeSetExcludedClause(sFields: str, bAddUpdatedAtTimestamp: Optional[str] = None) -> str:
+def make_set_excluded_clause(fields: str, add_updated_at_timestamp: Optional[str] = None) -> str:
     """
-    Builds an "ON CONFLICT DO UPDATE SET" body from a comma-separated field list sFields, mapping each
-    field to excluded.field. If bAddUpdatedAtTimestamp is given, appends "{bAddUpdatedAtTimestamp}=(now() at time zone 'utc')"
-    as the final clause instead of a trailing comma.
+    Builds an "ON CONFLICT DO UPDATE SET" body from a comma-separated field list ``fields``, mapping
+    each field to excluded.field. If ``add_updated_at_timestamp`` is given, appends
+    "{add_updated_at_timestamp}=(now() at time zone 'utc')" as the final clause instead of a
+    trailing comma.
+
+    Also importable as :func:`MakeSetExcludedClause` -- a deprecated alias, same function, kept
+    for backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
     res = ""
-    v = sFields.split(",")
+    v = fields.split(",")
     for i in v:
         # Validate field name to prevent SQL injection
         validate_sql_identifier(i)
         res = res + i + "=excluded." + i + ","
-    if bAddUpdatedAtTimestamp:
+    if add_updated_at_timestamp:
         # Regression fix (SQL injection): every OTHER field name in this function is validated
         # via validate_sql_identifier() before being spliced into the generated SQL --
-        # bAddUpdatedAtTimestamp was the one exception, spliced raw with no validation and no
+        # add_updated_at_timestamp was the one exception, spliced raw with no validation and no
         # "accepted raw fragment" docstring warning either (unlike update_if_now()'s `clause`
         # param a few lines below, which IS explicitly documented as an accepted raw fragment).
-        # Reachable from the public GetIdByKeyFieldAndInsertIfNeeded() in db/__init__.py.
-        validate_sql_identifier(bAddUpdatedAtTimestamp)
-        res = res + f"{bAddUpdatedAtTimestamp}=(now() at time zone 'utc')"  # updated_at
+        # Reachable from the public get_id_by_key_field_and_insert_if_needed() in db/__init__.py.
+        validate_sql_identifier(add_updated_at_timestamp)
+        res = res + f"{add_updated_at_timestamp}=(now() at time zone 'utc')"  # updated_at
     else:
         res = res[:-1]
     return res
+
+
+def MakeSetExcludedClause(sFields: str, bAddUpdatedAtTimestamp: Optional[str] = None) -> str:
+    """Deprecated alias for :func:`make_set_excluded_clause` -- kept for backward compatibility."""
+    warnings.warn(
+        "MakeSetExcludedClause is deprecated and will be removed in a future release; use make_set_excluded_clause instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return make_set_excluded_clause(fields=sFields, add_updated_at_timestamp=bAddUpdatedAtTimestamp)
 
 
 def update_if_now(added_at: str, clause: str) -> str:

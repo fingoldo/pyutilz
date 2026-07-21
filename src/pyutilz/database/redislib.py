@@ -31,7 +31,17 @@ def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:st
     Create a Redis connection with the given credentials, store it as the module-level global ``rc``, and return it.
     """
     global rc
+    # Regression fix (meta-test-driven finding, proactive resource-lifecycle audit): a second
+    # rconnect() call (e.g. reconnecting with new credentials) used to drop the previous
+    # connection with no close(), leaking its connection pool -- same bug class fixed in
+    # web.init_vars()/get_new_session() this round.
+    old_rc = rc
     rc = redis.Redis(host=redis_host, port=redis_port, db=int(redis_db_name), password=redis_db_pwd, decode_responses=decode_responses)
+    if old_rc is not None:
+        try:
+            old_rc.close()
+        except Exception as e:
+            logger.exception(e)
 
     return rc
 

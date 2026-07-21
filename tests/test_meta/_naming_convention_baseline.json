@@ -1,0 +1,8 @@
+[
+  "src/pyutilz/database/db/__init__.py EnsurePgTableExists",
+  "src/pyutilz/database/db/__init__.py GetIdByKeyFieldAndInsertIfNeeded",
+  "src/pyutilz/database/db/__init__.py ReadTableIntoDic",
+  "src/pyutilz/database/db/__init__.py ReadTableIntoDicReversed",
+  "src/pyutilz/database/db/sql_helpers.py MakeSetExcludedClause",
+  "src/pyutilz/web/browser.py LoginAndGetCookies"
+]

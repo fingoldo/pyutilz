@@ -189,6 +189,18 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_llm_supports_json_mode": "cross-cutting — pins supports_json_mode() across all providers",
     "test_capture_signature": "covers pyutilz.dev.meta_test_utils.capture_signature (a single function, not a like-named production module)",
     "test_publish_workflow_version_check": "CI-process test — covers .github/workflows/publish.yml's tag-vs-version check, not a source module",
+    "test_verbose_param_consistency": "cross-cutting — pins `verbose: bool` annotation across pandaslib.dtypes/frames and polarslib's truthiness-only verbose family",
+    "test_no_module_reload": "meta-test — bans importlib.reload() outside a reviewed whitelist (module-identity-corruption guard)",
+    "test_cache_bounded_or_invalidatable": "meta-test — flags unbounded/TTL-less @lru_cache functions across the whole src tree",
+    "test_dict_cache_has_eviction": "meta-test — flags unbounded module-level dict/OrderedDict caches across the whole src tree",
+    "test_exception_logging_preserves_traceback": "meta-test — flags logger.exception() calls outside an active except handler across the whole src tree",
+    "test_thread_daemon_or_lifecycle_managed": "meta-test — flags non-daemon, unjoined, unmanaged threading.Thread() creations across the whole src tree",
+    "test_no_reiterated_iterable_params": "meta-test — flags Iterable[...] params consumed more than once without materializing, across the whole src tree",
+    "test_lock_discipline_consistency": "meta-test — flags globals/self.attrs assigned both under and outside their own lock, across the whole src tree",
+    "test_resource_reassignment_without_close": "meta-test — flags resource-holding globals/self.attrs reassigned without closing the previous value, across the whole src tree",
+    "test_consistent_param_naming_per_annotated_type": "meta-test — flags a concrete annotated type spelled with different first-param names within one module",
+    "test_naming_convention_consistency": "meta-test — flags non-snake_case public functions mixed into an otherwise snake_case module",
+    "test_deprecation_warnings_present": "meta-test — flags docstring-only deprecation notices with no warnings.warn() call",
 }
 
 # Source modules surfaced by the forward-direction audit but explicitly

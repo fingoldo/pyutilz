@@ -102,6 +102,58 @@ class TestShowcaseDfColumns:
         assert "Y" in captured.out
         assert "X" not in captured.out
 
+    def test_pandas_branch_value_counts_scanned_once_per_column(self, capsys):
+        """Regression (2026-07-21 audit round 2, MEDIUM): the pandas branch used to call
+        value_counts() up to twice per column (once for display, again when max_vars was set to
+        build full_stats) plus a separate nunique() call for n_unique -- three full-column scans
+        for information the first value_counts() call already provides (n_unique == len(stats),
+        full_stats == stats). Verified via call-count spies (deterministic), not timing, so a
+        regression re-introducing any of the redundant scans is caught regardless of dataframe
+        size."""
+        df = pd.DataFrame({"x": [1, 1, 2, 2, 3]})
+        vc_calls = []
+        nunique_calls = []
+        original_value_counts = pd.Series.value_counts
+        original_nunique = pd.Series.nunique
+
+        def spy_value_counts(self, *args, **kwargs):
+            vc_calls.append(self.name)
+            return original_value_counts(self, *args, **kwargs)
+
+        def spy_nunique(self, *args, **kwargs):
+            nunique_calls.append(self.name)
+            return original_nunique(self, *args, **kwargs)
+
+        with patch.object(pd.Series, "value_counts", spy_value_counts), patch.object(pd.Series, "nunique", spy_nunique):
+            # max_vars=1 exercises the branch that used to re-run value_counts() a second time.
+            showcase_df_columns(df, max_vars=1, use_markdown=False, use_print=True)
+
+        assert vc_calls.count("x") == 1, f"value_counts() should be called exactly once per column, was called {vc_calls.count('x')} times"
+        assert nunique_calls == [], f"nunique() should never be called (len(stats) is reused instead), but was called for: {nunique_calls}"
+
+    def test_polars_branch_collect_all_called_once(self):
+        """Regression (2026-07-21 audit round 2, MEDIUM): the polars branch used to build a
+        SECOND independent set of n_unique() lazy queries and run a second pl.collect_all() call,
+        duplicating a full-column scan that the value_counts pass's vc.height already gives for
+        free. Verified via a call-count spy on pl.collect_all, not timing."""
+        pl = pytest.importorskip("polars")
+        df = pl.DataFrame({"x": [1, 1, 2, 2, 3]})
+
+        collect_all_calls = []
+        original_collect_all = pl.collect_all
+
+        def spy_collect_all(lazy_frames, *args, **kwargs):
+            collect_all_calls.append(len(list(lazy_frames)))
+            return original_collect_all(lazy_frames, *args, **kwargs)
+
+        with patch("pyutilz.data.pandaslib.frames.pl.collect_all", side_effect=spy_collect_all):
+            showcase_df_columns(df, max_vars=1, use_markdown=False, use_print=True)
+
+        assert len(collect_all_calls) == 1, (
+            f"pl.collect_all() should be called exactly once (one batch for value_counts, no "
+            f"separate n_unique batch), was called {len(collect_all_calls)} times"
+        )
+
 
 # ---------------------------------------------------------------------------
 # share_dataframe

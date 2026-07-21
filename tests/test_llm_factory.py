@@ -112,6 +112,14 @@ class TestProviderCacheLRUEviction:
         factory._provider_cache.clear()
         factory._uncached_providers.clear()
         self._orig_max_size = factory._PROVIDER_CACHE_MAX_SIZE
+        # Regression fix: _register_fake() and test_evicted_provider_scheduled_for_close_when_no_running_loop
+        # below REASSIGN factory._PROVIDER_MODULES to a brand-new dict (not patch.dict, which
+        # auto-restores) -- with no restore here, the leftover "faketest" entry stayed in the
+        # module's real provider registry for the REST OF THE TEST SESSION, independently observed
+        # as a hard-to-reproduce, order-dependent failure in both
+        # test_llm_account_credits.py::test_both_methods_exist_on_every_provider ("faketest: missing
+        # get_account_credits") and test_meta/test_provider_contract.py's own scan of
+        # _PROVIDER_MODULES, purely depending on pytest-randomly's execution order.
         self._orig_provider_modules = dict(factory._PROVIDER_MODULES)
 
     def teardown_method(self):
@@ -119,10 +127,6 @@ class TestProviderCacheLRUEviction:
         factory._provider_cache.clear()
         factory._uncached_providers.clear()
         factory._PROVIDER_CACHE_MAX_SIZE = self._orig_max_size
-        # Regression fix (2026-07-22): tests below register a "faketest" entry directly on
-        # ``factory._PROVIDER_MODULES`` (a module-level dict) with no restore, so it leaked into
-        # every later test in the same pytest session -- test_meta/test_provider_contract.py's
-        # scan of ``_PROVIDER_MODULES`` then saw the leaked non-LLMProvider fake and failed.
         factory._PROVIDER_MODULES = self._orig_provider_modules
 
     def _register_fake(self, factory):

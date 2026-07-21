@@ -40,6 +40,7 @@ Env vars:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import logging
@@ -48,7 +49,7 @@ import pickle  # nosec B403 - this module's whole purpose is guarding pickle.loa
 import threading
 import time
 from os.path import isfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -70,19 +71,56 @@ DEFAULT_ALLOW_UNVERIFIED_ENV_VAR = "PYUTILZ_ALLOW_UNVERIFIED_PICKLE"
 # raises PickleVerificationError: sidecar mismatch). The lock only covers this process; it is not
 # a cross-process guarantee (same scope the module already limits itself to -- see safe_dump's
 # docstring on os.replace being the cross-process-safe primitive).
-_path_locks: Dict[str, threading.Lock] = {}
+#
+# Reference-counted, not a plain unbounded dict: a long-running process that safe_load/safe_dump's
+# many distinct paths over its lifetime would otherwise grow _path_locks forever, one Lock per
+# unique path ever seen, with no eviction (the same unbounded-cache shape fixed elsewhere this
+# round, e.g. llm.factory._provider_cache). A plain LRU bound is unsafe HERE though: evicting an
+# entry while another thread is still blocked on that exact Lock object would hand a LATER caller
+# for the same path a brand-new, different Lock -- both callers would then proceed concurrently,
+# exactly the interleaving this lock exists to prevent. Refcounting instead removes an entry only
+# when its refcount reaches zero (no thread currently holding or waiting on it), keeping
+# _path_locks' size proportional to paths CURRENTLY in flight rather than every path ever seen.
+class _PathLockEntry:
+    """A per-path lock plus a count of callers currently holding/waiting on it."""
+
+    __slots__ = ("lock", "refcount")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refcount = 0
+
+
+_path_locks: Dict[str, _PathLockEntry] = {}
 _path_locks_guard = threading.Lock()
 
 
-def _get_path_lock(path: str) -> threading.Lock:
-    """Return a process-wide lock keyed by the normalized absolute path, creating it on first use."""
+@contextlib.contextmanager
+def _get_path_lock(path: str) -> Iterator[None]:
+    """Context manager serializing access to the normalized absolute path across threads in this process.
+
+    Creates the path's lock entry on first use and removes it once no other caller is still
+    holding/waiting on it -- see the module-level comment above ``_PathLockEntry`` for why this
+    is refcounted rather than a plain LRU-bounded cache.
+    """
     key = os.path.abspath(path)
     with _path_locks_guard:
-        lock = _path_locks.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _path_locks[key] = lock
-        return lock
+        entry = _path_locks.get(key)
+        if entry is None:
+            entry = _PathLockEntry()
+            _path_locks[key] = entry
+        entry.refcount += 1
+    try:
+        with entry.lock:
+            yield
+    finally:
+        with _path_locks_guard:
+            entry.refcount -= 1
+            if entry.refcount == 0:
+                # Safe to remove: nobody else is waiting on THIS entry object. A caller arriving
+                # after this point creates a fresh entry, which is correct since no one holds a
+                # reference to the old one anymore.
+                del _path_locks[key]
 
 
 class PickleVerificationError(RuntimeError):

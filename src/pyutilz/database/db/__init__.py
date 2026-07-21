@@ -68,6 +68,7 @@ from pyutilz.database.db.sql_helpers import (
     construct_templates_and_values,
     u,
     nu,
+    make_set_excluded_clause,
     MakeSetExcludedClause,
     update_if_now,
 )
@@ -849,15 +850,15 @@ def get_id_by_key_field_and_insert_if_needed(
         if len(alternate_fields_names) > 0:
             if not use_alternate_fields_only:
                 rs = safe_execute(
-                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values ({Data},{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values ({Data},{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
                 )
             else:
                 rs = safe_execute(
-                    f"insert into {table} ({alternate_fields_names}) values ({alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(alternate_fields_names, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                    f"insert into {table} ({alternate_fields_names}) values ({alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(alternate_fields_names, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
                 )
         else:
             rs = safe_execute(
-                f"insert into {table} ({key_field_name}) values ({Data}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                f"insert into {table} ({key_field_name}) values ({Data}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
             )
 
         the_id = rs[0][0]

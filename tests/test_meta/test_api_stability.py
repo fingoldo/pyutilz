@@ -21,6 +21,7 @@ people we don't control.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -44,6 +45,33 @@ def _refresh_requested() -> bool:
 # imported as ``capture_signature`` / ``capture_module_surface`` above.
 
 
+def _fresh_module_copy(mod):
+    """Execute a fully separate copy of ``mod`` from its own import spec, without touching
+    ``sys.modules`` or the shared, already-imported module object the rest of the test session
+    depends on.
+
+    Regression (2026-07-21 audit round 2, verification pass): this used to be
+    ``importlib.reload(mod)``, which re-executes a module's top-level code IN PLACE, into the
+    SAME ``__dict__`` other already-imported code still references. Several pyutilz modules use a
+    module-level sentinel object for the "was this parameter passed at all?" idiom (e.g.
+    ``pythonlib._GET_ATTR_UNSET = object()``) -- reload silently rebinds that name to a brand new
+    object, while any function imported (``from pyutilz.pythonlib import get_attr``) by an
+    EARLIER-collected test file keeps its OLD sentinel as its own frozen parameter default (bound
+    once at def time). The two objects then disagree under ``is``, breaking that function for
+    every subsequent test in the same session -- reproduced concretely: running this file before
+    ``test_pythonlib_extra2.py`` made ``get_attr({"a": 1}, "b")`` return the raw sentinel instead
+    of ``[]``, purely because of THIS test's reload, regardless of test order otherwise. Building
+    an unregistered, throwaway module object from the same spec gets the same "clean state,
+    uncontaminated by other tests' monkeypatching" snapshot goal without mutating anything shared.
+    """
+    spec = importlib.util.find_spec(mod.__name__)
+    if spec is None or spec.loader is None:
+        return mod
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    return fresh
+
+
 def _build_snapshot() -> dict:
     snapshot: dict = {
         "package_all": sorted(getattr(pyutilz, "__all__", [])),
@@ -51,42 +79,36 @@ def _build_snapshot() -> dict:
         "alias_surfaces": {},
     }
     # For each alias, capture the public surface of the target.
-    # ``importlib.reload`` ensures a CLEAN module state — earlier tests
-    # in the same session may have mutated module-level globals (e.g.
-    # ``test_graphql.py::test_sets_global_client`` patches
-    # ``pyutilz.web.graphql.client``; ``init_logging`` reassigns
-    # ``pyutilz.dev.logginglib.logger`` to a real Logger). Without reload
-    # the snapshot captures the polluted state and CI surfaces phantom
-    # diffs vs the clean-import snapshot committed to git.
+    # A fresh, unregistered module copy (see ``_fresh_module_copy``) ensures a CLEAN module state
+    # — earlier tests in the same session may have mutated module-level globals (e.g.
+    # ``test_graphql.py::test_sets_global_client`` patches ``pyutilz.web.graphql.client``;
+    # ``init_logging`` reassigns ``pyutilz.dev.logginglib.logger`` to a real Logger). Without this
+    # the snapshot captures the polluted state and CI surfaces phantom diffs vs the clean-import
+    # snapshot committed to git. Deliberately NOT ``importlib.reload`` -- see
+    # ``_fresh_module_copy``'s docstring for the identity-corruption bug that caused.
     for alias, real_path in sorted(pyutilz._MODULE_ALIASES.items()):
         try:
             mod = importlib.import_module(real_path)
         except ImportError:
             snapshot["alias_surfaces"][alias] = {"_import_error": "module fails to import"}
             continue
-        # Snapshot-and-restore the module's __dict__ around the reload (regression fix,
-        # 2026-07-22): ``reload`` rebinds every module-level name to a NEW object -- a name
-        # another already-imported test module captured BEFORE this test ran (e.g.
-        # ``from pyutilz.data.polarslib import drop_constant_columns`` at some other test
-        # file's own top-level import, which happens once at collection time) keeps pointing
-        # to the OLD object forever after, while any later fresh import of the SAME name sees
-        # the reloaded module's NEW object -- an `is`-identity trap for any downstream test
-        # comparing the two (caught live: tests/test_polarslib_extra.py's
-        # ``remove_constant_columns is drop_constant_columns`` alias check flipped to False
-        # only when this test ran first in the same session). Restoring the pre-reload
-        # __dict__ after capturing the surface undoes reload's observable effect on every
-        # OTHER module-level name without giving up the clean-state read this test needs.
-        pre_reload_dict = dict(mod.__dict__)
+        # ``_fresh_module_copy`` never touches ``mod``'s own ``__dict__`` -- unlike an in-place
+        # ``importlib.reload(mod)``, which independently caused TWO distinct identity-trap
+        # symptoms caught live in this codebase: pythonlib._GET_ATTR_UNSET rebinding broke
+        # get_attr() for any earlier-imported caller (see _fresh_module_copy's docstring), and
+        # tests/test_polarslib_extra.py's ``remove_constant_columns is drop_constant_columns``
+        # alias check flipped to False whenever this test ran first in the same session (a name
+        # some OTHER test module imported BEFORE this one ran kept pointing to the OLD object
+        # while a later fresh import of the same name saw reload's NEW one). Building a separate,
+        # unregistered module object sidesteps both failure modes at the root, with nothing to
+        # snapshot or restore afterward.
         try:
-            mod = importlib.reload(mod)
-            snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
+            mod = _fresh_module_copy(mod)
         except Exception:
-            # If reload fails (rare — modules with side-effecting top
+            # If the fresh exec fails (rare — modules with side-effecting top
             # level), fall back to the live module state.
-            snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
-        finally:
-            mod.__dict__.clear()
-            mod.__dict__.update(pre_reload_dict)
+            pass
+        snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
     return snapshot
 
 

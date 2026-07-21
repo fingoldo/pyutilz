@@ -118,13 +118,20 @@ def init_vars():
     # potentially several open keep-alive sockets) was previously just dropped here with no
     # .close(), leaking its connection pool every time init_vars() runs (e.g. every
     # web.connect() call, including FileMaker's two-calls-per-authentication pattern).
-    old_sess = sess
-    sess = None
-    num_ip_queries = 0
-    template_headers = None
-    headers = {}
-    proxies = None
-    timeout = 10
+    #
+    # Regression fix (meta-test-driven finding, proactive lock-discipline audit): these globals
+    # used to be reset here with no lock, unlike get_url()'s snapshot read of the same sess/
+    # proxies/headers globals (which does take _state_lock) -- a concurrent get_url() call could
+    # observe a torn mix of old and new state. The lock only needs to cover the state mutation,
+    # not old_sess.close() (an I/O call with no reason to hold the lock during it).
+    with _state_lock:
+        old_sess = sess
+        sess = None
+        num_ip_queries = 0
+        template_headers = None
+        headers = {}
+        proxies = None
+        timeout = 10
     if old_sess is not None:
         try:
             old_sess.close()
@@ -165,7 +172,7 @@ def get_external_ip(
     return None
 
 
-def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"):
+def get_ipinfo(use_urllib: bool = False, url: str = "https://api.ipify.org?format=json") -> Optional[Any]:
     """Fetch JSON IP info from ``url``, either directly via ``urllib`` (``use_urllib=True``) or via the module's ``get_url`` (session/proxy-aware) fetcher."""
     json_loads: Any
     try:
@@ -180,11 +187,15 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
             resp = urllib.request.urlopen(_ensure_http_scheme(url), timeout=timeout or 10)  # nosec B310 - scheme validated above; timeout= avoids blocking forever, see get_external_ip's identical fix
         except Exception as e:
             logger.exception(e)
+            return None
         else:
             if resp.status == http.HTTPStatus.OK:
                 return json_loads(resp.read().decode("utf8").strip())
-            else:
-                return {}
+            # Regression fix (2026-07-21 audit round 2, LOW): a non-200 response used to return
+            # `{}` here while an exception (above) returned None -- two different failure values
+            # for the same "the request failed" outcome, unlike get_external_ip's single None
+            # convention and this function's own use_urllib=False branch below.
+            return None
     else:
         res = get_url(url, target="ipinfo", inject_headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         try:
@@ -274,17 +285,21 @@ def connect(
     global proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, template_headers, timeout, proxy_port, proxy_type
 
     init_vars()
-    proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, template_headers, timeout, proxy_port, proxy_type = (
-        m_proxy_user,
-        m_proxy_pass,
-        m_proxy_server,
-        m_proxy_min_port,
-        m_proxy_max_port,
-        m_template_headers,
-        m_timeout,
-        m_proxy_port,
-        m_proxy_type,
-    )
+    # Regression fix (meta-test-driven finding, proactive lock-discipline audit): this used to
+    # write proxy_user/proxy_pass/proxy_server/etc. with no lock, unlike set_proxy()'s write of
+    # the identical field group (which does take _state_lock) and get_url()'s locked read of it.
+    with _state_lock:
+        proxy_user, proxy_pass, proxy_server, proxy_min_port, proxy_max_port, template_headers, timeout, proxy_port, proxy_type = (
+            m_proxy_user,
+            m_proxy_pass,
+            m_proxy_server,
+            m_proxy_min_port,
+            m_proxy_max_port,
+            m_template_headers,
+            m_timeout,
+            m_proxy_port,
+            m_proxy_type,
+        )
 
 
 def set_proxy(

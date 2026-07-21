@@ -18,6 +18,19 @@ fool itself with comments / strings containing ``open(...)``.
   * ``open(path, "r+", errors="ignore")`` without encoding — flagged.
 
 Also covers ``Path.open(...)`` and ``pathlib.Path(...).open(...)``.
+
+Extended (2026-07-21 audit round 2 meta-test review) to cover two more
+locale-dependent text-I/O shapes beyond ``open()``, in the same spirit --
+this is the exact bug class that bit ``text.strings.configfiles.read_config_file``
+(``config.read(file)`` with no ``encoding=`` -- fixed this round):
+
+  * ``pathlib.Path(...).read_text(...)`` / ``.write_text(...)`` (any receiver
+    expression -- these two method names have no other common meaning in this
+    codebase, unlike bare ``.open(...)``'s ambiguity across PIL/zipfile/socket).
+  * ``configparser.ConfigParser(...).read(...)`` / ``RawConfigParser(...).read(...)`` --
+    restricted to a receiver NAME provably constructed from ``ConfigParser(``/
+    ``RawConfigParser(`` earlier in the SAME file, since bare ``.read(...)`` is even
+    more overloaded than ``.open(...)`` (sockets, file objects, subprocess pipes).
 """
 
 from __future__ import annotations
@@ -85,6 +98,47 @@ def _has_encoding_kwarg(call: ast.Call) -> bool:
     return any(kw.arg == "encoding" for kw in call.keywords)
 
 
+def _calls_to_read_text_or_write_text(tree: ast.AST):
+    """Yield every ``ast.Call`` node shaped ``<expr>.read_text(...)`` / ``<expr>.write_text(...)``.
+
+    Unlike bare ``.open(...)``, these two method names have no common meaning outside
+    ``pathlib.Path`` in this codebase, so the receiver expression isn't restricted.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in ("read_text", "write_text"):
+            yield node
+
+
+def _is_configparser_construction(value: ast.expr | None) -> bool:
+    if not isinstance(value, ast.Call):
+        return False
+    func = value.func
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+    return name in ("ConfigParser", "RawConfigParser")
+
+
+def _calls_to_configparser_read(tree: ast.AST):
+    """Yield every ``ast.Call`` node shaped ``<name>.read(...)`` where ``<name>`` was assigned
+    from a ``ConfigParser(...)``/``RawConfigParser(...)`` construction earlier in the same file.
+    """
+    configparser_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            if _is_configparser_construction(node.value):
+                configparser_names.add(node.targets[0].id)
+    if not configparser_names:
+        return
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "read" and isinstance(func.value, ast.Name) and func.value.id in configparser_names:
+            yield node
+
+
 def test_every_open_call_specifies_encoding_or_binary_mode():
     bad: list[str] = []
     audited = 0
@@ -127,4 +181,53 @@ def test_every_open_call_specifies_encoding_or_binary_mode():
             f"Whitelist via _EXEMPT_FILES if intentional:\n  "
             + "\n  ".join(sorted(set(bad))[:30])
             + (f"\n  ... and {len(set(bad)) - 30} more" if len(set(bad)) > 30 else "")
+        )
+
+
+def test_every_read_text_write_text_and_configparser_read_specifies_encoding():
+    """Extended (2026-07-21 audit round 2 meta-test review): the same locale-dependent-text-I/O
+    bug class as the open()-scanner above, for Path.read_text()/write_text() and
+    ConfigParser.read() -- see the module docstring for the exact shapes covered."""
+    bad: list[str] = []
+    audited = 0
+    for py in PYUTILZ_DIR.rglob("*.py"):
+        if "__pycache__" in py.parts:
+            continue
+        if py.name.endswith(".py.old"):
+            continue
+        rel = py.relative_to(PYUTILZ_DIR).as_posix()
+        if rel in _EXEMPT_FILES:
+            continue
+        try:
+            src = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        for call in _calls_to_read_text_or_write_text(tree):
+            audited += 1
+            if _has_encoding_kwarg(call):
+                continue
+            entry = f"{rel}:{call.lineno} .{call.func.attr}(...)"  # type: ignore[attr-defined]
+            if entry in _USER_DEFERRED_CALLS:
+                continue
+            bad.append(entry)
+        for call in _calls_to_configparser_read(tree):
+            audited += 1
+            if _has_encoding_kwarg(call):
+                continue
+            entry = f"{rel}:{call.lineno} ConfigParser.read(...)"
+            if entry in _USER_DEFERRED_CALLS:
+                continue
+            bad.append(entry)
+
+    if bad:
+        pytest.fail(
+            f"{len(bad)} Path.read_text()/write_text() or ConfigParser.read() call(s) in "
+            f"pyutilz production code don't specify encoding=. Same Windows cp1251/cp1252 "
+            f'UnicodeDecodeError risk as bare open() -- add encoding="utf-8" (see '
+            f"text.strings.configfiles.read_config_file's fix). Whitelist via "
+            f"_EXEMPT_FILES/_USER_DEFERRED_CALLS if intentional:\n  " + "\n  ".join(sorted(set(bad))[:30]) + (f"\n  ... and {len(set(bad)) - 30} more" if len(set(bad)) > 30 else "")
         )

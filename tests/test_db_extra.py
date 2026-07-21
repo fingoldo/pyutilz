@@ -107,24 +107,54 @@ def test_nu_treats_empty_string_as_null():
 
 
 # ---------------------------------------------------------------------------
-# db.MakeSetExcludedClause / db.update_if_now
+# db.make_set_excluded_clause / db.MakeSetExcludedClause (deprecated alias) / db.update_if_now
 # ---------------------------------------------------------------------------
 
-from pyutilz.database.db import MakeSetExcludedClause, update_if_now
+from pyutilz.database.db import MakeSetExcludedClause, make_set_excluded_clause, update_if_now
 
 
 def test_make_set_excluded_clause_basic():
-    assert MakeSetExcludedClause("a,b") == "a=excluded.a,b=excluded.b"
+    assert make_set_excluded_clause("a,b") == "a=excluded.a,b=excluded.b"
 
 
 def test_make_set_excluded_clause_with_updated_at_timestamp():
-    clause = MakeSetExcludedClause("a,b", bAddUpdatedAtTimestamp="updated_at")
+    clause = make_set_excluded_clause("a,b", add_updated_at_timestamp="updated_at")
     assert clause == "a=excluded.a,b=excluded.b,updated_at=(now() at time zone 'utc')"
 
 
 def test_make_set_excluded_clause_rejects_invalid_field():
     with pytest.raises(ValueError):
-        MakeSetExcludedClause("good,bad-name")
+        make_set_excluded_clause("good,bad-name")
+
+
+def test_make_set_excluded_clause_pascalcase_alias_warns_and_delegates(monkeypatch):
+    """Regression (2026-07-21 audit round 2 meta-test follow-up): MakeSetExcludedClause was
+    another PascalCase/Hungarian-notation legacy function mixed into sql_helpers.py's otherwise
+    modern surface -- same bug class as EnsurePgTableExists/ReadTableIntoDic/etc, surfaced by a
+    proactive naming-convention meta-test rather than the original audit."""
+    import pyutilz.database.db as db
+    from pyutilz.database.db import sql_helpers
+
+    # MakeSetExcludedClause's body calls make_set_excluded_clause via sql_helpers.py's OWN module
+    # globals (both are defined there; db.make_set_excluded_clause is only a facade re-export),
+    # so the patch target must be sql_helpers, not the db facade.
+    captured = {}
+    monkeypatch.setattr(sql_helpers, "make_set_excluded_clause", lambda fields, add_updated_at_timestamp=None: captured.update(fields=fields, add_updated_at_timestamp=add_updated_at_timestamp) or "stubbed")
+
+    with pytest.warns(DeprecationWarning, match="make_set_excluded_clause"):
+        result = db.MakeSetExcludedClause(sFields="a,b", bAddUpdatedAtTimestamp="updated_at")
+
+    assert captured == {"fields": "a,b", "add_updated_at_timestamp": "updated_at"}
+    assert result == "stubbed"
+
+
+def test_make_set_excluded_clause_snake_case_is_the_real_implementation():
+    """The snake_case function must not itself warn -- it's the primary, non-deprecated entry point."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        make_set_excluded_clause("a,b")  # must not raise
 
 
 def test_update_if_now_do_update_branch():
@@ -312,6 +342,7 @@ def test_db_facade_reexports_representative_public_symbols():
         "u",
         "nu",
         "MakeSetExcludedClause",
+        "make_set_excluded_clause",
         "update_if_now",
         "build_upsert_query",
         "ensure_db_tables_created",
@@ -340,6 +371,7 @@ def test_db_facade_helpers_are_same_objects_as_submodules():
     assert db._SQL_IDENTIFIER_RE is sql_helpers._SQL_IDENTIFIER_RE
     assert db.construct_templates_and_values is sql_helpers.construct_templates_and_values
     assert db.MakeSetExcludedClause is sql_helpers.MakeSetExcludedClause
+    assert db.make_set_excluded_clause is sql_helpers.make_set_excluded_clause
     assert db.build_upsert_query is upsert.build_upsert_query
     assert db.insert_sqllite_data is sqlite.insert_sqllite_data
 
@@ -374,7 +406,14 @@ def test_get_cursor_cache_is_thread_local():
     module-global dict, so two threads calling get_cursor()/basic_db_execute() concurrently could
     interleave onto the SAME psycopg2 cursor object -- a cursor's execute()/fetchall() pair is
     not safe to share across threads even though the connection itself is. Each thread must now
-    get an independently-cached cursor object for the same cursor_type."""
+    get an independently-cached cursor object for the same cursor_type.
+
+    Uses threading.Event handshakes (not join()-then-start()) to force a REAL interleaving window:
+    t2 writes to its cache strictly after t1 has written but strictly before t1 reads its own
+    cache back. With the old shared-dict bug, t2's write during that window would clobber t1's
+    entry and t1's read would wrongly observe t2's cursor object -- a purely sequential
+    t1.start(); t1.join(); t2.start(); t2.join() test (as this used to be written) never creates
+    that overlap and would pass even against the unfixed, buggy shared-dict code."""
     import threading
 
     import pyutilz.database.db as db
@@ -388,20 +427,35 @@ def test_get_cursor_cache_is_thread_local():
     db.conn = object()
     db._get_thread_cursors().clear()
 
+    t1_wrote = threading.Event()
+    t2_done = threading.Event()
     results: dict = {}
 
-    def worker(name):
-        # Each thread populates its OWN cache entry for the same cursor_type key.
-        db._get_thread_cursors()["cursor"] = _FakeCur()
-        results[name] = db.get_cursor("cursor")
+    def worker_1():
+        cur = _FakeCur()
+        db._get_thread_cursors()["cursor"] = cur
+        results["t1_written"] = cur
+        t1_wrote.set()
+        assert t2_done.wait(timeout=5), "t2 never signalled completion -- deadlock in interleaving handshake"
+        results["t1"] = db.get_cursor("cursor")
 
-    t1 = threading.Thread(target=worker, args=("t1",))
-    t2 = threading.Thread(target=worker, args=("t2",))
+    def worker_2():
+        assert t1_wrote.wait(timeout=5), "t1 never signalled its write -- deadlock in interleaving handshake"
+        cur = _FakeCur()
+        db._get_thread_cursors()["cursor"] = cur
+        results["t2_written"] = cur
+        results["t2"] = db.get_cursor("cursor")
+        t2_done.set()
+
+    t1 = threading.Thread(target=worker_1)
+    t2 = threading.Thread(target=worker_2)
     t1.start()
-    t1.join()
     t2.start()
-    t2.join()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
 
+    assert results["t1"] is results["t1_written"], "t1 must read back its OWN cached cursor, not t2's (which wrote in between)"
+    assert results["t2"] is results["t2_written"]
     assert results["t1"] is not results["t2"], "threads must not observe each other's cached cursor object"
 
 

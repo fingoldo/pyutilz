@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyutilz.database.db.sql_helpers import (
-    MakeSetExcludedClause,
+    make_set_excluded_clause,
     construct_templates_and_values,
     u,
     validate_sql_identifier,
@@ -25,10 +25,10 @@ class TestConstructTemplatesUpdateMode:
 class TestMakeSetExcludedClauseInjection:
     def test_rejects_malicious_bAddUpdatedAtTimestamp(self):
         with pytest.raises(ValueError):
-            MakeSetExcludedClause("name", "updated_at=now(); DROP TABLE users;--")
+            make_set_excluded_clause("name", "updated_at=now(); DROP TABLE users;--")
 
     def test_accepts_valid_identifier(self):
-        result = MakeSetExcludedClause("name", "updated_at")
+        result = make_set_excluded_clause("name", "updated_at")
         assert result == "name=excluded.name,updated_at=(now() at time zone 'utc')"
 
 
@@ -277,5 +277,67 @@ class TestRexecuteAuthenticationError:
             debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG and "still failing" in r.message]
             assert len(error_records) == 1, "exactly one full-traceback ERROR log expected (the first attempt)"
             assert len(debug_records) == 2, "subsequent attempts within the same streak should log at DEBUG, not ERROR"
+        finally:
+            redislib.rc = None
+
+
+class TestRconnectClosesPreviousConnection:
+    """Regression (meta-test-driven finding, proactive resource-lifecycle audit): a second
+    rconnect() call (e.g. reconnecting with new credentials after a config change) used to drop
+    the previous connection with no close(), leaking its connection pool -- same bug class fixed
+    in web.init_vars()/get_new_session() this round."""
+
+    def test_second_rconnect_closes_the_first_connection(self):
+        from pyutilz.database import redislib
+
+        pytest.importorskip("redis")
+        old_rc = MagicMock()
+        redislib.rc = old_rc
+        try:
+            with patch("pyutilz.database.redislib.redis.Redis") as mock_redis_cls:
+                new_rc = MagicMock()
+                mock_redis_cls.return_value = new_rc
+                result = redislib.rconnect("localhost", 6379, "0", "pwd")
+
+            old_rc.close.assert_called_once()
+            assert result is new_rc
+            assert redislib.rc is new_rc
+        finally:
+            redislib.rc = None
+
+    def test_first_rconnect_does_not_crash_with_nothing_to_close(self):
+        """No previous connection (rc is None) -- must not attempt to close anything."""
+        from pyutilz.database import redislib
+
+        pytest.importorskip("redis")
+        redislib.rc = None
+        try:
+            with patch("pyutilz.database.redislib.redis.Redis") as mock_redis_cls:
+                new_rc = MagicMock()
+                mock_redis_cls.return_value = new_rc
+                result = redislib.rconnect("localhost", 6379, "0", "pwd")
+            assert result is new_rc
+        finally:
+            redislib.rc = None
+
+    def test_close_failure_on_previous_connection_does_not_prevent_reconnect(self, caplog):
+        """A broken previous connection's close() raising must not stop the new connection from
+        being established and stored -- best-effort cleanup, not a hard dependency."""
+        import logging
+
+        from pyutilz.database import redislib
+
+        pytest.importorskip("redis")
+        old_rc = MagicMock()
+        old_rc.close.side_effect = RuntimeError("already broken")
+        redislib.rc = old_rc
+        try:
+            with patch("pyutilz.database.redislib.redis.Redis") as mock_redis_cls:
+                new_rc = MagicMock()
+                mock_redis_cls.return_value = new_rc
+                with caplog.at_level(logging.ERROR, logger="pyutilz.database.redislib"):
+                    result = redislib.rconnect("localhost", 6379, "0", "pwd")
+            assert result is new_rc
+            assert redislib.rc is new_rc
         finally:
             redislib.rc = None
