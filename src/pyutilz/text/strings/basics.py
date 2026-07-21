@@ -94,6 +94,7 @@ def get_hash(data: Any, algo: Optional[str] = "md5", base: Optional[int] = 64, r
     """Hashes str/bytes-like `data` with `algo` and returns it base-N encoded (or as a hex/raw digest when base is falsy).
 
     Args:
+        data: str/bytes-like value to hash (or an object exposing ``getquoted()``, e.g. a psycopg2 adapted value).
         algo: hashlib algorithm name (e.g. "md5", "sha256").
         base: base to encode the digest in via base64 module ("b64encode"/"b32encode"/...); if falsy, returns hex digest (or raw digest bytes when return_binary).
         return_binary: if True, returns raw encoded bytes instead of a decoded str.

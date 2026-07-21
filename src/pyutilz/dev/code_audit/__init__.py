@@ -151,6 +151,17 @@ list[Finding]):
   ``password``, ``token``, ``secret``, ``api_key``, ``cookie``, ...) with
   no redaction hint nearby -- a real, if noisy, security-adjacent signal.
 
+- ``scan_docstring_args_completeness``: a function whose docstring HAS a
+  Google-style ``Args:`` section that omits one or more of the function's
+  actual parameters -- a caller reading the docstring has no idea an
+  undocumented parameter exists.
+
+- ``scan_return_annotation_mismatch``: a function declared with a concrete
+  scalar return annotation (``-> float``/``-> int``/...) that has a
+  ``return`` statement returning a container literal or a bare
+  ``return``/``return None`` -- the declared type doesn't match what the
+  function actually hands back on that path.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -204,6 +215,8 @@ from .retry_loops import scan_retry_loops
 from .module_docstring import scan_duplicate_module_docstring
 from .unraised_exceptions import scan_unraised_exceptions
 from .credential_logging import scan_credential_shaped_log_args
+from .docstring_args import scan_docstring_args_completeness
+from .return_annotation import scan_return_annotation_mismatch
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -239,6 +252,8 @@ __all__ = [
     "scan_duplicate_module_docstring",
     "scan_unraised_exceptions",
     "scan_credential_shaped_log_args",
+    "scan_docstring_args_completeness",
+    "scan_return_annotation_mismatch",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -253,6 +268,7 @@ for _submod in (
     "undeclared_imports", "vacuous_assertions", "locals_globals_output",
     "network_timeout", "retry_loops", "module_docstring",
     "unraised_exceptions", "credential_logging",
+    "docstring_args", "return_annotation",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

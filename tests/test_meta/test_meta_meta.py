@@ -58,6 +58,7 @@ _PERMITTED_PRIVATE_IMPORTS: set[str] = {
     "test_provider_cache_concurrency::pyutilz.llm.factory._provider_lock",
     "test_provider_cache_concurrency::pyutilz.llm.factory._PROVIDER_MODULES",
     "test_provider_cache_concurrency::pyutilz.llm.factory._ALIASES",
+    "test_retry_predicate_matches_sdk_hierarchy::pyutilz.llm.gemini_provider._is_retryable_genai_error",
 }
 
 

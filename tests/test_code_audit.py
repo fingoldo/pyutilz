@@ -39,6 +39,8 @@ from pyutilz.dev.code_audit import (
     scan_duplicate_module_docstring,
     scan_unraised_exceptions,
     scan_credential_shaped_log_args,
+    scan_docstring_args_completeness,
+    scan_return_annotation_mismatch,
 )
 
 
@@ -2184,4 +2186,109 @@ def f(proxy):
     logger.info(redacted)
 """)
     findings = scan_credential_shaped_log_args(tmp_path)
+    assert findings == []
+
+
+# ---- docstring_args_incomplete ---------------------------------------------
+
+
+def test_docstring_args_incomplete_missing_param_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", '''
+def f(a, b):
+    """Do a thing.
+
+    Args:
+        a: the first thing.
+    """
+    return a + b
+''')
+    findings = scan_docstring_args_completeness(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "docstring_args_incomplete"
+    assert "b" in findings[0].detail
+
+
+def test_docstring_args_incomplete_all_documented_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+def f(a, b):
+    """Do a thing.
+
+    Args:
+        a: the first thing.
+        b: the second thing.
+    """
+    return a + b
+''')
+    findings = scan_docstring_args_completeness(tmp_path)
+    assert findings == []
+
+
+def test_docstring_args_incomplete_no_args_section_is_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+def f(a, b):
+    """Do a thing."""
+    return a + b
+''')
+    findings = scan_docstring_args_completeness(tmp_path)
+    assert findings == []
+
+
+# ---- return_annotation_mismatch --------------------------------------------
+
+
+def test_return_annotation_mismatch_tuple_literal_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(x) -> float:
+    if x < 0:
+        return (0.0, 1.0)
+    return x
+""")
+    findings = scan_return_annotation_mismatch(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P2"
+
+
+def test_return_annotation_mismatch_bare_return_none_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(x) -> str:
+    if not x:
+        return
+    return x
+""")
+    findings = scan_return_annotation_mismatch(tmp_path)
+    assert len(findings) == 1
+
+
+def test_return_annotation_mismatch_consistent_scalar_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x) -> float:
+    if x < 0:
+        return 0.0
+    return x
+""")
+    findings = scan_return_annotation_mismatch(tmp_path)
+    assert findings == []
+
+
+def test_return_annotation_mismatch_optional_annotation_is_skipped(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+from typing import Optional
+
+def f(x) -> Optional[float]:
+    if x < 0:
+        return None
+    return x
+""")
+    findings = scan_return_annotation_mismatch(tmp_path)
+    assert findings == []
+
+
+def test_return_annotation_mismatch_nested_function_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(x) -> float:
+    def helper():
+        return [1, 2, 3]
+    return x + len(helper())
+""")
+    findings = scan_return_annotation_mismatch(tmp_path)
     assert findings == []

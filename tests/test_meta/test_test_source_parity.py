@@ -94,6 +94,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "module_docstring": "code_audit scanner; covered by test_code_audit.py",
     "unraised_exceptions": "code_audit scanner; covered by test_code_audit.py",
     "credential_logging": "code_audit scanner; covered by test_code_audit.py",
+    "docstring_args": "code_audit scanner; covered by test_code_audit.py",
+    "return_annotation": "code_audit scanner; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
@@ -138,6 +140,8 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_llm_retry": "covers pyutilz.llm._retry (private module)",
     "test_llm_live": "live LLM-provider smoke tests (opt-in via --run-live, cross-cutting)",
     "test_llm_openrouter": "covers pyutilz.llm.openrouter_provider/* sub-package (catalogue/health/provider submodules)",
+    "test_sibling_api_parity": "cross-cutting — covers pyutilz.data.pandaslib and pyutilz.data.polarslib API/mutation-contract parity together",
+    "test_retry_predicate_matches_sdk_hierarchy": "cross-cutting — covers retry predicates in llm.anthropic_provider/gemini_provider and database.redislib together",
     "test_hardware_detection": "covers pyutilz.system.hardware_monitor",
     "test_cuda_home_autodetect": "cross-cutting — CUDA_HOME autodetection from the pip nvidia-cuda-nvcc wheel (env/setup behaviour, not one source module)",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",

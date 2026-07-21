@@ -26,6 +26,8 @@ from .retry_loops import scan_retry_loops
 from .module_docstring import scan_duplicate_module_docstring
 from .unraised_exceptions import scan_unraised_exceptions
 from .credential_logging import scan_credential_shaped_log_args
+from .docstring_args import scan_docstring_args_completeness
+from .return_annotation import scan_return_annotation_mismatch
 
 # --- registry -----------------------------------------------------------
 
@@ -69,6 +71,8 @@ register_scanner("retry_loop", scan_retry_loops)
 register_scanner("duplicate_module_docstring", scan_duplicate_module_docstring)
 register_scanner("unraised_exception_class", scan_unraised_exceptions)
 register_scanner("credential_shaped_log_arg", scan_credential_shaped_log_args)
+register_scanner("docstring_args_incomplete", scan_docstring_args_completeness)
+register_scanner("return_annotation_mismatch", scan_return_annotation_mismatch)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

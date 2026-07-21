@@ -27,6 +27,7 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
     Load a pickled dataframe from ``fpath``, optionally keeping only the last ``tail`` rows.
 
     Args:
+        fpath: path to the pickled dataframe file.
         tail: if a positive int, the dataframe is truncated to its last ``tail`` rows; falsy/None leaves it untouched.
     """
     logger.info("Loading data from file %s...", fpath)

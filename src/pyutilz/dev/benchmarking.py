@@ -359,6 +359,8 @@ def sweep_backend_grid(
             ``reference``) defines correctness; divergent variants are dropped.
         axes: ``{dim: [values]}`` -- the full Cartesian grid to sweep.
         make_inputs: ``dims_dict -> args tuple`` of HOST (numpy) arrays.
+        reference: name of the variant treated as correctness ground truth; defaults to the
+            first key in ``variants`` when omitted.
         residencies: subset of ``("host", "device")``.
         to_device: ``args -> args`` mover to VRAM (default ``cp.asarray`` ndarrays).
         repeats: timed reps per variant per cell (a warmup pass precedes timing).

@@ -59,7 +59,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
-        args: ['--ignore-words-list=coo,ser,utilizaton,re-declared,re-declare']
+        args: ['--ignore-words-list=coo,ser,utilizaton,re-declared,re-declare,statics']
 
   # Real-bug gate: the project's FULL configured select/ignore (pyproject.toml), minus C901
   # (complexity, advisory-only). Closed to 0 findings 2026-07-09 after the RUF/G/ISC/PERF/DTZ/A/
