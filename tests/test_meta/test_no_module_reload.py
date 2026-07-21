@@ -47,6 +47,12 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
+    "tests/test_pythonlib_extra2.py:494": "deliberately reloads pyutilz.core.pythonlib to prove "
+    "get_attr() survives it -- pythonlib.py's only historical sentinel hazard was "
+    "_GET_ATTR_UNSET, and get_attr() now captures a second `_unset` parameter from the SAME "
+    "name at the SAME def-time as its own default (comparing against that, not a bare global "
+    "lookup), making it provably immune to reload-driven rebinding; verified via grep that no "
+    "other '= object()' sentinel exists in pythonlib.py for this reload to still endanger.",
 }
 
 
