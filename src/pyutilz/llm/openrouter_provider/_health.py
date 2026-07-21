@@ -289,6 +289,12 @@ def _enrich_with_health(
             max_connections=max_workers,
         )
         client_headers = {"Authorization": f"Bearer {api_key}"}
+        # Regression fix (2026-07-21 audit round 2, MEDIUM): failures used to log one WARNING
+        # per model with no aggregation -- a single shared root cause (e.g. an expired/revoked
+        # API key) fails EVERY one of potentially 200+ concurrent /endpoints calls, producing
+        # 200+ near-identical WARNING lines that bury the actual signal. Per-model detail moves
+        # to DEBUG; one aggregated WARNING is emitted after the fan-out completes.
+        failures: list[tuple[str, BaseException]] = []
         with httpx.Client(
             timeout=timeout, headers=client_headers, limits=limits,
         ) as client:
@@ -306,12 +312,20 @@ def _enrich_with_health(
                     try:
                         endpoints = fut.result()
                     except Exception as exc:
-                        logger.warning(
+                        logger.debug(
                             "Health check failed for %s (%s); excluding from results.",
                             mid, exc,
                         )
+                        failures.append((mid, exc))
                         continue
                     fresh_health[mid] = _summarize_endpoints(endpoints)
+
+        if failures:
+            example_mid, example_exc = failures[0]
+            logger.warning(
+                "Health check failed for %d/%d models, e.g. %s: %s",
+                len(failures), len(to_fetch), example_mid, example_exc,
+            )
 
         if health_ttl_seconds > 0 and fresh_health:
             # Re-take monotonic at write time. The original `now` was taken

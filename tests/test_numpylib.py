@@ -140,6 +140,27 @@ class TestGetTopKIndices:
         assert 3 in result
         assert 1 in result
 
+    def test_get_topk_nan_never_picked_as_highest(self):
+        """Regression: np.argpartition/np.argsort treat NaN as greater than every real number,
+        so a single NaN used to be picked as the top-1 "highest" instead of the true max."""
+        arr = np.array([5.0, np.nan, 3.0, 10.0, 1.0])
+        assert get_topk_indices(arr, k=1, highest=True).tolist() == [3]
+        top2 = get_topk_indices(arr, k=2, highest=True)
+        assert 1 not in top2  # the NaN's index must not be among the top-2 real values
+        assert set(top2.tolist()) == {3, 0}
+
+    def test_get_topk_nan_not_excluded_from_lowest_when_needed(self):
+        """NaN sorts as +inf, so it's correctly the LAST choice for `lowest`, not silently
+        dropped when there aren't enough real values to fill k slots."""
+        arr = np.array([5.0, np.nan, 3.0])
+        result = get_topk_indices(arr, k=3, highest=False)
+        assert result.tolist()[-1] == 1  # NaN's index ends up last (worst) among the lowest-k
+
+    def test_get_topk_nan_non_float_dtype_unaffected(self):
+        """Integer arrays can't hold NaN -- the NaN-substitution path must not raise on them."""
+        arr = np.array([2, 0, 3], dtype=np.int64)
+        assert get_topk_indices(arr, k=2, highest=True).tolist() == [2, 0]
+
 
 class TestSmartRatios:
     """Test smart_ratios function - computes (a-b)/b"""

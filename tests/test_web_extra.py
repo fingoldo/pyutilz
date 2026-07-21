@@ -887,6 +887,24 @@ class TestGetUrl:
         r = mod.get_url("http://x.com", blocking_statuses=(403,), b_use_proxy=False, b_random_ua=False, max_retries=3)
         assert r.status_code == 200
 
+    @patch("pyutilz.web.web.sleep")
+    @patch("pyutilz.web.web.get_new_session")
+    def test_fetch_exception_logged_even_when_verbose_false(self, mock_gns, mock_sleep, caplog):
+        """Regression (2026-07-21 audit round 2, HIGH): the per-attempt exception was previously
+        logged ONLY when verbose=True (the non-default); with the default verbose=False every
+        network exception across all max_retries attempts was completely silent, leaving only a
+        generic "Could not get url" warning with no information about why. Now always logged."""
+        import logging
+
+        from pyutilz.web import web as mod
+        mock_sess = Mock()
+        mock_sess.get.side_effect = ConnectionError("a specific dns failure reason")
+        mod.sess = mock_sess
+        mod.delay = 0
+        with caplog.at_level(logging.WARNING, logger="pyutilz.web.web"):
+            mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False, max_retries=1, verbose=False)
+        assert any("a specific dns failure reason" in r.message for r in caplog.records)
+
 
 # ===== download_to_file =====
 

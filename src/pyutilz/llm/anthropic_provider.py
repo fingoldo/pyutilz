@@ -11,7 +11,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider, longest_prefix_lookup
+from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
 from pyutilz.llm.exceptions import LLMTruncationError
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,20 @@ class AnthropicProvider(LLMProvider):
     }
     _DEFAULT_PRICING = (3.00, 15.00)  # fallback = Sonnet pricing
 
+    # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
+    # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): see identical
+    # PerCallAttr usage + docstring in openai_compat.py / base.py -- generate_batch() fires N
+    # concurrent self.generate() calls on one shared/cached provider instance, so a plain
+    # attribute write from one in-flight request used to be visible to every other
+    # concurrently-running request. Cumulative session totals (total_input_tokens etc.) are
+    # NOT converted -- they are intentionally shared/summed across all calls.
+    _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
+    last_cache_creation_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_cache_read_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_thinking_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_thinking_tokens_estimated: PerCallAttr = PerCallAttr(lambda: False)
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -69,8 +83,6 @@ class AnthropicProvider(LLMProvider):
         self.model = model
         self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        # Per-call usage (read by LLMClient after generate())
-        self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         # Cumulative session accounting (mirrors OpenAICompatibleProvider).
         # ``get_session_cost`` reports these across ALL calls in the session;
         # without them it would silently report calls=0 and the last call's
@@ -78,18 +90,11 @@ class AnthropicProvider(LLMProvider):
         self._call_count = 0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
-        # Per-call cache + extended-thinking accounting.
-        # cache_creation_input_tokens — tokens written to ephemeral cache
-        #   (5min default, 2x base rate; 1h opt-in, 1.25x).
-        # cache_read_input_tokens — tokens read from cache (10% of input rate).
-        # thinking_tokens — extended-thinking output (Opus 4 only).
-        self.last_cache_creation_input_tokens = 0
-        self.last_cache_read_input_tokens = 0
         self.total_cache_creation_input_tokens = 0
         self.total_cache_read_input_tokens = 0
-        self.last_thinking_tokens = 0
-        self.last_thinking_tokens_estimated = False
         self.total_thinking_tokens = 0
+        # Per-call usage/cache/thinking/finish_reason: PerCallAttr class-level descriptors
+        # (declared above __init__) provide the defaults; nothing to initialize here.
         # Rate-limit info captured from response headers on every call.
         # Populated lazily by ``check_account_limits()`` from the snapshot
         # of the most recent response.

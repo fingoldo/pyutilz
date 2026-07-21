@@ -48,6 +48,13 @@ def ensure_db_tables_created(conn: sqlite3.Connection, cursor: sqlite3.Cursor, s
 def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: sqlite3.Cursor, conn: sqlite3.Connection, verbose: int = 1):
     """Самый быстрый способ для массовых вставок"""
 
+    # Regression fix: `columns` is iterated 3 separate times below (validate, build
+    # placeholders, build columns_str); a genuine one-shot iterator/generator (which the
+    # `Iterable` type hint explicitly invites) was exhausted after the first pass, silently
+    # producing an empty `INSERT INTO t () VALUES ()` -- caught by the broad `except Exception`
+    # below and reported as "0 rows inserted", indistinguishable from a real failure.
+    columns = list(columns)
+
     # Validate table/column names to prevent SQL injection
     validate_sql_identifier(table_name)
     for col in columns:
@@ -83,7 +90,7 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
         # on a completely successful insert.
         return n
     except Exception as e:
-        logger.error("Could not insert data into %s table: %s.", table_name, e)
+        logger.exception("Could not insert data into %s table: %s.", table_name, e)
         logger.error("Data sample: %s", values_list[-10:])
         # Regression fix: cursor.executemany() executes each parameter set sequentially: if row
         # k violates a constraint, rows 1..k-1 already executed and remained pending in an open,

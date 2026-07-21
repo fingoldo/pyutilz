@@ -187,6 +187,39 @@ def test_safe_delta_write_nonlocal_reraises():
         deltalakes.safe_delta_write("s3://bucket/table", boom)
 
 
+def test_safe_delta_write_lock_key_is_case_insensitive_on_windows(monkeypatch, tmp_path):
+    """Regression (2026-07-21 audit round 2): os.path.abspath() never changes case, but NTFS
+    (Windows' default filesystem) is case-insensitive-but-preserving -- "C:\\Data\\orders" and
+    "c:\\data\\ORDERS" are the SAME table on disk but used to hash to two DIFFERENT lock files,
+    letting two writers both acquire "their own" lock and commit concurrently to the same
+    underlying Delta log. Both spellings must now resolve to the identical lock file."""
+    captured_paths = []
+
+    class FakeLock:
+        def __init__(self, path):
+            captured_paths.append(path)
+
+        def acquire(self, timeout=None):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(deltalakes, "FileLock", FakeLock)
+
+    base = str(tmp_path / "region-us" / "orders")
+    variant = str(tmp_path / "region-us" / "orders").upper() if os.name == "nt" else str(tmp_path / "region-us" / "orders")
+
+    deltalakes.safe_delta_write(base, lambda: "ok")
+    deltalakes.safe_delta_write(variant, lambda: "ok")
+
+    if os.name == "nt":
+        assert captured_paths[0] == captured_paths[1], "same table under different case must map to the SAME lock file on Windows"
+
+
 # ---------------------------------------------------------------------------
 # redislib.rexecute  (#7: no busy-loop on permanent errors; rc-None guard)
 # ---------------------------------------------------------------------------
@@ -316,9 +349,9 @@ def test_db_connection_globals_live_in_parent_facade():
     every stateful function reads/writes the SAME namespace after a connect."""
     import pyutilz.database.db as db
 
-    # conn_alchemy is defined at import time; conn/cur/cursors are created by
-    # connect_to_db. Simulate a connect by assigning the globals and confirm a
-    # stateful reader (get_cursor) sees them via the shared module namespace.
+    # conn_alchemy is defined at import time; conn/cur are created by connect_to_db.
+    # `cursors` is deliberately NOT a plain shared global anymore (see
+    # test_get_cursor_cache_is_thread_local below) -- get_cursor()'s cache lives per-thread.
     class _FakeCur:
         description = None
 
@@ -326,14 +359,50 @@ def test_db_connection_globals_live_in_parent_facade():
             pass
 
     db.conn = object()
-    db.cursors = {"cursor": _FakeCur()}
-    assert db.get_cursor("cursor") is db.cursors["cursor"]
+    db._get_thread_cursors()["cursor"] = _FakeCur()
+    assert db.get_cursor("cursor") is db._get_thread_cursors()["cursor"]
 
     # lazy alias pyutilz.db must resolve to the same module object.
     import pyutilz
 
     assert pyutilz.db is db
     assert redislib.rc is None
+
+
+def test_get_cursor_cache_is_thread_local():
+    """Regression (2026-07-21 audit round 2, CRITICAL): the cursor cache used to be one shared
+    module-global dict, so two threads calling get_cursor()/basic_db_execute() concurrently could
+    interleave onto the SAME psycopg2 cursor object -- a cursor's execute()/fetchall() pair is
+    not safe to share across threads even though the connection itself is. Each thread must now
+    get an independently-cached cursor object for the same cursor_type."""
+    import threading
+
+    import pyutilz.database.db as db
+
+    class _FakeCur:
+        description = None
+
+        def execute(self, *a, **k):
+            pass
+
+    db.conn = object()
+    db._get_thread_cursors().clear()
+
+    results: dict = {}
+
+    def worker(name):
+        # Each thread populates its OWN cache entry for the same cursor_type key.
+        db._get_thread_cursors()["cursor"] = _FakeCur()
+        results[name] = db.get_cursor("cursor")
+
+    t1 = threading.Thread(target=worker, args=("t1",))
+    t2 = threading.Thread(target=worker, args=("t2",))
+    t1.start()
+    t1.join()
+    t2.start()
+    t2.join()
+
+    assert results["t1"] is not results["t2"], "threads must not observe each other's cached cursor object"
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +456,114 @@ def test_basic_db_execute_reraises_internal_error(monkeypatch):
 
     with pytest.raises(InternalError):
         db.basic_db_execute("execute", "select 1")
+
+
+# ---------------------------------------------------------------------------
+# db.basic_db_execute  (a named/server-side cursor -- withhold=True on Postgres --
+# was never closed on the return_cursor=False success path, leaking a real
+# DECLARE ... CURSOR ... WITH HOLD on the server. Fixed to close it right after
+# fetchall() whenever the caller isn't taking ownership of the cursor itself.)
+# ---------------------------------------------------------------------------
+
+
+def test_basic_db_execute_closes_named_cursor_when_not_returned(monkeypatch):
+    import pyutilz.database.db as db
+
+    class _FakeCur:
+        description = [("col",)]
+        closed = False
+
+        def execute(self, *a, **k):
+            pass
+
+        def fetchall(self):
+            return [(1,)]
+
+        def close(self):
+            self.closed = True
+
+    fake_cur = _FakeCur()
+    monkeypatch.setattr(db, "get_cursor", lambda *a, **k: fake_cur)
+
+    rows = db.basic_db_execute("execute", "select 1", cursor_name="page1", return_cursor=False)
+
+    assert rows == [(1,)]
+    assert fake_cur.closed is True
+
+
+def test_basic_db_execute_does_not_close_cursor_when_returned(monkeypatch):
+    """When return_cursor=True the caller takes ownership -- basic_db_execute must not close it
+    out from under them."""
+    import pyutilz.database.db as db
+
+    class _FakeCur:
+        description = [("col",)]
+        closed = False
+
+        def execute(self, *a, **k):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    fake_cur = _FakeCur()
+    monkeypatch.setattr(db, "get_cursor", lambda *a, **k: fake_cur)
+
+    result = db.basic_db_execute("execute", "select 1", cursor_name="page1", return_cursor=True)
+
+    assert result is fake_cur
+    assert fake_cur.closed is False
+
+
+def test_basic_db_execute_does_not_close_unnamed_cursor(monkeypatch):
+    """Only NAMED (server-side) cursors need explicit closing here -- basic_db_execute's cache
+    reuses unnamed cursors across calls (see get_cursor), so closing one after every call would
+    break that reuse."""
+    import pyutilz.database.db as db
+
+    class _FakeCur:
+        description = [("col",)]
+        closed = False
+
+        def execute(self, *a, **k):
+            pass
+
+        def fetchall(self):
+            return [(1,)]
+
+        def close(self):
+            self.closed = True
+
+    fake_cur = _FakeCur()
+    monkeypatch.setattr(db, "get_cursor", lambda *a, **k: fake_cur)
+
+    db.basic_db_execute("execute", "select 1", cursor_name=None, return_cursor=False)
+
+    assert fake_cur.closed is False
+
+
+# ---------------------------------------------------------------------------
+# db.basic_db_execute  (exception log lines never included the failing SQL
+# statement, so a production incident from one specific bad query was logged
+# as an anonymous traceback indistinguishable from every other call site.)
+# ---------------------------------------------------------------------------
+
+
+def test_basic_db_execute_logs_the_failing_statement(monkeypatch, caplog):
+    import logging
+
+    import pyutilz.database.db as db
+
+    def fake_get_cursor(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(db, "get_cursor", fake_get_cursor)
+
+    with caplog.at_level(logging.ERROR, logger="pyutilz.database.db"):
+        with pytest.raises(RuntimeError):
+            db.basic_db_execute("execute", "select * from very_specific_table where x=1")
+
+    assert any("very_specific_table" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -540,3 +717,161 @@ def test_build_upsert_query_hash_fields_default_empty_still_works():
         conflict_fields=["id"],
     )
     assert "insert into mytable" in query
+
+
+# ---------------------------------------------------------------------------
+# db.log_to_db  (an unrecognized `level` silently downgraded to INFO severity
+# with no signal, and "critical"/"fatal" -- reasonable caller-invented level
+# names -- fell into the same silent-INFO bucket instead of ERROR.)
+# ---------------------------------------------------------------------------
+
+
+def test_log_to_db_unrecognized_level_warns_and_degrades_to_info(monkeypatch, caplog):
+    import logging
+
+    import pyutilz.database.db as db
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda stmt, params: captured.setdefault("params", params))
+
+    with caplog.at_level(logging.WARNING, logger="pyutilz.database.db"):
+        db.log_to_db("something happened", level="Critical!!!")
+
+    assert any("unrecognized level" in r.message for r in caplog.records)
+    assert captured["params"][4] == 1  # cInfo -- still degrades safely, doesn't raise
+
+
+def test_log_to_db_critical_maps_to_error_severity(monkeypatch):
+    import pyutilz.database.db as db
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda stmt, params: captured.setdefault("params", params))
+
+    db.log_to_db("disk full", level="critical")
+
+    assert captured["params"][4] == 3  # cError
+
+
+def test_log_to_db_fatal_maps_to_error_severity(monkeypatch):
+    import pyutilz.database.db as db
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda stmt, params: captured.setdefault("params", params))
+
+    db.log_to_db("disk full", level="fatal")
+
+    assert captured["params"][4] == 3  # cError
+
+
+def test_log_to_db_warning_maps_to_warning_severity(monkeypatch):
+    import pyutilz.database.db as db
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda stmt, params: captured.setdefault("params", params))
+
+    db.log_to_db("disk getting full", level="warning")
+
+    assert captured["params"][4] == 2  # cWarning
+
+
+# ---------------------------------------------------------------------------
+# db.EnsurePgTableExists / db.ReadTableIntoDic / db.ReadTableIntoDicReversed /
+# db.GetIdByKeyFieldAndInsertIfNeeded  (PascalCase, Hungarian-notation names
+# mixed in with ~28 modern snake_case functions in the same module's public
+# surface -- undiscoverable via IDE autocomplete conventions the rest of the
+# module trains the user to expect. Added modern snake_case primaries; the
+# old names are now thin, deprecated delegating wrappers.)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_pg_table_exists_pascalcase_alias_warns_and_delegates(monkeypatch):
+    import pyutilz.database.db as db
+
+    captured = {}
+    monkeypatch.setattr(db, "check_if_pg_table_exists", lambda table_name, schema_name="public": True)
+
+    def fake_ensure(table, key_field_name=None, id_field_name=None, autocreate_id_type_name=None):
+        captured.update(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
+
+    monkeypatch.setattr(db, "ensure_pg_table_exists", fake_ensure)
+
+    with pytest.warns(DeprecationWarning, match="ensure_pg_table_exists"):
+        db.EnsurePgTableExists(sTable="t", sKeyFieldName="k", sIdFieldName="i")
+
+    assert captured == {"table": "t", "key_field_name": "k", "id_field_name": "i", "autocreate_id_type_name": None}
+
+
+def test_ensure_pg_table_exists_snake_case_is_the_real_implementation(monkeypatch):
+    """The snake_case function must not itself warn -- it's the primary, non-deprecated entry point."""
+    import warnings
+
+    import pyutilz.database.db as db
+
+    monkeypatch.setattr(db, "check_if_pg_table_exists", lambda table_name, schema_name="public": True)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        db.ensure_pg_table_exists(table="t")  # must not raise
+
+
+def test_read_table_into_dict_pascalcase_alias_warns_and_delegates(monkeypatch):
+    import pyutilz.database.db as db
+
+    calls = []
+    monkeypatch.setattr(
+        db,
+        "read_table_into_dict",
+        lambda dict_enums, table, key_field_name=None, condition=None, id_field_name=None, autocreate_id_type_name=None: calls.append((table, key_field_name)),
+    )
+
+    with pytest.warns(DeprecationWarning, match="read_table_into_dict"):
+        db.ReadTableIntoDic({}, sTable="t", sKeyFieldName="k")
+
+    assert calls == [("t", "k")]
+
+
+def test_read_table_into_dict_reversed_pascalcase_alias_warns_and_delegates(monkeypatch):
+    import pyutilz.database.db as db
+
+    calls = []
+    monkeypatch.setattr(
+        db,
+        "read_table_into_dict_reversed",
+        lambda dict_enums, table, key_field_name=None, condition=None, id_field_name=None, autocreate_id_type_name=None: calls.append((table, key_field_name)),
+    )
+
+    with pytest.warns(DeprecationWarning, match="read_table_into_dict_reversed"):
+        db.ReadTableIntoDicReversed({}, sTable="t", sKeyFieldName="k")
+
+    assert calls == [("t", "k")]
+
+
+def test_get_id_by_key_field_and_insert_if_needed_pascalcase_alias_warns_and_delegates(monkeypatch):
+    import pyutilz.database.db as db
+
+    calls = []
+
+    def fake(dict_enums, table, key_field_value, **kwargs):
+        calls.append((table, key_field_value))
+        return "the-id"
+
+    monkeypatch.setattr(db, "get_id_by_key_field_and_insert_if_needed", fake)
+
+    with pytest.warns(DeprecationWarning, match="get_id_by_key_field_and_insert_if_needed"):
+        result = db.GetIdByKeyFieldAndInsertIfNeeded({}, sTable="t", sKeyFieldValue="v")
+
+    assert result == "the-id"
+    assert calls == [("t", "v")]
+
+
+def test_get_id_by_key_field_and_insert_if_needed_null_shortcut():
+    import pyutilz.database.db as db
+
+    assert db.get_id_by_key_field_and_insert_if_needed({}, table="t", key_field_value="null") == "null"
+
+
+def test_get_id_by_key_field_and_insert_if_needed_cache_hit():
+    import pyutilz.database.db as db
+
+    dict_enums = {"existing": 42}
+    assert db.get_id_by_key_field_and_insert_if_needed(dict_enums, table="t", key_field_value="existing") == 42

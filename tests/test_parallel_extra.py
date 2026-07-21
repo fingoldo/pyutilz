@@ -99,7 +99,7 @@ class TestSplitArray:
 class TestDistributeWork:
     def test_basic(self):
         from pyutilz.system.parallel import distribute_work
-        work, indices = distribute_work([10, 20, 30, 40], nworkers=2)
+        work, indices = distribute_work([10, 20, 30, 40], n_jobs=2)
         assert len(work) == 2
         assert len(indices) == 2
         all_indices = sorted(sum(indices, []))
@@ -109,13 +109,33 @@ class TestDistributeWork:
     def test_zero_workers_uses_cpu_count(self, mock_psutil):
         from pyutilz.system.parallel import distribute_work
         mock_psutil.cpu_count.return_value = 2
-        work, indices = distribute_work([5, 5, 5], nworkers=0)
+        work, indices = distribute_work([5, 5, 5], n_jobs=0)
         assert len(work) == 2
 
     def test_single_worker(self):
         from pyutilz.system.parallel import distribute_work
-        work, indices = distribute_work([1, 2, 3], nworkers=1)
+        work, indices = distribute_work([1, 2, 3], n_jobs=1)
         assert work == [[1, 2, 3]]
+
+    def test_missing_n_jobs_raises(self):
+        from pyutilz.system.parallel import distribute_work
+        with pytest.raises(TypeError, match="n_jobs"):
+            distribute_work([1, 2, 3])
+
+    def test_nworkers_deprecated_alias_still_works_with_warning(self):
+        """Regression (2026-07-21 audit round 2, MEDIUM): this module had three different
+        spellings for "degree of parallelism" (n_jobs/n_cores/nworkers). `nworkers` is now a
+        deprecated alias for the standardized `n_jobs`."""
+        from pyutilz.system.parallel import distribute_work
+        with pytest.warns(DeprecationWarning, match="n_jobs"):
+            work, indices = distribute_work([10, 20, 30, 40], nworkers=2)
+        assert len(work) == 2
+
+    def test_nworkers_alias_does_not_override_explicit_n_jobs(self):
+        from pyutilz.system.parallel import distribute_work
+        with pytest.warns(DeprecationWarning):
+            work, _ = distribute_work([10, 20, 30, 40], n_jobs=1, nworkers=2)
+        assert len(work) == 1
 
 
 # ── parallel_run (lines 154-158) ──
@@ -144,7 +164,7 @@ class TestApplyfuncParallel:
         def add(a, b):
             return pd.DataFrame({"sum": [a + b]})
 
-        result = applyfunc_parallel([(1, 2), (3, 4)], add, n_cores=1, return_dataframe=True, use_threads=True)
+        result = applyfunc_parallel([(1, 2), (3, 4)], add, n_jobs=1, return_dataframe=True, use_threads=True)
         assert isinstance(result, pd.DataFrame)
         assert list(result["sum"]) == [3, 7]
 
@@ -154,7 +174,7 @@ class TestApplyfuncParallel:
         def identity(x):
             return x
 
-        result = applyfunc_parallel([(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True)
+        result = applyfunc_parallel([(1,), (2,)], identity, n_jobs=1, return_dataframe=False, use_threads=True)
         assert result is not None
 
     def test_with_processes(self):
@@ -165,9 +185,21 @@ class TestApplyfuncParallel:
         def make_df(x):
             return pd.DataFrame({"val": [x]})
 
-        result = applyfunc_parallel([(10,), (20,)], make_df, n_cores=1, return_dataframe=True, use_threads=True)
+        result = applyfunc_parallel([(10,), (20,)], make_df, n_jobs=1, return_dataframe=True, use_threads=True)
         assert isinstance(result, pd.DataFrame)
         assert sorted(result["val"].tolist()) == [10, 20]
+
+    def test_n_cores_deprecated_alias_still_works_with_warning(self):
+        """Regression (2026-07-21 audit round 2, MEDIUM): `n_cores` is now a deprecated alias
+        for the standardized `n_jobs` (see distribute_work's docstring)."""
+        from pyutilz.system.parallel import applyfunc_parallel
+
+        def identity(x):
+            return x
+
+        with pytest.warns(DeprecationWarning, match="n_jobs"):
+            result = applyfunc_parallel([(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True)
+        assert result is not None
 
 
 # ── set_tf_gpu (lines 208-221) ──

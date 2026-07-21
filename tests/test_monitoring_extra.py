@@ -202,6 +202,30 @@ class TestTimeoutWrapperExceptions:
         result = failing()
         assert result is None
 
+    def test_exception_logs_the_real_traceback_not_none(self, caplog):
+        """Regression (2026-07-21 audit round 2, HIGH): logger.exception() implicitly reads
+        sys.exc_info() from the CURRENT (main/wrapper) thread, but the exception was caught on
+        the CHILD thread (_run) -- by the time control reached the log call, the main thread was
+        never inside an except clause, so the logged traceback was bogus ("NoneType: None")
+        regardless of which real exception occurred. Fixed via exc_info=<the actual exception>."""
+        import logging
+
+        from pyutilz.system.monitoring import timeout_wrapper
+
+        @timeout_wrapper(timeout=5)
+        def failing():
+            raise ValueError("a very specific failure reason")
+
+        with caplog.at_level(logging.ERROR, logger="pyutilz.system.monitoring"):
+            result = failing()
+
+        assert result is None
+        error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert error_records, "expected an ERROR log for the failed call"
+        assert error_records[0].exc_info is not None, "exc_info must be the real exception, not None"
+        assert error_records[0].exc_info[0] is ValueError
+        assert "a very specific failure reason" in str(error_records[0].exc_info[1])
+
     def test_report_duration_logs(self):
         from pyutilz.system.monitoring import timeout_wrapper
 

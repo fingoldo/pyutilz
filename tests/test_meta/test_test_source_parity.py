@@ -184,6 +184,8 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_no_mutable_defaults": "meta-test (H4) — mutable default arguments (Python footgun)",
     "test_llm_account_credits": "cross-cutting — covers OpenRouter check_account_limits across providers",
     "test_llm_supports_json_mode": "cross-cutting — pins supports_json_mode() across all providers",
+    "test_capture_signature": "covers pyutilz.dev.meta_test_utils.capture_signature (a single function, not a like-named production module)",
+    "test_publish_workflow_version_check": "CI-process test — covers .github/workflows/publish.yml's tag-vs-version check, not a source module",
 }
 
 # Source modules surfaced by the forward-direction audit but explicitly

@@ -29,7 +29,7 @@ import inspect
 import logging
 import textwrap
 from functools import lru_cache
-from typing import Callable
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,34 @@ def _normalized_source(fn: Callable) -> str:
     return canonical
 
 
-@lru_cache(maxsize=2048)
+def _code_identity_key(fn: Callable) -> Any:
+    """Return a key that changes when ``fn``'s bytecode changes, even though ``fn`` may keep the
+    SAME object identity -- e.g. IPython's ``%autoreload 2`` patches ``fn.__code__`` in place
+    rather than rebinding the name to a new function object. CPython code objects compare/hash
+    STRUCTURALLY (by bytecode/consts/names/etc.), unlike plain function objects (``id()``-based),
+    so keying on the code object itself gives correct content-based cache invalidation "for
+    free" -- no need to separately hash source text just to build the key. Falls back to
+    ``id(fn)`` for callables with no ``__code__`` (e.g. a C-extension callable).
+    """
+    unwrapped = _unwrap(fn)
+    code = getattr(unwrapped, "__code__", None)
+    return code if code is not None else id(unwrapped)
+
+
+@lru_cache(maxsize=4096)
+def _normalized_source_by_code(fn: Callable, code_key: Any) -> str:
+    """Memoized :func:`_normalized_source`, LRU-keyed on ``(fn, code_key)``.
+
+    ``code_key`` (see :func:`_code_identity_key`) is what actually makes this content-aware: if
+    ``fn``'s bytecode is swapped in place, ``code_key`` changes, the ``(fn, code_key)`` tuple no
+    longer matches any cached entry, and this recomputes -- unlike the old design (a plain
+    ``lru_cache`` directly on ``compute_code_version``, keyed by the function objects
+    themselves), which stayed identity-blind to exactly that swap. See the HIGH audit finding
+    (2026-07-21 audit round 2) this fixes.
+    """
+    return _normalized_source(fn)
+
+
 def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: int = 0) -> str:
     """Deterministic SHA-256 over the normalized source of all ``variant_fns`` +
     ``extra_fns`` + ``salt``.
@@ -112,14 +139,15 @@ def compute_code_version(*variant_fns: Callable, extra_fns: tuple = (), salt: in
     logic -- or a ``salt`` bump -- changes the result; comment / format / docstring
     edits do not.
 
-    Memoized: the AST parse + unparse is ~1.3 ms/call, and dispatchers call this
-    on a hot path, so the result is cached per (variant_fns, extra_fns, salt).
-    The hash is deterministic per process, so caching is sound; ``extra_fns``
-    must be a tuple (hashable) -- it is, by signature + TunerSpec convention.
+    Per-function normalized source is memoized (the AST parse + unparse is ~1.3 ms/call) via
+    :func:`_normalized_source_by_code`, content-keyed rather than identity-keyed (see that
+    function's docstring) -- this function itself is NOT ``lru_cache``d, only the per-function
+    step is, so an in-place code swap on any one variant is picked up on the next call without
+    needing to invalidate anything keyed by the full ``variant_fns`` tuple.
     """
     # Logic-only: hash the name-normalized sources, sorted, so order / rename /
     # module-move do not change the result -- only a body-logic edit or salt does.
-    sources = sorted(_normalized_source(fn) for fn in list(variant_fns) + list(extra_fns))
+    sources = sorted(_normalized_source_by_code(fn, _code_identity_key(fn)) for fn in list(variant_fns) + list(extra_fns))
     h = hashlib.sha256()
     for src in sources:
         h.update(src.encode())

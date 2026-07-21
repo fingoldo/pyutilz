@@ -10,20 +10,67 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import os
 import threading
 import weakref
+from collections import OrderedDict
 
 from pyutilz.llm.config import LLMSettings, get_llm_settings
 from pyutilz.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
-# Instance cache: (canonical_name, kwargs_key) → LLMProvider
-_provider_cache: dict[tuple, LLMProvider] = {}
+# Instance cache: (canonical_name, kwargs_key) → LLMProvider, bounded LRU (see get_llm_provider's
+# eviction logic below). Regression fix (2026-07-21 audit round 2, MEDIUM): this used to be a
+# plain unbounded dict -- every distinct (provider, kwargs) combination a long-running process
+# ever saw stayed cached (and its live httpx.AsyncClient connection pool + SSL context open)
+# for the rest of the process lifetime.
+_provider_cache: "OrderedDict[tuple, LLMProvider]" = OrderedDict()
 _provider_lock = threading.Lock()
-# Providers built with unhashable kwargs bypass the cache (below). Track them
-# weakly so the atexit handler still closes their HTTP clients instead of leaking.
+_PROVIDER_CACHE_MAX_SIZE = int(os.environ.get("PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE", "128"))
+# Providers built with unhashable kwargs bypass the cache (below), and providers evicted from
+# the LRU above (when no running event loop can schedule their async close immediately) land
+# here too -- weakly tracked so the atexit handler still closes their HTTP clients instead of
+# leaking silently for the rest of the process lifetime.
 _uncached_providers: "weakref.WeakSet[LLMProvider]" = weakref.WeakSet()
+
+# asyncio only holds a WEAK reference to a task created via loop.create_task()/asyncio.create_task()
+# -- with nothing else referencing it, the task can be garbage-collected mid-execution before it
+# ever awaits close() (see asyncio.create_task's own docs: "task must be referenced ... or it can
+# get garbage collected at any time"). This set is that strong reference; each task removes itself
+# via add_done_callback once it finishes.
+_pending_close_tasks: "set[asyncio.Task[None]]" = set()
+
+
+def _schedule_provider_close(provider: LLMProvider) -> None:
+    """Best-effort close for a provider evicted from the LRU cache.
+
+    Evicted providers still hold live resources (httpx.AsyncClient connection pools, SSL
+    contexts) that leak if simply dropped. ``_close()`` is async; if an event loop is currently
+    running (the common case -- eviction happens inside ``get_llm_provider()``, itself normally
+    called from async application code) we schedule it as a fire-and-forget task. Without a
+    running loop we fall back to tracking the provider in ``_uncached_providers`` so the atexit
+    handler (``_close_cached_providers``) still closes it at process shutdown.
+    """
+    close = getattr(provider, "_close", None)
+    if close is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _uncached_providers.add(provider)
+        return
+
+    async def _close_and_log() -> None:
+        """Await the evicted provider's close(), logging (not raising) on failure."""
+        try:
+            await close()
+        except Exception as exc:
+            logger.debug("Evicted provider close error: %s", exc)
+
+    task = loop.create_task(_close_and_log())
+    _pending_close_tasks.add(task)
+    task.add_done_callback(_pending_close_tasks.discard)
 
 
 # Canonical provider names → (module_path, class_name) for lazy import
@@ -140,14 +187,15 @@ def get_llm_provider(
         _uncached_providers.add(instance)
         return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
-    if cache_key in _provider_cache:
-        return _provider_cache[cache_key]
-
     with _provider_lock:
         if cache_key in _provider_cache:
+            _provider_cache.move_to_end(cache_key)
             return _provider_cache[cache_key]
         instance = constructor(**kwargs)
         _provider_cache[cache_key] = instance
+        if len(_provider_cache) > _PROVIDER_CACHE_MAX_SIZE:
+            _, evicted = _provider_cache.popitem(last=False)
+            _schedule_provider_close(evicted)
         return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 

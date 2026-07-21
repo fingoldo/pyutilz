@@ -97,3 +97,38 @@ def test_numba_pyfunc_unwrap_and_logic_sensitivity():
     assert cv(_g) == cv(_g_renamed)
     assert cv(_g) != cv(_g_diff)
     assert cv(_g) != cv(_f1)
+
+
+def test_inplace_code_swap_invalidates_cache():
+    """Regression (2026-07-21 audit round 2, HIGH): the old design put a single ``lru_cache``
+    directly on ``compute_code_version``, keyed by the function-object args -- identity-based,
+    so it was blind to an in-place ``fn.__code__`` swap (IPython's ``%autoreload 2`` mechanism:
+    same function object, different bytecode). ``compute_code_version`` is no longer
+    ``lru_cache``d itself; the per-function source lookup is cached content-aware via
+    ``_code_identity_key``/``_normalized_source_by_code`` instead."""
+    before = cv(_f1)
+    original_code = _f1.__code__
+    try:
+        _f1.__code__ = _f2.__code__  # simulate autoreload: same object, swapped-in logic
+        after = cv(_f1)
+        assert after != before, "hash must change once the function's actual bytecode changes"
+    finally:
+        _f1.__code__ = original_code  # restore -- _f1 is module-level, shared by other tests
+    # And restoring the original code must make the hash match the original again --
+    # proving this isn't a one-way "always recompute" degradation either.
+    assert cv(_f1) == before
+
+
+def test_repeated_calls_with_unchanged_code_hit_the_per_function_cache():
+    """Perf sanity: the expensive per-function AST parse/unparse (~1.3ms) is still memoized
+    when a function's code object hasn't changed -- only the outer identity-blind cache was
+    removed, not caching altogether."""
+    from pyutilz.performance.kernel_tuning.code_versioning import _normalized_source_by_code
+
+    _normalized_source_by_code.cache_clear()
+    cv(_f1)
+    hits_before = _normalized_source_by_code.cache_info().hits
+    cv(_f1)
+    cv(_f1)
+    hits_after = _normalized_source_by_code.cache_info().hits
+    assert hits_after > hits_before

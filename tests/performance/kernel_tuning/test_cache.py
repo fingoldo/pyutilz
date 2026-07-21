@@ -396,6 +396,52 @@ class TestV2Metadata:
         assert c.evict("k") is True and c.get_metadata("k") is None and c.evict("k") is False
 
 
+class TestGCRespectsTunedUtc:
+    """Regression (2026-07-21 audit round 2, MEDIUM): ``_gc_kernel_dir`` used to sort purely by
+    file mtime (write order); the readers (``_read_kernel_newest`` / ``_read_kernel_dir_by_path``)
+    pick "newest" by ``tuned_utc`` first, mtime only as a tiebreak. Whenever ``tuned_utc`` is set
+    non-monotonically w.r.t. write order (e.g. importing/replaying historically-timestamped
+    tunings), GC could silently, permanently delete the logically newest entry before it's ever
+    read. Mirrors the audit's own verified repro (gen0 declares a far-future tuned_utc but is
+    written FIRST -- oldest mtime; gen1..gen4 are written after with progressively OLDER
+    tuned_utc)."""
+
+    @pytest.fixture
+    def fast_cache_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(ktc, "_cpu_model_slug", lambda: "testcpu")
+        monkeypatch.setattr(ktc, "_gpu_slug_and_cc", lambda: ("no-gpu", ""))
+        ktc.hw_fingerprint.cache_clear()
+        ktc._TUNED_THIS_PROCESS.clear()
+        yield str(tmp_path)
+        ktc.hw_fingerprint.cache_clear()
+
+    def test_logically_newest_entry_survives_gc_despite_oldest_mtime(self, fast_cache_dir):
+        import glob as _glob
+
+        cache = ktc.KernelTuningCache()
+        # gen0: far-future tuned_utc, written FIRST (so it has the OLDEST mtime of the 5).
+        cache.update("k", axes=["n"], regions=[{"variant": "gen0"}], tuned_utc="2030-01-01T00:00:00+00:00")
+        # gen1..gen4: written AFTER (newer mtimes) but with progressively OLDER declared tuned_utc.
+        for i in range(1, 5):
+            cache.update("k", axes=["n"], regions=[{"variant": f"gen{i}"}], tuned_utc=f"2020-01-0{i}T00:00:00+00:00")
+
+        kdir = ktc._kernel_dir(cache._path, "k")
+        files = _glob.glob(os.path.join(kdir, "*.json"))
+        assert len(files) == 4  # GC kept exactly `keep`=4 of the 5 written
+
+        survivors = []
+        for p in files:
+            with open(p, encoding="utf-8") as f:
+                rec = json.load(f)
+            survivors.append(rec.get("entry", {}).get("regions"))
+        assert [{"variant": "gen0"}] in survivors, "the logically newest tuning (by tuned_utc) must not be GC'd away"
+
+        # A fresh instance reading purely from disk must pick gen0 as current.
+        cache2 = ktc.KernelTuningCache()
+        assert cache2.get_regions("k") == [{"variant": "gen0"}]
+
+
 class TestV2Disk:
     """v2 disk round-trip (cpuinfo mocked so hw_fingerprint can't hang on WMI)."""
 

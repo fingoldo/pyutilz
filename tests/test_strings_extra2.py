@@ -185,6 +185,44 @@ def test_read_config_all_sections():
         os.unlink(fname)
 
 
+def test_read_config_file_roundtrips_non_ascii_value():
+    """Regression (2026-07-21 audit round 2, HIGH): read_config_file() used to call
+    config.read(file) with no explicit encoding, defaulting to the platform locale encoding.
+    write_config_file() always writes UTF-8 -- on a non-UTF-8-locale host (this Windows host
+    defaults to cp1251), the mismatch silently corrupted non-ASCII values on read."""
+    with tempfile.NamedTemporaryFile(suffix=".ini", delete=False, mode="w") as f:
+        fname = f.name
+    try:
+        write_config_file(fname, {"name": "café"}, section="MAIN", encryption=None)
+
+        obj_in = {}
+        read_config_file(fname, obj_in, section="MAIN", encryption=None)
+        assert obj_in["name"] == "café"
+    finally:
+        os.unlink(fname)
+
+
+def test_write_config_file_append_mode_roundtrips_non_ascii_value():
+    """Same fix, second call site: write_config_file()'s own "append" mode reads back its
+    previously-UTF-8-written file (config.read(file) at the top of the append branch) before
+    merging in new values -- that read must ALSO pin utf-8, or an append-mode round-trip
+    corrupts an existing non-ASCII value even without ever calling read_config_file()."""
+    with tempfile.NamedTemporaryFile(suffix=".ini", delete=False, mode="w") as f:
+        fname = f.name
+    try:
+        write_config_file(fname, {"name": "café"}, section="MAIN", encryption=None, mode="append")
+        # A second append-mode write (a different var) forces write_config_file to re-read the
+        # existing file via config.read(file) before rewriting it.
+        write_config_file(fname, {"other": "x"}, section="MAIN", encryption=None, mode="append")
+
+        obj_in = {}
+        read_config_file(fname, obj_in, section="MAIN", encryption=None)
+        assert obj_in["name"] == "café"
+        assert obj_in["other"] == "x"
+    finally:
+        os.unlink(fname)
+
+
 # ---------------------------------------------------------------------------
 # parse_tokens — lines 442-443
 # ---------------------------------------------------------------------------

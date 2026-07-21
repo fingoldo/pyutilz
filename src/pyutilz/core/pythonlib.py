@@ -214,11 +214,13 @@ def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 1
                     prev_value = to_float(prev_value)
                     if prev_value != 0.0:
                         new_value = to_float(new_value)
-                        change = abs(new_value - prev_value) * 100 / prev_value
+                        change = abs(new_value - prev_value) * 100 / abs(prev_value)
                         if change >= min_change_percent:
                             return True
                     else:
-                        return True
+                        new_value = to_float(new_value)
+                        if new_value != 0.0:
+                            return True
 
     return False
 
@@ -363,6 +365,8 @@ def float_distinct_digits_percent(number: float, precision: int = 5) -> float:
     # Extract the integer and fractional parts of the float
     int_part = int(number)
     frac_part = round(abs(number - int_part), precision)  # rounding needed for cases like 11.882
+    if precision:
+        frac_part = min(frac_part, 1 - 10**-precision)  # a rounding carry (e.g. 0.99999996 -> 1.0) must not push the fractional-digit count past `precision`
 
     # Initialize a set to store unique digits
     unique_digits = set()
@@ -626,8 +630,13 @@ def get_parent_func_args(skip_args: Sequence = ("self",)) -> dict:
     return argvals
 
 
-def store_params_in_object(obj: object, params: dict, postfix: str = ""):
-    """Useful for persisting __init__ params in the class instance."""
+def store_params_in_object(obj: object, params: dict, postfix: str = "_param_"):
+    """Useful for persisting __init__ params in the class instance.
+
+    ``postfix`` defaults to ``"_param_"`` to round-trip with :func:`load_object_params_into_func`'s
+    own default of the same value -- the two are documented as an inverse pair and must agree on
+    the suffix, or the round trip silently loses every value.
+    """
     if obj is None:
         return
     for param_name, param_value in params.items():

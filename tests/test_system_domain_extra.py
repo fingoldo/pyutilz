@@ -16,7 +16,7 @@ class TestPsutilNoneGuards:
     @patch("pyutilz.system.parallel.psutil.cpu_count", return_value=None)
     def test_distribute_work_handles_none_physical_count(self, mock_cc):
         # distribute_work now routes through cpu_count_physical(), which falls back to 1 on None.
-        planned, indices = distribute_work([1, 2, 3], nworkers=0)
+        planned, indices = distribute_work([1, 2, 3], n_jobs=0)
         assert len(planned) == 1
 
     @patch("pyutilz.system.parallel.psutil.cpu_count", return_value=None)
@@ -85,6 +85,60 @@ class TestTomlLiveConfigBoolIntAliasing:
         cfg = TomlLiveConfig(str(toml_path))
         result = cfg.get("section", "enabled", default=False, type_=bool)
         assert result is True
+
+
+class TestTomlLiveConfigBadValueFallback:
+    def test_bad_value_with_no_default_returns_none_not_hardcoded_zero(self, tmp_path):
+        """Regression (2026-07-21 audit round 2, HIGH): a value that can't be cast to `type_`,
+        with no `default` passed and no matching `defaults` dict entry, used to silently fall
+        back to a hardcoded `0` -- regardless of `type_` and regardless of what `0` means for
+        that setting (e.g. max_retries=0 -> retry loop body never executes). Returns None now,
+        forcing the caller to handle "no valid value" explicitly."""
+        toml_path = tmp_path / "cfg.toml"
+        toml_path.write_text('[limits]\nmax_retries = "unlimited"\n', encoding="utf-8")
+        cfg = TomlLiveConfig(str(toml_path))
+        result = cfg.get("limits", "max_retries", type_=int)
+        assert result is None
+
+    def test_bad_value_falls_back_to_explicit_default(self, tmp_path):
+        toml_path = tmp_path / "cfg.toml"
+        toml_path.write_text('[limits]\nmax_retries = "unlimited"\n', encoding="utf-8")
+        cfg = TomlLiveConfig(str(toml_path))
+        result = cfg.get("limits", "max_retries", default=5, type_=int)
+        assert result == 5
+
+    def test_bad_value_falls_back_to_defaults_dict_entry(self, tmp_path):
+        toml_path = tmp_path / "cfg.toml"
+        toml_path.write_text('[limits]\nmax_retries = "unlimited"\n', encoding="utf-8")
+        cfg = TomlLiveConfig(str(toml_path), defaults={"limits": {"max_retries": 3}})
+        result = cfg.get("limits", "max_retries", type_=int)
+        assert result == 3
+
+
+class TestTomlLiveConfigDataSetterLock:
+    def test_setter_uses_the_same_lock_as_reload(self, tmp_path):
+        """Regression: the `data` setter bypassed self._lock entirely, unlike every other
+        mutation of self._data -- breaking the class's own documented "Thread-safe via a single
+        threading.Lock" contract for this one mutation path."""
+        toml_path = tmp_path / "cfg.toml"
+        toml_path.write_text("[section]\nkey = 1\n", encoding="utf-8")
+        cfg = TomlLiveConfig(str(toml_path))
+
+        acquired_during_setter = []
+
+        class _TrackingLock:
+            def __enter__(self):
+                acquired_during_setter.append(True)
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        cfg._lock = _TrackingLock()
+        cfg.data = {"section": {"key": 2}}
+
+        assert acquired_during_setter, "the setter must acquire self._lock"
+        assert cfg._data == {"section": {"key": 2}}
 
 
 class TestBenchmarkExceptionIsolation:

@@ -109,6 +109,24 @@ class TestSerialize:
         assert result["list"] == data["list"]
         assert result["dict"] == data["dict"]
 
+    def test_serialize_failure_logs_fname_and_type(self, caplog):
+        """Regression (2026-07-21 audit round 2, MEDIUM): a serialize() failure used to log a
+        bare traceback with no fname/obj info -- identifying WHICH of a batch job's many
+        objects/paths failed required re-running under a debugger. The exception log now
+        includes both."""
+
+        class _Unpicklable:
+            def __reduce__(self):
+                raise TypeError("cannot pickle this")
+
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            result = serialize(_Unpicklable(), fname="some_target_file.bin")
+        assert result is None
+        assert "some_target_file.bin" in caplog.text
+        assert "_Unpicklable" in caplog.text
+
 
 class TestStrToClass:
     """Test str_to_class utility"""

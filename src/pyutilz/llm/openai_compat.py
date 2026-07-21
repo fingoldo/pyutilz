@@ -18,7 +18,7 @@ from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
-from pyutilz.llm.base import LLMProvider
+from pyutilz.llm.base import LLMProvider, PerCallAttr
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,19 @@ class OpenAICompatibleProvider(LLMProvider):
     _max_tokens_map: dict[str, int] = {}  # noqa: RUF012 -- intentional shared class-level lookup table (subclasses override with their own), not a per-instance mutable-default bug
     _default_max_tokens: int = 8192
 
+    # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
+    # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): generate_batch() fires
+    # N concurrent self.generate() calls on one shared/cached provider instance
+    # (llm.factory.get_llm_provider's cache); a plain attribute write from one in-flight request
+    # was visible to every other concurrently-running request reading the same attribute (see
+    # PerCallAttr's docstring in base.py for the confirmed repro). A direct, non-batched
+    # ``await provider.generate(...)`` is unaffected -- no task boundary is crossed between the
+    # write and the caller's immediately-following read.
+    _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
+    last_tool_calls: PerCallAttr = PerCallAttr(list)
+    last_citations: PerCallAttr = PerCallAttr(list)
+
     def __init__(
         self,
         api_key: str,
@@ -160,25 +173,13 @@ class OpenAICompatibleProvider(LLMProvider):
         self.total_cache_hit_tokens = 0
         self.total_reasoning_tokens = 0
         self._call_count = 0
-        # Per-call usage (read by LLMClient after generate())
-        self._last_usage: dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-        }
+        # Per-call usage/tool_calls/citations/finish_reason: PerCallAttr class-level descriptors
+        # (declared above __init__) provide the defaults; nothing to initialize here.
         # Most recent rate-limit headers seen on a response. Captured
         # automatically from x-ratelimit-* (OpenAI-family) and the
         # legacy ratelimit-* form some providers use. Read from
         # ``check_account_limits()``.
         self.last_rate_limits: dict[str, str] = {}
-        # tool_calls captured from choices[0].message.tool_calls when
-        # present (DeepSeek / OpenAI / xAI function-calling). The
-        # wrapper still returns the assistant text via ``generate()``;
-        # callers wanting structured tool calls read this attribute.
-        self.last_tool_calls: list[dict[str, Any]] = []
-        # citations from xAI live-search and similar grounded responses.
-        # Empty list when no grounding occurred.
-        self.last_citations: list[dict[str, Any]] = []
 
     # ── hooks for subclasses ─────────────────────────────────────────
 
@@ -716,7 +717,13 @@ class OpenAICompatibleProvider(LLMProvider):
         self,
         requests: list[dict[str, Any]],
     ) -> AsyncIterator[dict[str, Any]]:
-        """Generate responses in batch using concurrent requests."""
+        """Generate responses in batch using concurrent requests.
+
+        On success, each yielded dict also includes this request's own ``usage``/
+        ``tool_calls``/``citations``/``finish_reason`` metadata -- captured within this
+        request's own task, so it is NOT subject to the cross-task "last_*" attribute race
+        (see ``PerCallAttr`` in ``base.py``).
+        """
 
         async def process_request(req: dict) -> dict[str, Any]:
             """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
@@ -728,7 +735,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     temperature=req.get("temperature", 0.7),
                     max_tokens=req.get("max_tokens", 1024),
                 )
-                return {"id": request_id, "result": result}
+                out = {"id": request_id, "result": result}
+                out.update(self._capture_percall_metadata())
+                return out
             except Exception as e:
                 logger.error("Batch request %s failed: %s", request_id, e)
                 return {"id": request_id, "error": str(e)}

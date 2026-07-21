@@ -73,6 +73,21 @@ class AdvancedTokenizer:
     spacy's language model to be loadable (only the associated nlp global's loading is spacy-gated; nltk
     is used directly for sentence/word tokenization).
     """
+
+    MIN_MORPHEME_LENGTH = 1
+    MAX_MORPHEME_LENGTH = 8
+    """Per-word morpheme substring length bounds for tokenize()'s (i, j) enumeration. Regression
+    fix (2026-07-21 audit round 2, HIGH): tokenize() used to enumerate EVERY substring of every
+    word with no cap, an O(word_len**3) blowup (O(word_len**2) substrings, each up to O(word_len)
+    to slice/hash) -- reachable on ordinary scraped-web text (a long URL, a base64/JS blob that
+    survives fix_html, any unbroken run with no whitespace), not just adversarial input.
+    Verified: n=800 chars took ~1.4s for ONE word. Bounding morpheme length makes per-word cost
+    linear in word_len instead of cubic."""
+
+    MAX_WORD_LENGTH = 40
+    """Words longer than this are skipped entirely from morpheme extraction (not genuine
+    language content at this length) -- see MAX_MORPHEME_LENGTH's docstring for why."""
+
     def __init__(self, language_model="en_core_web_sm"):
         global nlp
 
@@ -129,8 +144,17 @@ class AdvancedTokenizer:
             last_word = None
             for w, word in enumerate(words):
                 word_len = len(word)
+                if word_len > self.MAX_WORD_LENGTH:
+                    # Not genuine language content at this length (a long URL, a base64/JS blob
+                    # that survived fix_html, an unbroken run of scraped text) -- skip entirely
+                    # rather than pay the substring-enumeration cost below. Breaks the
+                    # prev-word chain across the skipped word rather than linking across it.
+                    logger.debug("Skipping %d-char word in morpheme extraction (exceeds MAX_WORD_LENGTH=%d)", word_len, self.MAX_WORD_LENGTH)
+                    last_word = None
+                    continue
                 for i in range(word_len):
-                    for j in range(1, word_len - i + 1):
+                    max_j = min(word_len - i, self.MAX_MORPHEME_LENGTH)
+                    for j in range(self.MIN_MORPHEME_LENGTH, max_j + 1):
                         morpheme = word[i : i + j]
                         # if len(morpheme)>0:
                         if j == 1:
@@ -176,6 +200,32 @@ class AdvancedTokenizer:
                                         self.NUM_PREV_WORDS[base_morpheme] = defaultdict(int)
                                     self.NUM_PREV_WORDS[base_morpheme][last_word] += 1
                                 last_word = base_morpheme
+                if self.MAX_MORPHEME_LENGTH < word_len <= self.MAX_WORD_LENGTH:
+                    # The capped loop above never reaches i=0, j=word_len for a word longer than
+                    # MAX_MORPHEME_LENGTH, so the whole-word statistics that iteration would have
+                    # recorded (NUM_AS_SEPARATE_WORD / the NUM_PREV_WORDS chain) are recorded here
+                    # instead -- reusing FIRSTLETTER_CAPITAL/ALLLETTERS_CAPITAL, already computed
+                    # from the i=0, j=MIN_MORPHEME_LENGTH iteration above.
+                    base_morpheme = word.lower()
+                    if w == 0:
+                        self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
+                    elif w == k - 1:
+                        self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
+                    if FIRSTLETTER_CAPITAL:
+                        self.NUM_FIRSTLETTER_CAPITAL[base_morpheme] += 1
+                    if ALLLETTERS_CAPITAL:
+                        self.NUM_ALLLETTERS_CAPITAL[base_morpheme] += 1
+                    self.INWORD_ABSOLUTE_POSITION[base_morpheme] += 1
+                    self.INWORD_RELATIVE_POSITION[base_morpheme] += 1 / word_len
+                    self.INSENTENCE_ABSOLUTE_POSITION[base_morpheme] += w + 1
+                    self.INSENTENCE_RELATIVE_POSITION[base_morpheme] += (w + 1) / k
+                    self.NUM_OCCS[base_morpheme] += 1
+                    self.NUM_AS_SEPARATE_WORD[base_morpheme] += 1
+                    if last_word:
+                        if base_morpheme not in self.NUM_PREV_WORDS:
+                            self.NUM_PREV_WORDS[base_morpheme] = defaultdict(int)
+                        self.NUM_PREV_WORDS[base_morpheme][last_word] += 1
+                    last_word = base_morpheme
                 if w == 0:
                     if last_sentence_word:
                         if last_word not in self.NUM_PREV_SENTENCE_WORDS:

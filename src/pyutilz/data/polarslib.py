@@ -19,7 +19,7 @@ import os
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
 import polars as pl, polars.selectors as cs
 
-from typing import Any, Iterable, Literal, Optional, Tuple, TypeVar
+from typing import Any, Dict, Iterable, Literal, Optional, Tuple, TypeVar
 import numpy as np
 
 
@@ -190,15 +190,24 @@ def compute_concentrations(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def add_weighted_aggregates(columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: Optional[dict] = None) -> list:
-    """Computes weighted aggregates."""
+def add_weighted_aggregates(
+    columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: Optional[dict] = None, nans_filler: float = 0.0
+) -> list:
+    """Computes weighted aggregates.
+
+    A zero-sum-weight group (e.g. hedged buy/sell volumes, net-zero flow) makes the weighted-mean
+    division produce Inf/NaN; ``nans_filler`` is applied via :func:`clean_numeric` before the
+    ``_wmeanby_`` suffix is attached, so this never leaks unguarded Inf/NaN into the returned
+    expressions the way an un-cleaned division would.
+    """
     if not fields_remap:
         fields_remap = {}
     wcols = []
     if weighting_columns:
         for wcol in weighting_columns:
             all_other_num_cols: Any = columns_selector - cs.by_name(wcol)
-            weighted_mean = ((all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
+            raw_weighted_mean = (all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()
+            weighted_mean = clean_numeric(raw_weighted_mean, nans_filler=nans_filler).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
             # !TODO causes error for now
             # weighted_std = ((pl.col(wcol) * (all_other_num_cols - weighted_mean) ** 2).sum() / pl.col(wcol).sum()).sqrt().name.suffix(f"_wstdby_{wcol}")
@@ -725,6 +734,18 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
     return mi  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
+_BIN_DTYPE_MAX: Dict[Any, int] = {
+    pl.Int8: 127,
+    pl.Int16: 32767,
+    pl.Int32: 2147483647,
+    pl.Int64: 9223372036854775807,
+    pl.UInt8: 255,
+    pl.UInt16: 65535,
+    pl.UInt32: 4294967295,
+    pl.UInt64: 18446744073709551615,
+}
+
+
 def bin_numerical_columns(
     df: pl.DataFrame,
     target_columns: list,
@@ -739,7 +760,7 @@ def bin_numerical_columns(
     fill_nulls: bool = True,
     fill_nans: bool = True,
     max_log_text_width: int = 300,
-    verbose: int = 1,
+    verbose: bool = False,
 ) -> Tuple[pl.DataFrame, Optional[pl.DataFrame], dict, list, dict]:
     """Computes min, max, and quantiles of all numerical columns in one go.
     Decides which are outliers and adds clipping.
@@ -748,6 +769,17 @@ def bin_numerical_columns(
     """
     if exclude_columns is None:
         exclude_columns = []
+
+    needed_max = num_bins - 1
+    if bin_dtype in _BIN_DTYPE_MAX and needed_max > _BIN_DTYPE_MAX[bin_dtype]:
+        for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64):
+            if needed_max <= _BIN_DTYPE_MAX[candidate]:
+                if verbose:
+                    logger.warning("bin_dtype=%s can't hold num_bins-1=%s; auto-widening to %s", bin_dtype, needed_max, candidate)
+                bin_dtype = candidate
+                break
+        else:
+            raise ValueError(f"num_bins={num_bins} exceeds the range even of Int64 bin_dtype")
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
@@ -961,7 +993,7 @@ def bin_numerical_columns(
     return bins, binned_targets, public_clips, columns_to_drop, stats
 
 
-def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: int = 1) -> pl.DataFrame:
+def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: bool = False) -> pl.DataFrame:
     """Drop numeric columns whose min and max are equal (or missing/NaN), i.e. columns with no informative variation.
 
     Unlike ``pandaslib.frames.remove_constant_columns`` (the conceptually equivalent pandas
@@ -970,6 +1002,9 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
     You must capture the return value (``df = drop_constant_columns(df)``); porting a
     `remove_constant_columns(df)`-style call-and-discard from the pandas idiom silently leaves
     the constant columns in place with no error or warning.
+
+    Also importable as :func:`remove_constant_columns` (a plain alias, same function) for
+    grep/discoverability against its pandas sibling's name.
     """
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
@@ -1007,6 +1042,9 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
         df = df.drop(dead_columns)
 
     return df
+
+
+remove_constant_columns = drop_constant_columns  # discoverability alias, see drop_constant_columns's own docstring
 
 
 def polars_df_info(df: pl.DataFrame) -> str:

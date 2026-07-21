@@ -3,6 +3,8 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
+import threading
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ from pyutilz.core.pythonlib import ensure_installed
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any, Dict, Iterable, Optional, Union, cast
 import json
 import pandas as pd
 
@@ -83,7 +85,6 @@ PAGE_SIZE: int = 1_000_000
 db_flavor: Optional[str] = None
 conn: Optional[Any] = None
 cur: Optional[Any] = None
-cursors: Dict[str, Any] = {}
 db_name: Optional[str] = None
 db_host: Optional[str] = None
 db_port: Optional[int] = None
@@ -92,6 +93,23 @@ username: Optional[str] = None
 pwd: Optional[str] = None
 init_params_fn: Optional[Any] = None
 db_sslmode: Optional[str] = None
+
+# Per-thread cursor cache (regression fix, 2026-07-21 audit round 2): psycopg2 cursors are NOT
+# safe to share across threads -- only the underlying connection (`conn`, still module-global) is.
+# The cache used to be one shared module-global dict, so two threads calling e.g. safe_execute()
+# concurrently could interleave onto the SAME cursor object: thread B's execute() could land
+# between thread A's own execute() and fetchall(), so thread A silently received thread B's query
+# results. Each thread now gets its own independent cache, keyed the same way (by cursor_type).
+_thread_local = threading.local()
+
+
+def _get_thread_cursors() -> Dict[str, Any]:
+    """Return the CALLING thread's own cursor cache (see module-level comment above)."""
+    if not hasattr(_thread_local, "cursors"):
+        _thread_local.cursors = {}
+    return cast(Dict[str, Any], _thread_local.cursors)
+
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # sqlalchemy tricks
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -157,7 +175,7 @@ def connect_to_db(
     against); this docstring exists so the gap is discoverable up front instead of via a
     confusing assert deep in an unrelated helper.
     """
-    global db_flavor, conn, cur, cursors, conn_alchemy
+    global db_flavor, conn, cur, conn_alchemy
     global db_name, db_host, db_port, db_schema, username, pwd, init_params_fn, db_sslmode
     db_flavor = m_db_flavor
     db_name = m_db_name
@@ -201,15 +219,18 @@ def connect_to_db(
                 conn_alchemy = sqlalchemy.create_engine(conn_string, paramstyle="format")
                 # https://stackoverflow.com/questions/25917741/sqlalchemy-with-postgres-insert-into-a-table-whose-columns-have-parentheses
 
-                if "cursors" in globals():
-                    del cursors
-                cursors = dict()
+                # Only clears THIS (the connecting) thread's own cursor cache -- any other thread
+                # already holding cached cursors against a stale/prior connection keeps them
+                # until it next touches get_cursor() and (if the old connection is truly dead)
+                # gets a real error from psycopg2 rather than a silent cross-thread mix-up.
+                thread_cursors = _get_thread_cursors()
+                thread_cursors.clear()
 
                 cur = conn.cursor()
 
                 # if db_schema: cur.execute(f"set search_path to '{db_schema}'")
 
-                cursors["cursor"] = cur
+                thread_cursors["cursor"] = cur
             elif db_flavor == "mysql":
                 #!pip install pymysql
                 import pymysql
@@ -243,9 +264,9 @@ def get_cursor_type(cursor_factory: Any, cursor_name: Optional[str] = None) -> s
 
 
 def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> Any:
-    global cursors
-    if cursor_type in cursors and "_named" not in cursor_type:
-        cur = cursors[cursor_type]
+    thread_cursors = _get_thread_cursors()
+    if cursor_type in thread_cursors and "_named" not in cursor_type:
+        cur = thread_cursors[cursor_type]
     else:
         assert conn is not None, "get_cursor() requires connect_to_db() to have been called first"
         cur = conn.cursor(cursor_factory=cursor_factory, name=cursor_name, withhold=(False if cursor_name is None else True))
@@ -253,7 +274,7 @@ def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Option
             if str(itersize).isnumeric():
                 cur.itersize = itersize
         if "_named" not in cursor_type:
-            cursors[cursor_type] = cur
+            thread_cursors[cursor_type] = cur
     return cur
 
 
@@ -275,30 +296,40 @@ def basic_db_execute(
     page_size: int = PAGE_SIZE,
     max_retries: int = 5,
 ):
-    global cur, cursors
+    global cur
 
     cursor_type = get_cursor_type(cursor_factory, cursor_name)
+    stmt_preview = str(statement)[:500]
 
     # Add circuit breaker to prevent infinite retry loops
     retry_count = 0
     while retry_count < max_retries:
+        # `local_cur` (a genuine Python local, NOT the module-global `cur`) is what the
+        # execute()/fetchall() critical section below operates on -- regression fix (2026-07-21
+        # audit round 2): with `global cur` covering this whole function, a concurrent thread's
+        # own `cur = get_cursor(...)` reassignment could swap the module-global `cur` out from
+        # under this thread BETWEEN its own execute() and fetchall() calls, silently handing this
+        # thread another thread's cursor/result buffer. `cur` is still updated below (after the
+        # critical section completes) purely as a best-effort "last cursor used" introspection
+        # convenience for external callers/tests, never read back for this function's own logic.
+        local_cur = None
         try:
-            cur = get_cursor(cursor_type=cursor_type, cursor_factory=cursor_factory, cursor_name=cursor_name, itersize=itersize)
+            local_cur = get_cursor(cursor_type=cursor_type, cursor_factory=cursor_factory, cursor_name=cursor_name, itersize=itersize)
 
             if ex_type == "execute":
-                cur.execute(statement, data)
+                local_cur.execute(statement, data)
             elif ex_type == "execute_values":
-                execute_values(cur, statement, data, page_size=page_size)
+                execute_values(local_cur, statement, data, page_size=page_size)
 
             # if '_named' not in cursor_type:
             # if auto_commit: conn.commit()
 
-        except (OperationalError, InterfaceError) as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
+        except (OperationalError, InterfaceError) as e:
             retry_count += 1
             if retry_count >= max_retries:
-                logger.error("Max retries (%s) exceeded for database operation", max_retries)
+                logger.error("Max retries (%s) exceeded for database operation (statement=%s)", max_retries, stmt_preview)
                 raise
-            logger.exception(e)
+            logger.exception("Database operation failed (statement=%s): %s", stmt_preview, e)
             logger.info("Retrying database operation (%s/%s)...", retry_count, max_retries)
             sleep(1)
             connect_to_db(
@@ -314,19 +345,24 @@ def basic_db_execute(
             )
             continue  # Retry the operation
         except DuplicateTable as e:
-            logger.warning(e)
+            logger.warning("DuplicateTable (statement=%s): %s", stmt_preview, e)
             # conn.commit()
             return
         except InternalError as e:
-            logger.exception(e)
+            logger.exception("InternalError (statement=%s): %s", stmt_preview, e)
             # logger.warning("rolling back operation...")
             # conn.rollback()
             # InternalError indicates real corruption/state issues; do not silently
             # fall through to an implicit None (indistinguishable from "no rows") or
             # spin forever in the retry loop - propagate it to the caller.
+            if cursor_name is not None and local_cur is not None:
+                try:
+                    local_cur.close()
+                except Exception as close_exc:
+                    logger.exception(close_exc)
             raise
         except Exception as e:
-            logger.exception(e)
+            logger.exception("Database operation failed (statement=%s): %s", stmt_preview, e)
             if "cursor" in str(e) and "already exists" in str(e):
                 # Regression fix: this branch previously never touched retry_count, so the
                 # circuit breaker documented at the top of this function ("prevent infinite
@@ -339,24 +375,40 @@ def basic_db_execute(
                 # nothing is closed that this function can't positively identify.
                 retry_count += 1
                 if retry_count >= max_retries:
-                    logger.error("Max retries (%s) exceeded for database operation (cursor collision)", max_retries)
+                    logger.error("Max retries (%s) exceeded for database operation (cursor collision, statement=%s)", max_retries, stmt_preview)
                     raise
-                cursors.pop(cursor_type, None)
+                _get_thread_cursors().pop(cursor_type, None)
                 sleep(1)
                 continue
             else:
+                if cursor_name is not None and local_cur is not None:
+                    try:
+                        local_cur.close()
+                    except Exception as close_exc:
+                        logger.exception(close_exc)
                 raise
         else:
-            if cur.description is not None:
+            cur = local_cur
+            # A named/server-side cursor (withhold=True) corresponds to a real Postgres
+            # `DECLARE ... CURSOR ... WITH HOLD`, kept alive across commits until explicitly
+            # closed. When this function isn't handing the cursor back to the caller
+            # (return_cursor=False), IT is the only thing that can still close it -- otherwise
+            # the server-side cursor leaks for the lifetime of the connection.
+            if local_cur.description is not None:
                 # cols_names = [desc[0] for desc in cur.description]
                 if return_cursor:
-                    return cur
+                    return local_cur
                 else:
-                    return cur.fetchall()
+                    rows = local_cur.fetchall()
+                    if cursor_name is not None:
+                        local_cur.close()
+                    return rows
             else:
                 if return_cursor:
-                    return cur
+                    return local_cur
                 else:
+                    if cursor_name is not None:
+                        local_cur.close()
                     return []
 
 
@@ -515,6 +567,9 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
         last_db_settings_read_at = datetime.now(timezone.utc)
 
 
+_LOG_TO_DB_KNOWN_LEVELS = frozenset({"info", "warning", "warn", "error", "critical", "fatal"})
+
+
 def log_to_db(message, details=None, more_details=None, level="info", append_severity=False, application=None, table_name="logs"):
     import inspect
 
@@ -523,6 +578,14 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
     cError = 3
 
     if level:
+        if level not in _LOG_TO_DB_KNOWN_LEVELS:
+            # Regression fix: an unrecognized level (typo, case mismatch, a caller-invented
+            # string like "critical" before it was added to the map below) used to fall through
+            # to the `else` branch SILENTLY -- logged and persisted as plain "info" severity with
+            # no signal the requested level wasn't honored. Now at least a warning marks the
+            # mismatch, even though the message itself still degrades to info (log_to_db must not
+            # raise over a bad level string and abort the caller's actual operation).
+            logger.warning("log_to_db: unrecognized level %r, treating as 'info' (known levels: %s)", level, sorted(_LOG_TO_DB_KNOWN_LEVELS))
         s = message
         if details:
             if more_details:
@@ -538,7 +601,7 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
             severity = cWarning
             if append_severity:
                 message = "[Warning] " + message
-        elif level == "error":
+        elif level in ("error", "critical", "fatal"):
             logger.error(s)
             severity = cError
             if append_severity:
@@ -580,28 +643,73 @@ def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "publ
         return res[0][0]
 
 
-def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdFieldName: Optional[str] = "id", sAutocreateIdTypeName: Optional[str] = None):
+def ensure_pg_table_exists(
+    table: str, key_field_name: Optional[str] = "name", id_field_name: Optional[str] = "id", autocreate_id_type_name: Optional[str] = None
+) -> None:
+    """Create ``table`` (with ``key_field_name``/``id_field_name`` columns) if it doesn't exist yet.
+
+    Also importable as :func:`EnsurePgTableExists` -- a deprecated alias, same function, kept for
+    backward compatibility with the legacy PascalCase/Hungarian-notation name.
+    """
     # Validate identifiers to prevent SQL injection
-    validate_sql_identifier(sTable)
-    validate_sql_identifier(sKeyFieldName)
-    validate_sql_identifier(sIdFieldName)
-    if not check_if_pg_table_exists(sTable):
-        if sAutocreateIdTypeName:
-            if sAutocreateIdTypeName.lower() not in ("smallserial serial bigserial uuid".split()):
-                # sAutocreateIdTypeName is spliced verbatim into the CREATE TABLE statement below with no other
+    validate_sql_identifier(table)
+    validate_sql_identifier(key_field_name)
+    validate_sql_identifier(id_field_name)
+    if not check_if_pg_table_exists(table):
+        if autocreate_id_type_name:
+            if autocreate_id_type_name.lower() not in ("smallserial serial bigserial uuid".split()):
+                # autocreate_id_type_name is spliced verbatim into the CREATE TABLE statement below with no other
                 # validation, so under `python -O` a skipped assert would let arbitrary SQL be injected via this arg.
-                raise ValueError(f"Invalid sAutocreateIdTypeName: {sAutocreateIdTypeName!r}")
+                raise ValueError(f"Invalid autocreate_id_type_name: {autocreate_id_type_name!r}")
             # Regression fix: the validation above (2 lines up) correctly lowercases before
-            # comparing against the whitelist, but this comparison didn't -- sAutocreateIdTypeName="UUID"
+            # comparing against the whitelist, but this comparison didn't -- autocreate_id_type_name="UUID"
             # passed validation ("UUID".lower() == "uuid" is in the whitelist) but silently failed
             # THIS check ("UUID" == "uuid" is False), so `default_gen` stayed empty and the
             # generated DDL had no `default gen_random_uuid()` despite auto-generation having
             # been explicitly requested -- any insert omitting the id column (the whole point of
-            # sAutocreateIdTypeName) would then fail with a NOT NULL constraint violation.
-            default_gen = " default gen_random_uuid()" if sAutocreateIdTypeName.lower() == "uuid" else ""
+            # autocreate_id_type_name) would then fail with a NOT NULL constraint violation.
+            default_gen = " default gen_random_uuid()" if autocreate_id_type_name.lower() == "uuid" else ""
             safe_execute(
-                f"create table {sTable} ({sIdFieldName} {sAutocreateIdTypeName} primary key {default_gen},{sKeyFieldName} text, added_at timestamp without time zone DEFAULT (now() at time zone 'utc'))"
+                f"create table {table} ({id_field_name} {autocreate_id_type_name} primary key {default_gen},{key_field_name} text, added_at timestamp without time zone DEFAULT (now() at time zone 'utc'))"
             )
+
+
+def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdFieldName: Optional[str] = "id", sAutocreateIdTypeName: Optional[str] = None):
+    """Deprecated alias for :func:`ensure_pg_table_exists` -- kept for backward compatibility."""
+    warnings.warn(
+        "EnsurePgTableExists is deprecated and will be removed in a future release; use ensure_pg_table_exists instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return ensure_pg_table_exists(table=sTable, key_field_name=sKeyFieldName, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName)
+
+
+def read_table_into_dict(
+    dict_enums: dict,
+    table: str,
+    key_field_name: Optional[str] = "name",
+    condition: Optional[str] = "",
+    id_field_name: Optional[str] = "id",
+    autocreate_id_type_name: Optional[str] = None,
+) -> None:
+    """
+    Reads id->value mapping into a dictionary
+    if autocreate_id_type_name is specified, if table does not exist, it gets created with specified key type
+
+    Also importable as :func:`ReadTableIntoDic` -- a deprecated alias, same function, kept for
+    backward compatibility with the legacy PascalCase/Hungarian-notation name.
+    """
+
+    dict_enums.clear()
+    ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
+    # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
+    res = safe_execute(f"select {id_field_name},{key_field_name} from {table} {condition}")  # nosec B608
+    for rs in res:
+        if rs[1] is not None:
+            if rs[0] is not None:
+                the_id = rs[0]
+                key = rs[1]
+                dict_enums[key] = the_id
 
 
 def ReadTableIntoDic(
@@ -612,21 +720,46 @@ def ReadTableIntoDic(
     sIdFieldName: Optional[str] = "id",
     sAutocreateIdTypeName: Optional[str] = None,
 ) -> None:
-    """
-    Reads id->value mapping into a dictionary
-    if sAutocreateIdTypeName is specified, if table does not exist, it gets created with specified key type
+    """Deprecated alias for :func:`read_table_into_dict` -- kept for backward compatibility."""
+    warnings.warn(
+        "ReadTableIntoDic is deprecated and will be removed in a future release; use read_table_into_dict instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return read_table_into_dict(
+        dict_enums=dicEnums, table=sTable, key_field_name=sKeyFieldName, condition=sCondition, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName
+    )
+
+
+def read_table_into_dict_reversed(
+    dict_enums: dict,
+    table: str,
+    key_field_name: Optional[str] = "name",
+    condition: Optional[str] = "",
+    id_field_name: Optional[str] = "id",
+    autocreate_id_type_name: Optional[str] = None,
+) -> None:
+    """Reads value->id mapping into a dictionary.
+
+    WARNING: condition is spliced verbatim into the SQL statement (raw WHERE fragment,
+    unvalidated). This function executes raw, unvalidated SQL - condition must NEVER
+    be built from external/user-controlled input directly; only pass trusted, hard-coded
+    or internally-constructed condition strings.
+
+    Also importable as :func:`ReadTableIntoDicReversed` -- a deprecated alias, same function,
+    kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
 
-    dicEnums.clear()
-    EnsurePgTableExists(sTable=sTable, sKeyFieldName=sKeyFieldName, sIdFieldName=sIdFieldName, sAutocreateIdTypeName=sAutocreateIdTypeName)
-    # sTable/sKeyFieldName/sIdFieldName validated inside EnsurePgTableExists above; sCondition is an accepted raw WHERE fragment
-    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")  # nosec B608
+    dict_enums.clear()
+    ensure_pg_table_exists(table=table, key_field_name=key_field_name, id_field_name=id_field_name, autocreate_id_type_name=autocreate_id_type_name)
+    # table/key_field_name/id_field_name validated inside ensure_pg_table_exists above; condition is an accepted raw WHERE fragment
+    res = safe_execute(f"select {id_field_name},{key_field_name} from {table} {condition}")  # nosec B608
     for rs in res:
         if rs[1] is not None:
             if rs[0] is not None:
                 the_id = rs[0]
                 key = rs[1]
-                dicEnums[key] = the_id
+                dict_enums[the_id] = key
 
 
 def ReadTableIntoDicReversed(
@@ -637,24 +770,15 @@ def ReadTableIntoDicReversed(
     sIdFieldName: Optional[str] = "id",
     sAutocreateIdTypeName: Optional[str] = None,
 ) -> None:
-    """Reads value->id mapping into a dictionary.
-
-    WARNING: sCondition is spliced verbatim into the SQL statement (raw WHERE fragment,
-    unvalidated). This function executes raw, unvalidated SQL - sCondition must NEVER
-    be built from external/user-controlled input directly; only pass trusted, hard-coded
-    or internally-constructed condition strings.
-    """
-
-    dicEnums.clear()
-    EnsurePgTableExists(sTable=sTable, sKeyFieldName=sKeyFieldName, sIdFieldName=sIdFieldName, sAutocreateIdTypeName=sAutocreateIdTypeName)
-    # sTable/sKeyFieldName/sIdFieldName validated inside EnsurePgTableExists above; sCondition is an accepted raw WHERE fragment
-    res = safe_execute(f"select {sIdFieldName},{sKeyFieldName} from {sTable} {sCondition}")  # nosec B608
-    for rs in res:
-        if rs[1] is not None:
-            if rs[0] is not None:
-                the_id = rs[0]
-                key = rs[1]
-                dicEnums[the_id] = key
+    """Deprecated alias for :func:`read_table_into_dict_reversed` -- kept for backward compatibility."""
+    warnings.warn(
+        "ReadTableIntoDicReversed is deprecated and will be removed in a future release; use read_table_into_dict_reversed instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return read_table_into_dict_reversed(
+        dict_enums=dicEnums, table=sTable, key_field_name=sKeyFieldName, condition=sCondition, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName
+    )
 
 
 def read_unique_table_field(table_name: str, field_name: str, container: Union[set, dict], clear: bool = True, placeholder_value=None) -> Union[set, dict]:
@@ -672,6 +796,72 @@ def read_unique_table_field(table_name: str, field_name: str, container: Union[s
     return container
 
 
+def get_id_by_key_field_and_insert_if_needed(
+    dict_enums: dict,
+    table: str,
+    key_field_value: str,
+    key_field_name: Optional[str] = "name",
+    key_is_not_string: Optional[bool] = False,
+    alternate_fields_names: Optional[str] = "",
+    alternate_fields_values: Optional[str] = "",
+    unique_constraint_fields: Optional[str] = "",
+    use_alternate_fields_only: Optional[bool] = False,
+    id_field_name: Optional[str] = "id",
+    add_updated_at_timestamp: Optional[str] = None,
+) -> str:
+    """Look up ``key_field_value``'s id in ``dict_enums`` (or the DB), inserting a new row if needed.
+
+    Also importable as :func:`GetIdByKeyFieldAndInsertIfNeeded` -- a deprecated alias, same
+    function, kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
+    """
+
+    if key_field_value == "null":
+        return "null"
+
+    if key_field_value in dict_enums:
+        return dict_enums[key_field_value]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    else:
+        key_field_name = key_field_name if key_field_name is not None else "name"
+        alternate_fields_names = alternate_fields_names if alternate_fields_names is not None else ""
+        unique_constraint_fields = unique_constraint_fields if unique_constraint_fields is not None else ""
+        id_field_name = id_field_name if id_field_name is not None else "id"
+
+        # Validate identifiers to prevent SQL injection
+        validate_sql_identifier(table)
+        validate_sql_identifier(key_field_name)
+        validate_sql_identifier(id_field_name)
+        for _name in [n for n in alternate_fields_names.split(",") if n]:
+            validate_sql_identifier(_name)
+        if unique_constraint_fields == "":
+            unique_constraint_fields = key_field_name
+        for _name in [n for n in unique_constraint_fields.split(",") if n]:
+            validate_sql_identifier(_name)
+
+        if key_is_not_string:
+            Data = key_field_value
+        else:
+            Data = u(key_field_value)
+        # All identifiers below (table, key_field_name, id_field_name, alternate_fields_names, unique_constraint_fields) are validated above
+        if len(alternate_fields_names) > 0:
+            if not use_alternate_fields_only:
+                rs = safe_execute(
+                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values ({Data},{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                )
+            else:
+                rs = safe_execute(
+                    f"insert into {table} ({alternate_fields_names}) values ({alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(alternate_fields_names, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                )
+        else:
+            rs = safe_execute(
+                f"insert into {table} ({key_field_name}) values ({Data}) on conflict ({unique_constraint_fields}) do update set {MakeSetExcludedClause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+            )
+
+        the_id = rs[0][0]
+        dict_enums[key_field_value] = the_id
+
+        return the_id  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
+
 def GetIdByKeyFieldAndInsertIfNeeded(
     dicEnums: dict,
     sTable: str,
@@ -685,52 +875,25 @@ def GetIdByKeyFieldAndInsertIfNeeded(
     sIdFieldName: Optional[str] = "id",
     bAddUpdatedAtTimestamp: Optional[str] = None,
 ) -> str:
-
-    if sKeyFieldValue == "null":
-        return "null"
-
-    if sKeyFieldValue in dicEnums:
-        return dicEnums[sKeyFieldValue]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-    else:
-        sKeyFieldName = sKeyFieldName if sKeyFieldName is not None else "name"
-        sAlternateFieldsNames = sAlternateFieldsNames if sAlternateFieldsNames is not None else ""
-        sUniqueConstraintFields = sUniqueConstraintFields if sUniqueConstraintFields is not None else ""
-        sIdFieldName = sIdFieldName if sIdFieldName is not None else "id"
-
-        # Validate identifiers to prevent SQL injection
-        validate_sql_identifier(sTable)
-        validate_sql_identifier(sKeyFieldName)
-        validate_sql_identifier(sIdFieldName)
-        for _name in [n for n in sAlternateFieldsNames.split(",") if n]:
-            validate_sql_identifier(_name)
-        if sUniqueConstraintFields == "":
-            sUniqueConstraintFields = sKeyFieldName
-        for _name in [n for n in sUniqueConstraintFields.split(",") if n]:
-            validate_sql_identifier(_name)
-
-        if bKeyIsNotString:
-            Data = sKeyFieldValue
-        else:
-            Data = u(sKeyFieldValue)
-        # All identifiers below (sTable, sKeyFieldName, sIdFieldName, sAlternateFieldsNames, sUniqueConstraintFields) are validated above
-        if len(sAlternateFieldsNames) > 0:
-            if not bUseAlternateFieldsOnly:
-                rs = safe_execute(
-                    f"insert into {sTable} ({sKeyFieldName} , {sAlternateFieldsNames}) values ({Data},{sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
-                )
-            else:
-                rs = safe_execute(
-                    f"insert into {sTable} ({sAlternateFieldsNames}) values ({sAlternateFieldsValues}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sAlternateFieldsNames, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
-                )
-        else:
-            rs = safe_execute(
-                f"insert into {sTable} ({sKeyFieldName}) values ({Data}) on conflict ({sUniqueConstraintFields}) do update set {MakeSetExcludedClause(sKeyFieldName, bAddUpdatedAtTimestamp)} returning {sIdFieldName}"  # nosec B608
-            )
-
-        the_id = rs[0][0]
-        dicEnums[sKeyFieldValue] = the_id
-
-        return the_id  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    """Deprecated alias for :func:`get_id_by_key_field_and_insert_if_needed` -- kept for backward compatibility."""
+    warnings.warn(
+        "GetIdByKeyFieldAndInsertIfNeeded is deprecated and will be removed in a future release; use get_id_by_key_field_and_insert_if_needed instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_id_by_key_field_and_insert_if_needed(
+        dict_enums=dicEnums,
+        table=sTable,
+        key_field_value=sKeyFieldValue,
+        key_field_name=sKeyFieldName,
+        key_is_not_string=bKeyIsNotString,
+        alternate_fields_names=sAlternateFieldsNames,
+        alternate_fields_values=sAlternateFieldsValues,
+        unique_constraint_fields=sUniqueConstraintFields,
+        use_alternate_fields_only=bUseAlternateFieldsOnly,
+        id_field_name=sIdFieldName,
+        add_updated_at_timestamp=bAddUpdatedAtTimestamp,
+    )
 
 
 def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):

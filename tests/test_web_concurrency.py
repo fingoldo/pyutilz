@@ -137,4 +137,74 @@ def test_get_new_session_concurrent_no_corruption():
 
     assert not errors, f"Concurrent get_new_session() raised: {errors}"
     assert web_module.num_ip_queries == 0
+
+
+def test_get_new_session_closes_previous_session():
+    """Regression (2026-07-21 audit round 2): the previous requests.Session (owning its own
+    urllib3 connection pool) was dropped with no .close() on every rotation, leaking open
+    sockets/connection-pool state without bound over a long-running scraper."""
+    with patch.object(web_module, "requests") as mock_requests:
+        mock_requests.Session.side_effect = _fake_session
+
+        web_module.get_new_session(b_random_ua=False, b_use_proxy=False)
+        first_sess = web_module.sess
+
+        web_module.get_new_session(b_random_ua=False, b_use_proxy=False)
+
+    first_sess.close.assert_called_once()
+
+
+def test_init_vars_closes_current_session():
+    """Regression: init_vars() (called by web.connect(), including FileMaker's two-calls-per-
+    authentication pattern) used to drop the current Session with no .close() either."""
+    with patch.object(web_module, "requests") as mock_requests:
+        mock_requests.Session.side_effect = _fake_session
+        web_module.get_new_session(b_random_ua=False, b_use_proxy=False)
+
+    current_sess = web_module.sess
+    web_module.init_vars()
+
+    current_sess.close.assert_called_once()
+
+
+def test_get_url_concurrent_proxy_rotation_on_error_no_corruption():
+    """Regression (2026-07-21 audit round 2, HIGH): the except-branch's `proxies =
+    get_new_smartproxy(...)` assignment used to write the module-global directly with no lock,
+    unlike every other write to `proxies` in this file -- two threads hitting a bad-proxy
+    exception around the same time could race, and whichever assignment landed last silently
+    discarded the other thread's proxy rotation. Asserts the final `proxies` value is a
+    genuine (non-torn) result from exactly one thread's get_new_smartproxy() call."""
+    n_threads = 8
+    errors = []
+    web_module.proxy_server = "server.example.invalid"
+    web_module.proxy_user = "user"
+    web_module.proxy_pass = "pass"
+
+    def fake_get_new_smartproxy(proxy_user, proxy_pass, proxy_server, *args, **kwargs):
+        # Tag the returned proxy dict with the calling thread's identity so a torn/mixed
+        # result would be detectable (e.g. one field from thread A, another from thread B).
+        tid = threading.get_ident()
+        return {"https": f"http://proxy-{tid}:1"}
+
+    with patch.object(web_module, "requests") as mock_requests, patch.object(web_module, "get_new_smartproxy", side_effect=fake_get_new_smartproxy):
+        session = _fake_session()
+        session.get.side_effect = ConnectionError("proxy connection broken")
+        mock_requests.Session.side_effect = lambda: session
+
+        def worker():
+            try:
+                web_module.get_url("http://example.invalid/", max_retries=1, b_use_proxy=True, verbose=False)
+            except Exception as e:  # pragma: no cover - failure path
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+    assert not errors, f"Concurrent get_url() raised: {errors}"
+    # The final `proxies` dict must be a complete, single-thread's dict -- not a torn mix.
+    assert web_module.proxies is not None
+    assert web_module.proxies["https"].startswith("http://proxy-")
     assert web_module.sess is not None

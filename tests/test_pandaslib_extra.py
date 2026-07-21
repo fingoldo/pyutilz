@@ -120,6 +120,30 @@ class TestShareDataframe:
         shared = share_dataframe(df)
         assert shared.shape == df.shape
 
+    def test_int64_above_2_53_survives_round_trip(self):
+        """Regression: forcing every column through a shared float64 buffer silently corrupted
+        int64 values above 2**53 (float64's mantissa can't represent them exactly)."""
+        df = pd.DataFrame({"id": np.array([9007199254740993, 9007199254740995], dtype=np.int64)})
+        shared = share_dataframe(df)
+        assert shared["id"].dtype == np.int64
+        assert shared["id"].tolist() == [9007199254740993, 9007199254740995]
+
+    def test_mixed_dtypes_round_trip_and_preserve_column_order(self):
+        df = pd.DataFrame(
+            {
+                "f": [1.5, 2.5, 3.5],
+                "i32": np.array([1, 2, 3], dtype=np.int32),
+                "i64": np.array([9007199254740993, 1, 2], dtype=np.int64),
+                "b": [True, False, True],
+            }
+        )
+        shared = share_dataframe(df)
+        assert list(shared.columns) == list(df.columns)
+        assert shared["i64"].tolist() == [9007199254740993, 1, 2]
+        assert shared["i32"].dtype == np.int32
+        assert shared["f"].tolist() == [1.5, 2.5, 3.5]
+        assert shared["b"].tolist() == [True, False, True]
+
 
 # ---------------------------------------------------------------------------
 # group_columns_by_dtype
@@ -167,6 +191,15 @@ class TestGetSuspiciouslyConstantColumns:
         result = get_suspiciously_constant_columns(df)
         # Should not raise; falls back to per-column check
         assert isinstance(result, list)
+
+    def test_callable_by_keyword_df_matching_frames_py_convention(self):
+        """Regression: this function used to name its parameter `ref_df`, inconsistent with
+        every sibling in frames.py that uses `df` -- a caller reaching for it by keyword after
+        calling a sibling with df=... got a TypeError."""
+        df = pd.DataFrame({"a": [1, 1, 1], "b": [1, 2, 3]})
+        result = get_suspiciously_constant_columns(df=df)
+        assert "a" in result
+        assert "b" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -315,10 +348,24 @@ class TestOptimizeDtypsBranches:
 class TestPrefixizeColumnsInplace:
     def test_inplace_returns_mapping(self):
         df = pd.DataFrame({"a": [1], "b": [2]})
-        result = prefixize_columns(df, "pfx", inplace=True)
-        assert isinstance(result, dict)
+        result, columns = prefixize_columns(df, "pfx", inplace=True)
+        assert isinstance(columns, dict)
+        assert result is df
         assert "pfx_a" in df.columns
         assert "pfx_b" in df.columns
+
+    def test_inplace_and_not_inplace_return_the_same_shape(self):
+        """Regression: before the fix, inplace=True returned a bare dict and inplace=False
+        returned a bare DataFrame -- the return TYPE flipped based on the flag. Both must now
+        return the identical (DataFrame, dict) tuple shape."""
+        df1 = pd.DataFrame({"a": [1], "b": [2]})
+        df2 = pd.DataFrame({"a": [1], "b": [2]})
+        result_inplace = prefixize_columns(df1, "pfx", inplace=True)
+        result_not_inplace = prefixize_columns(df2, "pfx", inplace=False)
+        assert isinstance(result_inplace, tuple) and len(result_inplace) == 2
+        assert isinstance(result_not_inplace, tuple) and len(result_not_inplace) == 2
+        assert isinstance(result_inplace[0], pd.DataFrame) and isinstance(result_not_inplace[0], pd.DataFrame)
+        assert isinstance(result_inplace[1], dict) and isinstance(result_not_inplace[1], dict)
 
 
 # ---------------------------------------------------------------------------

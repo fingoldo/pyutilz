@@ -114,12 +114,22 @@ def _redact_headers(headers_dict: Optional[dict]) -> Optional[dict]:
 def init_vars():
     """Reset the module-level session state (session, IP-query counter, headers, proxies, timeout) to defaults."""
     global sess, num_ip_queries, template_headers, headers, proxies, timeout
+    # Regression fix: the old Session (a requests.Session owns a urllib3 connection pool --
+    # potentially several open keep-alive sockets) was previously just dropped here with no
+    # .close(), leaking its connection pool every time init_vars() runs (e.g. every
+    # web.connect() call, including FileMaker's two-calls-per-authentication pattern).
+    old_sess = sess
     sess = None
     num_ip_queries = 0
     template_headers = None
     headers = {}
     proxies = None
     timeout = 10
+    if old_sess is not None:
+        try:
+            old_sess.close()
+        except Exception as e:
+            logger.exception(e)
     logger.debug("Session cleared")
 
 
@@ -590,15 +600,20 @@ def get_url(
 
         except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             se = str(e)
-            if verbose:
-                logger.exception(e)
+            # Regression fix: this was the ONLY log statement for the exception, gated behind
+            # verbose=False (the default) -- every network exception across all max_retries
+            # attempts was completely silent, leaving only the generic "Could not get url"
+            # warning at the very end with no information about *why* (DNS/TLS/proxy-auth/
+            # timeout). verbose now controls only the extra report_params() request dump below;
+            # the fetch error itself is always logged.
+            logger.warning("get_url attempt %d/%d for %s failed: %s", n_retries, max_retries, url, e)
             se = se.lower()
             if "proxy" in se or "timed out" in se or "bad handshake" in se or "connection broken" in se or "sslerror" in se:
                 if b_use_proxy:
                     if proxy_server_snapshot:
                         if verbose:
                             logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
-                        proxies = get_new_smartproxy(
+                        new_proxies = get_new_smartproxy(
                             proxy_user_snapshot,
                             proxy_pass_snapshot,
                             proxy_server_snapshot,
@@ -611,6 +626,13 @@ def get_url(
                             proxy_port=proxy_port_snapshot,
                             proxy_type=proxy_type_snapshot if proxy_type_snapshot is not None else "http",
                         )
+                        # Regression fix: this assignment used to write straight to the module
+                        # global with no lock, unlike every OTHER write to `proxies` in this file
+                        # (see get_new_session/set_proxy) -- two threads hitting a bad proxy
+                        # around the same time could race here, and whichever assignment landed
+                        # last silently discarded the other thread's proxy rotation.
+                        with _state_lock:
+                            proxies = new_proxies
             # Regression fix: this loop's only unconditional sleep() previously sat OUTSIDE the
             # while loop (fires once, after the loop exits) -- any exception not already covered
             # by a sleep above (e.g. a bare ConnectionError whose message matches none of the
@@ -622,7 +644,12 @@ def get_url(
             if res.status_code not in (http.HTTPStatus.OK, http.HTTPStatus.PARTIAL_CONTENT):
                 if res.status_code in blocking_statuses:
                     logger.info("Error %s while getting %s", res.status_code, url)
-                    report_params(url, proxies, params, data, json, headers_to_use, timeout)
+                    # Regression fix: this used to read the module-global `proxies` directly,
+                    # unprotected by _state_lock, in a function that otherwise takes pains to
+                    # snapshot everything under the lock (see proxies_snapshot above) -- another
+                    # unprotected read alongside the unprotected writes fixed elsewhere in this
+                    # function.
+                    report_params(url, proxies_snapshot, params, data, json, headers_to_use, timeout)
                     handle_blocking(target, b_random_ua=b_random_ua, b_use_proxy=b_use_proxy)
                     was_blocked = True
                     if quit_on_blocking:
@@ -642,7 +669,7 @@ def get_url(
                             logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
                         if ratelimited_proxy_sleep_interval:
                             sleep(ratelimited_proxy_sleep_interval * random())  # nosec B311 - random jitter on a rate-limit backoff sleep, not security-sensitive
-                        proxies = get_new_smartproxy(
+                        new_proxies = get_new_smartproxy(
                             proxy_user_snapshot,
                             proxy_pass_snapshot,
                             proxy_server_snapshot,
@@ -655,6 +682,9 @@ def get_url(
                             proxy_port=proxy_port_snapshot,
                             proxy_type=proxy_type_snapshot if proxy_type_snapshot is not None else "http",
                         )
+                        # See the identical fix/comment on the except-branch's proxy rotation above.
+                        with _state_lock:
+                            proxies = new_proxies
                     else:
                         sleep(ratelimited_sleep_interval)
                 else:
@@ -719,11 +749,22 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
             )
 
     with _state_lock:
+        old_sess = sess
         sess = new_sess
         num_ip_queries = 0
         headers = new_headers
         local_proxy_user, local_proxy_pass, local_proxy_server = proxy_user, proxy_pass, proxy_server
         local_proxy_min_port, local_proxy_max_port, local_proxy_port, local_proxy_type = proxy_min_port, proxy_max_port, proxy_port, proxy_type
+
+    # Regression fix: the previous Session (owning its own urllib3 connection pool) was
+    # dropped here with no .close() -- get_new_session() is called routinely, by design, every
+    # time the per-session request budget is exhausted, so each rotation silently leaked open
+    # sockets/connection-pool state with no bound over a long-running scraper.
+    if old_sess is not None:
+        try:
+            old_sess.close()
+        except Exception as e:
+            logger.exception(e)
 
     logger.debug("Created new web session")
 

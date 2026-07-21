@@ -240,21 +240,22 @@ class TestGetSparseMemoryUsage:
         assert memory > 0
 
     def test_invalid_input(self):
-        """Test with non-matrix input"""
-        memory = get_sparse_memory_usage("not a matrix")
-        assert memory == -1
+        """Test with non-matrix input -- raises TypeError, matching get_df_memory_consumption's
+        convention for an unsupported container type (was a silent -1 sentinel before the fix)."""
+        with pytest.raises(TypeError):
+            get_sparse_memory_usage("not a matrix")
 
-        memory = get_sparse_memory_usage(None)
-        assert memory == -1
+        with pytest.raises(TypeError):
+            get_sparse_memory_usage(None)
 
-        memory = get_sparse_memory_usage(42)
-        assert memory == -1
+        with pytest.raises(TypeError):
+            get_sparse_memory_usage(42)
 
     def test_dense_array_input(self):
-        """Test with dense numpy array (should return -1)"""
+        """Test with dense numpy array (should raise TypeError)"""
         arr = np.array([[1, 2], [3, 4]])
-        memory = get_sparse_memory_usage(arr)
-        assert memory == -1
+        with pytest.raises(TypeError):
+            get_sparse_memory_usage(arr)
 
     def test_different_dtypes(self):
         """Test memory calculation with different data types"""
@@ -276,8 +277,8 @@ class TestGetSparseMemoryUsage:
 
     def test_broken_csr_matrix_logs_warning(self, caplog):
         """Test that a genuinely broken csr_matrix (missing expected attribute)
-        still returns -1, but distinguishably logs a warning (unlike the
-        unsupported-type case, which is silent)."""
+        still raises TypeError, but distinguishably logs a warning first (unlike the
+        unsupported-type case, which raises silently)."""
         data = np.array([1, 2, 3, 4], dtype=np.int32)
         indices = np.array([0, 2, 1, 0], dtype=np.int32)
         indptr = np.array([0, 2, 3, 4], dtype=np.int32)
@@ -285,10 +286,9 @@ class TestGetSparseMemoryUsage:
         matrix = csr_matrix((data, indices, indptr), shape=(3, 3))
         del matrix.__dict__["data"]
 
-        with caplog.at_level("WARNING"):
-            memory = get_sparse_memory_usage(matrix)
+        with caplog.at_level("WARNING"), pytest.raises(TypeError):
+            get_sparse_memory_usage(matrix)
 
-        assert memory == -1
         assert any("AttributeError" in record.message or "get_sparse_memory_usage" in record.message for record in caplog.records)
         assert len(caplog.records) > 0
 

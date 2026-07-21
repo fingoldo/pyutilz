@@ -124,3 +124,79 @@ class TestDegradesOnError:
         cache2 = _make_cache_with_remote(RaisingRemote())
         assert cache2.lookup("k", dtype="float64") is None  # degrades cleanly
         cache2.update("k", axes=["dtype"], regions=[{"backend": "b"}])  # no raise
+
+
+class TestRemoteFailureEscalation:
+    """Regression (2026-07-21 audit round 2, HIGH): every remote read/write failure used to log
+    at DEBUG unconditionally, with no escalation -- invisible by default (loggers are
+    WARNING-and-above when unconfigured). An expired credential / renamed bucket / blocked
+    network silently disabled cross-machine sharing forever with zero default-visible signal.
+    Failures now escalate to WARNING on the first failure after a run of successes, and
+    periodically thereafter; a subsequent success logs a recovery WARNING too.
+
+    Tests drive ``_log_remote_failure``/``_note_remote_success`` directly (one call = one
+    remote-op outcome) rather than through ``update()`` -- a single ``update()`` call touches
+    TWO internal remote call sites (a pre-write merge read in ``_remote_payload`` AND the write
+    in ``_persist_kernel``), which would make an exact per-call-count assertion depend on that
+    internal fan-out rather than on the escalation logic itself."""
+
+    def test_first_failure_escalates_to_warning(self, caplog):
+        cache = ktc.KernelTuningCache(in_memory=True)
+        with caplog.at_level("DEBUG"):
+            cache._log_remote_failure("read", RuntimeError("boom"))
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "1 consecutive failure" in warnings[0].getMessage()
+
+    def test_subsequent_failures_stay_at_debug_until_the_interval(self, caplog):
+        cache = ktc.KernelTuningCache(in_memory=True)
+        with caplog.at_level("DEBUG"):
+            for _ in range(19):  # #1 warns, #2-19 stay debug (interval=20 not yet reached)
+                cache._log_remote_failure("read", RuntimeError("boom"))
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        debugs = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert len(warnings) == 1
+        assert len(debugs) == 18
+
+    def test_periodic_reescalation_at_interval(self, caplog):
+        cache = ktc.KernelTuningCache(in_memory=True)
+        with caplog.at_level("DEBUG"):
+            for _ in range(20):  # #1 warns, #20 warns again (interval=20)
+                cache._log_remote_failure("read", RuntimeError("boom"))
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 2
+        assert "20 consecutive failure" in warnings[1].getMessage()
+
+    def test_recovery_after_failures_logs_warning_and_resets_counter(self, caplog):
+        cache = ktc.KernelTuningCache(in_memory=True)
+        with caplog.at_level("DEBUG"):
+            cache._log_remote_failure("read", RuntimeError("boom"))
+            cache._log_remote_failure("write", RuntimeError("boom"))
+        assert cache._remote_consecutive_failures == 2
+
+        with caplog.at_level("DEBUG"):
+            cache._note_remote_success()
+
+        assert cache._remote_consecutive_failures == 0
+        recovery = [r for r in caplog.records if r.levelname == "WARNING" and "recovered" in r.getMessage()]
+        assert len(recovery) == 1
+        assert "2 consecutive failure" in recovery[0].getMessage()
+
+    def test_success_without_prior_failures_does_not_log_recovery(self, caplog):
+        cache = ktc.KernelTuningCache(in_memory=True)
+        with caplog.at_level("DEBUG"):
+            cache._note_remote_success()
+        recovery = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(recovery) == 0
+
+
+class TestRemoteFailureEscalationIntegration:
+    """End-to-end smoke test: a genuinely raising remote backend surfaces at least one WARNING
+    through the real ``update()`` -> ``_persist_kernel()`` -> ``_remote_payload()`` call chain."""
+
+    def test_raising_remote_surfaces_at_least_one_warning(self, tmp_cache_dir, caplog):
+        cache = _make_cache_with_remote(RaisingRemote())
+        with caplog.at_level("DEBUG"):
+            cache.update("k", axes=["dtype"], regions=[{"backend": "b"}])
+        warnings = [r for r in caplog.records if r.levelname == "WARNING" and "remote" in r.getMessage()]
+        assert len(warnings) >= 1

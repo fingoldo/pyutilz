@@ -69,6 +69,27 @@ class TestKeysChangedEnough:
         # "a" changed a lot but key_contains="b" so ignored
         assert keys_changed_enough({"a": 999, "b": 200}, {"a": 1, "b": 200}, min_change_percent=10.0, key_contains="b") is False
 
+    def test_negative_baseline_large_swing_detected(self):
+        """Regression: dividing by un-abs'd prev_value made `change` negative for a negative
+        baseline, so `change >= min_change_percent` was always False no matter how large the
+        real swing was."""
+        from pyutilz.pythonlib import keys_changed_enough
+
+        assert keys_changed_enough({"a": 200}, {"a": -100}, min_change_percent=10.0) is True
+        assert keys_changed_enough({"a": -200}, {"a": -100}, min_change_percent=10.0) is True
+
+    def test_zero_to_zero_is_not_changed(self):
+        """Regression: the prev_value==0.0 branch returned True unconditionally, so a value
+        that stayed at exactly 0 was always reported as "changed enough"."""
+        from pyutilz.pythonlib import keys_changed_enough
+
+        assert keys_changed_enough({"x": 0}, {"x": 0}, min_change_percent=1.0, key_contains="x") is False
+
+    def test_zero_to_nonzero_is_changed(self):
+        from pyutilz.pythonlib import keys_changed_enough
+
+        assert keys_changed_enough({"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x") is True
+
 
 # ---------------------------------------------------------------------------
 # unpack_counter
@@ -193,6 +214,36 @@ class TestEnsureValidFilename:
 
         result = ensure_valid_filename("a" * 500, max_length=10)
         assert len(result) == 10
+
+    @pytest.mark.parametrize("reserved_name", [
+        "CON", "NUL", "AUX", "PRN", "COM1", "COM9", "LPT1", "LPT9",
+    ])
+    def test_bare_windows_reserved_device_names_replaced(self, reserved_name):
+        """Regression-coverage (2026-07-21 audit round 2, MEDIUM): the Windows
+        reserved-device-name regex was entirely untested for a BARE name (no extension) --
+        only ``"COM1.txt"`` (with an extension) was ever exercised."""
+        from pyutilz.pythonlib import ensure_valid_filename
+
+        assert ensure_valid_filename(reserved_name) == "_"
+
+    @pytest.mark.parametrize("reserved_name_lower", [
+        "con", "nul", "aux", "prn", "com1", "lpt1",
+    ])
+    def test_reserved_device_names_are_case_insensitive(self, reserved_name_lower):
+        from pyutilz.pythonlib import ensure_valid_filename
+
+        assert ensure_valid_filename(reserved_name_lower) == "_"
+
+    @pytest.mark.parametrize("passthrough_name", [
+        "COM10",  # negative-lookahead boundary: COM10 is NOT a reserved name (only COM1-9 are)
+        "COM1,",  # COM1 followed by a non-dot char -- the lookahead requires this to pass through
+    ])
+    def test_names_that_merely_resemble_reserved_names_pass_through_unchanged(self, passthrough_name):
+        """The documented negative-lookahead boundary: these must NOT be replaced, unlike a bare
+        reserved name or one followed by a dot (e.g. "COM1.txt")."""
+        from pyutilz.pythonlib import ensure_valid_filename
+
+        assert ensure_valid_filename(passthrough_name) == passthrough_name
 
 
 # ---------------------------------------------------------------------------

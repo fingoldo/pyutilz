@@ -257,6 +257,75 @@ class TestModelsCatalogueFetch:
         assert cat["openai/gpt-4o"]["pricing"]["prompt"] == "0.0000025"
 
 
+class TestModelsCatalogueTTL:
+    """Regression (2026-07-21 audit round 2, MEDIUM): the catalogue used to be fetched once and
+    cached indefinitely -- pricing/context-limit data went stale forever in a long-running
+    process. It now expires after ``_MODELS_CATALOGUE_TTL_SECONDS`` (default 300s, override via
+    ``PYUTILZ_OR_CATALOGUE_TTL_SECONDS``) and re-fetches automatically."""
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+        openrouter_module._MODELS_CATALOGUE_FETCHED_AT = float("inf")
+
+    def _fake_fetch_response(self, model_id="fresh/model"):
+        fake_resp = MagicMock()
+        fake_resp.json.return_value = {"data": [{"id": model_id, "pricing": {"prompt": "0"}}]}
+        fake_resp.raise_for_status = MagicMock()
+        return fake_resp
+
+    def test_within_ttl_does_not_refetch(self):
+        with patch("pyutilz.llm.openrouter_provider.httpx.get", return_value=self._fake_fetch_response()) as mock_get:
+            _fetch_models_catalogue()  # real fetch #1, stamps _MODELS_CATALOGUE_FETCHED_AT
+            _fetch_models_catalogue()  # within TTL -- must be a cache hit, no second HTTP call
+        assert mock_get.call_count == 1
+
+    def test_past_ttl_triggers_refetch(self):
+        with patch("pyutilz.llm.openrouter_provider.httpx.get", return_value=self._fake_fetch_response()) as mock_get:
+            _fetch_models_catalogue()
+        assert mock_get.call_count == 1
+
+        # Simulate TTL expiry without sleeping.
+        openrouter_module._MODELS_CATALOGUE_FETCHED_AT -= openrouter_module._MODELS_CATALOGUE_TTL_SECONDS + 1.0
+
+        with patch("pyutilz.llm.openrouter_provider.httpx.get", return_value=self._fake_fetch_response("fresh-2/model")) as mock_get2:
+            cat = _fetch_models_catalogue()
+        assert mock_get2.call_count == 1
+        assert "fresh-2/model" in cat
+
+    def test_manually_injected_catalogue_treated_as_fresh(self):
+        """A catalogue set directly (tests, or a caller pre-populating the cache) without going
+        through ``_fetch_models_catalogue`` must NOT be treated as stale just because
+        ``_MODELS_CATALOGUE_FETCHED_AT`` was never stamped -- this preserves every existing
+        test's ``openrouter_module._MODELS_CATALOGUE = {...}`` pattern."""
+        openrouter_module._MODELS_CATALOGUE = {"injected/model": {"id": "injected/model"}}
+        with patch("pyutilz.llm.openrouter_provider.httpx.get") as mock_get:
+            cat = _fetch_models_catalogue()
+        mock_get.assert_not_called()
+        assert cat == {"injected/model": {"id": "injected/model"}}
+
+    def test_ttl_env_var_override(self):
+        """Verify ``_MODELS_CATALOGUE_TTL_SECONDS`` reads ``PYUTILZ_OR_CATALOGUE_TTL_SECONDS``
+        at import time. Checked in a FRESH SUBPROCESS rather than ``importlib.reload`` in this
+        process -- reloading ``openrouter_provider`` (a package facade that defines the
+        ``OpenRouterProvider`` class other tests already imported) would split that class's
+        identity from what's bound elsewhere in this test session."""
+        import os as _os
+        import pathlib
+        import subprocess
+        import sys as _sys
+
+        worktree_src = str(pathlib.Path(__file__).resolve().parent.parent / "src")
+        env = dict(_os.environ)
+        env["PYTHONPATH"] = worktree_src + _os.pathsep + env.get("PYTHONPATH", "")
+        env["PYUTILZ_OR_CATALOGUE_TTL_SECONDS"] = "5"
+        result = subprocess.run(
+            [_sys.executable, "-c", "import pyutilz.llm.openrouter_provider as m; print(m._MODELS_CATALOGUE_TTL_SECONDS)"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "5.0"
+
+
 class TestListModels:
     def setup_method(self):
         openrouter_module._MODELS_CATALOGUE = {
@@ -738,6 +807,71 @@ class TestHealthEnrichment:
             )
         # gpt-4o-mini (120 t/s) > claude (80 t/s)
         assert rows[0]["id"] == "openai/gpt-4o-mini"
+
+
+class TestHealthCheckLogDedup:
+    """Regression (2026-07-21 audit round 2, MEDIUM): a single shared root cause (e.g. an
+    expired/revoked API key) used to log one WARNING PER failed model -- 200+ near-identical
+    lines burying the actual signal. Failures are now aggregated into ONE summary WARNING after
+    the fan-out completes; per-model detail moves to DEBUG."""
+
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "a/model-1": {"id": "a/model-1", "pricing": {"prompt": "0", "completion": "0"}},
+            "a/model-2": {"id": "a/model-2", "pricing": {"prompt": "0", "completion": "0"}},
+            "a/model-3": {"id": "a/model-3", "pricing": {"prompt": "0", "completion": "0"}},
+        }
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+
+    def _all_fail_client_factory(self, *args, **kwargs):
+        client = MagicMock()
+        client.__enter__ = lambda self_: self_
+        client.__exit__ = lambda *a: None
+
+        def _get(url, timeout=None):
+            raise httpx.ConnectError("boom")
+
+        client.get = MagicMock(side_effect=_get)
+        return client
+
+    def test_one_aggregated_warning_not_one_per_model(self, monkeypatch, caplog):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        with patch("pyutilz.llm.openrouter_provider.httpx.Client", side_effect=self._all_fail_client_factory):
+            with caplog.at_level("DEBUG"):
+                list_openrouter_models(return_only_healthy=True)
+
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING" and "Health check failed" in r.getMessage()]
+        assert len(warning_records) == 1
+        assert "3/3" in warning_records[0].getMessage()
+
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG" and "Health check failed" in r.getMessage()]
+        assert len(debug_records) == 3
+
+    def test_no_failures_means_no_aggregated_warning(self, monkeypatch, caplog):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+        def _ok_client_factory(*args, **kwargs):
+            client = MagicMock()
+            client.__enter__ = lambda self_: self_
+            client.__exit__ = lambda *a: None
+
+            def _get(url, timeout=None):
+                resp = MagicMock()
+                resp.json.return_value = {"data": {"endpoints": []}}
+                resp.raise_for_status = MagicMock()
+                return resp
+
+            client.get = MagicMock(side_effect=_get)
+            return client
+
+        with patch("pyutilz.llm.openrouter_provider.httpx.Client", side_effect=_ok_client_factory):
+            with caplog.at_level("WARNING"):
+                list_openrouter_models(return_only_healthy=True)
+
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING" and "Health check failed" in r.getMessage()]
+        assert len(warning_records) == 0
 
 
 class TestHealthTTLCache:

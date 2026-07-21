@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from pyutilz.llm.exceptions import (
     JSONParsingError,
@@ -15,6 +16,61 @@ from pyutilz.llm.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class PerCallAttr:
+    """Descriptor for a provider's "last successful call" state (e.g. ``last_tool_calls``,
+    ``_last_usage``), backed by a private ``contextvars.ContextVar`` per (instance, attribute).
+
+    Regression fix (2026-07-21 audit round 2, HIGH): these used to be plain instance attributes,
+    written unconditionally at the end of every ``generate()`` call. ``generate_batch()`` fires
+    N concurrent ``self.generate()`` calls on ONE shared, cached provider instance (see
+    ``llm.factory.get_llm_provider``'s whole reason for existing) via ``asyncio.create_task`` --
+    a write from one in-flight task was visible to every other task reading the same plain
+    attribute, so a caller reading e.g. ``provider.last_tool_calls`` right after a batch item is
+    yielded could silently get a DIFFERENT request's data (verified with a standalone repro:
+    ``generate_batch()`` yielded ``id='req-0'`` while ``provider.last_tool_calls`` already
+    reflected ``id='req-2'``).
+
+    ``asyncio.create_task()`` gives each Task its own COPY of the current context, so a
+    ``contextvars.ContextVar`` set inside one task is invisible to every other task -- this
+    closes the cross-task race. A direct (non-batched) ``await provider.generate(...)`` keeps
+    working exactly as before: no task boundary is crossed, so the write and the caller's
+    immediately-following read share the same context.
+
+    Does NOT fix (by design -- this is the correct, intentional behavior): the outer caller of
+    ``generate_batch()`` runs in yet another context than any individual request task, so it can
+    no longer read a completed batch item's metadata off the provider instance at all -- it must
+    come from the yielded dict instead (see ``generate_batch``'s ``usage``/``tool_calls``/etc.
+    keys), which is exactly the fix the audit's own report recommended.
+    """
+
+    def __init__(self, default_factory: Callable[[], Any]) -> None:
+        self._default_factory = default_factory
+        self._name = "_unnamed"
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    def _var(self, instance: Any) -> "contextvars.ContextVar[Any]":
+        """Return (creating if absent) the per-instance ContextVar backing this attribute on ``instance``."""
+        store: dict[str, contextvars.ContextVar[Any]] = instance.__dict__.setdefault("_percall_vars", {})
+        var = store.get(self._name)
+        if var is None:
+            var = contextvars.ContextVar(f"{type(instance).__name__}.{self._name}")
+            store[self._name] = var
+        return var
+
+    def __get__(self, instance: Any, owner: type) -> Any:
+        if instance is None:
+            return self
+        try:
+            return self._var(instance).get()
+        except LookupError:
+            return self._default_factory()
+
+    def __set__(self, instance: Any, value: Any) -> None:
+        self._var(instance).set(value)
 
 
 def _longest_prefix_pricing(
@@ -301,6 +357,51 @@ class LLMProvider(ABC):
         """Human-readable provider name used in JSON-parse error messages."""
         return getattr(self, "_provider_name", self.__class__.__name__)
 
+    # Attribute names read by ``_capture_percall_metadata`` -- the union of every "last
+    # successful call" attribute any built-in provider sets (openai_compat: usage/tool_calls/
+    # citations/finish_reason; anthropic: + cache/thinking tokens; gemini: + safety_ratings/
+    # grounding/function_calls). Missing on a given provider -> simply not included, via getattr's
+    # default; harmless for providers that don't set some of these (e.g. Anthropic has no
+    # ``last_tool_calls``).
+    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (
+        "_last_usage",
+        "_last_finish_reason",
+        "last_tool_calls",
+        "last_citations",
+        "last_cache_creation_input_tokens",
+        "last_cache_read_input_tokens",
+        "last_thinking_tokens",
+        "last_thinking_tokens_estimated",
+        "last_safety_ratings",
+        "last_grounding_metadata",
+        "last_citation_metadata",
+        "last_function_calls",
+        "last_cached_content_tokens",
+        "last_all_candidates",
+    )
+
+    def _capture_percall_metadata(self) -> dict[str, Any]:
+        """Snapshot this provider's "last successful call" attributes, called immediately after
+        ``await self.generate(...)`` returns -- i.e. still within the SAME asyncio Task/context
+        that just set them, so this read is race-free regardless of how many other concurrent
+        ``generate_batch()`` tasks are in flight on the same shared provider instance. The
+        snapshot is returned for inclusion in the per-request result dict -- reading the
+        instance attribute again later, from a DIFFERENT task/context (e.g. the caller iterating
+        ``generate_batch()``'s yielded results), is exactly the race this exists to avoid.
+
+        Keys drop both the leading underscore and the ``last_`` prefix (``_last_usage`` ->
+        ``usage``, ``last_tool_calls`` -> ``tool_calls``) -- "last" describes the now-superseded
+        shared-instance-attribute semantics, not this per-request snapshot.
+        """
+        out: dict[str, Any] = {}
+        for name in self._PERCALL_METADATA_ATTRS:
+            if hasattr(self, name):
+                key = name.lstrip("_")
+                if key.startswith("last_"):
+                    key = key[len("last_") :]
+                out[key] = getattr(self, name)
+        return out
+
     def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
         """Return extra fields to merge into a per-request batch error dict.
 
@@ -346,7 +447,10 @@ class LLMProvider(ABC):
         classification is delegated to ``_classify_batch_exception``.
 
         Yields:
-            Response dicts with ``id`` and either ``result`` or ``error``.
+            Response dicts with ``id`` and either ``result`` or ``error``. On success, also
+            includes this request's own ``usage``/``tool_calls``/``citations``/``finish_reason``
+            (etc., provider-dependent) metadata -- captured within this request's own task, so
+            it is NOT subject to the cross-task "last_*" attribute race (see ``PerCallAttr``).
         """
         async def process_request(req: dict) -> dict[str, Any]:
             """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
@@ -358,7 +462,9 @@ class LLMProvider(ABC):
                     temperature=req.get("temperature", 0.7),
                     max_tokens=req.get("max_tokens", 1024),
                 )
-                return {"id": request_id, "result": result}
+                out = {"id": request_id, "result": result}
+                out.update(self._capture_percall_metadata())
+                return out
             except Exception as e:
                 logger.error("Batch request %s failed: %s", request_id, e)
                 out = {"id": request_id, "error": str(e)}

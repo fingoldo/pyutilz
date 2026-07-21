@@ -140,6 +140,25 @@ class TestDropConstantColumns:
         result = drop_constant_columns(df, verbose=1)
         assert "a" not in result.columns
 
+    def test_remove_constant_columns_alias_matches(self, mock_clean):
+        """Regression: drop_constant_columns and its pandas sibling remove_constant_columns are
+        documented as the same operation but had no name in common, undiscoverable by grep."""
+        from pyutilz.data.polarslib import remove_constant_columns
+
+        assert remove_constant_columns is drop_constant_columns
+        df = pl.DataFrame({"a": [1, 1, 1], "b": [1.0, 2.0, 3.0]}).lazy()
+        result = remove_constant_columns(df, verbose=0)
+        assert "a" not in result.columns
+        assert "b" in result.columns
+
+    def test_verbose_default_is_false(self, mock_clean):
+        """Regression: verbose defaulted to the truthy int 1 here but to False in the pandas
+        sibling (remove_constant_columns) -- porting a call between them silently flipped
+        logging on/off. Both now default to no logging."""
+        import inspect
+
+        assert inspect.signature(drop_constant_columns).parameters["verbose"].default is False
+
 
 # ============================================================
 # bin_numerical_columns
@@ -180,6 +199,19 @@ class TestBinNumericalColumns:
         df = pl.DataFrame({"a": list(range(50))}).lazy()
         bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], bin_dtype=pl.Int16, verbose=0)
         assert bins["a"].dtype == pl.Int16
+
+    def test_num_bins_exceeding_int8_auto_widens_instead_of_crashing(self, mock_clean):
+        """Regression: num_bins=200 with the default bin_dtype=pl.Int8 (max 127) used to crash
+        with polars.exceptions.InvalidOperationError instead of binning; now auto-widens."""
+        df = pl.DataFrame({"x": [float(i) for i in range(300)]}).lazy()
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], num_bins=200, verbose=0)
+        assert bins["x"].dtype in (pl.Int16, pl.Int32, pl.Int64)
+        assert bins["x"].max() == 199
+
+    def test_num_bins_within_int8_range_keeps_int8(self, mock_clean):
+        df = pl.DataFrame({"x": [float(i) for i in range(50)]}).lazy()
+        bins, _, _, _, _ = bin_numerical_columns(df, target_columns=[], num_bins=10, verbose=0)
+        assert bins["x"].dtype == pl.Int8
 
     def test_clips_dict_populated_for_outliers(self, mock_clean):
         values = list(range(100)) + [10000]
@@ -248,6 +280,23 @@ class TestAddWeightedAggregates:
         result = df.group_by(pl.lit(1).alias("grp")).agg(exprs)
         col_names = result.columns
         assert any("pref_" in c for c in col_names)
+
+    def test_zero_sum_weight_group_does_not_leak_inf(self):
+        """Regression: a weighting column that sums to zero within a group (hedged buy/sell
+        volumes, net-zero flow) produced an unguarded -inf/inf/NaN, never routed through
+        clean_numeric the way every other fragile stat in this module is."""
+        df = pl.DataFrame({"x": [1.0, 2.0, 3.0], "w": [1.0, -1.0, 0.0]})
+        exprs = add_weighted_aggregates(cs.by_name("x"), weighting_columns=["w"])
+        result = df.select(exprs)
+        value = result.to_series(0)[0]
+        assert value == 0.0  # clean_numeric's nans_filler default
+        assert value not in (float("inf"), float("-inf"))
+
+    def test_zero_sum_weight_uses_custom_nans_filler(self):
+        df = pl.DataFrame({"x": [1.0, 2.0, 3.0], "w": [1.0, -1.0, 0.0]})
+        exprs = add_weighted_aggregates(cs.by_name("x"), weighting_columns=["w"], nans_filler=-1.0)
+        result = df.select(exprs)
+        assert result.to_series(0)[0] == -1.0
 
 
 # ============================================================

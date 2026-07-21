@@ -310,6 +310,39 @@ class TestHardwareMonitor:
         assert "cpu_utilizaton_percent" in avg_util
         print(f"[OK] UtilizationMonitor collected data: CPU {avg_util['cpu_utilizaton_percent']}%")
 
+    def test_monitor_thread_is_daemon(self):
+        """Regression (2026-07-21 audit round 2, HIGH): the worker thread was created without
+        daemon=True. If the code between start()/stop() raises, stop() is skipped and the
+        thread's infinite loop runs forever -- CPython refuses to exit until every non-daemon
+        thread finishes, hanging the whole process at shutdown, not just leaking a thread."""
+        from pyutilz.system.hardware_monitor import UtilizationMonitor
+
+        monitor = UtilizationMonitor(sleep_interval_seconds=0.5, gpu_ids=[])
+        assert monitor.thread.daemon is True
+
+    def test_context_manager_stops_monitor_even_on_exception(self):
+        """Regression: `with UtilizationMonitor(...) as monitor:` must guarantee stop() runs
+        (stop_flag set, thread joined) even when the wrapped code raises."""
+        from pyutilz.system.hardware_monitor import UtilizationMonitor
+
+        monitor = UtilizationMonitor(sleep_interval_seconds=0.1, gpu_ids=[])
+        with pytest.raises(ValueError, match="boom"):
+            with monitor as m:
+                assert m is monitor
+                raise ValueError("boom")
+
+        assert monitor.stop_flag.is_set()
+        assert not monitor.thread.is_alive()
+
+    def test_context_manager_normal_exit_stops_monitor(self):
+        from pyutilz.system.hardware_monitor import UtilizationMonitor
+
+        with UtilizationMonitor(sleep_interval_seconds=0.1, gpu_ids=[]) as monitor:
+            pass
+
+        assert monitor.stop_flag.is_set()
+        assert not monitor.thread.is_alive()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -29,7 +29,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
             variables = variables.split(",")
 
         config = configparser.ConfigParser(interpolation=None)
-        config.read(file)
+        config.read(file, encoding="utf-8")
 
         if isinstance(section, str):
             sections = [section]
@@ -104,7 +104,12 @@ def write_config_file(
 
         if mode == "append":
             if os.path.exists(file):
-                config.read(file)
+                # Same fix as read_config_file's config.read() below -- this file was written
+                # with encoding="utf-8" (see the open() call at the end of this function), so
+                # reading it back without pinning the encoding falls back to the platform locale
+                # encoding on non-UTF-8-locale hosts, corrupting non-ASCII values on every
+                # "append" round-trip.
+                config.read(file, encoding="utf-8")
 
         if section not in config:
             config[section] = {}

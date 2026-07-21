@@ -5,6 +5,8 @@ Split out of the historical flat ``pyutilz.data.pandaslib`` module; re-exported
 from the package ``__init__`` to preserve the public import surface.
 """
 
+import warnings
+
 from ._common import (
     Any,
     Dict,
@@ -46,9 +48,15 @@ def nullify_standard_values(
     df.loc[df[field].isin(top_values), field] = placeholder
 
 
-def prefixize_columns(df: pd.DataFrame, prefix: str, special_prefixes: Optional[dict] = None, sep="_", exclusions: Optional[Sequence] = None, inplace: bool = True):
+def prefixize_columns(
+    df: pd.DataFrame, prefix: str, special_prefixes: Optional[dict] = None, sep="_", exclusions: Optional[Sequence] = None, inplace: bool = True
+) -> "tuple[pd.DataFrame, dict]":
     """
-    Prefix every column of a pandas dataframe (except clearly formulated exclusions) with some arbitrary prefix string - to identify variable's source
+    Prefix every column of a pandas dataframe (except clearly formulated exclusions) with some arbitrary prefix string - to identify variable's source.
+
+    Returns ``(df, columns)`` -- the (possibly in-place-mutated) dataframe and the
+    ``{old_col: new_col}`` rename mapping -- regardless of ``inplace``, so the return shape
+    doesn't silently flip between a ``dict`` and a ``DataFrame`` depending on that flag.
     """
     if special_prefixes is None:
         special_prefixes = {}
@@ -58,9 +66,9 @@ def prefixize_columns(df: pd.DataFrame, prefix: str, special_prefixes: Optional[
     columns = {col: special_prefixes.get(col, prefix) + sep + col if col not in exclusions else col for col in df.columns}
     if inplace:
         df.rename(columns=columns, inplace=True)
-        return columns
     else:
-        return df.rename(columns=columns, inplace=False)
+        df = df.rename(columns=columns, inplace=False)
+    return df, columns
 
 
 def showcase_df_columns(
@@ -218,18 +226,7 @@ def showcase_df_columns(
         # pl.collect_all runs all queries in parallel via the Polars thread pool
         vc_results = pl.collect_all(lazy_queries)
 
-        # Also collect n_unique in parallel for the rare-category check. Respect `dropna` here
-        # too (drop_nulls() before n_unique() when dropna=True) so the eligibility gate agrees
-        # with the dropna-aware value-counts computed above -- otherwise a null-inclusive count
-        # can push a column one over max_cat_uniq_qty and skip it entirely, even though the
-        # caller's dropna=True means they only care about the non-null distinct values.
-        nuniq_queries = [
-            (df.lazy().select(pl.col(var).drop_nulls().n_unique().alias("n")) if dropna else df.lazy().select(pl.col(var).n_unique().alias("n")))
-            for var in target_cols
-        ]
-        nuniq_results = pl.collect_all(nuniq_queries)
-
-        for var, vc, nuniq_df in zip(target_cols, vc_results, nuniq_results):
+        for var, vc in zip(target_cols, vc_results):
             dtype = df.schema[var]
             if use_markdown and _facade.HAS_IPYTHON:
                 _facade.display(_facade.Markdown(f"**{var}** {dtype}"))
@@ -252,8 +249,11 @@ def showcase_df_columns(
                 else:
                     print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
-            # Rare/uninformative analysis
-            n_unique = nuniq_df.item(0, 0)
+            # Rare/uninformative analysis. `vc` is grouped under the same dropna treatment as
+            # n_unique would be (drop_nulls() before group_by when dropna=True, null counted as
+            # its own group otherwise), so vc.height already IS n_unique -- no second full-column
+            # scan needed.
+            n_unique = vc.height
             if n_unique <= max_cat_uniq_qty and vc.height > 0:
                 rare_mask = vc.get_column("count").to_list()
                 rare_vals = vc.get_column(var).to_list()
@@ -284,9 +284,13 @@ def showcase_df_columns(
             # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
             # computed above), so a column that's within max_cat_uniq_qty distinct non-null
             # values isn't silently skipped just because it also has nulls the caller asked to ignore.
-            n_unique = df[var].nunique(dropna=dropna)
+            # `stats` already IS the full value_counts(dropna=dropna) result (`.head(max_vars)`
+            # above only affects what gets printed, never truncates `stats` itself), so both
+            # `len(stats)` and re-running value_counts() are redundant full-column rescans of a
+            # value already on hand.
+            n_unique = len(stats)
             if n_unique <= max_cat_uniq_qty and len(stats) > 0:
-                full_stats = df[var].value_counts(dropna=dropna) if max_vars is not None else stats
+                full_stats = stats
                 col_rare = full_stats[full_stats <= rare_threshold].index.tolist()
                 if col_rare:
                     rare_categories[var] = col_rare
@@ -326,49 +330,92 @@ class FeatureNamer:
         return self.revfnames.get(key)
 
 
+_SHARE_DATAFRAME_INT_CTYPES: Dict[str, Any] = {
+    "int8": ctypes.c_int8,
+    "int16": ctypes.c_int16,
+    "int32": ctypes.c_int32,
+    "int64": ctypes.c_int64,
+    "uint8": ctypes.c_uint8,
+    "uint16": ctypes.c_uint16,
+    "uint32": ctypes.c_uint32,
+    "uint64": ctypes.c_uint64,
+}
+
+
 def share_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     Returns a cloned dataframe from create numpy mem views that can be shared with multiple worker processes as a global variable.
     Should not contain datetime dtype! or won't be able to fit the double dtype.
     Ram usage grows from 7x (while cloning) to 3x (while using) of the original's df, but adding more workers does not increase RAM consumption anymore!
+
+    Integer columns (int8/16/32/64, uint8/16/32/64) are routed through their own dtype-matched
+    ctypes buffer rather than the shared float64 buffer below -- float64's 52-bit mantissa can't
+    represent every int64 value above 2**53 exactly, so forcing integers through it silently
+    corrupts large IDs/timestamps/hashes. Every other dtype (float/bool/object/...) still shares
+    one float64 buffer, unchanged from before.
     """
     # the origingal dataframe is df, store the columns/dtypes pairs
     df_dtypes_dict = dict(list(zip(df.columns, df.dtypes)))
 
-    # declare a shared Array with data from df
-    mparr = Array(ctypes.c_double, df.values.reshape(-1), lock=True)
+    int_cols = [c for c in df.columns if str(df[c].dtype) in _SHARE_DATAFRAME_INT_CTYPES]
+    other_cols = [c for c in df.columns if c not in int_cols]
 
-    # create a new df based on the shared array
-    df_shared = pd.DataFrame(np.frombuffer(mparr.get_obj()).reshape(df.shape), columns=df.columns).astype(df_dtypes_dict)  # type: ignore[call-overload]  # multiprocessing.Array's ctypes buffer is a standard np.frombuffer input; numpy's stub overloads don't cover it
+    pieces: Dict[Any, Any] = {}
+
+    if other_cols:
+        sub = df[other_cols]
+        mparr = Array(ctypes.c_double, sub.values.reshape(-1), lock=True)
+        sub_shared = pd.DataFrame(np.frombuffer(mparr.get_obj()).reshape(sub.shape), columns=other_cols)  # type: ignore[call-overload]  # multiprocessing.Array's ctypes buffer is a standard np.frombuffer input; numpy's stub overloads don't cover it
+        for c in other_cols:
+            pieces[c] = sub_shared[c]
+
+    # Group integer columns by their EXACT dtype (not just "is it an int") -- mixing e.g. int32
+    # and int64 columns in one sub-frame would make pandas' `.values` upcast them all to int64
+    # before they ever reach the ctypes buffer, silently reintroducing the same class of bug.
+    dtype_groups: Dict[str, list] = {}
+    for c in int_cols:
+        dtype_groups.setdefault(str(df[c].dtype), []).append(c)
+
+    for dtype_name, cols in dtype_groups.items():
+        ctype = _SHARE_DATAFRAME_INT_CTYPES[dtype_name]
+        sub = df[cols]
+        mparr = Array(ctype, sub.values.reshape(-1), lock=True)
+        arr = np.frombuffer(mparr.get_obj(), dtype=np.dtype(dtype_name)).reshape(sub.shape)
+        sub_shared = pd.DataFrame(arr, columns=cols)
+        for c in cols:
+            pieces[c] = sub_shared[c]
+
+    # create a new df based on the shared arrays, restoring the caller's original column order
+    df_shared = pd.DataFrame({c: pieces[c] for c in df.columns}).astype(df_dtypes_dict)
 
     return df_shared
 
 
-def get_non_stale_columns(X: pd.DataFrame) -> list:
+def get_non_stale_columns(df: pd.DataFrame) -> list:
     """
-    Returns the names of ``X`` columns whose values DO change (i.e. every column except the
-    stale/constant ones). Does NOT mutate ``X`` -- unlike its sibling ``remove_constant_columns``,
+    Returns the names of ``df`` columns whose values DO change (i.e. every column except the
+    stale/constant ones). Does NOT mutate ``df`` -- unlike its sibling ``remove_constant_columns``,
     this function only rebinds its local parameter, so the caller's DataFrame is untouched;
-    the caller must apply the returned column list itself (``X = X[get_non_stale_columns(X)]``).
+    the caller must apply the returned column list itself (``df = df[get_non_stale_columns(df)]``).
     """
-    if len(X) == 0:
-        return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    if len(df) == 0:
+        return df.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     # nunique(dropna=False) treats NaN as its own value, so an all-NaN column (nunique==1)
-    # is correctly flagged stale -- unlike ``X != X.iloc[0]``, which is always True for NaN
+    # is correctly flagged stale -- unlike ``df != df.iloc[0]``, which is always True for NaN
     # vs NaN and so never flags an all-NaN column as stale.
-    stale_columns = X.nunique(dropna=False) <= 1
+    stale_columns = df.nunique(dropna=False) <= 1
 
     num_stale = stale_columns.sum()
     if num_stale > 0:
         logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns].index.values.tolist())}")
-        X = X.loc[:, stale_columns[~stale_columns].index.values]
-        all_features_names = X.columns.tolist()
+        df = df.loc[:, stale_columns[~stale_columns].index.values]
+        all_features_names = df.columns.tolist()
         return all_features_names  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-    return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return df.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def remove_stale_columns(X: pd.DataFrame) -> list:
+def remove_stale_columns(df: pd.DataFrame) -> list:
     """Deprecated alias for :func:`get_non_stale_columns` -- kept for backward compatibility.
 
     Despite the name (mirroring ``remove_constant_columns``, which genuinely mutates its input
@@ -376,21 +423,26 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
     list of non-stale column names. Prefer :func:`get_non_stale_columns`, whose name reflects
     the actual (non-mutating) contract.
     """
-    return get_non_stale_columns(X)
+    warnings.warn(
+        "remove_stale_columns is deprecated and will be removed in a future release; use get_non_stale_columns instead (same non-mutating behavior, name reflects it).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_non_stale_columns(df)
 
 
-def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:
+def get_suspiciously_constant_columns(df: pd.DataFrame) -> list:
     """
-    Return names of columns in ``ref_df`` that have at most one distinct value (constant or all-NaN).
+    Return names of columns in ``df`` that have at most one distinct value (constant or all-NaN).
     Falls back to a per-column loop, skipping columns whose values raise TypeError (e.g. unhashable), if the vectorized ``nunique()`` call fails.
     """
     try:
-        susp_columns = ref_df.columns[ref_df.nunique() <= 1].tolist()
+        susp_columns = df.columns[df.nunique() <= 1].tolist()
     except Exception:
         susp_columns = []
-        for col in ref_df.columns:
+        for col in df.columns:
             try:
-                if ref_df[col].nunique() <= 1:
+                if df[col].nunique() <= 1:
                     susp_columns.append(col)
             except TypeError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this column, check the rest)
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.

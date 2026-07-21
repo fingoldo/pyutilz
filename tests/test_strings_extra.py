@@ -558,3 +558,12 @@ from pyutilz.strings import json_pg_dumps
 def test_json_pg_dumps_basic():
     result = json_pg_dumps({"a": 1})
     assert result is not None
+
+
+def test_json_pg_dumps_strips_embedded_nul():
+    """Test-gap coverage (2026-07-21 audit round 2, LOW): json_pg_dumps documents stripping
+    literal NUL escapes ("postgres rejects NUL inside jsonb text") but no test ever exercised it
+    end-to-end with an actual embedded NUL character."""
+    result = json_pg_dumps({"a": "hello\x00world"})
+    assert "\x00" not in result.adapted["a"]
+    assert result.adapted == {"a": "helloworld"}

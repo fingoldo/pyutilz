@@ -212,14 +212,33 @@ class TestParseIpResponse:
         ("  1.2.3.4  ", "1.2.3.4"),
         ('{"origin": "1.2.3.4, 5.6.7.8"}', "1.2.3.4"),
         ("1.2.3.4, 5.6.7.8\n", "1.2.3.4"),
-        ("{broken json", "{broken json"),
-        ("{}", "{}"),
-        ('{"foo": "bar"}', '{"foo": "bar"}'),
         ("2001:db8::1", "2001:db8::1"),
         ('{"ip": "::1"}', "::1"),
     ])
     def test_formats(self, text, expected):
         assert parse_ip_response(text) == expected
+
+    @pytest.mark.parametrize("text", [
+        "{broken json",
+        "{}",
+        '{"foo": "bar"}',
+        '{"origin": null}',
+        '{"origin": ""}',
+    ])
+    def test_non_ip_shaped_fallback_returns_unreachable_sentinel(self, text):
+        """Regression (2026-07-21 audit round 2, HIGH, security-relevant fail-open): these
+        inputs used to fall back to returning the ENTIRE raw JSON blob as "the IP" with no
+        validation -- a garbage string that equals neither "?" nor real_ip, so
+        check_ip_matches_real() fell through to its "OK, proxy works" branch even though no IP
+        was ever actually determined. Now returns "?" (the same sentinel get_ip() already uses
+        for "unreachable"), which check_ip_matches_real() correctly treats as a failure."""
+        assert parse_ip_response(text) == "?"
+
+    def test_non_string_json_value_returns_string_not_bare_value(self):
+        """Regression: {"origin": 12345} used to return the bare int 12345, silently violating
+        the -> str contract."""
+        result = parse_ip_response('{"origin": 12345}')
+        assert isinstance(result, str)
 
 
 # ── get_ip ──────────────────────────────────────────────────────────────────
@@ -296,6 +315,17 @@ class TestVerifyProxyIp:
     def test_leak_detected(self):
         proxy_sess = MagicMock()
         proxy_sess.get.return_value = MagicMock(text='{"ip": "1.1.1.1"}')
+        assert verify_proxy_ip(proxy_sess, real_ip="1.1.1.1", exit_on_fail=False) is False
+
+    def test_malformed_ip_check_response_reported_as_failure_not_false_positive(self):
+        """Regression (2026-07-21 audit round 2, HIGH): a malformed-but-valid-JSON IP-check
+        response ({"origin": null} -- a realistic flaky-provider response, not adversarial)
+        used to make parse_ip_response return the whole raw JSON blob, which then compared
+        unequal to both "?" and real_ip in check_ip_matches_real() -- so verify_proxy_ip()
+        reported the proxy as WORKING when no IP was ever actually determined. This is the
+        end-to-end composition the isolated parse_ip_response tests don't exercise."""
+        proxy_sess = MagicMock()
+        proxy_sess.get.return_value = MagicMock(text='{"origin": null}')
         assert verify_proxy_ip(proxy_sess, real_ip="1.1.1.1", exit_on_fail=False) is False
 
 

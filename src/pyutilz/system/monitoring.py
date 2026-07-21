@@ -211,7 +211,15 @@ def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bo
                 # cause any OTHER call to spuriously time out.
                 return None  # Or raise, depending on use case
             if "error" in outcome:
-                logger.exception("Error in %s: %s", func.__name__, outcome["error"])
+                # Regression fix: logger.exception() implicitly sets exc_info=True, which pulls
+                # sys.exc_info() from the CURRENT thread -- but the exception was caught (and its
+                # except block already exited) on the CHILD thread (_run, above); by the time
+                # control reaches here (the main/wrapper thread), this thread was never inside an
+                # except clause at all, so sys.exc_info() here is (None, None, None) and the
+                # logged traceback is bogus ("NoneType: None") regardless of which real exception
+                # occurred. Passing the actual exception object via exc_info= works regardless of
+                # which thread originally raised it.
+                logger.error("Error in %s: %s", func.__name__, outcome["error"], exc_info=outcome["error"])
                 return None
             if report_actual_duration:
                 logger.info("%s completed in %.2fs", func.__name__, time.time() - start_ts)

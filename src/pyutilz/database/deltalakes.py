@@ -79,7 +79,15 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
         # directory, forcing one to block on the other's lock (up to lock_timeout, default 20
         # minutes) despite having no real data-race between them. Hashing the full normalized
         # path makes the lock filename unique per actual table.
-        path_hash = hashlib.sha256(os.path.abspath(path).encode("utf-8")).hexdigest()
+        #
+        # os.path.normcase() (2026-07-21 audit round 2): os.path.abspath() never changes case,
+        # but NTFS (Windows' default filesystem) is case-INSENSITIVE-but-preserving -- without
+        # this, "C:\Data\orders" and "c:\data\ORDERS" (the exact same table on disk) hash to two
+        # DIFFERENT lock files, so two writers could both acquire "their own" lock and commit to
+        # the same underlying Delta log concurrently, exactly the corruption this function exists
+        # to prevent. normcase() is a no-op on POSIX (case-sensitive filesystems) and lowercases +
+        # backslash-normalizes on Windows, so both spellings collapse to one lock file everywhere.
+        path_hash = hashlib.sha256(os.path.normcase(os.path.abspath(path)).encode("utf-8")).hexdigest()
         lock_file = os.path.join(tempfile.gettempdir(), f"{path_hash}{lock_suffix}")
         lock = FileLock(lock_file)
 

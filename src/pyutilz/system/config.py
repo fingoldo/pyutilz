@@ -166,7 +166,17 @@ class TomlLiveConfig:
                 try:
                     return type_(val)
                 except (TypeError, ValueError) as exc:
-                    fallback = default if default is not None else (self._defaults.get(section) or {}).get(key, 0)
+                    # Regression fix: when the caller passed no `default` and `self._defaults`
+                    # has no matching entry, this used to fall back to a hardcoded `0` --
+                    # regardless of `type_` (even for type_=str/float) and regardless of what
+                    # `0` actually means for THIS setting. A single bad value in a hot-reloaded
+                    # TOML file (this class's whole purpose) could silently turn e.g.
+                    # max_retries=0 (retry loop body never executes) or
+                    # min_free_gb_threshold=0 (a disk-space safety check that always passes)
+                    # into a semantically-arbitrary number, with only a warning log easy to miss.
+                    # `None` forces the caller's own downstream logic to explicitly handle "no
+                    # valid value" instead of silently proceeding with a number that looks legitimate.
+                    fallback = default if default is not None else (self._defaults.get(section) or {}).get(key)
                     self._log.warning(
                         "config [%s].%s: bad value %r (%s), using %s",
                         section, key, val, exc, fallback,
@@ -197,8 +207,16 @@ class TomlLiveConfig:
 
     @data.setter
     def data(self, value: dict[str, Any]) -> None:
-        """Replace config data programmatically (e.g. after validation)."""
-        self._data = value
+        """Replace config data programmatically (e.g. after validation).
+
+        Regression fix: this used to bypass ``self._lock``, breaking the class's own documented
+        "Thread-safe via a single threading.Lock" contract -- a background mtime-triggered
+        reload (``_reload()``, always called under the lock from ``_maybe_reload()``) racing this
+        setter on another thread was a plain lost-update: whichever assignment landed last won
+        non-deterministically, with no error and no way for either caller to know it lost.
+        """
+        with self._lock:
+            self._data = value
 
     # ── Change logging ─────────────────────────────────────────────────
 

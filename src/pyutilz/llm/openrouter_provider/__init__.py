@@ -50,6 +50,14 @@ logger = logging.getLogger("pyutilz.llm.openrouter_provider")
 _MODELS_CATALOGUE: dict[str, dict[str, Any]] | None = None
 _MODELS_LOCK = threading.Lock()
 _MODELS_URL = "https://openrouter.ai/api/v1/models"
+# Regression fix (2026-07-21 audit round 2, MEDIUM): the catalogue used to be fetched once and
+# cached indefinitely -- pricing/context-limit data went stale forever in a long-running process
+# unless a caller remembered ``refresh=True``. ``_MODELS_CATALOGUE_FETCHED_AT`` defaults to +inf
+# (never "stale") so a catalogue injected directly (tests, or a caller pre-populating the cache)
+# without going through ``_fetch_models_catalogue()`` is treated as fresh; only a REAL fetch
+# stamps a finite monotonic time, after which the TTL below actually applies.
+_MODELS_CATALOGUE_FETCHED_AT: float = float("inf")
+_MODELS_CATALOGUE_TTL_SECONDS = float(os.environ.get("PYUTILZ_OR_CATALOGUE_TTL_SECONDS", "300"))
 
 # Health side.
 _HEALTH_CACHE_MAX_SIZE = 1024

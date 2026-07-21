@@ -15,3 +15,15 @@ max_cols
 # text/similarity.py normalize_sentence -- legacy flag with no implemented behavior and
 # no caller relying on it; left in the signature rather than removing public API surface.
 bSports
+
+# performance/kernel_tuning/code_versioning.py _normalized_source_by_code -- code_key
+# participates in the lru_cache key (see _code_identity_key's docstring: content-aware
+# invalidation on an in-place __code__ swap) but is never read inside the function body.
+code_key
+
+# system/hardware_monitor.py UtilizationMonitor.__exit__ -- standard context-manager
+# protocol signature (exc_type, exc_val, exc_tb); never inspected since this cleanup path
+# stops the monitor unconditionally regardless of how the with-block exited.
+exc_type
+exc_val
+exc_tb

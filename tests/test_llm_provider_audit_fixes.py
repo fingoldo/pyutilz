@@ -20,6 +20,7 @@ Covers the genuine bugs fixed in the pyutilz.llm package:
 No live DB is required by any test here.
 """
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, MagicMock
 
@@ -479,3 +480,143 @@ class TestThinkingRequestField:
     def test_openrouter_effort_passthrough_lowercased(self):
         p = self._openrouter()
         assert p._thinking_request_field("HIGH") == {"reasoning": {"effort": "high"}}
+
+
+# ---------------------------------------------------------------------------
+# Finding (2026-07-21 audit round 2, HIGH): PerCallAttr race in generate_batch
+# ---------------------------------------------------------------------------
+
+
+class _RaceStubProvider(OpenAICompatibleProvider):
+    _base_url = "https://race.example.com"
+    _provider_name = "RaceStub"
+    _max_tokens_map = {"stub": 4096}
+    _default_max_tokens = 2048
+
+    def _input_cost_per_1m(self, model):
+        return 1.0
+
+    def _output_cost_per_1m(self, model):
+        return 2.0
+
+
+def _make_race_stub():
+    return _RaceStubProvider(api_key="test-key", model="stub")  # pragma: allowlist secret
+
+
+class TestPerCallAttrRace:
+    """Regression (2026-07-21 audit round 2, HIGH): `generate_batch()` fires N concurrent
+    `self.generate()` calls on ONE shared/cached provider instance (see
+    `llm.factory.get_llm_provider`'s cache). Before `PerCallAttr` (contextvars-backed), a plain
+    `self._last_usage`/`self.last_tool_calls` write from one in-flight request was visible to
+    every other concurrently-completing request reading the same attribute -- confirmed by the
+    audit's own repro (batch yielded id='req-0' while `provider.last_tool_calls` already reflected
+    a DIFFERENT, concurrently-completing id='req-2'). `generate_batch()` now captures each
+    request's own metadata inside its own task via `_capture_percall_metadata()`, immediately
+    after its own `generate()` call returns -- so the yielded dict must match its own request
+    regardless of which order the concurrent requests actually complete in."""
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_yields_own_metadata_not_a_siblings(self):
+        p = _make_race_stub()
+
+        # Requests complete in REVERSE order (the request scheduled LAST finishes FIRST) --
+        # the exact interleaving shape that reproduced the race pre-fix.
+        delays = {"req-0": 0.03, "req-1": 0.02, "req-2": 0.01}
+
+        async def fake_generate(prompt, **kwargs):
+            await asyncio.sleep(delays[prompt])
+            p._last_usage = {"input_tokens": len(prompt), "output_tokens": 0, "reasoning_tokens": 0}
+            p.last_tool_calls = [{"id": prompt}]
+            p.last_citations = [{"source": prompt}]
+            return f"echo:{prompt}"
+
+        p.generate = fake_generate
+
+        requests = [
+            {"id": "id-0", "prompt": "req-0"},
+            {"id": "id-1", "prompt": "req-1"},
+            {"id": "id-2", "prompt": "req-2"},
+        ]
+        results = {r["id"]: r async for r in p.generate_batch(requests)}
+
+        assert len(results) == 3
+        for req_id, prompt in [("id-0", "req-0"), ("id-1", "req-1"), ("id-2", "req-2")]:
+            r = results[req_id]
+            assert r["result"] == f"echo:{prompt}"
+            assert r["tool_calls"] == [{"id": prompt}]
+            assert r["citations"] == [{"source": prompt}]
+            assert r["usage"]["input_tokens"] == len(prompt)
+
+    @pytest.mark.asyncio
+    async def test_direct_non_batched_call_still_reads_own_state_immediately(self):
+        """The non-batched path must keep working exactly as before: no task boundary is
+        crossed between `generate()`'s write and the caller's immediately-following read."""
+        p = _make_race_stub()
+
+        async def fake_generate(prompt, **kwargs):
+            p.last_tool_calls = [{"id": prompt}]
+            return f"echo:{prompt}"
+
+        p.generate = fake_generate
+        await p.generate("solo")
+        assert p.last_tool_calls == [{"id": "solo"}]
+
+
+class TestPerCallAttrDescriptor:
+    """Unit tests for the `PerCallAttr` descriptor itself (base.py)."""
+
+    def test_default_factory_used_when_unset(self):
+        from pyutilz.llm.base import PerCallAttr
+
+        class _Owner:
+            attr = PerCallAttr(list)
+
+        o = _Owner()
+        assert o.attr == []
+
+    def test_set_and_get_roundtrip(self):
+        from pyutilz.llm.base import PerCallAttr
+
+        class _Owner:
+            attr = PerCallAttr(lambda: None)
+
+        o = _Owner()
+        o.attr = {"x": 1}
+        assert o.attr == {"x": 1}
+
+    def test_two_instances_do_not_share_state(self):
+        from pyutilz.llm.base import PerCallAttr
+
+        class _Owner:
+            attr = PerCallAttr(lambda: 0)
+
+        a, b = _Owner(), _Owner()
+        a.attr = "a-value"
+        b.attr = "b-value"
+        assert a.attr == "a-value"
+        assert b.attr == "b-value"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_tasks_do_not_leak_across_each_other(self):
+        from pyutilz.llm.base import PerCallAttr
+
+        class _Owner:
+            attr = PerCallAttr(lambda: None)
+
+        o = _Owner()
+
+        async def setter(value, delay):
+            await asyncio.sleep(delay)
+            o.attr = value
+            await asyncio.sleep(0.01)
+            return o.attr
+
+        # Task scheduled last (smallest delay) finishes first -- if state leaked across
+        # tasks, the earlier-finishing task would observe a later write.
+        results = await asyncio.gather(
+            asyncio.create_task(setter("first", 0.03)),
+            asyncio.create_task(setter("second", 0.02)),
+            asyncio.create_task(setter("third", 0.01)),
+        )
+        assert results == ["first", "second", "third"]

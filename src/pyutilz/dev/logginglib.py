@@ -132,7 +132,7 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
         function_name = current_frame.f_code.co_name
         module_name = inspect.getfile(current_frame)
     except (AttributeError, TypeError) as e:
-        logging.exception(e)
+        logger.exception(e)
     try:
         if current_frame is None:
             raise TypeError("no caller frame available")
@@ -147,7 +147,7 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
             assert isinstance(filtered_params, dict)
             params = {**filtered_params, **kwargs}
     except (AttributeError, TypeError) as e:
-        logging.exception(e)
+        logger.exception(e)
 
     results_log: Dict[str, Any] = {}
     results_log["module"] = basename(module_name) if module_name else ""

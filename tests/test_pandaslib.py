@@ -218,26 +218,29 @@ class TestPrefixizeColumns:
     def test_adds_prefix_to_columns(self):
         """Test that prefix is added to all columns"""
         df = pd.DataFrame({"a": [1], "b": [2]})
-        result = prefixize_columns(df, "test", inplace=False)
+        result, columns = prefixize_columns(df, "test", inplace=False)
 
         assert "test_a" in result.columns
         assert "test_b" in result.columns
+        assert columns == {"a": "test_a", "b": "test_b"}
 
     def test_respects_exclusions(self):
         """Test that excluded columns are not prefixed"""
         df = pd.DataFrame({"a": [1], "b": [2]})
-        result = prefixize_columns(df, "test", exclusions={"a"}, inplace=False)
+        result, columns = prefixize_columns(df, "test", exclusions={"a"}, inplace=False)
 
         assert "a" in result.columns
         assert "test_b" in result.columns
+        assert columns == {"a": "a", "b": "test_b"}
 
     def test_special_prefixes(self):
         """Test that special prefixes override default prefix"""
         df = pd.DataFrame({"a": [1], "b": [2]})
-        result = prefixize_columns(df, "default", special_prefixes={"a": "special"}, inplace=False)
+        result, columns = prefixize_columns(df, "default", special_prefixes={"a": "special"}, inplace=False)
 
         assert "special_a" in result.columns
         assert "default_b" in result.columns
+        assert columns == {"a": "special_a", "b": "default_b"}
 
 
 class TestFeatureNamer:
@@ -302,6 +305,16 @@ class TestEnsureDataframeFloat32Convertability:
 
         # Should complete successfully with all columns converted
         assert all(result.dtypes == np.float32)
+
+    def test_does_not_mutate_caller_dataframe(self):
+        """Regression: the pandas branch used to mutate the caller's DataFrame in place (while
+        the polars branch, being immutable, never could) -- an inconsistent contract keyed on
+        the input's dynamic type. Now neither backend mutates the caller's object."""
+        df = pd.DataFrame({"int64": np.array([1, 2, 3], dtype=np.int64)})
+        original_dtype = df["int64"].dtype
+        result = ensure_dataframe_float32_convertability(df)
+        assert df["int64"].dtype == original_dtype
+        assert result["int64"].dtype == np.float32
 
 
 class TestClassifyColumnTypes:

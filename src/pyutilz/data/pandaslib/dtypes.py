@@ -315,7 +315,7 @@ def get_df_memory_consumption(df, max_cols: int = 0, deep: bool = True) -> float
 
 def ensure_dataframe_float32_convertability(
     df: Union[pd.DataFrame, pl.DataFrame],
-    verbose: int = 0,
+    verbose: bool = False,
 ) -> Union[pd.DataFrame, pl.DataFrame]:
     """
     Ensures numeric columns are convertible to float32 for compatibility with LightGBM and
@@ -325,7 +325,9 @@ def ensure_dataframe_float32_convertability(
     which often upcasts int32/int64/float64 to float64. To prevent this and save memory,
     convert numeric columns to float32 beforehand.
 
-    Supports both Pandas (NumPy or PyArrow backend) and Polars DataFrames.
+    Supports both Pandas (NumPy or PyArrow backend) and Polars DataFrames. Always returns a NEW
+    object and never mutates the input in place, for either backend -- the caller must capture
+    the return value regardless of which backend it passed in.
     """
 
     if isinstance(df, pl.DataFrame):
@@ -333,6 +335,7 @@ def ensure_dataframe_float32_convertability(
         df = df.with_columns(pl.col([pl.UInt32, pl.Int32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64]).cast(pl.Float32))
 
     elif isinstance(df, pd.DataFrame):
+        df = df.copy()
         arrow_backed = df.dtypes.apply(lambda dt: "pyarrow" in str(dt))
 
         # --- Regular (NumPy-backed) dtypes ---

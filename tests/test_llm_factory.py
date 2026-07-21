@@ -98,3 +98,88 @@ class TestGetLlmProvider:
         assert returned is created[0]
         assert returned not in _provider_cache.values()  # cache was bypassed
         assert returned in list(factory._uncached_providers)  # but tracked for cleanup
+
+
+class TestProviderCacheLRUEviction:
+    """Regression (2026-07-21 audit round 2, MEDIUM): ``_provider_cache`` used to be a plain
+    unbounded dict -- every distinct (provider, kwargs) combination a long-running process ever
+    saw stayed cached (and its live resources open) forever. It's now an ``OrderedDict``-backed
+    LRU bounded by ``_PROVIDER_CACHE_MAX_SIZE``, evicting the least-recently-used entry and
+    scheduling its close."""
+
+    def setup_method(self):
+        from pyutilz.llm import factory
+        factory._provider_cache.clear()
+        factory._uncached_providers.clear()
+        self._orig_max_size = factory._PROVIDER_CACHE_MAX_SIZE
+
+    def teardown_method(self):
+        from pyutilz.llm import factory
+        factory._provider_cache.clear()
+        factory._uncached_providers.clear()
+        factory._PROVIDER_CACHE_MAX_SIZE = self._orig_max_size
+
+    def _register_fake(self, factory):
+        created = []
+
+        class _FakeProvider:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                created.append(self)
+
+        globals()["_FakeCacheLRUProvider"] = _FakeProvider
+        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_FakeCacheLRUProvider"))
+        return created
+
+    def test_cache_bounded_by_max_size(self):
+        from pyutilz.llm import factory
+        factory._PROVIDER_CACHE_MAX_SIZE = 3
+        created = self._register_fake(factory)
+
+        for i in range(5):
+            get_llm_provider("faketest", model=f"m{i}")
+
+        assert len(created) == 5
+        assert len(_provider_cache) == 3
+
+    def test_lru_order_evicts_least_recently_used_not_oldest_created(self):
+        """Touching an old entry (a cache hit) must protect it from eviction --
+        a plain FIFO (not LRU) would evict it purely by insertion order."""
+        from pyutilz.llm import factory
+        factory._PROVIDER_CACHE_MAX_SIZE = 2
+        self._register_fake(factory)
+
+        first = get_llm_provider("faketest", model="m0")
+        get_llm_provider("faketest", model="m1")
+        # Touch "m0" again -- it becomes the most-recently-used, so the NEXT
+        # insertion should evict "m1" (least-recently-used), not "m0".
+        touched_again = get_llm_provider("faketest", model="m0")
+        assert touched_again is first
+        get_llm_provider("faketest", model="m2")
+
+        cached_models = {kwargs.get("model") for (name, kwargs_tuple) in _provider_cache for kwargs in [dict(kwargs_tuple)]}
+        assert "m0" in cached_models
+        assert "m1" not in cached_models
+        assert "m2" in cached_models
+
+    def test_evicted_provider_scheduled_for_close_when_no_running_loop(self):
+        """Without a running event loop, an evicted provider (that exposes ``_close``) must
+        fall back to ``_uncached_providers`` so the atexit handler still closes it."""
+        from pyutilz.llm import factory
+        factory._PROVIDER_CACHE_MAX_SIZE = 1
+
+        class _ClosableFakeProvider:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            async def _close(self):
+                pass
+
+        globals()["_ClosableFakeProvider"] = _ClosableFakeProvider
+        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_ClosableFakeProvider"))
+
+        first = get_llm_provider("faketest", model="m0")
+        get_llm_provider("faketest", model="m1")  # evicts "m0" (no running loop in this sync test)
+
+        assert first in list(factory._uncached_providers)
+        assert len(_provider_cache) == 1

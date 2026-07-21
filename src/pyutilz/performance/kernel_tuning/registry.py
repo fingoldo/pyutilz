@@ -12,6 +12,7 @@ import importlib
 import logging
 import pkgutil
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
@@ -93,8 +94,17 @@ class TunerSpec:
     """Human-friendly name for the CLI (defaults to kernel_name). Used in
     ``mlframe-tune-kernels show <label>`` commands."""
 
-    _choice_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
-    """Per-spec memo of choose() results, keyed by sorted dims (the dispatch is hot)."""
+    _choice_cache: "OrderedDict[tuple, str]" = field(default_factory=OrderedDict, init=False, repr=False, compare=False)
+    """Per-spec memo of choose() results, keyed by sorted dims (the dispatch is hot). Bounded LRU
+    (see ``_CHOICE_CACHE_MAX_SIZE``) -- regression fix (2026-07-21 audit round 2, LOW): this used
+    to be a plain unbounded dict, so a long-running service seeing a continuous stream of
+    distinct (n_samples, n_features, ...) dims combinations grew one permanent entry per
+    combination for the life of the process."""
+
+    _CHOICE_CACHE_MAX_SIZE = 1024
+    """Class-level cap for ``_choice_cache`` (not a dataclass field: no per-instance override
+    needed). Its only purpose is to skip the ``get_or_tune`` region-match lookup on the hot
+    path, not to remember every distinct input forever."""
 
     def code_version(self) -> Optional[str]:
         """code_version over variant_fns + extra_fns + salt (memoized in
@@ -125,6 +135,7 @@ class TunerSpec:
         per-op compatibility before routing to device."""
         key = tuple(sorted(dims.items()))
         if key in self._choice_cache:
+            self._choice_cache.move_to_end(key)
             return self._choice_cache[key]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         fb = self._fallback_choice(dims)
         bc = fb
@@ -154,6 +165,8 @@ class TunerSpec:
         # Memoize only a settled (tuned) decision. While the async sweep is pending, re-resolve each call (a cheap
         # in-memory lookup) so the measured backend is picked up the moment the background sweep finishes.
         if tuned:
+            if len(self._choice_cache) >= self._CHOICE_CACHE_MAX_SIZE:
+                self._choice_cache.popitem(last=False)  # evict least-recently-used
             self._choice_cache[key] = bc
         return bc
 

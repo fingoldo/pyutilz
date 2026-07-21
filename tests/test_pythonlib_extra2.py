@@ -295,6 +295,19 @@ def test_load_object_params_into_func_none():
     load_object_params_into_func(None, {})  # no-op
 
 
+def test_store_and_load_round_trip_with_defaults():
+    """Regression: the two functions are documented as an inverse pair; before the fix,
+    store's default postfix="" and load's default postfix="_param_" didn't compose, so a
+    default-args round trip silently returned an empty dict."""
+    class Obj:
+        pass
+    o = Obj()
+    store_params_in_object(o, {"alpha": 1, "beta": 2})
+    loc: dict = {}
+    load_object_params_into_func(o, loc)
+    assert loc == {"alpha": 1, "beta": 2}
+
+
 # ---------------------------------------------------------------------------
 # get_partitioned_filepath — lines 636-658 (actually 592-605)
 # ---------------------------------------------------------------------------
@@ -477,6 +490,14 @@ def test_float_distinct_digits_percent_negative_matches_positive():
     positive = float_distinct_digits_percent(11.882, precision=3)
     negative = float_distinct_digits_percent(-11.882, precision=3)
     assert positive == negative
+
+
+def test_float_distinct_digits_percent_rounding_carry_stays_within_precision():
+    """Regression: round(0.99999996, 5) rounds up to exactly 1.0, and frac_part*10**precision
+    then produced 10**precision (a precision+1-digit number), silently inflating ntotal."""
+    result = float_distinct_digits_percent(0.99999996, precision=5)
+    assert isinstance(result, float)
+    assert 0.0 <= result <= 1.0
 
 
 def test_hashable_dict_mixed_key_types_does_not_crash():

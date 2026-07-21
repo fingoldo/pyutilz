@@ -193,3 +193,58 @@ def test_cache_public_code_version_stale():
     assert cache.code_version_stale("cv_k", None) is False
     # Public method delegates to the private one identically.
     assert cache.code_version_stale("cv_k", "cvB") == cache._code_version_stale("cv_k", "cvB")
+
+
+class _FakeTunedCache:
+    """Deterministically reports every kernel as already-tuned -- lets ``choose()`` memoize on
+    the FIRST call for every distinct ``dims``, sidestepping the real cache's background-sweep
+    timing (which the existing ``test_spec_choose_returns_fallback_on_empty_cache`` shows isn't
+    guaranteed to settle within one synchronous call)."""
+
+    def get_or_tune(self, *args, **kwargs):
+        return {"backend_choice": "cpu"}
+
+    def has(self, *args, **kwargs):
+        return True
+
+    def code_version_stale(self, *args, **kwargs):
+        return False
+
+
+class TestChoiceCacheBoundedLRU:
+    """Regression (2026-07-21 audit round 2, LOW): ``_choice_cache`` used to be a plain
+    unbounded dict -- a long-running service seeing a continuous stream of distinct dims
+    combinations grew one permanent entry per combination for the life of the process. It's
+    now an OrderedDict-backed LRU bounded by ``_CHOICE_CACHE_MAX_SIZE``."""
+
+    def _patch_fake_tuned_cache(self, monkeypatch):
+        import pyutilz.performance.kernel_tuning.cache as cache_mod
+        monkeypatch.setattr(cache_mod.KernelTuningCache, "load_or_create", classmethod(lambda cls: _FakeTunedCache()))
+
+    def _spec(self, kernel_name: str) -> TunerSpec:
+        return TunerSpec(kernel_name=kernel_name, variant_fns=(_np,), tuner=lambda: [], axes={"n": [10]}, fallback={"backend_choice": "cpu"})
+
+    def test_cache_bounded_by_max_size(self, monkeypatch):
+        self._patch_fake_tuned_cache(monkeypatch)
+        spec = self._spec("bounded_direct")
+        spec._CHOICE_CACHE_MAX_SIZE = 3
+        for n in range(10):
+            spec.choose(n=n)
+        assert len(spec._choice_cache) == 3
+
+    def test_lru_order_evicts_least_recently_used(self, monkeypatch):
+        self._patch_fake_tuned_cache(monkeypatch)
+        spec = self._spec("lru_direct")
+        spec._CHOICE_CACHE_MAX_SIZE = 2
+
+        spec.choose(n=1)
+        spec.choose(n=2)
+        # Touch n=1 again -- it becomes most-recently-used, so the NEXT insertion should
+        # evict n=2 (least-recently-used), not n=1.
+        spec.choose(n=1)
+        spec.choose(n=3)
+
+        cached_ns = {dict(k).get("n") for k in spec._choice_cache}
+        assert 1 in cached_ns
+        assert 2 not in cached_ns
+        assert 3 in cached_ns

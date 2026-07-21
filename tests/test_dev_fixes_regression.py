@@ -48,6 +48,34 @@ class TestInitializeFunctionLogNoNameError:
         assert "module" in log and "function" in log
 
 
+class TestInitializeFunctionLogUsesModuleLogger:
+    """Regression (2026-07-21 audit round 2, LOW): both frame-introspection ``except`` blocks in
+    ``initialize_function_log()`` used to call the module-level ``logging.exception(...)``
+    function (always the ROOT logger) instead of this file's own configured ``logger`` object --
+    invisible to a caller who reconfigured ``logger`` via ``init_logging()`` (custom handlers/
+    format/level), unlike every other log call in this file."""
+
+    def test_frame_getfile_failure_logs_via_module_logger(self):
+        import pyutilz.logginglib as logginglib_module
+        from pyutilz.logginglib import initialize_function_log
+
+        fake_logger = MagicMock()
+        with patch.object(logginglib_module, "logger", fake_logger):
+            with patch("pyutilz.logginglib.inspect.getfile", side_effect=TypeError("boom")):
+                initialize_function_log()
+        fake_logger.exception.assert_called_once()
+
+    def test_argvalues_failure_logs_via_module_logger(self):
+        import pyutilz.logginglib as logginglib_module
+        from pyutilz.logginglib import initialize_function_log
+
+        fake_logger = MagicMock()
+        with patch.object(logginglib_module, "logger", fake_logger):
+            with patch("pyutilz.logginglib.inspect.getargvalues", side_effect=TypeError("boom")):
+                initialize_function_log()
+        fake_logger.exception.assert_called_once()
+
+
 class TestClocksTimezoneAware:
     """Finding 3: timestamps must be timezone-aware (datetime.now(timezone.utc))."""
 

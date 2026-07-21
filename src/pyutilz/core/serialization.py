@@ -85,7 +85,7 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
         else:
             return data
     except Exception as e:
-        logger.exception(e)
+        logger.exception("serialize failed (fname=%r, type=%s): %s", fname, type(obj).__name__, e)
         return None
 
 

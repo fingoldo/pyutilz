@@ -11,7 +11,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider
+from pyutilz.llm.base import LLMProvider, PerCallAttr
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,22 @@ class GeminiProvider(LLMProvider):
     }
     _DEFAULT_PRICING = (0.25, 1.50)
 
+    # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
+    # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): see identical
+    # PerCallAttr usage + docstring in openai_compat.py / base.py -- generate_batch() fires N
+    # concurrent self.generate() calls on one shared/cached provider instance, so a plain
+    # attribute write from one in-flight request used to be visible to every other
+    # concurrently-running request. ``total_cached_content_tokens`` is NOT converted -- it is
+    # intentionally cumulative/summed across all calls.
+    _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
+    last_safety_ratings: PerCallAttr = PerCallAttr(list)
+    last_grounding_metadata: PerCallAttr = PerCallAttr(lambda: None)
+    last_citation_metadata: PerCallAttr = PerCallAttr(lambda: None)
+    last_function_calls: PerCallAttr = PerCallAttr(list)
+    last_all_candidates: PerCallAttr = PerCallAttr(list)
+    last_cached_content_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -108,16 +124,9 @@ class GeminiProvider(LLMProvider):
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
-        # Per-call response metadata captured by ``_capture_candidate_metadata``.
-        # Without these, grounding / citations / function calls / safety
-        # categories silently disappear when only ``.text`` is extracted.
-        self.last_safety_ratings: list[dict[str, Any]] = []
-        self.last_grounding_metadata: Any = None
-        self.last_citation_metadata: Any = None
-        self.last_function_calls: list[dict[str, Any]] = []
-        self.last_all_candidates: list[Any] = []
-        self.last_cached_content_tokens = 0
+        # Per-call usage/safety/grounding/citation/function-call/candidate metadata:
+        # PerCallAttr class-level descriptors (declared above __init__) provide the defaults;
+        # nothing to initialize here.
         self.total_cached_content_tokens = 0
         # Phase-4 multi-candidate + cache support.
         # ``candidate_count``: how many response candidates to ask for in

@@ -177,15 +177,39 @@ def strip_lineno(entry: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+_SAFE_DEFAULT_TYPES = (bool, int, float, str, type(None))
+
+
+def _safe_default_repr(default: object) -> str:
+    """Return a stable ``repr()`` for a parameter default, for the "safe to serialize" types
+    (bool/int/float/str/None, and tuples thereof) -- else a fixed placeholder.
+
+    Arbitrary objects/sentinels (a module-level ``_UNSET = object()``, a mutable default, a
+    class instance) often ``repr()`` with a memory address or other unstable identity, which
+    would make the API snapshot flap on every run even though the actual default never changed.
+    Restricting to literal-like types keeps the capture deterministic while still catching the
+    common, highest-risk case: a bool/int/float/str/None default silently flipping.
+    """
+    if isinstance(default, _SAFE_DEFAULT_TYPES):
+        return repr(default)
+    if isinstance(default, tuple) and all(isinstance(v, _SAFE_DEFAULT_TYPES) for v in default):
+        return repr(default)
+    return "<unstable-default>"
+
+
 def capture_signature(obj: object) -> str:
     """Stringify a callable's signature in a form stable across
     refactors that don't change semantics.
 
-    Captures parameter name, kind (positional / keyword / var), and
-    has-default. Annotations are intentionally omitted because they
-    churn under harmless type-narrowing refactors. Failures (LocalProxy,
-    builtins without inspectable signatures, etc.) yield
-    ``"<no-signature>"``.
+    Captures parameter name, kind (positional / keyword / var), has-default, and -- for
+    "safe to serialize" default types (bool/int/float/str/None/tuple-of-those) -- the default
+    value itself (see ``_safe_default_repr``). Regression fix (2026-07-21 audit round 2, HIGH):
+    the has-default flag alone can't distinguish ``def f(verbose=False)`` from
+    ``def f(verbose=True)`` -- both captured as the byte-identical ``"(verbose:any:1)"``, so a
+    silent default-value flip (a real, common backward-compat break) went completely undetected
+    by this snapshot. Annotations are intentionally omitted because they churn under harmless
+    type-narrowing refactors. Failures (LocalProxy, builtins without inspectable signatures,
+    etc.) yield ``"<no-signature>"``.
     """
     try:
         sig = inspect.signature(obj)  # type: ignore[arg-type]  # obj is intentionally untyped object; non-callables are caught below and yield "<no-signature>"
@@ -201,7 +225,8 @@ def capture_signature(obj: object) -> str:
             inspect.Parameter.VAR_KEYWORD: "**kw",
         }.get(p.kind, str(p.kind))
         has_default = p.default is not inspect.Parameter.empty
-        params.append(f"{name}:{kind_short}:{int(has_default)}")
+        default_repr = _safe_default_repr(p.default) if has_default else ""
+        params.append(f"{name}:{kind_short}:{int(has_default)}:{default_repr}")
     return "(" + ", ".join(params) + ")"
 
 

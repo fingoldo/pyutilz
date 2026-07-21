@@ -23,6 +23,7 @@ import numpy as np
 import heapq
 import psutil
 import pandas as pd
+import warnings
 import atexit
 import shutil
 from multiprocessing.pool import ThreadPool
@@ -130,13 +131,29 @@ def split_array(arr: Sized, step: int) -> list:
     return res
 
 
-def distribute_work(workload: Sequence, nworkers: int) -> tuple:
-    """Distribute array workload into nworkers chunks of approximately same total size."""
-    if nworkers <= 0:
-        nworkers = cpu_count_physical()
-    planned_work_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
-    workload_indices_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
-    totals = [(0, i) for i in range(nworkers)]
+def distribute_work(workload: Sequence, n_jobs: Optional[int] = None, nworkers: Optional[int] = None) -> tuple:
+    """Distribute array workload into ``n_jobs`` chunks of approximately same total size.
+
+    ``nworkers`` is a deprecated alias for ``n_jobs`` (kept for backward compatibility) -- this
+    module had three different spellings for "degree of parallelism" (``n_jobs``/``n_cores``/
+    ``nworkers``) across its three parallel-dispatch functions; ``n_jobs`` (matching the joblib
+    convention :func:`parallel_run` already follows) is now the standard name everywhere.
+    """
+    if nworkers is not None:
+        warnings.warn(
+            "distribute_work's `nworkers` parameter is deprecated; use `n_jobs` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if n_jobs is None:
+            n_jobs = nworkers
+    if n_jobs is None:
+        raise TypeError("distribute_work() missing required argument: 'n_jobs' (or deprecated 'nworkers')")
+    if n_jobs <= 0:
+        n_jobs = cpu_count_physical()
+    planned_work_per_worker: List[List[Any]] = [[] for _ in range(n_jobs)]
+    workload_indices_per_worker: List[List[Any]] = [[] for _ in range(n_jobs)]
+    totals = [(0, i) for i in range(n_jobs)]
     heapq.heapify(totals)
     for i, value in enumerate(workload):
         total, index = heapq.heappop(totals)
@@ -174,31 +191,43 @@ def parallel_run(
 def applyfunc_parallel(
     iterable: list,
     func: Callable,
-    n_cores: Optional[int] = None,
+    n_jobs: Optional[int] = None,
     return_dataframe: bool = True,
     logical: bool = False,
     initializer=None,
     initargs=(),
     use_threads: bool = False,
+    n_cores: Optional[int] = None,
 ) -> Union[list, pd.DataFrame]:
     """Runs function in parallel using the multiprocessing Pool.
 
     Returns a ``pd.DataFrame`` (via ``pd.concat``) when ``return_dataframe=True`` (the default),
     or a bare ``list`` of per-chunk results when ``return_dataframe=False``.
+
+    ``n_cores`` is a deprecated alias for ``n_jobs`` (kept for backward compatibility) -- see
+    :func:`distribute_work`'s docstring for why ``n_jobs`` is now this module's standard name.
     """
-    if n_cores is None:
+    if n_cores is not None:
+        warnings.warn(
+            "applyfunc_parallel's `n_cores` parameter is deprecated; use `n_jobs` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if n_jobs is None:
+            n_jobs = n_cores
+    if n_jobs is None:
         detected = psutil.cpu_count(logical=logical)
-        n_cores = min(detected if detected and detected > 0 else 1, len(iterable))
+        n_jobs = min(detected if detected and detected > 0 else 1, len(iterable))
     try:
         fname = func.__name__
     except Exception:
         fname = "function"
 
-    logger.info("Applying of %s started, ncores=%s, nchunks=%s...", fname, n_cores, len(iterable))
+    logger.info("Applying of %s started, n_jobs=%s, nchunks=%s...", fname, n_jobs, len(iterable))
 
     if use_threads:
         with ThreadPool(
-            processes=n_cores,
+            processes=n_jobs,
             initializer=initializer,
             initargs=initargs,
         ) as pool:
@@ -206,7 +235,7 @@ def applyfunc_parallel(
     else:
 
         with Pool(
-            processes=n_cores,
+            processes=n_jobs,
             initializer=initializer,
             initargs=initargs,
         ) as pool:

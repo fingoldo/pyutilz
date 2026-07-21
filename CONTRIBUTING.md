@@ -288,9 +288,13 @@ fix(db): prevent SQL injection in table name validation
 
 Replace string formatting with proper parameterized queries.
 Add validate_sql_identifier() calls before dynamic table names.
-
-BREAKING CHANGE: Invalid table names now raise ValueError
 ```
+
+For a breaking change, describe it in the commit body (as above) and add a "BREAKING" entry
+under CHANGELOG.md's "Unreleased" section (see "Pull Request Process" below) -- that CHANGELOG
+entry, not a commit-message footer, is what this project actually treats as the source of truth
+for release notes; there is no commit-msg hook or CI check that parses a `BREAKING CHANGE:`
+footer, so don't rely on one to surface the change.
 
 ## Pull Request Process
 

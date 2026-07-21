@@ -117,3 +117,45 @@ def test_normality_verdict_too_few_samples() -> None:
     out = normality_verdict(np.array([1.0, 2.0, 3.0]))
     assert out["verdict"] == "too-few-samples"
     assert out["reject_normal"] is False
+
+
+def test_normality_verdict_constant_sample_is_degenerate_not_normal() -> None:
+    """Test-gap coverage (2026-07-21 audit round 2, MEDIUM): a zero-variance (constant) sample
+    must be flagged "degenerate", not misreported as "consistent with Normal" -- the whole point
+    of this early-return per its own inline comment (catches e.g. a broken model that always
+    predicts the same value)."""
+    from pyutilz.stats.normality import normality_verdict
+
+    out = normality_verdict(np.full(50, 3.0))
+    assert out["verdict"] == "degenerate (zero variance)"
+    assert out["reject_normal"] is False
+
+
+def test_normality_verdict_subsamples_without_replacement_when_over_max_n_ad(monkeypatch) -> None:
+    """Test-gap coverage (2026-07-21 audit round 2, MEDIUM): the max_n_ad subsampling branch was
+    never exercised. Asserts BOTH the reported sizes AND that the underlying rng.choice() call
+    actually used replace=False -- asserting only `out["n"] == max_n_ad` would not catch a
+    mutation flipping replace=False to True, since the sample size stays the same either way."""
+    from pyutilz.stats import normality as normality_module
+
+    # Built BEFORE patching np.random.default_rng below -- that patch is process-global (np.random
+    # is the same module object everywhere), so generating the input sample after patching would
+    # route through the spy too.
+    x = np.random.default_rng(1).standard_normal(500)
+
+    captured_kwargs: dict = {}
+    real_rng = np.random.default_rng(0)
+
+    class _SpyRng:
+        def choice(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return real_rng.choice(*args, **kwargs)
+
+    monkeypatch.setattr(normality_module.np.random, "default_rng", lambda seed: _SpyRng())
+
+    out = normality_module.normality_verdict(x, max_n_ad=50)
+
+    assert out["n"] == 50
+    assert out["n_total"] == 500
+    assert captured_kwargs.get("replace") is False
+    assert captured_kwargs.get("size") == 50

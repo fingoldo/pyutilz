@@ -85,7 +85,16 @@ def rexecute(method_name: str, *args, max_retries: Any = None, **kwargs) -> Any:
         except RedisConnectionError as e:
             # Transient: retry with backoff, bounded by max_retries if given.
             attempt += 1
-            logger.exception(e)
+            # Regression fix: this used to log a full ERROR-level traceback on EVERY attempt --
+            # with max_retries=None (the documented default, "retries indefinitely"), a real
+            # outage produced roughly one full traceback per second, forever, drowning out every
+            # other log signal and potentially blowing through a log-aggregator's ingestion
+            # quota. Only the first failure of a streak gets the full traceback; subsequent
+            # identical retries log a one-line DEBUG summary until success or the final give-up.
+            if attempt == 1:
+                logger.exception(e)
+            else:
+                logger.debug("rexecute: still failing (attempt %d): %s", attempt, e)
             if max_retries is not None and attempt >= max_retries:
                 logger.error("rexecute: giving up after %d attempts", attempt)
                 raise

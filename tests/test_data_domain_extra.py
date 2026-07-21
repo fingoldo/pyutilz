@@ -61,6 +61,21 @@ class TestRemoveStaleColumns:
         df = pd.DataFrame({"const": [1, 1, 1], "var": [1, 2, 3]})
         assert get_non_stale_columns(df) == remove_stale_columns(df)
 
+    def test_warns_deprecation(self):
+        """Regression: the deprecated alias previously had no warnings.warn(), so callers had
+        no runtime signal (only a docstring) that they should migrate to get_non_stale_columns."""
+        df = pd.DataFrame({"const": [1, 1, 1], "var": [1, 2, 3]})
+        with pytest.warns(DeprecationWarning, match="get_non_stale_columns"):
+            remove_stale_columns(df)
+
+    def test_callable_by_keyword_df_matching_frames_py_convention(self):
+        """Regression: get_non_stale_columns/remove_stale_columns used to name their parameter
+        `X`, inconsistent with every sibling in frames.py that uses `df` -- a caller who just
+        called a sibling with df=... got a TypeError reaching for these two by keyword."""
+        df = pd.DataFrame({"const": [1, 1, 1], "var": [1, 2, 3]})
+        assert get_non_stale_columns(df=df) == ["var"]
+        assert remove_stale_columns(df=df) == ["var"]
+
 
 class TestShowcaseDfColumnsDropnaGate:
     def test_pandas_dropna_true_respects_gate(self):

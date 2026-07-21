@@ -81,9 +81,14 @@ class CsrRowColConstructor:
             del self.data, self.rows, self.cols
         return matrix
 
-def get_sparse_memory_usage(mat:object)->int:
+def get_sparse_memory_usage(mat: object) -> int:
     """
-    Return mem usage of a csr, csc, or coo matrix
+    Return mem usage of a csr, csc, or coo matrix.
+
+    Raises ``TypeError`` for an unsupported ``mat`` type, matching ``get_df_memory_consumption``'s
+    convention elsewhere in the package -- an int return space that also used ``-1`` as an
+    "unsupported input" sentinel let callers silently under-count real memory usage when summing
+    across mixed container types.
     """
     try:
         if isinstance(mat, (csr_matrix, csc_matrix)):
@@ -92,7 +97,7 @@ def get_sparse_memory_usage(mat:object)->int:
         elif isinstance(mat, coo_matrix):
             return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         else:
-            return -1
-    except AttributeError:
+            raise TypeError(f"Unsupported sparse matrix type: {type(mat)}")
+    except AttributeError as e:
         logger.warning("get_sparse_memory_usage: AttributeError while reading memory-usage attributes of a %s instance", type(mat).__name__)
-        return -1
+        raise TypeError(f"Unsupported sparse matrix type: {type(mat)}") from e

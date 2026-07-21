@@ -8,10 +8,16 @@ object with a ``.text`` attribute.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from typing import Any, Dict, Optional
 
 _log = logging.getLogger(__name__)
+
+# A bare IPv4 dotted-quad or IPv6 address -- used to decide whether the raw JSON response body
+# is a plausible fallback "IP" (see parse_ip_response's `{"origin": null}` fix below), not a
+# general-purpose IP validator (doesn't reject out-of-range octets; that's not this check's job).
+_IP_SHAPE_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$")
 
 # orjson is faster than stdlib json; resolved once so the fallback branch never
 # references the `orjson` name after a failed import (that raised UnboundLocalError
@@ -62,10 +68,19 @@ def parse_ip_response(text: str) -> str:
     if body.startswith("{"):
         try:
             data = _json_loads(body)
-            raw = data.get("origin") or data.get("ip") or body
-            return raw.split(",")[0].strip() if isinstance(raw, str) else raw
+            raw = data.get("origin") or data.get("ip")
+            if isinstance(raw, str) and raw:
+                return raw.split(",")[0].strip()
+            # `raw` is missing/falsy/non-string (e.g. {"origin": null}, {"origin": ""}) --
+            # regression fix: falling back unconditionally to the raw JSON body text here meant
+            # a garbage/JSON-blob string (equal to neither "?" nor real_ip) reached
+            # check_ip_matches_real() as a false-positive "proxy works, IP differs" result. Only
+            # fall back to `body` if it independently looks like a plausible bare IP address;
+            # otherwise "?" -- the same sentinel get_ip() already uses for "unreachable" -- so the
+            # caller correctly treats this the same as every other unusable-response case.
+            return body if _IP_SHAPE_RE.match(body) else "?"
         except (_JSONDecodeError, ValueError):
-            return body
+            return body if _IP_SHAPE_RE.match(body) else "?"
     return body.split(",")[0].strip()
 
 

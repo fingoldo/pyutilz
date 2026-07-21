@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -32,18 +33,35 @@ def _pkg():
     return sys.modules["pyutilz.llm.openrouter_provider"]
 
 
+def _catalogue_is_fresh() -> bool:
+    """Return True if a cached catalogue exists and hasn't exceeded ``_MODELS_CATALOGUE_TTL_SECONDS``.
+
+    Regression fix (2026-07-21 audit round 2, MEDIUM): the catalogue used to be cached forever
+    once fetched -- pricing/context-limit data went stale for the rest of a long-running
+    process's lifetime. ``_MODELS_CATALOGUE_FETCHED_AT`` defaults to +inf, so a catalogue
+    injected directly (tests, or a caller pre-populating the cache) rather than through
+    :func:`_fetch_models_catalogue` is treated as fresh -- only a real fetch stamps a finite
+    monotonic time, after which this TTL check actually applies.
+    """
+    pkg = _pkg()
+    if pkg._MODELS_CATALOGUE is None:
+        return False
+    return bool((time.monotonic() - pkg._MODELS_CATALOGUE_FETCHED_AT) < pkg._MODELS_CATALOGUE_TTL_SECONDS)
+
+
 def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     """Fetch and parse the public /api/v1/models catalogue.
 
     Returns a dict mapping ``model_id`` to its raw entry. Returns an empty
     dict on failure WITHOUT caching the failure — a transient outage at
     startup would otherwise lock the process into zero pricing forever.
-    The next call retries; once a fetch succeeds the result is cached.
+    The next call retries; once a fetch succeeds the result is cached for
+    ``_MODELS_CATALOGUE_TTL_SECONDS`` (see :func:`_catalogue_is_fresh`).
     """
-    if _pkg()._MODELS_CATALOGUE is not None:
+    if _catalogue_is_fresh():
         return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     with _pkg()._MODELS_LOCK:
-        if _pkg()._MODELS_CATALOGUE is not None:
+        if _catalogue_is_fresh():
             return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         try:
             resp = _pkg().httpx.get(_pkg()._MODELS_URL, timeout=timeout)
@@ -58,6 +76,7 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             )
             return {}  # do NOT cache failure — retry on next call
         _pkg()._MODELS_CATALOGUE = catalogue
+        _pkg()._MODELS_CATALOGUE_FETCHED_AT = time.monotonic()
         return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
@@ -72,7 +91,7 @@ async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
     on the async path should await this BEFORE the sync property is read, so the property call
     that follows is a cheap cache-hit.
     """
-    if _pkg()._MODELS_CATALOGUE is not None:
+    if _catalogue_is_fresh():
         return
     await asyncio.to_thread(_fetch_models_catalogue, timeout)
 

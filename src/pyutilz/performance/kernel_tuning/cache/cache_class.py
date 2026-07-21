@@ -125,6 +125,36 @@ class KernelTuningCache:
         else:
             from ..remote import get_remote_backend
             self._remote = get_remote_backend()
+        # Regression fix (2026-07-21 audit round 2, HIGH): remote read/write failures used to
+        # log at DEBUG unconditionally, with no escalation -- invisible by default (loggers are
+        # WARNING-and-above when unconfigured), so an expired credential / renamed bucket /
+        # blocked network silently disabled cross-machine sharing forever with zero signal. See
+        # ``_log_remote_failure``/``_note_remote_success``.
+        self._remote_consecutive_failures = 0
+
+    # Re-announce at WARNING every this-many consecutive failures (not just the first) so a
+    # long-lived process doesn't go silent again after the initial warning.
+    _REMOTE_FAILURE_WARN_INTERVAL = 20
+
+    def _log_remote_failure(self, op: str, exc: Exception) -> None:
+        """Log a remote-backend failure, escalating to WARNING on the first failure after a run
+        of successes and periodically thereafter (every ``_REMOTE_FAILURE_WARN_INTERVAL``
+        consecutive failures); every other occurrence stays at DEBUG so a backend failing on
+        EVERY call doesn't flood the log."""
+        self._remote_consecutive_failures += 1
+        n = self._remote_consecutive_failures
+        if n == 1 or n % self._REMOTE_FAILURE_WARN_INTERVAL == 0:
+            logger.warning("kernel_tuning_cache: remote %s failed (%d consecutive failure(s)): %s", op, n, exc)
+        else:
+            logger.debug("kernel_tuning_cache: remote %s failed: %s", op, exc)
+
+    def _note_remote_success(self) -> None:
+        """Reset the consecutive-failure counter; if recovering from a run of failures, log the
+        recovery at WARNING too -- otherwise an operator who saw the earlier warning has no
+        signal that the remote backend is working again."""
+        if self._remote_consecutive_failures > 0:
+            logger.warning("kernel_tuning_cache: remote operations recovered after %d consecutive failure(s)", self._remote_consecutive_failures)
+        self._remote_consecutive_failures = 0
 
     @classmethod
     def load_or_create(cls) -> "KernelTuningCache":
@@ -307,8 +337,9 @@ class KernelTuningCache:
             # permanently overwrite/delete those peer-only kernels from the shared object.
             try:
                 remote_data = self._remote.read(hw_fingerprint())
+                self._note_remote_success()
             except Exception as e:
-                logger.debug("kernel_tuning_cache: remote read failed: %s", e)
+                self._log_remote_failure("read", e)
                 remote_data = None
             if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
                 prov = remote_data.get("provenance")
@@ -397,8 +428,9 @@ class KernelTuningCache:
         if remote and self._remote is not None:
             try:
                 self._remote.write(hw_fingerprint(), self._remote_payload())
+                self._note_remote_success()
             except Exception as e:
-                logger.debug("kernel_tuning_cache: remote write failed: %s", e)
+                self._log_remote_failure("write", e)
 
     def _remote_payload(self) -> dict:
         """Assemble the legacy-shaped monolithic payload (all kernels) for the
@@ -414,8 +446,10 @@ class KernelTuningCache:
         kernels = dict((self._loaded or {}).get("kernels", {}) if self._loaded else {})
         try:
             remote_data = self._remote.read(hw_fingerprint()) if self._remote is not None else None
+            if self._remote is not None:
+                self._note_remote_success()
         except Exception as e:
-            logger.debug("kernel_tuning_cache: remote read (pre-write merge) failed: %s", e)
+            self._log_remote_failure("read (pre-write merge)", e)
             remote_data = None
         if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
             for name, entry in (remote_data.get("kernels", {}) or {}).items():
@@ -430,20 +464,47 @@ class KernelTuningCache:
         }
 
     def _gc_kernel_dir(self, kdir: str, keep: int = 4) -> None:
-        """Lazily garbage-collect a kernel directory, keeping the newest ``keep``
-        immutable files (by mtime). Negligible space + never blocks; best-effort
-        (a failed unlink is harmless -- the reader always picks the newest)."""
+        """Lazily garbage-collect a kernel directory, keeping the newest ``keep`` immutable
+        files. "Newest" uses the SAME ``(tuned_utc, mtime)`` key the readers
+        (``_read_kernel_newest`` / ``_read_kernel_dir_by_path``) use to pick the current tuning
+        -- NOT raw mtime alone.
+
+        Regression fix (2026-07-21 audit round 2, MEDIUM): GC previously sorted purely by mtime
+        (write order). ``update()`` accepts an explicit ``tuned_utc`` override; whenever that's
+        set non-monotonically w.r.t. wall-clock write order (importing/replaying
+        historically-timestamped tunings, or merging tunings recorded on a different host/
+        clock), the entry the reader would pick as logically newest could have an OLDER mtime
+        than several others and get silently, permanently deleted here before ever being read.
+        Unreadable/corrupt files sort as oldest (empty ``tuned_utc``) and are evicted first --
+        consistent with the readers, which skip them entirely anyway.
+
+        Negligible space + never blocks; best-effort (a failed unlink is harmless -- the reader
+        always picks the newest of whatever remains).
+        """
         try:
             files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
         except OSError:
             return
         if len(files) <= keep:
             return
-        try:
-            files.sort(key=lambda p: os.path.getmtime(p))
-        except OSError:
-            return
-        for p in files[:-keep]:
+        candidates: list[tuple] = []  # (tuned_ts, mtime, path)
+        for p in files:
+            ts = ""
+            try:
+                with open(p, encoding="utf-8") as f:
+                    rec = json.load(f)
+                entry = rec.get("entry")
+                if isinstance(entry, dict):
+                    ts = entry.get("tuned_utc") or ""
+            except (OSError, json.JSONDecodeError):
+                pass  # unreadable -- sorts as oldest (ts=""), evicted first
+            try:
+                mtime = os.path.getmtime(p)
+            except OSError:
+                mtime = 0.0
+            candidates.append((ts, mtime, p))
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        for _ts, _mtime, p in candidates[:-keep]:
             with contextlib.suppress(OSError):
                 os.remove(p)
 
@@ -589,8 +650,9 @@ class KernelTuningCache:
                 if not self._in_memory and self._remote is not None:
                     try:
                         self._remote.write(hw_fingerprint(), self._remote_payload())
+                        self._note_remote_success()
                     except Exception as e:
-                        logger.debug("kernel_tuning_cache: remote write failed: %s", e)
+                        self._log_remote_failure("write", e)
                 return True
             return False
 

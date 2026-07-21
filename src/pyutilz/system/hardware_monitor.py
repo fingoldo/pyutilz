@@ -75,7 +75,13 @@ class UtilizationMonitor:
         self.gpu_ids = gpu_ids
         self.sleep_interval_seconds = sleep_interval_seconds
         self.stop_flag = threading.Event()
-        self.thread = threading.Thread(target=self.query_utilization)
+        # daemon=True (regression fix): if the code between start()/stop() raises -- the entire
+        # reason someone wraps a benchmark in a monitor, to profile code that might fail --
+        # stop() is skipped and stop_flag is never set. A non-daemon thread then runs its
+        # infinite loop forever, and CPython refuses to exit the interpreter until every
+        # non-daemon thread finishes -- not just "a thread leaks", the whole process hangs at
+        # shutdown. A daemon thread no longer blocks interpreter exit either way.
+        self.thread = threading.Thread(target=self.query_utilization, daemon=True)
 
     def query_utilization(self):
         """Background thread function that monitors hardware utilization.
@@ -177,6 +183,15 @@ class UtilizationMonitor:
         self.stop_flag.set()
         self.thread.join()
         logger.info("Hardware utilization monitoring stopped")
+
+    def __enter__(self) -> "UtilizationMonitor":
+        """``with UtilizationMonitor(...) as monitor:`` -- guarantees stop() runs via __exit__
+        even when the wrapped code raises, so a benchmark exception never skips cleanup."""
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()
 
     def get_average_utilization(self, ndigits: int = 3):
         """Calculate average utilization across all samples.

@@ -28,6 +28,11 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     Works for arrays of any dimensionality. The result has k entries along `axis`,
     ordered from best to worst (highest-first when highest=True, lowest-first otherwise).
 
+    NaN is never picked as a "highest" value (nor excluded from being "lowest" when there aren't
+    enough real values to fill k slots) -- ``np.argpartition``/``np.argsort`` otherwise treat NaN
+    as greater than every real number, so an unguarded NaN anywhere in ``arr`` would silently
+    outrank the true maximum.
+
     >>> arr = np.array([2., 0., 3.], dtype=np.float32)
     >>> get_topk_indices(arr, k=2, highest=True)
     array([2, 0], dtype=int64)
@@ -44,16 +49,23 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
         empty_shape[axis] = 0
         return np.empty(empty_shape, dtype=np.int64)
 
+    # NaN sorts as +inf under argpartition/argsort's default order; substitute it towards the
+    # "worst" end for whichever direction we're ranking so it's never mistaken for a real extreme
+    # (only for floating dtypes -- np.isnan raises on integer arrays, which can't hold NaN anyway).
+    is_float = np.issubdtype(arr.dtype, np.floating)
     if highest:
+        ranking_arr = np.where(np.isnan(arr), -np.inf, arr) if is_float else arr
         # Partition so the k largest end up in the last k positions along axis.
-        part = np.argpartition(arr, n - k, axis=axis)
+        part = np.argpartition(ranking_arr, n - k, axis=axis)
         cand = np.take(part, np.arange(n - k, n), axis=axis)
     else:
-        part = np.argpartition(arr, k - 1, axis=axis)
+        ranking_arr = np.where(np.isnan(arr), np.inf, arr) if is_float else arr
+        part = np.argpartition(ranking_arr, k - 1, axis=axis)
         cand = np.take(part, np.arange(0, k), axis=axis)
 
-    # Reorder the k candidates by their actual values (argpartition leaves them unordered).
-    cand_vals = np.take_along_axis(arr, cand, axis=axis)
+    # Reorder the k candidates by their (NaN-substituted) ranking values (argpartition leaves
+    # them unordered).
+    cand_vals = np.take_along_axis(ranking_arr, cand, axis=axis)
     order = np.argsort(cand_vals, axis=axis)
     if highest:
         order = np.flip(order, axis=axis)
