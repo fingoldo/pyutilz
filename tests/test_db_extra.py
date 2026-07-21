@@ -875,3 +875,41 @@ def test_get_id_by_key_field_and_insert_if_needed_cache_hit():
 
     dict_enums = {"existing": 42}
     assert db.get_id_by_key_field_and_insert_if_needed(dict_enums, table="t", key_field_value="existing") == 42
+
+
+# ---------------------------------------------------------------------------
+# log_to_db -- node resolution (regression: log_to_db.node_id was read via
+# globals().get("node_id"), a magic-string lookup against a name that is
+# NEVER assigned anywhere in this module, always resolving to None and
+# silently falling through to lookup_in_stack(). Replaced with a real
+# module-level `node_id` global so an explicit override is actually usable
+# and discoverable.
+# ---------------------------------------------------------------------------
+
+
+def test_log_to_db_defaults_to_stack_lookup_when_node_id_unset(monkeypatch):
+    import pyutilz.database.db as db
+
+    monkeypatch.setattr(db, "node_id", None)
+    monkeypatch.setattr(db, "lookup_in_stack", lambda name: "stack-node" if name == "node_id" else "stack-app")
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda sql, params: captured.update(sql=sql, params=params))
+
+    db.log_to_db("hello")
+
+    assert captured["params"][0] == "stack-node"
+
+
+def test_log_to_db_honors_explicit_node_id_override(monkeypatch):
+    import pyutilz.database.db as db
+
+    monkeypatch.setattr(db, "node_id", "worker-3")
+    monkeypatch.setattr(db, "lookup_in_stack", lambda name: (_ for _ in ()).throw(AssertionError(f"lookup_in_stack({name!r}) should not be called when node_id is set")))
+
+    captured = {}
+    monkeypatch.setattr(db, "safe_execute", lambda sql, params: captured.update(sql=sql, params=params))
+
+    db.log_to_db("hello", application="myapp")
+
+    assert captured["params"][0] == "worker-3"

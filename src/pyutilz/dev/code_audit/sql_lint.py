@@ -21,6 +21,86 @@ _LIMIT_RE = re.compile(r"\bLIMIT\s+(?::\w+|%\(?\w*\)?s|\$\d+|\?|(\d+))", re.IGNO
 _ORDER_BY_RE = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
 _OFFSET_RE = re.compile(r"\bOFFSET\b", re.IGNORECASE)
 
+# --- MIN()/MAX() over a raw JSON-text extraction, before casting ----------
+
+_MIN_MAX_CALL_RE = re.compile(r"\b(MIN|MAX)\s*\(", re.IGNORECASE)
+# Postgres/MySQL/SQLite JSON text-extraction operators: ``->>'key'`` (Postgres,
+# text result) and ``->'key'`` (Postgres, jsonb result -- still needs a cast
+# to compare/aggregate as anything but jsonb).
+_JSON_EXTRACT_RE = re.compile(r"->>?\s*'")
+_CAST_RE = re.compile(r"::\s*\w+")
+
+
+def _matching_close_paren(text: str, open_paren_idx: int) -> int:
+    """Index of the ``)`` that closes the ``(`` at ``open_paren_idx``
+    (balanced-paren scan, so nested calls inside the aggregate's argument
+    don't confuse it), or -1 if unbalanced."""
+    depth = 0
+    for i in range(open_paren_idx, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def scan_sql_aggregate_before_cast(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find ``MIN()``/``MAX()`` wrapping a raw JSON-text extraction
+    (``col->>'key'``) with no ``::type`` cast anywhere in the aggregate's
+    argument.
+
+    Aggregating (or comparing) the *text* representation of a JSON value
+    sorts lexicographically, not by the value's real type -- correct only by
+    coincidence when the source data happens to already be in a
+    lexicographically-sortable format (e.g. ISO-8601 timestamps), an
+    unstated invariant that silently breaks the moment the upstream producer
+    changes format or a differently-formatted row slips in. Cast inside the
+    aggregate's own parens (``MIN((col->>'key')::timestamptz)``) so the
+    aggregate operates on the real type.
+
+    Severity: P2 (silently wrong ordering/selection under a data-shape
+    assumption that isn't enforced anywhere, not an immediate crash).
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for node, sql in _string_constants(tree):
+            for m in _MIN_MAX_CALL_RE.finditer(sql):
+                open_idx = m.end() - 1
+                close_idx = _matching_close_paren(sql, open_idx)
+                if close_idx == -1:
+                    continue
+                arg = sql[open_idx + 1 : close_idx]
+                if not _JSON_EXTRACT_RE.search(arg):
+                    continue
+                if _CAST_RE.search(arg):
+                    continue
+                findings.append(Finding(
+                    check="sql_aggregate_before_cast",
+                    severity="P2",
+                    file=rel,
+                    line=node.lineno,
+                    snippet=_line_text(src_lines, node.lineno),
+                    detail=(
+                        f"{m.group(1).upper()}() wraps a raw JSON-text extraction "
+                        "(->>'...' / ->'...') with no ::type cast anywhere in its "
+                        "argument -- aggregates/compares the TEXT representation, "
+                        "which sorts lexicographically rather than by the real "
+                        "value's type. Cast inside the aggregate's own parens, "
+                        "e.g. MIN((col->>'key')::timestamptz)."
+                    ),
+                ))
+    return findings
+
 
 def _string_constants(tree: ast.Module) -> list[tuple[ast.Constant, str]]:
     """Every ``ast.Constant`` string literal in the module, in traversal

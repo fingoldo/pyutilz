@@ -475,6 +475,27 @@ def test_get_attr_no_default_passed_still_coerces_to_list():
     assert get_attr({"a": 1}, "b") == []
 
 
+def test_get_attr_survives_reload_of_its_own_module():
+    """Regression: tests/test_meta/test_api_stability.py reloads every
+    aliased module (including pyutilz.core.pythonlib) via
+    importlib.reload() to snapshot a clean public surface. A get_attr
+    reference captured BEFORE that reload must keep coercing correctly
+    afterward -- comparing against a bare module-global sentinel name
+    (rather than one bound into the function's own defaults at the same
+    def-time as `default_value`) desyncs after reload, since reload
+    rebinds the module-global name to a NEW sentinel object while an
+    already-bound `get_attr` keeps its OLD one baked into __defaults__.
+    """
+    import importlib
+
+    from pyutilz.core import pythonlib as pythonlib_module
+    from pyutilz.pythonlib import get_attr as get_attr_before_reload
+
+    importlib.reload(pythonlib_module)
+
+    assert get_attr_before_reload({"a": 1}, "b") == []
+
+
 def test_keys_changed_enough_default_key_contains_does_not_crash():
     from pyutilz.pythonlib import keys_changed_enough
 

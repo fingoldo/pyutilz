@@ -110,6 +110,10 @@ def _get_thread_cursors() -> Dict[str, Any]:
     return cast(Dict[str, Any], _thread_local.cursors)
 
 
+# Optional override for log_to_db()'s "node" column -- callers may set
+# pyutilz.database.db.node_id = "..." directly; falls back to lookup_in_stack()
+# when unset (the pre-existing default, unchanged).
+node_id: Optional[str] = None
 # ----------------------------------------------------------------------------------------------------------------------------
 # sqlalchemy tricks
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -610,7 +614,7 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
             logger.info(s)
             severity = cInfo
 
-        node = globals().get("node_id")
+        node = node_id
         if node is None or application is None:
             if node is None:
                 node = lookup_in_stack("node_id")

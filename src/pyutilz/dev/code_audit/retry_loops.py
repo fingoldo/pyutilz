@@ -59,6 +59,23 @@ def _except_has_sleep(handler: ast.ExceptHandler) -> bool:
     return False
 
 
+def _try_body_has_blocking_wait_with_timeout(try_node: ast.Try) -> bool:
+    """True if the ``try:`` block itself (not its ``except`` handlers)
+    contains a call passing a ``timeout=`` keyword -- e.g. the common
+    producer/consumer idiom ``item = queue.get(timeout=N); except
+    queue.Empty: continue``. That blocking wait already provides the same
+    backoff a ``sleep()`` in the handler would -- it happens BEFORE the
+    exception is even raised, not after it -- so an except handler with no
+    ``sleep()`` here is not a busy-loop. Confirmed false positive found in
+    the wild (a queue-drain loop) during the first real run of this scanner.
+    """
+    for stmt in try_node.body:
+        for n in ast.walk(stmt):
+            if isinstance(n, ast.Call) and any(kw.arg == "timeout" for kw in n.keywords):
+                return True
+    return False
+
+
 def scan_retry_loops(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -95,7 +112,8 @@ def scan_retry_loops(
             if not has_retry_shape:
                 continue
             any_except_has_sleep = any(_except_has_sleep(h) for t in try_nodes for h in t.handlers)
-            if not any_except_has_sleep:
+            any_blocking_wait = any(_try_body_has_blocking_wait_with_timeout(t) for t in try_nodes)
+            if not any_except_has_sleep and not any_blocking_wait:
                 findings.append(Finding(
                     check="busy_retry_loop",
                     severity="P1",

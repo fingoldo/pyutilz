@@ -11,7 +11,8 @@ from .default_via_or import scan_default_via_or_trap
 from .broad_except import scan_broad_except_swallows
 from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
-from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination
+from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination, scan_sql_aggregate_before_cast
+from .locals_get import scan_locals_get_fragile_lookup
 from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
@@ -73,6 +74,8 @@ register_scanner("unraised_exception_class", scan_unraised_exceptions)
 register_scanner("credential_shaped_log_arg", scan_credential_shaped_log_args)
 register_scanner("docstring_args_incomplete", scan_docstring_args_completeness)
 register_scanner("return_annotation_mismatch", scan_return_annotation_mismatch)
+register_scanner("sql_aggregate_before_cast", scan_sql_aggregate_before_cast)
+register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

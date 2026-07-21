@@ -41,6 +41,8 @@ from pyutilz.dev.code_audit import (
     scan_credential_shaped_log_args,
     scan_docstring_args_completeness,
     scan_return_annotation_mismatch,
+    scan_sql_aggregate_before_cast,
+    scan_locals_get_fragile_lookup,
 )
 
 
@@ -2291,4 +2293,83 @@ def f(x) -> float:
     return x + len(helper())
 """)
     findings = scan_return_annotation_mismatch(tmp_path)
+    assert findings == []
+
+
+# ---- sql_aggregate_before_cast --------------------------------------------
+
+
+def test_sql_aggregate_before_cast_json_extract_no_cast_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", '''
+def latest_count(cur):
+    cur.execute("SELECT MAX(data->>'count') FROM events")
+''')
+    findings = scan_sql_aggregate_before_cast(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "sql_aggregate_before_cast"
+    assert findings[0].severity == "P2"
+
+
+def test_sql_aggregate_before_cast_with_cast_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+def latest_count(cur):
+    cur.execute("SELECT MAX((data->>'count')::int) FROM events")
+''')
+    findings = scan_sql_aggregate_before_cast(tmp_path)
+    assert findings == []
+
+
+def test_sql_aggregate_before_cast_no_json_extract_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+def latest(cur):
+    cur.execute("SELECT MAX(created_at) FROM events")
+''')
+    findings = scan_sql_aggregate_before_cast(tmp_path)
+    assert findings == []
+
+
+# ---- locals_get_fragile_lookup --------------------------------------------
+
+
+def test_locals_get_fragile_lookup_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(flag):
+    if flag:
+        cached_result = compute()
+    return locals().get("cached_result", None)
+""")
+    findings = scan_locals_get_fragile_lookup(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "locals_get_fragile_lookup"
+    assert findings[0].severity == "P1"
+
+
+def test_globals_get_fragile_lookup_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f():
+    return globals().get("some_name", None)
+""")
+    findings = scan_locals_get_fragile_lookup(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "locals_get_fragile_lookup"
+
+
+def test_locals_get_normal_variable_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(flag):
+    cached_result = None
+    if flag:
+        cached_result = compute()
+    return cached_result
+""")
+    findings = scan_locals_get_fragile_lookup(tmp_path)
+    assert findings == []
+
+
+def test_locals_dict_other_method_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    return list(locals().keys())
+""")
+    findings = scan_locals_get_fragile_lookup(tmp_path)
     assert findings == []

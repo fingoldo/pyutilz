@@ -162,6 +162,20 @@ list[Finding]):
   ``return``/``return None`` -- the declared type doesn't match what the
   function actually hands back on that path.
 
+- ``scan_sql_aggregate_before_cast``: a SQL ``MIN``/``MAX`` aggregate
+  whose argument contains a JSON text extraction operator with no
+  ``::type`` cast anywhere in the argument -- Postgres compares the
+  extracted value as TEXT, lexicographically rather than numerically,
+  so aggregating an un-cast numeric-looking string silently picks the
+  wrong row (e.g. treats ``"9"`` as greater than ``"10"``).
+
+- ``scan_locals_get_fragile_lookup``: ``locals().get(...)``/
+  ``globals().get(...)`` as a stand-in for a direct name reference --
+  fragile to a rename (the target is a magic string, not a symbol a
+  refactor tool or grep-based rename can find) and, for ``locals()``,
+  frequently wrong regardless (a nested function's ``locals()`` doesn't
+  see an enclosing scope's later-defined name the way a closure would).
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -200,7 +214,7 @@ from .default_via_or import scan_default_via_or_trap
 from .broad_except import scan_broad_except_swallows
 from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
-from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination
+from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination, scan_sql_aggregate_before_cast
 from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
@@ -217,6 +231,7 @@ from .unraised_exceptions import scan_unraised_exceptions
 from .credential_logging import scan_credential_shaped_log_args
 from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
+from .locals_get import scan_locals_get_fragile_lookup
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -254,6 +269,8 @@ __all__ = [
     "scan_credential_shaped_log_args",
     "scan_docstring_args_completeness",
     "scan_return_annotation_mismatch",
+    "scan_sql_aggregate_before_cast",
+    "scan_locals_get_fragile_lookup",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -268,7 +285,7 @@ for _submod in (
     "undeclared_imports", "vacuous_assertions", "locals_globals_output",
     "network_timeout", "retry_loops", "module_docstring",
     "unraised_exceptions", "credential_logging",
-    "docstring_args", "return_annotation",
+    "docstring_args", "return_annotation", "locals_get",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

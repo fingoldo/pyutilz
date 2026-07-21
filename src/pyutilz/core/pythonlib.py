@@ -174,13 +174,20 @@ def ensure_dict_elem(obj: dict, name: str, value) -> None:
 _GET_ATTR_UNSET = object()  # sentinel distinguishing "no default_value passed" from "caller passed default_value=None"
 
 
-def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None) -> object:
+def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None, *, _unset: object = _GET_ATTR_UNSET) -> object:
     """
     If no default_value is supplied, missing/unwanted values fall back to [] (to prevent
     TypeError: 'NoneType' object is not iterable downstream). Passing default_value=None
     explicitly is honored and returned as None.
     """
-    if default_value is _GET_ATTR_UNSET:
+    # Compare against `_unset` (a second default bound to the SAME sentinel object at this
+    # function's own def-time), not a bare `_GET_ATTR_UNSET` global lookup: `importlib.reload`
+    # of this module rebinds the module-level `_GET_ATTR_UNSET` name to a NEW object while an
+    # already-imported `get_attr` (from before the reload) keeps its OLD default baked into
+    # `__defaults__` -- a bare-global comparison would then always be False for that stale
+    # function object. Both `default_value` and `_unset` are captured from the same name at
+    # the same time, so they stay in sync for the lifetime of any single function object.
+    if default_value is _unset:
         default_value = []
     if obj == unwanted_value:
         return default_value

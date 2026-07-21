@@ -84,6 +84,38 @@ def _param_is_mutated(func: ast.FunctionDef | ast.AsyncFunctionDef, param_name: 
     return False
 
 
+_KNOWN_IMMUTABLE_SCALAR_NAMES = frozenset({"int", "float", "str", "bytes", "bool", "complex"})
+
+
+def _param_annotations(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, Optional[ast.expr]]:
+    """param_name -> its annotation AST node (None if unannotated)."""
+    a = func.args
+    out: dict[str, Optional[ast.expr]] = {}
+    for arg in (*a.posonlyargs, *a.args, *a.kwonlyargs):
+        out[arg.arg] = arg.annotation
+    return out
+
+
+def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> bool:
+    """True for a bare ``int``/``float``/``str``/``bytes``/``bool``/``complex``
+    annotation, optionally ``X | None`` -- deliberately narrow (only these
+    simple shapes) rather than attempting to resolve arbitrary ``Optional[...]``/
+    subscripted/string-quoted annotations. ``+=``/``-=`` etc. on any of these
+    types always rebinds (creates a new object via ``__add__``/``__sub__``,
+    never ``__iadd__``/in-place mutation), so aliasing one is never the
+    parameter-mutation-leak shape this scanner targets -- unlike a bare,
+    unannotated name (where the type is unknown and the conservative default
+    of flagging AugAssign stays in effect) or a container-typed one.
+    """
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Name):
+        return annotation.id in _KNOWN_IMMUTABLE_SCALAR_NAMES
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _is_known_immutable_scalar_annotation(annotation.left) or _is_known_immutable_scalar_annotation(annotation.right)
+    return False
+
+
 def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[str, str, int]]:
     """Find ``local = param`` (bare Name-to-Name rebind, no ``.copy()``/``list()``/``dict()``/
     ``[*...]`` wrapping) followed later in the SAME function by an in-place mutation of ``local``
@@ -98,8 +130,18 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
     that sibling branch's own body) -- BFS order can pair a mutation from one branch against an
     alias established in a DIFFERENT, mutually-exclusive branch, a false positive found in the
     wild (``text/strings/jsonutils.py``) during the first real run of this scanner.
+
+    An ``AugAssign`` (``+=``/``-=``/etc.) on a local aliasing a parameter
+    annotated as a known-immutable scalar (``int``/``float``/``str``/
+    ``bytes``/``bool``/``complex``, optionally ``| None``) is never flagged:
+    unlike a mutable container's ``__iadd__``, augmented assignment on an
+    immutable type always REBINDS the local name to a new object (``x = x -
+    y``), never mutating the original -- confirmed false positive found in
+    the wild (a `remaining -= slice_sec` loop over a `total: float`
+    parameter) during the first real run of this scanner.
     """
     param_names = set(_arg_names(func))
+    param_annotations = _param_annotations(func)
     aliases: dict[str, str] = {}  # local_name -> param_name
     hits: list[tuple[str, str, int]] = []
     nodes = sorted(ast.walk(func), key=lambda n: getattr(n, "lineno", 0))
@@ -121,8 +163,10 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
                 target_name = node.func.value.id
                 lineno = node.lineno
         elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id in aliases:
-            target_name = node.target.id
-            lineno = node.lineno
+            aliased_param = aliases[node.target.id]
+            if not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param)):
+                target_name = node.target.id
+                lineno = node.lineno
         elif isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id in aliases:
