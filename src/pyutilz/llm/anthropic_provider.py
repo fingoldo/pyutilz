@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -82,7 +81,7 @@ class AnthropicProvider(LLMProvider):
 
         self.model = model
         self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
         # Cumulative session accounting (mirrors OpenAICompatibleProvider).
         # ``get_session_cost`` reports these across ALL calls in the session;
         # without them it would silently report calls=0 and the last call's

@@ -155,7 +155,7 @@ class OpenAICompatibleProvider(LLMProvider):
     ):
         self.api_key = api_key
         self.model_name = model
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
 
         timeout_s = self._get_timeout(model)
         self._client = httpx.AsyncClient(

@@ -9,6 +9,8 @@ OpenRouter has its own dedicated test file; this one focuses on the
 shared interface and providers WITHOUT a public balance endpoint.
 """
 
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

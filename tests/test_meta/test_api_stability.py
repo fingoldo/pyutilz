@@ -64,13 +64,29 @@ def _build_snapshot() -> dict:
         except ImportError:
             snapshot["alias_surfaces"][alias] = {"_import_error": "module fails to import"}
             continue
+        # Snapshot-and-restore the module's __dict__ around the reload (regression fix,
+        # 2026-07-22): ``reload`` rebinds every module-level name to a NEW object -- a name
+        # another already-imported test module captured BEFORE this test ran (e.g.
+        # ``from pyutilz.data.polarslib import drop_constant_columns`` at some other test
+        # file's own top-level import, which happens once at collection time) keeps pointing
+        # to the OLD object forever after, while any later fresh import of the SAME name sees
+        # the reloaded module's NEW object -- an `is`-identity trap for any downstream test
+        # comparing the two (caught live: tests/test_polarslib_extra.py's
+        # ``remove_constant_columns is drop_constant_columns`` alias check flipped to False
+        # only when this test ran first in the same session). Restoring the pre-reload
+        # __dict__ after capturing the surface undoes reload's observable effect on every
+        # OTHER module-level name without giving up the clean-state read this test needs.
+        pre_reload_dict = dict(mod.__dict__)
         try:
             mod = importlib.reload(mod)
+            snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
         except Exception:
             # If reload fails (rare — modules with side-effecting top
             # level), fall back to the live module state.
-            pass
-        snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
+            snapshot["alias_surfaces"][alias] = capture_module_surface(mod)
+        finally:
+            mod.__dict__.clear()
+            mod.__dict__.update(pre_reload_dict)
     return snapshot
 
 

@@ -1,7 +1,7 @@
 """Tests for pyutilz.llm.factory."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 pytest.importorskip("pydantic")
 
@@ -112,12 +112,18 @@ class TestProviderCacheLRUEviction:
         factory._provider_cache.clear()
         factory._uncached_providers.clear()
         self._orig_max_size = factory._PROVIDER_CACHE_MAX_SIZE
+        self._orig_provider_modules = dict(factory._PROVIDER_MODULES)
 
     def teardown_method(self):
         from pyutilz.llm import factory
         factory._provider_cache.clear()
         factory._uncached_providers.clear()
         factory._PROVIDER_CACHE_MAX_SIZE = self._orig_max_size
+        # Regression fix (2026-07-22): tests below register a "faketest" entry directly on
+        # ``factory._PROVIDER_MODULES`` (a module-level dict) with no restore, so it leaked into
+        # every later test in the same pytest session -- test_meta/test_provider_contract.py's
+        # scan of ``_PROVIDER_MODULES`` then saw the leaked non-LLMProvider fake and failed.
+        factory._PROVIDER_MODULES = self._orig_provider_modules
 
     def _register_fake(self, factory):
         created = []

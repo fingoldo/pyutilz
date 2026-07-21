@@ -73,6 +73,37 @@ class PerCallAttr:
         self._var(instance).set(value)
 
 
+class LazySemaphore:
+    """Descriptor for a provider's concurrency-limiting ``asyncio.Semaphore``, constructed lazily
+    on first access rather than eagerly in ``__init__``.
+
+    On Python 3.9, ``asyncio.Semaphore.__init__`` eagerly calls ``asyncio.get_event_loop()`` to
+    bind a loop; 3.10+ removed that eager bind in favour of binding lazily on first
+    ``acquire()``/``release()``. A provider is normally constructed synchronously (e.g. via
+    ``llm.factory.get_llm_provider``, in a sync test, or at import time) with no loop running, so
+    the eager bind raised ``RuntimeError: There is no current event loop`` on 3.9 only -- every
+    other supported version masked the bug. Deferring construction to first ``__get__`` (which
+    only happens inside ``async with self.semaphore:``, i.e. while a loop IS running) reproduces
+    3.10+'s lazy-bind behavior on 3.9 too. Backed by instance ``__dict__`` so a test can still
+    assign a replacement semaphore directly (``provider.semaphore = asyncio.Semaphore(1)``).
+    """
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+
+    def __get__(self, instance: Any, owner: type | None = None) -> Any:
+        if instance is None:
+            return self
+        value = instance.__dict__.get(self._name)
+        if value is None:
+            value = asyncio.Semaphore(instance._max_concurrent)
+            instance.__dict__[self._name] = value
+        return value
+
+    def __set__(self, instance: Any, value: Any) -> None:
+        instance.__dict__[self._name] = value
+
+
 def _longest_prefix_pricing(
     model: str,
     pricing_table: dict[str, tuple[float, float]],
@@ -184,6 +215,8 @@ def is_llm_refusal(text: str) -> bool:
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
+
+    semaphore = LazySemaphore()
 
     @property
     def max_output_tokens(self) -> int:

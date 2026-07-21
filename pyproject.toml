@@ -425,7 +425,11 @@ max-complexity = 20
 # infer on its own) and the per_rule_ignores below (genuinely optional third-party libs behind
 # try/except ImportError guards, verified individually -- never a hard runtime requirement).
 [tool.deptry]
-exclude = ["tests", "scripts", ".venv", "build", "dist"]
+# .claude added 2026-07-22: nested Claude Code agent worktrees live under .claude/worktrees/<name>/
+# (each a full checkout with its own tests/, src/, etc.) -- deptry's file-tree scan isn't git-aware
+# and was reading their duplicate source trees as part of THIS project, misattributing imports from
+# worktree-local branches (transitive-dep, since-removed, or not-yet-merged) to the real project.
+exclude = ["tests", "scripts", ".venv", "build", "dist", ".claude"]
 
 [tool.deptry.package_module_name_map]
 "psycopg2-binary" = "psycopg2"

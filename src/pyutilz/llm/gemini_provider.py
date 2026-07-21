@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -123,7 +122,7 @@ class GeminiProvider(LLMProvider):
 
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = model
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
         # Per-call usage/safety/grounding/citation/function-call/candidate metadata:
         # PerCallAttr class-level descriptors (declared above __init__) provide the defaults;
         # nothing to initialize here.

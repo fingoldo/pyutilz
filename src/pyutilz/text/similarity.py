@@ -1,5 +1,7 @@
 """String and sentence similarity metrics: Levenshtein-based string similarity, word-overlap sentence similarity (with numba-accelerated variants), and a batched candidate-matching index."""
 
+from __future__ import annotations
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------

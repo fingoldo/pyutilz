@@ -270,7 +270,7 @@ class ClaudeCodeProvider(LLMProvider):
         self.model = model
         self.model_name = model
         self.timeout = timeout
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._max_concurrent = max_concurrent
         self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self._call_count = 0
         self.total_prompt_tokens = 0

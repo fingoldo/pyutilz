@@ -1,5 +1,7 @@
 """Dead-man's-switch job monitoring (healthchecks.io / cronitor.io heartbeats) plus timeout and duration-logging decorators."""
 
+from __future__ import annotations
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
