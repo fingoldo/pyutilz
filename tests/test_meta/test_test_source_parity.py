@@ -97,6 +97,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "docstring_args": "code_audit scanner; covered by test_code_audit.py",
     "return_annotation": "code_audit scanner; covered by test_code_audit.py",
     "locals_get": "code_audit scanner; covered by test_code_audit.py",
+    "shielded_resource_release": "code_audit scanner; covered by test_code_audit.py",
+    "duplicate_credential_regex": "code_audit scanner; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and

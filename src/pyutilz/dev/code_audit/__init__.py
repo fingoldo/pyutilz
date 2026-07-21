@@ -176,6 +176,22 @@ list[Finding]):
   frequently wrong regardless (a nested function's ``locals()`` doesn't
   see an enclosing scope's later-defined name the way a closure would).
 
+- ``scan_shielded_resource_release_race``: ``asyncio.shield(closure())``
+  where the shielded closure reads a name the ENCLOSING function's own
+  ``finally:`` also hands to a release-shaped call, outside the shielded
+  closure -- ``asyncio.shield`` protects the shielded task from the
+  caller's cancellation, not the caller's local variables, so a resource
+  release in the outer ``finally:`` can race a still-running shielded
+  task on the exact same pooled resource.
+
+- ``scan_duplicate_credential_regex``: a ``re.compile(...)`` call whose
+  pattern matches a credential-shaped keyword (password/token/secret/
+  api_key/credential/authorization/bearer), defined outside the project's
+  designated canonical scrubber module(s) (``canonical_module_rel_paths``)
+  -- the same "redact a secret before logging it" problem solved
+  independently, non-identically, in multiple places, with coverage that
+  silently drifts between the copies.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -232,6 +248,8 @@ from .credential_logging import scan_credential_shaped_log_args
 from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
 from .locals_get import scan_locals_get_fragile_lookup
+from .shielded_resource_release import scan_shielded_resource_release_race
+from .duplicate_credential_regex import scan_duplicate_credential_regex
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -271,6 +289,8 @@ __all__ = [
     "scan_return_annotation_mismatch",
     "scan_sql_aggregate_before_cast",
     "scan_locals_get_fragile_lookup",
+    "scan_shielded_resource_release_race",
+    "scan_duplicate_credential_regex",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -286,6 +306,7 @@ for _submod in (
     "network_timeout", "retry_loops", "module_docstring",
     "unraised_exceptions", "credential_logging",
     "docstring_args", "return_annotation", "locals_get",
+    "shielded_resource_release", "duplicate_credential_regex",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

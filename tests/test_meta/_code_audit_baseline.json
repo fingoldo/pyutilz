@@ -83,6 +83,8 @@
   "default_via_or::web/web.py:153",
   "default_via_or::web/web.py:180",
   "default_via_or::web/web.py:546",
+  "duplicate_credential_regex::dev/code_audit/credential_logging.py:19",
+  "duplicate_credential_regex::dev/code_audit/duplicate_credential_regex.py:15",
   "locals_globals_as_output::text/strings/__init__.py:127",
   "log_only_except::cloud/cloud.py:151",
   "log_only_except::cloud/cloud.py:165",

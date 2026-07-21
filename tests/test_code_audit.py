@@ -43,6 +43,8 @@ from pyutilz.dev.code_audit import (
     scan_return_annotation_mismatch,
     scan_sql_aggregate_before_cast,
     scan_locals_get_fragile_lookup,
+    scan_shielded_resource_release_race,
+    scan_duplicate_credential_regex,
 )
 
 
@@ -2372,4 +2374,117 @@ def f():
     return list(locals().keys())
 """)
     findings = scan_locals_get_fragile_lookup(tmp_path)
+    assert findings == []
+
+
+# ---- shielded_resource_release_race ---------------------------------------
+
+
+def test_shielded_resource_release_race_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import asyncio
+
+async def save_and_notify(pool):
+    conn = pool.acquire()
+    try:
+        async def _do_work():
+            await conn.execute("insert ...")
+        await asyncio.shield(_do_work())
+    finally:
+        release_conn(conn)
+""")
+    findings = scan_shielded_resource_release_race(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "shielded_resource_release_race"
+    assert findings[0].severity == "P0"
+
+
+def test_shielded_resource_release_race_own_resource_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import asyncio
+
+async def save_and_notify(pool):
+    conn = pool.acquire()
+    try:
+        async def _do_work():
+            own_conn = pool.acquire()
+            try:
+                await own_conn.execute("insert ...")
+            finally:
+                release_conn(own_conn)
+        await asyncio.shield(_do_work())
+    finally:
+        release_conn(conn)
+""")
+    findings = scan_shielded_resource_release_race(tmp_path)
+    assert findings == []
+
+
+def test_shielded_resource_release_race_no_shield_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import asyncio
+
+async def save_and_notify(pool):
+    conn = pool.acquire()
+    try:
+        async def _do_work():
+            await conn.execute("insert ...")
+        await _do_work()
+    finally:
+        release_conn(conn)
+""")
+    findings = scan_shielded_resource_release_race(tmp_path)
+    assert findings == []
+
+
+def test_shielded_resource_release_race_custom_release_names(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import asyncio
+
+async def save_and_notify(pool):
+    conn = pool.acquire()
+    try:
+        async def _do_work():
+            await conn.execute("insert ...")
+        await asyncio.shield(_do_work())
+    finally:
+        my_custom_release(conn)
+""")
+    assert scan_shielded_resource_release_race(tmp_path) == []
+    findings = scan_shielded_resource_release_race(tmp_path, release_call_names=frozenset({"my_custom_release"}))
+    assert len(findings) == 1
+
+
+# ---- duplicate_credential_regex -------------------------------------------
+
+
+def test_duplicate_credential_regex_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import re
+
+_TOKEN_RE = re.compile(r"token=\\\\w+")
+""")
+    findings = scan_duplicate_credential_regex(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "duplicate_credential_regex"
+    assert findings[0].severity == "P2"
+
+
+def test_duplicate_credential_regex_inside_canonical_module_is_clean(tmp_path: Path):
+    _write(tmp_path, "secrets_scrub.py", """
+import re
+
+_TOKEN_RE = re.compile(r"token=\\\\w+")
+""")
+    findings = scan_duplicate_credential_regex(tmp_path, canonical_module_rel_paths=frozenset({"secrets_scrub.py"}))
+    assert findings == []
+
+
+def test_duplicate_credential_regex_non_credential_pattern_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import re
+
+_DATE_RE = re.compile(r"\\\\d{4}-\\\\d{2}-\\\\d{2}")
+""")
+    findings = scan_duplicate_credential_regex(tmp_path)
     assert findings == []
