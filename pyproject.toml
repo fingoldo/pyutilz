@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyutilz"
 version = "1.0.0"
-description = "Modular utilities for dataframes, databases, web scraping, cloud storage, system introspection, parallelism, and a unified async LLM-provider interface (Anthropic, OpenAI, Gemini, and more) — zero hard dependencies, install only what you need"
+description = "Modular utilities for dataframes, databases, web scraping, cloud storage, system introspection, parallelism, and a unified async LLM-provider interface (Anthropic, OpenAI, Gemini, and more) — few hard dependencies, install only what you need beyond the core"
 authors = [{name = "Anatoly Alexeev"}]
 license = {text = "MIT"}
 readme = "README.md"
@@ -40,16 +40,95 @@ classifiers = [
     "Topic :: System :: Monitoring",
 ]
 
-dependencies = []  # Core has no hard requirements (fully modular design)
+dependencies = [
+    # core/pythonlib.py -- imported by nearly every other subpackage (filemaker, data/*,
+    # database/db, dev/logginglib, text/strings, system/*, performance/kernel_tuning/cache) --
+    # unconditionally imports numba (njit-decorated helper), joblib (default constructor args
+    # on ObjectsDumper/ObjectsLoader, evaluated at import time), and portalocker (open_safe_shelve).
+    # Found 2026-07-21 audit: these were undeclared, breaking a bare `pip install pyutilz` and
+    # several extras groups (`[polars]`, `[database]`, `[nlp]`) that transitively hit pythonlib.py
+    # without installing `[system]`. None of the three is guarded by try/except like the module's
+    # other optional imports (catboost, IPython, nvidia) -- promoting them to real core deps is
+    # the honest fix (the alternative, a lazy-import refactor of the library's most widely-shared
+    # helper module, has a much larger blast radius for three lightweight, pure-pip-installable
+    # packages with no heavy system/CUDA prerequisites of their own).
+    "numba>=0.56",
+    # numba itself hard-requires numpy at its own import time (not lazily) -- found 2026-07-21
+    # audit follow-up: masking numpy alone (leaving numba unmasked, since numba is core) still
+    # broke `import pyutilz.core.pythonlib`, because `from numba import njit` transitively fails
+    # without numpy. Declaring it directly here (rather than leaving it "core in practice, but
+    # only via an undeclared transitive pull through numba") matches this project's own stated
+    # preference elsewhere for explicit declaration over relying on transitive luck.
+    "numpy>=1.20",
+    "joblib>=1.2",
+    "portalocker>=2.0",
+    # pyutilz.system.system (the subpackage core/serialization.py's `ensure_dir_exists()` and
+    # data/polarslib.py's `clean_ram()` both reach into) eagerly imports ALL SIX of its own
+    # submodules in its __init__.py (_common, probing, memory, fsutils, misc, sysinfo) --
+    # EVERY one of them unconditionally imports psutil at module level, found 2026-07-21 audit.
+    # Since that eager-import-everything design means psutil is needed just to import the
+    # subpackage AT ALL regardless of which single function a caller wants, and psutil is a
+    # small, universally-wheel-available package with no heavy/compiled dependency chain of its
+    # own (unlike scipy/Pillow), declaring it core (rather than refactoring six submodules'
+    # worth of eager imports into a lazy, per-symbol-aware __getattr__) is the honest fix.
+    "psutil>=5.9",
+    # system/config.py unconditionally imports tomllib (stdlib only since Python 3.11, PEP 680)
+    # with no guard -- found 2026-07-21 audit: broke the declared Python 3.8/3.9/3.10 support
+    # floor outright, on every extras combination, not just a packaging gap. `tomli` is the
+    # widely-used backport; only installed pre-3.11, where the code now falls back to it.
+    "tomli>=2.0 ; python_version < '3.11'",
+]
 
 [project.optional-dependencies]
 # Data science packages
 pandas = [
     "pandas>=1.5",
-    "numpy>=1.20",
-    "pyarrow>=10.0"
+    # numpy moved to core [project.dependencies] (transitively required by numba, itself core).
+    "pyarrow>=10.0",
+    # data/pandaslib/_common.py (the shared-imports hub every pandaslib submodule pulls in)
+    # unconditionally imports polars too, purely to re-export it for sibling submodules --
+    # found 2026-07-21 audit: `pip install pyutilz[pandas]` alone could not import
+    # `pyutilz.data.pandaslib`. Declaring it here (rather than a lazy-import refactor of the
+    # hub) matches how this project already resolves this bug class elsewhere in this file.
+    "polars>=0.19",
+    # pandas itself hard-requires python-dateutil at import time (its own real pip dependency) --
+    # declared explicitly rather than relying on that transitive pull, matching the project's
+    # existing convention for pandas' other hard transitive deps (see numpy's note above).
+    "python-dateutil>=2.8",
+    # data/pandaslib/_common.py also does `from pyutilz.system.system import tqdmu,
+    # ensure_dir_exists` -- and pyutilz.system.system's own __init__.py eagerly imports ALL SIX
+    # of its submodules (not just fsutils/misc, whichever one actually defines these two names),
+    # so importing pyutilz.system.system AT ALL (for any single symbol) unconditionally needs
+    # every one of its submodules' own hard deps, including misc.py's tqdm+pympler. A full lazy,
+    # per-symbol-aware refactor of that package's __init__.py is out of scope for this fix;
+    # declaring the transitive requirement here (same "declare over invasive refactor" choice
+    # made throughout this dependency cleanup) is the proportionate fix.
+    "tqdm>=4.65",
+    "pympler>=1.0",
 ]
-polars = ["polars>=0.18"]
+polars = [
+    # Bumped from the stale 0.18.0 floor (2026-07-21 audit): data/polarslib.py uses
+    # `polars.selectors` and the `.group_by()`/`.group_by_dynamic()` methods. Confirmed via
+    # Polars' own upgrade guide that `groupby` was renamed/deprecated in favor of `group_by`
+    # starting in the 0.19.0 release (https://docs.pola.rs/releases/upgrade/0.19/) -- 0.18.0
+    # predates that rename and would raise AttributeError on `.group_by`. The `polars.selectors`
+    # submodule likewise postdates 0.18; no network access to pin its exact introducing patch
+    # version, so the floor is set to the confirmed 0.19.0 minor rather than guessing a patch.
+    "polars>=0.19",
+    # numpy moved to core [project.dependencies] (transitively required by numba, itself core) --
+    # data/polarslib.py unconditionally imports numpy too; modern polars treats numpy as an
+    # optional extra of its own, so this would otherwise have been an undeclared dependency
+    # of this extras group specifically.
+    #
+    # data/polarslib.py also does `from pyutilz.system.system import clean_ram`, which -- for
+    # the same "eager-imports-all-six-submodules" reason documented on the "pandas" extras
+    # group above -- transitively needs misc.py's tqdm+pympler AND memory.py's own pandas
+    # (+ pandas' own dateutil requirement), not just psutil (now core).
+    "tqdm>=4.65",
+    "pympler>=1.0",
+    "pandas>=1.5",
+    "python-dateutil>=2.8",
+]
 
 # Combined dataframe stack (self-referential to avoid duplication/drift).
 # pandas/polars stay as individual extras too for callers who only need one.
@@ -62,12 +141,17 @@ database = [
     "sqlalchemy>=1.4",
     "psycopg2-binary>=2.9",
     "pymysql>=1.0",
-    # database/__init__.py imports dateutil.relativedelta unconditionally at module level;
+    # database/db/__init__.py imports dateutil.relativedelta unconditionally at module level
+    # (database/__init__.py itself is a 4-line re-export shim with no imports of its own --
+    # the actual unconditional import lives one directory deeper, in the db/ subpackage);
     # redislib.py imports redis unconditionally at module level. Neither is guarded by
     # try/except (unlike e.g. orjson elsewhere), so they're real requirements of this
     # extra, not correctly-optional add-ons.
     "python-dateutil>=2.8",
     "redis>=4.0",
+    # database/db/__init__.py also unconditionally imports pandas (pd.read_sql calls) -- found
+    # 2026-07-21 audit, same undeclared-import class as dateutil/redis above.
+    "pandas>=1.5",
 ]
 
 # Web scraping packages
@@ -112,13 +196,27 @@ nlp = [
     "nltk>=3.8",
     "jellyfish>=0.9",
     "tiktoken>=0.5",
-    # text/strings/webtext.py imports these three unconditionally (no try/except
-    # fallback, unlike orjson elsewhere in the codebase), so they must be real
-    # declared dependencies rather than relying on some other extra's transitive
-    # pull -- deptry DEP003 flagged all three as used-but-undeclared.
+    # text/strings/webtext.py lazily imports these three (function-local, on first call --
+    # corrected 2026-07-21 audit, this comment previously and incorrectly said "unconditionally
+    # ... at module level", which the actual code does not do: each is guarded by a
+    # `global X; if X is None: import Y` cache pattern, same shape as this file's own `nlp`
+    # spaCy-model lazy-load). Being lazy doesn't make them optional, though: there is no
+    # try/except fallback (unlike orjson elsewhere in the codebase) -- calling
+    # get_ascii_emojies/get_unicode_emojies/suffixize without the package installed raises
+    # ModuleNotFoundError at call time -- so they must still be real declared dependencies of
+    # this extra rather than relying on some other extra's transitive pull. deptry DEP003
+    # flagged all three as used-but-undeclared regardless of the eager-vs-lazy distinction.
     "beautifulsoup4>=4.0",
     "inflect>=6.0",
     "emoji-data-python>=1.6",
+    # text/strings/__init__.py, webtext.py, basics.py, and textentropy.py all unconditionally
+    # import pandas (numpy moved to core [project.dependencies], transitively required by numba)
+    # -- found 2026-07-21 audit: no dedicated "text"/"strings" extras group exists, and this is
+    # the closest-matching domain extra for the text/strings subpackage. python-dateutil is
+    # pandas' own hard transitive dependency, declared explicitly for the same reason noted on
+    # the "pandas" extras group above.
+    "pandas>=1.5",
+    "python-dateutil>=2.8",
 ]
 
 # LLM providers
@@ -134,12 +232,17 @@ llm = [
 
 # System utilities
 system = [
-    "psutil>=5.9",
     "tqdm>=4.65",
-    "numba>=0.56",
     "pympler>=1.0",
-    "joblib>=1.2",
-    "portalocker>=2.0",
+    # numba, joblib, portalocker, psutil moved to the core [project.dependencies] list above --
+    # required unconditionally by core/pythonlib.py / pyutilz.system.system, not specific to
+    # this "system" domain.
+    # system/parallel.py (applyfunc_parallel's return_dataframe=True default path) and
+    # system/system/memory.py both unconditionally import pandas -- found 2026-07-21 audit.
+    # python-dateutil is pandas' own hard transitive dependency, declared explicitly for the
+    # same reason noted on the "pandas" extras group above (numpy itself is core, see above).
+    "pandas>=1.5",
+    "python-dateutil>=2.8",
     # core/image.py and core/matrix.py import Pillow/scipy unconditionally at module level;
     # neither maps to an existing domain extra, so they'd otherwise be genuinely undeclared
     # requirements for anyone importing those two core submodules directly.
@@ -149,6 +252,18 @@ system = [
     "py-cpuinfo>=9.0",
     "GPUtil>=1.4",
     "xmltodict>=0.13",
+    # text/similarity.py unconditionally imports jellyfish at module level (found by
+    # code_audit's undeclared_import scanner, 2026-07-21 audit follow-up); jellyfish is
+    # otherwise only declared under the "nlp" extras group.
+    "jellyfish>=0.9",
+]
+
+# Statistics (normality tests). pyutilz.stats is a standalone, mypy-strict-mode subpackage (see
+# [[tool.mypy.overrides]] below) with its own minimal numpy-only requirement, distinct from the
+# heavier pandas/system stacks. Found 2026-07-21 audit: stats/normality.py unconditionally
+# imports numpy with no matching extras group of its own.
+stats = [
+    "numpy>=1.20",
 ]
 
 # GPU acceleration (cupy). Every cupy import site in the codebase is already
@@ -162,11 +277,15 @@ gpu = [
 
 # All optional dependencies (self-referential to avoid duplication/drift)
 all = [
-    "pyutilz[pandas,polars,database,web,cloud,nlp,llm,system]",
+    "pyutilz[pandas,polars,database,web,cloud,nlp,llm,system,stats]",
 ]
 
 # Development dependencies
 dev = [
+    # dev/benchmarking.py unconditionally imports numpy -- found 2026-07-21 audit: no extras
+    # group covering the dev domain declared it (a contributor running `pip install .[dev]`
+    # alone, without also `[pandas]`/`[system]`/etc., could not import this module).
+    "numpy>=1.20",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
@@ -201,7 +320,7 @@ Homepage = "https://github.com/fingoldo/pyutilz"
 Documentation = "https://fingoldo.github.io/pyutilz/"
 Repository = "https://github.com/fingoldo/pyutilz.git"
 Issues = "https://github.com/fingoldo/pyutilz/issues"
-Changelog = "https://github.com/fingoldo/pyutilz/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/fingoldo/pyutilz/blob/master/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -220,8 +339,7 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers -ra --timeout=120"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "gpu: marks tests requiring GPU",
+    "gpu: marks tests requiring GPU (deselected in default CI; no GPU runner)",
     "live: marks tests requiring live provider API keys (skipped by default; pass --run-live to execute)"
 ]
 
@@ -375,13 +493,14 @@ DEP001 = [
 ]
 
 # DEP003 (import used but declared as transitive, not direct): same soft-import names as DEP001
-# above, minus flask_login/concurrent_log_handler/claude_code_sdk/wmi (which stayed genuinely
-# absent in this environment). Whether deptry reports DEP001 or DEP003 for a given name depends
-# on whether something else's dependency resolution happens to pull it in transitively -- not
-# something this repo controls or wants to depend on staying stable, so both codes are ignored
+# above, minus concurrent_log_handler/claude_code_sdk/wmi (which stayed genuinely absent in this
+# environment). Whether deptry reports DEP001 or DEP003 for a given name depends on whether
+# something else's dependency resolution happens to pull it in transitively -- not something
+# this repo controls or wants to depend on staying stable, so both codes are ignored
 # for the same verified-optional names rather than re-triaging every time a transitive pin shifts.
 DEP003 = [
     "catboost", "IPython", "nvidia", "polars_ds", "orjson", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
+    "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature; now pulled in transitively in some envs (previously genuinely absent)
 ]
 
 # Interrogate: docstring coverage. Blocking at --fail-under=100 since 2026-07-09 (see the CI

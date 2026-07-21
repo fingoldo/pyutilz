@@ -63,6 +63,7 @@ _HEALTH_CACHE_LOCK = threading.Lock()
 # otherwise race the globals (they only READ ``_pkg.X`` at call time, so the
 # partially-initialised module object is fine as long as the names exist).
 from pyutilz.llm.openrouter_provider._catalogue import (
+    _ensure_catalogue_warm_async,
     _fetch_models_catalogue,
     _per_token_cost_pair,
     _resolve_model_limits,

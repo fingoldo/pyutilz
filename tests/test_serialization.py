@@ -9,6 +9,7 @@ import pickle
 from pathlib import Path
 
 from pyutilz.serialization import serialize, unserialize, str_to_class
+from pyutilz.core.safe_pickle import PickleVerificationError
 
 
 class TestSerialize:
@@ -196,32 +197,34 @@ class TestEdgeCases:
         assert result is None
 
     def test_unserialize_uncompressed_data(self):
-        """Test that raw pickle data (not zlib-compressed) is handled"""
+        """Raw (non-zlib) pickle bytes must fall back to being read as raw pickle and decode
+        exactly -- zlib.decompress() raising zlib.error on non-zlib input is caught internally
+        and always falls through to the raw-pickle path, so the outcome is fully deterministic,
+        not "either succeeds or returns None"."""
         import pickle as pkl
         data = {"key": "value"}
         raw = pkl.dumps(data)
-        # Raw pickle without zlib compression - should still try to decompress
-        # and either succeed or return None gracefully
         result = unserialize(raw, compression=9)
-        # Either returns data or None (if decompression fails)
-        assert result is None or isinstance(result, dict)
+        assert result == data
 
 
 class TestUnserializeSidecarVerification:
     """verify_sidecar= is opt-in (default False) so existing callers are unaffected; when True
     and obj is a file path, it requires a matching pyutilz.core.safe_pickle sidecar before
-    unpickling."""
+    unpickling. A missing/mismatched sidecar raises PickleVerificationError distinctly -- it is
+    NOT swallowed into a generic None return, so callers can tell "tampered/corrupt" apart from
+    every other failure mode in this function."""
 
     def test_default_false_loads_without_a_sidecar(self, tmp_path):
         p = tmp_path / "no_sidecar.pkl"
         serialize({"a": 1}, fname=str(p))
         assert unserialize(str(p)) == {"a": 1}
 
-    def test_verify_sidecar_true_without_sidecar_returns_none(self, tmp_path, caplog):
+    def test_verify_sidecar_true_without_sidecar_raises(self, tmp_path):
         p = tmp_path / "no_sidecar.pkl"
         serialize({"a": 1}, fname=str(p))
-        result = unserialize(str(p), verify_sidecar=True)
-        assert result is None
+        with pytest.raises(PickleVerificationError):
+            unserialize(str(p), verify_sidecar=True)
 
     def test_verify_sidecar_true_with_matching_sidecar_loads(self, tmp_path):
         from pyutilz.core.safe_pickle import write_sidecar
@@ -231,7 +234,7 @@ class TestUnserializeSidecarVerification:
         write_sidecar(str(p))
         assert unserialize(str(p), verify_sidecar=True) == {"a": 1}
 
-    def test_verify_sidecar_true_with_stale_sidecar_returns_none(self, tmp_path):
+    def test_verify_sidecar_true_with_stale_sidecar_raises(self, tmp_path):
         from pyutilz.core.safe_pickle import write_sidecar
 
         p = tmp_path / "stale_sidecar.pkl"
@@ -239,7 +242,8 @@ class TestUnserializeSidecarVerification:
         write_sidecar(str(p))
         # Overwrite the payload after the sidecar was written -- digest now stale.
         serialize({"a": 2}, fname=str(p))
-        assert unserialize(str(p), verify_sidecar=True) is None
+        with pytest.raises(PickleVerificationError):
+            unserialize(str(p), verify_sidecar=True)
 
     def test_verify_sidecar_has_no_effect_on_in_memory_bytes(self):
         data = {"a": 1}

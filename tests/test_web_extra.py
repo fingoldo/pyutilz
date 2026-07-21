@@ -283,6 +283,128 @@ class TestGetNewSmartproxy:
         r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000, last_used_dict={}, min_idle_interval_minutes=999, failed_dict=failed)
         assert "http" in r
 
+    def test_max_wait_seconds_raises_timeout_instead_of_hanging_forever(self):
+        """Regression test: a fixed single-port pool where the only candidate is permanently
+        "touched" (e.g. marked failed 24h ago per the default min_failed_idle_interval_minutes)
+        previously blocked get_new_smartproxy() forever with zero way to detect/bound the hang.
+        """
+        from pyutilz.web import web as mod
+        from joblib import hash as jl_hash
+
+        proxies = mod.make_proxies_dict("u", "p", "srv", 9999, "http")
+        key = jl_hash(proxies)
+        failed = {key: datetime.utcnow()}
+        with patch("pyutilz.web.web.sleep"):
+            with pytest.raises(TimeoutError, match="no eligible proxy found"):
+                mod.get_new_smartproxy(
+                    "u", "p", "srv", proxy_port=9999, failed_dict=failed,
+                    min_idle_interval_minutes=999, warn_after_n_failures=1,
+                    max_wait_seconds=0,
+                )
+
+    def test_unconditional_logging_on_stuck_wait_even_without_verbose(self, caplog):
+        """The "could not get an untouched proxy" message must fire regardless of verbose= --
+        previously it was gated on verbose=True, and every real call site in this module invokes
+        get_new_smartproxy() with the default verbose=False, making a stuck wait completely
+        undiagnosable from logs alone."""
+        from pyutilz.web import web as mod
+        from joblib import hash as jl_hash
+        import logging
+
+        proxies = mod.make_proxies_dict("u", "p", "srv", 9999, "http")
+        key = jl_hash(proxies)
+        failed = {key: datetime.utcnow()}
+        with patch("pyutilz.web.web.sleep"), caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
+            with pytest.raises(TimeoutError):
+                mod.get_new_smartproxy(
+                    "u", "p", "srv", proxy_port=9999, failed_dict=failed,
+                    min_idle_interval_minutes=999, warn_after_n_failures=1,
+                    max_wait_seconds=0, verbose=False,
+                )
+        assert any("Could not get an untouched proxy" in r.message for r in caplog.records)
+
+
+# ===== report_params / handle_blocking credential redaction =====
+
+class TestCredentialRedaction:
+    def test_report_params_redacts_proxy_password(self, caplog):
+        import logging
+        from pyutilz.web import web as mod
+
+        proxies = {"http": "http://scraperuser:s3cr3t@proxy.host:8080", "https": "http://scraperuser:s3cr3t@proxy.host:8080"}  # pragma: allowlist secret
+        with caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
+            mod.report_params("https://example.com", proxies, None, None, None, {"authorization": "Bearer sk-secret"}, 10)
+        logged = " ".join(r.message for r in caplog.records)
+        assert "s3cr3t" not in logged
+        assert "sk-secret" not in logged
+        assert "scraperuser" not in logged
+        assert "proxy.host:8080" in logged  # host:port kept for diagnostic value
+
+    def test_report_params_handles_none_proxies(self, caplog):
+        import logging
+        from pyutilz.web import web as mod
+
+        with caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
+            mod.report_params("https://example.com", None, None, None, None, None, 10)
+        # Must not raise.
+
+    def test_handle_blocking_no_indexerror_on_unauthenticated_proxy(self, caplog):
+        """Regression test: proxies["https"].split("@")[1] raised IndexError for an
+        unauthenticated proxy (make_proxies_dict() builds an "@"-free URL when
+        proxy_user/proxy_pass are falsy)."""
+        import logging
+        from pyutilz.web import web as mod
+
+        mod.proxies = {"https": "http://proxy.host:8080", "http": "http://proxy.host:8080"}
+        mod.delay = None  # skip the sleep
+        with patch("pyutilz.web.web.set_proxy_last_use_time"), patch("pyutilz.web.web.get_new_session"):
+            with caplog.at_level(logging.WARNING, logger="pyutilz.web.web"):
+                mod.handle_blocking("example.com")  # must not raise IndexError
+        assert any("proxy.host:8080" in r.message for r in caplog.records)
+
+    def test_handle_blocking_redacts_authenticated_proxy(self, caplog):
+        import logging
+        from pyutilz.web import web as mod
+
+        mod.proxies = {
+            "https": "http://user:s3cr3t@proxy.host:8080",  # pragma: allowlist secret
+            "http": "http://user:s3cr3t@proxy.host:8080",  # pragma: allowlist secret
+        }
+        mod.delay = None
+        with patch("pyutilz.web.web.set_proxy_last_use_time"), patch("pyutilz.web.web.get_new_session"):
+            with caplog.at_level(logging.WARNING, logger="pyutilz.web.web"):
+                mod.handle_blocking("example.com")
+        logged = " ".join(r.message for r in caplog.records)
+        assert "s3cr3t" not in logged
+        assert "proxy.host:8080" in logged
+
+
+# ===== download_in_parallel None-check ordering =====
+
+class TestDownloadInParallelNoneCheck:
+    def test_none_response_does_not_crash_the_whole_batch(self):
+        """Regression test: `if len(resp.history) > 0` was dereferenced BEFORE the
+        `if resp is not None` check, so a single failed URL (grequests.map() puts None into the
+        results for a request that raised) crashed the entire batch with AttributeError instead
+        of just recording that one URL as errored."""
+        import sys
+        import types
+
+        from pyutilz.web import web as mod
+
+        fake_grequests = types.ModuleType("grequests")
+        ok_resp = MagicMock(status_code=http.HTTPStatus.OK, history=[])
+        fake_grequests.get = MagicMock(return_value="request_obj")
+        fake_grequests.map = MagicMock(return_value=[None, ok_resp])
+        sys.modules["grequests"] = fake_grequests
+        try:
+            processed = []
+            errored = mod.download_in_parallel(["http://bad.example", "http://ok.example"], lambda resp, url: processed.append(url))
+        finally:
+            del sys.modules["grequests"]
+        assert errored == ["http://bad.example"]
+        assert processed == ["http://ok.example"]
+
 
 # ===== is_rotating_proxy =====
 

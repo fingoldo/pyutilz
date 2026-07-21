@@ -34,9 +34,10 @@ class Finding:
     detail: str
 
     def as_md_row(self) -> str:
-        """Render this finding as one Markdown table row (``| severity | check | file:line | snippet | detail |``), escaping pipe characters in the snippet."""
+        """Render this finding as one Markdown table row (``| severity | check | file:line | snippet | detail |``), escaping pipe characters in the snippet and detail."""
         snip = self.snippet.replace("|", "\\|")
-        return f"| {self.severity} | {self.check} | {self.file}:{self.line} | " f"`{snip}` | {self.detail} |"
+        detail = self.detail.replace("|", "\\|")
+        return f"| {self.severity} | {self.check} | {self.file}:{self.line} | " f"`{snip}` | {detail} |"
 
 
 # --- helpers -------------------------------------------------------------

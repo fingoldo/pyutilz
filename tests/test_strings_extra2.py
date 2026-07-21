@@ -177,7 +177,10 @@ def test_read_config_all_sections():
         write_config_file(fname, {"x": "1"}, section="SEC1", encryption=None)
         obj = {}
         read_config_file(fname, obj, section=None, encryption=None)
-        assert "x" in obj
+        # Regression test: reading ALL sections (section=None) now prefixes keys by section name
+        # (sec1_x, not x) so a same-named variable in two different sections can't silently
+        # overwrite each other.
+        assert "sec1_x" in obj
     finally:
         os.unlink(fname)
 

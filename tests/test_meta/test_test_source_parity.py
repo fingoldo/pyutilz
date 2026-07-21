@@ -39,6 +39,7 @@ TESTS_DIR = REPO_ROOT / "tests"
 # Modules that don't need a dedicated test file. Cite reason.
 _TEST_EXEMPT_MODULES: dict[str, str] = {
     "version": "single-line constant; no behaviour to test",
+    "benchmark": "performance/kernel_tuning/benchmark.py — covered by tests/test_kernel_tuning_benchmark.py, renamed 2026-07-21 to stop being confusable with test_dev_benchmarking.py (pyutilz.dev.benchmarking)",
     "config": "module-level constants/literals only — no functions",
     # Sub-package boundary modules are pure namespaces; behaviour lives
     # in the modules under them.
@@ -85,6 +86,14 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "missed_await": "code_audit scanner; covered by test_code_audit.py",
     "redundant_test_fit": "code_audit scanner; covered by test_code_audit.py",
     "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
+    "undeclared_imports": "code_audit scanner; covered by test_code_audit.py",
+    "vacuous_assertions": "code_audit scanner; covered by test_code_audit.py",
+    "locals_globals_output": "code_audit scanner; covered by test_code_audit.py",
+    "network_timeout": "code_audit scanner; covered by test_code_audit.py",
+    "retry_loops": "code_audit scanner; covered by test_code_audit.py",
+    "module_docstring": "code_audit scanner; covered by test_code_audit.py",
+    "unraised_exceptions": "code_audit scanner; covered by test_code_audit.py",
+    "credential_logging": "code_audit scanner; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
@@ -133,8 +142,12 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_cuda_home_autodetect": "cross-cutting — CUDA_HOME autodetection from the pip nvidia-cuda-nvcc wheel (env/setup behaviour, not one source module)",
     "test_proxy": "covers pyutilz.web.proxy/* sub-package",
     "test_dev_fixes_regression": "cross-cutting — regression tests spanning dev/logginglib, dev/notebook_init, dev/meta_test_utils, system/monitoring, system/hardware_monitor, system/distributed",
-    "test_audit_providers": "cross-cutting — regression tests for the llm-providers quality audit (spans anthropic/gemini/openai-compat/claude-code provider modules)",
+    "test_llm_provider_audit_fixes": "cross-cutting — regression tests for the llm-providers quality audit (spans anthropic/gemini/openai-compat/claude-code provider modules)",
     "test_strings_facade": "sensor test for the text/strings subpackage split (facade re-export identity)",
+    "test_data_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning data/polarslib, data/pandaslib, data/numpylib, data/numbalib, stats/normality",
+    "test_database_extra2": "cross-cutting — 2026-07-21 audit regression tests spanning database/db/sql_helpers, database/db/upsert, database/db/sqlite, database/redislib",
+    "test_llm_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning llm/gemini_provider, llm/anthropic_provider, llm/openai_provider, llm/base, llm/token_counter",
+    "test_system_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning system/parallel, system/system/fsutils, system/system/misc, system/config, performance/kernel_tuning/benchmark",
     # system.py was split into the system/system/ subpackage; test_system*.py cover it jointly.
     "test_system": "covers pyutilz.system.system/* sub-package",
     "test_system_extra": "covers pyutilz.system.system/* sub-package",

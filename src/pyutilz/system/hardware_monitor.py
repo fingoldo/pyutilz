@@ -94,7 +94,13 @@ class UtilizationMonitor:
             self.cpu_clocks.append(cpu_freq.current if cpu_freq is not None else 0.0)
 
             # RAM
-            self.own_ram_used.append(get_own_memory_usage())
+            # get_own_memory_usage() documents returning None if psutil raises AND there's no
+            # prior successful reading to fall back on (e.g. psutil fails on the very first
+            # sample) -- appending it unfiltered would make every later np.mean() over this list
+            # raise TypeError, so skip the sample instead of recording a None.
+            own_ram = get_own_memory_usage()
+            if own_ram is not None:
+                self.own_ram_used.append(own_ram)
             mem = psutil.virtual_memory()
             self.total_ram_used.append(mem.used)
             self.total_ram_free.append(mem.free)

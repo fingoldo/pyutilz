@@ -26,7 +26,11 @@ from __future__ import annotations
 import logging
 import threading
 import time
-import tomllib
+
+try:
+    import tomllib  # stdlib since Python 3.11 (PEP 680)
+except ImportError:  # Python 3.8-3.10: declared as a conditional core dependency (see pyproject.toml)
+    import tomli as tomllib  # type: ignore[no-redef]
 from pathlib import Path
 from typing import Any
 
@@ -153,7 +157,12 @@ class TomlLiveConfig:
             # Skip the type cast when the value already has the right type --
             # TOML parses floats/ints/bools natively so type_() is usually a
             # no-op coercion that still costs a Python function call.
-            if type_ is not type(val) and not isinstance(val, type_):
+            # bool is a subclass of int in Python, so `isinstance(True, int)` is True -- without
+            # excluding it explicitly, the default type_=int would let a TOML bool alias past the
+            # cast entirely (isinstance(val, type_) short-circuits), returning a bool where an int
+            # was requested.
+            bool_int_alias = isinstance(val, bool) and type_ is not bool
+            if bool_int_alias or (type_ is not type(val) and not isinstance(val, type_)):
                 try:
                     return type_(val)
                 except (TypeError, ValueError) as exc:

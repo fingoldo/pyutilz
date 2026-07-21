@@ -29,6 +29,16 @@ from pyutilz.dev.code_audit import (
     scan_duplicate_conditions,
     scan_missed_await,
     scan_redundant_test_fit_calls,
+    scan_undeclared_imports,
+    scan_vacuous_assertions,
+    scan_locals_globals_as_output,
+    scan_missing_network_timeout,
+    scan_parameter_aliasing_mutation,
+    scan_sync_blocking_in_async,
+    scan_retry_loops,
+    scan_duplicate_module_docstring,
+    scan_unraised_exceptions,
+    scan_credential_shaped_log_args,
 )
 
 
@@ -1728,3 +1738,450 @@ def test_cli_json_output(tmp_path: Path, capsys):
     payload = _json.loads(out)
     assert isinstance(payload, list)
     assert payload and payload[0]["check"] == "mutable_default"
+
+
+# --- 2026-07-21 audit regression tests ------------------------------------
+
+
+def test_cli_min_severity_does_not_weaken_exit_code(tmp_path: Path):
+    """Regression: --min-severity previously filtered `findings` BEFORE the exit-code check,
+    so a real P1 finding silently exited 0 once filtered out of the display."""
+    from pyutilz.dev.code_audit import main as cli_main
+
+    _write(tmp_path, "bad.py", """
+async def process(item):
+    await item.save()
+
+def caller(item):
+    process(item)
+""")
+    assert cli_main([str(tmp_path), "--min-severity", "Low"]) == 1
+    assert cli_main([str(tmp_path), "--min-severity", "P0"]) == 1
+
+
+def test_mutable_default_not_flagged_when_only_shadowing_nested_func_mutates(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def outer(x=[]):
+    def inner(x):
+        x.append(1)
+        return x
+    return inner([1, 2, 3])
+""")
+    findings = scan_mutable_defaults(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"  # not P0: outer's own x is never mutated
+
+
+def test_late_binding_closure_flags_list_comprehension(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+handlers = [lambda: x for x in range(3)]
+""")
+    findings = scan_late_binding_closures(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+
+
+def test_late_binding_closure_flags_dict_comprehension(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+handlers = {i: (lambda: i) for i in range(3)}
+""")
+    findings = scan_late_binding_closures(tmp_path)
+    assert len(findings) == 1
+
+
+def test_missed_await_not_flagged_when_shadowed_by_nested_def(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+async def process(item):
+    await item.save()
+
+def sync_wrapper(item):
+    def process(x):
+        x.touch()
+    process(item)
+""")
+    findings = scan_missed_await(tmp_path)
+    assert findings == []
+
+
+def test_dead_cli_flag_not_flagged_when_read_via_literal_getattr(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--resume", action="store_true")
+args = parser.parse_args()
+if getattr(args, "resume"):
+    print("resuming")
+""")
+    findings = scan_dead_cli_flags(tmp_path)
+    assert findings == []
+
+
+def test_sql_migration_recognizes_custom_dollar_quote_tag(tmp_path: Path):
+    (tmp_path / "migration.sql").write_text(
+        """
+DO $body$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'pk_users'
+    ) THEN
+        ALTER TABLE users ADD PRIMARY KEY (id);
+    END IF;
+END $body$;
+""",
+        encoding="utf-8",
+    )
+    findings = scan_sql_migration_idempotency(tmp_path)
+    assert findings == []
+
+
+def test_finding_as_md_row_escapes_pipe_in_detail():
+    f = Finding(check="x", severity="Low", file="a.py", line=1, snippet="s", detail="an `X | None` parameter")
+    row = f.as_md_row()
+    assert "X \\| None" in row
+    # Table structure preserved: exactly 4 unescaped pipes delimit the 5 cells (plus outer edges).
+    assert row.count("|") - row.count("\\|") == 6
+
+
+def test_registry_register_scanner_rejects_collision():
+    from pyutilz.dev.code_audit.registry import register_scanner, SCANNERS
+
+    def _dummy(root, exclude_dirs=frozenset()):
+        return []
+
+    with pytest.raises(ValueError):
+        register_scanner("mutable_default", _dummy)
+    assert SCANNERS["mutable_default"] is not _dummy
+
+    register_scanner("mutable_default", _dummy, allow_override=True)
+    try:
+        assert SCANNERS["mutable_default"] is _dummy
+    finally:
+        register_scanner("mutable_default", scan_mutable_defaults, allow_override=True)
+
+
+def test_duplicate_conditions_not_flagged_for_impure_bare_function_retry(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    success = attempt() or attempt()
+    return success
+""")
+    findings = scan_duplicate_conditions(tmp_path)
+    assert findings == []
+
+
+def test_nan_equality_ignores_unrelated_dot_nan_attribute(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(result, expected):
+    if result.nan == expected.nan:
+        return True
+    return False
+""")
+    findings = scan_nan_equality(tmp_path)
+    assert findings == []
+
+
+def test_nan_equality_still_flags_np_nan(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import numpy as np
+def f(x):
+    if x == np.nan:
+        return True
+    return False
+""")
+    findings = scan_nan_equality(tmp_path)
+    assert len(findings) == 1
+
+
+def test_mutation_during_iteration_list_message_is_backend_agnostic(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(mylist):
+    for x in mylist:
+        mylist[0] = x * 2
+""")
+    findings = scan_mutation_during_iteration(tmp_path)
+    assert len(findings) == 1
+    assert "RuntimeError on dict/set" not in findings[0].detail
+
+
+# ---- undeclared_import ----------------------------------------------------
+
+
+def test_undeclared_import_cross_domain_flags_p1(tmp_path: Path):
+    (tmp_path / "web").mkdir()
+    _write(tmp_path, "web/bad.py", """
+import pandas as pd
+
+def f():
+    return pd.DataFrame()
+""")
+    findings = scan_undeclared_imports(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "undeclared_import"
+    assert findings[0].severity == "P1"
+
+
+def test_undeclared_import_own_domain_is_clean(tmp_path: Path):
+    (tmp_path / "web").mkdir()
+    _write(tmp_path, "web/ok.py", """
+import requests
+
+def f():
+    return requests.get("http://x", timeout=5)
+""")
+    findings = scan_undeclared_imports(tmp_path)
+    assert findings == []
+
+
+# ---- vacuous_assertion ------------------------------------------------
+
+
+def test_vacuous_assertion_bare_true_flagged(tmp_path: Path):
+    _write(tmp_path, "test_bad.py", """
+def test_thing():
+    result = compute()
+    assert True
+""")
+    findings = scan_vacuous_assertions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "vacuous_assertion"
+
+
+def test_vacuous_assertion_full_domain_or_flagged(tmp_path: Path):
+    _write(tmp_path, "test_bad.py", """
+def test_thing(result):
+    assert result is None or result == {} or isinstance(result, dict)
+""")
+    findings = scan_vacuous_assertions(tmp_path)
+    assert len(findings) == 1
+
+
+def test_vacuous_assertion_real_check_is_clean(tmp_path: Path):
+    _write(tmp_path, "test_ok.py", """
+def test_thing():
+    result = compute()
+    assert result == 42
+""")
+    findings = scan_vacuous_assertions(tmp_path)
+    assert findings == []
+
+
+# ---- locals_globals_as_output ------------------------------------------
+
+
+def test_locals_globals_as_output_kwarg_flagged_p1(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def connect(session):
+    session.apply(object=locals())
+""")
+    findings = scan_locals_globals_as_output(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+
+
+def test_locals_globals_as_output_never_passed_to_a_call_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def debug_dump():
+    snapshot = locals()
+    return snapshot
+""")
+    findings = scan_locals_globals_as_output(tmp_path)
+    assert findings == []
+
+
+# ---- missing_network_timeout -------------------------------------------
+
+
+def test_missing_network_timeout_flags_bare_get(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import requests
+
+def f():
+    return requests.get("http://example.com")
+""")
+    findings = scan_missing_network_timeout(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "missing_network_timeout"
+
+
+def test_missing_network_timeout_with_timeout_kwarg_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import requests
+
+def f():
+    return requests.get("http://example.com", timeout=5)
+""")
+    findings = scan_missing_network_timeout(tmp_path)
+    assert findings == []
+
+
+# ---- parameter_aliasing_mutation ---------------------------------------
+
+
+def test_parameter_aliasing_mutation_flags_p0(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def upsert(history_fields, hash_field):
+    returning_fields = history_fields
+    returning_fields += [hash_field]
+    return returning_fields
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "parameter_aliasing_mutation"
+    assert findings[0].severity == "P0"
+
+
+def test_parameter_aliasing_mutation_copy_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def upsert(history_fields, hash_field):
+    returning_fields = history_fields.copy()
+    returning_fields += [hash_field]
+    return returning_fields
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert findings == []
+
+
+# ---- sync_blocking_in_async --------------------------------------------
+
+
+def test_sync_blocking_in_async_flags_bare_requests(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import requests
+
+async def generate():
+    return requests.get("http://example.com")
+""")
+    findings = scan_sync_blocking_in_async(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P1"
+
+
+def test_sync_blocking_in_async_awaited_httpx_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import httpx
+
+async def generate():
+    async with httpx.AsyncClient() as client:
+        return await client.get("http://example.com")
+""")
+    findings = scan_sync_blocking_in_async(tmp_path)
+    assert findings == []
+
+
+# ---- retry_loop ----------------------------------------------------------
+
+
+def test_retry_loop_busy_loop_flagged_p1(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def connect():
+    while True:
+        try:
+            return do_connect()
+        except ConnectionError:
+            continue
+""")
+    findings = scan_retry_loops(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "busy_retry_loop"
+    assert findings[0].severity == "P1"
+
+
+def test_retry_loop_with_sleep_and_break_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import time
+
+def connect():
+    while True:
+        try:
+            result = do_connect()
+            break
+        except ConnectionError:
+            time.sleep(1)
+    return result
+""")
+    findings = scan_retry_loops(tmp_path)
+    assert findings == []
+
+
+# ---- duplicate_module_docstring ------------------------------------------
+
+
+def test_duplicate_module_docstring_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", '''
+"""First docstring."""
+"""Second docstring, silently discarded."""
+
+def f():
+    pass
+''')
+    findings = scan_duplicate_module_docstring(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"
+
+
+def test_duplicate_module_docstring_single_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+"""Only docstring."""
+
+def f():
+    pass
+''')
+    findings = scan_duplicate_module_docstring(tmp_path)
+    assert findings == []
+
+
+# ---- unraised_exception_class ---------------------------------------------
+
+
+def test_unraised_exception_class_never_raised_flagged(tmp_path: Path):
+    _write(tmp_path, "exc.py", """
+class LLMTruncationError(Exception):
+    pass
+""")
+    findings = scan_unraised_exceptions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Medium"
+
+
+def test_unraised_exception_class_raised_in_different_file_is_clean(tmp_path: Path):
+    _write(tmp_path, "exc.py", """
+class RetryableError(Exception):
+    pass
+""")
+    _write(tmp_path, "use.py", """
+from exc import RetryableError
+
+def f():
+    raise RetryableError("boom")
+""")
+    findings = scan_unraised_exceptions(tmp_path)
+    assert findings == []
+
+
+# ---- credential_shaped_log_arg ---------------------------------------------
+
+
+def test_credential_shaped_log_arg_unredacted_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def f(proxy):
+    logger.info(proxy)
+""")
+    findings = scan_credential_shaped_log_args(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P2"
+
+
+def test_credential_shaped_log_arg_redacted_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def f(proxy):
+    redacted = proxy.split("@")[1]
+    logger.info(redacted)
+""")
+    findings = scan_credential_shaped_log_args(tmp_path)
+    assert findings == []

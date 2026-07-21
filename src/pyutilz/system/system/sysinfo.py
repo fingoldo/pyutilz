@@ -149,7 +149,7 @@ def get_system_info(
                     except Exception:
                         logger.warning("Could not extract Android serial")
                         info["os_serial"] = info.get("os_machine_guid", "")
-                elif current_system == "Mac":
+                elif current_system == "Darwin":  # platform.system() reports "Darwin" on macOS, never "Mac"
                     try:
                         # Pipeline ``ioreg | grep`` — both Popen handles
                         # bound to context managers so they're terminated
@@ -173,6 +173,11 @@ def get_system_info(
                     except Exception:
                         logger.warning("Could not extract Mac UUID")
                         info["os_serial"] = info.get("os_machine_guid", "")
+                else:
+                    # Unrecognized platform.system() value: still fill os_serial (distributed.py's
+                    # register_scraper() unconditionally expects the field) via the generic fallback.
+                    logger.warning("Unrecognized platform %r; using machine GUID fallback for os_serial", current_system)
+                    info["os_serial"] = info.get("os_machine_guid", "")
 
                 # host_name is also required for distributed.py
                 info["host_name"] = socket.gethostname()
@@ -243,7 +248,13 @@ def get_system_info(
         if numba is not None and "cuda" in dir(numba):
             if numba.cuda.is_available():
                 try:
-                    cuda_version = re.findall(", V(.+)\r\n", subprocess.check_output("nvcc --version").decode())  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal command, no shell, no external input
+                    # list-style argv (not a single "nvcc --version" string): with shell=False (the
+                    # default), a string args is the literal executable name/path with NO whitespace
+                    # splitting on POSIX -- there is no executable named "nvcc --version", so the old
+                    # form always raised FileNotFoundError on Linux/macOS regardless of whether nvcc was
+                    # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
+                    # "\n" on Linux/macOS, not "\r\n".
+                    cuda_version = re.findall(r", V(\S+)", subprocess.check_output(["nvcc", "--version"]).decode())  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal argv, no shell, no external input
                 except Exception:
                     cuda_version = [""]
 

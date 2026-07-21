@@ -12,81 +12,65 @@ import tempfile
 
 
 class TestHeartbeatSql:
-    """Test get_heartbeat_sql - SQL injection protection"""
+    """Test get_heartbeat_sql - SQL injection protection
+
+    Regression test (2026-07-21 audit): these tests previously targeted a nonexistent
+    `pyutilz.distributed.DistributedManager` class, so every test here hit ImportError and was
+    unconditionally skipped forever -- the real, correctly-named module-level `get_heartbeat_sql`
+    function (src/pyutilz/system/distributed.py) was never actually exercised. Rewritten against
+    the real API, matching the pattern `TestIdentityRaceCondition` (bottom of this file) already
+    uses correctly.
+    """
 
     def test_returns_parameterized_query(self):
-        """Test that heartbeat SQL uses parameterized queries (line 91-115 fix)"""
-        try:
-            from pyutilz.distributed import DistributedManager
-        except ImportError:
-            pytest.skip("DistributedManager not available")
+        """get_heartbeat_sql uses parameterized queries, no f-string/.format() interpolation."""
+        import pyutilz.system.distributed as distributed_module
 
-        # Create manager instance
-        try:
-            manager = DistributedManager()
-        except Exception:
-            pytest.skip("Cannot instantiate DistributedManager")
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = 1
 
-        # Get heartbeat SQL
-        try:
-            result = manager.get_heartbeat_sql()
-        except Exception as e:
-            pytest.skip(f"get_heartbeat_sql not available: {e}")
+        sql, params = distributed_module.get_heartbeat_sql(status="ok", ip="1.2.3.4")
 
-        if result:
-            # Should return tuple (sql, params)
-            assert isinstance(result, tuple), "Should return (sql, params) tuple for parameterized query"
-
-            sql, params = result
-
-            # SQL should use placeholders (%s), not direct string interpolation
-            assert "%s" in sql or "?" in sql, "SQL should use placeholders for parameterized query (SQL injection fix)"
-
-            # Should NOT have f-string or .format() in the SQL string itself
-            assert "{" not in sql, "SQL should not use f-string formatting (SQL injection risk)"
+        assert isinstance(sql, str)
+        assert "%s" in sql
+        assert "{" not in sql
 
     def test_heartbeat_sql_has_upsert_structure(self):
-        """Test that heartbeat SQL has proper UPSERT structure"""
-        try:
-            from pyutilz.distributed import DistributedManager
-        except ImportError:
-            pytest.skip("DistributedManager not available")
+        """get_heartbeat_sql has proper INSERT ... ON CONFLICT UPSERT structure."""
+        import pyutilz.system.distributed as distributed_module
 
-        try:
-            manager = DistributedManager()
-            result = manager.get_heartbeat_sql()
-        except Exception:
-            pytest.skip("Cannot get heartbeat SQL")
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = 1
 
-        if result:
-            sql, params = result
+        sql, params = distributed_module.get_heartbeat_sql(status="ok", ip="1.2.3.4")
 
-            # Should have INSERT ... ON CONFLICT structure
-            assert "INSERT" in sql.upper(), "Should have INSERT statement"
-            assert "ON CONFLICT" in sql.upper() or "ON DUPLICATE" in sql.upper(), "Should have conflict handling (UPSERT)"
+        assert "INSERT" in sql.upper()
+        assert "ON CONFLICT" in sql.upper()
 
     def test_heartbeat_sql_parameters_count_matches(self):
-        """Test that number of placeholders matches number of parameters"""
-        try:
-            from pyutilz.distributed import DistributedManager
-        except ImportError:
-            pytest.skip("DistributedManager not available")
+        """Number of %s placeholders matches the number of bound params."""
+        import pyutilz.system.distributed as distributed_module
 
-        try:
-            manager = DistributedManager()
-            result = manager.get_heartbeat_sql()
-        except Exception:
-            pytest.skip("Cannot get heartbeat SQL")
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = 1
 
-        if result:
-            sql, params = result
+        sql, params = distributed_module.get_heartbeat_sql(status="ok", ip="1.2.3.4")
 
-            # Count placeholders
-            placeholder_count = sql.count("%s") + sql.count("?")
+        placeholder_count = sql.count("%s")
+        assert params is not None
+        assert len(params) == placeholder_count
 
-            # Should match params length
-            if params:
-                assert len(params) == placeholder_count, f"Placeholder count ({placeholder_count}) should match params count ({len(params)})"
+    def test_returns_empty_when_not_registered(self):
+        """Unregistered node (node_id None) returns ("", None) rather than a malformed query."""
+        import pyutilz.system.distributed as distributed_module
+
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = None
+
+        sql, params = distributed_module.get_heartbeat_sql(status="ok", ip="1.2.3.4")
+
+        assert sql == ""
+        assert params is None
 
 
 class TestModuleLevelVariables:
@@ -133,32 +117,23 @@ class TestVersioning:
                 ), "Should use content-based versioning (hash), not just mtime (clock skew issues)"
 
 
-class TestDistributedManagerInstantiation:
-    """Test DistributedManager can be instantiated"""
+class TestDistributedModulePublicSurface:
+    """The real API here is module-level functions, not a class -- confirms the actual public
+    surface (regression test: no pyutilz.distributed.DistributedManager class exists or ever
+    did; see TestHeartbeatSql's docstring for the history)."""
 
-    def test_manager_creation(self):
-        """Test that DistributedManager can be created"""
-        try:
-            from pyutilz.distributed import DistributedManager
-        except ImportError:
-            pytest.skip("DistributedManager not available")
+    def test_expected_functions_exist(self):
+        import pyutilz.system.distributed as distributed_module
 
-        try:
-            manager = DistributedManager()
-            assert manager is not None
-        except Exception as e:
-            # May fail due to missing configuration, but class should exist
-            pytest.skip(f"Cannot create DistributedManager (missing config expected): {e}")
+        assert hasattr(distributed_module, "get_heartbeat_sql")
+        assert hasattr(distributed_module, "register_scraper")
+        assert hasattr(distributed_module, "heartbeat_scraper")
+        assert callable(distributed_module.get_heartbeat_sql)
 
-    def test_manager_has_required_methods(self):
-        """Test that DistributedManager has expected methods"""
-        try:
-            from pyutilz.distributed import DistributedManager
-        except ImportError:
-            pytest.skip("DistributedManager not available")
+    def test_no_distributedmanager_class(self):
+        import pyutilz.system.distributed as distributed_module
 
-        # Check for expected methods
-        assert hasattr(DistributedManager, "get_heartbeat_sql"), "Should have get_heartbeat_sql method"
+        assert not hasattr(distributed_module, "DistributedManager")
 
 
 class TestSqlInjectionProtection:
@@ -193,22 +168,20 @@ class TestSqlInjectionProtection:
     ("ok", None),
 ])
 def test_heartbeat_sql_with_different_parameters(status, ip):
-    """Parametrized test for heartbeat SQL with different parameters"""
-    try:
-        from pyutilz.distributed import DistributedManager
-    except ImportError:
-        pytest.skip("DistributedManager not available")
+    """Parametrized test for heartbeat SQL with different parameters, against the real
+    module-level get_heartbeat_sql function (not a nonexistent DistributedManager class)."""
+    import pyutilz.system.distributed as distributed_module
 
-    try:
-        manager = DistributedManager()
-        result = manager.get_heartbeat_sql(status=status, ip=ip)
-    except Exception:
-        pytest.skip("Cannot get heartbeat SQL")
+    with distributed_module._identity_lock:
+        distributed_module._container.node_id = 1
+        distributed_module.m_ip = "0.0.0.0"
 
-    if result:
-        sql, params = result
-        assert isinstance(sql, str)
-        assert params is None or isinstance(params, tuple)
+    sql, params = distributed_module.get_heartbeat_sql(status=status, ip=ip)
+
+    assert isinstance(sql, str)
+    assert sql != ""
+    assert isinstance(params, tuple)
+    assert status in params
 
 
 def test_distributed_module_imports_successfully():

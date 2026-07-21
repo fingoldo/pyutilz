@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import hashlib
 import logging
 from typing import Any
 from urllib.parse import urlparse
@@ -72,7 +73,14 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
         if FileLock is None:
             raise ImportError("safe_delta_write on a local path requires the 'filelock' package; pip install filelock")
 
-        lock_file = os.path.join(tempfile.gettempdir(), f"{os.path.basename(path).replace('/', '_')}{lock_suffix}")
+        # Regression fix: keying the lock filename on basename(path) alone means any two DISTINCT
+        # Delta tables that happen to share a basename (e.g. /data/region-us/orders and
+        # /data/region-eu/orders) map to the exact same OS-wide lock file in the shared temp
+        # directory, forcing one to block on the other's lock (up to lock_timeout, default 20
+        # minutes) despite having no real data-race between them. Hashing the full normalized
+        # path makes the lock filename unique per actual table.
+        path_hash = hashlib.sha256(os.path.abspath(path).encode("utf-8")).hexdigest()
+        lock_file = os.path.join(tempfile.gettempdir(), f"{path_hash}{lock_suffix}")
         lock = FileLock(lock_file)
 
         try:
@@ -80,7 +88,13 @@ def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock
                 logger.debug("Acquired lock for local Delta path: %s", path)
                 return delta_op_func()
         except Timeout:
+            # Regression fix: previously fell through to an implicit `return None` here,
+            # indistinguishable from delta_op_func() itself legitimately returning None (which
+            # write_deltalake() does, per this function's own docstring example) -- a caller
+            # could not tell "the write succeeded" apart from "the write was silently skipped
+            # because another process held the lock for the full timeout window".
             logger.warning("Timeout while waiting for lock on %s. Skipping operation.", path)
+            raise TimeoutError(f"safe_delta_write: could not acquire lock for {path!r} within {lock_timeout}s; operation was skipped") from None
         except Exception as e:
             logger.exception("Delta operation failed on %s: %s", path, e)
             raise (e)

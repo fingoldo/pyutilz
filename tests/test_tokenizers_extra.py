@@ -39,7 +39,7 @@ def test_tokenize_db_reviews_closes_cursor_and_pbar_on_exception():
 
     fake_pbar = Mock()
 
-    with patch("pyutilz.text.tokenizers.db.safe_execute", return_value=fake_cur), patch("pyutilz.text.tokenizers.tqdm", return_value=fake_pbar), patch(
+    with patch("pyutilz.database.db.safe_execute", return_value=fake_cur), patch("tqdm.notebook.tqdm", return_value=fake_pbar), patch(
         "pyutilz.text.tokenizers.sentencize_text", side_effect=lambda text: text
     ):
         with pytest.raises(RuntimeError, match="boom while tokenizing"):
@@ -60,7 +60,7 @@ def test_tokenize_db_reviews_closes_cursor_and_pbar_on_fetch_exception():
 
     fake_pbar = Mock()
 
-    with patch("pyutilz.text.tokenizers.db.safe_execute", return_value=fake_cur), patch("pyutilz.text.tokenizers.tqdm", return_value=fake_pbar), patch(
+    with patch("pyutilz.database.db.safe_execute", return_value=fake_cur), patch("tqdm.notebook.tqdm", return_value=fake_pbar), patch(
         "pyutilz.text.tokenizers.sentencize_text", side_effect=lambda text: text
     ):
         with pytest.raises(RuntimeError, match="server-side cursor died"):
@@ -83,7 +83,7 @@ def test_tokenize_db_reviews_closes_cursor_and_pbar_on_normal_completion():
 
     fake_pbar = Mock()
 
-    with patch("pyutilz.text.tokenizers.db.safe_execute", return_value=fake_cur), patch("pyutilz.text.tokenizers.tqdm", return_value=fake_pbar), patch(
+    with patch("pyutilz.database.db.safe_execute", return_value=fake_cur), patch("tqdm.notebook.tqdm", return_value=fake_pbar), patch(
         "pyutilz.text.tokenizers.sentencize_text", side_effect=lambda text: text
     ):
         tok.tokenize_db_reviews(sql="select 1", tokens={})

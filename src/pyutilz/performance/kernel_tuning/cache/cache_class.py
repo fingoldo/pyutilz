@@ -180,11 +180,20 @@ class KernelTuningCache:
 
     def _migrate_legacy(self) -> None:
         """One-time split of a legacy monolithic ``<fp>.json`` into per-kernel
-        immutable files, under an ``O_EXCL`` claim so only one process migrates.
+        immutable files, under a claim marker so only one process migrates.
         After a successful split the monolith is renamed aside (``.migrated``) so
         it is found-once but never re-read. Backward compatible: existing caches
         keep working transparently. Idempotent + crash-safe (a partial migration
-        just re-runs; immutable writes can't corrupt)."""
+        just re-runs; immutable writes can't corrupt).
+
+        The claim marker uses the SAME pid+start_ts+steal pattern as the sweep
+        INPROGRESS markers (``_try_create_marker``/pid-liveness + budget staleness
+        check below) rather than a bare O_EXCL empty file -- a bare claim has no
+        way to tell "a live peer is migrating" from "a process crashed after
+        claiming and before removing it," so an orphaned claim from a killed
+        process (OOM-killer, kill -9, container eviction) would otherwise disable
+        migration on this host FOREVER (every subsequent process's O_EXCL fails
+        and just returns, with no retry and no steal logic)."""
         if self._in_memory or self._path is None or self._migrated:
             return
         self._migrated = True  # at most one attempt per process
@@ -192,15 +201,12 @@ class KernelTuningCache:
         if not os.path.isfile(legacy):
             return
         claim = os.path.join(self._path, ".migrate.INPROGRESS")
-        try:
-            os.makedirs(self._path, exist_ok=True)
-            fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
-        except FileExistsError:
-            return  # another process is migrating; its result will be read on next _load
-        except OSError as e:
-            logger.debug("kernel_tuning_cache: migration claim failed: %s", e)
-            return
+        os.makedirs(self._path, exist_ok=True)
+        owns = self._try_create_marker(claim)
+        if not owns:
+            owns = self._maybe_steal_migration_claim(claim)
+        if not owns:
+            return  # a live peer is migrating; its result will be read on next _load
         try:
             with open(legacy, encoding="utf-8") as f:
                 data = json.load(f)
@@ -291,9 +297,14 @@ class KernelTuningCache:
                 entry = self._read_kernel_dir_by_path(d.path)
                 if entry is not None:
                     kernels[entry[0]] = entry[1]
-        if not kernels and self._remote is not None:
-            # Read-through: pull this host's payload from the shared store + cache
-            # each kernel as an immutable local file, then they resolve normally.
+        if self._remote is not None:
+            # Read-through: pull this host's payload from the shared store + cache each kernel
+            # as an immutable local file, then they resolve normally. Gated PER-KERNEL (any
+            # remote kernel not already in the local view), not on the local store being
+            # entirely empty -- a host that already has ANY locally-tuned kernel would otherwise
+            # never learn about kernels tuned only by a peer sharing the same hw_fingerprint,
+            # and its next write-through (which serializes only its own local view) would then
+            # permanently overwrite/delete those peer-only kernels from the shared object.
             try:
                 remote_data = self._remote.read(hw_fingerprint())
             except Exception as e:
@@ -304,6 +315,8 @@ class KernelTuningCache:
                 live_prov = _build_provenance()
                 if not (prov and provenance_changed(prov, live_prov)):
                     for name, entry in (remote_data.get("kernels", {}) or {}).items():
+                        if name in kernels:
+                            continue  # local copy already resolved (possibly newer); don't shadow it
                         if isinstance(entry, dict):
                             self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
                             kernels[name] = entry
@@ -390,14 +403,30 @@ class KernelTuningCache:
     def _remote_payload(self) -> dict:
         """Assemble the legacy-shaped monolithic payload (all kernels) for the
         remote store, so the remote object stays one-per-fingerprint and a peer's
-        read-through repopulates every kernel."""
-        kernels = (self._loaded or {}).get("kernels", {}) if self._loaded else {}
+        read-through repopulates every kernel.
+
+        Merges in any kernel present on the CURRENT remote object but absent from this
+        process's local view before writing -- a plain "serialize only what I have locally"
+        write would otherwise overwrite/delete kernels tuned only by a peer host sharing the
+        same hw_fingerprint that this process never loaded (e.g. tuned by that peer AFTER this
+        process's own _load() ran). Local entries always win over remote ones for the same name.
+        """
+        kernels = dict((self._loaded or {}).get("kernels", {}) if self._loaded else {})
+        try:
+            remote_data = self._remote.read(hw_fingerprint()) if self._remote is not None else None
+        except Exception as e:
+            logger.debug("kernel_tuning_cache: remote read (pre-write merge) failed: %s", e)
+            remote_data = None
+        if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
+            for name, entry in (remote_data.get("kernels", {}) or {}).items():
+                if name not in kernels and isinstance(entry, dict):
+                    kernels[name] = entry
         return {
             "schema_version": SCHEMA_VERSION,
             "hw_fingerprint": hw_fingerprint(),
             "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
             "provenance": _build_provenance(),
-            "kernels": dict(kernels),
+            "kernels": kernels,
         }
 
     def _gc_kernel_dir(self, kdir: str, keep: int = 4) -> None:
@@ -891,6 +920,37 @@ class KernelTuningCache:
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
+
+    def _maybe_steal_migration_claim(self, claim: str) -> bool:
+        """Like ``_maybe_steal_marker`` but for the legacy-migration claim (no ``hooks``
+        callback, no kernel_name -- the migration claim is process-global, not per-kernel).
+        Steal (return True) iff the owning pid is dead OR start_ts is older than the max-sweep
+        budget; else give up (False)."""
+        try:
+            with open(claim, encoding="utf-8") as f:
+                info = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            info = {}
+        pid = int(info.get("pid", 0) or 0)
+        start_ts = float(info.get("start_ts", 0.0) or 0.0)
+        budget = _sweep_budget_seconds()
+        if pid <= 0 or start_ts <= 0.0:
+            try:
+                age = time.time() - os.path.getmtime(claim)
+            except OSError:
+                age = float("inf")
+            if age <= budget:
+                return False  # a peer is mid-creation -> let it finish
+        else:
+            age = time.time() - start_ts
+        same_host = info.get("host") in (None, hw_fingerprint())
+        owner_dead = same_host and not _pid_alive(pid)
+        if not (owner_dead or age > budget):
+            return False  # a live, in-budget migrator owns it -> give up
+        logger.info("kernel_tuning_cache: stealing stale migration claim (pid=%s alive=%s age=%.0fs budget=%.0fs)", pid, not owner_dead, age, budget)
+        with contextlib.suppress(OSError):
+            os.remove(claim)
+        return self._try_create_marker(claim)
 
     def _maybe_steal_marker(self, marker: str, kernel_name: str, hooks) -> bool:
         """An existing marker was found. Steal it (return True) iff the owning pid

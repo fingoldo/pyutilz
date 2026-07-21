@@ -150,11 +150,17 @@ def sweep_backend_crossover(
         extra_region_keys: fixed keys merged into every region (e.g. other dims
             held constant for this sweep).
         repeats: timed reps per variant per size (a warmup pass precedes timing).
+        equiv_atol: absolute tolerance for the reference-output equivalence check (see
+            ``reference`` above).
+        equiv_rtol: relative tolerance for the reference-output equivalence check.
         synchronize_gpu: sync the GPU before stopping each timer so async
             cupy/cuda kernels are timed at completion, not launch.
+        decision_key: the dict key under which the winning variant's name is stored in
+            each returned region (default ``"backend_choice"``).
         ranking: ``"robust"`` (default) interleaves candidates per rep + takes the
             per-candidate MIN over reps (contention-robust); ``"mean"`` is the legacy
             sequential per-candidate mean. See :func:`_rank_candidates`.
+        verbose: 0 = silent; >0 increases logging detail of the sweep's progress.
 
     Returns:
         Region dicts ``[{"<axis>_max": int|None, decision_key: name,
@@ -355,6 +361,14 @@ def sweep_backend_grid(
         make_inputs: ``dims_dict -> args tuple`` of HOST (numpy) arrays.
         residencies: subset of ``("host", "device")``.
         to_device: ``args -> args`` mover to VRAM (default ``cp.asarray`` ndarrays).
+        repeats: timed reps per variant per cell (a warmup pass precedes timing).
+        equiv_atol: absolute tolerance for the reference-output equivalence check (see
+            ``reference`` above).
+        equiv_rtol: relative tolerance for the reference-output equivalence check.
+        synchronize_gpu: sync the GPU before stopping each timer so async
+            cupy/cuda kernels are timed at completion, not launch.
+        decision_key: the dict key under which the winning variant's name is stored in
+            each returned region (default ``"backend_choice"``).
         ranking: how the per-cell timings are aggregated to pick the winner.
             ``"robust"`` (default) interleaves candidates within each rep and takes
             the per-candidate MIN over reps -- contention-robust, so a concurrent GPU
@@ -362,6 +376,7 @@ def sweep_backend_grid(
             since noise only adds time). ``"mean"`` is the legacy sequential
             per-candidate mean (kept for A/B; correct only on a quiet device). See
             :func:`_rank_candidates`.
+        verbose: 0 = silent; >0 increases logging detail of the sweep's progress.
 
     Returns:
         Region dicts ``[{"<dim>_max": int, ..., "location_eq": "host"|"device",

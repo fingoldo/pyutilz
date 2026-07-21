@@ -1,11 +1,15 @@
 """PT-8 — meta-test that ``import pyutilz`` succeeds even when every
 optional dependency is masked.
 
-pyutilz declares zero hard dependencies (``pyproject.toml`` says
-``dependencies = []``); all real deps live in ``[project.optional-dependencies]``.
-The promise to users: ``pip install pyutilz`` always works, and you only
-get ``ImportError`` when you try to *use* a sub-feature whose extra dep
-isn't installed.
+pyutilz declares a few core hard dependencies (``pyproject.toml``'s
+``[project.dependencies]``: numba, numpy, joblib, portalocker, psutil, plus a
+Python<3.11-only tomli backport -- all either used unconditionally by
+``pyutilz.core.pythonlib``/``pyutilz.system.system``, both transitively imported by
+nearly every other subpackage, or (numpy) a hard transitive dependency of numba
+itself); everything else lives in ``[project.optional-dependencies]``. The promise
+to users: ``pip install pyutilz`` always works (core deps install automatically),
+and you only get ``ImportError`` when you try to *use* a sub-feature whose extra
+dep isn't installed.
 
 This test enforces that promise: importing the top-level package and
 each sub-package should NOT crash because some optional dep is missing.
@@ -36,32 +40,119 @@ import pytest
 # masking these in ``sys.modules`` simulates the user not having
 # installed the extra.
 _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
-    "pandas": ["pandas", "numpy", "pyarrow"],
-    "polars": ["polars"],
-    "database": ["sqlalchemy", "psycopg2", "pymysql"],
+    # numpy/psutil are NOT listed anywhere below (promoted to core pyproject.toml dependencies:
+    # numba, itself core, hard-requires numpy at its own import time; pyutilz.system.system's
+    # own __init__.py eagerly imports psutil via all six of its submodules) -- masking either
+    # would no longer simulate a real "missing extra" scenario. Same reasoning for
+    # numba/joblib/portalocker.
+    #
+    # tqdm/pympler appear in "pandas"/"polars" (not just "system") because
+    # pyutilz.system.system's eager all-six-submodules import means ANY reach into that
+    # subpackage (data/pandaslib/_common.py's `tqdmu`/`ensure_dir_exists`, data/polarslib.py's
+    # `clean_ram`) transitively needs misc.py's tqdm+pympler too, regardless of which single
+    # symbol was actually wanted.
+    "pandas": ["pandas", "pyarrow", "polars", "dateutil", "tqdm", "pympler"],
+    "polars": ["polars", "tqdm", "pympler", "pandas", "dateutil"],
+    "database": ["sqlalchemy", "psycopg2", "pymysql", "dateutil", "redis", "pandas"],
     "web": ["selenium", "undetected_chromedriver", "requests", "grequests", "fake_useragent", "curl_cffi"],
     "cloud": ["google.cloud.storage", "boto3"],
-    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken"],
+    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python", "pandas", "dateutil"],
     "llm": ["anthropic", "google.genai", "httpx", "tenacity", "pydantic", "pydantic_settings"],
+    # Found 2026-07-21 audit: "system" and "gpu" were missing from this dict entirely, so
+    # tqdm/pympler/Pillow/scipy/py-cpuinfo/GPUtil/xmltodict/cupy were never
+    # masked/simulated-absent by ANY scenario below -- a structural blind spot that let
+    # core/pythonlib.py's undeclared numba/joblib/portalocker imports ship undetected (those
+    # three, plus psutil/numpy, used to live in this list before being promoted to core deps).
+    "system": ["tqdm", "pympler", "PIL", "scipy", "cpuinfo", "GPUtil", "xmltodict", "pandas", "dateutil"],
+    "gpu": ["cupy"],
 }
+
+# dateutil is a real (transitive, via pandas) requirement of "pandas"/"database"/"nlp"/"system"
+# above, but python-dateutil itself has no lazy-import story to test -- unlike spacy/nltk/etc
+# below, which text/strings/webtext.py genuinely defers to call-site (`global X; if X is None:
+# import Y`). _NLP_LAZY_ONLY_DEPS is the narrower subset used by
+# test_tokenizers_module_imports_without_nlp_group_deps below, which specifically verifies that
+# deferred-import subset doesn't leak into the plain `import pyutilz.text.tokenizers` statement
+# -- masking the FULL "nlp" group there would also mask pandas, which pyutilz.text.strings
+# (a tokenizers.py dependency) genuinely does need at import time, unrelated to this check.
+_NLP_LAZY_ONLY_DEPS = ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python"]
 
 # pyutilz sub-packages that should remain import-safe even when
 # the corresponding optional-dep group is missing. The user can still
 # touch unrelated sub-packages.
-_ALWAYS_IMPORTABLE_SUBPACKAGES = ["pyutilz", "pyutilz.core", "pyutilz.text"]
+#
+# pyutilz.core.pythonlib is included here (not in _LEAF_MODULE_OWN_GROUP below) because, after
+# the 2026-07-21 audit fix, it has NO optional dependency at all -- numba/joblib/portalocker are
+# real core pyproject.toml dependencies now, so this module must import with every optional
+# group masked, the same bar as pyutilz.core/pyutilz.text's own package __init__.py files.
+_ALWAYS_IMPORTABLE_SUBPACKAGES = ["pyutilz", "pyutilz.core", "pyutilz.text", "pyutilz.core.pythonlib"]
+
+# Leaf submodules that are frequently imported directly by real callers, mapped to the ONE
+# optional-dep group (from _OPTIONAL_DEP_GROUPS) each legitimately needs. Complements
+# test_safe_subpackages_import_with_all_optional_deps_masked, which only probes package
+# __init__.py files -- often declaration-only (just __all__, no eager submodule imports; see
+# that test's own subjects) -- and never imports the actual leaf submodules where real callers'
+# eager third-party imports live. Found 2026-07-21 audit: that blind spot is exactly why several
+# modules shipped an undeclared unconditional third-party import undetected by this suite.
+_LEAF_MODULE_OWN_GROUP: dict[str, str] = {
+    "pyutilz.core.matrix": "system",  # Pillow, scipy
+    "pyutilz.data.polarslib": "polars",
+    "pyutilz.data.pandaslib": "pandas",
+    "pyutilz.database.db": "database",
+    "pyutilz.text.strings": "nlp",
+    "pyutilz.text.tokenizers": "nlp",
+    "pyutilz.web.web": "web",
+    "pyutilz.system.parallel": "system",
+    "pyutilz.system.system.memory": "system",
+}
+
+
+def _deps_to_mask_except(own_group: str) -> list[str]:
+    """Every top-level package name from every OTHER optional-dep group, EXCLUDING any package
+    that also appears in ``own_group``'s own list (packages legitimately shared between two
+    groups -- e.g. pandas/numpy appearing in both "pandas" and "nlp" -- must never be masked
+    when testing the group that also legitimately needs them)."""
+    own_deps = set(_OPTIONAL_DEP_GROUPS.get(own_group, []))
+    deps_to_mask: list[str] = []
+    for group, group_deps in _OPTIONAL_DEP_GROUPS.items():
+        if group == own_group:
+            continue
+        deps_to_mask.extend(d for d in group_deps if d not in own_deps)
+    return deps_to_mask
 
 
 def _mask_modules_script(deps_to_mask: list[str], imports_to_try: list[str]) -> str:
     """Build the snippet run in a sub-process: blocks the listed deps,
-    then imports the listed pyutilz sub-packages."""
+    then imports the listed pyutilz sub-packages.
+
+    The finder returns a real (but raising-on-exec) ModuleSpec rather than raising directly
+    from find_spec() itself -- found 2026-07-21, needed to add the pyutilz.data.polarslib leaf
+    module to this suite: polars' own optional-dependency machinery legitimately probes
+    ``importlib.util.find_spec("boto3")`` (a pure existence check, exactly the documented
+    correct pattern for a library with lazy optional integrations) without ever actually
+    importing/executing the module unless that specific optional feature is used. Raising
+    directly from find_spec broke that legitimate probe (indistinguishable from "genuinely
+    installed" as far as find_spec's caller is concerned would be wrong either way -- but
+    raising made even a non-executing existence check blow up), producing a false-positive
+    "masked dep leaked" failure for a dependency pyutilz.data.polarslib never actually touches.
+    Deferring the raise to exec_module() only fires it for an ACTUAL `import x` statement,
+    matching a real "not pip installed" environment far more faithfully.
+    """
     return (
         "import sys, importlib.abc, importlib.machinery\n"
         f"_BLOCKED = {deps_to_mask!r}\n"
+        "class _BlockingLoader(importlib.abc.Loader):\n"
+        "    def __init__(self, fullname):\n"
+        "        self.fullname = fullname\n"
+        "    def create_module(self, spec):\n"
+        "        return None\n"
+        "    def exec_module(self, module):\n"
+        "        raise ImportError(f'(masked by PT-8 test) {self.fullname}')\n"
         "class _BlockingFinder(importlib.abc.MetaPathFinder):\n"
         "    def find_spec(self, fullname, path, target=None):\n"
         "        for blocked in _BLOCKED:\n"
         "            if fullname == blocked or fullname.startswith(blocked + '.'):\n"
-        "                raise ImportError(f'(masked by PT-8 test) {fullname}')\n"
+        "                return importlib.machinery.ModuleSpec(fullname, _BlockingLoader(fullname), is_package=True)\n"
         "        return None\n"
         "sys.meta_path.insert(0, _BlockingFinder())\n"
         f"for mod in {imports_to_try!r}:\n"
@@ -91,7 +182,7 @@ def test_top_level_pyutilz_imports_when_optional_group_missing(group_name):
     script = _mask_modules_script(deps, ["pyutilz"])
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         pytest.fail(
@@ -121,7 +212,7 @@ def test_system_subpackage_imports_without_web_group_deps():
     script = _mask_modules_script(deps, ["pyutilz.system"])
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         pytest.fail(
@@ -142,17 +233,42 @@ def test_tokenizers_module_imports_without_nlp_group_deps():
     aborting the whole test session (``Interrupted: 1 error during collection``) rather than just
     that one file's tests.
     """
-    deps = _OPTIONAL_DEP_GROUPS["nlp"]
+    deps = _NLP_LAZY_ONLY_DEPS
     script = _mask_modules_script(deps, ["pyutilz.text.tokenizers"])
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         pytest.fail(
-            f"``import pyutilz.text.tokenizers`` failed when the 'nlp' group deps ({deps}) were "
-            f"masked. AdvancedTokenizer may still fail when actually USED without nltk/spacy, "
-            f"but the IMPORT itself must be safe. stderr:\n{result.stderr}"
+            f"``import pyutilz.text.tokenizers`` failed when spacy/nltk/jellyfish/tiktoken/"
+            f"bs4/inflect/emoji_data_python ({deps}) were masked. AdvancedTokenizer may still "
+            f"fail when actually USED without nltk/spacy, but the IMPORT itself must be safe. "
+            f"stderr:\n{result.stderr}"
+        )
+
+
+@pytest.mark.parametrize("leaf_module,own_group", list(_LEAF_MODULE_OWN_GROUP.items()))
+def test_leaf_submodule_imports_with_only_its_own_group_installed(leaf_module, own_group):
+    """``pip install pyutilz[<own_group>]`` alone must be enough to import ``leaf_module`` --
+    every OTHER optional-dep group's packages are masked (simulating a user who installed only
+    the one extra matching this module's domain), while packages ``own_group`` legitimately
+    shares with another group (e.g. pandas/numpy, needed by both "pandas" and "nlp") are
+    correctly left unmasked. See _LEAF_MODULE_OWN_GROUP's docstring for why this test exists
+    alongside test_safe_subpackages_import_with_all_optional_deps_masked below.
+    """
+    deps_to_mask = _deps_to_mask_except(own_group)
+    script = _mask_modules_script(deps_to_mask, [leaf_module])
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"``import {leaf_module}`` failed with every optional-dep group EXCEPT "
+            f"{own_group!r} masked -- `pip install pyutilz[{own_group}]` alone is not enough "
+            f"to import this module; it has an undeclared dependency on another group's "
+            f"package. stderr:\n{result.stderr}"
         )
 
 
@@ -167,7 +283,7 @@ def test_safe_subpackages_import_with_all_optional_deps_masked(subpkg):
     script = _mask_modules_script(all_deps, [subpkg])
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         pytest.fail(

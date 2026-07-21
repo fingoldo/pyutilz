@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator
 import httpx
 from tenacity import retry, retry_if_exception
 
-from pyutilz.llm.exceptions import LLMProviderError
+from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider
 
@@ -231,6 +231,19 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return None
 
+    async def _async_prepare(self) -> None:
+        """Async hook called (only when ``max_tokens<=0``, i.e. before ``self.max_output_tokens``
+        is read) at the START of every ``generate()`` / ``generate_stream()``, BEFORE the sync
+        ``self.max_output_tokens`` property is accessed.
+
+        Default no-op. A subclass whose ``max_output_tokens``/``context_window`` properties do
+        network I/O on a cache miss (e.g. OpenRouterProvider's catalogue fetch) should override
+        this to pre-warm that cache via a genuinely async path (``asyncio.to_thread`` or an async
+        HTTP client) -- properties can't themselves be async, so without this hook a sync network
+        call reachable from an async property blocks the WHOLE event loop with no ``await`` point.
+        """
+        return None
+
     def _capture_rate_limit_headers(self, headers: Any) -> None:
         """Snapshot rate-limit headers from the most recent response.
 
@@ -407,6 +420,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._reset_per_call_state()
 
         if max_tokens <= 0:
+            await self._async_prepare()
             max_tokens = self.max_output_tokens
 
         body: dict[str, Any] = {
@@ -511,7 +525,15 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         prompt_tok = usage.get("prompt_tokens", 0)
         compl_tok = usage.get("completion_tokens", 0)
-        cache_hit = usage.get("prompt_cache_hit_tokens", 0)
+        # DeepSeek reports cache hits under the legacy "prompt_cache_hit_tokens" key. OpenAI's
+        # actual Chat Completions response (and xAI, whose API is explicitly OpenAI-compatible)
+        # instead nests it under "prompt_tokens_details.cached_tokens" -- a DIFFERENT key one
+        # level deeper. Without this fallback, OpenAIProvider/XAIProvider never see any cache-hit
+        # tokens at all (total_cache_hit_tokens stays 0 forever), making their entire
+        # _CACHE_HIT_COST pricing table unreachable dead code and silently over-reporting cost by
+        # treating every cache-hit token as a full-price cache-miss.
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        cache_hit = usage.get("prompt_cache_hit_tokens") or prompt_details.get("cached_tokens", 0) or 0
         details = usage.get("completion_tokens_details", {}) or {}
         reasoning_tok = details.get("reasoning_tokens", 0) or 0
 
@@ -584,6 +606,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         self._reset_per_call_state()
         if max_tokens <= 0:
+            await self._async_prepare()
             max_tokens = self.max_output_tokens
         async with self.semaphore:
             body: dict[str, Any] = {
@@ -653,6 +676,14 @@ class OpenAICompatibleProvider(LLMProvider):
                 # Tool-call-only response (no assistant text). Return empty
                 # string but keep tool_calls accessible via the attribute.
                 return ""
+            if self._last_finish_reason == "length":
+                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified
+                # (finish_reason field, "caller should double max_tokens and re-issue" contract)
+                # but never actually raised anywhere -- callers catching it to auto-retry with a
+                # bigger budget never saw it fire, even on a genuine max_tokens cutoff.
+                raise LLMTruncationError(
+                    f"{self._provider_name} response truncated by max_tokens (finish_reason='length')", finish_reason=self._last_finish_reason
+                )
             return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     async def generate_json(
@@ -706,8 +737,17 @@ class OpenAICompatibleProvider(LLMProvider):
         # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
         # — feeding Tasks instead works across versions.
         tasks = [asyncio.create_task(process_request(req)) for req in requests]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            # See LLMProvider.generate_batch's identical fix for why: without this, a caller
+            # stopping early (GeneratorExit at the yield above) leaves every already-scheduled
+            # task running to completion in the background as an orphaned, unobservable, billable
+            # LLM call.
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Estimate cost in USD (cache miss pricing)."""
@@ -736,6 +776,8 @@ class OpenAICompatibleProvider(LLMProvider):
         }
 
     async def count_tokens(self, text: str) -> int:
-        """Count tokens using tiktoken (accurate) or len//4 fallback."""
+        """Count tokens using tiktoken (encoding resolved per-model, e.g. o200k_base for
+        gpt-4o/o1, not always cl100k_base) or len//4 fallback. An APPROXIMATION, not exact --
+        see token_counter.count_tokens's own docstring."""
         from pyutilz.llm.token_counter import count_tokens
-        return count_tokens(text)
+        return count_tokens(text, model=self.model_name)

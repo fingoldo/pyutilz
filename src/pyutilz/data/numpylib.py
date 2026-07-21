@@ -75,9 +75,14 @@ def div0(a, b, na_fill=np.nan):
 
 
 def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_fill=np.nan) -> np.ndarray:
-    """Returns (a-b)/b,
-    but watches that b is not close to zero by shifting both values up, so that b.min() becomes positive and at least as big as the entire span of a or b.
-    span is maybe 99% percentile span.
+    """Returns (a-b)/(b + span_correction), guarding only against an exactly-zero or non-finite
+    denominator (via :func:`div0`).
+
+    ``span_correction`` is NOT computed automatically from the data -- it's a caller-supplied
+    constant added to ``b`` only (default 0.0, i.e. no shift). If ``b`` contains values merely
+    close to (but not exactly) zero, the ratio can still blow up; pass an explicit
+    ``span_correction`` (e.g. derived from ``np.abs(b).max() - b.min()`` or a percentile span of
+    ``a``/``b``) to dampen that, matching whatever numeric-stability margin your use case needs.
     """
 
     return div0(a - b, b + span_correction, na_fill=na_fill)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime

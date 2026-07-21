@@ -46,6 +46,13 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Python 3.8 or higher
 - Git
 
+Note: some `[dev]` tooling requires a newer interpreter than the package's own 3.8 floor —
+`black` needs Python >=3.10 and `py-ci-shared` (this project's Black-filtered-apply / mypy-cache
+tooling) needs >=3.9. On 3.8/3.9, `pip install -e .[all,dev]` below succeeds but silently skips
+those two packages (their `pyproject.toml` entries carry explicit `python_version` markers for
+this reason); `black .` / the pre-commit hooks that depend on them just won't be installed. If
+you'll be doing dev-tooling work (formatting, pre-commit), use Python >=3.10.
+
 ### Setup Instructions
 
 ```bash
@@ -55,6 +62,9 @@ cd pyutilz
 
 # Install in development mode with all extras
 pip install -e .[all,dev]
+
+# Install the pre-commit hooks (runs the meta-test suite + linters on every commit)
+pre-commit install
 
 # Verify installation
 pytest
@@ -75,21 +85,29 @@ pip install -e .[dev]         # For development tools only
 
 ### Style Guide
 
-We use **Black** for code formatting and **Ruff** for linting:
+We use **Black** for code formatting and **Ruff** for linting — but NEVER run raw `black`/`black --fix`
+repo-wide: this project excludes two Black behaviors (arg/collection-list explosion and blank-line
+insertion) that stock Black has no flag for, via a shared filtered-apply script:
 
 ```bash
-# Format code (line-length: 160)
-black .
+# Format code (line-length: 160) -- only the files you're touching, via py-ci-shared
+python -m py_ci_shared.black_filtered_apply --config pyproject.toml --write <files>
 
-# Check formatting
-black --check .
+# Check formatting (CI / dry-run, whole repo)
+python -m py_ci_shared.black_filtered_apply --config pyproject.toml --check .
 
-# Lint code
+# Lint code (repo-wide read-only; never --fix beyond files you're actively editing)
 ruff check .
 
-# Fix auto-fixable issues
-ruff check --fix .
+# Fix auto-fixable issues -- ONLY for the specific files you just edited, and only
+# genuinely mechanical/safe rules (e.g. F541 empty f-strings); never a repo-wide --fix,
+# and never for rules that can change behavior or delete a re-export (F401)
+ruff check --fix <files>
 ```
+
+A project-wide reformat or `ruff check --fix` beyond files you're already editing requires
+explicit maintainer approval first — see this project's own `CLAUDE.md` for the incident that
+established this rule.
 
 **Key style points:**
 - Line length: **160 characters** (not 88!)
@@ -147,7 +165,7 @@ pytest -v
 pytest tests/test_pandaslib.py
 
 # Run specific test
-pytest tests/test_pandaslib.py::test_optimize_dtypes
+pytest tests/test_dtypes_regression.py::test_optimize_dtypes_does_not_truncate_fractional_object_column
 
 # Run with coverage
 pytest --cov=. --cov-report=html --cov-report=term-missing
@@ -161,7 +179,12 @@ start htmlcov/index.html  # Windows
 
 - **Location**: `tests/test_<module_name>.py`
 - **Naming**: `test_<function_name>` or `test_<feature>`
-- **Coverage**: Aim for >80% coverage for new code
+- **Coverage**: Aim for >80% coverage for new code. Note the measured percentage is against a
+  shrunk denominator: `pyproject.toml`'s `[tool.coverage.run] omit` list excludes `scheduling/`,
+  `cloud/`, `web/browser.py`, `dev/dashlib.py`, `dev/notebook_init.py`, and `text/tokenizers.py`
+  entirely (heavy-IO/external-service code not exercised by the unit suite) — those files aren't
+  measured at all, not measured-and-low. Don't add new modules to that omit list without a reason;
+  prefer writing the tests instead.
 - **Fixtures**: Use pytest fixtures for common setups
 
 Example test:
@@ -282,7 +305,7 @@ BREAKING CHANGE: Invalid table names now raise ValueError
 ### PR Checklist
 
 - [ ] Tests pass locally (`pytest`)
-- [ ] Code formatted with black (`black .`)
+- [ ] Code formatted with black (via `py_ci_shared.black_filtered_apply`, not raw `black`)
 - [ ] Linting passes (`ruff check .`)
 - [ ] Documentation updated (if needed)
 - [ ] CHANGELOG.md updated

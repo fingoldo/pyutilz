@@ -577,25 +577,35 @@ try:
     def _pack_words(words: list) -> tuple:
         """Pack a list of strings into (buf: int32[], offsets: int32[]) for numba.
 
-        Uses array module for fast ord() conversion instead of per-character Python loop.
+        Uses numpy's frombuffer for fast ord() conversion instead of per-character Python loop.
         Returns (buf, offsets, n_words).
+
+        - ``errors="surrogatepass"``: a lone/unpaired UTF-16 surrogate codepoint (producible via
+          malformed-encoding recovery, surrogateescape, or hand-built strings) would otherwise
+          raise UnicodeEncodeError on utf-32-le encoding -- unlike the pure-Python
+          `sentences_similarity` reference, which never encodes anything and only crashes on such
+          input if an actual jellyfish.levenshtein_distance comparison is reached. Passing
+          surrogates through unchanged keeps this numba path from crashing on inputs the reference
+          path tolerates via its exact-match fast path.
+        - explicit little-endian dtype ("<u4", not a bare int32/native-order reinterpretation):
+          the source bytes are produced as utf-32-**le** explicitly; reinterpreting them via a
+          native-byte-order view (the previous ``array.array("i", ...)`` + int32-view approach)
+          would silently byte-swap every codepoint above 0xFF on a big-endian platform.
         """
-        import array as _array
         n = len(words)
         parts = []
         offsets = np.empty(n + 1, dtype=np.int32)
         pos = 0
         for i, w in enumerate(words):
             offsets[i] = pos
-            a = _array.array("i", w.encode("utf-32-le"))  # 4 bytes per codepoint
-            parts.append(a)
-            pos += len(a)
+            chunk = np.frombuffer(w.encode("utf-32-le", errors="surrogatepass"), dtype="<u4").astype(np.int32)
+            parts.append(chunk)
+            pos += len(chunk)
         offsets[n] = pos
         if pos > 0:
             buf = np.empty(pos, dtype=np.int32)
             p = 0
-            for a in parts:
-                chunk = np.frombuffer(a, dtype=np.int32)
+            for chunk in parts:
                 buf[p : p + len(chunk)] = chunk
                 p += len(chunk)
         else:

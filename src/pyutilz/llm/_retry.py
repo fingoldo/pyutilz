@@ -44,8 +44,10 @@ def log_retry(retry_state) -> None:
     )
 
 
-# Shared wait strategy: exponential 5s → 10s → 20s → ... → 300s (5 min cap)
-# plus random jitter to avoid thundering herd.
+# Shared wait strategy: roughly doubling backoff (attempts 1-9 with multiplier=2/min=5/max=300
+# actually produce 5, 5, 8, 16, 32, 64, 128, 256, 300 -- the first two attempts both floor at 5s
+# before the doubling pattern becomes visible, not a clean 5/10/20/... sequence), capped at 300s
+# (5 min), plus random jitter to avoid thundering herd.
 RETRY_WAIT = wait_exponential(multiplier=2, min=5, max=300) + wait_random(0, 5)
 
 _STOP = stop_never if MAX_RETRY_ATTEMPTS == 0 else stop_after_attempt(MAX_RETRY_ATTEMPTS)

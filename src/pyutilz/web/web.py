@@ -81,6 +81,36 @@ def _ensure_http_scheme(url: str) -> str:
     return url
 
 
+_SENSITIVE_HEADER_NAMES = frozenset({"authorization", "cookie", "set-cookie", "proxy-authorization", "x-api-key"})
+
+
+def _redact_proxy_url(proxy_url: Optional[str]) -> Optional[str]:
+    """Strip embedded ``user:pass@`` credentials from a proxy URL for safe logging, keeping the
+    host:port for diagnostic value. Returns the input unchanged if it isn't URL-shaped (e.g. no
+    ``@`` at all -- an unauthenticated proxy, per make_proxies_dict()'s own credential-less branch)."""
+    if not proxy_url or "@" not in proxy_url:
+        return proxy_url
+    scheme_sep = proxy_url.find("://")
+    prefix = proxy_url[: scheme_sep + 3] if scheme_sep != -1 else ""
+    rest = proxy_url[len(prefix) :]
+    _, _, host_part = rest.rpartition("@")
+    return f"{prefix}***@{host_part}"
+
+
+def _redact_proxies_dict(proxies_dict: Optional[dict]) -> Optional[dict]:
+    """Apply :func:`_redact_proxy_url` to every value of a ``requests``-style proxies dict."""
+    if not proxies_dict:
+        return proxies_dict
+    return {scheme: _redact_proxy_url(url) for scheme, url in proxies_dict.items()}
+
+
+def _redact_headers(headers_dict: Optional[dict]) -> Optional[dict]:
+    """Mask ``Authorization``/``Cookie``/etc. header values for safe logging (case-insensitive)."""
+    if not headers_dict:
+        return headers_dict
+    return {k: ("***" if k.lower() in _SENSITIVE_HEADER_NAMES else v) for k, v in headers_dict.items()}
+
+
 def init_vars():
     """Reset the module-level session state (session, IP-query counter, headers, proxies, timeout) to defaults."""
     global sess, num_ip_queries, template_headers, headers, proxies, timeout
@@ -105,7 +135,12 @@ def get_external_ip(
 
     for source in IP_PROVIDERS:
         try:
-            resp = urllib.request.urlopen(_ensure_http_scheme(source))  # nosec B310 - scheme validated above
+            # timeout= is required: urlopen's default is socket._GLOBAL_DEFAULT_TIMEOUT, which
+            # blocks forever unless something else in the process called
+            # socket.setdefaulttimeout() (nothing in this package does) -- a single stalled
+            # provider would otherwise hang this whole function indefinitely instead of moving
+            # on to the next shuffled IP_PROVIDERS entry.
+            resp = urllib.request.urlopen(_ensure_http_scheme(source), timeout=timeout or 10)  # nosec B310 - scheme validated above
         except ssl.SSLCertVerificationError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this provider, try the next)
             pass
         except Exception as e:
@@ -132,7 +167,7 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
 
     if use_urllib:
         try:
-            resp = urllib.request.urlopen(_ensure_http_scheme(url))  # nosec B310 - scheme validated above
+            resp = urllib.request.urlopen(_ensure_http_scheme(url), timeout=timeout or 10)  # nosec B310 - scheme validated above; timeout= avoids blocking forever, see get_external_ip's identical fix
         except Exception as e:
             logger.exception(e)
         else:
@@ -151,7 +186,12 @@ def get_ipinfo(use_urllib: bool = False, url="https://api.ipify.org?format=json"
 
 
 def download_in_parallel(
-    urls_to_process: Sequence, func: Callable, headers: Optional[dict] = None, nparallel_downloads: int = 3, report_each: int = 10
+    urls_to_process: Sequence,
+    func: Callable,
+    headers: Optional[dict] = None,
+    nparallel_downloads: int = 3,
+    report_each: int = 10,
+    request_timeout: Optional[float] = 30,
 ) -> Optional[List]:
     """Fetch ``urls_to_process`` concurrently via ``grequests`` and call ``func(response, url)`` on each successful (HTTP 200) response.
 
@@ -167,16 +207,25 @@ def download_in_parallel(
 
     n_processed = 0
     errored_urls = []
-    rs = (grequests.get(sub_url, verify=True, allow_redirects=True, headers=headers) for sub_url in urls_to_process)
+    # request_timeout=: grequests.get() previously had no timeout at all -- a single stalled URL
+    # (server accepts the connection but never responds) blocked grequests.map() from ever
+    # returning, hanging the whole batch regardless of how many OTHER urls had already succeeded.
+    rs = (grequests.get(sub_url, verify=True, allow_redirects=True, headers=headers, timeout=request_timeout) for sub_url in urls_to_process)
     logger.info("Started crawling! nlinks=%d", len(urls_to_process))
     # pbar=tqdmu(urls_to_process)
     for resp, sub_url in zip(grequests.map(rs, size=nparallel_downloads), urls_to_process):
         n_processed = n_processed + 1
-        if len(resp.history) > 0:
-            final_status_code = resp.history[-1].status_code
+        # None-check MUST come before touching any attribute of resp: grequests.map() puts None
+        # into the results for a request that raised (no exception_handler passed here), exactly
+        # the case this function's own docstring says it handles ("None response"). Previously
+        # `resp.history` was dereferenced first, raising an uncaught AttributeError that aborted
+        # the ENTIRE batch (including URLs not yet processed) instead of recording just this one
+        # URL as errored.
+        if resp is None:
+            errored_urls.append(sub_url)
+            logger.error("Response is None for url %s", sub_url)
         else:
-            final_status_code = resp.status_code
-        if resp is not None:
+            final_status_code = resp.history[-1].status_code if len(resp.history) > 0 else resp.status_code
             if resp.status_code == http.HTTPStatus.OK:
                 try:
                     func(resp, sub_url)
@@ -186,9 +235,6 @@ def download_in_parallel(
             else:
                 errored_urls.append(sub_url)
                 logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
-        else:
-            errored_urls.append(sub_url)
-            logger.error("Response is None for url %s", sub_url)
         if (n_processed % report_each) == 0:
             # pbar.update(report_each)
             logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))
@@ -329,13 +375,21 @@ def get_new_smartproxy(
     proxy_port: Optional[int] = None,
     proxy_type: str = "http",
     verbose=False,
+    max_wait_seconds: Optional[float] = None,
 ) -> dict:
     """Pick a proxy (random port within ``[proxy_min_port, proxy_max_port]`` unless ``proxy_port`` is fixed) that hasn't been touched recently per ``last_used_dict``/``failed_dict``.
 
     Keeps re-rolling a random port and sleeping ``delay`` seconds every ``warn_after_n_failures``
     attempts until an eligible (not recently used/failed within ``min_idle_interval_minutes``)
-    proxy dict is found, then returns it. Blocks indefinitely if no proxy in the range is ever
-    eligible.
+    proxy dict is found, then returns it. Blocks indefinitely if ``max_wait_seconds`` is None
+    (the default, preserving historical behaviour) and no proxy in the range is ever eligible --
+    a real risk for a fixed/single-proxy pool (e.g. ``proxy_port`` fixed, or
+    ``proxy_min_port == proxy_max_port``, the exact "server-side rotation" pattern
+    :func:`is_rotating_proxy` recognizes) after one transient failure marks the sole candidate
+    "touched" for up to ``min_failed_idle_interval_minutes`` (default 24h). Every
+    ``warn_after_n_failures`` attempts is now logged unconditionally (not gated on ``verbose``)
+    specifically so a stuck wait is diagnosable from logs alone; pass ``max_wait_seconds`` to
+    raise :class:`TimeoutError` instead of blocking forever once that budget is exhausted.
     """
     if failed_dict is None:
         failed_dict = {}
@@ -343,6 +397,7 @@ def get_new_smartproxy(
         last_used_dict = {}
     n = 0
     now_time = datetime.utcnow()  # noqa: DTZ003 -- must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
+    wait_started_at: Optional[datetime] = None
     while True:
         # ----------------------------------------------------------------------------------------------------------------------------
         # Get random port
@@ -373,15 +428,49 @@ def get_new_smartproxy(
         else:
             n = n + 1
             if n > warn_after_n_failures:
-                if verbose:
-                    logger.info("Could not get an untouched proxy%s, sleeping %s sec.", "" if job_desc == "" else " for " + job_desc, delay)
+                # Unconditional, not gated on verbose=True: every real call site in this module
+                # invokes get_new_smartproxy() (directly or via set_proxy()) with the default
+                # verbose=False, so this was previously the ONLY diagnostic signal available for
+                # a stuck wait -- and it never fired, making an indefinite hang undiagnosable
+                # from logs alone (the only other symptom being a silent sleep(delay) every ~5
+                # attempts with no output at all).
+                logger.info(
+                    "Could not get an untouched proxy%s after %d attempts, sleeping %s sec.",
+                    "" if job_desc == "" else " for " + job_desc,
+                    n,
+                    delay,
+                )
+                if max_wait_seconds is not None:
+                    if wait_started_at is None:
+                        wait_started_at = datetime.utcnow()  # noqa: DTZ003 -- naive-UTC, matches now_time's convention above
+                    elif (datetime.utcnow() - wait_started_at).total_seconds() > max_wait_seconds:  # noqa: DTZ003
+                        raise TimeoutError(
+                            f"get_new_smartproxy: no eligible proxy found within {max_wait_seconds}s "
+                            f"(pool [{proxy_min_port}, {proxy_max_port}] may be exhausted or too small "
+                            f"for min_idle_interval_minutes={min_idle_interval_minutes})"
+                        )
                 sleep(delay)
                 n = 0
 
 
 def report_params(url, proxies, params, data, json, headers_to_use, timeout):
-    """Log a request's url/proxies/params/data/json/headers/timeout at INFO level, for debugging a fetch."""
-    logger.info("url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s", url, str(proxies), params, data, json, headers_to_use, timeout)
+    """Log a request's url/proxies/params/data/json/headers/timeout at INFO level, for debugging a fetch.
+
+    Proxy credentials and sensitive headers (Authorization/Cookie/etc.) are redacted before
+    logging -- this function previously logged them in cleartext unconditionally on a common
+    code path (get_url()'s blocking-status branch, not gated on verbose=True), and the plaintext
+    proxy password embedded in the proxies URL string would land directly in the log stream.
+    """
+    logger.info(
+        "url=%s, proxies=%s, params=%s, data=%s, json=%s, headers=%s, timeout=%s",
+        url,
+        str(_redact_proxies_dict(proxies)),
+        params,
+        data,
+        json,
+        _redact_headers(headers_to_use),
+        timeout,
+    )
 
 
 def get_url(
@@ -418,6 +507,17 @@ def get_url(
     ``blocking_statuses``/``ratelimiting_statuses`` is seen, and stops early on statuses in
     ``exit_statuses`` or ``session_expired_statuses``. Sleeps ``delay`` seconds (jittered)
     between attempts. Returns the final ``requests.Response`` (or None if nothing was fetched).
+
+    WARNING -- non-idempotent verbs: on any network exception, or any status in
+    ``retry_statuses``, this function re-issues the EXACT SAME request (same ``verb``/``data``/
+    ``json``), with no idempotency-key mechanism and no distinction between safe verbs
+    (GET/HEAD/PUT/DELETE) and unsafe ones (POST/PATCH). If the server actually processed a POST
+    but the response was lost in transit (realistic with proxy rotation, where a mid-response
+    connection drop is common), this cannot distinguish that from "request never reached the
+    server" and will resubmit it, which can create duplicate side effects (e.g. a duplicate
+    order/charge) against a non-idempotent endpoint. Pass a caller-generated idempotency-key
+    header via ``inject_headers``/``custom_headers`` (if the target API supports one) when using
+    ``verb="post"``/``"patch"`` against an endpoint with real side effects.
     """
     global proxies
     global was_blocked
@@ -445,6 +545,19 @@ def get_url(
                 sess_snapshot = sess
                 proxies_snapshot = proxies
                 headers_snapshot = headers
+                # Regression fix: the except/ratelimiting branches below used to read these
+                # proxy_* globals directly, unprotected by _state_lock, unlike sess/proxies/
+                # headers just above -- a concurrent set_proxy() call (which DOES take the lock
+                # for its writes) could interleave, producing a torn mix of old and new proxy
+                # fields (e.g. old proxy_min_port paired with new proxy_type) passed to
+                # get_new_smartproxy() below.
+                proxy_user_snapshot = proxy_user
+                proxy_pass_snapshot = proxy_pass
+                proxy_server_snapshot = proxy_server
+                proxy_min_port_snapshot = proxy_min_port
+                proxy_max_port_snapshot = proxy_max_port
+                proxy_port_snapshot = proxy_port
+                proxy_type_snapshot = proxy_type
             headers_to_use = custom_headers if custom_headers else headers_snapshot
             if inject_headers:
                 if headers_to_use:
@@ -482,22 +595,29 @@ def get_url(
             se = se.lower()
             if "proxy" in se or "timed out" in se or "bad handshake" in se or "connection broken" in se or "sslerror" in se:
                 if b_use_proxy:
-                    if proxy_server:
+                    if proxy_server_snapshot:
                         if verbose:
                             logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
                         proxies = get_new_smartproxy(
-                            proxy_user,
-                            proxy_pass,
-                            proxy_server,
-                            int(proxy_min_port) if proxy_min_port is not None else 20001,
-                            int(proxy_max_port) if proxy_max_port is not None else 37960,
+                            proxy_user_snapshot,
+                            proxy_pass_snapshot,
+                            proxy_server_snapshot,
+                            int(proxy_min_port_snapshot) if proxy_min_port_snapshot is not None else 20001,
+                            int(proxy_max_port_snapshot) if proxy_max_port_snapshot is not None else 37960,
                             last_used_dict=last_used_dict,
                             min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                             failed_dict=failed_dict,
                             min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
-                            proxy_port=proxy_port,
-                            proxy_type=proxy_type if proxy_type is not None else "http",
+                            proxy_port=proxy_port_snapshot,
+                            proxy_type=proxy_type_snapshot if proxy_type_snapshot is not None else "http",
                         )
+            # Regression fix: this loop's only unconditional sleep() previously sat OUTSIDE the
+            # while loop (fires once, after the loop exits) -- any exception not already covered
+            # by a sleep above (e.g. a bare ConnectionError whose message matches none of the
+            # "proxy"/"timed out"/etc substrings) looped back to the top of `while` immediately,
+            # firing up to max_retries requests back-to-back with zero backoff/jitter.
+            if delay:
+                sleep(delay * random())  # nosec B311 - random jitter on the per-attempt retry backoff, not security-sensitive
         else:
             if res.status_code not in (http.HTTPStatus.OK, http.HTTPStatus.PARTIAL_CONTENT):
                 if res.status_code in blocking_statuses:
@@ -517,23 +637,23 @@ def get_url(
                 elif res.status_code in ratelimiting_statuses:
                     if verbose:
                         logger.warning("Ratelimited [%s] while getting url %s: %s", res.status_code, url, res.text)
-                    if proxy_server:
+                    if proxy_server_snapshot:
                         if verbose:
                             logger.warning("Seems to be a bad proxy. Receiving new proxy for %s", target)
                         if ratelimited_proxy_sleep_interval:
                             sleep(ratelimited_proxy_sleep_interval * random())  # nosec B311 - random jitter on a rate-limit backoff sleep, not security-sensitive
                         proxies = get_new_smartproxy(
-                            proxy_user,
-                            proxy_pass,
-                            proxy_server,
-                            int(proxy_min_port) if proxy_min_port is not None else 20001,
-                            int(proxy_max_port) if proxy_max_port is not None else 37960,
+                            proxy_user_snapshot,
+                            proxy_pass_snapshot,
+                            proxy_server_snapshot,
+                            int(proxy_min_port_snapshot) if proxy_min_port_snapshot is not None else 20001,
+                            int(proxy_max_port_snapshot) if proxy_max_port_snapshot is not None else 37960,
                             last_used_dict=last_used_dict,
                             min_idle_interval_minutes=min_idle_interval_minutes if min_idle_interval_minutes is not None else 0,
                             failed_dict=failed_dict,
                             min_failed_idle_interval_minutes=min_failed_idle_interval_minutes if min_failed_idle_interval_minutes is not None else 60 * 24,
-                            proxy_port=proxy_port,
-                            proxy_type=proxy_type if proxy_type is not None else "http",
+                            proxy_port=proxy_port_snapshot,
+                            proxy_type=proxy_type_snapshot if proxy_type_snapshot is not None else "http",
                         )
                     else:
                         sleep(ratelimited_sleep_interval)
@@ -546,6 +666,12 @@ def get_url(
                         # unless retry on this status is permitted explicitly
                         if res.status_code not in retry_statuses:
                             break
+                    # A status explicitly listed in retry_statuses (or blocking_statuses/
+                    # exit_statuses being non-empty, per the comment above) previously looped
+                    # back to retry immediately with no delay at all -- same thundering-herd gap
+                    # as the generic-exception branch above, just for the status-code path.
+                    if delay:
+                        sleep(delay * random())  # nosec B311 - random jitter on the per-attempt retry backoff, not security-sensitive
             else:
                 err_found = False
                 for t in blocking_errors:
@@ -624,7 +750,10 @@ def get_new_session(b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
 def handle_blocking(target: str, b_random_ua: bool = True, b_use_proxy: bool = True) -> None:
     """Log that ``target`` got blocked, mark the current proxy as failed, sleep the configured jittered delay, then obtain a fresh session/proxy."""
     if proxies is not None:
-        logger.warning("IP %s blocked. Receiving new proxy/session for %s", proxies["https"].split("@")[1], target)
+        # Regression fix: proxies["https"].split("@")[1] raised IndexError for an
+        # unauthenticated proxy (make_proxies_dict() builds an "@"-free URL when
+        # proxy_user/proxy_pass are falsy -- an explicitly supported configuration).
+        logger.warning("IP %s blocked. Receiving new proxy/session for %s", _redact_proxy_url(proxies.get("https")), target)
     else:
         logger.warning("IP blocked.")
 
@@ -665,13 +794,20 @@ def download_to_file(
         try:
             request = requests.get(url, timeout=timeout, headers=headers, stream=True)
         except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
-            if request is not None and request.status_code in exit_codes:
-                return
             logger.exception(e)
             sleep(10 * random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
             logger.info("Making another attempt")
             nattempts += 1
         else:
+            if request.status_code in exit_codes:
+                # Regression fix: this check previously lived in the `except` branch, where
+                # `request` can never hold a response object (it's only ever reassigned by a
+                # SUCCESSFUL requests.get() call, which takes the `else` branch here instead) --
+                # unreachable dead code, so a caller-designated fatal status (e.g. 404) was never
+                # actually honored; requests.get() doesn't raise on 4xx/5xx by default, so the
+                # loop simply broke out and proceeded to download the error page's body as if it
+                # were the real file.
+                return None
             break
 
     if request is None:

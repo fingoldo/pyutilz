@@ -210,9 +210,7 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
         else:
             if size >= min_size_bytes:
                 res.append(dict(type=type(obj), size_gb=size / 1024**3))
-    if res:
-        res = pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N)
-    return res
+    return pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N) if res else pd.DataFrame()
 
 
 def show_tracemalloc_snapshot(N: int = 10):

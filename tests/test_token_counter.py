@@ -47,29 +47,29 @@ class TestCountTokensTiktoken:
         fake_encoding.encode.return_value = [1, 2, 3, 4, 5]
 
         import pyutilz.llm.token_counter as mod
-        orig_has, orig_enc = mod._HAS_TIKTOKEN, getattr(mod, "_ENCODING", None)
+        orig_has, orig_enc = mod._HAS_TIKTOKEN, mod._DEFAULT_ENCODING
         try:
             mod._HAS_TIKTOKEN = True
-            mod._ENCODING = fake_encoding
+            mod._DEFAULT_ENCODING = fake_encoding
             assert mod.count_tokens("hello world") == 5
             fake_encoding.encode.assert_called_once_with("hello world")
         finally:
             mod._HAS_TIKTOKEN = orig_has
-            mod._ENCODING = orig_enc
+            mod._DEFAULT_ENCODING = orig_enc
 
     def test_tiktoken_empty_string(self):
         fake_encoding = MagicMock()
         fake_encoding.encode.return_value = []
 
         import pyutilz.llm.token_counter as mod
-        orig_has, orig_enc = mod._HAS_TIKTOKEN, getattr(mod, "_ENCODING", None)
+        orig_has, orig_enc = mod._HAS_TIKTOKEN, mod._DEFAULT_ENCODING
         try:
             mod._HAS_TIKTOKEN = True
-            mod._ENCODING = fake_encoding
+            mod._DEFAULT_ENCODING = fake_encoding
             assert mod.count_tokens("") == 0
         finally:
             mod._HAS_TIKTOKEN = orig_has
-            mod._ENCODING = orig_enc
+            mod._DEFAULT_ENCODING = orig_enc
 
 
 def test_module_import_degrades_to_fallback_on_non_import_error():
@@ -95,7 +95,7 @@ def test_module_import_degrades_to_fallback_on_non_import_error():
             import pyutilz.llm.token_counter as mod
 
         assert mod._HAS_TIKTOKEN is False, "should degrade to fallback, not propagate the exception"
-        assert mod._ENCODING is None
+        assert mod._DEFAULT_ENCODING is None
         assert mod.count_tokens("hello world test") == len("hello world test") // 4
         print("OK")
         """)

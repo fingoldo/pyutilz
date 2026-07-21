@@ -133,7 +133,30 @@ def connect_to_db(
     m_db_flavor: str = "postgres",
     m_db_schema: Optional[str] = None,
     m_db_sslmode: Optional[str] = None,
+    max_retries: Optional[int] = None,
 ):
+    """Connect to a Postgres or MySQL database, retrying (5s backoff) on failure.
+
+    ``max_retries=None`` (default) preserves the original retry-forever behavior for
+    long-running services that should keep waiting out a DB outage. Pass an int to bound it
+    (e.g. for a one-shot script/CLI where "wrong host/credentials" should fail fast instead of
+    looping forever) -- once exhausted, the last connection exception is re-raised rather than
+    silently retrying past a permanent (not transient) failure like bad credentials.
+
+    ``m_db_flavor="mysql"`` is PARTIAL support: it only builds ``conn_alchemy`` (SQLAlchemy
+    engine), so only the SQLAlchemy-based helpers (``select()``, ``execute_alchemy()``,
+    ``explain_table()``) work against MySQL. It never assigns the module-level ``conn``/``cur``
+    globals, so the entire cursor-based API this module otherwise exposes (``get_cursor``,
+    ``basic_db_execute``, ``safe_execute``, ``get_table_fields``, ``db_command``, ``log_to_db``,
+    ``EnsurePgTableExists``, ``ReadTableIntoDic*``, ``GetIdByKeyFieldAndInsertIfNeeded``,
+    ``create/delete_postgres_range_partitions``, etc.) raises ``AssertionError`` on first use
+    against a MySQL connection, even though ``connect_to_db()`` completed without error. Building
+    a real ``pymysql`` conn/cur pair mirroring the Postgres branch is a real feature gap, not
+    fixed here (pymysql's cursor semantics -- named/withhold server-side cursors in particular --
+    don't map 1:1 onto psycopg2's, and this repo has no MySQL instance available to verify
+    against); this docstring exists so the gap is discoverable up front instead of via a
+    confusing assert deep in an unrelated helper.
+    """
     global db_flavor, conn, cur, cursors, conn_alchemy
     global db_name, db_host, db_port, db_schema, username, pwd, init_params_fn, db_sslmode
     db_flavor = m_db_flavor
@@ -148,7 +171,9 @@ def connect_to_db(
 
     assert db_flavor in ("postgres", "mysql")  # nosec B101 - db_flavor only steers if/elif branching below, never spliced into SQL
 
+    attempt = 0
     while True:
+        attempt += 1
         conn_opened_this_iteration = False
         try:
             logger.info("Connecting to the DB %s...", db_name)
@@ -200,6 +225,9 @@ def connect_to_db(
                     conn.close()
                 except Exception as close_exc:
                     logger.exception(close_exc)
+            if max_retries is not None and attempt >= max_retries:
+                logger.error("connect_to_db: giving up after %d attempts", attempt)
+                raise
             sleep(5)
         else:
             logger.info("Connected to the DB %s", db_name)
@@ -300,9 +328,22 @@ def basic_db_execute(
         except Exception as e:
             logger.exception(e)
             if "cursor" in str(e) and "already exists" in str(e):
+                # Regression fix: this branch previously never touched retry_count, so the
+                # circuit breaker documented at the top of this function ("prevent infinite
+                # retry loops") never applied here -- a named/server-side cursor collision that
+                # keeps recurring (e.g. left open by a prior failed transaction) looped forever.
+                # Also, `cur = get_cursor(...)` above raised BEFORE completing its assignment, so
+                # the module-level `cur` still held whatever the PREVIOUS call left it as -- an
+                # unrelated cursor, not the one that actually collided -- so `cur.close()` was
+                # closing the wrong object. Only the stale cache entry is cleared here now;
+                # nothing is closed that this function can't positively identify.
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error("Max retries (%s) exceeded for database operation (cursor collision)", max_retries)
+                    raise
                 cursors.pop(cursor_type, None)
-                if cur is not None:
-                    cur.close()
+                sleep(1)
+                continue
             else:
                 raise
         else:
@@ -363,6 +404,17 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
         return
     if mode not in ["select", "insert", "update"]:
         logger.error("Unknown mode: %s", mode)
+        return
+    # Regression fix: "select"/"update" only ever consult where_fields to build the WHERE
+    # clause, but the check above only required ONE of where_fields/set_fields to be non-None --
+    # where_fields=None with set_fields=[...] passed silently, then crashed inside
+    # construct_templates_and_values() with an opaque `TypeError: 'NoneType' object is not
+    # iterable`. Separately, where_fields=[] (an empty list, not None) also passed the check
+    # silently, producing a WHERE clause with no condition ("... where ") that Postgres itself
+    # rejects with a syntax error at execution time, rather than failing fast with a clear
+    # validation message here.
+    if mode in ("select", "update") and not where_fields:
+        logger.error("mode=%r requires a non-empty where_fields (got %r)", mode, where_fields)
         return
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -511,13 +563,19 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
 
 
 def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "public"):
-    # table_name/schema_name are safely quoted as string LITERALS via u() (compared against information_schema
-    # metadata columns), not spliced in as identifiers, so no validate_sql_identifier() call is needed here
-    res = safe_execute(f"""
+    # table_name/schema_name are compared against information_schema metadata columns as VALUES,
+    # not identifiers -- parameterized via %s placeholders (correctness/consistency fix: this
+    # previously used u()'s manual quote-doubling escape instead of driver-level parameter
+    # binding, unlike log_to_db()'s equivalent query a few lines above in the same file, which
+    # already used %s correctly for the same class of comparison).
+    res = safe_execute(
+        """
     SELECT EXISTS (
        SELECT FROM information_schema.tables
-       WHERE  table_schema = {u(schema_name)} AND table_name={u(table_name)}
-   )""")  # nosec B608
+       WHERE  table_schema = %s AND table_name = %s
+   )""",
+        (schema_name, table_name),
+    )
     if res:
         return res[0][0]
 
@@ -533,7 +591,14 @@ def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdF
                 # sAutocreateIdTypeName is spliced verbatim into the CREATE TABLE statement below with no other
                 # validation, so under `python -O` a skipped assert would let arbitrary SQL be injected via this arg.
                 raise ValueError(f"Invalid sAutocreateIdTypeName: {sAutocreateIdTypeName!r}")
-            default_gen = " default gen_random_uuid()" if sAutocreateIdTypeName == "uuid" else ""
+            # Regression fix: the validation above (2 lines up) correctly lowercases before
+            # comparing against the whitelist, but this comparison didn't -- sAutocreateIdTypeName="UUID"
+            # passed validation ("UUID".lower() == "uuid" is in the whitelist) but silently failed
+            # THIS check ("UUID" == "uuid" is False), so `default_gen` stayed empty and the
+            # generated DDL had no `default gen_random_uuid()` despite auto-generation having
+            # been explicitly requested -- any insert omitting the id column (the whole point of
+            # sAutocreateIdTypeName) would then fail with a NOT NULL constraint violation.
+            default_gen = " default gen_random_uuid()" if sAutocreateIdTypeName.lower() == "uuid" else ""
             safe_execute(
                 f"create table {sTable} ({sIdFieldName} {sAutocreateIdTypeName} primary key {default_gen},{sKeyFieldName} text, added_at timestamp without time zone DEFAULT (now() at time zone 'utc'))"
             )
@@ -684,9 +749,9 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
         elif partition_size == "year":
             n = d + relativedelta(years=1)
         if bigint_degree is None or bigint_degree == 0:
-            cmd = f"CREATE TABLE z_{table_name}_y{d.year:0000d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
+            cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
         else:
-            cmd = f"CREATE TABLE z_{table_name}_y{d.year:0000d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
+            cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
         # print(cmd)
         safe_execute(cmd)
         d = n
@@ -708,7 +773,7 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
         elif partition_size == "year":
             n = d + relativedelta(years=1)
 
-        cmd = f"drop table z_{table_name}_y{d.year:0000d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
+        cmd = f"drop table z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
         safe_execute(cmd)
         d = n
 
@@ -760,16 +825,25 @@ def execute_alchemy(sql: str, max_retries: int = 3) -> None:
     """
     assert conn_alchemy is not None, "execute_alchemy() requires conn_alchemy to be configured first"
     n = 0
+    last_exc: Optional[Exception] = None
     while n < max_retries:
         try:
             n += 1
             with conn_alchemy.connect() as connection:
                 connection.execute(sqlalchemy.text(sql))
                 connection.commit()
-            break
-        except Exception as e:
+            return
+        except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             logger.exception(e)
+            last_exc = e
             sleep(3)
+    # Regression fix: previously fell off the end of the function with no return/raise once
+    # `n < max_retries` became false -- a permanently-broken statement (SQL syntax error,
+    # permission denied) failed identically on every attempt (retried as if transient) and then
+    # returned None silently, with no way for the caller to know the statement never executed.
+    logger.error("execute_alchemy: giving up after %d attempts", max_retries)
+    if last_exc is not None:
+        raise last_exc
 
 
 def enable_tables_sizes_approximation():

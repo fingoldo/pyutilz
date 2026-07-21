@@ -25,11 +25,14 @@ with even a realistic micro-measurement, trust the end-to-end one.
 """
 from __future__ import annotations
 
+import logging
 import os
 import statistics
 import threading
 import time
 from typing import Callable, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Hardware-busy gate (shared by the async-sweep deferral and the per-iteration
@@ -175,8 +178,16 @@ def time_backend(
         shared = tuple(make_inputs())
         return [shared] * count
 
-    for _ in range(max(0, int(warmup))):
-        fn(*make_inputs())
+    try:
+        for _ in range(max(0, int(warmup))):
+            fn(*make_inputs())
+    except Exception:
+        # A raising backend (GPU OOM, unsupported compute capability, an under-provisioned
+        # block size) must not poison the whole sweep -- callers rely on the OTHER backends'
+        # measurements still being usable. Log loud (WARNING, not DEBUG) so a human notices the
+        # broken variant instead of the kernel being silently stuck on the fallback forever.
+        logger.warning("time_backend: %r raised during warmup -- treating as inf (excluded from this sweep).", fn, exc_info=True)
+        return float("inf")
 
     def _run(inputs_list: list, out: list) -> None:
         """Time `fn(*args)` for each prebuilt `args` in `inputs_list` (optionally gating on idle hardware first) and append the elapsed seconds to `out`."""
@@ -191,22 +202,26 @@ def time_backend(
             local.append(timer() - t0)
         out.extend(local)
 
-    if concurrency == 1:
-        samples: list = []
-        _run(_prebuild(n_iters), samples)
-        return statistics.median(samples) * 1000.0 if samples else float("inf")
+    try:
+        if concurrency == 1:
+            samples: list = []
+            _run(_prebuild(n_iters), samples)
+            return statistics.median(samples) * 1000.0 if samples else float("inf")
 
-    # Pre-build every thread's inputs (host-side) before starting, so the timed region is purely
-    # ``fn`` -- including, for a GPU backend, its own H2D upload of the fresh buffer.
-    per_thread_inputs = [_prebuild(n_iters) for _ in range(concurrency)]
-    results: list[list] = [[] for _ in range(concurrency)]
-    threads = [threading.Thread(target=_run, args=(per_thread_inputs[i], results[i])) for i in range(concurrency)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    flat = [s for r in results for s in r]
-    return statistics.median(flat) * 1000.0 if flat else float("inf")
+        # Pre-build every thread's inputs (host-side) before starting, so the timed region is purely
+        # ``fn`` -- including, for a GPU backend, its own H2D upload of the fresh buffer.
+        per_thread_inputs = [_prebuild(n_iters) for _ in range(concurrency)]
+        results: list[list] = [[] for _ in range(concurrency)]
+        threads = [threading.Thread(target=_run, args=(per_thread_inputs[i], results[i])) for i in range(concurrency)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        flat = [s for r in results for s in r]
+        return statistics.median(flat) * 1000.0 if flat else float("inf")
+    except Exception:
+        logger.warning("time_backend: %r raised during timed run -- treating as inf (excluded from this sweep).", fn, exc_info=True)
+        return float("inf")
 
 
 def benchmark_backends(

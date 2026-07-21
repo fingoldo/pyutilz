@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-# psycopg2 + pyutilz.database are deferred to call site - tokenizers.py is
-# loaded by mlframe via the pyutilz.text re-export chain; not every consumer
-# needs the database stack just to use string utilities below.
-from pyutilz.database import db  # used by call sites in this file
+# psycopg2 + pyutilz.database are deferred to call site (tokenize_db_reviews() below) -
+# tokenizers.py is loaded by mlframe via the pyutilz.text re-export chain; not every consumer
+# needs the database stack just to use string utilities below. Was previously a plain top-level
+# `from pyutilz.database import db` here -- the opposite of deferred, since
+# pyutilz.database.db.__init__ unconditionally imports sqlalchemy/psycopg2/pymysql regardless
+# of this file's own deferred psycopg2.extras import a few lines below (fixed 2026-07-21 audit:
+# broke `pip install pyutilz[nlp]` alone, since [nlp] doesn't declare the [database] stack).
 from typing import Optional
 
 from pyutilz.text.strings import (
@@ -62,12 +65,6 @@ except Exception as e:  # nosec B110 - optional dependency probe, mirrors the sp
 vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(  # noqa: A001 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     ","
 )
-
-try:
-    from tqdm.notebook import tqdm
-except Exception:
-    from tqdm import tqdm
-
 
 class AdvancedTokenizer:
     """
@@ -194,10 +191,20 @@ class AdvancedTokenizer:
         Progress is shown against exp_length via a tqdm bar; if save_as is given, save_tokens_to_file()
         is called at the end. newlines, if given, is replaced with an actual newline before processing.
         """
-        # psycopg2 is the actual cursor backend - import lazily so the module
-        # itself can be loaded without psycopg2 installed (only this DB-reading
-        # method is gated on it).
+        # psycopg2 + pyutilz.database.db are the actual DB backend - imported lazily here so the
+        # module itself can be loaded without the [database] extra installed (only this
+        # DB-reading method is gated on it). tqdm was previously a module-level `try: from
+        # tqdm.notebook import tqdm except Exception: from tqdm import tqdm` -- the except only
+        # guarded the notebook-vs-plain variant choice, not tqdm being entirely absent, so it was
+        # really an unconditional import; moved here since it's only ever used in this one method
+        # (found 2026-07-21 audit: `pip install pyutilz[nlp]` alone could not import
+        # pyutilz.text.tokenizers, since tqdm isn't part of the nlp extras group).
         import psycopg2.extras
+        from pyutilz.database import db
+        try:
+            from tqdm.notebook import tqdm
+        except Exception:
+            from tqdm import tqdm
         nchunks = 0
         nitems = 0
         cur = db.safe_execute(sql, cursor_factory=psycopg2.extras.NamedTupleCursor, cursor_name="test", return_cursor=True)
@@ -237,7 +244,10 @@ class AdvancedTokenizer:
                     # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
                     nitems = nitems + chunksize
-                    pbar.update(nitems)
+                    # pbar.update(n) ADDS n to the current position -- it is not "set position to
+                    # n". Passing the cumulative total here doubled/tripled the displayed progress
+                    # every chunk; the per-chunk increment (chunksize) is what's actually new.
+                    pbar.update(chunksize)
                     if nitems > exp_length:
                         pbar.total = nitems * 1.1
                         pbar.refresh()

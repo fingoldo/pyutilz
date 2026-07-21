@@ -286,6 +286,26 @@ def normality_verdict(
             "verdict": "too-few-samples",
         }
 
+    if float(np.var(r)) <= 0.0:
+        # A constant sample is a degenerate distribution, not a Normal one. dagostino_k2/
+        # anderson_darling_normal both short-circuit to a "can't reject" result here (k2_p=1.0,
+        # ad_p=nan), which would otherwise report "consistent with Normal" for e.g. a broken
+        # model that always predicts the same value -- exactly the kind of pipeline bug this
+        # audit exists to surface, not mask.
+        return {
+            "n": n_total,
+            "n_total": n_total,
+            "k2_stat": 0.0,
+            "k2_p": 1.0,
+            "k2_z_skew": 0.0,
+            "k2_z_kurt": 0.0,
+            "ad_stat": float("nan"),
+            "ad_p": float("nan"),
+            "reject_normal": False,
+            "alpha": alpha,
+            "verdict": "degenerate (zero variance)",
+        }
+
     k2_stat, k2_p, z_skew, z_kurt = dagostino_k2(r)
 
     if n_total > max_n_ad:

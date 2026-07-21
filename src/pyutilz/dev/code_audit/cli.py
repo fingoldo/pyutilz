@@ -88,15 +88,16 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     exclude_dirs = frozenset(_DEFAULT_EXCLUDE_DIRS | set(args.exclude_dir or ()))
 
-    findings = run_all(root, checks=args.check, exclude_dirs=exclude_dirs)
+    all_findings = run_all(root, checks=args.check, exclude_dirs=exclude_dirs)
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     cutoff = sev_order[args.min_severity]
-    findings = [f for f in findings if sev_order.get(f.severity, 99) <= cutoff]
+    findings = [f for f in all_findings if sev_order.get(f.severity, 99) <= cutoff]
 
     out = _render_json(findings) if args.format == "json" else _render_markdown(findings)
     sys.stdout.write(out)
-    # exit code: non-zero only when P0/P1 found, so CI can gate on it.
-    return 1 if any(f.severity in {"P0", "P1"} for f in findings) else 0
+    # exit code computed from the UNFILTERED findings: --min-severity only controls what's
+    # rendered, it must never weaken the CI gate.
+    return 1 if any(f.severity in {"P0", "P1"} for f in all_findings) else 0
 
 
 if __name__ == "__main__":

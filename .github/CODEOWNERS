@@ -1,0 +1,8 @@
+# Minimal file-level review-requirement signal (2026-07-21 audit finding).
+# Effective only once branch protection with required reviews is enabled for this repo.
+
+* @fingoldo
+
+# Release process and packaging metadata get extra scrutiny.
+/.github/workflows/publish.yml @fingoldo
+/pyproject.toml @fingoldo

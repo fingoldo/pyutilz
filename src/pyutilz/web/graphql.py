@@ -140,13 +140,17 @@ def query_schema()->dict:
     """)
 
 def text_to_graphql(text: str) -> str:
-    """Escape literal ``\\n`` sequences in *text* so they survive embedding in a GraphQL string.
+    """Escape literal backslashes in *text* so an embedded ``\\n`` sequence survives as literal
+    text (rather than being read as a newline escape) when placed inside a GraphQL string.
 
-    Any two-character backslash-n occurrence is doubled into ``\\\\n`` (an escaped
-    backslash followed by ``n``), preventing it from being interpreted as a newline
-    when the resulting text is placed inside a GraphQL query/variable literal.
+    Regression fix: the previous implementation, `text.replace(r"\\n", "\\" + "n")`, was a
+    complete no-op -- the search pattern `r"\\n"` and the replacement `"\\" + "n"` are both the
+    same 2-character string (backslash, n), so .replace() never changed anything (verified: 100%
+    reproducible on every call, not a probabilistic edge case). Doubling every backslash is the
+    actual fix: it makes a literal `\\n` in the input survive as `\\\\n` in the output, which a
+    GraphQL/JSON parser reads back as the 2 literal characters `\\n`, not a real newline.
     """
-    return text.replace(r"\n", "\\" + "n")
+    return text.replace("\\", "\\\\")
 
 def beautify_gql_query(query: str, join_token_find: str = "}\n}", join_token_replace: str = "}}") -> str:  # nosec B107 - "}\n}" is a GraphQL closing-brace text pattern used for query reformatting, not a credential
     """

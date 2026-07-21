@@ -1,9 +1,11 @@
 """
 Performance benchmarks for pandaslib.py optimizations.
 
-Run with: python -m tests.benchmark_pandaslib
+Run with: python -m _benchmarks.bench_pandaslib
 
-This verifies that refactored code is actually faster than the original.
+This verifies that refactored code is actually faster than the original. Standalone,
+deliberately-non-pytest script (no `test_` prefix, lives outside `tests/`) alongside
+bench_classify_column_types.py / bench_get_columns_of_type.py -- never collected/run by CI.
 """
 
 import pandas as pd

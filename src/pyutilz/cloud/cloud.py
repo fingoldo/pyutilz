@@ -85,9 +85,18 @@ def connect_to_s3(file: str = "settings.ini"):
     import boto3
     from pyutilz.text.strings import read_config_file
 
-    aws_access_key_id = None
-    aws_secret_access_key = None
-    if read_config_file(file=file, object=globals(), section="S3", variables="aws_access_key_id,aws_secret_access_key"):
+    # Regression fix: `object=globals()` made read_config_file() write into THIS MODULE's
+    # global namespace dict, not the local variables `aws_access_key_id`/`aws_secret_access_key`
+    # declared just below -- Python resolves those names as the function's own local bindings
+    # (compile-time scoping) throughout the whole function body, which the globals() mutation
+    # never touched. boto3.Session() below was therefore ALWAYS called with (None, None),
+    # silently falling back to ambient credentials (env vars / ~/.aws/credentials / an IAM
+    # role) if any existed, or raising NoCredentialsError on the first real S3 call otherwise --
+    # regardless of what settings.ini actually contained.
+    creds: dict = {}
+    if read_config_file(file=file, object=creds, section="S3", variables="aws_access_key_id,aws_secret_access_key"):
+        aws_access_key_id = creds.get("aws_access_key_id")
+        aws_secret_access_key = creds.get("aws_secret_access_key")
         boto_session = boto3.Session(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
         s3 = boto_session.resource("s3")
         return s3
@@ -95,10 +104,24 @@ def connect_to_s3(file: str = "settings.ini"):
 
 def s3_file_exists(key: str, bucket: str) -> bool:
     """Check whether an object with the given key exists in an S3 bucket (via a HEAD request)."""
+    # Regression fix: a blanket `except Exception: return False` conflated a genuine "object
+    # missing" 404 (the case this function is meant to report) with the module-level `s3`
+    # global being None (connect_to_s3() never called, or it failed) -- an AttributeError on
+    # `s3.meta` -- and with real botocore auth/network errors. All three previously looked
+    # identical to a caller, masking the real root cause behind a misleading "not found" log
+    # message and (in get_from_s3_or_cache()) an indefinite polling loop for a file that could
+    # never appear "uploaded" no matter how long the wait, because the client was never
+    # actually configured/reachable.
+    if s3 is None:
+        raise RuntimeError("pyutilz.cloud.cloud.s3 is not set; call connect_to_s3() first")
     try:
+        from botocore.exceptions import ClientError
+
         s3.meta.client.head_object(Bucket=bucket, Key=key)
-    except Exception:
-        return False
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+            return False
+        raise
     else:
         return True
 
@@ -140,7 +163,19 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     try:
                         shutil.unpack_archive(local_object_path + ".zip", temp_dir)
                     except Exception as e:
+                        # Regression fix: previously neither removed the corrupted zip nor
+                        # slept -- the `while not exists(local_object_path):` loop immediately
+                        # re-entered with the exact same on-disk state (unpack always fails the
+                        # same way), an unbounded zero-delay busy loop pinning a CPU core at
+                        # 100% forever. Removing the corrupted file lets the next iteration
+                        # re-download it instead (mirrors the "not found in bucket" branch's own
+                        # sleep(10), which this branch previously lacked entirely).
                         logger.error("Error while unpacking model from bucket %s: %s", local_object_path + ".zip", e)
+                        try:
+                            os.remove(local_object_path + ".zip")
+                        except OSError as remove_err:
+                            logger.error("Could not remove corrupted archive %s: %s", local_object_path + ".zip", remove_err)
+                        sleep(10)
                     else:
                         logger.info("Unzipped model from archive %s", local_object_path + ".zip")
                         os.remove(local_object_path + ".zip")

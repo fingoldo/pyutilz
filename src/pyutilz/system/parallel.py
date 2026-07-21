@@ -133,7 +133,7 @@ def split_array(arr: Sized, step: int) -> list:
 def distribute_work(workload: Sequence, nworkers: int) -> tuple:
     """Distribute array workload into nworkers chunks of approximately same total size."""
     if nworkers <= 0:
-        nworkers = psutil.cpu_count(logical=False)
+        nworkers = cpu_count_physical()
     planned_work_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
     workload_indices_per_worker: List[List[Any]] = [[] for _ in range(nworkers)]
     totals = [(0, i) for i in range(nworkers)]
@@ -187,7 +187,8 @@ def applyfunc_parallel(
     or a bare ``list`` of per-chunk results when ``return_dataframe=False``.
     """
     if n_cores is None:
-        n_cores = min(psutil.cpu_count(logical=logical), len(iterable))
+        detected = psutil.cpu_count(logical=logical)
+        n_cores = min(detected if detected and detected > 0 else 1, len(iterable))
     try:
         fname = func.__name__
     except Exception:

@@ -218,6 +218,34 @@ def test_log_loaded_rows_ru():
     assert rl["results"]["loaded"]["file"]["my_file"]["rows"] == 1
 
 
+def test_log_loaded_rows_picks_up_callers_module_level_reports_language():
+    # Regression test: lang=None used to resolve via globals() inside pyutilz.dev.logginglib
+    # itself (always "en" in practice, since this module never defines reports_language) rather
+    # than the CALLER's module globals -- lookup_in_stack() walks the real call stack instead.
+    mock_logger = MagicMock()
+    _logginglib_mod.logger = mock_logger
+    rl = {"results": {}}
+    globals()["reports_language"] = "ru"
+    try:
+        with patch("pyutilz.dev.logginglib.suffixize", return_value="rows"):
+            log_loaded_rows([1, 2], "my_table", source_type="db_table", results_log=rl, lang=None, verbose=True)
+    finally:
+        del globals()["reports_language"]
+    logged_message = mock_logger.info.call_args[0][1] if mock_logger.info.call_args else ""
+    assert "таблицы БД" in logged_message
+
+
+def test_log_loaded_rows_defaults_to_en_with_no_reports_language_anywhere():
+    mock_logger = MagicMock()
+    _logginglib_mod.logger = mock_logger
+    rl = {"results": {}}
+    assert "reports_language" not in globals()
+    with patch("pyutilz.dev.logginglib.suffixize", return_value="rows"):
+        log_loaded_rows([1], "my_table", source_type="db_table", results_log=rl, lang=None, verbose=True)
+    logged_message = mock_logger.info.call_args[0][1] if mock_logger.info.call_args else ""
+    assert "DB table" in logged_message
+
+
 # ---------------------------------------------------------------------------
 # logged decorator — lines 251, 270-276
 # ---------------------------------------------------------------------------
@@ -239,12 +267,27 @@ def test_logged_decorator():
 def test_logged_decorator_with_special_vars():
     _logginglib_mod.EXTERNAL_IP = "127.0.0.1"
 
+    captured = {}
+
     @logged()
     def my_func(x, current_proxy=None, login=None, results_log=None):
+        captured["results_log"] = results_log
         return x
 
-    result = my_func(1, current_proxy="proxy1", login="admin")
+    result = my_func(1, current_proxy="http://user:s3cr3t@proxy.host:8080", login="admin")
     assert result == 1
+
+    session = captured["results_log"]["session"]
+    # Regression test: special_vars used to be RELOCATED unredacted into results_log["session"]
+    # -- same plaintext value, different dict key, zero confidentiality benefit, and that dict
+    # is what finalize_function_log() persists/prints.
+    assert "s3cr3t" not in session["current_proxy"]
+    assert "user" not in session["current_proxy"]
+    assert session["current_proxy"] == "http://***@proxy.host:8080"
+    assert session["login"] == "ad***in"
+    # And special_vars must never leak into ["parameters"] either (pre-existing contract).
+    assert "current_proxy" not in captured["results_log"]["parameters"]
+    assert "login" not in captured["results_log"]["parameters"]
 
 
 def test_logged_decorator_explicit_only():

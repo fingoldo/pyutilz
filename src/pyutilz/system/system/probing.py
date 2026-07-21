@@ -386,19 +386,20 @@ def check_huge_pages_macos():
     return False
 
 
-def check_large_pages_support():
+def check_large_pages_support() -> Optional[bool]:
     """Cross-platform check for large pages support.
 
     Returns:
-        bool: True if large pages are available on current platform
+        Optional[bool]: True/False if large pages support could be determined on the current
+        platform, None on an unrecognized/unsupported platform.
     """
     current_system = platform.system()
     if current_system == "Linux":
-        return check_huge_pages_linux()
+        return bool(check_huge_pages_linux())
     elif current_system == "Windows":
-        return check_large_pages_windows()
+        return bool(check_large_pages_windows())
     elif current_system == "Darwin":
-        return check_huge_pages_macos()
+        return bool(check_huge_pages_macos())
     else:
         logger.warning("Unsupported operating system: %s", current_system)
         return None

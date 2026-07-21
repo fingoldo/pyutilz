@@ -26,6 +26,7 @@ from typing import Any as _Any
 from typing import Optional, Sequence, Union
 
 import locale
+import threading as _threading
 import tqdm
 import psutil
 import tracemalloc
@@ -191,7 +192,8 @@ def get_max_affordable_workers_count(reservedCores=1):
     """Return the number of physical CPU cores available for parallel workers, reserving ``reservedCores`` for other use (minimum 1)."""
     import psutil
 
-    n = psutil.cpu_count(logical=False) - reservedCores
+    detected = psutil.cpu_count(logical=False)  # None on platforms without the info (e.g. restricted containers)
+    n = (detected if detected and detected > 0 else 1) - reservedCores
     if n < 1:
         n = 1
     return n
@@ -210,7 +212,11 @@ def count_app_instances(processname=None, cmdline=None):
     # Iterate over all running process
     for proc in psutil.process_iter():
         if processname is not None:
-            if processname != proc.name():
+            try:
+                if processname != proc.name():
+                    continue
+            except Exception as e:  # nosec B112 - transient psutil access errors (process exited / no access) on a single proc while iterating all processes; skip that proc and keep counting
+                logger.debug("Could not read name for process %s: %s", proc, e)
                 continue
         if cmdline is not None:
             try:
@@ -397,6 +403,9 @@ def get_utc_unix_timestamp():
     return int(datetime.now(tz=timezone.utc).timestamp())
 
 
+_locale_lock = _threading.Lock()
+
+
 def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = None) -> dict:
     """Return a dict of locale params.
 
@@ -406,12 +415,19 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
     >>>get_locale_settings(locale_name="en_US.utf8", only_fields=("decimal_point", "thousands_sep"))
     {'decimal_point': '.', 'thousands_sep': ','}
 
+    WARNING: ``locale.setlocale`` mutates PROCESS-WIDE C-library locale state (not thread-local)
+    and the CPython ``locale`` module is documented upstream as not thread-safe for concurrent
+    ``setlocale`` calls. This function serializes its own set+read under a module-level lock, but
+    it cannot protect unrelated code elsewhere in the process doing locale-sensitive formatting/
+    parsing (number formatting, strftime, decimal-point interpretation) at the same moment -- avoid
+    calling this from worker threads that also do locale-sensitive work concurrently.
     """
-    locale.setlocale(locale.LC_ALL, locale_name)
-    settings: _Any = locale.localeconv()
-    if settings:
-        if only_fields:
-            settings = {field: value for field, value in settings.items() if field in only_fields}
+    with _locale_lock:
+        locale.setlocale(locale.LC_ALL, locale_name)
+        settings: _Any = locale.localeconv()
+        if settings:
+            if only_fields:
+                settings = {field: value for field, value in settings.items() if field in only_fields}
     return settings  # type: ignore[no-any-return]  # untyped upstream source (locale.localeconv()); return value verified correct at runtime
 
 # ----------------------------------------------------------------------------------------------------------------------------

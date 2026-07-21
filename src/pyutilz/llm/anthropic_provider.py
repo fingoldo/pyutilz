@@ -7,11 +7,12 @@ import logging
 from typing import Any
 
 import anthropic
-from tenacity import retry, retry_if_exception_type
+from tenacity import retry, retry_if_exception, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider
+from pyutilz.llm.base import LLMProvider, longest_prefix_lookup
+from pyutilz.llm.exceptions import LLMTruncationError
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class AnthropicProvider(LLMProvider):
         settings = get_llm_settings()
         self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)
         if not self.api_key:
-            raise ValueError("Anthropic API key not provided")
+            raise ValueError("Anthropic API key not provided. Set ANTHROPIC_API_KEY in .env or pass api_key=")
 
         self.model = model
         self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
@@ -95,18 +96,33 @@ class AnthropicProvider(LLMProvider):
         self.last_rate_limits: dict[str, str] = {}
         self.last_organization_id: str | None = None
 
+    # Source: https://platform.claude.com/docs/en/docs/about-claude/models
+    #   Opus 4.6+: 128K, Opus 4/4.1: 32K, Sonnet family: 64K, Haiku family: 64K.
+    # Resolved via the same longest-prefix matcher used for _PRICING (see that table's own
+    # comment) -- a bare substring test ("4-6" in self.model) has exactly the failure mode that
+    # matcher was written to avoid: any Opus release whose id doesn't literally contain "4-6"
+    # (claude-opus-4-7-..., claude-opus-4-8-..., a differently-numbered future release) would
+    # silently get the wrong (4x smaller) limit.
+    _MAX_OUTPUT_TOKENS: dict[str, int] = {  # noqa: RUF012 -- intentional shared class-level lookup table, not a per-instance mutable-default bug
+        "claude-opus-4-7": 128000,
+        "claude-opus-4-6-20250610": 128000,
+        "claude-opus-4-5-20250414": 32000,
+        "claude-opus-4-1-20250805": 32000,
+        "claude-opus-4-20250514": 32000,
+        "claude-sonnet-4-6-20250610": 64000,
+        "claude-sonnet-4-5-20250414": 64000,
+        "claude-sonnet-4-20250514": 64000,
+        "claude-sonnet-3-7-20250219": 64000,
+        "claude-haiku-4-5-20251001": 64000,
+        "claude-haiku-3-5-20241022": 64000,
+        "claude-haiku-3-20240307": 64000,
+        "claude-opus-3-20240229": 32000,
+    }
+
     @property
     def max_output_tokens(self) -> int:
         """Maximum output tokens for ``self.model``, looked up from the known per-family limits (Opus/Sonnet/Haiku)."""
-        # Source: https://platform.claude.com/docs/en/docs/about-claude/models
-        #   Opus 4.6: 128K, Opus 4/4.1: 32K, Sonnet 4.6: 64K, Haiku 4.5: 64K
-        if self.model.startswith("claude-opus"):
-            return 128000 if "4-6" in self.model else 32000
-        if self.model.startswith("claude-sonnet"):
-            return 64000
-        if self.model.startswith("claude-haiku"):
-            return 64000
-        return 64000
+        return int(longest_prefix_lookup(self.model, self._MAX_OUTPUT_TOKENS, 64000))
 
     @property
     def context_window(self) -> int:
@@ -122,12 +138,19 @@ class AnthropicProvider(LLMProvider):
         return False
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
+        # Regression fix (2026-07-21 audit): OverloadedError (529), ServiceUnavailableError (503),
+        # and DeadlineExceededError (504) are SEPARATE, SIBLING subclasses of APIStatusError in the
+        # installed SDK -- NOT subclasses of InternalServerError -- so the previous tuple silently
+        # never retried Anthropic's own documented "always retry with backoff" 529 overloaded
+        # condition. Retrying on the status-code set directly (rather than enumerating leaf
+        # classes) also survives the SDK adding new status-specific exception subclasses later.
         retry=retry_if_exception_type((
             anthropic.RateLimitError,
             anthropic.APIConnectionError,
             anthropic.APITimeoutError,
-            anthropic.InternalServerError,
-        )),
+        )) | retry_if_exception(
+            lambda e: isinstance(e, anthropic.APIStatusError) and getattr(e, "status_code", None) in {429, 500, 502, 503, 504, 529}
+        ),
         **INFINITE_RETRY_KWARGS,
     )
     async def generate(
@@ -203,11 +226,19 @@ class AnthropicProvider(LLMProvider):
             }
 
             # Pull text from the first text block (skip thinking blocks).
+            result_text = None
             for block in response.content:
                 if getattr(block, "type", None) == "text":
-                    return block.text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-            # Fall back to the legacy single-block layout.
-            return response.content[0].text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                    result_text = block.text
+                    break
+            if result_text is None:
+                # Fall back to the legacy single-block layout.
+                result_text = response.content[0].text
+            if self._last_finish_reason == "max_tokens":
+                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
+                # never actually raised anywhere -- see openai_compat.py's identical fix.
+                raise LLMTruncationError("Anthropic response truncated by max_tokens (stop_reason='max_tokens')", finish_reason=self._last_finish_reason)
+            return result_text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     def _capture_response_headers(self, headers: Any) -> None:
         """Snapshot rate-limit headers + org id from the latest response.
@@ -307,16 +338,17 @@ class AnthropicProvider(LLMProvider):
         1h cache, multiply ``cache_creation_input_tokens`` by 2 instead.
         """
         in_rate, out_rate = self._get_pricing()
-        # Effective non-cache input tokens across the WHOLE session (paid at
-        # full input rate). The Anthropic ``input_tokens`` field already
-        # excludes cache_read tokens but not cache_creation; subtract both
-        # cumulative cache totals to avoid double-counting cached input.
+        # Regression fix (2026-07-21 audit): Anthropic's ``usage.input_tokens`` field ALREADY
+        # EXCLUDES both cache_creation_input_tokens AND cache_read_input_tokens (total tokens
+        # sent = input_tokens + cache_creation_input_tokens + cache_read_input_tokens -- this is
+        # Anthropic's own documented semantics). Subtracting the cumulative cache totals again
+        # here double-subtracted them from a figure that never included them in the first place,
+        # which `max(0, ...)` could clamp to 0 -- silently dropping the entire "fresh" input-cost
+        # tier for any session where cumulative cache tokens exceed cumulative fresh input_tokens
+        # (the common case for a heavily-cached agentic session).
         total_input = getattr(self, "total_input_tokens", 0)
         total_output = getattr(self, "total_output_tokens", 0)
-        plain_input = max(
-            0,
-            total_input - self.total_cache_creation_input_tokens - self.total_cache_read_input_tokens,
-        )
+        plain_input = total_input
         return {
             "calls": getattr(self, "_call_count", 0),
             "prompt_tokens": total_input,

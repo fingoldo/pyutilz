@@ -26,7 +26,7 @@ import numpy as np
 import textwrap
 from collections import Counter
 from pyutilz.system.system import clean_ram
-from pyutilz.pythonlib import is_cuda_available, check_cpu_flag
+from pyutilz.core.pythonlib import is_cuda_available, check_cpu_flag
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -43,8 +43,13 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 
 def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Return a DataFrame keeping only the numeric columns that contain at least one NaN value."""
-    meta = df.select(cs.numeric().is_nan().any())
+    """Return a DataFrame keeping only the numeric columns that contain at least one NaN or null value.
+
+    Polars distinguishes float NaN from missing/null (unlike pandas, where isna()/isnull() catch
+    both), so both ``is_nan()`` and ``is_null()`` are checked -- an all-null column would otherwise
+    be invisible to a caller expecting pandas-style semantics.
+    """
+    meta = df.select(cs.numeric().is_nan().fill_null(False).any() | cs.numeric().is_null().any())
     true_cols = meta.row(0)
     return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
@@ -72,11 +77,25 @@ _PlFrameT = TypeVar("_PlFrameT", pl.DataFrame, pl.LazyFrame)
 
 
 def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
-    """Downcast Float64 and the common integer dtypes to Float32/Int32 to shrink memory usage."""
+    """Downcast Float64 AND the common integer dtypes to Float32 (not Int32) to shrink memory usage.
+
+    Float32 has a 24-bit mantissa, so integers are only representable exactly up to 2**24
+    (16,777,216); any Int64/UInt64/UInt32/Int128 column with values beyond that magnitude loses
+    precision silently. This mirrors the sibling ``ensure_dataframe_float32_convertability``
+    (pandaslib/dtypes.py), which does the same int->float32 cast for LightGBM compatibility.
+    If you need integers preserved exactly, downcast to a smaller *integer* dtype instead.
+    """
     # Int128 was added in polars 0.19.0, make it optional for older versions
     int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
     if hasattr(pl, "Int128"):
         int_types.append(pl.Int128)
+    if isinstance(df, pl.DataFrame):
+        int_cols = df.select(pl.col(*int_types)).columns
+        if int_cols:
+            overflow = df.select([pl.col(c).abs().max().gt(2**24).alias(c) for c in int_cols]).row(0)
+            lossy = [c for c, is_lossy in zip(int_cols, overflow) if is_lossy]
+            if lossy:
+                logger.warning("cast_f64_to_f32: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.", lossy)
     return df.with_columns(pl.col(*int_types, pl.Float64).cast(pl.Float32))
 
 
@@ -943,7 +962,15 @@ def bin_numerical_columns(
 
 
 def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: int = 1) -> pl.DataFrame:
-    """Drop numeric columns whose min and max are equal (or missing/NaN), i.e. columns with no informative variation."""
+    """Drop numeric columns whose min and max are equal (or missing/NaN), i.e. columns with no informative variation.
+
+    Unlike ``pandaslib.frames.remove_constant_columns`` (the conceptually equivalent pandas
+    function, which mutates its input DataFrame in place and returns None), polars frames are
+    immutable -- this function returns a NEW DataFrame and does NOT touch the caller's ``df``.
+    You must capture the return value (``df = drop_constant_columns(df)``); porting a
+    `remove_constant_columns(df)`-style call-and-discard from the pandas idiom silently leaves
+    the constant columns in place with no error or warning.
+    """
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
     # ----------------------------------------------------------------------------------------------------------------------------

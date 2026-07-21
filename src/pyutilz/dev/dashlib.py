@@ -300,6 +300,12 @@ def create_tabs(
     Expected tabs format: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)
     """
     # print('In create_tabs of %s' % tabsName)
+    # user starts unauthenticated (None), not just unassigned: if flask_login is absent (or
+    # there's no request/session context) the except branch below must still leave a defined,
+    # falsy-role value for the "any role-restricted tab" check further down -- previously `user`
+    # was only ever assigned inside the try block, so that exact (explicitly tolerated) failure
+    # path left it unbound, raising NameError the moment a role-restricted tab was reached.
+    user = None
     try:
         from flask_login import current_user
 
@@ -320,8 +326,9 @@ def create_tabs(
     # print('active_tab=%s' % active_tab)
 
     tabs = []
+    tooltips = []
     for tab in tabsList:
-        tabClassName, labelClassName, _tabTooltip = None, None, None
+        tabClassName, labelClassName, tabTooltip = None, None, None
         tabUsers = None
         tabLabel, tabId, tabUsers, *tabClassNames = tab
 
@@ -331,17 +338,15 @@ def create_tabs(
             if len(tabClassNames) > 1:
                 labelClassName = tabClassNames[1]
             if len(tabClassNames) > 2:
-                tabClassNames[2]
-                # print('tabTooltip=%s' % tabTooltip)
+                tabTooltip = tabClassNames[2]
         if tabId is None:
             tabId = tabLabel
         if tabLabel is None:
             tabLabel = tabId
         if isinstance(tabUsers, str):
             tabUsers = tabUsers.split(roles_separator)
-        # if tabTooltip: tooltips.append(dbc.Tooltip(tabTooltip,target=(prefix+tabId)))
 
-        if (tabUsers is None) or (user.role in tabUsers):
+        if (tabUsers is None) or (user is not None and user.role in tabUsers):
 
             logger.debug("tabLabel=%s, tabId=%s, tabUsers=%s", tabLabel, tabId, tabUsers)
 
@@ -354,6 +359,8 @@ def create_tabs(
                     labelClassName=f"{labelClassName} {activeLabelClassName if prefix+tabId==active_tab and activeLabelClassName else ''}",
                 )
             )
+            if tabTooltip:
+                tooltips.append(dbc.Tooltip(tabTooltip, target=prefix + tabId))
 
     if len(tabs) > 0:
         header = dbc.Tabs(tabs, id=prefix + "s" + tabsName, active_tab=active_tab, className=tabsClassName)  # , card=use_cardstyle : deprecated
@@ -362,6 +369,5 @@ def create_tabs(
             data = dbc.Card([dbc.CardHeader(header, className="pt-0"), dbc.CardBody(body, className="px-2 py-0")], className="p-0")
         else:
             data = [header, body]
-        # print(tooltips)
-        # elems.extend(tooltips)
+        data = [*data, *tooltips] if isinstance(data, list) else [data, *tooltips]
         return dbc.Container(data, fluid=True, className=contentClassName)

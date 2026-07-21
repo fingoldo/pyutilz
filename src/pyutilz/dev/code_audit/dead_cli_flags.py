@@ -56,7 +56,13 @@ def scan_dead_cli_flags(
     declared is not flagged. This trades a little precision for
     resilience against multi-file CLI designs; a name collision with an
     unrelated ``.name`` attribute access elsewhere only produces a
-    (safe) false negative, never a false positive.
+    (safe) false negative, never a false positive from THAT mechanism.
+
+    Known blind spot: the corpus is a regex over literal ``.attrname``
+    dot-access text, plus ``getattr(x, "name")`` / ``vars(x)["name"]``
+    shapes. A flag read through some other dynamic-access spelling this
+    scanner doesn't recognize will still be misreported as dead (a real,
+    if narrow, false-positive source).
 
     Severity: P2 (a CLI flag silently not doing what its help text
     promises is a real behavior-vs-documentation gap, but not a crash).
@@ -72,6 +78,9 @@ def scan_dead_cli_flags(
         except OSError:
             continue
         used_attrs.update(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)\b", src))
+        # getattr(args, "name") / vars(args)["name"] dynamic-access shapes.
+        used_attrs.update(re.findall(r"""getattr\s*\([^,]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']""", src))
+        used_attrs.update(re.findall(r"""vars\s*\([^)]*\)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]""", src))
 
     for py in py_files:
         tree = _safe_parse(py)

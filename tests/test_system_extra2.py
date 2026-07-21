@@ -404,9 +404,13 @@ class TestShowBiggestSessionObjects:
     @patch("pyutilz.system.system.memory.clean_ram")
     @patch("pyutilz.system.system.memory.get_own_memory_usage", return_value=0.5)
     def test_empty_session(self, mock_mem, mock_clean):
+        import pandas as pd
         from pyutilz.system.system import show_biggest_session_objects
         result = show_biggest_session_objects({}, N=5, min_size_bytes=999999999)
-        assert result == [] or (hasattr(result, "__len__") and len(result) == 0)
+        # Regression test: previously returned the bare `[]` list unchanged (contract violation
+        # against the declared `-> pd.DataFrame` return type); now always a DataFrame, empty here.
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 0
 
 
 # ── check_huge_pages_linux (lines 1047-1055) ──

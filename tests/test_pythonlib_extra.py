@@ -349,14 +349,18 @@ class TestWeekofmonthExtra:
     @pytest.mark.parametrize("day,expected", [
         (1, 1),
         (6, 1),
-        (7, 2),
+        (7, 1),
         (8, 2),
-        (14, 3),
+        (14, 2),
         (15, 3),
-        (28, 5),
+        (21, 3),
+        (28, 4),
         (29, 5),
     ])
     def test_various_days(self, day, expected):
+        # 7-day buckets starting at day 1: days 1-7 -> week 1, 8-14 -> week 2, etc.
+        # (regression test for the off-by-one bug where day 7/14/21/28 were bucketed
+        # into the *next* week instead of closing out the current 7-day bucket)
         from pyutilz.pythonlib import weekofmonth
 
         assert weekofmonth(date(2024, 1, day)) == expected

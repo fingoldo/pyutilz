@@ -13,9 +13,12 @@ phrases in cover letters).
 
 from __future__ import annotations
 
+import logging
 import random
 import re
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # QWERTY adjacency maps
@@ -380,15 +383,28 @@ def humanize(
     rng:
         Seeded Random for reproducibility.
     protected_spans:
-        ``(start, end)`` pairs of character offsets to leave untouched by
-        the typo engine.  Note: offsets refer to positions in the text
-        **after** pattern stripping / dash fixing / emoji removal, so the
-        caller should compute them against the cleaned text or pass raw
-        offsets and accept minor drift.
+        ``(start, end)`` pairs of character offsets computed against the ORIGINAL (pre-cleaning)
+        ``text``. Each span's exact substring content is captured before the strip/fix stages
+        run (which can insert/delete text and shift every downstream offset), then located by
+        content in the post-cleaning text so the typo engine protects the same actual characters
+        regardless of how much earlier stages shifted their position. If a protected substring's
+        content itself gets altered by an earlier stage (rather than merely shifted), it can no
+        longer be found and is logged (WARNING) and NOT protected -- silent partial protection
+        would defeat the whole point of this parameter for a compliance-verification use case.
     """
+    original_snippets = [text[s:e] for s, e in protected_spans]
     text = strip_ai_patterns(text)
     text = fix_dashes(text)
     text = strip_emojis(text)
+    remapped_spans: list[tuple[int, int]] = []
+    for snippet in original_snippets:
+        if not snippet:
+            continue
+        idx = text.find(snippet)
+        if idx == -1:
+            logger.warning("humanize(): protected span content %r not found after cleaning -- not protected from typo injection.", snippet[:60])
+            continue
+        remapped_spans.append((idx, idx + len(snippet)))
     if typo_count > 0:
-        text = introduce_typos(text, count=typo_count, rng=rng, protected_spans=protected_spans)
+        text = introduce_typos(text, count=typo_count, rng=rng, protected_spans=remapped_spans)
     return text

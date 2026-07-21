@@ -26,10 +26,13 @@ from logging.handlers import RotatingFileHandler  # QueueHandler, TimedRotatingF
 # cd C:\ProgramData\Anaconda3\Scripts
 # python pywin32_postinstall.py -install
 
-from pyutilz.core.pythonlib import filter_elements_by_type, ensure_dict_elem
+from pyutilz.core.pythonlib import filter_elements_by_type, ensure_dict_elem, lookup_in_stack
 from pyutilz.text.strings import json_pg_dumps, suffixize
-from pyutilz.database.db import safe_execute_values
-from pyutilz.database.db.sql_helpers import validate_sql_qualified_identifier
+# pyutilz.database.db is deferred to call site (finalize_function_log() below, the only function
+# that uses it) -- logginglib.py is also exposed under the generic top-level alias
+# `pyutilz.logging`, which invites use by callers wanting basic Python logging setup with no DB
+# connotation; pyutilz.database.db.__init__ unconditionally imports sqlalchemy/psycopg2/pymysql,
+# none of which are declared by the `dev` extras group this module otherwise only needs.
 
 EXTERNAL_IP = None
 # Sane default so calling log_loaded_rows()/_message() before init_logging()
@@ -206,6 +209,9 @@ def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verb
     _stop_clocks(results_log["results"]["timing"])
 
     if db_path:
+        from pyutilz.database.db import safe_execute_values
+        from pyutilz.database.db.sql_helpers import validate_sql_qualified_identifier
+
         # Validate table/schema-qualified path to prevent SQL injection (db_fields is a fixed internal constant, not caller-controlled)
         validate_sql_qualified_identifier(db_path)
         db_fields = "module,function,parameters,results,node,session"
@@ -262,7 +268,12 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
         results_log = {}
     assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
     if lang is None:
-        lang = globals().get("reports_language", "en")
+        # globals() inside this module always resolves to pyutilz.dev.logginglib's OWN
+        # namespace, never the caller's -- so this used to be a very roundabout way of always
+        # getting "en" unless a caller monkeypatched this specific module's `reports_language`
+        # attribute. lookup_in_stack() walks the actual call stack's frame globals, so a caller
+        # that defines its own module-level `reports_language = "ru"` is now correctly found.
+        lang = lookup_in_stack("reports_language") or "en"
 
     sources = {
         "db_table": {"en": "DB table", "ru": "таблицы БД"},
@@ -285,6 +296,31 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
 
     if verbose:
         _message(message)
+
+
+def _redact_credential_shaped_value(value: Any) -> str:
+    """Redact a value bound for ``results_log["session"]`` (persisted / possibly printed).
+
+    ``special_vars`` (below) are excluded from ``results_log["parameters"]`` specifically
+    because they're credential-bearing by convention (``current_proxy``/``current_proxy_resolved``
+    are proxy URLs of the form ``scheme://user:pass@host:port`` -- pragma: allowlist secret;
+    ``login`` is a username). Simply
+    relocating the raw value into a different dict key (the previous behaviour) gave zero
+    confidentiality benefit -- it was still the same plaintext value, in a dict that gets
+    persisted to a DB table and/or printed. Proxy URLs get their userinfo stripped (host:port is
+    kept for diagnostic value); anything else is masked to its first/last 2 characters.
+    """
+    if not isinstance(value, str):
+        return "***"
+    scheme_sep = value.find("://")
+    prefix = value[: scheme_sep + 3] if scheme_sep != -1 else ""
+    rest = value[len(prefix) :]
+    if "@" in rest:
+        _, _, host_part = rest.rpartition("@")
+        return f"{prefix}***@{host_part}"
+    if len(value) > 4:
+        return f"{value[:2]}***{value[-2:]}"
+    return "***"
 
 
 def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
@@ -338,7 +374,10 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             for var in special_vars:
                 if var in kwargs:
                     if kwargs[var]:
-                        results_log["session"][var] = kwargs[var]
+                        # Redacted, not just relocated: these are credential-bearing by
+                        # convention (proxy URLs / login), and results_log["session"] is
+                        # persisted to db_path and/or printed just like ["parameters"] is.
+                        results_log["session"][var] = _redact_credential_shaped_value(kwargs[var])
 
             results_log["results"] = {"timing": {}}
             _init_clocks(results_log["results"]["timing"])

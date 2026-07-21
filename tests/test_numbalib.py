@@ -47,6 +47,29 @@ class TestSetNumbaRandomSeed:
         except Exception as e:
             pytest.fail(f"set_numba_random_seed should work with integer: {e}")
 
+    def test_same_seed_reproduces_same_draws(self):
+        """The one property a seed function exists to provide: calling it twice with the same
+        seed must make subsequent random draws identical, not merely 'doesn't crash'.
+
+        set_numba_random_seed is itself @njit-compiled, so np.random.seed() inside it seeds
+        numba's OWN internal RNG stream, which is documented to be independent of numpy's
+        global RNG state used by plain (non-jitted) np.random calls -- draws must therefore be
+        observed through another @njit function to see the effect, not via bare np.random.rand().
+        """
+        from numba import njit
+
+        from pyutilz.numbalib import set_numba_random_seed
+
+        @njit
+        def _draw():
+            return np.random.rand(5)
+
+        set_numba_random_seed(42)
+        a = _draw()
+        set_numba_random_seed(42)
+        b = _draw()
+        assert np.array_equal(a, b)
+
 
 class TestSetRandomSeed:
     """Test set_random_seed wrapper - handles None defaults"""
@@ -71,6 +94,23 @@ class TestSetRandomSeed:
             assert True
         except Exception as e:
             pytest.fail(f"set_random_seed(456) raised {e}")
+
+    def test_same_seed_reproduces_same_draws(self):
+        """Same determinism property as TestSetNumbaRandomSeed, for the None-handling wrapper.
+        Draws observed via an @njit consumer -- see that test's docstring for why."""
+        from numba import njit
+
+        from pyutilz.numbalib import set_random_seed
+
+        @njit
+        def _draw():
+            return np.random.rand(5)
+
+        set_random_seed(456)
+        a = _draw()
+        set_random_seed(456)
+        b = _draw()
+        assert np.array_equal(a, b)
 
 
 class TestArr2Str:

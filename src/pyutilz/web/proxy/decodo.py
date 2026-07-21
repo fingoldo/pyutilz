@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from .base import PortHealthTracker, ProxyConfig, ProxyProvider
+from pyutilz.web.exceptions import ProxyConfigurationError, ProxyFetchError
 
 _log = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ class DecodoProvider(ProxyProvider):
     def _api_headers(self) -> Dict[str, str]:
         """Build the Authorization/Content-Type headers for Decodo API requests; raises if ``api_key`` is unset."""
         if not self.api_key:
-            raise RuntimeError("DECODO_API_KEY not set. " "Get it from: dashboard.decodo.com -> Settings -> API Keys")
+            raise ProxyConfigurationError("DECODO_API_KEY not set. " "Get it from: dashboard.decodo.com -> Settings -> API Keys")
         return {"Authorization": self.api_key, "Content-Type": "application/json"}
 
     def get_subscriptions(self) -> List[DecodoSubscription]:
@@ -275,9 +276,14 @@ class DecodoProvider(ProxyProvider):
                 data = r.json()
                 items = data if isinstance(data, list) else [data]
                 return [DecodoSubscription.from_api(item) for item in items]
-            except requests.HTTPError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next endpoint)
+            except requests.RequestException:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next endpoint)
+                # Regression fix: only requests.HTTPError (raised by raise_for_status() on a
+                # non-2xx response) was caught here -- a Timeout/ConnectionError on the FIRST
+                # endpoint (a transient network blip, not an "endpoint unsupported" signal)
+                # previously propagated uncaught instead of falling through to try the second
+                # endpoint, even though the second endpoint might well have succeeded.
                 continue
-        raise RuntimeError("Could not fetch subscriptions from any Decodo API endpoint")
+        raise ProxyFetchError("Could not fetch subscriptions from any Decodo API endpoint")
 
     def get_endpoints(self) -> Dict[str, Any]:
         """Fetch available proxy endpoints from ``/v2/endpoints``.

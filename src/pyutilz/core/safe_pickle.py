@@ -41,6 +41,7 @@ Env vars:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
 import pickle  # nosec B403 - this module's whole purpose is guarding pickle.load behind sha256 sidecar verification (see safe_load below and the module-level THREAT MODEL CAVEAT docstring); callers needing tamper-resistance against a co-located attacker must layer keyed integrity on top
@@ -156,7 +157,7 @@ def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_va
         logger.error("verify_sidecar: could not read sidecar %s: %s", sidecar, exc)
         return False
     actual = _sha256_of_file(path).lower()
-    return expected == actual
+    return hmac.compare_digest(expected, actual)
 
 
 def write_sidecar(path: str) -> None:

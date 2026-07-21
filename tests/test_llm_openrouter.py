@@ -180,8 +180,16 @@ class TestCostTracking:
     def test_track_usage_cached_tokens_fallback(self):
         # OR's modern field is prompt_tokens_details.cached_tokens; the legacy
         # prompt_cache_hit_tokens field should still take precedence if present.
+        # Regression test (2026-07-21 audit): total_cache_hit_tokens accumulation moved to the
+        # shared base class's _record_usage (which now also falls back to
+        # prompt_tokens_details.cached_tokens for every OpenAI-compatible provider, not just OR) --
+        # _track_provider_specific_usage alone only updates last_cache_hit_tokens, to avoid double
+        # counting when both the base and this override see the same "cached_tokens" field.
         p = _provider()
         p._track_provider_specific_usage({"prompt_tokens_details": {"cached_tokens": 50}})
+        assert p.total_cache_hit_tokens == 0
+        assert p.last_cache_hit_tokens == 50
+        p._record_usage({"prompt_tokens": 100, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 50}})
         assert p.total_cache_hit_tokens == 50
 
     def test_get_session_cost_includes_actual(self):

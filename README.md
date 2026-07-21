@@ -9,16 +9,16 @@
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![docs](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://fingoldo.github.io/pyutilz/)
+[![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg)](https://fingoldo.github.io/pyutilz/)
 
-A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core has zero hard dependencies; every domain ships as an optional extras group so `pip install pyutilz` stays light and you opt into what you need.
+A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core has few hard dependencies (`numba`, `joblib`, `portalocker` -- used throughout `pyutilz.core.pythonlib`, the module nearly every other subpackage imports); every domain-specific extra beyond that ships as an optional extras group so `pip install pyutilz` stays light and you opt into what you need.
 
 ## Installation
 
 ```bash
 pip install pyutilz[all,dev]          # full install (recommended)
 
-pip install pyutilz                   # core only, no hard deps
+pip install pyutilz                   # core only (numba, joblib, portalocker)
 pip install pyutilz[dataframes]       # pandas + numpy + pyarrow + polars
 pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql
 pip install pyutilz[web]              # selenium, requests, undetected-chromedriver
@@ -53,8 +53,9 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 | `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination |
 | `pyutilz.performance`| Per-host `KernelTuningCache` for dispatching CUDA/numba/cupy kernel variants |
 | `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers |
-| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities |
+| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities, AST-based `code_audit` bug-class scanner + CLI |
 | `pyutilz.llm`        | Unified async interface across Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code |
+| `pyutilz.stats`      | Numba-jitted normality testing (D'Agostino K², Anderson-Darling) |
 
 ## Quick examples
 
@@ -102,10 +103,13 @@ print(p.last_call_summary())
 #  'native_finish_reason': 'end_turn', 'is_byok': False, ...}
 ```
 
-Streaming preserves token-usage tracking. Account credits work where
-the upstream API exposes them (OpenRouter, DeepSeek); other providers
-fall back to capturing `anthropic-ratelimit-*` / `x-ratelimit-*`
-response headers automatically.
+Streaming preserves token-usage tracking. `get_account_credits()` works
+natively for OpenRouter and DeepSeek only; other providers raise
+`NotImplementedError`. `check_account_limits()` is native for OpenRouter,
+falls back to captured `anthropic-ratelimit-*` / `x-ratelimit-*` response
+headers for Anthropic and DeepSeek, and raises `NotImplementedError` by
+design for OpenAI/xAI/Gemini regardless of any headers already captured
+(Claude Code shells out to the CLI, no HTTP headers to capture at all).
 
 **OpenRouter health-aware model selection** — two-stage lookup
 (offline catalogue → concurrent live `/endpoints` health check) drops
@@ -251,7 +255,7 @@ def occasionally_slow_function(): ...
 from pyutilz.database.db import validate_sql_identifier, safe_execute
 
 table = validate_sql_identifier(user_input)             # raises on injection
-rows = safe_execute("SELECT * FROM {} WHERE id = %s", (table, user_id))
+rows = safe_execute("SELECT * FROM {} WHERE id = %s".format(table), (user_id,))  # table formatted in AFTER validation; only the value goes through the placeholder
 ```
 
 ## Security

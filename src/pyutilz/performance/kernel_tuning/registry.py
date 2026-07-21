@@ -271,7 +271,8 @@ def retune_all(
         {kernel_name: n_regions_tuned, ...}
 
     Side effects:
-        - Calls discover_tuners (clears + repopulates registry).
+        - Calls discover_tuners (repopulates registry WITHOUT clearing it first --
+          see discover_tuners's own docstring for why).
         - Updates cache files under the host's hw_fingerprint.
     """
     from tqdm import tqdm

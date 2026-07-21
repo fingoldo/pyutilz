@@ -1,5 +1,3 @@
-"""Incremental builders and utilities for scipy sparse (CSR/COO) matrices."""
-
 """Incremental builders and memory-usage helpers for scipy sparse (CSR/COO) matrices."""
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -20,7 +18,7 @@ logger=logging.getLogger(__name__)
 from typing import Any, List
 
 import numpy as np
-from scipy.sparse import csr_matrix, coo_matrix
+from scipy.sparse import csr_matrix, csc_matrix, coo_matrix
 
 class CsrIndPtrConstructor:
     """Incremental builder of CSR matrices from (indptr, indices, data) triples.
@@ -85,10 +83,11 @@ class CsrRowColConstructor:
 
 def get_sparse_memory_usage(mat:object)->int:
     """
-    Return mem usage of a csr or csc matrix
+    Return mem usage of a csr, csc, or coo matrix
     """
     try:
-        if isinstance(mat, csr_matrix):
+        if isinstance(mat, (csr_matrix, csc_matrix)):
+            # csr and csc share the same (data, indptr, indices) layout, just transposed semantics.
             return mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
         elif isinstance(mat, coo_matrix):
             return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime

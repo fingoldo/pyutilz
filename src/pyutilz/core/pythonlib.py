@@ -66,7 +66,7 @@ def ensure_installed(packages, sep: str = " ") -> None:
             logger.info(mes)
             for pkg in missing_packages:
                 try:
-                    subprocess.check_call(["pip", "install", pkg])  # nosec B603 B607 - "pip" is a fixed trusted executable resolved via PATH (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])  # nosec B603 - sys.executable is the running interpreter's own path (not attacker-controlled), and pkg names come from ensure_installed's own `packages` argument (developer-supplied dependency list), not from untrusted/network input. Using `sys.executable -m pip` (rather than a bare "pip" resolved via PATH search order) guarantees installation into the running interpreter's own environment and avoids Windows' CWD-before-PATH executable search order picking up an attacker-planted pip.exe/pip.bat.
                 except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one failed install shouldn't abort the rest)
                     logger.debug("Failed to install package %s: %s", pkg, e)
 
@@ -171,12 +171,16 @@ def ensure_dict_elem(obj: dict, name: str, value) -> None:
         obj[name] = value
 
 
-def get_attr(obj: dict, attr_name: str, default_value: object = None, unwanted_value=None) -> object:
+_GET_ATTR_UNSET = object()  # sentinel distinguishing "no default_value passed" from "caller passed default_value=None"
+
+
+def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None) -> object:
     """
-    if attr is None, return default
-    To prevent TypeError: 'NoneType' object is not iterable
+    If no default_value is supplied, missing/unwanted values fall back to [] (to prevent
+    TypeError: 'NoneType' object is not iterable downstream). Passing default_value=None
+    explicitly is honored and returned as None.
     """
-    if default_value is None:
+    if default_value is _GET_ATTR_UNSET:
         default_value = []
     if obj == unwanted_value:
         return default_value
@@ -203,7 +207,7 @@ def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 1
 
     """
     for key, prev_value in prev_obj.items():
-        if key_contains in key:
+        if key_contains is None or key_contains in key:
             if is_float(prev_value):
                 new_value = obj.get(key)
                 if is_float(new_value):
@@ -365,7 +369,7 @@ def float_distinct_digits_percent(number: float, precision: int = 5) -> float:
     ntotal = 0
 
     # Count digits in the integer part
-    nsubtotal, digits = integer_digits(int_part)
+    nsubtotal, digits = integer_digits(abs(int_part))
     unique_digits.update(digits)
     ntotal += nsubtotal
 
@@ -524,7 +528,7 @@ def imitate_delay(
 
 def weekofmonth(date: date):
     """Returns the 1-based week-of-month number for `date` (7-day buckets starting at day 1)."""
-    return date.day // 7 + 1
+    return (date.day - 1) // 7 + 1
 
 
 def datetime_to_utc_timestamp(dt):
@@ -588,7 +592,7 @@ def lookup_in_stack(variable):
     st = inspect.stack()
     for i in range(len(st)):
         frame = st[i]
-        caller_globals = dict(inspect.getmembers(frame[0]))["f_globals"]
+        caller_globals = frame[0].f_globals
         res = caller_globals.get(variable)
         if res:
             return res
@@ -758,7 +762,7 @@ class ObjectsAndFilesProcessor:
 
         # Get caller globals is no container specified
         if container is None:
-            caller_globals = dict(inspect.getmembers(inspect.stack()[1][0]))["f_globals"]
+            caller_globals = inspect.stack()[1][0].f_globals
             container = caller_globals
 
         if not objects_names:
@@ -856,7 +860,10 @@ class HashableDict(dict):
     """A dict subclass that is hashable, based on its sorted (key, value) items. The dict must not be mutated while used as a hash key."""
 
     def __hash__(self):  # type: ignore[override]  # intentional: dict.__hash__ is None (unhashable); this recipe makes it hashable
-        return hash(tuple(sorted(self.items())))
+        # Sort by (type name, str) rather than the raw key: sorted() on raw (key, value) tuples
+        # raises TypeError for dicts with mixed-incomparable-type keys (e.g. str and int keys in
+        # the same dict), since Python 3 no longer allows comparing across unrelated types.
+        return hash(tuple(sorted(self.items(), key=lambda kv: (type(kv[0]).__name__, str(kv[0])))))
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -873,14 +880,22 @@ import portalocker
 def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False, timeout: int = 10):
     """Context manager opening `db_path` as a shelve db, guarded by a file lock to prevent concurrent access.
 
-    On exit, flushes the lock file and fsyncs it to disk before releasing the lock.
+    On exit, closes/syncs the shelve database, then flushes the lock file and fsyncs it to disk
+    before releasing the lock -- both run even if the caller's `with`-block body raises.
     """
 
     with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
-        yield shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)
-        # flush and sync to filesystem
-        fh.flush()
-        os.fsync(fh.fileno())
+        db = shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)
+        try:
+            yield db
+        finally:
+            # db.close() commits/syncs the underlying dbm backend (e.g. dbm.sqlite3 needs an
+            # explicit close/commit before a subsequent open can see the writes; writeback=True
+            # additionally never flushes its in-memory cache without this). Must happen before
+            # the lock-file flush/fsync below and before the portalocker.Lock releases.
+            db.close()
+            fh.flush()
+            os.fsync(fh.fileno())
 
 
 @contextmanager

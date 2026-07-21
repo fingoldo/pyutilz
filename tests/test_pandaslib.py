@@ -391,7 +391,11 @@ class TestGetColumnsOfType:
         assert "float_col" in float_cols
 
     def test_order_and_multimatch_preserved(self):
-        """The hoisted str(dtype) repr must yield the same result (column order + one entry per matching type_name) as the per-probe variant."""
+        """The hoisted str(dtype) repr must yield the same result (column order, at most one entry
+        per column) as the per-probe variant. Regression test: previously each matching type_name
+        substring appended the column again, so a column whose dtype repr matched multiple entries
+        in type_names (e.g. both "int" and "in" match "int64") was duplicated in the result -- this
+        pins the fixed, deduplicated contract instead."""
         df = pd.DataFrame({
             'i': pd.array([1, 2, 3], dtype='int64'),
             'f': [1.0, 2.0, 3.0],
@@ -399,8 +403,8 @@ class TestGetColumnsOfType:
         })
         # The string column's dtype repr is 'object' on classic pandas and 'str' under pandas future.infer_string; probe whatever it actually is so the test pins the hoist behavior, not the ambient string-inference default.
         s_type = str(df.dtypes["s"])
-        # 'int' matches 'i'; both 'int' and 'in' match 'i' -> two appends, preserving the multi-match behavior.
-        assert get_columns_of_type(df, ["int", "in"]) == ["i", "i"]
+        # 'int' and 'in' both match 'i's dtype ('int64') -> 'i' must appear only ONCE.
+        assert get_columns_of_type(df, ["int", "in"]) == ["i"]
         assert get_columns_of_type(df, ["float", "int"]) == ["i", "f"]
         assert get_columns_of_type(df, [s_type, "int"]) == ["i", "s"]
 

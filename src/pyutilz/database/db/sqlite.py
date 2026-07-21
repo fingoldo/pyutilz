@@ -55,7 +55,12 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
 
     # Создаем SQL запрос
     placeholders = ", ".join(["?" for _ in columns])
-    columns_str = ", ".join([f'"{col}"' if col == "GROUP" else col for col in columns])
+    # Regression fix: only the exact literal string "GROUP" was quoted -- SQLite's reserved-word
+    # matching is case-insensitive (a column literally named "group" was NOT caught) and there
+    # are many other reserved words besides GROUP (ORDER, TABLE, SELECT, WHERE, INDEX, etc.).
+    # Quoting is always valid in SQLite regardless of whether the name happens to be reserved,
+    # so quote every identifier unconditionally instead of special-casing one keyword.
+    columns_str = ", ".join(f'"{col}"' for col in columns)
     sql = f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})"  # nosec B608 - table_name/columns validated above
 
     # Преобразуем словари в кортежи в правильном порядке
@@ -71,8 +76,19 @@ def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns
         n = len(values_list)
         if verbose:
             logger.info("Inserted %s row(s) into %s table.", n, table_name)
-            return n
+        # Regression fix: `return n` was previously nested INSIDE `if verbose:`, so a fully
+        # successful insert with verbose=0 (the function's own documented way to silence
+        # per-call logging) fell off the end of the try block and implicitly returned None --
+        # a caller doing `total += insert_sqllite_data(..., verbose=0)` crashed with TypeError
+        # on a completely successful insert.
+        return n
     except Exception as e:
         logger.error("Could not insert data into %s table: %s.", table_name, e)
         logger.error("Data sample: %s", values_list[-10:])
+        # Regression fix: cursor.executemany() executes each parameter set sequentially: if row
+        # k violates a constraint, rows 1..k-1 already executed and remained pending in an open,
+        # never-rolled-back transaction on this connection -- indistinguishable from "nothing was
+        # inserted" (the return value this except branch reports) until an unrelated later
+        # conn.commit() on the same connection silently committed them for real.
+        conn.rollback()
         return 0

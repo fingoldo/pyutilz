@@ -29,6 +29,21 @@ def _operand_key(node: ast.AST) -> str:
     return ast.dump(node)
 
 
+def _contains_bare_function_call(node: ast.AST) -> bool:
+    """True if ``node`` contains a call to a bare, free-standing function (``foo()``, not
+    ``x.foo()``) anywhere in its subtree.
+
+    Structural equality can't distinguish a pure predicate from an impure one. Method-call
+    predicates on builtins/strings (``x.endswith(...)``, ``x.startswith(...)``) are the common,
+    confirmed-real-bug shape this scanner targets and are left flagged. Bare function calls are
+    excluded: a "retry once independently" idiom like ``attempt() or attempt()`` (drawing from a
+    queue, retrying something non-deterministic) is structurally identical to a copy-paste typo
+    but isn't one -- purity can't be determined statically, so this operand shape is skipped
+    rather than risk a false positive on it.
+    """
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) for n in ast.walk(node))
+
+
 def scan_duplicate_conditions(root: Path,
                               exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                               ) -> list[Finding]:
@@ -71,6 +86,8 @@ def scan_duplicate_conditions(root: Path,
             if isinstance(node, ast.BoolOp):
                 seen: dict[str, ast.AST] = {}
                 for operand in node.values:
+                    if _contains_bare_function_call(operand):
+                        continue
                     key = _operand_key(operand)
                     if key in seen:
                         op_word = "and" if isinstance(node.op, ast.And) else "or"

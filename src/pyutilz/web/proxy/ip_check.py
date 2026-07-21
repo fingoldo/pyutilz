@@ -78,7 +78,16 @@ def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, ti
         try:
             r = session_or_requests.get(url, **kwargs)
             return parse_ip_response(r.text)
-        except (OSError, ValueError, KeyError):  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
+        except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
+            # Regression fix: this module's own docstring promises "any HTTP client (requests,
+            # curl_cffi, httpx, etc.)" -- but (OSError, ValueError, KeyError) only actually
+            # covers requests/curl_cffi (both raise OSError subclasses); httpx's exceptions
+            # (HTTPError and its subclasses ConnectError/TimeoutException/etc.) subclass plain
+            # Exception directly, verified against the installed httpx package. An httpx client
+            # hitting a transient failure on the FIRST url would previously propagate uncaught
+            # instead of falling through to try the next IP_CHECK_URLS entry as documented. The
+            # function already degrades gracefully to "?" if every URL fails, so a blanket catch
+            # here is safe.
             continue
     return "?"
 

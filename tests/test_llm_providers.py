@@ -52,6 +52,16 @@ class TestExtractJson:
 
 
 class TestFactory:
+    def setup_method(self):
+        from pyutilz.llm.factory import _provider_cache
+
+        _provider_cache.clear()
+
+    def teardown_method(self):
+        from pyutilz.llm.factory import _provider_cache
+
+        _provider_cache.clear()
+
     def test_known_providers(self):
         assert len(_PROVIDER_MODULES) >= 5
 
@@ -64,13 +74,19 @@ class TestFactory:
             get_llm_provider("nonexistent_provider")
 
     def test_case_insensitive(self):
+        # Regression test (2026-07-21 audit): previously had a blanket `except Exception: pass`
+        # after the "Unknown provider" check, which silently swallowed the DIFFERENT ValueError
+        # ("API key not provided...") that get_llm_provider("CLAUDE") raises in the default CI
+        # config (no ANTHROPIC_API_KEY set) -- the test passed without ever having verified alias
+        # resolution actually worked, on exactly the configuration this repo runs by default.
+        # Any exception other than "Unknown provider" means the alias resolved to a real
+        # provider class and construction proceeded past that point -- which is what this test
+        # is actually verifying.
         try:
             get_llm_provider("CLAUDE")
         except ValueError as e:
             if "Unknown provider" in str(e):
                 pytest.fail("get_llm_provider('CLAUDE') raised ValueError — alias resolution failed")
-        except Exception:
-            pass
 
     @pytest.mark.parametrize("alias,canonical", list(_ALIASES.items()))
     def test_each_alias(self, alias, canonical):
@@ -456,13 +472,20 @@ class TestLongestPrefixPricingHelper:
 
 class TestAnthropicMaxTokensRedundantClause:
     def test_opus_46_still_128k_after_dropping_redundant_clause(self):
-        """Audit Low #7: dropped the redundant ``or 'opus-4-6' in self.model``
-        clause; opus-4-6 must still resolve to 128k via ``'4-6' in model``."""
+        """Audit Low #7 regression test: max_output_tokens now resolves via the same
+        longest-prefix-lookup table used for pricing, instead of a bare `"4-6" in self.model`
+        substring test. That substring test previously gave claude-opus-4-7 (same $5/$25
+        pricing tier as 4-6, per _PRICING) the WRONG (4x smaller) 32000 limit purely because
+        "4-6" isn't a substring of "claude-opus-4-7" -- confirmed as a real bug, not a feature;
+        both models are now correctly in the 128k tier."""
         from pyutilz.llm.anthropic_provider import AnthropicProvider
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = "claude-opus-4-6-20250610"
         assert p.max_output_tokens == 128000
         p.model = "claude-opus-4-7"
+        assert p.max_output_tokens == 128000
+        # Legacy Opus 4/4.1 (different, non-4.5+, pricing tier) still get the smaller 32k limit.
+        p.model = "claude-opus-4-20250514"
         assert p.max_output_tokens == 32000
 
 

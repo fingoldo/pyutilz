@@ -102,7 +102,7 @@ class _StubCompat(OpenAICompatibleProvider):
 
 
 def _make_compat():
-    return _StubCompat(api_key="test-key", model="stub")
+    return _StubCompat(api_key="test-key", model="stub")  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------
@@ -270,22 +270,21 @@ class TestGeminiBatchIsolation:
 
 class TestGeminiClose:
     @pytest.mark.asyncio
-    async def test_close_shuts_down_executor(self):
+    async def test_close_is_a_noop(self):
+        # Regression test (2026-07-21 audit): generate()/count_tokens() now use google-genai's
+        # native async client (self.client.aio) instead of a dedicated ThreadPoolExecutor, so
+        # GeminiProvider no longer has per-provider worker threads to release. _close() is kept
+        # as a no-op hook only so factory.py's atexit handler (which awaits _close() on every
+        # cached provider that exposes it) still has something to call.
         p = _make_gemini()
-        p._executor = ThreadPoolExecutor(max_workers=1)
-        # Factory atexit hook awaits provider._close() when present.
+        assert not hasattr(p, "_executor")
         assert hasattr(p, "_close")
-        await p._close()
-        # After shutdown the executor refuses new work.
-        with pytest.raises(RuntimeError):
-            p._executor.submit(lambda: 1)
+        await p._close()  # must not raise
 
     @pytest.mark.asyncio
-    async def test_close_is_idempotent_when_no_executor(self):
+    async def test_close_is_idempotent(self):
         p = _make_gemini()
-        # Defensive: _close must not raise if the executor is missing.
-        if hasattr(p, "_executor"):
-            del p._executor
+        await p._close()
         await p._close()
 
 

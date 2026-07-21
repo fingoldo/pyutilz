@@ -6,13 +6,24 @@ from pyutilz.web.graphql import text_to_graphql, beautify_gql_query, connect, ex
 
 class TestTextToGraphql:
     def test_basic_replacement(self):
-        assert text_to_graphql(r"line1\nline2") == "line1\\nline2"
+        # Regression test: the previous assertion (`== "line1\\nline2"`) was tautologically true
+        # regardless of whether the function did anything, since the raw-string input
+        # r"line1\nline2" and the non-raw expected value "line1\\nline2" are the textually
+        # identical 2-character backslash-n sequence -- confirmed the old implementation was a
+        # complete no-op and this test still passed. A literal backslash-n must become a
+        # DOUBLED backslash followed by n (3 characters: \, \, n) so a GraphQL/JSON parser reads
+        # it back as the literal 2-char sequence \n, not a real newline escape.
+        assert text_to_graphql("line1\\nline2") == "line1\\\\nline2"
+        assert len(text_to_graphql("line1\\nline2")) == len("line1\\nline2") + 1
 
-    def test_no_op_when_no_backslash_n(self):
+    def test_no_op_when_no_backslash(self):
         assert text_to_graphql("hello world") == "hello world"
 
     def test_empty_string(self):
         assert text_to_graphql("") == ""
+
+    def test_multiple_backslashes(self):
+        assert text_to_graphql("a\\b\\c") == "a\\\\b\\\\c"
 
 
 class TestBeautifyGqlQuery:

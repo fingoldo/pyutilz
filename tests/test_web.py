@@ -23,33 +23,36 @@ class TestWebUtilities:
         """Test detecting rotating proxy"""
         from pyutilz.web import is_rotating_proxy
 
-        proxy_dict = {"http": "http://rotating-proxy.com:8080"}
-        result = is_rotating_proxy(proxy_dict)
+        proxy_server = {"PROXY_HOST": "gate.dc.smartproxy.com", "PROXY_MIN_PORT": 20000, "PROXY_MAX_PORT": 20000}
+        result = is_rotating_proxy(proxy_server)
 
-        # Function may return None if implementation incomplete
-        assert result is None or isinstance(result, bool)
+        assert result is True
 
     def test_is_rotating_proxy_false(self):
         """Test non-rotating proxy"""
         from pyutilz.web import is_rotating_proxy
 
-        proxy_dict = {"http": "http://static-proxy.com:8080"}
-        result = is_rotating_proxy(proxy_dict)
+        proxy_server = {"PROXY_HOST": "gate.dc.smartproxy.com", "PROXY_MIN_PORT": 20001, "PROXY_MAX_PORT": 37960}
+        result = is_rotating_proxy(proxy_server)
 
-        # Function may return None if implementation incomplete
-        assert result is None or isinstance(result, bool)
+        assert result is None
 
     def test_set_proxy_last_use_time(self):
         """Test setting proxy last use time"""
+        from datetime import datetime, timedelta
+
         from pyutilz.web import set_proxy_last_use_time
+        from joblib import hash as joblib_hash
 
         last_used = {}
         proxies = {"http": "http://proxy.com:8080"}
 
         set_proxy_last_use_time(last_used, proxies)
 
-        # Should add timestamp
-        assert len(last_used) > 0 or last_used == {}
+        key = joblib_hash(proxies)
+        assert key in last_used
+        assert isinstance(last_used[key], datetime)
+        assert datetime.utcnow() - last_used[key] < timedelta(seconds=5)
 
 
 class TestWebConstants:
@@ -66,16 +69,15 @@ class TestWebConstants:
 class TestWebReporting:
     """Test web reporting utilities"""
 
-    def test_report_params(self):
-        """Test parameter reporting"""
+    def test_report_params(self, caplog):
+        """Test parameter reporting logs the expected INFO-level record."""
+        import logging
         from pyutilz.web import report_params
 
-        # Should not crash with basic params
-        try:
+        with caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
             report_params(url="http://example.com", proxies=None, params=None, data=None, json=None, headers_to_use=None, timeout=30)
-        except Exception:
-            # Expected if logger not configured
-            pass
+
+        assert any("http://example.com" in r.message for r in caplog.records)
 
 
 class TestEnsureHttpScheme:

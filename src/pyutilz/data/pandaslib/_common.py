@@ -35,7 +35,7 @@ import pandas as pd, polars as pl  # noqa: F401
 from pyutilz.text.strings import find_between  # noqa: F401
 from collections import defaultdict  # noqa: F401
 from pyarrow.dataset import dataset  # noqa: F401
-from pyutilz.pythonlib import to_float  # noqa: F401
+from pyutilz.core.pythonlib import to_float  # noqa: F401
 
 import ctypes  # noqa: F401
 from multiprocessing import Array  # noqa: F401

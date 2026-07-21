@@ -444,3 +444,88 @@ def test_check_cpu_flag_nonexistent():
     result = check_cpu_flag("nonexistent_flag_xyz")
     # Either False (flag not found) or False (cpuinfo not installed)
     assert result is False or isinstance(result, bool)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: 2026-07-21 audit fixes
+# ---------------------------------------------------------------------------
+
+
+def test_get_attr_explicit_none_default_is_honored():
+    # Previously `default_value=None` was silently coerced to [] regardless of
+    # whether the caller passed it explicitly; now only the "not passed at all"
+    # case coerces to [].
+    assert get_attr({"a": 1}, "b", default_value=None) is None
+
+
+def test_get_attr_no_default_passed_still_coerces_to_list():
+    assert get_attr({"a": 1}, "b") == []
+
+
+def test_keys_changed_enough_default_key_contains_does_not_crash():
+    from pyutilz.pythonlib import keys_changed_enough
+
+    # key_contains=None (the function's own default) used to raise
+    # TypeError: 'in <string>' requires string as left operand, not NoneType
+    assert keys_changed_enough(obj={"a": 100, "b": 180}, prev_obj={"a": 100, "b": 200}) is True
+    assert keys_changed_enough(obj={"a": 100, "b": 200}, prev_obj={"a": 100, "b": 200}) is False
+
+
+def test_float_distinct_digits_percent_negative_matches_positive():
+    # int_part's digits were silently dropped for negative numbers (int_part passed
+    # to integer_digits() without abs()), giving an asymmetric result vs the positive case.
+    positive = float_distinct_digits_percent(11.882, precision=3)
+    negative = float_distinct_digits_percent(-11.882, precision=3)
+    assert positive == negative
+
+
+def test_hashable_dict_mixed_key_types_does_not_crash():
+    from pyutilz.pythonlib import HashableDict
+
+    # sorted() on raw (key, value) tuples raised TypeError comparing str vs int keys.
+    d = HashableDict({1: "a", "b": 2})
+    assert isinstance(hash(d), int)
+
+
+def test_hashable_dict_hash_is_order_independent():
+    from pyutilz.pythonlib import HashableDict
+
+    assert hash(HashableDict({"a": 1, "b": 2})) == hash(HashableDict({"b": 2, "a": 1}))
+
+
+def test_open_safe_shelve_roundtrips_across_separate_with_blocks():
+    from pyutilz.pythonlib import open_safe_shelve
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "shelvedb")
+        with open_safe_shelve(db_path) as db:
+            db["x"] = 42
+        # Previously the underlying shelve/dbm connection was never closed/committed
+        # before the lock released, so a second, separate open would fail to see the
+        # write (or crash outright on some dbm backends).
+        with open_safe_shelve(db_path, flag="r") as db2:
+            assert db2["x"] == 42
+
+
+def test_open_safe_shelve_closes_db_even_if_body_raises():
+    from pyutilz.pythonlib import open_safe_shelve
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "shelvedb2")
+        with pytest.raises(ValueError):
+            with open_safe_shelve(db_path) as db:
+                db["y"] = 1
+                raise ValueError("boom")
+        with open_safe_shelve(db_path, flag="r") as db2:
+            assert db2["y"] == 1
+
+
+def test_ensure_installed_uses_running_interpreter_pip():
+    # Regression: must invoke `sys.executable -m pip`, never a bare "pip" resolved
+    # via PATH search order (which on Windows checks CWD before PATH).
+    with patch("pyutilz.core.pythonlib.importlib.util.find_spec", return_value=None):
+        with patch("pyutilz.core.pythonlib.subprocess.check_call") as mock_call:
+            ensure_installed("nonexistent_pkg_xyz")
+            args = mock_call.call_args[0][0]
+            assert args[0] == sys.executable
+            assert args[1:3] == ["-m", "pip"]

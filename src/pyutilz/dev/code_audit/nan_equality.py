@@ -28,9 +28,13 @@ def _is_nan_constant(node: ast.AST) -> bool:
         and node.args[0].value.strip().lower() == "nan"
     ):
         return True
-    # ``np.nan`` / ``numpy.nan`` / ``math.nan`` form
+    # ``np.nan`` / ``numpy.nan`` / ``math.nan`` form -- require the base to look like one of
+    # those modules/aliases, so an unrelated object's own ``.nan`` attribute isn't misflagged.
     if isinstance(node, ast.Attribute) and node.attr == "nan":
-        return True
+        base = node.value
+        base_name = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else None)
+        if base_name in ("np", "numpy", "math"):
+            return True
     # ``math.inf`` / ``np.inf`` are NOT NaN; let those through.
     return False
 

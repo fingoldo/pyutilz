@@ -218,8 +218,15 @@ def showcase_df_columns(
         # pl.collect_all runs all queries in parallel via the Polars thread pool
         vc_results = pl.collect_all(lazy_queries)
 
-        # Also collect n_unique in parallel for the rare-category check
-        nuniq_queries = [df.lazy().select(pl.col(var).n_unique().alias("n")) for var in target_cols]
+        # Also collect n_unique in parallel for the rare-category check. Respect `dropna` here
+        # too (drop_nulls() before n_unique() when dropna=True) so the eligibility gate agrees
+        # with the dropna-aware value-counts computed above -- otherwise a null-inclusive count
+        # can push a column one over max_cat_uniq_qty and skip it entirely, even though the
+        # caller's dropna=True means they only care about the non-null distinct values.
+        nuniq_queries = [
+            (df.lazy().select(pl.col(var).drop_nulls().n_unique().alias("n")) if dropna else df.lazy().select(pl.col(var).n_unique().alias("n")))
+            for var in target_cols
+        ]
         nuniq_results = pl.collect_all(nuniq_queries)
 
         for var, vc, nuniq_df in zip(target_cols, vc_results, nuniq_results):
@@ -274,8 +281,10 @@ def showcase_df_columns(
             else:
                 print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
-            # Rare/uninformative analysis
-            n_unique = df[var].nunique(dropna=False)
+            # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
+            # computed above), so a column that's within max_cat_uniq_qty distinct non-null
+            # values isn't silently skipped just because it also has nulls the caller asked to ignore.
+            n_unique = df[var].nunique(dropna=dropna)
             if n_unique <= max_cat_uniq_qty and len(stats) > 0:
                 full_stats = df[var].value_counts(dropna=dropna) if max_vars is not None else stats
                 col_rare = full_stats[full_stats <= rare_threshold].index.tolist()
@@ -335,9 +344,12 @@ def share_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df_shared
 
 
-def remove_stale_columns(X: pd.DataFrame) -> list:
+def get_non_stale_columns(X: pd.DataFrame) -> list:
     """
-    Removes columns with values that do not change
+    Returns the names of ``X`` columns whose values DO change (i.e. every column except the
+    stale/constant ones). Does NOT mutate ``X`` -- unlike its sibling ``remove_constant_columns``,
+    this function only rebinds its local parameter, so the caller's DataFrame is untouched;
+    the caller must apply the returned column list itself (``X = X[get_non_stale_columns(X)]``).
     """
     if len(X) == 0:
         return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
@@ -354,6 +366,17 @@ def remove_stale_columns(X: pd.DataFrame) -> list:
         all_features_names = X.columns.tolist()
         return all_features_names  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     return X.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
+
+def remove_stale_columns(X: pd.DataFrame) -> list:
+    """Deprecated alias for :func:`get_non_stale_columns` -- kept for backward compatibility.
+
+    Despite the name (mirroring ``remove_constant_columns``, which genuinely mutates its input
+    in place), this does NOT remove anything from the caller's DataFrame; it only returns the
+    list of non-stale column names. Prefer :func:`get_non_stale_columns`, whose name reflects
+    the actual (non-mutating) contract.
+    """
+    return get_non_stale_columns(X)
 
 
 def get_suspiciously_constant_columns(ref_df: pd.DataFrame) -> list:

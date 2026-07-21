@@ -76,6 +76,31 @@ def _longest_prefix_pricing(
     return default
 
 
+def longest_prefix_lookup(model: str, table: dict[str, Any], default: Any) -> Any:
+    """Same longest-matching-prefix resolution algorithm as :func:`_longest_prefix_pricing`
+    (exact match, then longest full-key prefix, then longest trailing-segment-trimmed prefix),
+    but for an arbitrary per-model VALUE table (e.g. max-output-token limits) rather than a
+    fixed ``(input, output)`` pricing pair. Silent, no warning log -- callers wanting the
+    mispricing-style warning should log it themselves.
+    """
+    exact = table.get(model)
+    if exact is not None:
+        return exact
+    best_val = None
+    best_len = -1
+    for key, val in table.items():
+        if model.startswith(key) and len(key) > best_len:
+            best_len = len(key)
+            best_val = val
+    if best_val is None:
+        for key, val in table.items():
+            prefix = key.rsplit("-", 1)[0]
+            if model.startswith(prefix) and len(prefix) > best_len:
+                best_len = len(prefix)
+                best_val = val
+    return best_val if best_val is not None else default
+
+
 # ── Refusal detection ─────────────────────────────────────────────────────
 # Patterns for common LLM refusal sentinels across providers (Anthropic,
 # OpenAI, Gemini). Intentionally conservative — we only match phrases that
@@ -346,8 +371,18 @@ class LLMProvider(ABC):
         # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
         # — feeding Tasks instead works across versions.
         tasks = [asyncio.create_task(process_request(req)) for req in requests]
-        for coro in asyncio.as_completed(tasks):
-            yield await coro
+        try:
+            for coro in asyncio.as_completed(tasks):
+                yield await coro
+        finally:
+            # If the caller stops consuming early (a `break`, an exception in the loop body, or
+            # simply not draining the generator), Python delivers GeneratorExit at the `yield`
+            # above -- without this, every already-scheduled-but-not-yet-completed task keeps
+            # running to completion in the background, invisibly making real (billable) LLM API
+            # calls the caller has no way to observe or cancel.
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
     def estimate_cost(
         self,
@@ -386,8 +421,13 @@ class LLMProvider(ABC):
     async def check_account_limits(self) -> dict[str, Any]:
         """Return account-level rate limit / quota / usage snapshot.
 
-        Default raises :class:`NotImplementedError`. Concrete providers
-        override when they expose this (currently only OpenRouter).
+        Default raises :class:`NotImplementedError`. 6 of 7 concrete providers override this
+        (only DeepSeek relies on the inherited OpenAI-compat header-fallback without its own
+        override): OpenRouter has a real dedicated-endpoint implementation; Anthropic and
+        DeepSeek fall back to captured rate-limit response headers; OpenAI, xAI, and Gemini
+        deliberately re-raise :class:`NotImplementedError` even though OpenAI/xAI already capture
+        the same headers internally; Claude Code shells out to the CLI (no HTTP headers to
+        capture at all).
 
         Common keys (provider-dependent):
             ``limit_remaining`` — credits left under the cap (USD)

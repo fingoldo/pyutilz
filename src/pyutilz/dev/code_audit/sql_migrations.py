@@ -35,15 +35,18 @@ _UNGUARDED_PATTERNS: list[tuple[re.Pattern, str]] = [
 # guard block that checks the current state first, not a keyword. Flagged
 # separately (advisory, not "add this keyword").
 _UNGUARDED_ADD_PK_RE = re.compile(r"\bADD\s+PRIMARY\s+KEY\b", re.IGNORECASE)
-_DO_BLOCK_RE = re.compile(r"\bDO\s*\$\$", re.IGNORECASE)
+_DO_BLOCK_RE = re.compile(r"\bDO\s*\$\w*\$", re.IGNORECASE)
 
-# A statement inside a ``DO $$ ... END $$`` block that itself contains an
+# A statement inside a ``DO $$ ... END $$`` block (or a custom-tagged variant,
+# e.g. ``DO $body$ ... END $body$`` -- PostgreSQL allows any tag between the
+# dollar signs, and many teams prefer a custom tag precisely to avoid ambiguity
+# when the block body itself contains ``$$``) that itself contains an
 # ``IF [NOT] EXISTS (...) THEN`` existence check is already conditional at
 # the block level, even though the guarded statement's own line has no
 # ``IF EXISTS``/``IF NOT EXISTS`` keyword -- the classic
 # information_schema-probe idempotency idiom. Matches the whole block
 # (DOTALL) so a multi-line ``IF NOT EXISTS (\n  SELECT ...\n)`` is found.
-_DO_BLOCK_SPAN_RE = re.compile(r"\bDO\s*\$\$(.*?)END\s*\$\$", re.IGNORECASE | re.DOTALL)
+_DO_BLOCK_SPAN_RE = re.compile(r"\bDO\s*(\$\w*\$)(.*?)END\s*\1", re.IGNORECASE | re.DOTALL)
 _EXISTENCE_GUARD_RE = re.compile(r"\bIF\s+(?:NOT\s+)?EXISTS\s*\(", re.IGNORECASE)
 
 
@@ -54,7 +57,7 @@ def _existence_guarded_line_ranges(text: str) -> list[tuple[int, int]]:
     at the block level, regardless of its own keyword form."""
     ranges = []
     for m in _DO_BLOCK_SPAN_RE.finditer(text):
-        if not _EXISTENCE_GUARD_RE.search(m.group(1)):
+        if not _EXISTENCE_GUARD_RE.search(m.group(2)):
             continue
         start_line = text.count("\n", 0, m.start()) + 1
         end_line = text.count("\n", 0, m.end()) + 1

@@ -12,7 +12,7 @@ DataFrame tooling across `pandaslib`, `polarslib`, `numpylib`, and `numbalib`: d
 
 ## `pyutilz.database`
 
-PostgreSQL/MySQL helpers, parameterised queries, SQL identifier validation (`validate_sql_identifier` rejects anything outside `^[A-Za-z_][A-Za-z0-9_]*$`, closing the classic identifier-interpolation injection hole), Redis helpers, and Delta Lake I/O. Example: `safe_execute("SELECT * FROM {} WHERE id = %s", (table, user_id))` where `table` has already passed `validate_sql_identifier`.
+PostgreSQL/MySQL helpers, parameterised queries, SQL identifier validation (`validate_sql_identifier` rejects anything outside `^[A-Za-z_][A-Za-z0-9_]*$`, closing the classic identifier-interpolation injection hole), Redis helpers, and Delta Lake I/O. Example: `safe_execute("SELECT * FROM {} WHERE id = %s".format(table), (user_id,))` where `table` has already passed `validate_sql_identifier` (formatted in after validation; only the value goes through the `%s` placeholder).
 
 ## `pyutilz.web`
 
@@ -32,8 +32,12 @@ String processing, Numba-accelerated similarity search (`SentenceSimilarityIndex
 
 ## `pyutilz.dev`
 
-Logging setup, benchmarking helpers, dashboards, Jupyter notebook helpers, and meta-test utilities used by the project's own static test suite. This is the "developer experience" layer — tooling that supports building and testing pyutilz itself and downstream projects, rather than runtime application logic.
+Logging setup, benchmarking helpers, dashboards, Jupyter notebook helpers, meta-test utilities used by the project's own static test suite, and `code_audit` — an AST-based scanner (+ CLI, `python -m pyutilz.dev.code_audit <root>`) for recurring bug classes (mutable defaults, late-binding closures, broad excepts, non-idempotent SQL migrations, and more). This is the "developer experience" layer — tooling that supports building and testing pyutilz itself and downstream projects, rather than runtime application logic.
 
 ## `pyutilz.llm`
 
 A unified async interface across seven LLM providers (Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code) behind one `generate()` / `generate_json()` / `generate_stream()` surface, plus account-credit and rate-limit introspection. See the [dedicated guide](guides/llm_providers.md) for why the abstraction exists and how provider switching works in practice.
+
+## `pyutilz.stats`
+
+Numba-jitted normality testing: D'Agostino K² and Anderson-Darling tests plus a combined `normality_verdict()` helper, for residual-distribution / degenerate-sample audits where the ordinary scipy path is too slow to run per-batch.

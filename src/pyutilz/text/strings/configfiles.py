@@ -16,7 +16,9 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
     For each requested variable, attempts base64 decoding (if ``encryption="xor"`` and the
     value isn't numeric) followed by ``ast.literal_eval`` to coerce it back to its native
     Python type, falling back to the raw string on either failure. If ``section`` is None,
-    every section in the file is read. Returns True on success, None if an exception occurred.
+    every section in the file is read, and keys are prefixed with their lowercased section name
+    (``"<section>_<var>"``) to avoid a same-named variable in two different sections silently
+    overwriting each other. Returns True on success, None if an exception occurred.
     """
     import ast
     import configparser
@@ -33,8 +35,13 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
             sections = [section]
             prepend_section_names = False
         elif section is None:
+            # Reading ALL sections: prefix keys by section name so a same-named variable in two
+            # different sections (a common [dev]/[prod]-style INI pattern) doesn't silently
+            # overwrite each other via last-write-wins in `object`.
             sections = config.sections()
-            prepend_section_names = False
+            prepend_section_names = True
+        else:
+            raise TypeError(f"section must be str or None, got {type(section).__name__}")
         for next_section in sections:
             if variables is None:
                 cur_variables = list(config[next_section].keys())

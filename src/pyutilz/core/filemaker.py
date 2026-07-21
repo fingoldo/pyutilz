@@ -24,7 +24,7 @@ from http import HTTPStatus
 from base64 import b64encode
 
 from pyutilz import web
-from pyutilz.pythonlib import get_attr
+from pyutilz.core.pythonlib import get_attr
 
 filemaker_url, filemaker_username, filemaker_password = None, None, None
 
@@ -68,12 +68,13 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
             logger.warning("Error %s while getting filemaker session token: %s", res.status_code, res.text)
         else:
             res = res.json()
-            def_token = get_attr(get_attr(res, "response", {}), "token")
-            if not def_token:
+            response_field = get_attr(res, "response", {})
+            def_token = get_attr(response_field if isinstance(response_field, dict) else {}, "token")
+            if not def_token or not isinstance(def_token, str):
                 logger.warning("Empty filemaker session token: %s", res)
             else:
                 web.connect(m_template_headers={"Authorization": "Bearer " + def_token, "Content-Type": "application/json"})
-                return def_token  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                return def_token
         sleep(sleep_int_seconds)
     return None
 

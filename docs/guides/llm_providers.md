@@ -24,7 +24,8 @@ Every provider exposes the same core surface:
 
 - `generate(prompt, system=None, **kwargs)` — a single completion.
 - `generate_json(...)` — schema-constrained JSON output where the upstream API supports it.
-- `get_account_credits()` / `check_account_limits()` — works natively where the upstream exposes it (OpenRouter, DeepSeek); other providers fall back to capturing `anthropic-ratelimit-*` / `x-ratelimit-*` response headers automatically, so the caller gets *some* signal even when the vendor has no dedicated billing endpoint.
+- `get_account_credits()` — native only for OpenRouter and DeepSeek (both expose a real balance endpoint); every other provider raises `NotImplementedError`.
+- `check_account_limits()` — native dedicated-endpoint support only for OpenRouter; Anthropic and DeepSeek fall back to captured `anthropic-ratelimit-*` / `x-ratelimit-*` response headers (populated after at least one `generate()` call); OpenAI, xAI, and Gemini raise `NotImplementedError` by design, even though OpenAI/xAI already capture the same rate-limit headers internally for other purposes; Claude Code shells out to the CLI and has no HTTP headers to capture.
 
 `generate_stream(...)` — token streaming with usage tracking preserved across the stream, not just on the final chunk — is available on the OpenAI-compatible providers (`openai`, `deepseek`, `xai`, `openrouter`). `anthropic`, `gemini`, and `claude-code` don't implement it yet.
 

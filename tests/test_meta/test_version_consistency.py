@@ -45,7 +45,7 @@ def _read_pyproject_version() -> str | None:
             continue
         if not in_project:
             continue
-        m = re.match(r'version\s*=\s*"([^"]+)"', stripped)
+        m = re.match(r'version\s*=\s*[\'"]([^\'"]+)[\'"]', stripped)
         if m:
             return m.group(1)
     return None
@@ -57,11 +57,23 @@ def test_version_consistent_across_sources():
         sources["pyutilz.__version__"] = pyutilz.__version__
     if hasattr(version_module, "__version__"):
         sources["pyutilz.version.__version__"] = version_module.__version__
-    pyproject_version = _read_pyproject_version()
-    if pyproject_version is not None:
-        sources["pyproject.toml::[project].version"] = pyproject_version
 
-    assert len(sources) >= 2, f"version consistency test needs ≥ 2 sources to compare; got " f"{list(sources)}"
+    # pyutilz.__version__ and pyutilz.version.__version__ are NOT independent sources --
+    # pyutilz/__init__.py does `from .version import __version__`, so they are always the exact
+    # same value by construction. The only real drift this test can catch is between the runtime
+    # value and pyproject.toml's declared build version, so pyproject_version must always be
+    # required (never silently skipped) -- otherwise this test degrades to comparing a value
+    # against itself and provides zero protection against the exact failure mode it exists for.
+    pyproject_version = _read_pyproject_version()
+    assert pyproject_version is not None, (
+        f"could not extract [project].version from {PYPROJECT_PATH} -- the parsing regex may have "
+        "silently stopped matching (e.g. an unrecognized quoting/formatting style). This test "
+        "provides no protection against pyproject.toml/version.py drift while this fails, so fix "
+        "the parser rather than letting this check quietly disappear."
+    )
+    sources["pyproject.toml::[project].version"] = pyproject_version
+
+    assert len(sources) >= 2, f"version consistency test needs >= 2 sources to compare; got {list(sources)}"
     distinct = set(sources.values())
     if len(distinct) > 1:
         details = "\n  ".join(f"{k} = {v!r}" for k, v in sources.items())

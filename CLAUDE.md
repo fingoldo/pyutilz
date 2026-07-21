@@ -31,3 +31,13 @@ New or edited code must type-check under strict mypy the first time, not after a
 8. **Run `mypy` on any file you touch before considering the change done**, the same way you'd run the relevant tests. A clean mypy run on the file(s) you just wrote/edited is part of "finished," not a follow-up chore for someone else.
 
 This is a general engineering-discipline rule, not a project-specific one — it applies to every new function and every edit to an existing one, in both `mlframe` and `pyutilz`.
+
+## Community-health files: intentionally absent (2026-07-21)
+
+`SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`, and `CITATION.cff` are deliberately NOT present in this repo. This is a decision, not a gap — do not add any of them, and do not flag their absence as a finding in a future audit.
+
+(`CODEOWNERS` was a separate, later Low finding in the same audit batch — not covered by the user's explicit won't-fix decision above; it was added as a minimal file rather than declared won't-fix, see repo root/`.github/CODEOWNERS`.)
+
+**Why:** raised during the 2026-07-21 full-repo audit, which flagged their absence as a Medium/Low finding per standard OSS-repo-hygiene conventions. The user explicitly said this is intentional behavior for this project and asked that it be documented so future audits/sessions stop proposing them.
+
+**How to apply:** if an audit, linter, or template-completeness check surfaces "missing SECURITY.md" / "missing CODE_OF_CONDUCT.md" / "no issue or PR templates" / "no CITATION.cff" for this repo, treat it as already dispositioned (won't-fix) — do not create the file, and do not re-raise it as an open item.

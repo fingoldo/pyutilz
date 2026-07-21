@@ -42,6 +42,7 @@ from pyutilz.llm.openrouter_provider._catalogue import (
     _per_token_cost_pair,
     _resolve_model_limits,
     _fetch_models_catalogue,
+    _ensure_catalogue_warm_async,
 )
 from pyutilz.llm.openrouter_provider._health import _summarize_endpoints
 
@@ -240,6 +241,13 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         assert last_exc is not None  # nosec B101 - internal invariant (loop always sets last_exc before falling through); not a security check, and python -O stripping it just means last_exc could be None here, causing a TypeError instead of this assert
         raise last_exc
 
+    async def _async_prepare(self) -> None:
+        """Pre-warm the models catalogue cache off the event-loop thread before
+        ``context_window``/``max_output_tokens`` (sync properties) are read on the hot request
+        path -- see ``_ensure_catalogue_warm_async``'s docstring for the blocking-call bug this
+        closes."""
+        await _ensure_catalogue_warm_async()
+
     @property
     def context_window(self) -> int:
         """Return the upstream-enforced context window for the active model.
@@ -401,10 +409,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             self.total_cache_write_tokens += cache_write
 
         cached = int(prompt_details.get("cached_tokens", 0) or 0)
-        # Fall back to "cached_tokens" only when upstream didn't use the legacy
-        # "prompt_cache_hit_tokens" field (which the base class already tracks).
-        if cached and not usage.get("prompt_cache_hit_tokens"):
-            self.total_cache_hit_tokens += cached
+        # NOTE: total_cache_hit_tokens itself is now accumulated in the shared base class's
+        # _record_usage (which, as of the 2026-07-21 audit fix, also falls back to
+        # prompt_tokens_details.cached_tokens) -- do NOT add it again here, that would double-count.
         self.last_cache_hit_tokens = cached or int(usage.get("prompt_cache_hit_tokens") or 0)
 
         audio = int(prompt_details.get("audio_tokens", 0) or 0)

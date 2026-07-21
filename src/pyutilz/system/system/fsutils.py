@@ -36,11 +36,17 @@ from pyutilz.text.strings import remove_json_defaults
 
 
 def ensure_dir_exists(directory: str):
-    """Create ``directory`` (and any missing parents) if it doesn't already exist. Return True if it already existed, False if it was just created."""
-    # directory = os.path.dirname(file_path)
+    """Create ``directory`` (and any missing parents) if it doesn't already exist. Return True if it already existed, False if it was just created.
+
+    Uses ``exist_ok=True`` rather than a separate exists-check-then-create (TOCTOU race): with
+    multiple worker processes/threads (this package's own parallel.py/joblib backends) each
+    calling this against the same not-yet-existing shared output directory, whichever loses an
+    exists()-then-makedirs() race gets an uncaught FileExistsError. The accepted trade-off is the
+    (measured, ~2.9x) syscall overhead of makedirs(exist_ok=True) vs. exists()-then-skip on the
+    common already-exists path -- correctness under concurrent callers wins here.
+    """
     existed = os.path.exists(directory)
-    if not existed:
-        os.makedirs(directory)
+    os.makedirs(directory, exist_ok=True)
     return existed
 
 
@@ -68,7 +74,7 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
             if du.free > max_singledisk_free_space:
                 # print(disk.mountpoint,free)
                 max_singledisk_free_space, best_disk = du.free, disk.mountpoint
-                percent = du.free / du.total
+                percent = du.free / du.total if du.total else 0.0
 
     return max_singledisk_free_space / 2**30, percent, best_disk, cumulative_disks_usage_total / 2**30, cumulative_disks_usage_free / 2**30
 

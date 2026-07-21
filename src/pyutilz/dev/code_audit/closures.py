@@ -70,6 +70,33 @@ def _ancestor_chain(target: ast.AST, root: ast.stmt) -> list[ast.AST]:
     return chain
 
 
+def _comprehension_target_names(node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp) -> set[str]:
+    """Names bound by any ``for`` clause of a comprehension/generator expression."""
+    names: set[str] = set()
+    for gen in node.generators:
+        names |= _loop_target_names_from_target(gen.target)
+    return names
+
+
+def _loop_target_names_from_target(target: ast.AST) -> set[str]:
+    """Same tuple/starred-unpacking logic as ``_loop_target_names``, but taking a bare target
+    (used by comprehensions, whose ``ast.comprehension.target`` isn't wrapped in a For node)."""
+    names: set[str] = set()
+
+    def _walk(t: ast.AST) -> None:
+        """Recursively collect Name ids bound by a (possibly nested/starred) comprehension target into the enclosing ``names`` set."""
+        if isinstance(t, ast.Name):
+            names.add(t.id)
+        elif isinstance(t, (ast.Tuple, ast.List)):
+            for el in t.elts:
+                _walk(el)
+        elif isinstance(t, ast.Starred):
+            _walk(t.value)
+
+    _walk(target)
+    return names
+
+
 def _closure_escapes_iteration(closure_node: ast.AST, loop_body: list[ast.stmt]) -> bool:
     """Conservative check: does ``closure_node`` look like it escapes
     this iteration of the loop body?
@@ -202,4 +229,35 @@ def scan_late_binding_closures(root: Path,
                             detail=(f"nested def {sub.name!r} inside for-loop " f"captures loop var(s) {sorted(captured)!r}; " f"closure escapes iteration."),
                         )
                     )
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                continue
+            loop_vars = _comprehension_target_names(node)
+            if not loop_vars:
+                continue
+            elts = [node.elt] if hasattr(node, "elt") else [node.key, node.value]
+            for elt in elts:
+                for sub in ast.walk(elt):
+                    if isinstance(sub, ast.Lambda):
+                        own_defaults = {a.arg for a in (*sub.args.posonlyargs, *sub.args.args, *sub.args.kwonlyargs)}
+                        referenced = _names_referenced(sub.body)
+                        captured = (referenced & loop_vars) - own_defaults
+                        if not captured:
+                            continue
+                        # A comprehension/generator lambda's closure is, by construction, stored
+                        # into the resulting list/set/dict/generator -- it always escapes the
+                        # iteration that created it, unlike a bare `for` loop where escape depends
+                        # on what the loop body does with the closure.
+                        findings.append(Finding(
+                            check="late_binding_closure",
+                            severity="P1",
+                            file=rel,
+                            line=sub.lineno,
+                            snippet=_line_text(src_lines, sub.lineno),
+                            detail=(
+                                f"lambda inside comprehension/generator expression captures loop var(s) "
+                                f"{sorted(captured)!r}; every lambda in the comprehension shares the same "
+                                f"post-iteration binding. Bind as default: `lambda x=x: ...`."
+                            ),
+                        ))
     return findings

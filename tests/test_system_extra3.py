@@ -252,7 +252,9 @@ class TestGetSystemInfoMac:
     @patch("pyutilz.system.system.sysinfo.socket")
     def test_mac_uuid_success(self, mock_socket, mock_bat, mock_pp, mock_os_info, mock_psutil, mock_sub, mock_plat):
         from pyutilz.system.system import get_system_info
-        mock_plat.system.return_value = "Mac"
+        # Regression test: platform.system() reports "Darwin" on real macOS, never "Mac" -- the
+        # "Mac" branch was previously dead code that no real platform.system() value ever matched.
+        mock_plat.system.return_value = "Darwin"
         # Popen calls are now context-managed (``with subprocess.Popen(...)``);
         # __enter__ must return the same MagicMock so attribute lookups in the
         # ``with``-block (.stdout, .communicate) hit the configured fakes.

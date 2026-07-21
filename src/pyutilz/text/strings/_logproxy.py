@@ -27,5 +27,20 @@ class _FacadeLoggerProxy:
     def __getattr__(self, name):
         return getattr(self._resolve(), name)
 
+    def __repr__(self):
+        # repr()/str() are resolved directly against the TYPE (bypassing __getattr__), so
+        # without explicit forwarding these fell through to object's generic default instead of
+        # reflecting the real, live-resolved logger.
+        return repr(self._resolve())
+
+    def __str__(self):
+        return str(self._resolve())
+
+    def __eq__(self, other):
+        return self._resolve() == other
+
+    def __hash__(self):
+        return hash(self._resolve())
+
 
 logger = _FacadeLoggerProxy()

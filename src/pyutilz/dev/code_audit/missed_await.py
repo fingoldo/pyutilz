@@ -61,6 +61,10 @@ def scan_missed_await(root: Path,
                     rebound.add(n.id)
                 elif isinstance(n, ast.arg):
                     rebound.add(n.arg)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func:
+                    # A nested def with the same name as a module-level async function is a
+                    # legitimate local shadow (same idea as the local-import shadow above).
+                    rebound.add(n.name)
             for stmt in ast.walk(func):
                 if not isinstance(stmt, ast.Expr):
                     continue
@@ -82,4 +86,119 @@ def scan_missed_await(root: Path,
                             f"operation actually executes."
                         ),
                     ))
+    return findings
+
+
+# --- sync-blocking call inside async def ----------------------------------
+#
+# Symmetric "sibling" of the missed-await scan above: that one catches "forgot to await a
+# coroutine"; this one catches "used a synchronous blocking call inside a coroutine with no
+# await/to_thread wrapper", which stalls the WHOLE event loop (every other in-flight coroutine),
+# not just the current task. Confirmed real bug in the 2026-07-21 audit:
+# openrouter_provider/_catalogue.py's `httpx.get()` (no await) was reachable from `async def
+# generate()`/`generate_stream()` through a same-package helper chain, blocking the entire event
+# loop for up to ~10s on the first call per process.
+
+_BLOCKING_ATTR_CALLS = frozenset({"get", "post", "put", "delete", "patch", "request", "urlopen", "sleep", "run", "call", "check_call", "check_output"})
+_BLOCKING_ROOT_HINTS = frozenset({"requests", "grequests", "urllib", "time", "subprocess"})
+# httpx is intentionally excluded from _BLOCKING_ROOT_HINTS: httpx.AsyncClient's own .get()/.post()
+# ARE legitimately awaited, so a bare root-name check would false-positive on the common case.
+
+
+def _is_blocking_call(node: ast.Call) -> bool:
+    """True if ``node`` looks like a synchronous blocking call (``requests.get(...)``,
+    ``time.sleep(...)``, ``subprocess.run(...)``, bare ``httpx.get(...)`` -- NOT
+    ``httpx.AsyncClient().get(...)``, which is a legitimate async call site normally awaited)."""
+    if not isinstance(node.func, ast.Attribute) or node.func.attr not in _BLOCKING_ATTR_CALLS:
+        return False
+    base = node.func.value
+    while isinstance(base, ast.Attribute):
+        base = base.value
+    if isinstance(base, ast.Name):
+        if base.id in _BLOCKING_ROOT_HINTS:
+            return True
+        if base.id == "httpx" and node.func.attr in ("get", "post", "put", "delete", "patch", "request"):
+            return True
+    return False
+
+
+class _BlockingCallFinder(ast.NodeVisitor):
+    """Collect blocking ``ast.Call`` nodes reachable in a function body that are NOT inside an
+    ``await`` expression, tracking Await-ancestor state via an explicit depth counter rather than
+    ``ast.walk`` (which has no ancestor information)."""
+
+    def __init__(self) -> None:
+        self.hits: list[ast.Call] = []
+        self._await_depth = 0
+
+    def visit_Await(self, node: ast.Await) -> None:
+        """Track entry/exit of an ``await`` expression's subtree so calls inside it are not flagged."""
+        self._await_depth += 1
+        self.generic_visit(node)
+        self._await_depth -= 1
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Record ``node`` as a hit if it's a blocking call not currently nested under an ``await``."""
+        if self._await_depth == 0 and _is_blocking_call(node):
+            self.hits.append(node)
+        self.generic_visit(node)
+
+    # Don't descend into nested function/lambda scopes -- their own blocking calls are that
+    # scope's own concern (a nested `def` might itself be sync, called via run_in_executor).
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Stop traversal at a nested sync function's own scope."""
+        return None
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Stop traversal at a nested async function's own scope."""
+        return None
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Stop traversal at a nested lambda's own scope."""
+        return None
+
+
+def scan_sync_blocking_in_async(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find synchronous blocking calls (``requests.*``, bare ``httpx.get/post/...``,
+    ``time.sleep``, ``subprocess.run/call/check_call/check_output``) inside an ``async def`` body
+    with no ``await``/``asyncio.to_thread`` wrapper -- this stalls the ENTIRE event loop (every
+    other in-flight coroutine), not just the current task.
+
+    Only checks calls made directly in the async function's own body (does not follow calls into
+    helper functions -- same-file call-graph inlining is a known blind spot, kept out to avoid
+    false positives from cross-file/library calls this scanner can't resolve).
+
+    Severity: P1 (a real, confirmed-in-the-wild event-loop-stall bug class).
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.AsyncFunctionDef):
+                continue
+            finder = _BlockingCallFinder()
+            for stmt in func.body:
+                finder.visit(stmt)
+            for call in finder.hits:
+                assert isinstance(call.func, ast.Attribute)  # nosec B101 - _is_blocking_call only ever appends Calls whose .func is an Attribute; narrows the type for the access below, not a security check
+                attr = call.func.attr
+                findings.append(Finding(
+                    check="sync_blocking_in_async",
+                    severity="P1",
+                    file=rel,
+                    line=call.lineno,
+                    snippet=_line_text(src_lines, call.lineno),
+                    detail=(
+                        f"`...{attr}(...)` is a synchronous blocking call inside `async def "
+                        f"{func.name}` with no `await`/`asyncio.to_thread` wrapper -- stalls the "
+                        "WHOLE event loop (every other in-flight coroutine), not just this task."
+                    ),
+                ))
     return findings

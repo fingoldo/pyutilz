@@ -114,7 +114,13 @@ def compute_entropy_stats(text: str, order: int = 0) -> tuple:
 def naive_entropy_rate(a: str) -> float:
     """
     Computes zeroth-order (character-frequency-based) Shannon entropy of the string a, ignoring any sequential/conditional structure.
+
+    Returns 0.0 for an empty string ("entropy of nothing" is undefined; 0.0 is the deliberate,
+    documented sentinel rather than the -0.0 numpy's empty-array division would otherwise produce
+    silently).
     """
+    if not a:
+        return 0.0
     _, cnt = np.unique(np.array(list(a)), return_counts=True)
     # print(_)  # unique chars themselves, unused: only their counts matter for entropy
     # print(cnt)

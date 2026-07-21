@@ -1,13 +1,17 @@
 # pyutilz
 
 [![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
+[![MyPy](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml)
 [![Black](https://github.com/fingoldo/pyutilz/workflows/Black/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
+[![codecov-numba](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg?flag=numba-disabled)](https://codecov.io/gh/fingoldo/pyutilz/flags)
+[![numba coverage](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/fingoldo/pyutilz/blob/master/LICENSE)
+[![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg)](https://fingoldo.github.io/pyutilz/)
 
-A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core has zero hard dependencies; every domain ships as an optional extras group so `pip install pyutilz` stays light and you opt into what you need.
+A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core has few hard dependencies (`numba`, `joblib`, `portalocker` -- used throughout `pyutilz.core.pythonlib`, the module nearly every other subpackage imports); every domain-specific extra beyond that ships as an optional extras group so `pip install pyutilz` stays light and you opt into what you need.
 
 See the [Modules](modules.md) reference for what each sub-package does, and the guides below for the subsystems with real design decisions behind them.
 

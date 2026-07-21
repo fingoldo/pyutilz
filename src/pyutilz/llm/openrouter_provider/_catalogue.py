@@ -13,6 +13,7 @@ via ``_pkg().<name>`` at call time so those patches are always seen here.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Any
@@ -58,6 +59,22 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             return {}  # do NOT cache failure — retry on next call
         _pkg()._MODELS_CATALOGUE = catalogue
         return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
+
+async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
+    """Async-safe pre-warm of the catalogue cache, via ``asyncio.to_thread`` so the blocking
+    ``httpx.get()`` in ``_fetch_models_catalogue`` runs off the event-loop thread.
+
+    Regression fix (2026-07-21 audit): ``context_window``/``max_output_tokens`` are plain
+    (necessarily sync) properties that call ``_fetch_models_catalogue()`` on a cache miss --
+    calling that directly from an async property has NO await point, so it synchronously blocks
+    the WHOLE event loop (every other in-flight coroutine) for up to ``timeout`` seconds. Callers
+    on the async path should await this BEFORE the sync property is read, so the property call
+    that follows is a cheap cache-hit.
+    """
+    if _pkg()._MODELS_CATALOGUE is not None:
+        return
+    await asyncio.to_thread(_fetch_models_catalogue, timeout)
 
 
 def _per_token_cost_pair(model: str) -> tuple[float, float]:

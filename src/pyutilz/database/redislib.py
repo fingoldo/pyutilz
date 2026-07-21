@@ -19,7 +19,10 @@ from typing import Any
 import redis
 from time import sleep
 from random import random
+from redis.exceptions import AuthenticationError as RedisAuthenticationError
 from redis.exceptions import ConnectionError as RedisConnectionError
+
+from pyutilz.database.exceptions import DatabaseConnectionError
 
 rc = None
 
@@ -43,15 +46,23 @@ def rclose() -> None:
         finally:
             rc = None
 
-def rexecute (method_name:str,*args,**kwargs) -> Any:
+def rexecute(method_name: str, *args, max_retries: Any = None, **kwargs) -> Any:
     """
     Safely execute any Redis command, not worrying about temporary network/server issues.
 
-    Transient ConnectionErrors are retried with a small random backoff. A permanent error
-    (e.g. missing connection, unknown method) is logged and re-raised instead of busy-looping forever.
+    Transient ConnectionErrors are retried with a small random backoff (up to ``max_retries``
+    times; ``None``, the default, retries indefinitely -- pass an int to bound it). A permanent
+    error (e.g. missing connection, unknown method, or authentication failure) is logged and
+    re-raised instead of retrying.
+
+    WARNING: ``method_name``/``args``/``kwargs`` must never be built from external/user-controlled
+    input -- this is a generic reflection-based dispatcher onto the ENTIRE redis-py client API
+    (including e.g. ``eval``/``evalsha`` for arbitrary Lua, ``config_set``, ``flushall``,
+    ``flushdb``, ``shutdown``), with no allow-list. "Safely" in this docstring refers only to the
+    retry-on-transient-ConnectionError behaviour below, not command authorization.
     """
     if rc is None:
-        raise RuntimeError("Redis connection is not established. Call rconnect(...) first.")
+        raise DatabaseConnectionError("Redis connection is not established. Call rconnect(...) first.")
 
     try:
         method = getattr(rc, method_name)
@@ -60,12 +71,24 @@ def rexecute (method_name:str,*args,**kwargs) -> Any:
         raise
 
     res = None
+    attempt = 0
     while True:
         try:
             res = method(*args, **kwargs)
-        except RedisConnectionError as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
-            # Transient: retry with backoff.
+        except RedisAuthenticationError:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
+            # Regression fix: AuthenticationError (wrong password) is a SUBCLASS of
+            # ConnectionError in redis-py -- a permanent, non-transient failure was previously
+            # caught by the same "retry with jittered backoff" branch as a genuine network
+            # blip, looping forever with no exception ever propagating to the caller.
+            logger.exception("Redis authentication failed -- not retrying (permanent error)")
+            raise
+        except RedisConnectionError as e:
+            # Transient: retry with backoff, bounded by max_retries if given.
+            attempt += 1
             logger.exception(e)
+            if max_retries is not None and attempt >= max_retries:
+                logger.error("rexecute: giving up after %d attempts", attempt)
+                raise
             sleep(1 * random())  # nosec B311 - jitter for retry backoff timing, not a security/crypto use
         except Exception as e:
             # Permanent error: log and propagate instead of busy-looping forever.

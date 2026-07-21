@@ -217,8 +217,14 @@ class PortHealthTracker:
     def pick_port(self, port_range: int) -> int:
         """Pick a random non-banned port offset in ``[1, port_range]``.
 
-        Falls back to any port if >90% are banned.
+        Falls back to any port (logged) if no unbanned candidate is found after 10 tries.
         """
+        # Regression fix: port_range<=0 made random.randint(1, port_range) raise ValueError
+        # ("empty range") -- port_range=0 is a plausible way to express "single fixed proxy, no
+        # rotation range" (mirrored by web.py's is_rotating_proxy() for the OTHER proxy
+        # subsystem in this package, which recognizes a fixed min==max port the same way).
+        if port_range <= 1:
+            return 1
         with self._lock:
             if not self._banned:
                 return random.randint(1, port_range)  # nosec B311 - non-cryptographic random selection of a sticky-session proxy port offset for load spreading, not a security control
@@ -230,13 +236,23 @@ class PortHealthTracker:
             expired = [p for p, exp in self._banned.items() if time.monotonic() >= exp]
             for p in expired:
                 del self._banned[p]
-            if len(self._banned) >= port_range * 0.9:
+            # Regression fix: this fallback (give up after 10 random tries against the ban list,
+            # return an unchecked random port) previously only LOGGED when >=90% of the pool was
+            # banned, even though the exact same unchecked-fallback behavior fires below that
+            # threshold too -- silently handing back a port already known to be misbehaving with
+            # no log signal at all in the common case (e.g. 50% banned, 10 unlucky random draws).
+            ban_ratio = len(self._banned) / port_range
+            if ban_ratio >= 0.9:
                 _log.warning(
-                    "[PROXY] %d/%d ports banned -- using random port anyway",
+                    "[PROXY] %d/%d ports banned -- using random (possibly-banned) port anyway",
                     len(self._banned), port_range,
                 )
-                return random.randint(1, port_range)  # nosec B311 - fallback random port pick when almost all ports are banned; still just load-spreading, not security-sensitive
-            return random.randint(1, port_range)  # nosec B311 - default-path random port-offset selection for proxy rotation, not security-sensitive
+            else:
+                _log.debug(
+                    "[PROXY] gave up after 10 random draws against %d/%d banned ports -- using random (possibly-banned) port anyway",
+                    len(self._banned), port_range,
+                )
+            return random.randint(1, port_range)  # nosec B311 - fallback random port pick after exhausting the unbanned-candidate search budget; still just load-spreading, not security-sensitive
 
     def stats(self) -> Dict[str, Any]:
         """Return current health stats (for debugging / metrics)."""

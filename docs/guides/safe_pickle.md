@@ -11,7 +11,7 @@ safe_dump(model, "model.pkl")   # writes model.pkl AND model.pkl.sha256
 model = safe_load("model.pkl")  # recomputes the hash, compares, then unpickles
 ```
 
-`safe_dump` writes atomically (dump to a per-process temp file, fsync, `os.replace` onto the final path) so a crash mid-write leaves the previous file intact rather than a truncated one, and the sidecar is written only *after* the payload is fully on disk — the hash always matches the final bytes, never a partial write.
+`safe_dump` writes atomically (dump to a per-process-and-thread temp file, fsync, `os.replace` onto the final path) so a crash mid-write leaves the previous file intact rather than a truncated one, and the sidecar is written only *after* the payload is fully on disk — the hash always matches the final bytes, never a partial write.
 
 ## Why this exists
 

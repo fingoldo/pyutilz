@@ -29,12 +29,18 @@ def connect(prefect_key: Optional[str] = None) -> None:
     """Create the module-level Prefect ``client`` from ``prefect_key`` (or from ``settings.ini``'s ``[PREFECT] prefect_key`` if not given) and hook it into the graphql helper; sets ``client`` to None if no key is available."""
     global client
     if prefect_key is None:
+        # locals() inside a normal function scope is a DISCONNECTED SNAPSHOT dict in CPython --
+        # mutating it never writes back to the real `prefect_key` fast-local variable slot, so the
+        # settings.ini fallback below previously never actually took effect. Use a real dict and
+        # read the resolved value back out of it instead.
+        cfg: dict = {}
         strings.read_config_file(
             file="settings.ini",
             section="PREFECT",
             variables="prefect_key",
-            object=locals(),
+            object=cfg,
         )
+        prefect_key = cfg.get("prefect_key")
     if prefect_key:
         client = prefect.Client(api_key=prefect_key)
         graphql.connect(client)
@@ -117,12 +123,12 @@ def wait_for_absense_of_tasks(
     max_retries: int = 60,
     logger: Optional[logging.Logger] = None,
 ):
-    """Poll (sleeping ``sleep_seconds`` between attempts, up to ``max_retries`` times) until no flow run with both the "ml" and "gpu" labels is running; returns True once clear, False if retries are exhausted."""
+    """Poll (sleeping ``sleep_seconds`` between attempts, up to ``max_retries`` times) until no flow run carrying ALL of ``labels`` (default ``{"ml", "gpu"}``) is running; returns True once clear, False if retries are exhausted."""
     if labels is None:
-        labels = set()
+        labels = {"ml", "gpu"}
     n = 0
     while True:
-        if get_running_flows(flow_id=flow_id, except_flowrun_id=except_flowrun_id, allof_labels=set(["ml", "gpu"])):
+        if get_running_flows(flow_id=flow_id, except_flowrun_id=except_flowrun_id, allof_labels=labels):
             n += 1
             if n > max_retries:
                 return False

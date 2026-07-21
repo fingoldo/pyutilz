@@ -44,7 +44,7 @@ jobs:
       # the 3.8 leg. Rather than dropping [llm] wholesale (factory.py eagerly imports
       # pydantic-settings, breaking collection for every llm test), install the same
       # [llm] package set MINUS google-genai directly on 3.8: gemini-specific tests
-      # already guard with pytest.importorskip("google.genai") (see test_audit_providers.py,
+      # already guard with pytest.importorskip("google.genai") (see test_llm_provider_audit_fixes.py,
       # test_llm_account_credits.py, test_llm_live.py), so they skip cleanly instead of
       # erroring, and every other provider's tests run unaffected.
       # PYVER is passed via env: rather than interpolated directly into the script (${{ }}
@@ -67,7 +67,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        pytest --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=60
+        pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=60
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac  # v5
@@ -82,13 +82,13 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@f26052fd4fee0d667aa6f4c3290d77e7ca6c1c06  # v1.2.0
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@1fd408df105f2a7d22d36a239d94a39ef888305a  # v1.2.1
     with:
       ignore: "C901"
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@f26052fd4fee0d667aa6f4c3290d77e7ca6c1c06  # v1.2.0
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@1fd408df105f2a7d22d36a239d94a39ef888305a  # v1.2.1
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -100,7 +100,7 @@ jobs:
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@f26052fd4fee0d667aa6f4c3290d77e7ca6c1c06  # v1.2.0
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@1fd408df105f2a7d22d36a239d94a39ef888305a  # v1.2.1
     with:
       source-path: src/pyutilz
 

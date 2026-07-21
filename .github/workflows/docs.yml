@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   docs:
-    uses: fingoldo/py-ci-shared/.github/workflows/docs.yml@f26052fd4fee0d667aa6f4c3290d77e7ca6c1c06  # v1.2.0
+    uses: fingoldo/py-ci-shared/.github/workflows/docs.yml@1fd408df105f2a7d22d36a239d94a39ef888305a  # v1.2.1
     with:
       default-branch: master
       install-command: |

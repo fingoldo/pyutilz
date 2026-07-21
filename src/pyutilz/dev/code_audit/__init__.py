@@ -99,6 +99,58 @@ list[Finding]):
   result. A helper already decorated with ``@cache``/``@lru_cache`` is
   skipped (already fixed).
 
+- ``scan_undeclared_imports``: a module-top-level third-party import whose
+  package belongs to a DIFFERENT pyproject.toml extras group than the
+  importing file's own domain -- catches an import reachable only because
+  another feature's extras group happens to also be installed, so a
+  minimal install of just this file's own domain breaks at import time.
+
+- ``scan_vacuous_assertions``: a tautological ``assert`` in a ``test_*.py``
+  file -- a bare ``assert True``, or an ``assert (X is None or X == {} or
+  ... )`` whose every OR-branch just restates "any value of X is fine",
+  so the assertion can never fail regardless of what the code under test
+  actually returns.
+
+- ``scan_locals_globals_as_output``: ``locals()``/``globals()`` passed as
+  an argument whose name suggests it's meant to be an output/mutation
+  channel (``object=``, ``out=``, ``target=``, ...) -- both are
+  disconnected snapshots inside a normal function, so the intended
+  mutation never reaches the caller.
+
+- ``scan_missing_network_timeout``: an HTTP call (``requests``/``httpx``/
+  ``urllib``/...) with no ``timeout=`` and no pre-configured
+  session/client timeout -- a hung remote peer blocks the call forever.
+
+- ``scan_parameter_aliasing_mutation``: ``local = param`` (a bare rebind,
+  no ``.copy()``) followed by an in-place mutation of ``local`` in the
+  same function -- the mutation silently reaches the CALLER's object
+  through the un-copied parameter reference.
+
+- ``scan_sync_blocking_in_async``: a synchronous blocking call
+  (``requests.*``, bare ``httpx.get/post/...``, ``time.sleep``,
+  ``subprocess.run/call/...``) inside an ``async def`` body with no
+  ``await``/``asyncio.to_thread`` wrapper -- stalls the WHOLE event loop,
+  not just the current task.
+
+- ``scan_retry_loops``: two shapes of risky retry loop -- a ``while
+  True:`` retry whose ``except`` handler has no ``sleep()`` (a busy-loop
+  burning 100% CPU on a persistent failure), and a sleep-backed ``while
+  True:`` retry with no visible ``break`` (advisory: confirm "retry
+  forever" is deliberate).
+
+- ``scan_duplicate_module_docstring``: two consecutive bare string-literal
+  statements at the top of a module -- only the first becomes
+  ``__doc__``; the second is silently discarded at runtime.
+
+- ``scan_unraised_exceptions``: a custom exception class (repo-wide,
+  cross-file) that is never ``raise``d anywhere in the scanned tree --
+  its documented error-signaling contract silently never fires.
+
+- ``scan_credential_shaped_log_args``: a ``logger.<level>(...)`` call
+  whose arguments include a credential-shaped name (``proxy``,
+  ``password``, ``token``, ``secret``, ``api_key``, ``cookie``, ...) with
+  no redaction hint nearby -- a real, if noisy, security-adjacent signal.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -131,7 +183,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 from ._base import Finding
-from .mutable_defaults import scan_mutable_defaults
+from .mutable_defaults import scan_mutable_defaults, scan_parameter_aliasing_mutation
 from .closures import scan_late_binding_closures
 from .default_via_or import scan_default_via_or_trap
 from .broad_except import scan_broad_except_swallows
@@ -142,15 +194,25 @@ from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
-from .missed_await import scan_missed_await
+from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
-from .registry import SCANNERS, run_all
+from .undeclared_imports import scan_undeclared_imports
+from .vacuous_assertions import scan_vacuous_assertions
+from .locals_globals_output import scan_locals_globals_as_output
+from .network_timeout import scan_missing_network_timeout
+from .retry_loops import scan_retry_loops
+from .module_docstring import scan_duplicate_module_docstring
+from .unraised_exceptions import scan_unraised_exceptions
+from .credential_logging import scan_credential_shaped_log_args
+from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
 __all__ = [
     "Finding",
     "SCANNERS",
     "run_all",
+    "register_scanner",
+    "get_scanners",
     "main",
     "scan_mutable_defaults",
     "scan_late_binding_closures",
@@ -167,6 +229,16 @@ __all__ = [
     "scan_duplicate_conditions",
     "scan_missed_await",
     "scan_redundant_test_fit_calls",
+    "scan_undeclared_imports",
+    "scan_vacuous_assertions",
+    "scan_locals_globals_as_output",
+    "scan_missing_network_timeout",
+    "scan_parameter_aliasing_mutation",
+    "scan_sync_blocking_in_async",
+    "scan_retry_loops",
+    "scan_duplicate_module_docstring",
+    "scan_unraised_exceptions",
+    "scan_credential_shaped_log_args",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -178,6 +250,9 @@ for _submod in (
     "broad_except", "nan_equality", "mutation_during_iteration",
     "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
     "duplicate_conditions", "missed_await", "redundant_test_fit",
+    "undeclared_imports", "vacuous_assertions", "locals_globals_output",
+    "network_timeout", "retry_loops", "module_docstring",
+    "unraised_exceptions", "credential_logging",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

@@ -59,7 +59,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
-        args: ['--ignore-words-list=coo']
+        args: ['--ignore-words-list=coo,ser,utilizaton,re-declared,re-declare']
 
   # Real-bug gate: the project's FULL configured select/ignore (pyproject.toml), minus C901
   # (complexity, advisory-only). Closed to 0 findings 2026-07-09 after the RUF/G/ISC/PERF/DTZ/A/
@@ -260,7 +260,7 @@ repos:
   # mypy-full.yml exactly (same `mypy src/pyutilz` invocation) -- still useful to run in full
   # on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
   - repo: https://github.com/fingoldo/py-ci-shared
-    rev: v1.0.0
+    rev: v1.2.1
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']

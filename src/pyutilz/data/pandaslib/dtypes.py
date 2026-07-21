@@ -59,7 +59,8 @@ def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
     for col, type_name in df.dtypes.to_dict().items():
         # str(type_name) is loop-invariant across type_names; hoisting it avoids recomputing the dtype repr once per probed type.
         type_name_str = str(type_name)
-        res.extend([col for the_type in type_names if the_type in type_name_str])
+        if any(the_type in type_name_str for the_type in type_names):
+            res.append(col)
     return res
 
 
@@ -202,7 +203,12 @@ def optimize_dtypes(
                                 # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float32) must not pass here, for example.
                                 if col not in mantissas:
                                     values = df[col].values
-                                    with np.errstate(divide="ignore"):
+                                    # invalid="ignore" also suppresses the "invalid value encountered in
+                                    # divide" RuntimeWarning from 0.0/0.0 (exact 0.0 values: log10(0)==-inf,
+                                    # 10**-inf==0.0) -- a different warning category than "divide", which
+                                    # errstate(divide=...) alone doesn't cover. The resulting NaN is already
+                                    # masked out downstream via np.ma.array, so this only silences noise.
+                                    with np.errstate(divide="ignore", invalid="ignore"):
                                         _, int_part = np.modf(np.log10(np.abs(values)))
                                         mantissa = np.round(values / 10**int_part, np.finfo(old_dtypes[col]).precision - 1)
 

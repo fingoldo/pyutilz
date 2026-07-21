@@ -18,7 +18,7 @@ from ._common import (
 
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection (see below)
 
-from .dtypes import optimize_dtypes
+from .dtypes import optimize_dtypes, get_df_memory_consumption
 from typing import Callable, Optional
 
 
@@ -106,13 +106,17 @@ def read_stats_from_multiple_files(
         fnames.append(filename)
         tmp_df = getattr(pd, read_fcn)(filename)
 
-        old_size = tmp_df.memory_usage(index=True).sum() / 1024**3
+        # deep=True (byte-accurate for object/string columns) -- a shallow .memory_usage() call
+        # undercounts object-dtype columns by 30x+ (pointer size only), making the resave-trigger
+        # comparison below unreliable for exactly the string-heavy dataframes this function
+        # batch-processes.
+        old_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
         logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
 
         if optimize:
             tmp_df = optimize_dtypes(tmp_df)
             gc.collect()
-            new_size = tmp_df.memory_usage(index=True).sum() / 1024**3
+            new_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
             logger.info("After optimization, %s got size %.1f Gb", filename, new_size)
 
             if save_on_successful_optimization:

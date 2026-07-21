@@ -16,12 +16,14 @@ import re
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
+import random
 import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
 from pyutilz.llm.base import LLMProvider
+from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -346,10 +348,15 @@ class ClaudeCodeProvider(LLMProvider):
 
         self._call_count += 1
         attempt = 0
-        max_attempts = 20
+        # Regression fix (2026-07-21 audit): read the same PYUTILZ_LLM_MAX_RETRIES-configurable
+        # bound every other provider uses (via _retry.py), instead of a hardcoded 20 that
+        # silently diverged from the env-var-documented behavior -- since get_llm_provider()'s
+        # default provider_name is "claude-code", this is the retry behavior most callers get.
+        # 0 means infinite (mirrors _retry.MAX_RETRY_ATTEMPTS semantics).
+        max_attempts = MAX_RETRY_ATTEMPTS
         while True:
             attempt += 1
-            if attempt > max_attempts:
+            if max_attempts != 0 and attempt > max_attempts:
                 raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
             try:
                 if _HAS_SDK:
@@ -403,8 +410,16 @@ class ClaudeCodeProvider(LLMProvider):
                 self.total_prompt_tokens += in_tok
                 self.total_completion_tokens += out_tok
                 return result
-            except (ConnectionError, TimeoutError, OSError) as e:
-                wait = min(5 * (2 ** (attempt - 1)), 300)
+            except (ConnectionError, TimeoutError, OSError, subprocess.TimeoutExpired) as e:
+                # subprocess.TimeoutExpired (raised by run_cli() on a CLI hang past self.timeout)
+                # is a SubprocessError subclass, NOT a TimeoutError/OSError/ConnectionError
+                # subclass -- it previously fell through to the generic `except Exception` below,
+                # never matched _is_rate_limit_error, and re-raised immediately with zero retries
+                # despite being exactly the transient-failure shape this except clause exists for.
+                # Jitter added (matching _retry.py's RETRY_WAIT) so several ClaudeCodeProvider
+                # workers hitting a transient error at the same moment (a shared network blip)
+                # don't all retry in lockstep -- a classic thundering-herd pattern.
+                wait = min(5 * (2 ** (attempt - 1)), 300) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
                 logger.warning(
                     "LLM call attempt %d failed (%s: %s), retrying in %.0fs...",
                     attempt, type(e).__name__, str(e)[:200], wait,
@@ -744,9 +759,26 @@ class ClaudeCodeProvider(LLMProvider):
         return 0.0
 
     async def count_tokens(self, text: str) -> int:
-        """Count tokens using tiktoken (accurate) or len//4 fallback."""
-        from pyutilz.llm.token_counter import count_tokens
-        return count_tokens(text)
+        """Count tokens via Anthropic's native ``messages.count_tokens`` API when a usable
+        Anthropic client/API key is available -- Claude Code runs real Claude models, so tiktoken
+        (OpenAI's tokenizer, wrong for Claude's BPE for >5% of typical text -- see
+        AnthropicProvider.count_tokens()'s docstring) is only an approximation, not "accurate".
+
+        Falls back to the tiktoken/len//4 approximation whenever no Anthropic API key is
+        configured (the common case for Claude Code, which authenticates via CLI subscription,
+        not an API key) or the API call fails for any other reason -- this must never hard-require
+        an API key just to count tokens.
+        """
+        try:
+            import anthropic as _anthropic
+
+            client = _anthropic.AsyncAnthropic()  # picks up ANTHROPIC_API_KEY from env, if set
+            result = await client.messages.count_tokens(model=self.model, messages=[{"role": "user", "content": text}])
+            return int(result.input_tokens)
+        except Exception as exc:
+            logger.debug("Claude Code count_tokens via Anthropic API unavailable (%s); falling back to tiktoken approximation.", exc)
+            from pyutilz.llm.token_counter import count_tokens
+            return count_tokens(text)
 
     async def get_account_credits(self) -> dict:
         """Always raise ``NotImplementedError``: Claude Code runs on a Max subscription with no per-token credit balance to fetch."""

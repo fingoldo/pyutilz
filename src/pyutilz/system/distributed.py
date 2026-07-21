@@ -32,7 +32,6 @@ class Container:
 
 
 pid = None
-node_id = None
 _container = Container()
 m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
 
@@ -63,7 +62,7 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
             caller learns the scraper did NOT register instead of failing silently.
     """
     global pid
-    global _container, node_id, pid, m_app_name, m_scraper_name, m_version, m_ip
+    global _container, pid, m_app_name, m_scraper_name, m_version, m_ip
 
     import os
     import inspect
@@ -94,36 +93,47 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     with _identity_lock:
         m_app_name, m_scraper_name, m_version, m_ip = app_name, scraper_name, version, ip
 
-    if _container.node_id is None:
-        try:
-            info = system.get_system_info(only_stats=False)
-        except Exception as e:
-            # Fail loudly: without system info the scraper cannot register at all,
-            # and silently returning None here left callers believing registration
-            # succeeded. Re-raise so the failure is visible.
-            logger.exception(e)
-            raise
-        else:
-            fields = "host_name,os_machine_guid,os_serial"
+    # The whole check-then-act on _container.node_id (including the DB select/insert that
+    # eventually sets it) runs under _identity_lock -- _container is explicitly named in the
+    # lock's own docstring as protected, and without this two concurrent callers can both
+    # observe node_id is None and race redundant/duplicate registration attempts against the
+    # nodes table. heartbeat_scraper() (below) acquires _identity_lock itself via
+    # get_heartbeat_sql, and threading.Lock is NOT reentrant, so it must be called AFTER
+    # releasing the lock, not from inside this block.
+    just_registered = False
+    with _identity_lock:
+        if _container.node_id is None:
+            try:
+                info = system.get_system_info(only_stats=False)
+            except Exception as e:
+                # Fail loudly: without system info the scraper cannot register at all,
+                # and silently returning None here left callers believing registration
+                # succeeded. Re-raise so the failure is visible.
+                logger.exception(e)
+                raise
+            else:
+                fields = "host_name,os_machine_guid,os_serial"
 
-            db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
-            if _container.node_id is None:
-                db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
-            if _container.node_id is None:
-                return None
+                db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
+                if _container.node_id is None:
+                    db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
+                if _container.node_id is None:
+                    return None
 
-            db.db_command(
-                "insert",
-                "nodes_info",
-                set_fields=((set(info.keys()) - set(["host_name", "os_machine_guid", "os_serial"])) | set(["node"])),
-                replace_values={"node": _container.node_id},
-                returning="",
-                source=info,
-                jsonize=True,
-            )
-            logger.info("Registered as %s with node_id %s", m_scraper_name, _container.node_id)
-            heartbeat_scraper(status="starting", ip=None)
-            return _container.node_id
+                db.db_command(
+                    "insert",
+                    "nodes_info",
+                    set_fields=((set(info.keys()) - set(["host_name", "os_machine_guid", "os_serial"])) | set(["node"])),
+                    replace_values={"node": _container.node_id},
+                    returning="",
+                    source=info,
+                    jsonize=True,
+                )
+                logger.info("Registered as %s with node_id %s", m_scraper_name, _container.node_id)
+                just_registered = True
+
+    if just_registered:
+        heartbeat_scraper(status="starting", ip=None)
     return _container.node_id
 
 

@@ -79,6 +79,7 @@ from .frames import (
     FeatureNamer,
     share_dataframe,
     remove_stale_columns,
+    get_non_stale_columns,
     get_suspiciously_constant_columns,
     remove_constant_columns,
 )

@@ -48,6 +48,13 @@ def _iter_target_chain(node: ast.AST) -> Optional[str]:
     return None
 
 
+def _looks_dict_like(iter_node: ast.AST) -> bool:
+    """True if the iterated expression is explicitly a dict/set view (``.items()``,
+    ``.keys()``, ``.values()``) -- otherwise the receiver could just as well be a list, where
+    subscript-assignment can never raise RuntimeError (no "add a new key" concept)."""
+    return isinstance(iter_node, ast.Call) and isinstance(iter_node.func, ast.Attribute) and iter_node.func.attr in {"items", "keys", "values"}
+
+
 def scan_mutation_during_iteration(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -113,20 +120,32 @@ def scan_mutation_during_iteration(
                         if isinstance(tgt, ast.Subscript):
                             sub_chain = _iter_target_chain(tgt.value)
                             if sub_chain == iter_chain:
-                                findings.append(Finding(
-                                    check="mutation_during_iteration",
-                                    severity="P1",
-                                    file=rel,
-                                    line=child.lineno,
-                                    snippet=_line_text(src_lines, child.lineno),
-                                    detail=(
+                                if _looks_dict_like(node.iter):
+                                    detail = (
                                         f"``{iter_chain}[...] = ...`` while iterating "
                                         f"the same collection at line {node.lineno}. "
                                         f"Reassigning an EXISTING key is size-preserving "
                                         f"and safe (CPython); ADDING a new key changes "
                                         f"size and raises RuntimeError on dict / set. "
                                         f"Statically indistinguishable -- inspect."
-                                    ),
+                                    )
+                                else:
+                                    detail = (
+                                        f"``{iter_chain}[...] = ...`` while iterating "
+                                        f"the same collection at line {node.lineno}. "
+                                        f"If this is a dict/set, adding a new key raises "
+                                        f"RuntimeError; if a list, subscript-assignment can't "
+                                        f"change size (in-range succeeds, out-of-range raises "
+                                        f"IndexError) but verify the index is still meaningful "
+                                        f"relative to the in-progress iteration."
+                                    )
+                                findings.append(Finding(
+                                    check="mutation_during_iteration",
+                                    severity="P1",
+                                    file=rel,
+                                    line=child.lineno,
+                                    snippet=_line_text(src_lines, child.lineno),
+                                    detail=detail,
                                 ))
                 # d.append(...) / d.pop(...) / etc.
                 if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):

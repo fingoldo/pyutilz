@@ -224,7 +224,9 @@ class TestGetSparseMemoryUsage:
         assert memory > 0
 
     def test_csc_matrix_memory(self):
-        """Test with CSC matrix (should return -1 for unsupported type)"""
+        """Test with CSC matrix -- docstring claims csr/csc support, and the code now actually
+        matches it (regression test: csc previously silently fell through to the -1 branch
+        despite the docstring's claim, since only csr_matrix was ever isinstance-checked)."""
         data = np.array([1, 2, 3, 4], dtype=np.int32)
         indices = np.array([0, 1, 2, 0], dtype=np.int32)
         indptr = np.array([0, 2, 3, 4], dtype=np.int32)
@@ -233,8 +235,9 @@ class TestGetSparseMemoryUsage:
 
         memory = get_sparse_memory_usage(matrix)
 
-        # CSC not explicitly supported, should return -1
-        assert memory == -1
+        expected = data.nbytes + indptr.nbytes + indices.nbytes
+        assert memory == expected
+        assert memory > 0
 
     def test_invalid_input(self):
         """Test with non-matrix input"""

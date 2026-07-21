@@ -70,10 +70,8 @@ def python_dict_2_numba_dict(python_dict: dict, numba_dict: Optional[numba.typed
 
 
 @njit()
-def generate_combinations_recursive_njit(sequence, r):
-    """Replacement of itertools combinations function.
-    Call generate_combinations_recursive_njit(sequence, r)[::-1] for the same effect as combinations(sequence, r).
-    """
+def _generate_combinations_recursive_njit_core(sequence, r):
+    """Recursive core of generate_combinations_recursive_njit; assumes r >= 0 (validated by the caller)."""
     if r == 0:
         return np.empty((1, 0), dtype=sequence.dtype)
     if sequence.size == 0:
@@ -81,8 +79,8 @@ def generate_combinations_recursive_njit(sequence, r):
 
     first, rest = sequence[0], sequence[1:]
 
-    without_first = generate_combinations_recursive_njit(rest, r)
-    with_first = generate_combinations_recursive_njit(rest, r - 1)
+    without_first = _generate_combinations_recursive_njit_core(rest, r)
+    with_first = _generate_combinations_recursive_njit_core(rest, r - 1)
 
     result = np.empty((without_first.shape[0] + with_first.shape[0], r), dtype=sequence.dtype)
 
@@ -92,3 +90,12 @@ def generate_combinations_recursive_njit(sequence, r):
         result[i + without_first.shape[0], 1:] = with_first[i, :]
 
     return result
+
+
+def generate_combinations_recursive_njit(sequence, r):
+    """Replacement of itertools combinations function.
+    Call generate_combinations_recursive_njit(sequence, r)[::-1] for the same effect as combinations(sequence, r).
+    """
+    if r < 0:
+        raise ValueError(f"r must be >= 0, got {r}")
+    return _generate_combinations_recursive_njit_core(sequence, r)

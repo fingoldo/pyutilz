@@ -25,6 +25,7 @@ import sys
 import io
 import pickle, zlib, os  # nosec B403 - pickle.dumps/loads here operate on caller-provided in-process objects/paths for serialize()/unserialize(); untrusted-path loading is additionally gated via the optional verify_sidecar path (see pyutilz.core.safe_pickle)
 from pyutilz.system import system
+from pyutilz.core.safe_pickle import PickleVerificationError
 
 
 def str_to_class(classname: str) -> Any:
@@ -94,14 +95,18 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     Otherwise, obj will be read from memory directl.
     Unpacked data will be returned.
 
-    ``verify_sidecar`` (default False, preserving historical behaviour for existing callers):
-    when True AND ``obj`` is a file path, requires a matching ``<path>.sha256`` sidecar
-    (see :mod:`pyutilz.core.safe_pickle`) before unpickling. Like every other failure mode in
-    this function, a missing/mismatched sidecar is caught by the blanket ``except Exception``
-    below -- logged via ``logger.exception`` and returns ``None``, it is NOT re-raised to the
-    caller (kept consistent with the "file not found" / any other error path here). Write the
-    sidecar for a trusted file with ``pyutilz.core.safe_pickle.write_sidecar(path)``. Has no
-    effect when ``obj`` is already bytes/a file-like object (there's no "path" to check a
+    ``verify_sidecar`` (default False, preserving historical behaviour for existing callers --
+    ``serialize()`` in this same module never writes a ``.sha256`` sidecar, so flipping this
+    default would break every plain ``serialize()``/``unserialize()`` round-trip; use
+    :mod:`pyutilz.core.safe_pickle`'s ``safe_dump``/``safe_load`` instead when you want
+    verification on by default): when True AND ``obj`` is a file path, requires a matching
+    ``<path>.sha256`` sidecar (see :mod:`pyutilz.core.safe_pickle`) before unpickling. Unlike
+    every other failure mode in this function, a missing/mismatched sidecar is raised to the
+    caller as :class:`pyutilz.core.safe_pickle.PickleVerificationError` -- it is NOT swallowed
+    into the generic ``except Exception: logger.exception(...); return None`` path below, so
+    callers can distinguish "tampered/corrupt" from "file not found" or any other I/O error.
+    Write the sidecar for a trusted file with ``pyutilz.core.safe_pickle.write_sidecar(path)``.
+    Has no effect when ``obj`` is already bytes/a file-like object (there's no "path" to check a
     sidecar against; that in-memory data was already produced within the same process/caller).
     """
     if compression is not None:
@@ -114,7 +119,7 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
                 return
             else:
                 if verify_sidecar:
-                    from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar, PickleVerificationError
+                    from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar
 
                     if not _verify_sidecar(obj):
                         raise PickleVerificationError(
@@ -142,5 +147,10 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
             return data
         else:
             logger.warning("Unexpected input data type: %s", type(obj))
+    except PickleVerificationError:
+        # Deliberately NOT swallowed into the blanket handler below: a tamper/corruption signal
+        # from an opted-in sidecar check must stay distinguishable from "file not found" or any
+        # other I/O error, so callers can `except PickleVerificationError` specifically.
+        raise
     except Exception as e:
         logger.exception(e)

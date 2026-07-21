@@ -103,12 +103,28 @@ from .textentropy import (
 # ----------------------------------------------------------------------------------------------------------------------------
 # Lazily-initialised module-level globals.
 #
-# These are stateful caches mutated (via `global`) inside webtext.py. The names below are re-exported here purely
-# to preserve the historic public surface of the flat strings.py module (so `from pyutilz.text.strings import nlp`
-# etc. keeps resolving). The authoritative, mutated copies live in webtext; read those for live state.
+# These are stateful caches mutated (via `global`) inside webtext.py. A plain `from .webtext import
+# inflect_engine, nlp, ...` would take a ONE-TIME SNAPSHOT (all None) at package-import time --
+# webtext.py's own functions later mutate ITS OWN module-level globals via `global nlp` etc., which
+# never updates a separately-bound copy here. PEP 562 module-level __getattr__ resolves these names
+# LIVE against webtext's current state on every access instead, so `from pyutilz.text.strings import
+# nlp` (or `pyutilz.text.strings.nlp`) always reflects whatever webtext.py has actually cached,
+# preserving both the historic public surface AND live-state correctness.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from .webtext import inflect_engine, nlp, ascii_emojies, unicode_emojies
+_LAZY_WEBTEXT_GLOBALS = frozenset({"inflect_engine", "nlp", "ascii_emojies", "unicode_emojies"})
+
+
+def __getattr__(name):
+    if name in _LAZY_WEBTEXT_GLOBALS:
+        from . import webtext as _webtext
+
+        return getattr(_webtext, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | _LAZY_WEBTEXT_GLOBALS)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # MAIN

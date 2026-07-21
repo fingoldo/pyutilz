@@ -26,7 +26,7 @@ commit time. Selected entries:
 | Test                                    | Polices                                                                                                                                              |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `test_provider_registration.py`         | Every canonical name in `llm.factory._PROVIDER_MODULES` resolves; every alias has a target; no key collisions.                                       |
-| `test_module_alias_integrity.py`        | The 24-entry backward-compat module alias map imports cleanly and proxies real symbols.                                                              |
+| `test_module_alias_integrity.py`        | The 27-entry backward-compat module alias map imports cleanly and proxies real symbols.                                                              |
 | `test_provider_contract.py`             | Every concrete LLM provider inherits from `LLMProvider`, overrides every abstract method, and signature-matches the base interface.                  |
 | `test_optional_deps_isolation.py`       | `import pyutilz` succeeds with each optional-dep group masked; sub-process isolated.                                                                 |
 | `test_no_top_level_side_effects.py`     | Importing pyutilz performs zero network I/O at module-load time. Sub-process socket block.                                                           |
@@ -64,6 +64,29 @@ fraction of a cent per run. Setup:
 
 `.env` is gitignored; the [detect-secrets](https://github.com/Yelp/detect-secrets)
 pre-commit hook blocks accidental commits of API keys to source files.
+
+## Test layout
+
+Most test files sit flat at `tests/` root; three subfolders exist for a real reason:
+`tests/performance/kernel_tuning/`, `tests/stats/`, and `tests/system/` group tests for source
+subpackages that were split into multiple files (`performance/kernel_tuning/*`, `stats/*`,
+`system/gpu_dispatch.py` + `system/system/*`) — one test-file-per-source-file would otherwise
+scatter closely-related coverage across many flat-root files. New tests for those three source
+areas go in the matching subfolder; everything else (including the rest of `system/` —
+`monitoring.py`, `parallel.py`, `distributed.py` — which predate this convention and stayed at
+flat-root for historical reasons) goes at `tests/` root as `test_<module_name>.py`.
+
+`_extra`/`_extra2`/`_extra3` suffixes on some files (e.g. `test_system_extra3.py`,
+`test_pandaslib_extra2.py`) mark tests added later to close a specific coverage gap in the base
+`test_<module>.py` file for the same module — check the base file first for existing coverage of
+a function before adding a new test, regardless of which numbered file it ends up in.
+
+Four separate "benchmark" surfaces exist, easy to confuse by name: `_benchmarks/bench_*.py`
+(standalone scripts, `python -m _benchmarks.bench_*`, never run by pytest/CI — hard-coded
+identity assertions comparing an old vs. new implementation) vs. `tests/test_kernel_tuning_benchmark.py`
+(real, CI-collected pytest coverage for `pyutilz.performance.kernel_tuning.benchmark`) vs.
+`tests/test_dev_benchmarking.py` (real, CI-collected pytest coverage for the unrelated
+`pyutilz.dev.benchmarking` module).
 
 ## Pre-commit hook
 

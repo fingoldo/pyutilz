@@ -108,13 +108,6 @@ def build_upsert_query(
             # be a real, non-disable-able check rather than an assert.
             raise ValueError(f"Invalid field_type for {field_name!r}: {field_type!r}")
 
-    rev_on_conflict_update_values = {}
-    if len(on_conflict_update_values) > 0:
-        for _field in on_conflict_update_values.keys():
-            # assert _field in fields_names
-            pass
-        for field, value in on_conflict_update_values.items():
-            rev_on_conflict_update_values[field] = value.replace("excluded.", "")
     # ------------------------------
     # Building query
     # ------------------------------
@@ -172,11 +165,28 @@ def build_upsert_query(
             fresh_query += f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"  # nosec B608
         else:
             fresh_query += custom_onconflict
+    elif conflict_fields:
+        # Regression fix: a caller wanting "skip duplicates on this specific key, but still
+        # error on other unique-constraint violations" (conflict_fields=["id"],
+        # on_conflict_update_fields=[] -- the natural way to express a targeted DO NOTHING)
+        # previously fell all the way to the bare "on conflict do nothing" branch below,
+        # completely ignoring conflict_fields. A bare ON CONFLICT DO NOTHING matches ANY
+        # unique/exclusion constraint violation on the table, not just the intended one -- e.g.
+        # a genuine duplicate-email bug on an unrelated unique constraint would be silently
+        # swallowed too, when the caller only asked to tolerate collisions on `conflict_fields`.
+        fresh_query += f"on conflict ({','.join(conflict_fields)}) do nothing "  # nosec B608 - conflict_fields validated above
     else:
         fresh_query += "on conflict do nothing "
 
     if len(history_fields) > 0:
-        returning_fields = history_fields
+        # Regression fix: `returning_fields = history_fields` bound returning_fields to the SAME
+        # list object as history_fields (which, unless the caller passed None, is literally the
+        # caller's own list) -- the `returning_fields += [hash_field]` below is list.__iadd__, an
+        # in-place mutation, so it also mutated history_fields (and the caller's original list)
+        # permanently, leaking hash_field(s) into the history-table INSERT's column list
+        # (history_fields_final, built from history_fields further down) even though the caller
+        # never asked for them there.
+        returning_fields = list(history_fields)
         if hash_fields:
             for hash_field in hash_fields:
                 assert hash_field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces hash_fields is a subset of the insert columns, a business-logic invariant

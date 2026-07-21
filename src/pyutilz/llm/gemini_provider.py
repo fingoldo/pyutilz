@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from tenacity import retry, retry_if_exception_type
+from tenacity import retry, retry_if_exception, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.exceptions import LLMSafetyBlockError
+from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider
 
@@ -30,19 +29,28 @@ except ImportError:
     # to import google.api_core must NOT clobber a valid ``types`` binding.
     types = None
 
-# Google API exceptions for rate limit / server errors (retry-worthy).
+# Regression fix (2026-07-21 audit): the installed google-genai SDK (the only Gemini client this
+# module imports -- `from google import genai` above) raises its OWN google.genai.errors
+# ClientError/ServerError (both inherit directly from Exception), NOT google.api_core.exceptions
+# -- that's a separate library used by older, gRPC-based Google client SDKs, and google-genai
+# doesn't even depend on it. The previous predicate matched nothing a real google-genai call ever
+# raises, so a rate-limited (429) or briefly-down (5xx) Gemini call was never actually retried.
 try:
-    from google.api_core.exceptions import (
-        ResourceExhausted,
-        ServiceUnavailable,
-        InternalServerError as GoogleInternalServerError,
-        TooManyRequests,
-    )
-    _GENAI_RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
-        ResourceExhausted, ServiceUnavailable, GoogleInternalServerError, TooManyRequests,
-    )
+    from google.genai.errors import ClientError as _GenaiClientError, ServerError as _GenaiServerError
+
+    def _is_retryable_genai_error(exc: BaseException) -> bool:
+        """5xx (ServerError) always retryable; ClientError only for 429 (rate limit) -- other 4xx
+        (400 bad request, 401/403 auth) are permanent and must not be retried."""
+        if isinstance(exc, _GenaiServerError):
+            return True
+        if isinstance(exc, _GenaiClientError):
+            return getattr(exc, "code", None) == 429
+        return False
 except ImportError:
-    _GENAI_RETRYABLE_EXCEPTIONS = ()
+
+    def _is_retryable_genai_error(exc: BaseException) -> bool:
+        """google.genai.errors unavailable -- nothing to classify as retryable."""
+        return False
 
 
 class GeminiProvider(LLMProvider):
@@ -95,12 +103,11 @@ class GeminiProvider(LLMProvider):
         settings = get_llm_settings()
         self.api_key = api_key or (settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None)
         if not self.api_key:
-            raise ValueError("Gemini API key not provided")
+            raise ValueError("Gemini API key not provided. Set GEMINI_API_KEY in .env or pass api_key=")
 
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self._executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         # Per-call response metadata captured by ``_capture_candidate_metadata``.
         # Without these, grounding / citations / function calls / safety
@@ -148,10 +155,7 @@ class GeminiProvider(LLMProvider):
         return True
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        retry=retry_if_exception_type((
-            ConnectionError, TimeoutError, OSError,
-            *_GENAI_RETRYABLE_EXCEPTIONS,
-        )),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)) | retry_if_exception(_is_retryable_genai_error),
         **INFINITE_RETRY_KWARGS,
     )
     async def generate(
@@ -183,14 +187,13 @@ class GeminiProvider(LLMProvider):
                 config_kwargs["cached_content"] = self._cached_content
             config = types.GenerateContentConfig(**config_kwargs)
 
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                self._executor,
-                lambda: self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=config,
-                ),
+            # Native async client (google-genai's own .aio surface) instead of offloading the
+            # sync client to a dedicated ThreadPoolExecutor: avoids consuming a thread-pool
+            # worker per concurrent call and integrates more naturally with asyncio cancellation.
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
             )
 
             if response.candidates:
@@ -247,6 +250,12 @@ class GeminiProvider(LLMProvider):
                         "finish_reason": self._last_finish_reason,
                         "safety_ratings": self.last_safety_ratings,
                     },
+                )
+            if "MAX_TOKENS" in _fr:
+                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
+                # never actually raised anywhere -- see openai_compat.py's identical fix.
+                raise LLMTruncationError(
+                    f"Gemini response truncated by max_tokens (finish_reason={self._last_finish_reason})", finish_reason=self._last_finish_reason
                 )
             return text_out  # type: ignore[no-any-return]  # untyped upstream source (google.genai response text); return value verified correct at runtime
 
@@ -317,13 +326,9 @@ class GeminiProvider(LLMProvider):
         estimate for budgeting).
         """
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                self._executor,
-                lambda: self.client.models.count_tokens(
-                    model=self.model_name,
-                    contents=text,
-                ),
+            result = await self.client.aio.models.count_tokens(
+                model=self.model_name,
+                contents=text,
             )
             if result.total_tokens is None:
                 raise ValueError("Gemini count_tokens returned no total_tokens")
@@ -350,15 +355,9 @@ class GeminiProvider(LLMProvider):
         raise NotImplementedError("Gemini does not expose per-key rate limits via API. " "Quotas are GCP-side at console.cloud.google.com/iam-admin/quotas.")
 
     async def _close(self) -> None:
-        """Release the per-provider ThreadPoolExecutor.
-
-        The factory's atexit handler (factory.py ``_close_cached_providers``)
-        awaits ``_close`` on every cached provider that exposes it. Without
-        this hook the executor's worker threads accumulate when a long-lived
-        process builds many distinct Gemini providers (the stdlib executor's
-        own atexit hook only joins threads at interpreter exit).
-        ``wait=False`` so shutdown never blocks on an in-flight call.
-        """
-        executor = getattr(self, "_executor", None)
-        if executor is not None:
-            executor.shutdown(wait=False)
+        """No-op: ``generate()``/``count_tokens()`` now use google-genai's native async client
+        (``self.client.aio``) rather than a dedicated ThreadPoolExecutor, so there are no
+        per-provider worker threads left to release. Kept as a hook for factory.py's
+        ``_close_cached_providers``, which awaits ``_close`` on every cached provider that
+        exposes it."""
+        return None
