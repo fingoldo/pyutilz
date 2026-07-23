@@ -192,6 +192,16 @@ list[Finding]):
   independently, non-identically, in multiple places, with coverage that
   silently drifts between the copies.
 
+- ``scan_asymmetric_resource_guard``: within one class, an operation-shape
+  (a dotted call like ``conn.cursor`` or ``self._db.execute``) that's
+  wrapped in a guarding ``with``/``async with`` block
+  (``.transaction()``/``.atomic()``/``.begin()``, or a bare
+  ``self._lock``-shaped context manager) in at least one method but
+  performed UNGUARDED in a SIBLING method of the same class -- the class's
+  own code already demonstrates the correct pattern in one place and
+  omits it in another, the strongest signal available without
+  understanding what the operation actually does.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -250,6 +260,7 @@ from .return_annotation import scan_return_annotation_mismatch
 from .locals_get import scan_locals_get_fragile_lookup
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
+from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -291,6 +302,7 @@ __all__ = [
     "scan_locals_get_fragile_lookup",
     "scan_shielded_resource_release_race",
     "scan_duplicate_credential_regex",
+    "scan_asymmetric_resource_guard",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -307,6 +319,7 @@ for _submod in (
     "unraised_exceptions", "credential_logging",
     "docstring_args", "return_annotation", "locals_get",
     "shielded_resource_release", "duplicate_credential_regex",
+    "asymmetric_resource_guard",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

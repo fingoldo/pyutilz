@@ -31,6 +31,7 @@ from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
+from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 
 # --- registry -----------------------------------------------------------
 
@@ -80,6 +81,7 @@ register_scanner("sql_aggregate_before_cast", scan_sql_aggregate_before_cast)
 register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 register_scanner("shielded_resource_release_race", scan_shielded_resource_release_race)
 register_scanner("duplicate_credential_regex", scan_duplicate_credential_regex)
+register_scanner("asymmetric_resource_guard", scan_asymmetric_resource_guard)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

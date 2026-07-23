@@ -1,4 +1,5 @@
 [
+  "asymmetric_resource_guard::performance/kernel_tuning/cache/cache_class.py:430",
   "broad_except_swallow::dev/benchmarking.py:114",
   "broad_except_swallow::llm/factory.py:217",
   "broad_except_swallow::llm/openai_compat.py:260",
