@@ -32,24 +32,8 @@ def _flag_dest_name(call: ast.Call) -> str | None:
 
 
 def _is_add_argument_call(node: ast.AST) -> bool:
-    """True if ``node`` is an ``argparse.ArgumentParser``-style ``<something>.add_argument(...)``
-    call -- deliberately excludes calls with ZERO keyword arguments, since Selenium's
-    ``ChromeOptions``/``FirefoxOptions`` (and similar browser-automation libraries) expose an
-    UNRELATED ``add_argument(flag_string)`` method with the identical name that appends a raw
-    command-line flag to a list passed to an external browser BINARY -- it has no ``dest=``/
-    ``action=``/``type=``/etc. concept at all, so ``args.<name>`` is never expected to exist in
-    THIS codebase's own Python source (the flag is consumed by Chrome/Firefox itself, not parsed
-    into a namespace here). Confirmed false positive found in the wild (2026-07-22):
-    ``web/browser.py``'s ``options.add_argument("--no-sandbox")`` and 3 siblings were flagged as
-    "dead" despite doing exactly what they're meant to -- configure the launched browser process.
-    Real argparse usage in this codebase (``dev/code_audit/cli.py``) always carries at least one
-    argparse-specific keyword (``type=``, ``help=``, etc.); a zero-keyword-argument call is the
-    reliable, checked-in-the-wild signal that distinguishes the two libraries' identically-named
-    methods.
-    """
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"):
-        return False
-    return bool(node.keywords)
+    """True if ``node`` is a ``<something>.add_argument(...)`` call (argparse or similar)."""
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"
 
 
 def scan_dead_cli_flags(
@@ -106,6 +90,15 @@ def scan_dead_cli_flags(
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_add_argument_call(node):
+                continue
+            # audit-2026-07-22 false-positive fix: Selenium's ChromeOptions/FirefoxOptions
+            # expose an UNRELATED add_argument(flag_string) method (appends a raw CLI flag to a
+            # list passed to the external Chrome/Firefox binary) -- no dest=/action=/etc. concept
+            # at all. Real argparse declarations in this codebase always carry at least one
+            # keyword; a call with ZERO keywords is syntactically indistinguishable from
+            # Selenium's, so it's no longer flagged even if genuinely dead (a narrow, low-risk
+            # gap traded for eliminating a confirmed, concrete false-positive class).
+            if not node.keywords:
                 continue
             name = _flag_dest_name(node)
             if not name or name == "help":

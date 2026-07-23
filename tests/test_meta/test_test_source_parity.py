@@ -102,6 +102,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "asymmetric_resource_guard": "code_audit scanner; covered by test_code_audit.py",
     "spy_arity": "code_audit scanner; covered by test_code_audit.py",
     "log_throttle": "code_audit scanner; covered by test_code_audit.py",
+    "dead_import": "code_audit scanner; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and

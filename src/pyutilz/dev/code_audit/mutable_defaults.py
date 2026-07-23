@@ -98,21 +98,14 @@ def _param_annotations(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str
 
 def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> bool:
     """True for a bare ``int``/``float``/``str``/``bytes``/``bool``/``complex``
-    annotation, optionally ``X | None`` or ``typing.Optional[X]`` -- deliberately narrow (only
-    these simple shapes) rather than attempting to resolve arbitrary subscripted/string-quoted
-    annotations. ``+=``/``-=`` etc. on any of these types always rebinds (creates a new object via
-    ``__add__``/``__sub__``, never ``__iadd__``/in-place mutation), so aliasing one is never the
-    parameter-mutation-leak shape this scanner targets -- unlike a bare, unannotated name (where
-    the type is unknown and the conservative default of flagging AugAssign stays in effect) or a
-    container-typed one.
-
-    Confirmed false positive found in the wild (2026-07-22): ``sentinel_field: Optional[str] =
-    None`` in ``data/pandaslib/io_ops.py`` was flagged P0 because ``Optional[str]`` is a
-    ``Subscript`` node, not the ``X | None`` ``BinOp`` shape this function originally recognized
-    -- the SAME immutable-scalar guarantee applies to either spelling of "str or None", so both
-    need to be recognized for this exemption to actually cover typing.Optional-style code
-    (the dominant style in a codebase still supporting Python < 3.10, where ``X | None`` isn't
-    valid at runtime without ``from __future__ import annotations``).
+    annotation, optionally ``X | None`` -- deliberately narrow (only these
+    simple shapes) rather than attempting to resolve arbitrary ``Optional[...]``/
+    subscripted/string-quoted annotations. ``+=``/``-=`` etc. on any of these
+    types always rebinds (creates a new object via ``__add__``/``__sub__``,
+    never ``__iadd__``/in-place mutation), so aliasing one is never the
+    parameter-mutation-leak shape this scanner targets -- unlike a bare,
+    unannotated name (where the type is unknown and the conservative default
+    of flagging AugAssign stays in effect) or a container-typed one.
     """
     if annotation is None:
         return False
@@ -120,11 +113,13 @@ def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> boo
         return annotation.id in _KNOWN_IMMUTABLE_SCALAR_NAMES
     if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
         return _is_known_immutable_scalar_annotation(annotation.left) or _is_known_immutable_scalar_annotation(annotation.right)
-    if isinstance(annotation, ast.Subscript):
-        base = annotation.value
-        base_name = base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else None
-        if base_name == "Optional":
-            return _is_known_immutable_scalar_annotation(annotation.slice)
+    # audit-2026-07-22 false-positive fix: `typing.Optional[X]` is a Subscript node, not the
+    # `X | None` BinOp shape -- the SAME immutable-scalar guarantee applies to either spelling
+    # (needed for Python < 3.10 compatibility, where `X | None` isn't valid at runtime without
+    # `from __future__ import annotations`), so both must be recognized for this exemption to
+    # actually cover typing.Optional-style code.
+    if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
+        return _is_known_immutable_scalar_annotation(annotation.slice)
     return False
 
 

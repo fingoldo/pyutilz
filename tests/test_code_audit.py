@@ -48,6 +48,7 @@ from pyutilz.dev.code_audit import (
     scan_asymmetric_resource_guard,
     scan_stale_test_spy_arity,
     scan_unthrottled_hot_loop_log,
+    scan_possibly_dead_import,
 )
 
 
@@ -3292,3 +3293,123 @@ def scan(items, log, checks):
 """)
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
+
+
+# ---- possibly_dead_import --------------------------------------------------
+
+
+def test_possibly_dead_import_flagged(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+import os
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "possibly_dead_import"
+    assert findings[0].severity == "Low"
+
+
+def test_possibly_dead_import_bare_name_usage_is_clean(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+import os
+
+def f():
+    return os.getcwd()
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_from_import_usage_is_clean(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+from pathlib import Path
+
+def f():
+    return Path(".")
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_aliased_usage_is_clean(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+import numpy as np
+
+def f():
+    return np.array([1, 2, 3])
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_facade_reexport_suppressed_by_corpus_attribute_access(tmp_path: Path):
+    """The exact confirmed-real bug class this scanner exists for: `helper` is imported into
+    `facade.py` purely to be re-exported, unused within facade.py itself, but consumed elsewhere
+    as `facade.helper` -- must NOT be flagged."""
+    _write(tmp_path, "facade.py", """
+from _impl import helper
+""")
+    _write(tmp_path, "test_facade.py", """
+import facade
+
+def test_it():
+    facade.helper()
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_dunder_all_reexport_is_clean(tmp_path: Path):
+    _write(tmp_path, "facade.py", """
+from _impl import helper
+
+__all__ = ["helper"]
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_underscore_alias_skipped(tmp_path: Path):
+    """`import x as _` is a conventional "explicitly discard" marker, not a name meant to be
+    referenced -- must not be flagged as a dead import."""
+    _write(tmp_path, "mod.py", """
+import os as _
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_from_import_underscore_alias_skipped(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+from os import path as _
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_star_import_skipped(tmp_path: Path):
+    """A star import can't be usage-checked by name -- must not crash or be flagged."""
+    _write(tmp_path, "mod.py", """
+from os import *
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
+    _write(tmp_path, "broken.py", "def f(:\n    pass\n")
+    _write(tmp_path, "mod.py", """
+import os
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].file == "mod.py"
+
+
+def test_possibly_dead_import_no_imports_is_clean(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+def f():
+    return 1
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_relative_import_with_no_module_skipped(tmp_path: Path):
+    """`from . import x` (ImportFrom with module=None) is a relative package import -- skipped
+    rather than crashing on the None module attribute."""
+    _write(tmp_path, "mod.py", """
+from . import helper
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    assert findings == []

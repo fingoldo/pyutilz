@@ -26,19 +26,32 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 
 
 def _loop_has_break(loop: ast.While) -> bool:
-    """True if ``loop``'s own body (not nested loops) contains a ``break`` OR a ``raise`` --
-    both are equally valid ways to stop retrying forever. Confirmed false positive found in the
-    wild (2026-07-22): ``llm/claude_code_provider.py``'s retry loop bounds itself via
-    ``if attempt > max_attempts: raise RuntimeError(...)`` (checked before the loop's own
-    ``try:``, so nothing inside the SAME loop catches it) -- this scanner originally only
-    recognized ``break``, misreporting a raise-bounded loop as unbounded.
+    """True if ``loop``'s own body (not nested loops) contains a ``break``."""
+    for node in ast.walk(loop):
+        if node is loop:
+            continue
+        if isinstance(node, (ast.While, ast.For)):
+            continue  # a break in a NESTED loop doesn't exit this one
+        if isinstance(node, ast.Break):
+            return True
+    return False
+
+
+def _loop_has_bounding_raise(loop: ast.While) -> bool:
+    """True if ``loop``'s own body (not nested loops) contains a ``raise`` statement.
+
+    audit-2026-07-22 false-positive fix: a ``while True:`` retry loop that bounds itself by
+    raising once an attempt counter is exceeded (checked BEFORE the loop's own try/except, so
+    nothing inside the SAME loop catches it) is just as bounded as one using ``break`` -- the
+    exit path is just "raise out of the loop" instead of "break out of the loop". Previously only
+    ``break`` was recognized, flagging every raise-bounded retry loop as unbounded.
     """
     for node in ast.walk(loop):
         if node is loop:
             continue
         if isinstance(node, (ast.While, ast.For)):
-            continue  # a break/raise in a NESTED loop doesn't exit this one
-        if isinstance(node, (ast.Break, ast.Raise)):
+            continue  # a raise in a NESTED loop doesn't necessarily bound THIS loop
+        if isinstance(node, ast.Raise):
             return True
     return False
 
@@ -132,7 +145,7 @@ def scan_retry_loops(
                         "of backing off."
                     ),
                 ))
-            elif not _loop_has_break(node):
+            elif not _loop_has_break(node) and not _loop_has_bounding_raise(node):
                 findings.append(Finding(
                     check="unbounded_retry_loop",
                     severity="Low",

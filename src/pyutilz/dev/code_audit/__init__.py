@@ -217,6 +217,15 @@ list[Finding]):
   item in a large batch hits the same condition (e.g. a systemic upstream
   outage), exactly when an operator most needs signal, not noise.
 
+- ``scan_possibly_dead_import``: a module-level import never referenced
+  as a bare name in its own file AND never accessed as ``<anything>.name``
+  anywhere in the whole scanned corpus -- a genuinely unused import, not
+  a facade re-export consumed indirectly elsewhere. The whole-corpus
+  attribute-access cross-check exists because a naive same-file-only scan
+  has a real false-positive class: 9 of 12 audit-suspected "dead"
+  re-exports in one real codebase turned out to be live, consumed via
+  ``import module as m; m.<name>`` in test files.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -278,6 +287,7 @@ from .duplicate_credential_regex import scan_duplicate_credential_regex
 from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
+from .dead_import import scan_possibly_dead_import
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -322,6 +332,7 @@ __all__ = [
     "scan_asymmetric_resource_guard",
     "scan_stale_test_spy_arity",
     "scan_unthrottled_hot_loop_log",
+    "scan_possibly_dead_import",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -339,7 +350,7 @@ for _submod in (
     "docstring_args", "return_annotation", "locals_get",
     "shielded_resource_release", "duplicate_credential_regex",
     "asymmetric_resource_guard",
-    "spy_arity", "log_throttle",
+    "spy_arity", "log_throttle", "dead_import",
     "registry", "cli",
 ):
     globals().pop(_submod, None)
