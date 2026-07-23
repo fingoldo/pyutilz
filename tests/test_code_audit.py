@@ -46,6 +46,8 @@ from pyutilz.dev.code_audit import (
     scan_shielded_resource_release_race,
     scan_duplicate_credential_regex,
     scan_asymmetric_resource_guard,
+    scan_stale_test_spy_arity,
+    scan_unthrottled_hot_loop_log,
 )
 
 
@@ -2878,4 +2880,415 @@ class Store:
     )
     assert scan_asymmetric_resource_guard(tmp_path) == []
     findings = scan_asymmetric_resource_guard(tmp_path, guard_call_names=frozenset({"my_custom_guard"}))
+    assert len(findings) == 1
+
+
+# ---- stale_test_spy_arity ------------------------------------------------
+
+
+def test_stale_test_spy_arity_flagged(tmp_path: Path):
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "stale_test_spy_arity"
+    assert findings[0].severity == "P1"
+
+
+def test_stale_test_spy_arity_matching_arity_is_clean(tmp_path: Path):
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node, memo=None):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_varargs_spy_is_clean(tmp_path: Path):
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(*args):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_unrelated_patch_target_not_matched(tmp_path: Path):
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(a):
+    pass
+
+def test_foo():
+    with patch("prod_module.other_function", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_attribute_call_form_matched(tmp_path: Path):
+    """A production call site using attribute form (obj.build_rows(...)) must be matched by
+    short name the same as a bare-Name call site."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+class Caller:
+    def run(self):
+        self.build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert len(findings) == 1
+
+
+def test_stale_test_spy_arity_starred_call_arg_skipped_not_counted(tmp_path: Path):
+    """A production call site using `*args` unpacking has an unknowable static arg count --
+    must be skipped (not crash, not spuriously counted as 0)."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller(args_tuple):
+    build_rows(*args_tuple)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []  # no resolvable real call site -> nothing to compare against
+
+
+def test_stale_test_spy_arity_call_with_unmatchable_func_expr_skipped(tmp_path: Path):
+    """A call whose func expression is neither a bare Name nor an Attribute (e.g. the result of
+    a subscript or another call) can't be short-name-matched -- must not crash."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller(dispatch_table):
+    dispatch_table["build_rows"](1, 2, 3)
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_skips_production_file_with_syntax_error(tmp_path: Path):
+    _write(tmp_path, "broken.py", "def f(:\n    pass\n")
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node):
+    pass
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert len(findings) == 1
+
+
+def test_stale_test_spy_arity_skips_test_file_with_syntax_error(tmp_path: Path):
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_broken.py", "def f(:\n    pass\n")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []  # broken test file skipped, no crash
+
+
+def test_stale_test_spy_arity_patch_call_with_no_positional_args_skipped(tmp_path: Path):
+    """A patch(...) call with no positional args at all (e.g. patch(target=..., side_effect=...))
+    has no target string to resolve -- must be skipped, not crash on an index error."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def spy(tables, cid, node):
+    pass
+
+def test_foo():
+    with patch(target="prod_module.build_rows", side_effect=spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_side_effect_not_a_bare_name_skipped(tmp_path: Path):
+    """side_effect=<a lambda / call expression>, not a bare Name referencing a local def --
+    can't resolve to a spy function's own arity, must be skipped."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=lambda *a: None):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+def test_stale_test_spy_arity_side_effect_name_not_a_local_def_skipped(tmp_path: Path):
+    """side_effect references a Name that isn't a local function def in this test file (e.g.
+    imported from elsewhere) -- can't inspect its arity, must be skipped, not crash."""
+    _write(tmp_path, "prod_module.py", """
+def build_rows(tables, cid, node, memo=None):
+    pass
+
+def caller():
+    build_rows(1, 2, 3, 4)
+""")
+    _write(tmp_path, "test_prod_module.py", """
+from unittest.mock import patch
+from some_helpers import imported_spy
+
+def test_foo():
+    with patch("prod_module.build_rows", side_effect=imported_spy):
+        pass
+""")
+    findings = scan_stale_test_spy_arity(tmp_path)
+    assert findings == []
+
+
+# ---- unthrottled_hot_loop_log ---------------------------------------------
+
+
+def test_unthrottled_hot_loop_log_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def scan(items, log):
+    for item in items:
+        if item.bad:
+            log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "unthrottled_hot_loop_log"
+    assert findings[0].severity == "P2"
+
+
+def test_unthrottled_hot_loop_log_throttled_guard_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def scan(items, log):
+    for item in items:
+        if item.bad:
+            if _log_throttle("key"):
+                log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_modulo_guard_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok2.py", """
+def scan(items, log):
+    for i, item in enumerate(items):
+        if i % 100 == 0:
+            log.warning("progress %s", i)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_outside_loop_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok3.py", """
+def scan(item, log):
+    if item.bad:
+        log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_debug_call_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok4.py", """
+def scan(items, log):
+    for item in items:
+        log.debug("processing %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_while_loop_flagged(tmp_path: Path):
+    _write(tmp_path, "bad2.py", """
+def scan(get_next, log):
+    while True:
+        item = get_next()
+        if item.bad:
+            log.error("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert len(findings) == 1
+
+
+def test_unthrottled_hot_loop_log_else_branch_flagged(tmp_path: Path):
+    """An unguarded log call in the `else` of an if/else, inside a loop, must still be flagged --
+    only the `if`'s own throttle-guarded body is exempt, not its sibling `else`."""
+    _write(tmp_path, "bad3.py", """
+def scan(items, log):
+    for item in items:
+        if item.ok:
+            pass
+        else:
+            log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert len(findings) == 1
+
+
+def test_unthrottled_hot_loop_log_attribute_receiver_and_throttle_call_covered(tmp_path: Path):
+    """Both the log receiver AND the throttle-check call are attribute access
+    (self.log.warning(...), self.limiter.should_throttle(...)) -- exercises the Attribute
+    branches of _call_name/_is_log_call, not just the bare-Name ones."""
+    _write(tmp_path, "ok5.py", """
+class Scanner:
+    def scan(self, items):
+        for item in items:
+            if self.limiter.should_throttle(item):
+                self.log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_non_log_named_receiver_not_flagged(tmp_path: Path):
+    """A `.warning(...)` call on a receiver whose name doesn't end in log/logger (e.g. a
+    warnings-module-shaped object) is out of scope for this scanner -- not every `.warning(...)`
+    call is a logger call."""
+    _write(tmp_path, "ok6.py", """
+def scan(items, notifier):
+    for item in items:
+        notifier.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_receiver_from_a_call_not_flagged(tmp_path: Path):
+    """A `.warning(...)` call whose receiver is itself a Call (e.g. `get_logger().warning(...)`)
+    can't be name-matched by this scanner's simple Name/Attribute receiver check -- exercises the
+    receiver_name-stays-None fallthrough."""
+    _write(tmp_path, "ok7.py", """
+def scan(items):
+    for item in items:
+        get_logger().warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert findings == []
+
+
+def test_unthrottled_hot_loop_log_skips_file_with_syntax_error(tmp_path: Path):
+    """A file with a syntax error must be skipped, not crash the whole scan -- and a sibling
+    valid file in the same directory must still be scanned normally."""
+    _write(tmp_path, "broken.py", "def f(:\n    pass\n")
+    _write(tmp_path, "bad4.py", """
+def scan(items, log):
+    for item in items:
+        log.error("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].file == "bad4.py"
+
+
+def test_unthrottled_hot_loop_log_guard_call_via_subscript_not_a_throttle_hint(tmp_path: Path):
+    """The guard's Call func is neither a bare Name nor an Attribute (e.g. a subscripted
+    dispatch-table lookup) -- can't name-match it as a throttle hint, so the log call inside
+    stays flagged (exercises _call_name's final None fallthrough)."""
+    _write(tmp_path, "bad5.py", """
+def scan(items, log, checks):
+    for item in items:
+        if checks["ok"](item):
+            log.warning("bad item %s", item)
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1

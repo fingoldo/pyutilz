@@ -33,6 +33,8 @@ from .return_annotation import scan_return_annotation_mismatch
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
 from .asymmetric_resource_guard import scan_asymmetric_resource_guard
+from .spy_arity import scan_stale_test_spy_arity
+from .log_throttle import scan_unthrottled_hot_loop_log
 
 # --- registry -----------------------------------------------------------
 
@@ -100,6 +102,8 @@ register_scanner(
     ),
 )
 register_scanner("asymmetric_resource_guard", scan_asymmetric_resource_guard)
+register_scanner("stale_test_spy_arity", scan_stale_test_spy_arity)
+register_scanner("unthrottled_hot_loop_log", scan_unthrottled_hot_loop_log)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

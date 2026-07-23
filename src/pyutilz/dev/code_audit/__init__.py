@@ -201,6 +201,21 @@ list[Finding]):
   own code already demonstrates the correct pattern in one place and
   omits it in another, the strongest signal available without
   understanding what the operation actually does.
+- ``scan_stale_test_spy_arity``: a test's hand-written spy/recorder
+  function, passed as ``patch(..., side_effect=<local def>)`` in place of
+  a real production function, whose own positional-arg arity has fallen
+  behind that production function's real call sites -- the production
+  function grew a new parameter (safe for real callers, since it has a
+  default) but the spy's fixed ``def spy(a, b, c): ...`` didn't grow with
+  it, so it raises ``TypeError`` the moment the new argument is actually
+  passed. ``MagicMock`` tolerates any arity; a hand-written spy doesn't.
+
+- ``scan_unthrottled_hot_loop_log``: a ``log.warning``/``log.error`` call
+  inside a ``for``/``while`` loop with no apparent rate-limiting guard (no
+  enclosing ``if`` that calls a throttle-shaped helper or uses a modulo
+  counter idiom) -- fine in isolation, but floods logs the moment every
+  item in a large batch hits the same condition (e.g. a systemic upstream
+  outage), exactly when an operator most needs signal, not noise.
 
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
@@ -261,6 +276,8 @@ from .locals_get import scan_locals_get_fragile_lookup
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
 from .asymmetric_resource_guard import scan_asymmetric_resource_guard
+from .spy_arity import scan_stale_test_spy_arity
+from .log_throttle import scan_unthrottled_hot_loop_log
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -303,6 +320,8 @@ __all__ = [
     "scan_shielded_resource_release_race",
     "scan_duplicate_credential_regex",
     "scan_asymmetric_resource_guard",
+    "scan_stale_test_spy_arity",
+    "scan_unthrottled_hot_loop_log",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -320,6 +339,7 @@ for _submod in (
     "docstring_args", "return_annotation", "locals_get",
     "shielded_resource_release", "duplicate_credential_regex",
     "asymmetric_resource_guard",
+    "spy_arity", "log_throttle",
     "registry", "cli",
 ):
     globals().pop(_submod, None)
