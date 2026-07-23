@@ -7,22 +7,31 @@ from pathlib import Path
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
 
 
-def _imported_bindings(tree: ast.Module) -> list[tuple[str, int, str]]:
+def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str, int, str]]:
     """``(bound_name, lineno, display_source)`` for every top-level (module-scope) ``import
     X``/``from X import Y [as Z]`` binding. Star imports and ``__all__``-listed names are excluded
     entirely (a star import can't be usage-checked by name; ``__all__`` membership already IS the
     usage). Wildcard aliasing (``as _``) is skipped -- a leading-underscore alias is a conventional
-    "explicitly discard" marker, not a name meant to be referenced."""
+    "explicitly discard" marker, not a name meant to be referenced. ``from __future__ import ...``
+    is skipped entirely -- a compiler directive, not a name ever meant to be referenced, so a
+    "never referenced" check is a category error for it, not a real finding. A line already
+    carrying a ``# noqa`` comment (any code) is skipped too -- the codebase has already reviewed
+    and explicitly exempted that import; re-flagging it is pure noise, not a new signal.
+    """
     out: list[tuple[str, int, str]] = []
     for node in tree.body:
         if isinstance(node, ast.Import):
+            if "# noqa" in _line_text(src_lines, node.lineno):
+                continue
             for alias in node.names:
                 bound = alias.asname or alias.name.split(".")[0]
                 if bound.startswith("_"):
                     continue
                 out.append((bound, node.lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
         elif isinstance(node, ast.ImportFrom):
-            if node.module is None:
+            if node.module is None or node.module == "__future__":
+                continue
+            if "# noqa" in _line_text(src_lines, node.lineno):
                 continue
             for alias in node.names:
                 if alias.name == "*":
@@ -105,12 +114,12 @@ def scan_possibly_dead_import(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        bindings = _imported_bindings(tree)
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        bindings = _imported_bindings(tree, src_lines)
         if not bindings:
             continue
         skip_lines = {lineno for _, lineno, _ in bindings}
         referenced = _names_referenced_in_file(tree, skip_lines)
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         rel = py.relative_to(root).as_posix()
 
         for name, lineno, display in bindings:

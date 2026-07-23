@@ -3387,6 +3387,28 @@ from os import *
     assert scan_possibly_dead_import(tmp_path) == []
 
 
+def test_possibly_dead_import_future_annotations_skipped(tmp_path: Path):
+    """`from __future__ import annotations` is a compiler directive, never referenced as a
+    name by design -- must never be flagged."""
+    _write(tmp_path, "mod.py", """
+from __future__ import annotations
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_noqa_line_skipped(tmp_path: Path):
+    """A line already carrying `# noqa` has already been reviewed and explicitly exempted --
+    re-flagging it is pure noise."""
+    _write(tmp_path, "mod.py", """
+import os  # noqa: F401
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+    _write(tmp_path, "mod2.py", """
+from os import path  # noqa: F401
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
     _write(tmp_path, "mod.py", """
