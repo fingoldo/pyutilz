@@ -149,7 +149,13 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     else:
                         s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path)
                 except Exception as e:
+                    # A persistent per-object failure (bad IAM perms, always-corrupt remote
+                    # object) previously retried with only network-RTT pacing -- no backoff --
+                    # unlike this function's two sibling failure branches ("not found in bucket"
+                    # and "corrupt zip", both `sleep(10)`). Matching them here closes the same
+                    # busy-loop risk class already fixed in those two branches.
                     logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
+                    sleep(10)
                 else:
                     logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
             else:

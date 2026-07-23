@@ -68,6 +68,14 @@ class TestGetRemoteBackend:
     def test_s3_no_bucket_returns_none(self):
         assert ktr.get_remote_backend("s3://") is None
 
+    def test_explicit_empty_spec_not_overridden_by_env_var(self, monkeypatch):
+        """Regression test: spec="" (an explicit "force local-only regardless of the
+        environment" request) was previously clobbered by `spec or os.environ.get(...)`,
+        silently falling through to PYUTILZ_KERNEL_REMOTE if that env var happened to be set --
+        the opposite of the caller's explicit intent."""
+        monkeypatch.setenv("PYUTILZ_KERNEL_REMOTE", "s3://my-bucket/tunings")
+        assert ktr.get_remote_backend("") is None
+
 
 class TestReadThrough:
     def test_read_through_populates_local(self, tmp_cache_dir):

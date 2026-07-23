@@ -111,7 +111,8 @@ def _max_abs_diff(a, b) -> float:
         if a.size == 0:
             return 0.0
         return float(np.abs(a - b).max())
-    except Exception:
+    except Exception as e:
+        logger.debug("_max_abs_diff: comparison failed (%s), treating as maximally different", e)
         return float("inf")
 
 

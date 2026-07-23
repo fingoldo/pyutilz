@@ -28,6 +28,18 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 
 _OUTPUT_LIKE_KWARG_NAMES = frozenset({"object", "out", "output", "target", "dest", "destination", "sink"})
 
+# Builtins that only ever READ their argument (iterate/hash its keys or items) -- never mutate it,
+# so passing locals()/globals() to one of these is never the "callee writes into it, expecting
+# that to reach the real variable slot" bug this scanner targets. Confirmed false positive found
+# in the wild (2026-07-22): text/strings/__init__.py's __dir__() returns
+# `sorted(set(globals()) | _LAZY_WEBTEXT_GLOBALS)` -- pure key-reading, no write-back expected.
+_READ_ONLY_BUILTIN_CONSUMERS = frozenset({"set", "list", "dict", "tuple", "frozenset", "sorted", "len", "iter", "vars", "repr", "str"})
+
+
+def _is_read_only_builtin_call(node: ast.AST) -> bool:
+    """True if ``node`` is a call to one of ``_READ_ONLY_BUILTIN_CONSUMERS`` (e.g. ``set(...)``, ``sorted(...)``)."""
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _READ_ONLY_BUILTIN_CONSUMERS
+
 
 def _is_locals_or_globals_call(node: ast.AST) -> bool:
     """True if ``node`` is a call to the bare builtin ``locals()``/``globals()`` (no args)."""
@@ -59,6 +71,8 @@ def scan_locals_globals_as_output(
                 continue
             if isinstance(node.func, ast.Name) and node.func.id in ("locals", "globals"):
                 continue  # this Call IS the locals()/globals() call itself, not a use of it
+            if _is_read_only_builtin_call(node):
+                continue  # e.g. set(globals()) -- reads keys, never writes into the dict
             for kw in node.keywords:
                 if kw.arg is not None and _is_locals_or_globals_call(kw.value):
                     severity = "P1" if kw.arg in _OUTPUT_LIKE_KWARG_NAMES else "Low"

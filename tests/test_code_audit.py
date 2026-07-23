@@ -1153,6 +1153,45 @@ def f(session):
     assert scan_sql_offset_pagination(tmp_path) == []
 
 
+def test_sql_offset_pagination_ignores_module_docstring_mentioning_sql_keywords(tmp_path: Path):
+    _write(tmp_path, "pkg_init.py", '''
+"""Documents this package's scanners.
+
+``scan_sql_offset_pagination``: a SQL literal combining ``LIMIT`` and ``OFFSET``. Advisory --
+flags the pattern so a reviewer can confirm the query is a SELECT with a stable filtered set.
+"""
+''')
+    assert scan_sql_offset_pagination(tmp_path) == []
+    assert scan_sql_limit_without_order_by(tmp_path) == []
+
+
+def test_sql_offset_pagination_ignores_class_and_function_docstrings(tmp_path: Path):
+    _write(tmp_path, "ok.py", '''
+class Foo:
+    """A SELECT with LIMIT and OFFSET is discussed here, not executed."""
+
+    def bar(self):
+        """Same SELECT/LIMIT/OFFSET vocabulary, still just prose."""
+        return 1
+''')
+    assert scan_sql_offset_pagination(tmp_path) == []
+
+
+def test_sql_offset_pagination_still_flags_real_sql_after_a_docstring(tmp_path: Path):
+    _write(tmp_path, "bad.py", '''
+"""This module talks about SELECT, LIMIT and OFFSET in prose."""
+
+def f(session, offset):
+    return session.execute("""
+        SELECT id FROM widgets WHERE flag IS NULL
+        ORDER BY id LIMIT :n OFFSET :offset
+    """)
+''')
+    findings = scan_sql_offset_pagination(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "sql_offset_pagination"
+
+
 # ---- dead_cli_flag ---------------------------------------------------------
 
 
@@ -1212,6 +1251,64 @@ def build_parser():
 def run(args):
     if args.resume:
         pass
+""")
+    assert scan_dead_cli_flags(tmp_path) == []
+
+
+def test_dead_cli_flag_ignores_selenium_options_add_argument(tmp_path: Path):
+    """Regression (2026-07-22, false positive found in the wild in web/browser.py):
+    Selenium's ChromeOptions/FirefoxOptions expose an UNRELATED add_argument(flag_string)
+    method with the identical name -- it appends a raw command-line flag to a list passed to
+    the external Chrome/Firefox binary, with no dest=/action=/etc. concept at all, so
+    `.no_sandbox` is never expected to appear anywhere in this codebase's own Python source.
+    Distinguished from real argparse usage by the absence of ANY keyword argument."""
+    _write(tmp_path, "ok.py", """
+from selenium.webdriver.chrome.options import Options
+
+def start_selenium():
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--remote-debugging-port=0")
+    return options
+""")
+    assert scan_dead_cli_flags(tmp_path) == []
+
+
+def test_dead_cli_flag_still_flags_argparse_flag_with_a_keyword(tmp_path: Path):
+    """The zero-keyword-argument exclusion (added to stop flagging Selenium's unrelated
+    add_argument) must not blind the scanner to a genuine dead argparse flag that carries at
+    least one argparse-specific keyword -- the shape virtually all real argparse declarations
+    use in practice (default=/action=/type=/help=/dest=)."""
+    _write(tmp_path, "bad.py", """
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume", default=False)
+    args = parser.parse_args()
+    print(args.batch_size)
+""")
+    findings = scan_dead_cli_flags(tmp_path)
+    assert len(findings) == 1
+    assert "resume" in findings[0].detail
+
+
+def test_dead_cli_flag_known_limitation_zero_kwarg_argparse_flag_not_flagged(tmp_path: Path):
+    """Documents an accepted trade-off: an argparse flag declared with NO keywords at all
+    (bare `add_argument("--resume")`, relying entirely on argparse's defaults) is
+    syntactically indistinguishable from Selenium's add_argument and is no longer flagged even
+    if genuinely dead. Real argparse declarations in this codebase always carry at least one
+    keyword (see dev/code_audit/cli.py), so this is a narrow, low-risk gap traded for
+    eliminating a confirmed, concrete false-positive class."""
+    _write(tmp_path, "bad_but_unflagged.py", """
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume")
+    args = parser.parse_args()
+    print(args.batch_size)
 """)
     assert scan_dead_cli_flags(tmp_path) == []
 
@@ -1995,6 +2092,41 @@ def debug_dump():
     assert findings == []
 
 
+def test_locals_globals_as_output_read_only_builtin_consumer_is_clean(tmp_path: Path):
+    """Regression (2026-07-22, false positive found in the wild in text/strings/__init__.py's
+    __dir__()): passing globals()/locals() to a builtin that only ever READS its argument
+    (set/list/dict/sorted/len/etc.) is never the "callee writes into it expecting write-back"
+    bug this scanner targets."""
+    _write(tmp_path, "ok.py", """
+def __dir__():
+    return sorted(set(globals()))
+""")
+    findings = scan_locals_globals_as_output(tmp_path)
+    assert findings == []
+
+
+def test_locals_globals_as_output_still_flags_positional_to_user_function(tmp_path: Path):
+    """The read-only-builtin exclusion must not blind the scanner to the real bug shape:
+    locals()/globals() passed positionally to a user-defined (non-builtin) function."""
+    _write(tmp_path, "bad.py", """
+def connect():
+    read_config_file(path, locals())
+""")
+    findings = scan_locals_globals_as_output(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "Low"
+
+
+def test_locals_globals_as_output_skips_unparseable_file(tmp_path: Path):
+    """A file with a syntax error must be skipped (via _safe_parse returning None), not raise."""
+    _write(tmp_path, "broken.py", """
+def connect(:
+    session.apply(object=locals())
+""")
+    findings = scan_locals_globals_as_output(tmp_path)
+    assert findings == []
+
+
 # ---- missing_network_timeout -------------------------------------------
 
 
@@ -2046,6 +2178,78 @@ def upsert(history_fields, hash_field):
 """)
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert findings == []
+
+
+def test_parameter_aliasing_mutation_immutable_scalar_union_syntax_is_clean(tmp_path: Path):
+    """``X | None``-annotated params: += always rebinds (never in-place mutates), so aliasing
+    one is not the leak shape this scanner targets."""
+    _write(tmp_path, "ok.py", """
+def f(total: float | None = None):
+    remaining = total
+    remaining -= 1.0
+    return remaining
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert findings == []
+
+
+def test_parameter_aliasing_mutation_immutable_scalar_optional_syntax_is_clean(tmp_path: Path):
+    """Regression (2026-07-22, false positive found in the wild in
+    data/pandaslib/io_ops.py::merge_pickles): ``typing.Optional[X]`` is a Subscript node, not
+    the ``X | None`` BinOp shape -- the SAME immutable-scalar guarantee applies to either
+    spelling, so both must be recognized for this exemption to actually cover
+    typing.Optional-style code (needed for Python < 3.10 compatibility, where ``X | None``
+    isn't valid at runtime without ``from __future__ import annotations``)."""
+    _write(tmp_path, "ok.py", """
+from typing import Optional
+
+def f(sentinel_field: Optional[str] = None):
+    current = sentinel_field
+    current += "1"
+    return current
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert findings == []
+
+
+def test_parameter_aliasing_mutation_bare_immutable_scalar_annotation_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(total: float):
+    remaining = total
+    remaining -= 1.0
+    return remaining
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert findings == []
+
+
+def test_parameter_aliasing_mutation_still_flags_mutable_container_despite_annotation(tmp_path: Path):
+    """A container-typed (list) parameter must still be flagged -- the immutable-scalar
+    exemption must not over-fire onto genuinely mutable types."""
+    _write(tmp_path, "bad.py", """
+from typing import Optional
+
+def f(items: Optional[list] = None):
+    local = items
+    local += [1]
+    return local
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P0"
+
+
+def test_parameter_aliasing_mutation_unannotated_param_stays_conservative(tmp_path: Path):
+    """No annotation at all -- the type is unknown, so the scanner's conservative default
+    (flag the AugAssign) must stay in effect rather than silently assuming immutability."""
+    _write(tmp_path, "bad.py", """
+def f(x):
+    local = x
+    local += 1
+    return local
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert len(findings) == 1
 
 
 # ---- sync_blocking_in_async --------------------------------------------
@@ -2105,6 +2309,47 @@ def connect():
         except ConnectionError:
             time.sleep(1)
     return result
+""")
+    findings = scan_retry_loops(tmp_path)
+    assert findings == []
+
+
+def test_retry_loop_sleep_backed_no_break_flagged_low(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import time
+
+def connect():
+    while True:
+        try:
+            return do_connect()
+        except ConnectionError:
+            time.sleep(1)
+""")
+    findings = scan_retry_loops(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "unbounded_retry_loop"
+    assert findings[0].severity == "Low"
+
+
+def test_retry_loop_bounded_via_raise_not_break_is_clean(tmp_path: Path):
+    """Regression (2026-07-22, false positive found in the wild in
+    llm/claude_code_provider.py): a `while True:` retry loop that bounds itself by raising
+    once an attempt counter is exceeded (checked BEFORE the loop's own try/except, so nothing
+    inside the SAME loop catches it) is just as bounded as one using `break` -- the scanner
+    used to only recognize `break`, flagging every raise-bounded retry loop as unbounded."""
+    _write(tmp_path, "ok.py", """
+import time
+
+def connect(max_attempts=5):
+    attempt = 0
+    while True:
+        attempt += 1
+        if attempt > max_attempts:
+            raise RuntimeError("exceeded max attempts")
+        try:
+            return do_connect()
+        except ConnectionError:
+            time.sleep(1)
 """)
     findings = scan_retry_loops(tmp_path)
     assert findings == []

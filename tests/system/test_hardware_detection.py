@@ -78,6 +78,33 @@ class TestCPUDetection:
         else:
             print("[WARN] lscpu not available")
 
+    def test_get_nix_cpu_sockets_number_parses_real_output(self, monkeypatch):
+        """get_nix_cpu_sockets_number() must parse a well-formed `lscpu` `Socket(s):` line."""
+        from pyutilz.system.system.probing import get_nix_cpu_sockets_number
+
+        monkeypatch.setattr(
+            "pyutilz.system.system.probing.subprocess.check_output",
+            lambda *a, **kw: b"Architecture:  x86_64\nSocket(s):     2\n",
+        )
+        assert get_nix_cpu_sockets_number() == 2
+
+    def test_get_nix_cpu_sockets_number_falls_back_to_1_on_unparseable_match(self, monkeypatch):
+        """Regression test: when `lscpu` succeeds and the ``Socket(s):`` line matches the
+        regex but the captured text isn't int-parseable, the function must still return the
+        documented fallback of 1 -- it previously left `num_sockets` overwritten to the raw
+        `re.findall()` match list, so a caller doing arithmetic on the "int" got a confusing
+        `TypeError` far from the real cause.
+        """
+        from pyutilz.system.system.probing import get_nix_cpu_sockets_number
+
+        monkeypatch.setattr(
+            "pyutilz.system.system.probing.subprocess.check_output",
+            lambda *a, **kw: b"Architecture:  x86_64\nSocket(s):     N/A\n",
+        )
+        result = get_nix_cpu_sockets_number()
+        assert result == 1
+        assert isinstance(result, int)
+
 
 class TestGPUDetection:
     """Test GPU detection functions."""
@@ -121,6 +148,32 @@ class TestGPUDetection:
             print(f"[OK] GPUtil: {len(gpu_stats)} GPU(s) found")
         else:
             print("[WARN] No GPUs detected by GPUtil")
+
+    def test_get_gpuutil_gpu_info_skips_one_bad_gpu_instead_of_truncating(self, monkeypatch):
+        """A per-GPU attribute-read failure must not silently drop every GPU after it.
+
+        Regression test: get_gpuutil_gpu_info() previously wrapped the WHOLE enumeration
+        loop in a single try/except, so one bad getattr() partway through returned whatever
+        partial list had been built so far -- indistinguishable from "these are genuinely
+        all the GPUs" for a caller like compute_total_gpus_ram() that sums the result.
+        """
+        import sys
+        import types
+        from pyutilz.system.system import get_gpuutil_gpu_info
+
+        good0 = types.SimpleNamespace(id=0, name="GPU0", memoryTotal=8192, memoryFree=4096, load=0.5, driver="1.0", temperature=60, uuid="a")
+        bad = types.SimpleNamespace(id=1, name="GPU1")  # missing memoryTotal -- getattr() raises AttributeError
+        good2 = types.SimpleNamespace(id=2, name="GPU2", memoryTotal=8192, memoryFree=4096, load=0.5, driver="1.0", temperature=60, uuid="c")
+
+        class _FakeGPUtil:
+            @staticmethod
+            def getGPUs():
+                return [good0, bad, good2]
+
+        monkeypatch.setitem(sys.modules, "GPUtil", _FakeGPUtil)
+        devices = get_gpuutil_gpu_info()
+
+        assert [d["id"] for d in devices] == [0, 2]  # the bad GPU is skipped, not a crash or a truncated-after-it list
 
 
 class TestPowerAndLargePages:

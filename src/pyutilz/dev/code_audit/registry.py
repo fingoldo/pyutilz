@@ -1,6 +1,7 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -80,7 +81,24 @@ register_scanner("return_annotation_mismatch", scan_return_annotation_mismatch)
 register_scanner("sql_aggregate_before_cast", scan_sql_aggregate_before_cast)
 register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 register_scanner("shielded_resource_release_race", scan_shielded_resource_release_race)
-register_scanner("duplicate_credential_regex", scan_duplicate_credential_regex)
+# canonical_module_rel_paths designates THIS package's own scanner-definition modules as the
+# credential-shaped-regex source of truth: credential_logging.py's _CREDENTIAL_NAME_RE and this
+# scanner's own DEFAULT_CREDENTIAL_KEYWORDS_RE both necessarily contain credential-shaped
+# keywords (that's their entire job as SECURITY-SCANNING META-TOOLING, not production
+# redaction/secret-handling logic) -- without this, the scanner flags itself and its sibling,
+# the only two credential-shaped re.compile(...) calls anywhere in this codebase, every run.
+register_scanner(
+    "duplicate_credential_regex",
+    partial(
+        scan_duplicate_credential_regex,
+        canonical_module_rel_paths=frozenset(
+            {
+                "dev/code_audit/credential_logging.py",
+                "dev/code_audit/duplicate_credential_regex.py",
+            }
+        ),
+    ),
+)
 register_scanner("asymmetric_resource_guard", scan_asymmetric_resource_guard)
 
 

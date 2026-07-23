@@ -257,7 +257,8 @@ class OpenAICompatibleProvider(LLMProvider):
             return
         try:
             mapping = {k.lower(): v for k, v in dict(headers).items()}
-        except Exception:
+        except Exception as e:
+            logger.debug("Could not parse response headers for rate-limit capture: %s", e)
             return
         captured = {k: v for k, v in mapping.items() if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")}
         if captured:

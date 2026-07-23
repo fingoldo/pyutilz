@@ -26,13 +26,19 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 
 
 def _loop_has_break(loop: ast.While) -> bool:
-    """True if ``loop``'s own body (not nested loops) contains a ``break``."""
+    """True if ``loop``'s own body (not nested loops) contains a ``break`` OR a ``raise`` --
+    both are equally valid ways to stop retrying forever. Confirmed false positive found in the
+    wild (2026-07-22): ``llm/claude_code_provider.py``'s retry loop bounds itself via
+    ``if attempt > max_attempts: raise RuntimeError(...)`` (checked before the loop's own
+    ``try:``, so nothing inside the SAME loop catches it) -- this scanner originally only
+    recognized ``break``, misreporting a raise-bounded loop as unbounded.
+    """
     for node in ast.walk(loop):
         if node is loop:
             continue
         if isinstance(node, (ast.While, ast.For)):
-            continue  # a break in a NESTED loop doesn't exit this one
-        if isinstance(node, ast.Break):
+            continue  # a break/raise in a NESTED loop doesn't exit this one
+        if isinstance(node, (ast.Break, ast.Raise)):
             return True
     return False
 
