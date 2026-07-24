@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
-from .broad_except import _has_log_call, _has_raise, _is_broad_except
+from .broad_except import _has_log_call, _has_raise, _is_broad_except, _handler_has_documented_rationale
 
 # --- logged-but-not-escalated except ---------------------------------------
 
@@ -152,6 +152,8 @@ def scan_log_only_except(
                     continue
                 if _escalates_to(handler, escalation_attrs):
                     continue
+                if _handler_has_documented_rationale(handler, lines):
+                    continue  # nosec / opportunistic / best-effort -- already a reviewed, intentional decision
                 findings.append(Finding(
                     check="log_only_except",
                     severity="P2",

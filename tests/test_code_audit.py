@@ -4001,3 +4001,20 @@ from pkg.sub import do_thing
     )
     findings = scan_possibly_dead_import(tmp_path)
     assert any(f.file.endswith("__init__.py") for f in findings), "a genuinely unconsumed re-export must still be flagged"
+
+
+def test_log_only_except_nosec_documented_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def process(rows):
+    validation_errors = []
+    try:
+        risky()
+    except Exception as e:  # nosec B110 - opportunistic path, logging is sufficient here
+        logger.warning("failed: %s", e)
+""",
+    )
+    findings = scan_log_only_except(tmp_path)
+    assert findings == [], f"nosec-documented log-only except must not be flagged; got {findings}"
