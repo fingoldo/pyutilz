@@ -19,31 +19,39 @@ def _is_asyncio_primitive_call(node: ast.AST, primitive_names: frozenset[str]) -
     return isinstance(func, ast.Attribute) and func.attr in primitive_names and isinstance(func.value, ast.Name) and func.value.id == "asyncio"
 
 
-def _is_persistent_target(target: ast.expr) -> bool:
+def _is_persistent_target(target: ast.expr, global_names: frozenset[str]) -> bool:
     """True for an assignment target that persists PAST the current function
-    call -- an object attribute (``self._lock``, ``cls.sem``) or a subscript
+    call -- an object attribute (``self._lock``, ``cls.sem``), a subscript
     into one (``instance.__dict__[self._name]``, a lazy-descriptor memoization
-    pattern; ``self._cache[key]``). A subscript into a plain local Name
-    (``local_dict[key] = ...`` where ``local_dict`` is itself function-scoped)
-    is NOT persistent and stays unflagged-by-this-exemption -- only recurse
-    through Attribute/Subscript chains, never through a bare Name base."""
+    pattern; ``self._cache[key]``), or a bare Name declared ``global`` in this
+    function (the ``global _sem; if _sem is None: _sem = asyncio.Lock()``
+    lazy-module-singleton idiom -- the module-level binding is exactly the
+    safe "one shared instance" case, not a fresh-per-call local). A subscript
+    into a plain NON-global local Name (``local_dict[key] = ...`` where
+    ``local_dict`` is itself function-scoped) is NOT persistent and stays
+    unflagged-by-this-exemption -- only recurse through Attribute/Subscript
+    chains or a global-declared Name, never through an ordinary local Name."""
     if isinstance(target, ast.Attribute):
         return True
     if isinstance(target, ast.Subscript):
-        return _is_persistent_target(target.value)
+        return _is_persistent_target(target.value, global_names)
+    if isinstance(target, ast.Name):
+        return target.id in global_names
     return False
 
 
 def _attribute_assigned_primitive_calls(func: ast.AST) -> set[ast.AST]:
     """Primitive-constructor call nodes that eventually reach a persistent
     target (see ``_is_persistent_target``) ANYWHERE inside ``func`` --
-    either directly (``self._lock = asyncio.Lock()``) or via one level of
-    local-variable indirection (``value = asyncio.Semaphore(...); ...;
-    instance.__dict__[key] = value``, the lazy-descriptor memoization
-    shape). Such an assignment persists on the object past the current
-    call, exactly the safe "create once, share via the instance" pattern
-    (typically in ``__init__``, or a lazy-descriptor's ``__get__``), so
-    these are never flagged regardless of which method they appear in."""
+    either directly (``self._lock = asyncio.Lock()``, ``global _sem; _sem =
+    asyncio.Lock()``) or via one level of local-variable indirection
+    (``value = asyncio.Semaphore(...); ...; instance.__dict__[key] =
+    value``, the lazy-descriptor memoization shape). Such an assignment
+    persists past the current call, exactly the safe "create once, share"
+    pattern (``__init__``, a lazy-descriptor's ``__get__``, or a
+    global-declared module-level lazy singleton), so these are never
+    flagged regardless of which method they appear in."""
+    global_names = frozenset(name for node in ast.walk(func) if isinstance(node, ast.Global) for name in node.names)
     direct: set[ast.AST] = set()
     local_var_of_call: dict[str, ast.AST] = {}
     persisted_var_names: set[str] = set()
@@ -54,7 +62,7 @@ def _attribute_assigned_primitive_calls(func: ast.AST) -> set[ast.AST]:
             targets, value = [node.target], node.value
         else:
             continue
-        if any(_is_persistent_target(t) for t in targets):
+        if any(_is_persistent_target(t, global_names) for t in targets):
             direct.add(value)
             if isinstance(value, ast.Name):
                 persisted_var_names.add(value.id)

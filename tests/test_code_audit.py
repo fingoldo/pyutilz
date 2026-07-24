@@ -4108,6 +4108,24 @@ class LazySemaphore:
 # ---- hardcoded_absolute_path_in_test --------------------------------------
 
 
+def test_async_primitive_reinit_per_call_global_lazy_singleton_is_clean(tmp_path: Path):
+    """global _sem; if _sem is None: _sem = asyncio.Lock() -- the lazy module-level
+    singleton idiom (double-checked init under global) must not be flagged; the
+    global binding IS the safe shared instance, same class as an instance attribute."""
+    _write(tmp_path, "ok4.py", """
+import asyncio
+
+_client_lock = None
+
+async def _get_shared_client():
+    global _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
+    async with _client_lock:
+        return 1
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert findings == []
 def test_hardcoded_absolute_path_in_test_windows_drive_flagged(tmp_path: Path):
     _write(tmp_path, "test_thing.py", """
 from pathlib import Path
