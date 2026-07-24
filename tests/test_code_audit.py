@@ -3928,6 +3928,45 @@ def b():
     assert findings == []
 
 
+def test_broad_except_fallback_log_message_phrases_all_exempt(tmp_path: Path):
+    """A log message naming the concrete fallback ("falling back to X" / "continuing with Y" /
+    "proceeding with Z" / "non-fatal") is itself the documentation of intent, the same signal
+    "best-effort" gives -- each phrase alone must exempt the handler."""
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+import logging
+logger = logging.getLogger(__name__)
+
+def a():
+    try:
+        risky()
+    except Exception as e:
+        logger.warning("step failed (%s); falling back to the default.", e)
+
+def b():
+    try:
+        risky()
+    except Exception as e:
+        logger.warning("step failed (%s); continuing with the prior value.", e)
+
+def c():
+    try:
+        risky()
+    except Exception as e:
+        logger.warning("step failed (%s); proceeding with the full set.", e)
+
+def d():
+    try:
+        risky()
+    except Exception as e:
+        logger.warning("step failed, non-fatal: %s", e)
+""",
+    )
+    assert scan_broad_except_swallows(tmp_path) == []
+
+
 def test_broad_except_unrelated_nosec_elsewhere_in_function_does_not_exempt(tmp_path: Path):
     """The exemption window is the handler's own line + body span -- an unrelated nosec comment on
     a DIFFERENT, unrelated line elsewhere in the same function must not accidentally exempt a real,
