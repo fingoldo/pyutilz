@@ -78,6 +78,37 @@ def _attribute_names_in_corpus(root: Path, exclude_dirs: frozenset[str]) -> set[
     return names
 
 
+def _from_import_names_by_file(root: Path, exclude_dirs: frozenset[str]) -> dict[Path, set[str]]:
+    """For every file, the set of names it pulls in via ``from <anything> import name`` (star
+    imports excluded). Used to detect a name re-exported from a facade ``__init__.py`` and
+    consumed by a DIFFERENT file doing ``from that_facade import name`` -- a shape invisible to
+    ``_attribute_names_in_corpus`` (the name never appears as ``X.name`` anywhere, only as the
+    ``from`` import's own target list) and invisible to the per-file bare-name check (the
+    consuming reference lives in a different file entirely). Confirmed as a real false-positive
+    class: mlframe package ``__init__.py`` facades re-exporting via ``from .submodule import
+    Name`` for downstream ``from mlframe.pkg import Name`` consumers were flagged wholesale."""
+    by_file: dict[Path, set[str]] = {}
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name != "*":
+                        names.add(alias.name)
+        by_file[py] = names
+    return by_file
+
+
+def _is_consumed_by_another_files_from_import(name: str, this_file: Path, from_import_names_by_file: dict[Path, set[str]]) -> bool:
+    """True if some file OTHER than ``this_file`` does ``from <anything> import name``. Excludes
+    ``this_file`` itself so the import binding being checked can't trivially "consume itself" by
+    virtue of being a ``from`` import in the first place."""
+    return any(name in names for other, names in from_import_names_by_file.items() if other != this_file)
+
+
 def scan_possibly_dead_import(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -109,6 +140,7 @@ def scan_possibly_dead_import(
     """
     findings: list[Finding] = []
     corpus_attr_names = _attribute_names_in_corpus(root, exclude_dirs)
+    from_import_names_by_file = _from_import_names_by_file(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
@@ -127,6 +159,8 @@ def scan_possibly_dead_import(
                 continue
             if name in corpus_attr_names:
                 continue  # possibly a facade re-export consumed as <module>.name elsewhere
+            if _is_consumed_by_another_files_from_import(name, py, from_import_names_by_file):
+                continue  # a facade re-export consumed via `from this_module import name` elsewhere
             findings.append(Finding(
                 check="possibly_dead_import",
                 severity="Low",

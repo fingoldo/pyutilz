@@ -207,6 +207,32 @@ def _is_in_boolean_context(node: ast.AST, parent_map: dict[int, tuple[ast.AST, s
         return False
 
 
+_BOOLEAN_VALUED_CALL_NAMES = frozenset({"isinstance", "issubclass", "hasattr", "callable", "all", "any"})
+
+
+def _is_boolean_valued(node: ast.AST) -> bool:
+    """True when ``node`` can only ever evaluate to an actual ``bool`` (never an arbitrary falsy
+    "empty" value like ``0``/``""``/``[]``) -- a comparison, a boolean-returning builtin call, a
+    ``not`` unary op, or a BoolOp whose own operands are all themselves boolean-valued. When BOTH
+    sides of an ``or`` are shapes like this, the whole expression can never be a "default value"
+    trap regardless of where it's used (assigned, returned, passed as an argument) -- there is no
+    falsy-but-meaningful non-bool value either side could ever produce. Confirmed as a real
+    false-positive class: ``return isinstance(op, ast.IsNot) or isinstance(op, ast.NotEq)`` and
+    ``return not (hi_a < lo_b or hi_b < lo_a)`` were both flagged despite being pure boolean logic,
+    not a default-substitution shape at all -- the existing boolean-CONTEXT exclusion only covers
+    if/while/assert/ternary TEST positions, missing a boolean expression used as a return value or
+    assigned to a bool-typed variable."""
+    if isinstance(node, ast.Compare):
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _BOOLEAN_VALUED_CALL_NAMES:
+        return True
+    if isinstance(node, ast.BoolOp):
+        return all(_is_boolean_valued(v) for v in node.values)
+    return False
+
+
 def scan_default_via_or_trap(root: Path,
                              exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                              ) -> list[Finding]:
@@ -235,6 +261,8 @@ def scan_default_via_or_trap(root: Path,
             # tests, comprehension filters) -- the result is consumed only
             # as a bool, never assigned/returned/passed as a "default value".
             if _is_in_boolean_context(node, parent_map):
+                continue
+            if _is_boolean_valued(node):
                 continue
             rhs = node.values[-1]
             # Skip when RHS is itself "trivial" (None/empty/falsy).

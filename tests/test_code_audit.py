@@ -3887,3 +3887,117 @@ def process(rows):
     )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings, "undocumented swallow must still be flagged"
+
+
+def test_default_via_or_boolean_valued_return_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def overlaps(lo_a, hi_a, lo_b, hi_b):
+    return not (hi_a < lo_b or hi_b < lo_a)
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == [], f"pure-boolean return must not be flagged; got {findings}"
+
+
+def test_default_via_or_isinstance_or_isinstance_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def is_not_or_ne(op):
+    return isinstance(op, int) or isinstance(op, float)
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == []
+
+
+def test_default_via_or_boolean_valued_assignment_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def check(a, b):
+    ok = (a > 0) or (b > 0)
+    return ok
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == []
+
+
+def test_default_via_or_non_boolean_return_still_flagged(tmp_path: Path):
+    """Sanity: a genuine default-via-or trap in a return statement is still caught -- the new
+    exemption only suppresses PURE-boolean operands, not arbitrary return-position ors."""
+    _write(
+        tmp_path,
+        "bad.py",
+        """
+def get_count(x):
+    return x.count or 5
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings, "a non-boolean-valued or-default in a return must still be flagged"
+
+
+def test_possibly_dead_import_facade_reexport_consumed_via_from_import_elsewhere(tmp_path: Path):
+    """A name re-exported by a package __init__.py, consumed elsewhere ONLY via
+    `from package import name` (never as `package.name` attribute access), must not be flagged."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "sub.py",
+        """
+def do_thing():
+    return 1
+""",
+    )
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from pkg.sub import do_thing
+""",
+    )
+    consumer_dir = tmp_path / "consumer"
+    consumer_dir.mkdir()
+    _write(
+        consumer_dir,
+        "user.py",
+        """
+from pkg import do_thing
+
+do_thing()
+""",
+    )
+    findings = scan_possibly_dead_import(tmp_path)
+    assert findings == [], f"facade re-export consumed via a downstream from-import must not be flagged; got {findings}"
+
+
+def test_possibly_dead_import_facade_reexport_never_imported_anywhere_still_flagged(tmp_path: Path):
+    """Sanity: a name imported into __init__.py but genuinely never consumed anywhere (no bare-name
+    use, no attribute access, no downstream from-import) must still be flagged."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "sub.py",
+        """
+def do_thing():
+    return 1
+""",
+    )
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from pkg.sub import do_thing
+""",
+    )
+    findings = scan_possibly_dead_import(tmp_path)
+    assert any(f.file.endswith("__init__.py") for f in findings), "a genuinely unconsumed re-export must still be flagged"
