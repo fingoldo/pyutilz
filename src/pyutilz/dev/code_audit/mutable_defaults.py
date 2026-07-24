@@ -19,6 +19,8 @@ _MUTATING_METHODS = frozenset({
 _MUTABLE_LITERAL_TYPES = (ast.List, ast.Dict, ast.Set)
 _MUTABLE_CALLS = frozenset({"list", "dict", "set"})
 
+_AST_INDEX = getattr(ast, "Index", None)  # deprecated 3.9+, removed entirely 3.12+; see its use below
+
 
 def _is_mutable_default(default: ast.AST) -> Optional[str]:
     """Return a short label if ``default`` is a mutable literal/call,
@@ -119,7 +121,15 @@ def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> boo
     # `from __future__ import annotations`), so both must be recognized for this exemption to
     # actually cover typing.Optional-style code.
     if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
-        return _is_known_immutable_scalar_annotation(annotation.slice)
+        inner = annotation.slice
+        # Python < 3.9 wraps Subscript.slice in ast.Index (removed from the parser's OWN output
+        # in 3.9, and from the ast module entirely in 3.12+, so this must be a getattr probe, not
+        # a bare `ast.Index` reference) -- without unwrapping it, `Optional[str]`'s inner `str`
+        # is an Index node on 3.8, matching none of this function's cases and falsely NOT
+        # recognized as immutable-scalar.
+        if _AST_INDEX is not None and isinstance(inner, _AST_INDEX):
+            inner = inner.value  # type: ignore[attr-defined]  # ast.Index only exists (as a name) on Python < 3.12, guarded by the isinstance check above
+        return _is_known_immutable_scalar_annotation(inner)
     return False
 
 

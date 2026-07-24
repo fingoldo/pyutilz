@@ -79,6 +79,7 @@ class TestLogProxyDunders:
 
 class TestStringsFacadeLiveGlobals:
     def test_inflect_engine_reflects_webtext_live_state(self):
+        pytest.importorskip("inflect")
         import pyutilz.text.strings as strings_pkg
         import pyutilz.text.strings.webtext as webtext_mod
 

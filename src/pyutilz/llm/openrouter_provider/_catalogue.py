@@ -93,7 +93,13 @@ async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
     """
     if _catalogue_is_fresh():
         return
-    await asyncio.to_thread(_fetch_models_catalogue, timeout)
+    if sys.version_info >= (3, 9):
+        # asyncio.to_thread (3.9+) also propagates the calling contextvars.Context to the
+        # worker thread, which loop.run_in_executor below does not do on its own.
+        await asyncio.to_thread(_fetch_models_catalogue, timeout)
+    else:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _fetch_models_catalogue, timeout)
 
 
 def _per_token_cost_pair(model: str) -> tuple[float, float]:

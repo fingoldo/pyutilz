@@ -9,6 +9,7 @@ pytest.importorskip("pydantic")
 
 class TestGeminiRetryPredicate:
     def test_retries_on_genai_server_error(self):
+        pytest.importorskip("google.genai")
         from google.genai.errors import ServerError
         from pyutilz.llm.gemini_provider import _is_retryable_genai_error
 
@@ -16,6 +17,7 @@ class TestGeminiRetryPredicate:
         assert _is_retryable_genai_error(exc) is True
 
     def test_retries_on_genai_client_error_429_only(self):
+        pytest.importorskip("google.genai")
         from google.genai.errors import ClientError
         from pyutilz.llm.gemini_provider import _is_retryable_genai_error
 
@@ -179,7 +181,7 @@ class TestLLMTruncationErrorWiring:
 
         p._client = type("C", (), {"post": fake_post})()
         p.model_name = "gpt-4o"
-        p.semaphore = asyncio.Semaphore(1)
+        p._max_concurrent = 1  # LazySemaphore constructs the real asyncio.Semaphore lazily, on first access inside the running loop below -- constructing it eagerly here (outside any loop) hits Python 3.9's "no current event loop" bug (removed in 3.10+, which binds lazily too)
         p.total_prompt_tokens = 0
         p.total_completion_tokens = 0
         p.total_cache_hit_tokens = 0
