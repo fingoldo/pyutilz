@@ -109,7 +109,7 @@ def job_completed(
                     # 429=rate limit exceeded
                     logger.warning("Problem %s while sending heartbeat to %s on job %s: %s", res.status_code, provider, job_id, res.text)
 
-            except Exception as e:
+            except Exception as e:  # best-effort: a heartbeat ping is fire-and-forget telemetry, never the caller's success signal
                 logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
 
         if blocking:

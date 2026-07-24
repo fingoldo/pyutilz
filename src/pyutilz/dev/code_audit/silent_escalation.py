@@ -30,6 +30,40 @@ _ESCALATION_METHOD_NAMES = frozenset({"append", "extend", "warn", "add_error", "
 _ESCALATION_HELPER_NAME_SUBSTRINGS: tuple[str, ...] = ("record", "track_fail", "mark_fail", "log_fail")
 
 
+def _file_uses_escalation_convention(tree: ast.AST, escalation_attrs: frozenset[str]) -> bool:
+    """True iff the file actually WRITES to an escalation-collection identifier somewhere in its
+    AST -- an assignment/augmented-assignment target, a dict-literal key, or the base of an
+    append-style call -- not merely mentions the word in a comment, a docstring, or a log-message
+    string, and not merely READS an attribute whose name happens to contain a qualifying
+    substring (``logger.warning(...)`` itself contains "warn", which would trivially satisfy a
+    naive "does this Attribute node's name qualify" walk for nearly every file that logs at all).
+    A raw text substring check over the whole file has the same problem one level up: it matches
+    ``# ... give identical errors`` in a comment or ``"per-target failures"`` inside a log format
+    string just as readily as a genuine ``errors.append(...)`` convention. Restricting to WRITE
+    positions is what actually distinguishes "this file collects problems into a named
+    collection" from "this file's prose happens to contain the word."
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if _looks_like_error_target(t) or (_target_name(t) or "") in escalation_attrs:
+                    return True
+        elif isinstance(node, ast.AugAssign):
+            if _looks_like_error_target(node.target) or (_target_name(node.target) or "") in escalation_attrs:
+                return True
+        elif isinstance(node, ast.Dict):
+            for k in node.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    if k.value in escalation_attrs or any(s in k.value.lower() for s in _ERROR_TARGET_SUBSTRINGS):
+                        return True
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES:
+            base = node.func.value
+            base_name = _target_name(base)
+            if base_name is not None and (base_name in escalation_attrs or any(s in base_name.lower() for s in _ERROR_TARGET_SUBSTRINGS)):
+                return True
+    return False
+
+
 def _target_name(node: ast.AST) -> str | None:
     """The identifier a target expression is ultimately named by: the
     attribute name for ``x.error``, the bound name for a plain variable, or
@@ -88,7 +122,19 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
       "record this outcome" convention (``_record(charts, name, False)``,
       ``track_failure(...)``) -- the append/warn step lives one indirection
       behind a small project-local function instead of being inlined.
+    - A ``return`` of a plain variable that was assigned (earlier in this same handler) from a
+      dict literal carrying an error-named key (``out = {"error": str(e)}; ...; return out``) --
+      the common "build the error payload, maybe merge in extra fields, then return it" shape,
+      equivalent to ``return {"error": ...}`` but one assignment away from the literal.
     """
+    _error_dict_vars: set[str] = set()
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Assign):
+            v = node.value
+            if isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        _error_dict_vars.add(t.id)
     for node in ast.walk(handler):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and any(s in node.func.id.lower() for s in _ESCALATION_HELPER_NAME_SUBSTRINGS):
             return True
@@ -113,6 +159,8 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
             if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Constant) and e.value is False for e in v.elts):
                 return True
             if isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys):
+                return True
+            if isinstance(v, ast.Name) and v.id in _error_dict_vars:
                 return True
     return False
 
@@ -157,9 +205,9 @@ def scan_log_only_except(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace")
-        if not any(attr in src_lines for attr in escalation_attrs):
+        if not _file_uses_escalation_convention(tree, escalation_attrs):
             continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace")
         lines = src_lines.splitlines()
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):

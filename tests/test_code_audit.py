@@ -1393,6 +1393,24 @@ def save():
     assert scan_log_only_except(tmp_path) == []
 
 
+def test_log_only_except_word_in_comment_or_string_not_gate(tmp_path: Path):
+    """A file that merely mentions "errors"/"failures" inside a comment or a log-message
+    string -- never as a real bound identifier -- must not be gated into the scan at all,
+    even though the whole-file text technically contains those words."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def save():
+    # transform should give identical errors across backends
+    try:
+        do_write()
+    except Exception as e:
+        logger.warning("per-target failures: %s", e)
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
 def test_log_only_except_no_log_call_not_double_flagged(tmp_path: Path):
     """No log call at all is scan_broad_except_swallows' territory, not this scanner's."""
     _write(tmp_path, "ok.py", """
@@ -1462,6 +1480,26 @@ def run(errors):
     except Exception as e:
         logger.warning("failed: %s", e)
         return {"error": str(e)}
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
+def test_log_only_except_return_error_dict_via_variable_is_clean(tmp_path: Path):
+    """``out = {"error": str(e)}; ...; return out`` -- the payload built into a local variable
+    (possibly merged with extra fields via ``.update()``) before being returned -- is the same
+    escalation contract as ``return {"error": ...}`` directly, just one assignment removed."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run(errors, extra):
+    try:
+        return {"result": do_thing()}
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        out = {"id": 1, "error": str(e)}
+        out.update(extra)
+        return out
 """)
     assert scan_log_only_except(tmp_path) == []
 
