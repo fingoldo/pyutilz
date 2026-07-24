@@ -3787,3 +3787,103 @@ from numpy import *
     )
     findings = scan_uncurated_star_exports(tmp_path)
     assert findings == []
+
+
+def test_broad_except_nosec_comment_on_except_line_skipped(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def probe():
+    try:
+        import cupy as cp
+        return cp, True
+    except Exception:  # nosec B110 - GPU probe is opportunistic, CPU fallback below
+        return None, False
+""",
+    )
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == [], f"nosec-documented swallow must not be flagged; got {findings}"
+
+
+def test_broad_except_opportunistic_keyword_in_handler_body_skipped(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def probe(n_full, n_sub):
+    try:
+        from ._gpu import fast_path
+        return fast_path(n_full, n_sub)
+    except Exception:
+        # GPU path is opportunistic; any failure falls through to the host path below.
+        pass
+""",
+    )
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == [], f"opportunistic-documented swallow must not be flagged; got {findings}"
+
+
+def test_broad_except_best_effort_keyword_hyphenated_and_spaced_both_match(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def a():
+    try:
+        risky()
+    except Exception:
+        pass  # best-effort cleanup, safe to skip
+
+def b():
+    try:
+        risky()
+    except Exception:
+        pass  # best effort cleanup, safe to skip
+""",
+    )
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings == []
+
+
+def test_broad_except_unrelated_nosec_elsewhere_in_function_does_not_exempt(tmp_path: Path):
+    """The exemption window is the handler's own line + body span -- an unrelated nosec comment on
+    a DIFFERENT, unrelated line elsewhere in the same function must not accidentally exempt a real,
+    undocumented swallow."""
+    _write(
+        tmp_path,
+        "bad.py",
+        """
+def f(rows):
+    eval(rows)  # nosec B307 - trusted internal input, unrelated to the block below
+    out = []
+    try:
+        out.append(transform(rows))
+    except Exception:
+        continue
+    return out
+""",
+    )
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings, "an unrelated nosec comment elsewhere in the function must not suppress a real finding"
+
+
+def test_broad_except_no_rationale_still_flagged(tmp_path: Path):
+    """Sanity: a plain undocumented swallow with none of the rationale markers is still flagged --
+    confirms the new exemption isn't accidentally matching everything."""
+    _write(
+        tmp_path,
+        "bad.py",
+        """
+def process(rows):
+    out = []
+    for r in rows:
+        try:
+            out.append(transform(r))
+        except Exception:
+            continue
+    return out
+""",
+    )
+    findings = scan_broad_except_swallows(tmp_path)
+    assert findings, "undocumented swallow must still be flagged"

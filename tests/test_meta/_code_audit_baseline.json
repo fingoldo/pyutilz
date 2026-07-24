@@ -10,6 +10,7 @@
   "default_via_or::dev/benchmarking.py:410",
   "default_via_or::dev/benchmarking.py:448",
   "default_via_or::dev/benchmarking.py:470",
+  "default_via_or::dev/code_audit/broad_except.py:138",
   "default_via_or::dev/code_audit/cli.py:89",
   "default_via_or::dev/code_audit/dead_import.py:27",
   "default_via_or::dev/code_audit/dead_import.py:39",
