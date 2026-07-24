@@ -46,16 +46,24 @@ def _target_name(node: ast.AST) -> str | None:
     return None
 
 
+# Substrings covering the same "collect problems" naming space as DEFAULT_ESCALATION_ATTRS
+# (errors/warnings/issues/problems/failures) -- checked as substrings, not exact names, so a
+# caller-supplied collection with a qualifying prefix/suffix (``panel_failures``, ``fit_issues``,
+# ``load_warnings``) is recognised the same way a bare ``errors``/``failures`` would be.
+_ERROR_TARGET_SUBSTRINGS: tuple[str, ...] = ("error", "fail", "warn", "issue", "problem")
+
+
 def _looks_like_error_target(node: ast.AST) -> bool:
     """True when a target's name itself signals an error-collection
     convention this project didn't declare via ``escalation_attrs`` -- e.g.
     ``stats["errors"] += 1``, ``total_errors += len(batch)``,
-    ``result.error = str(e)``. A substring match on "error" is deliberately
-    broad: false negatives here (a genuinely unescalated failure) are worse
-    than the rare false positive (an unrelated ``error`` in a variable
-    name that isn't actually this handler's escalation path)."""
+    ``result.error = str(e)``, ``panel_failures.append(...)``. A substring
+    match against ``_ERROR_TARGET_SUBSTRINGS`` is deliberately broad: false
+    negatives here (a genuinely unescalated failure) are worse than the rare
+    false positive (an unrelated "error"/"fail"/etc. in a variable name that
+    isn't actually this handler's escalation path)."""
     name = _target_name(node)
-    return name is not None and "error" in name.lower()
+    return name is not None and any(s in name.lower() for s in _ERROR_TARGET_SUBSTRINGS)
 
 
 def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) -> bool:

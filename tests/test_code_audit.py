@@ -1504,6 +1504,26 @@ def run(errors, charts):
     assert scan_log_only_except(tmp_path) == []
 
 
+def test_log_only_except_named_failure_list_append_is_clean(tmp_path: Path):
+    """``.append()`` onto a caller-supplied collection whose name merely CONTAINS one of the
+    error-target substrings (``panel_failures``, not an exact ``escalation_attrs`` member) is a
+    real escalation path, matching the same broad-substring policy already used for augmented
+    assignment / plain-assignment escalation targets."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def run(errors, panel_failures):
+    try:
+        do_thing()
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        if panel_failures is not None:
+            panel_failures.append("panel")
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
 def test_log_only_except_local_error_var_assignment_is_clean(tmp_path: Path):
     """Stashing the failure into a local ``error_message``-named variable
     (persisted after the loop) is a real escalation path even without an
