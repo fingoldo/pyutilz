@@ -1483,6 +1483,27 @@ def run(errors, results):
     assert scan_log_only_except(tmp_path) == []
 
 
+def test_log_only_except_record_helper_call_is_clean(tmp_path: Path):
+    """A call to a bare local helper whose name signals a "record this outcome" convention
+    (``_record(charts, name, False)``) is a real escalation path even though it isn't a
+    ``.append()``/``.warn()`` method call on the escalation collection itself."""
+    _write(tmp_path, "ok.py", """
+import logging
+logger = logging.getLogger(__name__)
+
+def _record(charts, name, ok):
+    charts.setdefault("saved" if ok else "failed", []).append(name)
+
+def run(errors, charts):
+    try:
+        do_thing()
+    except Exception as e:
+        logger.warning("failed: %s", e)
+        _record(charts, "step", False)
+""")
+    assert scan_log_only_except(tmp_path) == []
+
+
 def test_log_only_except_local_error_var_assignment_is_clean(tmp_path: Path):
     """Stashing the failure into a local ``error_message``-named variable
     (persisted after the loop) is a real escalation path even without an

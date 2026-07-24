@@ -21,6 +21,14 @@ DEFAULT_ESCALATION_ATTRS: frozenset[str] = frozenset({
 
 _ESCALATION_METHOD_NAMES = frozenset({"append", "extend", "warn", "add_error", "add_warning"})
 
+# Substrings of a bare (non-method) function name that signal a caller-defined "record this
+# outcome" helper -- e.g. ``_record(charts, "step", False)``, ``track_failure(name, exc)``. Many
+# codebases centralise the "append a failure marker" step behind a small local helper rather than
+# inlining a `.append()`/`.warn()` call at every site; without this, every one of those sites reads
+# as an unescalated swallow even though the failure IS made caller-visible, just one indirection
+# away from the literal method-call shapes ``_escalates_to`` otherwise recognises.
+_ESCALATION_HELPER_NAME_SUBSTRINGS: tuple[str, ...] = ("record", "track_fail", "mark_fail", "log_fail")
+
 
 def _target_name(node: ast.AST) -> str | None:
     """The identifier a target expression is ultimately named by: the
@@ -68,8 +76,14 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
       ``False``) or a dict literal with an error-named key
       (``return {"error": str(e)}``) -- the Phase0-style bool/dict-return
       escalation contract.
+    - A call to a bare (non-method) local helper whose name signals a
+      "record this outcome" convention (``_record(charts, name, False)``,
+      ``track_failure(...)``) -- the append/warn step lives one indirection
+      behind a small project-local function instead of being inlined.
     """
     for node in ast.walk(handler):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and any(s in node.func.id.lower() for s in _ESCALATION_HELPER_NAME_SUBSTRINGS):
+            return True
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES:
             if node.func.attr in ("warn", "add_error", "add_warning"):
                 return True
