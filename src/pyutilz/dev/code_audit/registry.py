@@ -39,6 +39,9 @@ from .dead_import import scan_possibly_dead_import
 from .unpicklable_resource_state import scan_unpicklable_resource_state
 from .skip_masking_except import scan_except_skip_masks_call_under_test
 from .uncurated_star_export import scan_uncurated_star_exports
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 
 # --- registry -----------------------------------------------------------
 
@@ -113,6 +116,9 @@ register_scanner("unpicklable_resource_state", scan_unpicklable_resource_state)
 register_scanner("tautological_is_not_none_only_test", scan_tautological_is_not_none_only_tests)
 register_scanner("except_skip_masks_call_under_test", scan_except_skip_masks_call_under_test)
 register_scanner("uncurated_star_export", scan_uncurated_star_exports)
+register_scanner("async_primitive_reinit_per_call", scan_async_primitive_reinit_per_call)
+register_scanner("hardcoded_absolute_path_in_test", scan_hardcoded_absolute_path_in_test)
+register_scanner("llm_call_missing_max_tokens_cap", scan_llm_call_missing_max_tokens_cap)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

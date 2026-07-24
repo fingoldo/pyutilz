@@ -53,6 +53,9 @@ from pyutilz.dev.code_audit import (
     scan_tautological_is_not_none_only_tests,
     scan_except_skip_masks_call_under_test,
     scan_uncurated_star_exports,
+    scan_async_primitive_reinit_per_call,
+    scan_hardcoded_absolute_path_in_test,
+    scan_llm_call_missing_max_tokens_cap,
 )
 
 
@@ -4018,3 +4021,193 @@ def process(rows):
     )
     findings = scan_log_only_except(tmp_path)
     assert findings == [], f"nosec-documented log-only except must not be flagged; got {findings}"
+# ---- async_primitive_reinit_per_call -------------------------------------
+
+
+def test_async_primitive_reinit_per_call_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import asyncio
+
+async def process_batch(items):
+    lock = asyncio.Lock()
+    async with lock:
+        for item in items:
+            await handle(item)
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "async_primitive_reinit_per_call"
+    assert findings[0].severity == "P1"
+
+
+def test_async_primitive_reinit_per_call_module_scope_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import asyncio
+
+_lock = asyncio.Lock()
+
+async def process_batch(items):
+    async with _lock:
+        for item in items:
+            await handle(item)
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert findings == []
+
+
+def test_async_primitive_reinit_per_call_init_scope_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok2.py", """
+import asyncio
+
+class Worker:
+    def __init__(self):
+        self._lock = asyncio.Lock()
+
+    async def process_batch(self, items):
+        async with self._lock:
+            for item in items:
+                await handle(item)
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert findings == []
+
+
+def test_async_primitive_reinit_per_call_custom_primitive_names(tmp_path: Path):
+    _write(tmp_path, "bad2.py", """
+import asyncio
+
+async def worker():
+    sem = asyncio.Semaphore(3)
+    async with sem:
+        await do_work()
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path, primitive_names=frozenset({"Semaphore"}))
+    assert len(findings) == 1
+    findings_lock_only = scan_async_primitive_reinit_per_call(tmp_path, primitive_names=frozenset({"Lock"}))
+    assert findings_lock_only == []
+
+
+def test_async_primitive_reinit_per_call_dict_memoization_is_clean(tmp_path: Path):
+    """Lazy-descriptor memoization onto instance.__dict__ (a Subscript target whose base is an
+    Attribute chain) is the same safe create-once-cache-on-the-object pattern as a direct
+    self._x = ... assignment -- must not be flagged."""
+    _write(tmp_path, "ok3.py", """
+import asyncio
+
+class LazySemaphore:
+    def __get__(self, instance, owner=None):
+        value = instance.__dict__.get(self._name)
+        if value is None:
+            value = asyncio.Semaphore(instance._max_concurrent)
+            instance.__dict__[self._name] = value
+        return value
+""")
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert findings == []
+
+# ---- hardcoded_absolute_path_in_test --------------------------------------
+
+
+def test_hardcoded_absolute_path_in_test_windows_drive_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing.py", """
+from pathlib import Path
+
+def test_uses_fixture():
+    fixture = Path("D:/Machine Learning/project/fixtures/data.csv")
+    assert fixture.exists()
+""")
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "hardcoded_absolute_path_in_test"
+    assert findings[0].severity == "P2"
+
+
+def test_hardcoded_absolute_path_in_test_posix_home_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing2.py", """
+def test_reads_config():
+    path = "/home/alice/configs/settings.json"
+    assert path
+""")
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+
+
+def test_hardcoded_absolute_path_in_test_non_test_file_is_clean(tmp_path: Path):
+    _write(tmp_path, "helpers.py", """
+def default_path():
+    return "D:/Machine Learning/project/fixtures/data.csv"
+""")
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert findings == []
+
+
+def test_hardcoded_absolute_path_in_test_tmp_and_var_are_clean(tmp_path: Path):
+    _write(tmp_path, "test_clean.py", """
+def test_writes_scratch():
+    path = "/tmp/scratch/output.json"
+    other = "/var/log/app.log"
+    assert path and other
+""")
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert findings == []
+
+
+def test_hardcoded_absolute_path_in_test_tmp_path_derived_is_clean(tmp_path: Path):
+    _write(tmp_path, "test_clean2.py", """
+def test_writes_scratch(tmp_path):
+    path = tmp_path / "output.json"
+    assert path
+""")
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert findings == []
+
+
+# ---- llm_call_missing_max_tokens_cap --------------------------------------
+
+
+def test_llm_call_missing_max_tokens_cap_no_kwarg_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+from pyutilz.llm.factory import get_llm_provider
+
+async def summarize(text):
+    provider = get_llm_provider("openai")
+    return await provider.generate(prompt=text)
+""")
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "llm_call_missing_max_tokens_cap"
+    assert findings[0].severity == "P2"
+
+
+def test_llm_call_missing_max_tokens_cap_zero_literal_flagged(tmp_path: Path):
+    _write(tmp_path, "bad2.py", """
+from pyutilz.llm.factory import get_llm_provider
+
+async def summarize(text):
+    provider = get_llm_provider("openai")
+    return await provider.generate_json(prompt=text, max_tokens=0)
+""")
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 1
+
+
+def test_llm_call_missing_max_tokens_cap_explicit_cap_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+from pyutilz.llm.factory import get_llm_provider
+
+async def judge(text):
+    provider = get_llm_provider("openai")
+    return await provider.generate(prompt=text, max_tokens=2000)
+""")
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert findings == []
+
+
+def test_llm_call_missing_max_tokens_cap_unrelated_provider_var_is_clean(tmp_path: Path):
+    _write(tmp_path, "ok2.py", """
+def summarize(text):
+    provider = build_my_own_thing()
+    return provider.generate(prompt=text)
+""")
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert findings == []

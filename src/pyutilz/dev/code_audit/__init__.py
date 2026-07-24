@@ -257,6 +257,29 @@ list[Finding]):
   the package's public surface, and same-named helpers from two
   star-imported submodules can silently shadow one another.
 
+- ``scan_async_primitive_reinit_per_call``: ``asyncio.Lock()``/``Event()``/
+  ``Semaphore()``/``Condition()`` instantiated INSIDE a function or method
+  body rather than at module/class scope -- every call gets its own
+  private, unshared instance, so concurrent callers never actually
+  coordinate through it. Nothing crashes; the coordination semantics
+  (mutual exclusion, wait-for-signal, bounded concurrency) simply never
+  engage, surfacing only once two callers genuinely overlap in production.
+
+- ``scan_hardcoded_absolute_path_in_test``: a hardcoded, developer-machine-
+  specific absolute path (a Windows drive letter, or a POSIX
+  ``/home/<user>/``/``/Users/<user>/``/``/root/`` path) as a string literal
+  in a test file -- exists on exactly one machine, so any conditional/skip
+  gate built on it silently and permanently no-ops on every other machine
+  or CI runner, occupying the mental slot of "covered" with zero real
+  regression coverage there.
+
+- ``scan_llm_call_missing_max_tokens_cap``: a call to ``.generate(...)``/
+  ``.generate_json(...)``/``.generate_batch(...)`` on a variable assigned
+  from ``pyutilz.llm.factory.get_llm_provider(...)``, with no explicit,
+  non-zero ``max_tokens`` -- these methods default ``max_tokens`` to ``0``
+  ("use provider max"), an unbounded-cost/latency output length a sibling
+  call site elsewhere in the codebase may already be guarding against.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -322,6 +345,9 @@ from .dead_import import scan_possibly_dead_import
 from .unpicklable_resource_state import scan_unpicklable_resource_state
 from .skip_masking_except import scan_except_skip_masks_call_under_test
 from .uncurated_star_export import scan_uncurated_star_exports
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -371,6 +397,9 @@ __all__ = [
     "scan_tautological_is_not_none_only_tests",
     "scan_except_skip_masks_call_under_test",
     "scan_uncurated_star_exports",
+    "scan_async_primitive_reinit_per_call",
+    "scan_hardcoded_absolute_path_in_test",
+    "scan_llm_call_missing_max_tokens_cap",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -390,6 +419,7 @@ for _submod in (
     "asymmetric_resource_guard",
     "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
     "skip_masking_except", "uncurated_star_export",
+    "async_primitive_reinit", "hardcoded_test_path", "llm_max_tokens_cap",
     "registry", "cli",
 ):
     globals().pop(_submod, None)
