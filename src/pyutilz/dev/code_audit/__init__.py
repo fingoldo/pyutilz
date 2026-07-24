@@ -226,6 +226,37 @@ list[Finding]):
   re-exports in one real codebase turned out to be live, consumed via
   ``import module as m; m.<name>`` in test files.
 
+- ``scan_unpicklable_resource_state``: a class's ``__init__`` assigns a
+  live, process-bound, unpicklable resource (``threading.Lock``/``RLock``/
+  ``Event``/..., a ``Thread``/``Process``/``Pool``, an ``open()`` file
+  handle, or a CUDA stream/event) directly to ``self.<attr>`` with no
+  ``__getstate__`` defined on the class to drop it before a pickle
+  round-trip -- ``pickle.dumps(instance)`` raises ``TypeError`` the first
+  time anything upstream caches, checkpoints, or ships the instance
+  across a process boundary. Generalizes a bug pattern fixed by hand
+  twice independently in the same downstream codebase before this
+  scanner existed (mlframe's ``FeatureCache._lock`` and
+  ``training/neural/ranker.py``'s trainer_/CUDA-tensor exclusion).
+
+- ``scan_tautological_is_not_none_only_tests``: a ``test_*`` function whose
+  ONLY unconditional assertion(s) are a bare ``X is not None``/``X != None``
+  check -- confirms something came back, never that it's the RIGHT thing.
+  Narrower than a raw ``is not None`` grep: a function with a stronger
+  assertion alongside the weak one is not flagged.
+
+- ``scan_except_skip_masks_call_under_test``: a ``try:`` block in a test
+  file that does more than import a module (calls the function/class under
+  test, or other real work) whose ``except`` handler calls
+  ``pytest.skip(...)`` -- a genuine API break gets silently reclassified as
+  an environment-limitation skip. The legitimate optional-dependency-guard
+  shape (try body is ONLY import statements) is exempted.
+
+- ``scan_uncurated_star_exports``: an ``__init__.py`` doing
+  ``from .submodule import *`` where neither it nor the target submodule
+  defines ``__all__`` -- every public name in the submodule silently joins
+  the package's public surface, and same-named helpers from two
+  star-imported submodules can silently shadow one another.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -272,7 +303,7 @@ from .duplicate_conditions import scan_duplicate_conditions
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
-from .vacuous_assertions import scan_vacuous_assertions
+from .vacuous_assertions import scan_vacuous_assertions, scan_tautological_is_not_none_only_tests
 from .locals_globals_output import scan_locals_globals_as_output
 from .network_timeout import scan_missing_network_timeout
 from .retry_loops import scan_retry_loops
@@ -288,6 +319,9 @@ from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
 from .dead_import import scan_possibly_dead_import
+from .unpicklable_resource_state import scan_unpicklable_resource_state
+from .skip_masking_except import scan_except_skip_masks_call_under_test
+from .uncurated_star_export import scan_uncurated_star_exports
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -333,6 +367,10 @@ __all__ = [
     "scan_stale_test_spy_arity",
     "scan_unthrottled_hot_loop_log",
     "scan_possibly_dead_import",
+    "scan_unpicklable_resource_state",
+    "scan_tautological_is_not_none_only_tests",
+    "scan_except_skip_masks_call_under_test",
+    "scan_uncurated_star_exports",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -350,7 +388,8 @@ for _submod in (
     "docstring_args", "return_annotation", "locals_get",
     "shielded_resource_release", "duplicate_credential_regex",
     "asymmetric_resource_guard",
-    "spy_arity", "log_throttle", "dead_import",
+    "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
+    "skip_masking_except", "uncurated_star_export",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

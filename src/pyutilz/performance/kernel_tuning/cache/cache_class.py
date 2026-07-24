@@ -132,6 +132,19 @@ class KernelTuningCache:
         # ``_log_remote_failure``/``_note_remote_success``.
         self._remote_consecutive_failures = 0
 
+    def __getstate__(self) -> dict:
+        """Drop the unpicklable ``threading.RLock`` (a fresh one is created in ``__setstate__``) --
+        flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this cache isn't on any
+        current pickling path, but the guard is cheap and matches the repo-wide convention."""
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state and re-create the ``threading.RLock`` dropped by ``__getstate__``."""
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     # Re-announce at WARNING every this-many consecutive failures (not just the first) so a
     # long-lived process doesn't go silent again after the initial warning.
     _REMOTE_FAILURE_WARN_INTERVAL = 20

@@ -49,6 +49,10 @@ from pyutilz.dev.code_audit import (
     scan_stale_test_spy_arity,
     scan_unthrottled_hot_loop_log,
     scan_possibly_dead_import,
+    scan_unpicklable_resource_state,
+    scan_tautological_is_not_none_only_tests,
+    scan_except_skip_masks_call_under_test,
+    scan_uncurated_star_exports,
 )
 
 
@@ -3434,4 +3438,352 @@ def test_possibly_dead_import_relative_import_with_no_module_skipped(tmp_path: P
 from . import helper
 """)
     findings = scan_possibly_dead_import(tmp_path)
+    assert findings == []
+
+
+# ---- unpicklable_resource_state ------------------------------------------
+
+
+def test_unpicklable_resource_state_lock_without_getstate_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import threading
+
+class Cache:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._mem = {}
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert len(findings) == 1, findings
+    f = findings[0]
+    assert f.check == "unpicklable_resource_state"
+    assert f.severity == "P2"
+    assert "Cache" in f.detail
+    assert "_lock" in f.detail
+
+
+def test_unpicklable_resource_state_bare_rlock_import_flagged(tmp_path: Path):
+    """A directly-imported ``RLock`` (not ``threading.RLock()``) must match on the constructor
+    name alone, not require the ``threading.`` prefix."""
+    _write(tmp_path, "bad.py", """
+from threading import RLock
+
+class Guarded:
+    def __init__(self):
+        self._lock = RLock()
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_unpicklable_resource_state_open_file_handle_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+class LogWriter:
+    def __init__(self, path):
+        self._fh = open(path, "w")
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert len(findings) == 1, findings
+    assert "_fh" in findings[0].detail
+
+
+def test_unpicklable_resource_state_with_getstate_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import threading
+
+class Cache:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._mem = {}
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert findings == [], f"class with __getstate__ must not be flagged; got {findings}"
+
+
+def test_unpicklable_resource_state_plain_attribute_not_flagged(tmp_path: Path):
+    """A class whose __init__ only assigns plain data (no lock/thread/file) must not be flagged."""
+    _write(tmp_path, "ok.py", """
+class Config:
+    def __init__(self, name):
+        self.name = name
+        self.values = {}
+        self.count = 0
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert findings == []
+
+
+def test_unpicklable_resource_state_no_init_not_flagged(tmp_path: Path):
+    """A class with no __init__ at all must not crash the scanner or be flagged."""
+    _write(tmp_path, "ok.py", """
+class Bare:
+    x = 1
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert findings == []
+
+
+def test_unpicklable_resource_state_thread_ctor_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import threading
+
+class Worker:
+    def __init__(self):
+        self._thread = threading.Thread(target=self._run)
+
+    def _run(self):
+        pass
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert len(findings) == 1, findings
+    assert "_thread" in findings[0].detail
+
+
+def test_unpicklable_resource_state_dotted_cuda_stream_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import torch
+
+class GpuBuffer:
+    def __init__(self):
+        self._stream = torch.cuda.Stream()
+""")
+    findings = scan_unpicklable_resource_state(tmp_path)
+    assert len(findings) == 1, findings
+
+
+# ---- tautological_is_not_none_only_test ----------------------------------
+
+
+def test_tautological_is_not_none_only_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
+def test_returns_something():
+    result = compute()
+    assert result is not None
+""",
+    )
+    findings = scan_tautological_is_not_none_only_tests(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "tautological_is_not_none_only_test"
+    assert "test_returns_something" in findings[0].detail
+
+
+def test_tautological_is_not_none_with_stronger_assert_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+def test_returns_something():
+    result = compute()
+    assert result is not None
+    assert result.value == 42
+""",
+    )
+    findings = scan_tautological_is_not_none_only_tests(tmp_path)
+    assert findings == []
+
+
+def test_tautological_is_not_none_nested_in_if_not_flagged(tmp_path: Path):
+    """A bare is-not-None inside a conditional branch isn't the function's only unconditional
+    check -- scanner is conservative and skips nested asserts entirely."""
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+def test_conditional():
+    result = compute()
+    if result:
+        assert result is not None
+    assert result.status == "ok"
+""",
+    )
+    findings = scan_tautological_is_not_none_only_tests(tmp_path)
+    assert findings == []
+
+
+def test_tautological_is_not_none_non_test_function_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+def helper():
+    result = compute()
+    assert result is not None
+""",
+    )
+    findings = scan_tautological_is_not_none_only_tests(tmp_path)
+    assert findings == []
+
+
+# ---- except_skip_masks_call_under_test -----------------------------------
+
+
+def test_except_skip_masks_real_call_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
+import pytest
+
+def test_something():
+    try:
+        result = train_model(x=1, y=2)
+    except Exception:
+        pytest.skip("environment issue")
+    assert result is not None
+""",
+    )
+    findings = scan_except_skip_masks_call_under_test(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "except_skip_masks_call_under_test"
+
+
+def test_except_skip_import_guard_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+import pytest
+
+def test_something():
+    try:
+        import torch
+    except ImportError:
+        pytest.skip("torch not installed")
+""",
+    )
+    findings = scan_except_skip_masks_call_under_test(tmp_path)
+    assert findings == []
+
+
+def test_except_no_skip_call_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+def test_something():
+    try:
+        result = train_model(x=1, y=2)
+    except Exception:
+        raise
+""",
+    )
+    findings = scan_except_skip_masks_call_under_test(tmp_path)
+    assert findings == []
+
+
+def test_except_skip_non_test_file_not_flagged(tmp_path: Path):
+    _write(
+        tmp_path,
+        "helper.py",
+        """
+import pytest
+
+def something():
+    try:
+        result = train_model(x=1, y=2)
+    except Exception:
+        pytest.skip("bad")
+""",
+    )
+    findings = scan_except_skip_masks_call_under_test(tmp_path)
+    assert findings == []
+
+
+# ---- uncurated_star_export -------------------------------------------
+
+
+def test_uncurated_star_export_flagged(tmp_path: Path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "sub.py",
+        """
+def public_helper():
+    return 1
+""",
+    )
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from .sub import *
+""",
+    )
+    findings = scan_uncurated_star_exports(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "uncurated_star_export"
+
+
+def test_uncurated_star_export_with_init_all_not_flagged(tmp_path: Path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "sub.py",
+        """
+def public_helper():
+    return 1
+""",
+    )
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from .sub import *
+
+__all__ = ["public_helper"]
+""",
+    )
+    findings = scan_uncurated_star_exports(tmp_path)
+    assert findings == []
+
+
+def test_uncurated_star_export_with_submodule_all_not_flagged(tmp_path: Path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "sub.py",
+        """
+def public_helper():
+    return 1
+
+__all__ = ["public_helper"]
+""",
+    )
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from .sub import *
+""",
+    )
+    findings = scan_uncurated_star_exports(tmp_path)
+    assert findings == []
+
+
+def test_uncurated_star_export_absolute_import_not_flagged(tmp_path: Path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    _write(
+        pkg,
+        "__init__.py",
+        """
+from numpy import *
+""",
+    )
+    findings = scan_uncurated_star_exports(tmp_path)
     assert findings == []

@@ -83,6 +83,23 @@ class UtilizationMonitor:
         # shutdown. A daemon thread no longer blocks interpreter exit either way.
         self.thread = threading.Thread(target=self.query_utilization, daemon=True)
 
+    def __getstate__(self) -> dict:
+        """Drop the unpicklable ``threading.Event``/``threading.Thread`` (fresh ones are created in
+        ``__setstate__``) -- flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this
+        monitor isn't on any current pickling path, but the guard is cheap and matches the repo-wide
+        convention. The restored instance is NOT running -- call ``start()`` again if needed."""
+        state = self.__dict__.copy()
+        state["stop_flag"] = None
+        state["thread"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state and re-create the ``Event``/``Thread`` dropped by ``__getstate__``, in
+        the same stopped (not-yet-started) state a fresh ``__init__`` would leave them in."""
+        self.__dict__.update(state)
+        self.stop_flag = threading.Event()
+        self.thread = threading.Thread(target=self.query_utilization, daemon=True)
+
     def query_utilization(self):
         """Background thread function that monitors hardware utilization.
 

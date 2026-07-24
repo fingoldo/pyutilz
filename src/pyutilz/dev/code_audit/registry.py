@@ -21,7 +21,7 @@ from .duplicate_conditions import scan_duplicate_conditions
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
-from .vacuous_assertions import scan_vacuous_assertions
+from .vacuous_assertions import scan_vacuous_assertions, scan_tautological_is_not_none_only_tests
 from .locals_globals_output import scan_locals_globals_as_output
 from .network_timeout import scan_missing_network_timeout
 from .retry_loops import scan_retry_loops
@@ -36,6 +36,9 @@ from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
 from .dead_import import scan_possibly_dead_import
+from .unpicklable_resource_state import scan_unpicklable_resource_state
+from .skip_masking_except import scan_except_skip_masks_call_under_test
+from .uncurated_star_export import scan_uncurated_star_exports
 
 # --- registry -----------------------------------------------------------
 
@@ -106,6 +109,10 @@ register_scanner("asymmetric_resource_guard", scan_asymmetric_resource_guard)
 register_scanner("stale_test_spy_arity", scan_stale_test_spy_arity)
 register_scanner("unthrottled_hot_loop_log", scan_unthrottled_hot_loop_log)
 register_scanner("possibly_dead_import", scan_possibly_dead_import)
+register_scanner("unpicklable_resource_state", scan_unpicklable_resource_state)
+register_scanner("tautological_is_not_none_only_test", scan_tautological_is_not_none_only_tests)
+register_scanner("except_skip_masks_call_under_test", scan_except_skip_masks_call_under_test)
+register_scanner("uncurated_star_export", scan_uncurated_star_exports)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
