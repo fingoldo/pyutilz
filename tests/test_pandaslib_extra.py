@@ -139,6 +139,8 @@ class TestShowcaseDfColumns:
         pl = pytest.importorskip("polars")
         df = pl.DataFrame({"x": [1, 1, 2, 2, 3]})
 
+        import pyutilz.data.pandaslib.frames as frames_module
+
         collect_all_calls = []
         original_collect_all = pl.collect_all
 
@@ -146,7 +148,13 @@ class TestShowcaseDfColumns:
             collect_all_calls.append(len(list(lazy_frames)))
             return original_collect_all(lazy_frames, *args, **kwargs)
 
-        with patch("pyutilz.data.pandaslib.frames.pl.collect_all", side_effect=spy_collect_all):
+        # patch.object on the directly-imported submodule, not a dotted string (the latter
+        # resolves "pyutilz.data.pandaslib.frames" via mock's getattr-chain fallback, which is
+        # fragile against the parent package's `frames` attribute momentarily not being set --
+        # observed failing on the 3.9 CI leg after test_meta's importlib.reload(pyutilz) runs
+        # earlier in the same session, even though `import pyutilz.data.pandaslib.frames` always
+        # succeeds directly).
+        with patch.object(frames_module.pl, "collect_all", side_effect=spy_collect_all):
             showcase_df_columns(df, max_vars=1, use_markdown=False, use_print=True)
 
         assert len(collect_all_calls) == 1, (
