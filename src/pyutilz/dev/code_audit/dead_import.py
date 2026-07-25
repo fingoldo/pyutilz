@@ -16,7 +16,10 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
     is skipped entirely -- a compiler directive, not a name ever meant to be referenced, so a
     "never referenced" check is a category error for it, not a real finding. A line already
     carrying a ``# noqa`` comment (any code) is skipped too -- the codebase has already reviewed
-    and explicitly exempted that import; re-flagging it is pure noise, not a new signal.
+    and explicitly exempted that import; re-flagging it is pure noise, not a new signal. Checked
+    on BOTH the statement's own line and each alias's own line, since a multi-line
+    ``from x import (\\n    a,  # noqa\\n)`` block's per-name noqa lands on the alias line, not
+    the statement line.
     """
     out: list[tuple[str, int, str]] = []
     for node in tree.body:
@@ -26,6 +29,10 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
             for alias in node.names:
                 bound = alias.asname or alias.name.split(".")[0]
                 if bound.startswith("_"):
+                    continue
+                # A multi-line import block's own alias may carry its own per-name rationale
+                # comment on a different physical line than node.lineno -- check both.
+                if "# noqa" in _line_text(src_lines, getattr(alias, "lineno", node.lineno)):
                     continue
                 out.append((bound, node.lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
         elif isinstance(node, ast.ImportFrom):
@@ -38,6 +45,11 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                     continue
                 bound = alias.asname or alias.name
                 if bound.startswith("_"):
+                    continue
+                # A multi-line parenthesized import block puts a per-name rationale comment on
+                # the ALIAS's own line, not the statement line -- check both, since this is the
+                # codebase's actual convention for per-name-reviewed re-exports.
+                if "# noqa" in _line_text(src_lines, getattr(alias, "lineno", node.lineno)):
                     continue
                 out.append((bound, node.lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
     return out

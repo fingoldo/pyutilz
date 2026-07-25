@@ -3495,6 +3495,19 @@ from os import path  # noqa: F401
     assert scan_possibly_dead_import(tmp_path) == []
 
 
+def test_possibly_dead_import_multiline_per_alias_noqa_skipped(tmp_path: Path):
+    """A multi-line `from x import (\\n    a,  # noqa\\n)` block's per-alias noqa (on the alias's
+    own physical line, not the statement's line) must also suppress the finding."""
+    _write(tmp_path, "mod.py", """
+from os import (
+    path,  # noqa: F401
+    sep,
+)
+sep
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
     _write(tmp_path, "mod.py", """
