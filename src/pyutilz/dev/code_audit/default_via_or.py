@@ -63,6 +63,34 @@ def _is_alias_key_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     return a in b or b in a
 
 
+def _lhs_default_matches_rhs(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """True for ``d.get("key", D) or D`` / ``getattr(obj, "name", D) or D`` -- the SAME literal/
+    expression ``D`` supplied as both the getter's own missing-key default AND the outer ``or``
+    fallback. Extremely common in this codebase for object/dict configs that use ``None`` as an
+    explicit "unset" sentinel (``getattr(config, "n_folds", 4)`` returns ``None`` verbatim when
+    ``config.n_folds = None`` was set explicitly, not just when the attribute is absent): the
+    ``or D`` closes that gap. Whatever falsy value could reach the ``or`` (0, "", None, ...) ends
+    up at EXACTLY the value the getter already declared as its own default -- provably a no-op
+    widening of the same declared intent, not a new/different fallback value the trap exists to
+    catch. ``ast.unparse`` equality (not just Constant equality) so this also matches non-literal
+    shared defaults (``getattr(obj, "n", DEFAULT_N) or DEFAULT_N``)."""
+    default_arg = None
+    if isinstance(lhs, ast.Call):
+        if isinstance(lhs.func, ast.Attribute) and lhs.func.attr == "get" and len(lhs.args) >= 2:
+            default_arg = lhs.args[1]
+        elif isinstance(lhs.func, ast.Name) and lhs.func.id == "getattr" and len(lhs.args) >= 3:
+            default_arg = lhs.args[2]
+    if default_arg is None:
+        return False
+    _unparse = getattr(ast, "unparse", None)
+    if _unparse is None:
+        return False
+    try:
+        return bool(_unparse(default_arg) == _unparse(rhs))
+    except (ValueError, RecursionError):
+        return False
+
+
 def _is_constructor_call(node: ast.AST) -> bool:
     """True when ``node`` is a call to a CamelCase-named callable
     (``HalvingSchedule()``, ``Path("x")``, ``AsyncAnthropic()``) -- by
@@ -292,6 +320,11 @@ def scan_default_via_or_trap(root: Path,
                 continue
             # Skip alias-key dual reads: d.get("notes") or d.get("note").
             if _is_alias_key_fallback(lhs, rhs):
+                continue
+            # Skip getattr(obj, "name", D) or D / d.get("key", D) or D -- the SAME default
+            # declared twice, provably a no-op widening (explicit-None coalesce), not a new
+            # fallback value.
+            if _lhs_default_matches_rhs(lhs, rhs):
                 continue
             # Also skip when the LHS is wrapped in a non-mutating expression
             # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
