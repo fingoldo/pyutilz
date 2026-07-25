@@ -122,37 +122,18 @@ def _try_body_is_best_effort_op(try_body: list[ast.stmt]) -> bool:
     return False
 
 
-_DOCUMENTED_RATIONALE_MARKERS = (
-    "nosec",
-    "opportunistic",
-    "best-effort",
-    "best effort",
-    # A log MESSAGE (not just a comment) that names the concrete fallback behavior is itself the
-    # documentation of intent -- "falling back to X" / "continuing with Y" / "proceeding with Z"
-    # tells the reader exactly what happens next and that it's deliberate, the same signal
-    # "best-effort" gives, just phrased as the operator-facing log text rather than a code
-    # comment. "non-fatal" is the same vocabulary from the other direction (names the SEVERITY
-    # judgment rather than the fallback action).
-    "falling back",
-    "fallback",
-    "continuing with",
-    "continuing without",
-    "proceeding with",
-    "non-fatal",
-)
+_DOCUMENTED_RATIONALE_MARKERS = ("nosec", "opportunistic", "best-effort", "best effort")
 
 
 def _handler_has_documented_rationale(handler: ast.ExceptHandler, src_lines: list[str]) -> bool:
-    """True if the except line itself, or the handler body's own comment/docstring/log-message
-    lines, name a documented reason the swallow is intentional (a ``# nosec ...`` bandit-
-    suppression comment, the words "opportunistic"/"best-effort", or a log message naming the
-    concrete fallback -- "falling back to X"/"continuing with Y"/"proceeding with Z"/"non-fatal" --
-    this project's own established vocabulary for "this path is optional, any failure here is
-    expected and handled by falling through"). A human already made and recorded this call;
-    re-flagging it every scan is pure noise, not a new signal. Matches only the handler's own line
-    + body span (not the whole enclosing function) so an unrelated nosec/opportunistic/fallback
-    comment or log line elsewhere in a large function doesn't accidentally exempt a genuinely-
-    undocumented swallow a few lines below it."""
+    """True if the except line itself, or the handler body's own comment/docstring lines, name a
+    documented reason the swallow is intentional (a ``# nosec ...`` bandit-suppression comment, or
+    the words "opportunistic"/"best-effort" -- this project's own established vocabulary for "this
+    path is optional, any failure here is expected and handled by falling through"). A human
+    already made and recorded this call; re-flagging it every scan is pure noise, not a new signal.
+    Matches only the handler's own line + body span (not the whole enclosing function) so an
+    unrelated nosec/opportunistic comment elsewhere in a large function doesn't accidentally exempt
+    a genuinely-undocumented swallow a few lines below it."""
     start = handler.lineno
     end = max((getattr(s, "end_lineno", s.lineno) or s.lineno) for s in handler.body) if handler.body else start
     window = "\n".join(_line_text(src_lines, i) for i in range(start, end + 1)).lower()

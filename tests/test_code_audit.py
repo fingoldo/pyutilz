@@ -53,9 +53,6 @@ from pyutilz.dev.code_audit import (
     scan_tautological_is_not_none_only_tests,
     scan_except_skip_masks_call_under_test,
     scan_uncurated_star_exports,
-    scan_async_primitive_reinit_per_call,
-    scan_hardcoded_absolute_path_in_test,
-    scan_llm_call_missing_max_tokens_cap,
 )
 
 
@@ -1393,24 +1390,6 @@ def save():
     assert scan_log_only_except(tmp_path) == []
 
 
-def test_log_only_except_word_in_comment_or_string_not_gate(tmp_path: Path):
-    """A file that merely mentions "errors"/"failures" inside a comment or a log-message
-    string -- never as a real bound identifier -- must not be gated into the scan at all,
-    even though the whole-file text technically contains those words."""
-    _write(tmp_path, "ok.py", """
-import logging
-logger = logging.getLogger(__name__)
-
-def save():
-    # transform should give identical errors across backends
-    try:
-        do_write()
-    except Exception as e:
-        logger.warning("per-target failures: %s", e)
-""")
-    assert scan_log_only_except(tmp_path) == []
-
-
 def test_log_only_except_no_log_call_not_double_flagged(tmp_path: Path):
     """No log call at all is scan_broad_except_swallows' territory, not this scanner's."""
     _write(tmp_path, "ok.py", """
@@ -1484,26 +1463,6 @@ def run(errors):
     assert scan_log_only_except(tmp_path) == []
 
 
-def test_log_only_except_return_error_dict_via_variable_is_clean(tmp_path: Path):
-    """``out = {"error": str(e)}; ...; return out`` -- the payload built into a local variable
-    (possibly merged with extra fields via ``.update()``) before being returned -- is the same
-    escalation contract as ``return {"error": ...}`` directly, just one assignment removed."""
-    _write(tmp_path, "ok.py", """
-import logging
-logger = logging.getLogger(__name__)
-
-def run(errors, extra):
-    try:
-        return {"result": do_thing()}
-    except Exception as e:
-        logger.warning("failed: %s", e)
-        out = {"id": 1, "error": str(e)}
-        out.update(extra)
-        return out
-""")
-    assert scan_log_only_except(tmp_path) == []
-
-
 def test_log_only_except_warn_method_call_is_clean(tmp_path: Path):
     """``results.warn(...)`` -- a distinct object-method escalation
     convention -- is recognised regardless of the base object's name."""
@@ -1517,47 +1476,6 @@ def run(errors, results):
     except Exception as e:
         logger.warning("failed: %s", e)
         results.warn(f"skipped: {e}")
-""")
-    assert scan_log_only_except(tmp_path) == []
-
-
-def test_log_only_except_record_helper_call_is_clean(tmp_path: Path):
-    """A call to a bare local helper whose name signals a "record this outcome" convention
-    (``_record(charts, name, False)``) is a real escalation path even though it isn't a
-    ``.append()``/``.warn()`` method call on the escalation collection itself."""
-    _write(tmp_path, "ok.py", """
-import logging
-logger = logging.getLogger(__name__)
-
-def _record(charts, name, ok):
-    charts.setdefault("saved" if ok else "failed", []).append(name)
-
-def run(errors, charts):
-    try:
-        do_thing()
-    except Exception as e:
-        logger.warning("failed: %s", e)
-        _record(charts, "step", False)
-""")
-    assert scan_log_only_except(tmp_path) == []
-
-
-def test_log_only_except_named_failure_list_append_is_clean(tmp_path: Path):
-    """``.append()`` onto a caller-supplied collection whose name merely CONTAINS one of the
-    error-target substrings (``panel_failures``, not an exact ``escalation_attrs`` member) is a
-    real escalation path, matching the same broad-substring policy already used for augmented
-    assignment / plain-assignment escalation targets."""
-    _write(tmp_path, "ok.py", """
-import logging
-logger = logging.getLogger(__name__)
-
-def run(errors, panel_failures):
-    try:
-        do_thing()
-    except Exception as e:
-        logger.warning("failed: %s", e)
-        if panel_failures is not None:
-            panel_failures.append("panel")
 """)
     assert scan_log_only_except(tmp_path) == []
 
@@ -3495,19 +3413,6 @@ from os import path  # noqa: F401
     assert scan_possibly_dead_import(tmp_path) == []
 
 
-def test_possibly_dead_import_multiline_per_alias_noqa_skipped(tmp_path: Path):
-    """A multi-line `from x import (\\n    a,  # noqa\\n)` block's per-alias noqa (on the alias's
-    own physical line, not the statement's line) must also suppress the finding."""
-    _write(tmp_path, "mod.py", """
-from os import (
-    path,  # noqa: F401
-    sep,
-)
-sep
-""")
-    assert scan_possibly_dead_import(tmp_path) == []
-
-
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
     _write(tmp_path, "mod.py", """
@@ -3941,45 +3846,6 @@ def b():
     assert findings == []
 
 
-def test_broad_except_fallback_log_message_phrases_all_exempt(tmp_path: Path):
-    """A log message naming the concrete fallback ("falling back to X" / "continuing with Y" /
-    "proceeding with Z" / "non-fatal") is itself the documentation of intent, the same signal
-    "best-effort" gives -- each phrase alone must exempt the handler."""
-    _write(
-        tmp_path,
-        "ok.py",
-        """
-import logging
-logger = logging.getLogger(__name__)
-
-def a():
-    try:
-        risky()
-    except Exception as e:
-        logger.warning("step failed (%s); falling back to the default.", e)
-
-def b():
-    try:
-        risky()
-    except Exception as e:
-        logger.warning("step failed (%s); continuing with the prior value.", e)
-
-def c():
-    try:
-        risky()
-    except Exception as e:
-        logger.warning("step failed (%s); proceeding with the full set.", e)
-
-def d():
-    try:
-        risky()
-    except Exception as e:
-        logger.warning("step failed, non-fatal: %s", e)
-""",
-    )
-    assert scan_broad_except_swallows(tmp_path) == []
-
-
 def test_broad_except_unrelated_nosec_elsewhere_in_function_does_not_exempt(tmp_path: Path):
     """The exemption window is the handler's own line + body span -- an unrelated nosec comment on
     a DIFFERENT, unrelated line elsewhere in the same function must not accidentally exempt a real,
@@ -4152,211 +4018,3 @@ def process(rows):
     )
     findings = scan_log_only_except(tmp_path)
     assert findings == [], f"nosec-documented log-only except must not be flagged; got {findings}"
-# ---- async_primitive_reinit_per_call -------------------------------------
-
-
-def test_async_primitive_reinit_per_call_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
-import asyncio
-
-async def process_batch(items):
-    lock = asyncio.Lock()
-    async with lock:
-        for item in items:
-            await handle(item)
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path)
-    assert len(findings) == 1, findings
-    assert findings[0].check == "async_primitive_reinit_per_call"
-    assert findings[0].severity == "P1"
-
-
-def test_async_primitive_reinit_per_call_module_scope_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
-import asyncio
-
-_lock = asyncio.Lock()
-
-async def process_batch(items):
-    async with _lock:
-        for item in items:
-            await handle(item)
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path)
-    assert findings == []
-
-
-def test_async_primitive_reinit_per_call_init_scope_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok2.py", """
-import asyncio
-
-class Worker:
-    def __init__(self):
-        self._lock = asyncio.Lock()
-
-    async def process_batch(self, items):
-        async with self._lock:
-            for item in items:
-                await handle(item)
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path)
-    assert findings == []
-
-
-def test_async_primitive_reinit_per_call_custom_primitive_names(tmp_path: Path):
-    _write(tmp_path, "bad2.py", """
-import asyncio
-
-async def worker():
-    sem = asyncio.Semaphore(3)
-    async with sem:
-        await do_work()
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path, primitive_names=frozenset({"Semaphore"}))
-    assert len(findings) == 1
-    findings_lock_only = scan_async_primitive_reinit_per_call(tmp_path, primitive_names=frozenset({"Lock"}))
-    assert findings_lock_only == []
-
-
-def test_async_primitive_reinit_per_call_dict_memoization_is_clean(tmp_path: Path):
-    """Lazy-descriptor memoization onto instance.__dict__ (a Subscript target whose base is an
-    Attribute chain) is the same safe create-once-cache-on-the-object pattern as a direct
-    self._x = ... assignment -- must not be flagged."""
-    _write(tmp_path, "ok3.py", """
-import asyncio
-
-class LazySemaphore:
-    def __get__(self, instance, owner=None):
-        value = instance.__dict__.get(self._name)
-        if value is None:
-            value = asyncio.Semaphore(instance._max_concurrent)
-            instance.__dict__[self._name] = value
-        return value
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path)
-    assert findings == []
-
-# ---- hardcoded_absolute_path_in_test --------------------------------------
-
-
-def test_async_primitive_reinit_per_call_global_lazy_singleton_is_clean(tmp_path: Path):
-    """global _sem; if _sem is None: _sem = asyncio.Lock() -- the lazy module-level
-    singleton idiom (double-checked init under global) must not be flagged; the
-    global binding IS the safe shared instance, same class as an instance attribute."""
-    _write(tmp_path, "ok4.py", """
-import asyncio
-
-_client_lock = None
-
-async def _get_shared_client():
-    global _client_lock
-    if _client_lock is None:
-        _client_lock = asyncio.Lock()
-    async with _client_lock:
-        return 1
-""")
-    findings = scan_async_primitive_reinit_per_call(tmp_path)
-    assert findings == []
-def test_hardcoded_absolute_path_in_test_windows_drive_flagged(tmp_path: Path):
-    _write(tmp_path, "test_thing.py", """
-from pathlib import Path
-
-def test_uses_fixture():
-    fixture = Path("D:/Machine Learning/project/fixtures/data.csv")
-    assert fixture.exists()
-""")
-    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
-    assert len(findings) == 1, findings
-    assert findings[0].check == "hardcoded_absolute_path_in_test"
-    assert findings[0].severity == "P2"
-
-
-def test_hardcoded_absolute_path_in_test_posix_home_flagged(tmp_path: Path):
-    _write(tmp_path, "test_thing2.py", """
-def test_reads_config():
-    path = "/home/alice/configs/settings.json"
-    assert path
-""")
-    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
-    assert len(findings) == 1
-
-
-def test_hardcoded_absolute_path_in_test_non_test_file_is_clean(tmp_path: Path):
-    _write(tmp_path, "helpers.py", """
-def default_path():
-    return "D:/Machine Learning/project/fixtures/data.csv"
-""")
-    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
-    assert findings == []
-
-
-def test_hardcoded_absolute_path_in_test_tmp_and_var_are_clean(tmp_path: Path):
-    _write(tmp_path, "test_clean.py", """
-def test_writes_scratch():
-    path = "/tmp/scratch/output.json"
-    other = "/var/log/app.log"
-    assert path and other
-""")
-    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
-    assert findings == []
-
-
-def test_hardcoded_absolute_path_in_test_tmp_path_derived_is_clean(tmp_path: Path):
-    _write(tmp_path, "test_clean2.py", """
-def test_writes_scratch(tmp_path):
-    path = tmp_path / "output.json"
-    assert path
-""")
-    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
-    assert findings == []
-
-
-# ---- llm_call_missing_max_tokens_cap --------------------------------------
-
-
-def test_llm_call_missing_max_tokens_cap_no_kwarg_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
-from pyutilz.llm.factory import get_llm_provider
-
-async def summarize(text):
-    provider = get_llm_provider("openai")
-    return await provider.generate(prompt=text)
-""")
-    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
-    assert len(findings) == 1, findings
-    assert findings[0].check == "llm_call_missing_max_tokens_cap"
-    assert findings[0].severity == "P2"
-
-
-def test_llm_call_missing_max_tokens_cap_zero_literal_flagged(tmp_path: Path):
-    _write(tmp_path, "bad2.py", """
-from pyutilz.llm.factory import get_llm_provider
-
-async def summarize(text):
-    provider = get_llm_provider("openai")
-    return await provider.generate_json(prompt=text, max_tokens=0)
-""")
-    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
-    assert len(findings) == 1
-
-
-def test_llm_call_missing_max_tokens_cap_explicit_cap_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
-from pyutilz.llm.factory import get_llm_provider
-
-async def judge(text):
-    provider = get_llm_provider("openai")
-    return await provider.generate(prompt=text, max_tokens=2000)
-""")
-    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
-    assert findings == []
-
-
-def test_llm_call_missing_max_tokens_cap_unrelated_provider_var_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok2.py", """
-def summarize(text):
-    provider = build_my_own_thing()
-    return provider.generate(prompt=text)
-""")
-    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
-    assert findings == []

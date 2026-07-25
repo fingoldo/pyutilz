@@ -18,7 +18,7 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
     carrying a ``# noqa`` comment (any code) is skipped too -- the codebase has already reviewed
     and explicitly exempted that import; re-flagging it is pure noise, not a new signal. Checked
     on BOTH the statement's own line and each alias's own line, since a multi-line
-    ``from x import (\\n    a,  # noqa\\n)`` block's per-name noqa lands on the alias line, not
+    ``from x import (\n    a,  # noqa\n)`` block's per-name noqa lands on the alias line, not
     the statement line.
     """
     out: list[tuple[str, int, str]] = []
