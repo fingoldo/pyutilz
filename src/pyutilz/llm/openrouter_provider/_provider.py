@@ -299,6 +299,29 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             return "response_format" in params_set or "structured_outputs" in params_set
         return True
 
+    def supports_json_schema(self) -> bool:
+        """Per-model STRICT-schema support from the OR catalogue's ``supported_parameters``.
+
+        Stricter than ``supports_json_mode``: plain ``response_format`` only buys valid JSON, whereas a
+        closed enum needs constrained generation, which OR advertises as ``structured_outputs``. Unlike
+        the json-mode check this returns False on catalogue failure or an unknown model — claiming a
+        guarantee we cannot verify is worse than degrading to json_object, because the caller would
+        stop validating the enum it believes was enforced.
+        """
+        try:
+            catalogue = _fetch_models_catalogue()
+        except Exception as exc:
+            logger.warning("OR catalogue unavailable (%s); treating %s as NOT supporting strict json_schema", exc, self.model_name)
+            return False
+        entry = catalogue.get(self.model_name)
+        if not entry:
+            logger.warning("%s absent from the OR catalogue; treating it as NOT supporting strict json_schema", self.model_name)
+            return False
+        params = entry.get("supported_parameters") or []
+        if isinstance(params, list):
+            return "structured_outputs" in {str(p).lower() for p in params}
+        return False
+
     def _get_timeout(self, model: str) -> float:
         """Return the request timeout in seconds for ``model``: 1200.0 for known slow reasoning-class models, else 240.0."""
         # Reasoning-class upstream models may need long timeouts; same heuristic

@@ -397,3 +397,71 @@ class TestCumulativeUsageLogging:
         assert generate_messages, "generate() should emit a cumulative-usage log message"
         assert stream_messages, "generate_stream() should emit a cumulative-usage log message"
         assert generate_messages == stream_messages
+
+
+class TestStrictJsonSchema:
+    """A strict json_schema CONSTRAINS generation (closed enums cannot be violated); plain json_mode
+    only promises syntactically valid JSON. Callers must be able to tell which one actually applied."""
+
+    SCHEMA = {
+        "name": "t",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"relation": {"type": "string", "enum": ["CAUSES", "INDICATES"]}},
+            "required": ["relation"],
+        },
+    }
+
+    class _NoSchemaProvider(_TestProvider):
+        def supports_json_schema(self) -> bool:
+            return False
+
+    @pytest.mark.asyncio
+    async def test_schema_is_sent_when_supported(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("x", json_mode=True, json_schema=self.SCHEMA)
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"]["strict"] is True
+        assert p.last_json_schema_applied is True
+
+    @pytest.mark.asyncio
+    async def test_degrades_to_json_object_when_unsupported(self):
+        p = self._NoSchemaProvider(api_key="k", model="test-model")
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("x", json_mode=True, json_schema=self.SCHEMA)
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        # The call still works, but the guarantee is explicitly NOT claimed.
+        assert body["response_format"] == {"type": "json_object"}
+        assert p.last_json_schema_applied is False
+
+    @pytest.mark.asyncio
+    async def test_no_response_format_without_json_mode_or_schema(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("x")
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert "response_format" not in body
+
+    @pytest.mark.asyncio
+    async def test_generate_json_forwards_schema(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(
+            return_value=_mock_response(
+                body={
+                    "choices": [{"message": {"content": '{"relation": "CAUSES"}'}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                }
+            )
+        )
+        out = await p.generate_json("x", json_schema=self.SCHEMA)
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert body["response_format"]["type"] == "json_schema"
+        assert out == {"relation": "CAUSES"}

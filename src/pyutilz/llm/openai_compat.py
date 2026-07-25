@@ -325,6 +325,40 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return True
 
+    def supports_json_schema(self) -> bool:
+        """OpenAI-compatible endpoints have accepted strict ``json_schema`` response formats since
+        2024-08. Support is per-model in practice, so routers (OpenRouter) override with a catalogue
+        check; a direct single-vendor endpoint can assume its own models.
+        """
+        return True
+
+    def _response_format(self, json_mode: bool, json_schema: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Choose the strictest response_format the model actually supports, and record which applied.
+
+        A caller passing ``json_schema`` to a model without strict-schema support degrades to plain JSON
+        mode rather than failing the call — a mixed-model sweep stays runnable — but the degradation is
+        logged and exposed via ``last_json_schema_applied`` so the caller can tell a guaranteed-shape
+        response from a merely-hopeful one instead of assuming the guarantee held.
+        """
+        self._last_json_schema_applied = False
+        if json_schema is not None:
+            if self.supports_json_schema():
+                self._last_json_schema_applied = True
+                return {"type": "json_schema", "json_schema": json_schema}
+            logger.warning(
+                "%s/%s does not support strict json_schema; falling back to json_object (enums NOT enforced)",
+                self._provider_name,
+                self.model_name,
+            )
+        if json_mode:
+            return {"type": "json_object"}
+        return None
+
+    @property
+    def last_json_schema_applied(self) -> bool:
+        """Whether the most recent call actually constrained generation to the caller's JSON schema."""
+        return getattr(self, "_last_json_schema_applied", False)
+
     async def _close(self):
         """Close the underlying httpx client."""
         await self._client.aclose()
@@ -401,6 +435,7 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int = 0,
         json_mode: bool = False,
         thinking: bool | str | None = None,
+        json_schema: dict[str, Any] | None = None,
     ):
         """Stream the model's response token-by-token via SSE.
 
@@ -431,8 +466,9 @@ class OpenAICompatibleProvider(LLMProvider):
             "max_tokens": max_tokens,
             "stream": True,
         }
-        if json_mode:
-            body["response_format"] = {"type": "json_object"}
+        rf = self._response_format(json_mode, json_schema)
+        if rf is not None:
+            body["response_format"] = rf
         body.update(self._extra_request_body(self.model_name))
         if thinking is not None:
             tf = self._thinking_request_field(thinking)
@@ -586,8 +622,14 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int = 0,
         json_mode: bool = False,
         thinking: bool | str | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> str:
         """Generate text using OpenAI-compatible chat/completions API.
+
+        ``json_schema``: a strict OpenAI-style schema dict (``{"name":..., "strict": True, "schema":
+        {...}}``). When the model supports it, generation is CONSTRAINED to that schema, so closed enums
+        cannot be violated; otherwise the call degrades to plain JSON mode with a warning and
+        ``last_json_schema_applied`` stays False.
 
         ``thinking``: provider-specific chain-of-thought toggle. Accepts
         bool OR effort string for finer control (provider-normalised).
@@ -616,8 +658,9 @@ class OpenAICompatibleProvider(LLMProvider):
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            if json_mode:
-                body["response_format"] = {"type": "json_object"}
+            rf = self._response_format(json_mode, json_schema)
+            if rf is not None:
+                body["response_format"] = rf
             body.update(self._extra_request_body(self.model_name))
             if thinking is not None:
                 thinking_field = self._thinking_request_field(thinking)
@@ -694,6 +737,7 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 0,
         force_json_mode: bool = True,
+        json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
@@ -710,6 +754,7 @@ class OpenAICompatibleProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             json_mode=force_json_mode,
+            json_schema=json_schema,
         )
         return self.extract_json(text, self._provider_name)
 

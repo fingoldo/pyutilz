@@ -228,6 +228,21 @@ class LLMProvider(ABC):
         """Maximum context window (input + output) in tokens."""
         return 200_000  # safe default for most models
 
+    def supports_json_schema(self) -> bool:
+        """Return True if this provider+model accepts a STRICT JSON schema, not merely JSON mode.
+
+        ``response_format={"type": "json_object"}`` only promises syntactically valid JSON — the model
+        stays free to invent fields and enum values. ``{"type": "json_schema", "json_schema": {...,
+        "strict": true}}`` constrains generation to the schema, which is what makes a closed enum (a
+        fixed relation vocabulary, a fixed set of severity levels) impossible to violate rather than
+        merely discouraged by the prompt.
+
+        Default: False — a provider must opt in, since sending the param to an upstream that ignores it
+        gives a false sense of guarantee. Subclasses override (OpenAI-compatible endpoints; OpenRouter
+        consults its catalogue per model).
+        """
+        return False
+
     def supports_json_mode(self) -> bool:
         """Return True if this provider+model accepts a structured
         JSON-mode parameter (``response_format={"type":"json_object"}``,

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Strict JSON-schema output** across the OpenAI-compatible providers: `generate()`, `generate_stream()` and `generate_json()` accept `json_schema=` and send `response_format={"type": "json_schema", ...}`, which CONSTRAINS generation instead of merely asking for valid JSON — a closed enum (fixed vocabulary, fixed severity levels) becomes impossible to violate rather than discouraged by the prompt. Capability is advertised by the new `LLMProvider.supports_json_schema()` (False by default, True for OpenAI-compatible endpoints, per-model catalogue check on OpenRouter requiring `structured_outputs`). A model without support degrades to plain JSON mode with a warning so mixed-model sweeps stay runnable, and `last_json_schema_applied` tells the caller whether the guarantee actually held — claiming an unverifiable guarantee would stop callers validating the enum they believe was enforced.
 - `[dataframes]` extras group (`pandas` + `polars` combined); `[all,dev]` is now the recommended one-line install.
 - `pyutilz.dev.code_audit` — AST-based scanner + CLI for four recurring bug classes (mutable defaults, late-binding closures, `x or DEFAULT` footguns, silent broad-except swallows). `python -m pyutilz.dev.code_audit <root>`.
 - Kernel-tuning cache rewritten as immutable per-`(host, kernel, code_version)` files — no `filelock`, no lost updates under concurrent writers; legacy monolithic caches migrate automatically.
