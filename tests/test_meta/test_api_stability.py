@@ -105,7 +105,7 @@ def _build_snapshot() -> dict:
         try:
             mod = _fresh_module_copy(mod)
         except Exception:
-            # If the fresh exec fails (rare — modules with side-effecting top
+            # best-effort: if the fresh exec fails (rare -- modules with side-effecting top
             # level), fall back to the live module state.
             pass
         snapshot["alias_surfaces"][alias] = capture_module_surface(mod)

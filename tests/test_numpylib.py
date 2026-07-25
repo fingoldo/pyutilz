@@ -3,7 +3,6 @@ Test suite for numpylib.py
 Tests cover numpy utility functions for array operations.
 """
 
-import pytest
 import numpy as np
 
 from pyutilz.numpylib import get_topk_indices, smart_ratios

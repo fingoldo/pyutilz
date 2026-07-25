@@ -1,5 +1,4 @@
 from unittest.mock import MagicMock, patch
-import pytest
 
 from pyutilz.web.graphql import text_to_graphql, beautify_gql_query, connect, execute
 

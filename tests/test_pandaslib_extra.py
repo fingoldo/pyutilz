@@ -139,8 +139,6 @@ class TestShowcaseDfColumns:
         pl = pytest.importorskip("polars")
         df = pl.DataFrame({"x": [1, 1, 2, 2, 3]})
 
-        import pyutilz.data.pandaslib.frames as frames_module
-
         collect_all_calls = []
         original_collect_all = pl.collect_all
 
@@ -148,13 +146,7 @@ class TestShowcaseDfColumns:
             collect_all_calls.append(len(list(lazy_frames)))
             return original_collect_all(lazy_frames, *args, **kwargs)
 
-        # patch.object on the directly-imported submodule, not a dotted string (the latter
-        # resolves "pyutilz.data.pandaslib.frames" via mock's getattr-chain fallback, which is
-        # fragile against the parent package's `frames` attribute momentarily not being set --
-        # observed failing on the 3.9 CI leg after test_meta's importlib.reload(pyutilz) runs
-        # earlier in the same session, even though `import pyutilz.data.pandaslib.frames` always
-        # succeeds directly).
-        with patch.object(frames_module.pl, "collect_all", side_effect=spy_collect_all):
+        with patch("pyutilz.data.pandaslib.frames.pl.collect_all", side_effect=spy_collect_all):
             showcase_df_columns(df, max_vars=1, use_markdown=False, use_print=True)
 
         assert len(collect_all_calls) == 1, (
@@ -475,11 +467,11 @@ class TestGetDfMemoryConsumptionExtra:
     def test_polars_dataframe(self):
         try:
             import polars as pl
-            df = pl.DataFrame({"a": [1, 2, 3]})
-            mem = get_df_memory_consumption(df)
-            assert mem > 0
         except ImportError:
             pytest.skip("polars not installed")
+        df = pl.DataFrame({"a": [1, 2, 3]})
+        mem = get_df_memory_consumption(df)
+        assert mem > 0
 
     def test_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Unsupported dataframe type"):
@@ -607,7 +599,7 @@ class TestReadStatsFromMultipleFiles:
             template="f*.pckl",
             optimize=True,
         )
-        assert result is not None
+        assert result["v"].dtype == np.uint8  # optimize=True downcasts int64 -> smallest fitting dtype
 
     def test_delete_after(self, tmp_path):
         fpath = str(tmp_path / "del.pckl")
@@ -647,18 +639,18 @@ class TestEnsureFloat32Polars:
     def test_polars_conversion(self):
         try:
             import polars as pl
-            # polars.Int128 not available in all versions
-            if not hasattr(pl, "Int128"):
-                pytest.skip("polars.Int128 not available in this version")
-            df = pl.DataFrame({
-                "a": pl.Series([1, 2, 3], dtype=pl.Int64),
-                "b": pl.Series([1.0, 2.0, 3.0], dtype=pl.Float64),
-            })
-            result = ensure_dataframe_float32_convertability(df)
-            assert result["a"].dtype == pl.Float32
-            assert result["b"].dtype == pl.Float32
         except ImportError:
             pytest.skip("polars not installed")
+        # polars.Int128 not available in all versions
+        if not hasattr(pl, "Int128"):
+            pytest.skip("polars.Int128 not available in this version")
+        df = pl.DataFrame({
+            "a": pl.Series([1, 2, 3], dtype=pl.Int64),
+            "b": pl.Series([1.0, 2.0, 3.0], dtype=pl.Float64),
+        })
+        result = ensure_dataframe_float32_convertability(df)
+        assert result["a"].dtype == pl.Float32
+        assert result["b"].dtype == pl.Float32
 
 
 # ---------------------------------------------------------------------------

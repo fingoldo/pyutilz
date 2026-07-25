@@ -136,6 +136,24 @@ def _unwrap_lhs(lhs: ast.AST) -> ast.AST:
     return lhs
 
 
+def _is_env_get_call(node: ast.AST) -> bool:
+    """True for ``os.environ.get(...)`` / ``os.getenv(...)`` -- both always return ``Optional[str]``
+    (or whatever literal default was passed, itself typically a string in this codebase's
+    convention of ``os.environ.get("VAR", "3")``). An ``or <int/float literal>`` after one of these
+    can NOT silently clobber a caller's legitimate numeric ``0`` the way the P1 severity implies:
+    the value being OR'd is a STRING, and a non-empty string like ``"0"`` is always truthy in
+    Python, so the fallback only fires on an empty-string/unset env var -- not on someone
+    legitimately setting the variable to ``"0"``. Confirmed: ``bool('0')`` is ``True``."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return False
+    if node.func.attr not in ("get", "getenv"):
+        return False
+    base = node.func.value
+    if isinstance(base, ast.Attribute) and base.attr == "environ" and isinstance(base.value, ast.Name) and base.value.id == "os":
+        return True
+    return isinstance(base, ast.Name) and base.id == "os" and node.func.attr == "getenv"
+
+
 def _lhs_is_documented_safe(lhs: ast.AST) -> bool:
     """True when ``lhs`` is a call to a callable whose only falsy return is
     None (or an intentional guard). Suppresses default-via-or noise for the
@@ -282,17 +300,34 @@ def scan_default_via_or_trap(root: Path,
             # call-chain back up the tree.
             sev = "Low"
             detail = "default-via-or trap candidate"
+            lhs_inner = _unwrap_lhs(lhs)
             if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
-                sev = "P1"
-                detail = (
-                    f"`or {rhs.value}`: caller passing the legitimate sentinel "
-                    f"0 is silently rewritten to {rhs.value}. Use "
-                    f"`x if x is not None else {rhs.value}` for None-only "
-                    f"defaulting."
-                )
+                if _is_env_get_call(lhs_inner):
+                    sev = "Low"
+                    detail = (
+                        f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                        f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                        f"var, not a legitimate numeric 0."
+                    )
+                else:
+                    sev = "P1"
+                    detail = (
+                        f"`or {rhs.value}`: caller passing the legitimate sentinel "
+                        f"0 is silently rewritten to {rhs.value}. Use "
+                        f"`x if x is not None else {rhs.value}` for None-only "
+                        f"defaulting."
+                    )
             elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, float) and rhs.value != 0.0:
-                sev = "P1"
-                detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
+                if _is_env_get_call(lhs_inner):
+                    sev = "Low"
+                    detail = (
+                        f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                        f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                        f"var, not a legitimate numeric 0.0."
+                    )
+                else:
+                    sev = "P1"
+                    detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
             elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
                 sev = "Low"
                 detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."

@@ -40,7 +40,7 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.errors import DuplicateTable
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from psycopg2.extras import execute_values, NamedTupleCursor, DictCursor
+from psycopg2.extras import execute_values, NamedTupleCursor
 from psycopg2 import OperationalError, InternalError, InterfaceError
 
 # psycopg2.InterfaceError: cursor already closed
@@ -48,8 +48,6 @@ from psycopg2 import OperationalError, InternalError, InterfaceError
 # ----------------------------------------------------------------------------------------------------------------------------
 # SQL Injection Protection
 # ----------------------------------------------------------------------------------------------------------------------------
-
-import re
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Re-exported PURE / STATELESS helpers carved into cohesive submodules.

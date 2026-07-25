@@ -106,7 +106,7 @@ class TestOptimizeDtypsSizeReduction:
         """Line 260: verbose log 'Going to use the following new dtypes'."""
         df = pd.DataFrame({"a": np.array([1, 2], dtype=np.int64)})
         result = optimize_dtypes(df, reduce_size=True, verbose=True, inplace=False)
-        assert result is not None
+        assert result["a"].dtype.itemsize < 8
 
     def test_float_to_int_conversion(self):
         """Float column with no NaN and no fractional part -> int."""
@@ -173,8 +173,10 @@ class TestReadParquetWithPyarrow:
 class TestReadStatsEdgeCases:
     def test_save_on_successful_optimization(self, tmp_path):
         """Lines 453-455: re-save file when optimization reduces size."""
+        fpath = tmp_path / "f.pckl"
         df = pd.DataFrame({"a": np.array([1, 2, 3], dtype=np.int64)})
-        df.to_pickle(str(tmp_path / "f.pckl"))
+        df.to_pickle(str(fpath))
+        size_before = fpath.stat().st_size
         result = read_stats_from_multiple_files(
             joint_file_name=str(tmp_path / "joint"),
             folder=str(tmp_path),
@@ -184,7 +186,8 @@ class TestReadStatsEdgeCases:
             min_size_improvement_percent=0.0,
             min_size_improvement=0.0,
         )
-        assert result is not None
+        assert result["a"].dtype.itemsize < 8
+        assert fpath.stat().st_size < size_before  # re-saved with the optimized (smaller) dtype
 
     def test_sentinel_field_collision(self, tmp_path):
         """Lines 461-462: sentinel field already exists in dataframe."""
@@ -211,7 +214,8 @@ class TestReadStatsEdgeCases:
                 template="f*.pckl",
                 delete_after=True,
             )
-        assert result is not None
+        assert len(result) == 1
+        assert os.path.exists(fpath)  # deletion failed (PermissionError swallowed), file must survive
 
     def test_concat_exception_returns_none(self, tmp_path):
         """Lines 486-487: exception during concat returns None."""
@@ -240,42 +244,42 @@ class TestEnsureFloat32Extra:
     def test_pyarrow_backed_integer(self):
         """Lines 893-901: PyArrow-backed integer column conversion."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="int64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_float(self):
         """Lines 893-901: PyArrow-backed float column conversion."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1.0, 2.0], dtype="float64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_verbose(self):
         """Lines 899-900: verbose log for pyarrow column."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1, 2], dtype="int64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df, verbose=1)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df, verbose=1)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_string_not_converted(self):
         """PyArrow string column should NOT be converted to float32."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array(["x", "y"], dtype="string[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float32" not in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float32" not in str(result["a"].dtype)
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +413,9 @@ class TestBenchmarkDataframeCompression:
             verbose=False,
         )
         # Either Styler or DataFrame depending on columns present
-        assert result is not None
+        assert isinstance(result, (pd.DataFrame, pd.io.formats.style.Styler))
+        data = result.data if isinstance(result, pd.io.formats.style.Styler) else result
+        assert not data.empty
 
     def test_benchmark_no_head(self, tmp_path):
         """Line 806: head=None uses full df."""
@@ -421,7 +427,8 @@ class TestBenchmarkDataframeCompression:
             return_styled=False,
             verbose=False,
         )
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
 
     def test_benchmark_exception_in_func(self, tmp_path):
         """Lines 828-829: exception in individual benchmark function is caught."""
@@ -434,7 +441,9 @@ class TestBenchmarkDataframeCompression:
                 return_styled=False,
                 verbose=False,
             )
-        assert result is not None
+        assert isinstance(result, pd.DataFrame)
+        assert "feather" not in result.index  # its benchmark raised and was caught, so it's excluded
+        assert not result.empty  # other compression methods still succeeded
 
 
 # ---------------------------------------------------------------------------

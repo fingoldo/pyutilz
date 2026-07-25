@@ -81,7 +81,8 @@ class TestRetryConfiguration:
         assert INFINITE_RETRY_KWARGS["before_sleep"] is log_retry
 
     def test_retry_wait_is_not_none(self):
-        assert RETRY_WAIT is not None
+        from tenacity.wait import wait_combine
+        assert isinstance(RETRY_WAIT, wait_combine)
 
 
 class TestIsRetryableHttpError:

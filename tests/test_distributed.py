@@ -188,10 +188,11 @@ def test_distributed_module_imports_successfully():
     """Test that distributed module can be imported without errors"""
     try:
         import pyutilz.distributed
-        assert pyutilz.distributed is not None
     except ImportError as e:
         # Some dependencies might be missing
         pytest.skip(f"distributed module dependencies not available: {e}")
+    assert hasattr(pyutilz.distributed, "get_heartbeat_sql")
+    assert hasattr(pyutilz.distributed, "register_scraper")
 
 
 class TestIdentityRaceCondition:

@@ -21,48 +21,6 @@ DEFAULT_ESCALATION_ATTRS: frozenset[str] = frozenset({
 
 _ESCALATION_METHOD_NAMES = frozenset({"append", "extend", "warn", "add_error", "add_warning"})
 
-# Substrings of a bare (non-method) function name that signal a caller-defined "record this
-# outcome" helper -- e.g. ``_record(charts, "step", False)``, ``track_failure(name, exc)``. Many
-# codebases centralise the "append a failure marker" step behind a small local helper rather than
-# inlining a `.append()`/`.warn()` call at every site; without this, every one of those sites reads
-# as an unescalated swallow even though the failure IS made caller-visible, just one indirection
-# away from the literal method-call shapes ``_escalates_to`` otherwise recognises.
-_ESCALATION_HELPER_NAME_SUBSTRINGS: tuple[str, ...] = ("record", "track_fail", "mark_fail", "log_fail")
-
-
-def _file_uses_escalation_convention(tree: ast.AST, escalation_attrs: frozenset[str]) -> bool:
-    """True iff the file actually WRITES to an escalation-collection identifier somewhere in its
-    AST -- an assignment/augmented-assignment target, a dict-literal key, or the base of an
-    append-style call -- not merely mentions the word in a comment, a docstring, or a log-message
-    string, and not merely READS an attribute whose name happens to contain a qualifying
-    substring (``logger.warning(...)`` itself contains "warn", which would trivially satisfy a
-    naive "does this Attribute node's name qualify" walk for nearly every file that logs at all).
-    A raw text substring check over the whole file has the same problem one level up: it matches
-    ``# ... give identical errors`` in a comment or ``"per-target failures"`` inside a log format
-    string just as readily as a genuine ``errors.append(...)`` convention. Restricting to WRITE
-    positions is what actually distinguishes "this file collects problems into a named
-    collection" from "this file's prose happens to contain the word."
-    """
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if _looks_like_error_target(t) or (_target_name(t) or "") in escalation_attrs:
-                    return True
-        elif isinstance(node, ast.AugAssign):
-            if _looks_like_error_target(node.target) or (_target_name(node.target) or "") in escalation_attrs:
-                return True
-        elif isinstance(node, ast.Dict):
-            for k in node.keys:
-                if isinstance(k, ast.Constant) and isinstance(k.value, str):
-                    if k.value in escalation_attrs or any(s in k.value.lower() for s in _ERROR_TARGET_SUBSTRINGS):
-                        return True
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES:
-            base = node.func.value
-            base_name = _target_name(base)
-            if base_name is not None and (base_name in escalation_attrs or any(s in base_name.lower() for s in _ERROR_TARGET_SUBSTRINGS)):
-                return True
-    return False
-
 
 def _target_name(node: ast.AST) -> str | None:
     """The identifier a target expression is ultimately named by: the
@@ -80,24 +38,40 @@ def _target_name(node: ast.AST) -> str | None:
     return None
 
 
-# Substrings covering the same "collect problems" naming space as DEFAULT_ESCALATION_ATTRS
-# (errors/warnings/issues/problems/failures) -- checked as substrings, not exact names, so a
-# caller-supplied collection with a qualifying prefix/suffix (``panel_failures``, ``fit_issues``,
-# ``load_warnings``) is recognised the same way a bare ``errors``/``failures`` would be.
-_ERROR_TARGET_SUBSTRINGS: tuple[str, ...] = ("error", "fail", "warn", "issue", "problem")
-
-
 def _looks_like_error_target(node: ast.AST) -> bool:
     """True when a target's name itself signals an error-collection
     convention this project didn't declare via ``escalation_attrs`` -- e.g.
     ``stats["errors"] += 1``, ``total_errors += len(batch)``,
-    ``result.error = str(e)``, ``panel_failures.append(...)``. A substring
-    match against ``_ERROR_TARGET_SUBSTRINGS`` is deliberately broad: false
-    negatives here (a genuinely unescalated failure) are worse than the rare
-    false positive (an unrelated "error"/"fail"/etc. in a variable name that
-    isn't actually this handler's escalation path)."""
+    ``result.error = str(e)``. A substring match on "error" is deliberately
+    broad: false negatives here (a genuinely unescalated failure) are worse
+    than the rare false positive (an unrelated ``error`` in a variable
+    name that isn't actually this handler's escalation path)."""
     name = _target_name(node)
-    return name is not None and any(s in name.lower() for s in _ERROR_TARGET_SUBSTRINGS)
+    return name is not None and "error" in name.lower()
+
+
+def _file_uses_escalation_convention(tree: ast.Module, escalation_attrs: frozenset[str]) -> bool:
+    """True if the file genuinely uses one of ``escalation_attrs`` as a collection being
+    appended/extended/incremented to somewhere -- as opposed to a raw substring match on the
+    file's text, which false-positives on an unrelated ``import warnings`` / ``warnings.warn(...)``
+    (the stdlib module, not a caller's own accumulation collection -- "warnings" is in
+    ``DEFAULT_ESCALATION_ATTRS`` and collides with this extremely common import), a docstring
+    that happens to mention "errors" or "issues", ``ignore_errors=True`` kwargs, or
+    ``pd.errors.PerformanceWarning``-shaped attribute access. Deliberately narrower than the
+    per-handler ``_escalates_to`` check (excludes its blanket "any .warn()/.add_error() call"
+    branch, which is a method-name signal independent of file-wide scope) since this only needs
+    to confirm the naming convention is genuinely IN USE as a collection somewhere, not gate on
+    a single handler's own escalation."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("append", "extend"):
+            base = node.func.value
+            if isinstance(base, (ast.Attribute, ast.Name)) and _target_name(base) in escalation_attrs:
+                return True
+        elif isinstance(node, ast.AugAssign) and _target_name(node.target) in escalation_attrs:
+            return True
+        elif isinstance(node, ast.Assign) and any(_target_name(t) in escalation_attrs for t in node.targets):
+            return True
+    return False
 
 
 def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) -> bool:
@@ -118,26 +92,8 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
       ``False``) or a dict literal with an error-named key
       (``return {"error": str(e)}``) -- the Phase0-style bool/dict-return
       escalation contract.
-    - A call to a bare (non-method) local helper whose name signals a
-      "record this outcome" convention (``_record(charts, name, False)``,
-      ``track_failure(...)``) -- the append/warn step lives one indirection
-      behind a small project-local function instead of being inlined.
-    - A ``return`` of a plain variable that was assigned (earlier in this same handler) from a
-      dict literal carrying an error-named key (``out = {"error": str(e)}; ...; return out``) --
-      the common "build the error payload, maybe merge in extra fields, then return it" shape,
-      equivalent to ``return {"error": ...}`` but one assignment away from the literal.
     """
-    _error_dict_vars: set[str] = set()
     for node in ast.walk(handler):
-        if isinstance(node, ast.Assign):
-            v = node.value
-            if isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        _error_dict_vars.add(t.id)
-    for node in ast.walk(handler):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and any(s in node.func.id.lower() for s in _ESCALATION_HELPER_NAME_SUBSTRINGS):
-            return True
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES:
             if node.func.attr in ("warn", "add_error", "add_warning"):
                 return True
@@ -159,8 +115,6 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
             if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Constant) and e.value is False for e in v.elts):
                 return True
             if isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys):
-                return True
-            if isinstance(v, ast.Name) and v.id in _error_dict_vars:
                 return True
     return False
 

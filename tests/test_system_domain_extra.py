@@ -3,8 +3,6 @@
 import threading
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from pyutilz.system.parallel import distribute_work, applyfunc_parallel
 from pyutilz.system.system.fsutils import ensure_dir_exists, get_max_singledisk_free_space_gb
 from pyutilz.system.system.misc import get_max_affordable_workers_count, count_app_instances

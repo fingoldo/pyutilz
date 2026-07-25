@@ -92,10 +92,19 @@ def _generate_combinations_recursive_njit_core(sequence, r):
     return result
 
 
+@njit(cache=True)
 def generate_combinations_recursive_njit(sequence, r):
     """Replacement of itertools combinations function.
     Call generate_combinations_recursive_njit(sequence, r)[::-1] for the same effect as combinations(sequence, r).
+
+    ``@njit`` (restored): a prior revision made this a plain-Python wrapper around the njit-decorated
+    ``_generate_combinations_recursive_njit_core`` to add the ``r < 0`` validation. That silently broke every
+    external caller that invokes this function from ITS OWN ``@njit`` context (e.g. mlframe's
+    ``evaluate_gain``) -- numba's nopython mode cannot call a plain Python function, so those callers failed
+    with ``TypingError: Untyped global name ... Cannot determine Numba type of <class 'function'>``. Restored
+    as an njit function with the same validation (numba nopython mode supports raising with a static string
+    message); still callable from plain Python exactly as before.
     """
     if r < 0:
-        raise ValueError(f"r must be >= 0, got {r}")
+        raise ValueError("generate_combinations_recursive_njit: r must be >= 0")
     return _generate_combinations_recursive_njit_core(sequence, r)

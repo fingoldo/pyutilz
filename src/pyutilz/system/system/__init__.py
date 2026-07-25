@@ -39,3 +39,8 @@ _SUBMODULE_NAMES = frozenset({"_common", "probing", "memory", "fsutils", "misc",
 
 def __dir__():
     return sorted(n for n in globals() if n not in _SUBMODULE_NAMES)
+
+
+# Curated for `from pyutilz.system.system import *` consumers and static-analysis tooling --
+# same filtering as __dir__ above, computed once the star imports have populated globals().
+__all__ = [n for n in globals() if not n.startswith("_") and n not in _SUBMODULE_NAMES]

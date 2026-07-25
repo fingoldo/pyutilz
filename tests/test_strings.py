@@ -120,19 +120,18 @@ class TestFixSpaces:
         """Test that default tokens list is not shared between calls"""
         try:
             from pyutilz.strings import fix_spaces
-
-            # First call
-            result1 = fix_spaces("test,text")
-
-            # Second call - should get fresh default list
-            result2 = fix_spaces("another.sentence")
-
-            # Both should work independently
-            assert isinstance(result1, str)
-            assert isinstance(result2, str)
-
         except ImportError:
             pytest.skip("fix_spaces not available")
+
+        # First call
+        result1 = fix_spaces("test,text")
+
+        # Second call - should get fresh default list
+        result2 = fix_spaces("another.sentence")
+
+        # Both should work independently
+        assert isinstance(result1, str)
+        assert isinstance(result2, str)
 
 
 @pytest.mark.parametrize("file_content,expected_token_count", [
@@ -225,8 +224,10 @@ class TestStringUtilities:
         """Test slugify with unicode"""
         from pyutilz.strings import slugify
 
-        result = slugify("Привет мир", allow_unicode=True)
-        assert result is not None
+        source = "Привет мир"
+        result = slugify(source, allow_unicode=True)
+        # lowercase=False by default -- case is preserved, only whitespace becomes a hyphen
+        assert result == source.replace(" ", "-")
 
     def test_slugify_lowercase(self):
         """Test slugify with lowercase option"""
@@ -546,18 +547,14 @@ class TestEmojiOperations:
         """Test getting ASCII emojis"""
         from pyutilz.strings import get_ascii_emojies
 
-        # Should not crash
-        try:
-            get_ascii_emojies()
-        except Exception:
-            pass
+        # Should not crash; pytest surfaces the real traceback if it does.
+        result = get_ascii_emojies()
+        assert isinstance(result, dict) and result
 
     def test_get_unicode_emojies(self):
         """Test getting Unicode emojis"""
         from pyutilz.strings import get_unicode_emojies
 
-        # Should not crash
-        try:
-            get_unicode_emojies()
-        except Exception:
-            pass
+        # Should not crash; pytest surfaces the real traceback if it does.
+        result = get_unicode_emojies()
+        assert isinstance(result, dict) and result

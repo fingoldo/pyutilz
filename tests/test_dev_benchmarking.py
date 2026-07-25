@@ -3,7 +3,6 @@ Test suite for benchmarking.py
 Tests cover the benchmark_algos_by_runtime function.
 """
 
-import pytest
 import numpy as np
 
 from pyutilz.dev.benchmarking import benchmark_algos_by_runtime

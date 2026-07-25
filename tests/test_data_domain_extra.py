@@ -110,6 +110,24 @@ class TestGenerateCombinationsNegativeR:
         result = generate_combinations_recursive_njit(np.array([1, 2, 3]), 2)
         assert result.shape == (3, 2)
 
+    def test_callable_from_another_njit_function(self):
+        """Regression: a prior revision turned this into a plain-Python wrapper (to add the r<0
+        validation) around the njit-decorated core, silently breaking every external caller that
+        invokes it from THEIR OWN @njit context -- numba's nopython mode cannot call a plain Python
+        function. mlframe's evaluate_gain (an @njit function) is exactly such a caller; it failed with
+        TypingError: Untyped global name 'generate_combinations_recursive_njit' before this was fixed
+        back to an njit function. This test pins that this function is directly callable from another
+        njit-compiled function, not just from plain Python.
+        """
+        from numba import njit
+
+        @njit
+        def _caller(seq, r):
+            return generate_combinations_recursive_njit(seq, r)
+
+        result = _caller(np.array([1, 2, 3]), 2)
+        assert result.shape == (3, 2)
+
 
 class TestNormalityVerdictDegenerate:
     def test_constant_sample_reported_as_degenerate(self):

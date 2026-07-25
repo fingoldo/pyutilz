@@ -409,10 +409,17 @@ from pyutilz.pythonlib import suppress_stdout_stderr
 
 def test_suppress_stdout_stderr():
     import io
-    with suppress_stdout_stderr():
-        print("should be suppressed")
-    # After context, stdout should be restored
-    assert sys.stdout is not None
+    original_stdout = sys.stdout
+    captured = io.StringIO()
+    sys.stdout = captured
+    try:
+        with suppress_stdout_stderr():
+            print("should be suppressed")
+    finally:
+        sys.stdout = original_stdout
+    assert captured.getvalue() == ""
+    # After context, stdout should be restored to the original object, not left redirected
+    assert sys.stdout is original_stdout
 
 
 # ---------------------------------------------------------------------------

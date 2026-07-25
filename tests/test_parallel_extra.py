@@ -175,7 +175,7 @@ class TestApplyfuncParallel:
             return x
 
         result = applyfunc_parallel([(1,), (2,)], identity, n_jobs=1, return_dataframe=False, use_threads=True)
-        assert result is not None
+        assert sorted(result) == [1, 2]
 
     def test_with_processes(self):
         import pandas as pd
@@ -199,24 +199,21 @@ class TestApplyfuncParallel:
 
         with pytest.warns(DeprecationWarning, match="n_jobs"):
             result = applyfunc_parallel([(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True)
-        assert result is not None
+        assert sorted(result) == [1, 2]
 
 
 # ── set_tf_gpu (lines 208-221) ──
 
 class TestSetTfGpu:
     def test_no_tensorflow(self):
-        """set_tf_gpu() must not crash uncaught when tensorflow isn't installed -- it's a plain
+        """set_tf_gpu() raises ModuleNotFoundError when tensorflow isn't installed -- it's a plain
         `import tensorflow as tf`, no ensure_installed() auto-install fallback (that helper lives
         in pyutilz.core.pythonlib and was never wired into this function; a stale patch target
         here previously masked whether this scenario was exercised at all -- AttributeError on
         the patch itself, before set_tf_gpu ever ran)."""
         from pyutilz.system.parallel import set_tf_gpu
-        with patch.dict("sys.modules", {"tensorflow": None}):
-            try:
-                set_tf_gpu(0)
-            except Exception:
-                pass  # expected when tf not available
+        with patch.dict("sys.modules", {"tensorflow": None}), pytest.raises(ModuleNotFoundError):
+            set_tf_gpu(0)
 
     def test_selects_requested_gpu_index(self):
         """The requested index must actually be used (previously hard-coded to gpus[3]

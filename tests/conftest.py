@@ -44,7 +44,7 @@ try:
         import pytest_randomly as _pr  # noqa: E402
         if getattr(_pr, "entrypoint_reseeds", None):
             _pr.entrypoint_reseeds = [_thinc_clamped_fix_random_seed if r is _thinc_original_fix else r for r in _pr.entrypoint_reseeds]
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover -- best-effort pytest-randomly plugin patch; a failure here just skips the shim
         pass
 except (ImportError, OSError, RuntimeError) as exc:  # pragma: no cover
     warnings.warn(
@@ -132,7 +132,7 @@ def _require_provider_key(env_var: str, provider_name: str) -> str:
             secret = getattr(settings, field, None)
             if secret is not None and secret.get_secret_value():
                 return secret.get_secret_value()
-        except Exception:
+        except Exception:  # best-effort secret-store lookup; falls through to skip below either way
             pass
         pytest.skip(f"{env_var} not set -- skipping {provider_name} live test")
     return val

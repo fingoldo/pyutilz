@@ -1,10 +1,8 @@
 """Extra tests for strings.py — covers uncovered lines."""
 
-import math
 import json
 import os
 import tempfile
-import pytest
 from unittest.mock import patch, MagicMock
 from collections import Counter
 
@@ -49,8 +47,8 @@ def test_jsonize_custom_object_exception():
     # The try/except should catch and return None-ish
     # Actually dir() is called on obj, so let's use a different approach
     result = jsonize_atrtributes(None)
-    # None has no attrs starting without _, should return empty dict or similar
-    assert result is not None
+    # None has no attrs starting without _, should return empty dict
+    assert result == {}
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +339,7 @@ def test_fix_broken_sentences_newline_before_capital():
 def test_fix_broken_sentences_newline_space_capital():
     text = "Hello world\n More text"
     result = fix_broken_sentences(text)
-    assert result is not None
+    assert result == "Hello world. More text."
 
 
 def test_fix_broken_sentences_newline_before_lowercase():

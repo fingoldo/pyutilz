@@ -46,14 +46,10 @@ class TestGetSystemInfo:
         """Test that function returns dict with expected system info keys"""
         from pyutilz.system import get_system_info
 
-        try:
-            result = get_system_info()
-            assert isinstance(result, dict)
-            # Should have at least some system info
-            assert len(result) > 0
-        except Exception:
-            # May fail on some systems, but should not crash
-            pass
+        result = get_system_info()
+        assert isinstance(result, dict)
+        # Should have at least some system info
+        assert len(result) > 0
 
 
 class TestShowTraceMallocSnapshot:
@@ -71,7 +67,7 @@ class TestShowTraceMallocSnapshot:
             # Call function
             show_tracemalloc_snapshot(N=5)
         except Exception:
-            # Function might fail, but we check cleanup happened
+            # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
             pass
 
         # Should NOT be tracing after function completes
@@ -89,7 +85,7 @@ class TestShowTraceMallocSnapshot:
             # This might raise an exception
             show_tracemalloc_snapshot(N=-1)  # Invalid argument
         except Exception:
-            pass
+            pass  # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
 
         # Should still stop tracemalloc even if exception occurred
         assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when exception occurs (try/finally fix)"
@@ -138,31 +134,29 @@ class TestGetCpuUsage:
         """Test that get_system_info includes CPU usage (not 0.0 from first call)"""
         from pyutilz.system import get_system_info
 
-        try:
-            info = get_system_info()
-            if info is None:
-                pytest.skip("get_system_info returned None (missing dependencies)")
-            # Should include CPU info
-            if "cpu_current_load_percent" in info:
-                usage = info["cpu_current_load_percent"]
-                assert isinstance(usage, (int, float))
-                assert 0 <= usage <= 100
-        except ImportError:
-            pytest.skip("psutil not available")
+        info = get_system_info()
+        if info is None:
+            pytest.skip("get_system_info returned None (missing dependencies)")
+        # Should include CPU info
+        if "cpu_current_load_percent" in info:
+            usage = info["cpu_current_load_percent"]
+            assert isinstance(usage, (int, float))
+            assert 0 <= usage <= 100
 
     def test_psutil_cpu_percent_called_correctly(self):
         """Verify get_system_info calls psutil.cpu_percent() correctly"""
         try:
-            import psutil
-            from pyutilz.system import get_system_info
-            import inspect
-
-            source = inspect.getsource(get_system_info)
-
-            # Should call cpu_percent
-            assert "cpu_percent" in source
+            import psutil  # noqa: F401 - import presence is the guard
         except ImportError:
             pytest.skip("psutil not available")
+
+        from pyutilz.system import get_system_info
+        import inspect
+
+        source = inspect.getsource(get_system_info)
+
+        # Should call cpu_percent
+        assert "cpu_percent" in source
 
 
 @pytest.mark.parametrize("n_lines", [1, 5, 10, 20])

@@ -8,6 +8,7 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 
 _LOG_METHODS = ("warning", "error", "exception", "critical")
 _THROTTLE_HINTS = ("throttle", "rate_limit", "ratelimit", "debounce")
+_BOUNDED_RETRY_HINTS = ("retr", "attempt")
 
 
 def _call_name(node: ast.AST) -> str | None:
@@ -30,6 +31,51 @@ def _guard_looks_throttled(test: ast.expr) -> bool:
                 return True
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             return True
+    return False
+
+
+def _looks_like_retry_bound_name(node: ast.expr | None) -> bool:
+    """True if ``node`` is a Name/Attribute whose identifier contains a retry/attempt-shaped
+    hint (``max_retries``, ``num_attempts``, ``retry_count``, ...)."""
+    if node is None:
+        return False
+    name = node.attr if isinstance(node, ast.Attribute) else node.id if isinstance(node, ast.Name) else None
+    return name is not None and any(h in name.lower() for h in _BOUNDED_RETRY_HINTS)
+
+
+def _loop_looks_bounded_retry(test: ast.expr) -> bool:
+    """True if a ``while`` loop's test is the common ``n < max_retries`` / ``attempt <=
+    max_attempts`` bounded-retry idiom: a Compare where either side is a Name/Attribute whose
+    identifier contains a retry/attempt-shaped hint. A retry loop capped at a small,
+    caller-configured count (typically single digits) logging once per attempt is standard
+    practice, not a "hot loop that compounds into spam under load" the way a per-item loop over
+    an unbounded batch/dataset is -- the whole point of the retry cap is that it CAN'T iterate
+    more than a handful of times."""
+    if not isinstance(test, ast.Compare):
+        return False
+    return any(_looks_like_retry_bound_name(side) for side in (test.left, *test.comparators))
+
+
+def _for_loop_looks_bounded_retry(iter_node: ast.expr) -> bool:
+    """True for the ``for _ in range(max_retries)`` / ``for attempt in range(num_attempts)``
+    bounded-retry idiom -- same reasoning as ``_loop_looks_bounded_retry``, just the For-loop
+    spelling of a bounded retry count instead of a While-loop comparison."""
+    if not (isinstance(iter_node, ast.Call) and isinstance(iter_node.func, ast.Name) and iter_node.func.id == "range"):
+        return False
+    return any(_looks_like_retry_bound_name(arg) for arg in iter_node.args)
+
+
+def _loop_body_has_meaningful_sleep(stmts: list[ast.stmt]) -> bool:
+    """True if any statement in ``stmts`` (walked recursively, including inside nested
+    if/try/for/while) calls ``sleep(...)``/``time.sleep(...)``/``asyncio.sleep(...)`` with at
+    least one argument -- a polling loop that sleeps between iterations (``while not
+    condition(): ...; sleep(10)``) is naturally rate-limited to at most one log line per sleep
+    interval, the same "already throttled" signal as an explicit rate-limit guard, just
+    expressed as pacing rather than a counter/modulo check."""
+    for stmt in stmts:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Call) and _call_name(node.func) == "sleep" and node.args:
+                return True
     return False
 
 
@@ -83,12 +129,14 @@ def _visit_if_aware(
             ),
         ))
     if isinstance(node, (ast.For, ast.AsyncFor)):
+        already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body)
         for child in (node.target, node.iter, *node.body, *node.orelse):
             if child is not None:
-                _visit_if_aware(child, loop_depth + 1, False, findings, rel, src_lines)
+                _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.While):
+        already_throttled = _loop_looks_bounded_retry(node.test) or _loop_body_has_meaningful_sleep(node.body)
         for child in (node.test, *node.body, *node.orelse):
-            _visit_if_aware(child, loop_depth + 1, False, findings, rel, src_lines)
+            _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.If):
         child_guarded = guarded or _guard_looks_throttled(node.test)
         for child in node.body:
@@ -121,7 +169,12 @@ def scan_unthrottled_hot_loop_log(
     calls a function whose name contains a throttle-shaped hint (``throttle``, ``rate_limit``,
     ``debounce``, case-insensitive -- matches this project's own ``_log_throttle`` and similarly
     named helpers elsewhere without per-project configuration) or uses a modulo expression
-    (``i % N``), a common cheap "every Nth iteration" throttle idiom.
+    (``i % N``), a common cheap "every Nth iteration" throttle idiom. A ``while``/``for`` loop is
+    also exempt when its test/iter is the common ``n < max_retries`` / ``for _ in
+    range(max_retries)`` bounded-retry idiom (logs at most a handful of times per call, unable to
+    "compound into spam under load"), or when the loop body calls ``sleep(...)`` with an
+    argument -- a polling loop that sleeps between iterations is naturally rate-limited to at
+    most one log line per sleep interval, the same signal as an explicit throttle guard.
 
     Severity: P2 (usually a hygiene/observability issue, not a correctness bug -- but can degrade
     into real operational pain: log-volume-driven disk fill, alerting fatigue, or a downstream

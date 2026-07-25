@@ -1,12 +1,8 @@
 """Extra tests for logginglib.py — covers uncovered lines."""
 
-import pytest
 import logging
-import numbers
-import functools
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, PropertyMock
-from os.path import basename
 
 # ---------------------------------------------------------------------------
 # init_logging — lines 54-90
@@ -18,7 +14,7 @@ from pyutilz.logginglib import init_logging
 def test_init_logging_forced_filename(tmp_path):
     log_file = str(tmp_path / "test")
     result = init_logging(forced_filename=log_file + ".py", log_to_file=False)
-    assert result is not None
+    assert isinstance(result, logging.Logger)
 
 
 def test_init_logging_custom_logger():
@@ -31,7 +27,8 @@ def test_init_logging_with_file(tmp_path, monkeypatch):
     # Force caller_name to something predictable
     monkeypatch.chdir(tmp_path)
     result = init_logging(forced_filename="testlog.py", log_to_file=True)
-    assert result is not None
+    assert isinstance(result, logging.Logger)
+    assert any(isinstance(h, logging.FileHandler) for h in logging.getLogger().handlers)
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +187,8 @@ def test_log_activity_close_previous():
     _logginglib_mod.logger = mock_logger
     rl = {"results": {"activities": {"step1": {"started_at": datetime.now(timezone.utc)}}}}
     duration = log_activity(rl, "step2", verbose=True)
-    assert duration is not None
+    assert isinstance(duration, float)
+    assert duration >= 0
 
 
 # ---------------------------------------------------------------------------

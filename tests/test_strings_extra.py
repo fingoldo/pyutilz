@@ -557,7 +557,8 @@ from pyutilz.strings import json_pg_dumps
 
 def test_json_pg_dumps_basic():
     result = json_pg_dumps({"a": 1})
-    assert result is not None
+    assert result.adapted == {"a": 1}
+    assert result.getquoted() == b"'{\"a\": 1}'"
 
 
 def test_json_pg_dumps_strips_embedded_nul():

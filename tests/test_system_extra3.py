@@ -434,8 +434,8 @@ class TestShowBiggestSessionObjects:
 
         session = {"bad": BadObj(), "good": "hello"}
         result = show_biggest_session_objects(session, N=5, min_size_bytes=1)
-        # Should not crash; good object is in result
-        assert result is not None
+        # Should not crash; "bad" is skipped (sizeof raised), "good" survives
+        assert list(result["type"]) == [str]
 
 
 # ── check_large_pages_windows exception (lines 1072-1074) ──
@@ -560,13 +560,16 @@ class TestGetNvidiaSmiInfoStatRemoval:
 class TestGetGpuCudaCapabilities:
     def test_success_with_cores(self):
         from pyutilz.system.system import get_gpu_cuda_capabilities
-        mock_enums = MagicMock()
-        mock_enums.__dir__ = lambda self: [
-            "CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR",
-            "CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR",
-            "CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT",
-            "CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK",
-        ]
+
+        # A plain class, not MagicMock: `dir()` calls type(obj).__dir__(obj) and ignores an
+        # INSTANCE `__dir__` attribute on a MagicMock, so a real class with these as class
+        # attributes is required for get_gpu_cuda_capabilities's `dir(enums)` scan to see them.
+        class _Enums:
+            CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR = 0
+            CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR = 0
+            CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT = 0
+            CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK = 0
+
         mock_cuda = MagicMock()
         device = MagicMock()
         device.COMPUTE_CAPABILITY_MAJOR = 7
@@ -575,16 +578,22 @@ class TestGetGpuCudaCapabilities:
         device.MAX_THREADS_PER_BLOCK = 1024
         mock_cuda.get_current_device.return_value = device
 
+        mock_numba = MagicMock()
+        mock_numba.cuda = mock_cuda  # `from numba import cuda` reads the parent's attribute first
+        mock_cudadrv = MagicMock()
+        mock_cudadrv.enums = _Enums()  # `from numba.cuda.cudadrv import enums` likewise
+
         with patch.dict("sys.modules", {
-            "numba": MagicMock(),
+            "numba": mock_numba,
             "numba.cuda": mock_cuda,
-            "numba.cuda.cudadrv": MagicMock(),
-            "numba.cuda.cudadrv.enums": mock_enums,
+            "numba.cuda.cudadrv": mock_cudadrv,
+            "numba.cuda.cudadrv.enums": mock_cudadrv.enums,
         }):
-            # Need to also patch dir() on enums
-            with patch("pyutilz.system.system.probing.remove_json_attributes"), patch("pyutilz.system.system.probing.remove_json_defaults"):
-                result = get_gpu_cuda_capabilities(device_id=0)
-        assert result is not None
+            result = get_gpu_cuda_capabilities(device_id=0)
+        assert result["COMPUTE_CAPABILITY_MAJOR"] == 7
+        assert result["COMPUTE_CAPABILITY_MINOR"] == 5
+        assert result["MULTIPROCESSOR_COUNT"] == 20
+        assert result["TOTAL_CUDA_CORES"] == 1280  # CUDA_SM_TO_CORES[75] (Turing) = 64 cores/SM * 20 SMs
 
     def test_import_error_returns_none(self):
         from pyutilz.system.system import get_gpu_cuda_capabilities

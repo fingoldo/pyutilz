@@ -143,11 +143,8 @@ class TestStrToClass:
         # It extracts init_data and passes to constructor
         # This is a complex function that requires the module to be already imported
         # Just test it doesn't crash with invalid input
-        try:
-            result = str_to_class("SomeClass(data)")
-        except Exception:
-            # Expected to fail since SomeClass doesn't exist
-            pass
+        with pytest.raises(AttributeError):
+            str_to_class("SomeClass(data)")
 
 
 class TestEdgeCases:

@@ -6,7 +6,6 @@
 
 import pytest
 import polars as pl
-import polars.selectors as cs
 import numpy as np
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock

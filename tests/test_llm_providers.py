@@ -1,6 +1,7 @@
 """Tests for LLM provider base class and factory."""
 
 import json
+from types import ModuleType
 
 import pytest
 
@@ -558,4 +559,5 @@ class TestGeminiTypesNotClobbered:
         from pyutilz.llm.gemini_provider import GENAI_AVAILABLE, types
         if not GENAI_AVAILABLE:
             pytest.skip("google-genai not installed")
-        assert types is not None
+        assert isinstance(types, ModuleType)
+        assert hasattr(types, "GenerateContentConfig")

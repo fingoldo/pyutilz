@@ -49,7 +49,9 @@ class TestCreateTabsNoFlaskLogin:
         with patch("flask_login.current_user", self._broken_current_user()):
             tabsList = [("Home", "home", None), ("About", "about", None)]
             result = create_tabs("mytabs", tabsList, _draw_content)
-        assert result is not None
+        import dash_bootstrap_components as dbc
+        assert isinstance(result, dbc.Container)
+        assert len(result.children) == 2  # header (dbc.Tabs) + body (html.Div), no tooltips
 
     def test_role_restricted_tab_is_skipped_not_crashed(self, app_context):
         # Previously: NameError: name 'user' is not defined, since the try block's exception
