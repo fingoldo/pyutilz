@@ -6,6 +6,7 @@
 
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ def get_external_ip(
             # socket.setdefaulttimeout() (nothing in this package does) -- a single stalled
             # provider would otherwise hang this whole function indefinitely instead of moving
             # on to the next shuffled IP_PROVIDERS entry.
-            resp = urllib.request.urlopen(_ensure_http_scheme(source), timeout=timeout or 10)  # nosec B310 - scheme validated above
+            resp = urllib.request.urlopen(_ensure_http_scheme(source), timeout=timeout if timeout is not None else 10)  # nosec B310 - scheme validated above -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
         except ssl.SSLCertVerificationError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this provider, try the next)
             pass
         except Exception as e:
@@ -184,7 +185,7 @@ def get_ipinfo(use_urllib: bool = False, url: str = "https://api.ipify.org?forma
 
     if use_urllib:
         try:
-            resp = urllib.request.urlopen(_ensure_http_scheme(url), timeout=timeout or 10)  # nosec B310 - scheme validated above; timeout= avoids blocking forever, see get_external_ip's identical fix
+            resp = urllib.request.urlopen(_ensure_http_scheme(url), timeout=timeout if timeout is not None else 10)  # nosec B310 - scheme validated above; timeout= avoids blocking forever, see get_external_ip's identical fix -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
         except Exception as e:
             logger.exception(e)
             return None
@@ -887,5 +888,16 @@ def download_to_file(
                 nattempts += 1
             else:
                 break
+        else:
+            # All max_attempts write attempts failed. `open(filename, "wb")` truncates the
+            # target on every attempt, so a partial/corrupt file would otherwise be left on
+            # disk while the function still returns None -- identical to a successful
+            # download. Best-effort remove it so "no file on disk" reliably signals failure
+            # here too, matching the connection-failure path above (tested via
+            # test_request_exception_on_all_attempts_returns_none).
+            try:
+                os.remove(filename)
+            except OSError:
+                pass
     finally:
         request.close()

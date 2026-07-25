@@ -37,6 +37,25 @@ def _loop_has_break(loop: ast.While) -> bool:
     return False
 
 
+def _loop_has_bounding_raise(loop: ast.While) -> bool:
+    """True if ``loop``'s own body (not nested loops) contains a ``raise`` statement.
+
+    audit-2026-07-22 false-positive fix: a ``while True:`` retry loop that bounds itself by
+    raising once an attempt counter is exceeded (checked BEFORE the loop's own try/except, so
+    nothing inside the SAME loop catches it) is just as bounded as one using ``break`` -- the
+    exit path is just "raise out of the loop" instead of "break out of the loop". Previously only
+    ``break`` was recognized, flagging every raise-bounded retry loop as unbounded.
+    """
+    for node in ast.walk(loop):
+        if node is loop:
+            continue
+        if isinstance(node, (ast.While, ast.For)):
+            continue  # a raise in a NESTED loop doesn't necessarily bound THIS loop
+        if isinstance(node, ast.Raise):
+            return True
+    return False
+
+
 def _try_has_sleep_or_continue(node: ast.AST) -> bool:
     """True if ``node``'s subtree contains a ``continue`` or a call to a function/method named ``sleep``."""
     for n in ast.walk(node):
@@ -126,7 +145,7 @@ def scan_retry_loops(
                         "of backing off."
                     ),
                 ))
-            elif not _loop_has_break(node):
+            elif not _loop_has_break(node) and not _loop_has_bounding_raise(node):
                 findings.append(Finding(
                     check="unbounded_retry_loop",
                     severity="Low",

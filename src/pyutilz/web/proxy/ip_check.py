@@ -89,11 +89,12 @@ def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, ti
     kwargs: Dict[str, Any] = {"timeout": timeout}
     if prx is not None:
         kwargs["proxies"] = prx
+    failures = []
     for url in IP_CHECK_URLS:
         try:
             r = session_or_requests.get(url, **kwargs)
             return parse_ip_response(r.text)
-        except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
             # Regression fix: this module's own docstring promises "any HTTP client (requests,
             # curl_cffi, httpx, etc.)" -- but (OSError, ValueError, KeyError) only actually
             # covers requests/curl_cffi (both raise OSError subclasses); httpx's exceptions
@@ -103,7 +104,14 @@ def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, ti
             # instead of falling through to try the next IP_CHECK_URLS entry as documented. The
             # function already degrades gracefully to "?" if every URL fails, so a blanket catch
             # here is safe.
+            failures.append((url, e))
             continue
+    # Regression fix: per-URL failures were completely silent -- if EVERY IP-check provider
+    # failed, the caller only ever saw "?" with no trace of why (DNS/proxy/timeout/etc), matching
+    # the same "fault-isolated but invisible when ALL isolated attempts fail" shape fixed
+    # elsewhere this round (see openrouter_provider._health's aggregated health-check logging).
+    if failures:
+        _log.warning("get_ip: all %d IP-check provider(s) failed, e.g. %s: %s", len(failures), failures[0][0], failures[0][1])
     return "?"
 
 

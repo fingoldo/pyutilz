@@ -192,6 +192,15 @@ list[Finding]):
   independently, non-identically, in multiple places, with coverage that
   silently drifts between the copies.
 
+- ``scan_asymmetric_resource_guard``: within one class, an operation-shape
+  (a dotted call like ``conn.cursor`` or ``self._db.execute``) that's
+  wrapped in a guarding ``with``/``async with`` block
+  (``.transaction()``/``.atomic()``/``.begin()``, or a bare
+  ``self._lock``-shaped context manager) in at least one method but
+  performed UNGUARDED in a SIBLING method of the same class -- the class's
+  own code already demonstrates the correct pattern in one place and
+  omits it in another, the strongest signal available without
+  understanding what the operation actually does.
 - ``scan_stale_test_spy_arity``: a test's hand-written spy/recorder
   function, passed as ``patch(..., side_effect=<local def>)`` in place of
   a real production function, whose own positional-arg arity has fallen
@@ -207,6 +216,69 @@ list[Finding]):
   counter idiom) -- fine in isolation, but floods logs the moment every
   item in a large batch hits the same condition (e.g. a systemic upstream
   outage), exactly when an operator most needs signal, not noise.
+
+- ``scan_possibly_dead_import``: a module-level import never referenced
+  as a bare name in its own file AND never accessed as ``<anything>.name``
+  anywhere in the whole scanned corpus -- a genuinely unused import, not
+  a facade re-export consumed indirectly elsewhere. The whole-corpus
+  attribute-access cross-check exists because a naive same-file-only scan
+  has a real false-positive class: 9 of 12 audit-suspected "dead"
+  re-exports in one real codebase turned out to be live, consumed via
+  ``import module as m; m.<name>`` in test files.
+
+- ``scan_unpicklable_resource_state``: a class's ``__init__`` assigns a
+  live, process-bound, unpicklable resource (``threading.Lock``/``RLock``/
+  ``Event``/..., a ``Thread``/``Process``/``Pool``, an ``open()`` file
+  handle, or a CUDA stream/event) directly to ``self.<attr>`` with no
+  ``__getstate__`` defined on the class to drop it before a pickle
+  round-trip -- ``pickle.dumps(instance)`` raises ``TypeError`` the first
+  time anything upstream caches, checkpoints, or ships the instance
+  across a process boundary. Generalizes a bug pattern fixed by hand
+  twice independently in the same downstream codebase before this
+  scanner existed (mlframe's ``FeatureCache._lock`` and
+  ``training/neural/ranker.py``'s trainer_/CUDA-tensor exclusion).
+
+- ``scan_tautological_is_not_none_only_tests``: a ``test_*`` function whose
+  ONLY unconditional assertion(s) are a bare ``X is not None``/``X != None``
+  check -- confirms something came back, never that it's the RIGHT thing.
+  Narrower than a raw ``is not None`` grep: a function with a stronger
+  assertion alongside the weak one is not flagged.
+
+- ``scan_except_skip_masks_call_under_test``: a ``try:`` block in a test
+  file that does more than import a module (calls the function/class under
+  test, or other real work) whose ``except`` handler calls
+  ``pytest.skip(...)`` -- a genuine API break gets silently reclassified as
+  an environment-limitation skip. The legitimate optional-dependency-guard
+  shape (try body is ONLY import statements) is exempted.
+
+- ``scan_uncurated_star_exports``: an ``__init__.py`` doing
+  ``from .submodule import *`` where neither it nor the target submodule
+  defines ``__all__`` -- every public name in the submodule silently joins
+  the package's public surface, and same-named helpers from two
+  star-imported submodules can silently shadow one another.
+
+- ``scan_async_primitive_reinit_per_call``: ``asyncio.Lock()``/``Event()``/
+  ``Semaphore()``/``Condition()`` instantiated INSIDE a function or method
+  body rather than at module/class scope -- every call gets its own
+  private, unshared instance, so concurrent callers never actually
+  coordinate through it. Nothing crashes; the coordination semantics
+  (mutual exclusion, wait-for-signal, bounded concurrency) simply never
+  engage, surfacing only once two callers genuinely overlap in production.
+
+- ``scan_hardcoded_absolute_path_in_test``: a hardcoded, developer-machine-
+  specific absolute path (a Windows drive letter, or a POSIX
+  ``/home/<user>/``/``/Users/<user>/``/``/root/`` path) as a string literal
+  in a test file -- exists on exactly one machine, so any conditional/skip
+  gate built on it silently and permanently no-ops on every other machine
+  or CI runner, occupying the mental slot of "covered" with zero real
+  regression coverage there.
+
+- ``scan_llm_call_missing_max_tokens_cap``: a call to ``.generate(...)``/
+  ``.generate_json(...)``/``.generate_batch(...)`` on a variable assigned
+  from ``pyutilz.llm.factory.get_llm_provider(...)``, with no explicit,
+  non-zero ``max_tokens`` -- these methods default ``max_tokens`` to ``0``
+  ("use provider max"), an unbounded-cost/latency output length a sibling
+  call site elsewhere in the codebase may already be guarding against.
 
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
@@ -254,7 +326,7 @@ from .duplicate_conditions import scan_duplicate_conditions
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
-from .vacuous_assertions import scan_vacuous_assertions
+from .vacuous_assertions import scan_vacuous_assertions, scan_tautological_is_not_none_only_tests
 from .locals_globals_output import scan_locals_globals_as_output
 from .network_timeout import scan_missing_network_timeout
 from .retry_loops import scan_retry_loops
@@ -266,8 +338,16 @@ from .return_annotation import scan_return_annotation_mismatch
 from .locals_get import scan_locals_get_fragile_lookup
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
+from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
+from .dead_import import scan_possibly_dead_import
+from .unpicklable_resource_state import scan_unpicklable_resource_state
+from .skip_masking_except import scan_except_skip_masks_call_under_test
+from .uncurated_star_export import scan_uncurated_star_exports
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 from .registry import SCANNERS, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -309,8 +389,17 @@ __all__ = [
     "scan_locals_get_fragile_lookup",
     "scan_shielded_resource_release_race",
     "scan_duplicate_credential_regex",
+    "scan_asymmetric_resource_guard",
     "scan_stale_test_spy_arity",
     "scan_unthrottled_hot_loop_log",
+    "scan_possibly_dead_import",
+    "scan_unpicklable_resource_state",
+    "scan_tautological_is_not_none_only_tests",
+    "scan_except_skip_masks_call_under_test",
+    "scan_uncurated_star_exports",
+    "scan_async_primitive_reinit_per_call",
+    "scan_hardcoded_absolute_path_in_test",
+    "scan_llm_call_missing_max_tokens_cap",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -327,7 +416,10 @@ for _submod in (
     "unraised_exceptions", "credential_logging",
     "docstring_args", "return_annotation", "locals_get",
     "shielded_resource_release", "duplicate_credential_regex",
-    "spy_arity", "log_throttle",
+    "asymmetric_resource_guard",
+    "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
+    "skip_masking_except", "uncurated_star_export",
+    "async_primitive_reinit", "hardcoded_test_path", "llm_max_tokens_cap",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

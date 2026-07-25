@@ -102,14 +102,41 @@ def scan_sql_aggregate_before_cast(
     return findings
 
 
+def _docstring_constant_ids(tree: ast.Module) -> set[int]:
+    """``id()`` of every ``ast.Constant`` node that IS a module/class/function docstring -- the
+    first statement of a ``Module``/``ClassDef``/``FunctionDef``/``AsyncFunctionDef`` body,
+    expressed as a bare string expression. These are prose documentation, never an executed SQL
+    string, even when they happen to mention SQL keywords while describing what a scanner does.
+
+    Confirmed false positive found in the wild (2026-07-22): ``dev/code_audit/__init__.py``'s own
+    module docstring documents ``scan_sql_limit_without_order_by``/``scan_sql_offset_pagination``
+    in prose ("a SQL ``SELECT ... LIMIT`` string", "a SQL literal combining ``LIMIT`` and
+    ``OFFSET``"), which ``_string_constants`` (with no docstring exclusion) misidentified as an
+    executable SQL literal.
+    """
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            ids.add(id(first.value))
+    return ids
+
+
 def _string_constants(tree: ast.Module) -> list[tuple[ast.Constant, str]]:
-    """Every ``ast.Constant`` string literal in the module, in traversal
-    order, paired with its string value (mypy can't narrow
-    ``Constant.value``'s union type through an isinstance filter inside
-    a comprehension, so the str is captured alongside the node)."""
+    """Every ``ast.Constant`` string literal in the module, in traversal order, paired with its
+    string value (mypy can't narrow ``Constant.value``'s union type through an isinstance filter
+    inside a comprehension, so the str is captured alongside the node) -- module/class/function
+    docstrings are excluded (see ``_docstring_constant_ids``), since prose documentation can never
+    be an executed SQL literal."""
+    docstring_ids = _docstring_constant_ids(tree)
     out: list[tuple[ast.Constant, str]] = []
     for n in ast.walk(tree):
-        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstring_ids:
             out.append((n, n.value))  # noqa: PERF401 -- a comprehension loses mypy's isinstance narrowing here
     return out
 

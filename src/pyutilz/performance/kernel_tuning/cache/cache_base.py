@@ -48,7 +48,8 @@ def _cpu_model_slug() -> str:
         import cpuinfo
         info = cpuinfo.get_cpu_info()
         return _slug(info.get("brand_raw", "unknown"))
-    except Exception:
+    except Exception as e:
+        logger.debug("cpuinfo probe failed (%s), CPU slug falls back to 'unknown'", e)
         return "unknown"
 
 
@@ -60,7 +61,8 @@ def _current_device_id() -> int:
     try:
         import cupy as cp
         return int(cp.cuda.runtime.getDevice())
-    except Exception:
+    except Exception as e:
+        logger.debug("Current CUDA device probe failed (%s), falling back to device 0", e)
         return 0
 
 
@@ -123,7 +125,8 @@ def _read_hw_fingerprint_from_disk() -> Optional[str]:
         # ``cache_dir()`` makedirs on first call -- safe to invoke here
         # before any kernel-tuning JSON exists.
         path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
-    except Exception:
+    except Exception as e:
+        logger.debug("Could not resolve on-disk hw-fingerprint path (%s), skipping disk cache", e)
         return None
     try:
         st = os.stat(path)
@@ -301,7 +304,8 @@ def _pid_alive(pid: int) -> bool:
     except OSError as e:
         # ESRCH => dead; EPERM => alive but not ours.
         return getattr(e, "errno", None) != errno.ESRCH
-    except Exception:
+    except Exception as e:
+        logger.debug("Process-liveness probe for pid=%s failed unexpectedly (%s), assuming alive (never steal)", pid, e)
         return True  # never steal on an unexpected probe failure
 
 
@@ -314,7 +318,8 @@ def _safe_version(import_name: str, attr: str = "__version__") -> Optional[str]:
     try:
         mod = __import__(import_name)
         return str(getattr(mod, attr, None))
-    except Exception:
+    except Exception as e:
+        logger.debug("Could not read %s.%s (%s), version omitted from provenance", import_name, attr, e)
         return None
 
 
@@ -425,7 +430,8 @@ def _async_sweep_hw_busy() -> bool:
     try:
         from ..benchmark import hardware_busy
         return hardware_busy()
-    except Exception:
+    except Exception as e:
+        logger.debug("hardware_busy() probe failed (%s), treating hardware as idle", e)
         return False
 
 # Process-scoped "tuned this run" guard, keyed on (kernel_name, cache_path), so

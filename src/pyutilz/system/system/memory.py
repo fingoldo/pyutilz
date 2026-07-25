@@ -86,6 +86,9 @@ def get_own_memory_usage() -> "Optional[float]":
         else:
             memory_usage = mi.rss / 2.0**30
     except Exception as e:
+        # best-effort: documented contract (see docstring) -- None is the caller-visible failure
+        # signal here, not a silent default. Optional[float] return type makes "no reading
+        # available" real, distinct from a normal-path None.
         logger.exception(e)
         if _LAST_OWN_MEMORY_USAGE_GB > 0.0:
             return _LAST_OWN_MEMORY_USAGE_GB
@@ -183,7 +186,7 @@ def clean_ram() -> None:
         try:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
-            logger.error("malloc_trim attempt failed")
+            logger.error("malloc_trim attempt failed")  # best-effort: gc.collect() above already ran; this is an opportunistic extra reclaim
 
 
 def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
@@ -204,7 +207,7 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
     for obj in session.values():
         try:
             size = sys.getsizeof(obj)
-        except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this object, keep scanning the rest)
+        except Exception:  # noqa: PERF203 -- best-effort: per-iteration fault isolation is intentional (skip this object, keep scanning the rest)
             logger.warning("stumbled on object of type %s", type(obj))
             pass
         else:

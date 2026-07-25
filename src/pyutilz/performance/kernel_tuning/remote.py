@@ -118,7 +118,9 @@ def get_remote_backend(spec: Optional[str] = None) -> Optional[RemoteBackend]:
     Currently supports ``s3://bucket/prefix``. Returns None if no spec is set
     or the scheme is unrecognized (local-only). Never raises.
     """
-    spec = spec or os.environ.get(_REMOTE_ENV)
+    # `is not None`, not `or`: a caller passing spec="" to explicitly force local-only
+    # regardless of the environment must not be silently overridden by PYUTILZ_KERNEL_REMOTE.
+    spec = spec if spec is not None else os.environ.get(_REMOTE_ENV)
     if not spec:
         return None
     try:

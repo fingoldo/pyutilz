@@ -99,8 +99,16 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "locals_get": "code_audit scanner; covered by test_code_audit.py",
     "shielded_resource_release": "code_audit scanner; covered by test_code_audit.py",
     "duplicate_credential_regex": "code_audit scanner; covered by test_code_audit.py",
+    "asymmetric_resource_guard": "code_audit scanner; covered by test_code_audit.py",
     "spy_arity": "code_audit scanner; covered by test_code_audit.py",
     "log_throttle": "code_audit scanner; covered by test_code_audit.py",
+    "dead_import": "code_audit scanner; covered by test_code_audit.py",
+    "unpicklable_resource_state": "code_audit scanner; covered by test_code_audit.py",
+    "skip_masking_except": "code_audit scanner; covered by test_code_audit.py",
+    "uncurated_star_export": "code_audit scanner; covered by test_code_audit.py",
+    "async_primitive_reinit": "code_audit scanner; covered by test_code_audit.py",
+    "hardcoded_test_path": "code_audit scanner; covered by test_code_audit.py",
+    "llm_max_tokens_cap": "code_audit scanner; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and

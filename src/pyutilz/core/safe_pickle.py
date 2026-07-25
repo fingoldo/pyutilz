@@ -90,6 +90,18 @@ class _PathLockEntry:
         self.lock = threading.Lock()
         self.refcount = 0
 
+    def __getstate__(self) -> dict:
+        """Drop the unpicklable ``threading.Lock`` (a fresh one is created in ``__setstate__``);
+        this class isn't on any current pickling path, but it's the same live-resource-survives-only-
+        because-nobody-pickles-the-parent-yet precondition flagged repo-wide by
+        ``pyutilz.dev.code_audit.unpicklable_resource_state``."""
+        return {"refcount": self.refcount}
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state and re-create the ``threading.Lock`` dropped by ``__getstate__``."""
+        self.refcount = state["refcount"]
+        self.lock = threading.Lock()
+
 
 _path_locks: Dict[str, _PathLockEntry] = {}
 _path_locks_guard = threading.Lock()

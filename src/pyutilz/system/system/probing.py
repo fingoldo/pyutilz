@@ -316,14 +316,17 @@ def summarize_system_info():
         return None
 
 
-def get_nix_cpu_sockets_number():
+def get_nix_cpu_sockets_number() -> int:
     """Returns the number of physical CPU sockets on Linux by parsing `lscpu` output; falls back to 1 on any failure."""
-    num_sockets: _Any = 1
+    num_sockets: int = 1
     try:
         res = subprocess.check_output("lscpu").decode()  # nosec B603 B607 - fixed trusted binary "lscpu", hardcoded string with no interpolation, no shell
-        num_sockets = re.findall("Socket\\(s\\):(.+)\n", res)
-        if len(num_sockets) > 0:
-            num_sockets = int(str(num_sockets[0]).strip())
+        matches = re.findall("Socket\\(s\\):(.+)\n", res)
+        if len(matches) > 0:
+            # Parse into a local first: if the matched text isn't int-parseable (odd
+            # locale/virtualization output), num_sockets must stay at its documented
+            # fallback of 1, not silently become the raw regex match list.
+            num_sockets = int(matches[0].strip())
     except Exception as e:
         logger.exception(e)
     return num_sockets
@@ -752,7 +755,13 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
         return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     try:
-        for gpu in GPUtil.getGPUs():
+        gpus = GPUtil.getGPUs()
+    except Exception as e:
+        logger.exception(e)
+        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
+    for gpu in gpus:
+        try:
             cur_device = dict()
             for attr in attrs:
                 val = getattr(gpu, attr)
@@ -762,8 +771,14 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
                     val = val * 100
                 cur_device[attr] = val
             devices.append(cur_device)
-    except Exception as e:
-        logger.exception(e)
+        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one bad GPU shouldn't truncate the rest)
+            # One bad GPU's attribute read must not silently truncate the whole result --
+            # compute_total_gpus_ram() sums this list directly, so a partial list would
+            # silently undercount capacity with no signal anything was skipped.
+            logger.exception("get_gpuutil_gpu_info: skipping a GPU after an attribute-read error (%s)", e)
+
+    if len(devices) < len(gpus):
+        logger.warning("get_gpuutil_gpu_info: only %d of %d detected GPU(s) were successfully enumerated", len(devices), len(gpus))
 
     return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 

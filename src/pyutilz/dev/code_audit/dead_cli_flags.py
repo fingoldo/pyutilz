@@ -91,6 +91,15 @@ def scan_dead_cli_flags(
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_add_argument_call(node):
                 continue
+            # audit-2026-07-22 false-positive fix: Selenium's ChromeOptions/FirefoxOptions
+            # expose an UNRELATED add_argument(flag_string) method (appends a raw CLI flag to a
+            # list passed to the external Chrome/Firefox binary) -- no dest=/action=/etc. concept
+            # at all. Real argparse declarations in this codebase always carry at least one
+            # keyword; a call with ZERO keywords is syntactically indistinguishable from
+            # Selenium's, so it's no longer flagged even if genuinely dead (a narrow, low-risk
+            # gap traded for eliminating a confirmed, concrete false-positive class).
+            if not node.keywords:
+                continue
             name = _flag_dest_name(node)
             if not name or name == "help":
                 continue

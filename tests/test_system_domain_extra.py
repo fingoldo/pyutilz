@@ -21,7 +21,32 @@ class TestPsutilNoneGuards:
 
     @patch("pyutilz.system.parallel.psutil.cpu_count", return_value=None)
     def test_applyfunc_parallel_handles_none_cpu_count(self, mock_cc):
-        result = applyfunc_parallel(iterable=[([1, 2],), ([3],)], func=lambda chunk: [x * 2 for x in chunk], return_dataframe=False, use_threads=True)
+        """Regression sensor for the n_jobs fallback when psutil.cpu_count() returns None --
+        not a real-threading test. A genuine multiprocessing.pool.ThreadPool here was found to
+        intermittently hang (reproduces only deep inside a huge combined pytest run, never
+        standalone or in smaller batches -- a sandbox-specific ThreadPool resource-pressure issue,
+        not a bug in applyfunc_parallel: other tests using the identical real-ThreadPool,
+        n_jobs=1, use_threads=True shape in test_parallel.py/test_parallel_extra.py pass reliably
+        in less-loaded chunks). This test's actual assertion target is the n_jobs-fallback-and-
+        starmap-and-concat LOGIC, which doesn't need a real OS thread pool to verify -- swapping
+        in a synchronous stand-in keeps full coverage of that logic while removing the sandbox
+        dependency."""
+
+        class _SyncThreadPool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def starmap(self, func, iterable):
+                return [func(*args) for args in iterable]
+
+        with patch("pyutilz.system.parallel.ThreadPool", _SyncThreadPool):
+            result = applyfunc_parallel(iterable=[([1, 2],), ([3],)], func=lambda chunk: [x * 2 for x in chunk], return_dataframe=False, use_threads=True)
         assert sorted(sum(list(result), [])) == [2, 4, 6]
 
     @patch("pyutilz.system.system.misc.psutil.cpu_count", return_value=None)

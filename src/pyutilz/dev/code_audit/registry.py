@@ -1,6 +1,7 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -20,7 +21,7 @@ from .duplicate_conditions import scan_duplicate_conditions
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
-from .vacuous_assertions import scan_vacuous_assertions
+from .vacuous_assertions import scan_vacuous_assertions, scan_tautological_is_not_none_only_tests
 from .locals_globals_output import scan_locals_globals_as_output
 from .network_timeout import scan_missing_network_timeout
 from .retry_loops import scan_retry_loops
@@ -31,8 +32,16 @@ from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
+from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
+from .dead_import import scan_possibly_dead_import
+from .unpicklable_resource_state import scan_unpicklable_resource_state
+from .skip_masking_except import scan_except_skip_masks_call_under_test
+from .uncurated_star_export import scan_uncurated_star_exports
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 
 # --- registry -----------------------------------------------------------
 
@@ -81,9 +90,35 @@ register_scanner("return_annotation_mismatch", scan_return_annotation_mismatch)
 register_scanner("sql_aggregate_before_cast", scan_sql_aggregate_before_cast)
 register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 register_scanner("shielded_resource_release_race", scan_shielded_resource_release_race)
-register_scanner("duplicate_credential_regex", scan_duplicate_credential_regex)
+# canonical_module_rel_paths designates THIS package's own scanner-definition modules as the
+# credential-shaped-regex source of truth: credential_logging.py's _CREDENTIAL_NAME_RE and this
+# scanner's own DEFAULT_CREDENTIAL_KEYWORDS_RE both necessarily contain credential-shaped
+# keywords (that's their entire job as SECURITY-SCANNING META-TOOLING, not production
+# redaction/secret-handling logic) -- without this, the scanner flags itself and its sibling,
+# the only two credential-shaped re.compile(...) calls anywhere in this codebase, every run.
+register_scanner(
+    "duplicate_credential_regex",
+    partial(
+        scan_duplicate_credential_regex,
+        canonical_module_rel_paths=frozenset(
+            {
+                "dev/code_audit/credential_logging.py",
+                "dev/code_audit/duplicate_credential_regex.py",
+            }
+        ),
+    ),
+)
+register_scanner("asymmetric_resource_guard", scan_asymmetric_resource_guard)
 register_scanner("stale_test_spy_arity", scan_stale_test_spy_arity)
 register_scanner("unthrottled_hot_loop_log", scan_unthrottled_hot_loop_log)
+register_scanner("possibly_dead_import", scan_possibly_dead_import)
+register_scanner("unpicklable_resource_state", scan_unpicklable_resource_state)
+register_scanner("tautological_is_not_none_only_test", scan_tautological_is_not_none_only_tests)
+register_scanner("except_skip_masks_call_under_test", scan_except_skip_masks_call_under_test)
+register_scanner("uncurated_star_export", scan_uncurated_star_exports)
+register_scanner("async_primitive_reinit_per_call", scan_async_primitive_reinit_per_call)
+register_scanner("hardcoded_absolute_path_in_test", scan_hardcoded_absolute_path_in_test)
+register_scanner("llm_call_missing_max_tokens_cap", scan_llm_call_missing_max_tokens_cap)
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:

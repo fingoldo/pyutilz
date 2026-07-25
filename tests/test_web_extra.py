@@ -102,10 +102,45 @@ class TestGetExternalIp:
         from pyutilz.web import web as mod
         assert mod.get_external_ip() is None
 
+    @patch("pyutilz.web.web.urllib.request.urlopen")
+    def test_explicit_timeout_zero_is_not_silently_rewritten(self, mock_urlopen):
+        """Regression: `timeout=timeout or 10` used to silently rewrite an explicit
+        module-level `timeout = 0` to 10 -- `0 or 10` evaluates to `10` regardless of
+        whether the caller meant it. Fixed to `timeout if timeout is not None else 10`."""
+        from pyutilz.web import web as mod
+        resp = Mock()
+        resp.status = http.HTTPStatus.OK
+        resp.read.return_value = b"1.2.3.4\n"
+        mock_urlopen.return_value = resp
+        orig_timeout = mod.timeout
+        try:
+            mod.timeout = 0
+            mod.get_external_ip()
+            assert mock_urlopen.call_args.kwargs["timeout"] == 0
+        finally:
+            mod.timeout = orig_timeout
+
 
 # ===== get_ipinfo =====
 
 class TestGetIpinfo:
+    @patch("pyutilz.web.web.urllib.request.urlopen")
+    def test_explicit_timeout_zero_is_not_silently_rewritten(self, mock_urlopen):
+        """Regression: `timeout=timeout or 10` used to silently rewrite an explicit
+        module-level `timeout = 0` to 10 -- fixed to `timeout if timeout is not None else 10`."""
+        from pyutilz.web import web as mod
+        resp = Mock()
+        resp.status = http.HTTPStatus.OK
+        resp.read.return_value = b'{"ip":"1.2.3.4"}'
+        mock_urlopen.return_value = resp
+        orig_timeout = mod.timeout
+        try:
+            mod.timeout = 0
+            mod.get_ipinfo(use_urllib=True)
+            assert mock_urlopen.call_args.kwargs["timeout"] == 0
+        finally:
+            mod.timeout = orig_timeout
+
     @patch("pyutilz.web.web.urllib.request.urlopen")
     def test_urllib_ok(self, mock_urlopen):
         from pyutilz.web import web as mod
@@ -1000,3 +1035,23 @@ class TestDownloadToFile:
         out = tmp_path / "out.bin"
         mod.download_to_file("http://x.com/f", str(out), max_attempts=1)
         mock_resp.close.assert_called_once()
+
+    @patch("pyutilz.web.web.sleep")
+    @patch("pyutilz.web.web.requests.get")
+    def test_truncated_file_removed_after_all_write_attempts_fail(self, mock_get, mock_sleep, tmp_path):
+        """Regression test: `open(filename, "wb")` truncates/creates the target file on every
+        write attempt. If ALL max_attempts writes fail, the truncated/partial file was
+        previously left on disk while the function still returned None -- identical to a
+        successful download. The file must be removed so "no file on disk" reliably signals
+        failure here too, matching the connection-failure path's tested contract
+        (test_request_exception_on_all_attempts_returns_none)."""
+        from pyutilz.web import web as mod
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.iter_content.side_effect = RuntimeError("boom")
+        mock_get.return_value = mock_resp
+
+        out = tmp_path / "out.bin"
+        result = mod.download_to_file("http://x.com/f", str(out), max_attempts=2)
+        assert result is None
+        assert not out.exists()

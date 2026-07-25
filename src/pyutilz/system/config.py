@@ -71,6 +71,19 @@ class TomlLiveConfig:
         self._last_check: float = 0.0
         self._reload()
 
+    def __getstate__(self) -> dict:
+        """Drop the unpicklable ``threading.Lock`` (a fresh one is created in ``__setstate__``) --
+        flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this config object isn't
+        on any current pickling path, but the guard is cheap and matches the repo-wide convention."""
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state and re-create the ``threading.Lock`` dropped by ``__getstate__``."""
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
     # ── Internal reload logic ──────────────────────────────────────────
 
     def _reload(self) -> None:

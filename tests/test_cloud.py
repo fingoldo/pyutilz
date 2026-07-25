@@ -120,3 +120,27 @@ class TestGetFromS3OrCacheCorruptZip:
 
         assert not os.path.exists(zip_path), "corrupted zip must be removed so the next iteration re-downloads"
         assert sleep_calls == [10], "must sleep instead of busy-looping at zero delay"
+
+
+class TestGetFromS3OrCacheDownloadFailure:
+    def test_download_exception_sleeps_instead_of_spinning(self, tmp_path, monkeypatch):
+        """Regression test: a persistent per-object download failure (bad IAM perms, always-
+        corrupt remote object) previously retried with only network-RTT pacing -- no backoff --
+        unlike this function's two sibling failure branches ("not found in bucket" and "corrupt
+        zip", both sleep(10))."""
+        monkeypatch.setattr(cloud_mod, "S3_BUCKET_NAME", "mybucket")
+        sleep_calls = []
+        monkeypatch.setattr(cloud_mod, "sleep", lambda s: sleep_calls.append(s))
+        monkeypatch.setattr(cloud_mod, "s3_file_exists", lambda key, bucket: True)
+
+        fake_s3 = MagicMock()
+        fake_s3.meta.client.download_file.side_effect = OSError("connection reset")
+        monkeypatch.setattr(cloud_mod, "s3", fake_s3)
+
+        local_path = str(tmp_path / "model.bin")
+        exists_results = iter([False, True])
+        monkeypatch.setattr(cloud_mod, "exists", lambda path: next(exists_results))
+
+        cloud_mod.get_from_s3_or_cache(local_path, "model.bin", str(tmp_path))
+
+        assert sleep_calls == [10], "must sleep instead of busy-looping at zero delay"

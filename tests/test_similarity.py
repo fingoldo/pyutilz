@@ -387,15 +387,23 @@ sentence_st = st.lists(word_st, min_size=1, max_size=6)
 
 class TestHypothesisSentenceSimilarity:
 
+    # deadline=None on the numba/joblib-backed tests below (ALL_IMPLS includes numba and
+    # batch_parallel variants): Hypothesis's default 200ms deadline is incompatible with these
+    # functions' one-time JIT-compilation / joblib-worker-startup cost on their FIRST call in a
+    # process -- observed directly as a hypothesis.errors.FlakyFailure/DeadlineExceeded (1324ms
+    # on the triggering call vs 0.19ms on Hypothesis's own reproduction re-run of the identical
+    # example), not a real per-call performance regression. deadline=None is Hypothesis's own
+    # documented fix for tests whose runtime is inherently variable for a reason unrelated to the
+    # property being tested (see its own error message).
     @given(sent=sentence_st)
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     @pytest.mark.parametrize("sim_fn", ALL_IMPLS)
     def test_self_similarity_is_one(self, sim_fn, sent):
         result = sim_fn(sent, sent)
         assert result == pytest.approx(1.0)
 
     @given(a=sentence_st, b=sentence_st)
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     @pytest.mark.parametrize("sim_fn", ALL_IMPLS)
     def test_range_zero_to_one(self, sim_fn, a, b):
         result = sim_fn(a, b)
@@ -414,7 +422,7 @@ class TestHypothesisSentenceSimilarity:
             assert abs(r1 - r2) < 0.01
 
     @given(a=sentence_st, b=sentence_st)
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)  # see deadline=None note above -- _sim_numba's first-call JIT warmup
     def test_numba_matches_python_hypothesis(self, a, b):
         """Numba must always match Python."""
         py = _sim_python(a, b)
@@ -425,7 +433,7 @@ class TestHypothesisSentenceSimilarity:
             assert nb == pytest.approx(py, abs=1e-10)
 
     @given(a=sentence_st, b=sentence_st)
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)  # see deadline=None note above -- _sim_batch's first-call JIT warmup
     def test_batch_matches_python_hypothesis(self, a, b):
         py = _sim_python(a, b)
         ba = _sim_batch(a, b)
@@ -435,7 +443,7 @@ class TestHypothesisSentenceSimilarity:
             assert ba == pytest.approx(py, abs=1e-10)
 
     @given(a=sentence_st, b=sentence_st)
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)  # see deadline=None note above -- _sim_batch_parallel's joblib worker-pool startup + JIT warmup
     def test_parallel_matches_python_hypothesis(self, a, b):
         py = _sim_python(a, b)
         pa = _sim_batch_parallel(a, b)

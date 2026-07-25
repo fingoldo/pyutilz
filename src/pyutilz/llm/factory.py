@@ -214,7 +214,8 @@ def _close_cached_providers() -> None:
     # cleanup — the OS will reclaim sockets at process exit anyway.
     try:
         loop = asyncio.new_event_loop()
-    except Exception:
+    except Exception as e:
+        logger.debug("Could not create event loop for provider shutdown cleanup: %s", e)
         return
     try:
         for provider in providers:

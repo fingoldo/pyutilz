@@ -73,6 +73,73 @@ def _looks_like_full_domain_or(node: ast.BoolOp) -> bool:
     return shapes == len(node.values) and len(targets) == 1
 
 
+def _is_bare_is_not_none(test: ast.AST) -> bool:
+    """True if ``test`` is exactly ``X is not None`` or ``X != None`` (a single comparison, no
+    boolop) -- the weakest possible "something came back" check, distinct from the ``A or B or ...``
+    tautology shape ``_looks_like_full_domain_or`` targets."""
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1):
+        return False
+    op = test.ops[0]
+    right = test.comparators[0]
+    if not (isinstance(right, ast.Constant) and right.value is None):
+        return False
+    return isinstance(op, ast.IsNot) or isinstance(op, ast.NotEq)
+
+
+def _collect_top_level_asserts(body: list[ast.stmt]) -> list[ast.Assert]:
+    """Return every ``ast.Assert`` directly in ``body`` (not nested inside ``if``/``for``/``with``/
+    ``try`` -- a function that conditionally asserts something stronger in a branch isn't vacuous,
+    so only unconditional top-level asserts count toward "is this the ONLY check")."""
+    return [s for s in body if isinstance(s, ast.Assert)]
+
+
+def scan_tautological_is_not_none_only_tests(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find ``test_*`` functions whose ONLY unconditional assertion(s) are a bare ``X is not
+    None``/``X != None`` check -- the function calls the code under test and confirms only that
+    SOMETHING non-None came back, never any attribute/value/behavioral property of it. A regression
+    that returns a different-but-still-non-None wrong value sails through undetected.
+
+    Deliberately narrower than a raw grep for `is not None`: a function with an is-not-None assert
+    PLUS at least one other, stronger assertion is not flagged -- only when EVERY top-level assert
+    in the function is this one weak shape. Nested asserts (inside if/for/with/try) are not counted
+    either way, matching this scanner's conservative-false-negative bias.
+
+    Severity: P2, same tier as ``scan_vacuous_assertions``'s other tautology shapes.
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        if not py.name.startswith("test_"):
+            continue
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for node in ast.walk(tree):
+            if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")):
+                continue
+            asserts = _collect_top_level_asserts(node.body)
+            if not asserts:
+                continue
+            if all(_is_bare_is_not_none(a.test) for a in asserts):
+                findings.append(Finding(
+                    check="tautological_is_not_none_only_test",
+                    severity="P2",
+                    file=rel,
+                    line=node.lineno,
+                    snippet=_line_text(src_lines, node.lineno),
+                    detail=(
+                        f"test function {node.name!r}'s only unconditional assertion(s) are a bare "
+                        f"'is not None'/'!= None' check -- confirms something came back, never that "
+                        f"it's the RIGHT thing. A regression returning a different wrong value passes."
+                    ),
+                ))
+    return findings
+
+
 def scan_vacuous_assertions(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,

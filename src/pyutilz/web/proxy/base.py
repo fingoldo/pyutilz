@@ -125,6 +125,19 @@ class PortHealthTracker:
         self.min_errors = min_errors
         self.absolute_ban_rate = absolute_ban_rate
 
+    def __getstate__(self) -> dict:
+        """Drop the unpicklable ``threading.Lock`` (a fresh one is created in ``__setstate__``) --
+        flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this tracker isn't on any
+        current pickling path, but the guard is cheap and matches the repo-wide convention."""
+        state = self.__dict__.copy()
+        state["_lock"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore state and re-create the ``threading.Lock`` dropped by ``__getstate__``."""
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
     def _trim_all(self, now: float) -> None:
         """Remove stale outcomes outside the window (caller must hold _lock)."""
         cutoff = now - self.window

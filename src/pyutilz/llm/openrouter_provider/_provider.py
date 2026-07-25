@@ -286,7 +286,12 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         """
         try:
             catalogue = _fetch_models_catalogue()
-        except Exception:
+        except Exception as e:
+            # _fetch_models_catalogue() already catches and logs its own network/parse failures
+            # (returning {} rather than raising), so reaching this handler means something more
+            # unexpected went wrong in the surrounding plumbing -- worth a trail even though the
+            # fail-open behavior itself is deliberate (see docstring above).
+            logger.debug("supports_json_mode: unexpected catalogue-fetch error (%s), assuming supported", e)
             return True
         entry = catalogue.get(self.model_name)
         if not entry:

@@ -1,6 +1,7 @@
 {
   "alias_surfaces": {
     "benchmarking": {
+      "annotations": "value",
       "benchmark_algos_by_runtime": "callable(implementations:any:0:, algo_name:any:1:'', n_reps:any:1:2, verbose:any:1:0, synchronize_gpu:any:1:True, algo_kwargs:**kw:0:)",
       "logger": "value",
       "sweep_backend_crossover": "callable(variants:any:0:, sizes:any:0:, make_inputs:any:0:, primary_axis:any:0:, reference:kw:1:None, extra_region_keys:kw:1:None, repeats:kw:1:15, equiv_atol:kw:1:1e-06, equiv_rtol:kw:1:1e-06, synchronize_gpu:kw:1:True, decision_key:kw:1:'backend_choice', ranking:kw:1:'robust', verbose:kw:1:0)",
@@ -216,6 +217,7 @@
     },
     "monitoring": {
       "API_TIMEOUT_SEC": "value",
+      "annotations": "value",
       "job_completed": "callable(job_id:any:0:, status:any:1:0, data:any:1:None, provider:any:1:'healthchecks.io', api_key:any:1:None, blocking:any:1:True)",
       "log_duration": "callable(threshold:any:1:1.0, logger_name:any:1:None, max_arg_size:any:1:1000)",
       "logger": "value",
@@ -406,6 +408,7 @@
       "HAS_NUMBA": "value",
       "SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD": "value",
       "SentenceSimilarityIndex": "class:pyutilz.text.similarity.SentenceSimilarityIndex",
+      "annotations": "value",
       "contigous_strings_similarity": "callable(a:any:0:, b:any:0:)",
       "levenshtein_strings_similarity": "callable(a:any:0:, b:any:0:)",
       "logger": "value",
