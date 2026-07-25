@@ -50,6 +50,30 @@ def _looks_like_error_target(node: ast.AST) -> bool:
     return name is not None and "error" in name.lower()
 
 
+def _file_uses_escalation_convention(tree: ast.Module, escalation_attrs: frozenset[str]) -> bool:
+    """True if the file genuinely uses one of ``escalation_attrs`` as a collection being
+    appended/extended/incremented to somewhere -- as opposed to a raw substring match on the
+    file's text, which false-positives on an unrelated ``import warnings`` / ``warnings.warn(...)``
+    (the stdlib module, not a caller's own accumulation collection -- "warnings" is in
+    ``DEFAULT_ESCALATION_ATTRS`` and collides with this extremely common import), a docstring
+    that happens to mention "errors" or "issues", ``ignore_errors=True`` kwargs, or
+    ``pd.errors.PerformanceWarning``-shaped attribute access. Deliberately narrower than the
+    per-handler ``_escalates_to`` check (excludes its blanket "any .warn()/.add_error() call"
+    branch, which is a method-name signal independent of file-wide scope) since this only needs
+    to confirm the naming convention is genuinely IN USE as a collection somewhere, not gate on
+    a single handler's own escalation."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("append", "extend"):
+            base = node.func.value
+            if isinstance(base, (ast.Attribute, ast.Name)) and _target_name(base) in escalation_attrs:
+                return True
+        elif isinstance(node, ast.AugAssign) and _target_name(node.target) in escalation_attrs:
+            return True
+        elif isinstance(node, ast.Assign) and any(_target_name(t) in escalation_attrs for t in node.targets):
+            return True
+    return False
+
+
 def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) -> bool:
     """True if the handler body makes the failure observable to a caller
     through any of the escalation conventions seen in practice:
@@ -135,9 +159,9 @@ def scan_log_only_except(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace")
-        if not any(attr in src_lines for attr in escalation_attrs):
+        if not _file_uses_escalation_convention(tree, escalation_attrs):
             continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace")
         lines = src_lines.splitlines()
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
