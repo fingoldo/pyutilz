@@ -538,7 +538,7 @@ class TestGetWindowsPowerPlan:
         with patch.dict("sys.modules", {"wmi": None}):
             # when wmi import fails it falls back to cmd
             result = get_windows_power_plan()
-        assert result is not None
+        assert result == {"plan_guid": "x", "plan_name": "y"}
 
 
 # ── get_battery_info (lines 1277-1279) ──

@@ -175,7 +175,7 @@ class TestApplyfuncParallel:
             return x
 
         result = applyfunc_parallel([(1,), (2,)], identity, n_jobs=1, return_dataframe=False, use_threads=True)
-        assert result is not None
+        assert sorted(result) == [1, 2]
 
     def test_with_processes(self):
         import pandas as pd
@@ -199,7 +199,7 @@ class TestApplyfuncParallel:
 
         with pytest.warns(DeprecationWarning, match="n_jobs"):
             result = applyfunc_parallel([(1,), (2,)], identity, n_cores=1, return_dataframe=False, use_threads=True)
-        assert result is not None
+        assert sorted(result) == [1, 2]
 
 
 # ── set_tf_gpu (lines 208-221) ──

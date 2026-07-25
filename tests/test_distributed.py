@@ -191,7 +191,8 @@ def test_distributed_module_imports_successfully():
     except ImportError as e:
         # Some dependencies might be missing
         pytest.skip(f"distributed module dependencies not available: {e}")
-    assert pyutilz.distributed is not None
+    assert hasattr(pyutilz.distributed, "get_heartbeat_sql")
+    assert hasattr(pyutilz.distributed, "register_scraper")
 
 
 class TestIdentityRaceCondition:

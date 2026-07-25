@@ -196,7 +196,8 @@ def test_parallel_module_imports_successfully():
     except ImportError as e:
         # Some dependencies might be missing, but import should not crash
         pytest.skip(f"parallel module dependencies not available: {e}")
-    assert pyutilz.parallel is not None
+    assert hasattr(pyutilz.parallel, "mem_map_array")
+    assert hasattr(pyutilz.parallel, "applyfunc_parallel")
 
 
 # ---------------------------------------------------------------------------

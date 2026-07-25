@@ -335,7 +335,8 @@ class TestHardwareMonitor:
         """Test UtilizationMonitor can be imported."""
         from pyutilz.system.hardware_monitor import UtilizationMonitor
 
-        assert UtilizationMonitor is not None
+        assert isinstance(UtilizationMonitor, type)
+        assert hasattr(UtilizationMonitor, "__init__")
         print("[OK] UtilizationMonitor imported successfully")
 
     def test_utilization_monitor_init(self):

@@ -224,8 +224,10 @@ class TestStringUtilities:
         """Test slugify with unicode"""
         from pyutilz.strings import slugify
 
-        result = slugify("Привет мир", allow_unicode=True)
-        assert result is not None
+        source = "Привет мир"
+        result = slugify(source, allow_unicode=True)
+        # lowercase=False by default -- case is preserved, only whitespace becomes a hyphen
+        assert result == source.replace(" ", "-")
 
     def test_slugify_lowercase(self):
         """Test slugify with lowercase option"""

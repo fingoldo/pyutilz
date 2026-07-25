@@ -599,7 +599,7 @@ class TestReadStatsFromMultipleFiles:
             template="f*.pckl",
             optimize=True,
         )
-        assert result is not None
+        assert result["v"].dtype == np.uint8  # optimize=True downcasts int64 -> smallest fitting dtype
 
     def test_delete_after(self, tmp_path):
         fpath = str(tmp_path / "del.pckl")
