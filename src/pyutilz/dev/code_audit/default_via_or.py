@@ -73,13 +73,23 @@ def _lhs_default_matches_rhs(lhs: ast.AST, rhs: ast.AST) -> bool:
     up at EXACTLY the value the getter already declared as its own default -- provably a no-op
     widening of the same declared intent, not a new/different fallback value the trap exists to
     catch. ``ast.unparse`` equality (not just Constant equality) so this also matches non-literal
-    shared defaults (``getattr(obj, "n", DEFAULT_N) or DEFAULT_N``)."""
+    shared defaults (``getattr(obj, "n", DEFAULT_N) or DEFAULT_N``). Also recognizes a call's own
+    ``default=D`` KEYWORD arg repeated as the ``or D`` fallback (``max(..., default=D) or D``) --
+    same idiom, different spelling. Unwraps transparent wrappers (``int``/``float``/``max``/
+    ``min``/``abs``) around the getter first, so ``int(a.get("key", D)) or D`` (common when
+    coercing a dict/JSON value to a concrete numeric type) resolves too."""
+    lhs = _unwrap_lhs(lhs)
     default_arg = None
     if isinstance(lhs, ast.Call):
         if isinstance(lhs.func, ast.Attribute) and lhs.func.attr == "get" and len(lhs.args) >= 2:
             default_arg = lhs.args[1]
         elif isinstance(lhs.func, ast.Name) and lhs.func.id == "getattr" and len(lhs.args) >= 3:
             default_arg = lhs.args[2]
+        else:
+            for kw in lhs.keywords:
+                if kw.arg == "default":
+                    default_arg = kw.value
+                    break
     if default_arg is None:
         return False
     _unparse = getattr(ast, "unparse", None)
