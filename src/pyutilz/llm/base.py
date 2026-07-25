@@ -243,6 +243,50 @@ class LLMProvider(ABC):
         """
         return False
 
+    # Headroom left for the chat envelope (role/formatting tokens) and for the tokeniser
+    # approximation error, so a clamp computed from an estimated input length stays inside the window.
+    _CONTEXT_RESERVE_TOKENS = 1024
+
+    def fit_max_tokens_to_context(self, max_tokens: int, prompt: str, system: str | None = None) -> int:
+        """Clamp an output budget so ``input + output`` fits the model's context window.
+
+        ``max_output_tokens`` is a per-model output ceiling that can EXCEED
+        ``context_window - input`` — llama-3.3-70b, for instance, advertises a 128k output cap inside
+        a 131k window, so requesting the full cap alongside any real prompt makes the upstream reject
+        the whole call (HTTP 400 "maximum context length is ... you requested ...") before generating
+        a single token. Providers therefore clamp here instead of forwarding an impossible budget.
+
+        Returns ``max_tokens`` unchanged when it already fits, or when the prompt alone leaves no
+        usable room — in that case the upstream's own context error is the more informative signal
+        than a silently truncated budget.
+        """
+        if max_tokens <= 0:
+            return max_tokens
+        ctx = self.context_window
+        if ctx <= 0:
+            return max_tokens
+        from pyutilz.llm.token_counter import count_tokens
+
+        # Providers name the active model differently (``model_name`` on OpenAI-compat/Gemini,
+        # ``model`` on Anthropic); resolved explicitly rather than via `or`, which would also swallow
+        # a legitimately empty value.
+        model = getattr(self, "model_name", "")
+        if not isinstance(model, str) or not model:
+            fallback = getattr(self, "model", "")
+            model = fallback if isinstance(fallback, str) else ""
+        input_tokens = count_tokens(prompt, model=model) + (count_tokens(system, model=model) if system else 0)
+        room = ctx - input_tokens - self._CONTEXT_RESERVE_TOKENS
+        if room <= 0 or room >= max_tokens:
+            return max_tokens
+        logger.debug(
+            "Clamping max_tokens %d -> %d to fit context window (%d) after ~%d input tokens",
+            max_tokens,
+            room,
+            ctx,
+            input_tokens,
+        )
+        return room
+
     def supports_json_mode(self) -> bool:
         """Return True if this provider+model accepts a structured
         JSON-mode parameter (``response_format={"type":"json_object"}``,

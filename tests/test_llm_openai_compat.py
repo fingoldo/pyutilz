@@ -465,3 +465,38 @@ class TestStrictJsonSchema:
         body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["response_format"]["type"] == "json_schema"
         assert out == {"relation": "CAUSES"}
+class TestContextClamp:
+    """The auto-selected output budget must fit the context window, or the upstream rejects the whole
+    request with HTTP 400 before generating anything (llama-3.3-70b: 128k output cap, 131k window)."""
+
+    class _WideOutputProvider(_TestProvider):
+        _max_tokens_map = {"wide-model": 128_000}
+        _context_window_map = {"wide-model": 131_072}
+
+    @pytest.mark.asyncio
+    async def test_auto_budget_is_clamped_into_the_window(self):
+        p = self._WideOutputProvider(api_key="k", model="wide-model")
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("x " * 8000)  # max_tokens omitted => provider max (128k) would overflow
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert body["max_tokens"] < 128_000
+        assert body["max_tokens"] > 0
+
+    @pytest.mark.asyncio
+    async def test_explicit_impossible_budget_is_also_clamped(self):
+        p = self._WideOutputProvider(api_key="k", model="wide-model")
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("x " * 8000, max_tokens=128_000)
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert body["max_tokens"] < 128_000
+
+    @pytest.mark.asyncio
+    async def test_fitting_budget_is_forwarded_verbatim(self):
+        p = self._WideOutputProvider(api_key="k", model="wide-model")
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+        await p.generate("short", max_tokens=1000)
+        body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
+        assert body["max_tokens"] == 1000

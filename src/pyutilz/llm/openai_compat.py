@@ -455,9 +455,12 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         self._reset_per_call_state()
 
+        # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
+        # (``context_window``) are sync properties that may hit the network on a catalogue miss.
+        await self._async_prepare()
         if max_tokens <= 0:
-            await self._async_prepare()
             max_tokens = self.max_output_tokens
+        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
 
         body: dict[str, Any] = {
             "model": self.model_name,
@@ -648,9 +651,12 @@ class OpenAICompatibleProvider(LLMProvider):
         Providers that don't support a thinking toggle ignore this flag.
         """
         self._reset_per_call_state()
+        # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
+        # (``context_window``) are sync properties that may hit the network on a catalogue miss.
+        await self._async_prepare()
         if max_tokens <= 0:
-            await self._async_prepare()
             max_tokens = self.max_output_tokens
+        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
             body: dict[str, Any] = {
                 "model": self.model_name,

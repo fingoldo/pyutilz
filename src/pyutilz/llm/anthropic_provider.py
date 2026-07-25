@@ -167,6 +167,7 @@ class AnthropicProvider(LLMProvider):
         """Generate text using Claude."""
         if max_tokens <= 0:
             max_tokens = min(self.max_output_tokens, 21000)
+        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
             messages = [{"role": "user", "content": prompt}]
 
