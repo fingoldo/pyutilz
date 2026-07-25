@@ -96,6 +96,29 @@ def _param_annotations(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str
     return out
 
 
+def _param_default_looks_like_immutable_scalar(func: ast.FunctionDef | ast.AsyncFunctionDef, param_name: str) -> bool:
+    """True if ``param_name`` is unannotated but its OWN default value is an int/float/str/bool/
+    complex/None literal -- a caller overriding a ``title=""`` / ``count=0`` default with a
+    completely different (mutable) type would be a pre-existing contract violation on the
+    function's own terms, not something this scanner needs to defend against. Confirmed real
+    false-positive shape: ``def f(title="", ...): title_line = title; title_line += f"..."`` --
+    ``title_line`` can only ever hold a str (its own default proves the contract), so the
+    ``+=`` always rebinds, never mutates in place, regardless of the missing annotation."""
+    a = func.args
+    positional = (*a.posonlyargs, *a.args)
+    defaults_by_name: dict[str, ast.expr] = dict(zip((p.arg for p in positional[len(positional) - len(a.defaults) :]), a.defaults))
+    for kw, kw_default in zip(a.kwonlyargs, a.kw_defaults):
+        if kw_default is not None:  # a kwonly arg with no default has a None placeholder here
+            defaults_by_name[kw.arg] = kw_default
+    default = defaults_by_name.get(param_name)
+    if default is None:
+        return False
+    # A `None` default (`items: list = None`) is the universal "optional/unset" sentinel and
+    # says nothing about the real type -- only a CONCRETE scalar literal default is a genuine
+    # type signal (a caller wouldn't override `count=0`/`title=""` with a container type).
+    return isinstance(default, ast.Constant) and default.value is not None and isinstance(default.value, (int, float, str, bytes, bool, complex))
+
+
 def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> bool:
     """True for a bare ``int``/``float``/``str``/``bytes``/``bool``/``complex``
     annotation, optionally ``X | None`` -- deliberately narrow (only these
@@ -171,7 +194,7 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
                 lineno = node.lineno
         elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id in aliases:
             aliased_param = aliases[node.target.id]
-            if not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param)):
+            if not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param)) and not _param_default_looks_like_immutable_scalar(func, aliased_param):
                 target_name = node.target.id
                 lineno = node.lineno
         elif isinstance(node, ast.Assign):

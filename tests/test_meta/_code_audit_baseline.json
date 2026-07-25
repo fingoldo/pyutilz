@@ -17,7 +17,7 @@
   "default_via_or::dev/code_audit/log_throttle.py:139",
   "default_via_or::dev/code_audit/log_throttle.py:141",
   "default_via_or::dev/code_audit/missed_await.py:59",
-  "default_via_or::dev/code_audit/mutable_defaults.py:115",
+  "default_via_or::dev/code_audit/mutable_defaults.py:138",
   "default_via_or::dev/logginglib.py:276",
   "default_via_or::llm/anthropic_provider.py:78",
   "default_via_or::llm/base.py:432",
