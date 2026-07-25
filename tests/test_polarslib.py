@@ -3,9 +3,7 @@ Test suite for polarslib.py
 Tests cover Polars utility functions for DataFrame operations.
 """
 
-import pytest
 import polars as pl
-import polars.selectors as cs
 import numpy as np
 
 from pyutilz.data.polarslib import (

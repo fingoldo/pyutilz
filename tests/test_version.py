@@ -1,5 +1,4 @@
 import re
-import pytest
 
 
 def test_version_is_string():

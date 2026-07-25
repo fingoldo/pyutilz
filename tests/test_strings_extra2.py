@@ -1,10 +1,8 @@
 """Extra tests for strings.py — covers uncovered lines."""
 
-import math
 import json
 import os
 import tempfile
-import pytest
 from unittest.mock import patch, MagicMock
 from collections import Counter
 

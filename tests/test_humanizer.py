@@ -2,8 +2,6 @@
 
 import random
 
-import pytest
-
 from pyutilz.text.humanizer import (
     strip_ai_patterns,
     fix_dashes,

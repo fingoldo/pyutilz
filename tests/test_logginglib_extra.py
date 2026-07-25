@@ -1,12 +1,8 @@
 """Extra tests for logginglib.py — covers uncovered lines."""
 
-import pytest
 import logging
-import numbers
-import functools
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock, PropertyMock
-from os.path import basename
 
 # ---------------------------------------------------------------------------
 # init_logging — lines 54-90

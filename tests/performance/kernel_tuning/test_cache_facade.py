@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from pyutilz.performance.kernel_tuning import cache as ktc
 from pyutilz.performance.kernel_tuning.cache import cache_base as base
 from pyutilz.performance.kernel_tuning.cache import cache_class
