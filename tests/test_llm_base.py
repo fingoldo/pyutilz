@@ -63,3 +63,65 @@ class TestExtractJsonEdgeCases:
     def test_provider_name_in_error(self):
         with pytest.raises(JSONParsingError, match="MyProvider"):
             LLMProvider.extract_json("not json", provider_name="MyProvider")
+
+
+class TestFitMaxTokensToContext:
+    """A model's output cap can exceed ``context_window - input`` (llama-3.3-70b: 128k cap in a 131k
+    window), and forwarding it makes the upstream reject the whole request with HTTP 400 before
+    generating anything. The budget must be clamped to what actually fits."""
+
+    class _Provider(LLMProvider):
+        """Minimal concrete provider mirroring llama-3.3-70b's advertised limits."""
+
+        model_name = "meta-llama/llama-3.3-70b-instruct"
+
+        @property
+        def max_output_tokens(self) -> int:
+            return 128_000
+
+        @property
+        def context_window(self) -> int:
+            return 131_072
+
+        async def generate(self, prompt, system=None, temperature=0.7, max_tokens=0, **kwargs):
+            return ""
+
+        async def generate_json(self, prompt, system=None, temperature=0.7, max_tokens=0, **kwargs):
+            return {}
+
+        async def generate_stream(self, prompt, system=None, temperature=0.7, max_tokens=0, **kwargs):
+            yield ""
+
+        async def count_tokens(self, text: str) -> int:
+            return len(text) // 4
+
+    def test_output_cap_exceeding_window_is_clamped(self):
+        prov = self._Provider()
+        prompt = "x " * 8000  # a real prompt, so cap + input overflows the window
+        fitted = prov.fit_max_tokens_to_context(prov.max_output_tokens, prompt)
+        assert fitted < prov.max_output_tokens
+        # The whole request must now fit: input + output <= context_window.
+        from pyutilz.llm.token_counter import count_tokens
+
+        assert count_tokens(prompt, model=prov.model_name) + fitted <= prov.context_window
+
+    def test_budget_that_already_fits_is_untouched(self):
+        prov = self._Provider()
+        assert prov.fit_max_tokens_to_context(4096, "short prompt") == 4096
+
+    def test_zero_budget_passes_through(self):
+        # 0 means "provider decides" and is resolved before the clamp runs.
+        assert self._Provider().fit_max_tokens_to_context(0, "prompt") == 0
+
+    def test_system_prompt_counts_towards_input(self):
+        prov = self._Provider()
+        prompt = "x " * 4000
+        with_system = prov.fit_max_tokens_to_context(prov.max_output_tokens, prompt, system="y " * 4000)
+        without = prov.fit_max_tokens_to_context(prov.max_output_tokens, prompt)
+        assert with_system < without
+
+    def test_oversized_prompt_defers_to_upstream_error(self):
+        # No usable room left: return the budget unchanged so the upstream's own context error
+        # surfaces instead of a silently truncated budget.
+        prov = self._Provider()
+        assert prov.fit_max_tokens_to_context(4096, "x " * 200_000) == 4096

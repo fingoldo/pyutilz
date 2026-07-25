@@ -177,6 +177,7 @@ class GeminiProvider(LLMProvider):
         """Generate text using Gemini."""
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
+        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
             contents = prompt
 
