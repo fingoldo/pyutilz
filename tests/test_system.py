@@ -46,14 +46,10 @@ class TestGetSystemInfo:
         """Test that function returns dict with expected system info keys"""
         from pyutilz.system import get_system_info
 
-        try:
-            result = get_system_info()
-            assert isinstance(result, dict)
-            # Should have at least some system info
-            assert len(result) > 0
-        except Exception:
-            # May fail on some systems, but should not crash
-            pass
+        result = get_system_info()
+        assert isinstance(result, dict)
+        # Should have at least some system info
+        assert len(result) > 0
 
 
 class TestShowTraceMallocSnapshot:
@@ -71,7 +67,7 @@ class TestShowTraceMallocSnapshot:
             # Call function
             show_tracemalloc_snapshot(N=5)
         except Exception:
-            # Function might fail, but we check cleanup happened
+            # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
             pass
 
         # Should NOT be tracing after function completes
@@ -89,7 +85,7 @@ class TestShowTraceMallocSnapshot:
             # This might raise an exception
             show_tracemalloc_snapshot(N=-1)  # Invalid argument
         except Exception:
-            pass
+            pass  # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
 
         # Should still stop tracemalloc even if exception occurred
         assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when exception occurs (try/finally fix)"

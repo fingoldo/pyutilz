@@ -266,7 +266,7 @@ class TestGetLinuxBoardInfo:
         from pyutilz.system.system import get_linux_board_info
         with patch("builtins.open", side_effect=FileNotFoundError):
             result = get_linux_board_info()
-        assert result == {} or isinstance(result, dict)
+        assert result == {}
 
 
 # ── get_nix_cpu_sockets_number (lines 907-915) ──
@@ -399,7 +399,8 @@ class TestShowBiggestSessionObjects:
         import pandas as pd
         session = {"a": [1]*1000, "b": "hello"}
         result = show_biggest_session_objects(session, N=2, min_size_bytes=1)
-        assert isinstance(result, pd.DataFrame) or isinstance(result, list)
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
 
     @patch("pyutilz.system.system.memory.clean_ram")
     @patch("pyutilz.system.system.memory.get_own_memory_usage", return_value=0.5)

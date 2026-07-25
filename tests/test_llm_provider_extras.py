@@ -256,7 +256,7 @@ class TestExceptAsVariableShadowingPattern:
             except ValueError as e:
                 try:
                     raise KeyError("inner")
-                except Exception as e:  # noqa: F841 - intentionally shadows outer `e`, reproducing the bug
+                except Exception as e:  # noqa: F841 - opportunistic: intentionally shadows outer `e`, reproducing the bug
                     pass
                 return e.args  # pre-fix pattern: UnboundLocalError here
 

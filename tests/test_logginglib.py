@@ -130,15 +130,11 @@ class TestInitLogging:
     """Test logging initialization"""
 
     def test_init_logging_console(self):
-        """Test console logging initialization"""
+        """Test console-only logging initialization (no file handler)"""
         from pyutilz.logginglib import init_logging
 
-        # Should not crash
-        try:
-            init_logging(console=True, file=False, level="INFO")
-        except Exception:
-            # May fail if logger already configured
-            pass
+        # Should not crash; pytest surfaces the real traceback if it does.
+        init_logging(log_to_file=False, level="INFO")
 
     def test_init_logging_file(self, tmp_path):
         """Test file logging initialization"""
@@ -146,11 +142,8 @@ class TestInitLogging:
 
         log_file = tmp_path / "test.log"
 
-        try:
-            init_logging(console=False, file=str(log_file), level="DEBUG")
-        except Exception:
-            # May fail if logger already configured
-            pass
+        # pytest surfaces the real traceback if it raises.
+        init_logging(log_to_file=True, forced_filename=str(log_file), level="DEBUG")
 
 
 class TestEdgeCases:

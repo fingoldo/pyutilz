@@ -546,18 +546,14 @@ class TestEmojiOperations:
         """Test getting ASCII emojis"""
         from pyutilz.strings import get_ascii_emojies
 
-        # Should not crash
-        try:
-            get_ascii_emojies()
-        except Exception:
-            pass
+        # Should not crash; pytest surfaces the real traceback if it does.
+        result = get_ascii_emojies()
+        assert isinstance(result, dict) and result
 
     def test_get_unicode_emojies(self):
         """Test getting Unicode emojis"""
         from pyutilz.strings import get_unicode_emojies
 
-        # Should not crash
-        try:
-            get_unicode_emojies()
-        except Exception:
-            pass
+        # Should not crash; pytest surfaces the real traceback if it does.
+        result = get_unicode_emojies()
+        assert isinstance(result, dict) and result

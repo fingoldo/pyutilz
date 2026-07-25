@@ -25,13 +25,8 @@ class TestSetNumbaRandomSeed:
         """Test that @njit function accepts integer seed (no None check)"""
         from pyutilz.numbalib import set_numba_random_seed
 
-        # Should work with integer seed
-        try:
-            set_numba_random_seed(42)
-            # If it runs without error, the fix works
-            assert True
-        except Exception as e:
-            pytest.fail(f"set_numba_random_seed(42) raised {e}")
+        # Should work with integer seed; pytest surfaces the real traceback if it raises.
+        set_numba_random_seed(42)
 
     def test_sets_random_state_without_error(self):
         """Test that setting seed works without error (nopython mode fix)"""
@@ -78,22 +73,15 @@ class TestSetRandomSeed:
         """Test that wrapper handles None default value"""
         from pyutilz.numbalib import set_random_seed
 
-        # Should not crash with None
-        try:
-            set_random_seed(None)
-            assert True
-        except Exception as e:
-            pytest.fail(f"set_random_seed(None) raised {e}")
+        # Should not crash with None; pytest surfaces the real traceback if it raises.
+        set_random_seed(None)
 
     def test_accepts_integer_seed(self):
         """Test that wrapper accepts integer seed"""
         from pyutilz.numbalib import set_random_seed
 
-        try:
-            set_random_seed(456)
-            assert True
-        except Exception as e:
-            pytest.fail(f"set_random_seed(456) raised {e}")
+        # pytest surfaces the real traceback if it raises.
+        set_random_seed(456)
 
     def test_same_seed_reproduces_same_draws(self):
         """Same determinism property as TestSetNumbaRandomSeed, for the None-handling wrapper.

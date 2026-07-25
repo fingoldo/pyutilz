@@ -167,7 +167,7 @@ def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
             try:
                 getattr(proxy, public)
             except Exception:
-                pass
+                pass  # opportunistic: only used to trigger __getattr__'s side effect; the real assertion is below
         # The bare top-level key must NOT now point at a pyutilz module.
         shadow = sys.modules.get(alias)
         assert shadow is None or not _is_pyutilz_file(shadow), (
