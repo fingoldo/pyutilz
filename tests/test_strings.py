@@ -120,19 +120,18 @@ class TestFixSpaces:
         """Test that default tokens list is not shared between calls"""
         try:
             from pyutilz.strings import fix_spaces
-
-            # First call
-            result1 = fix_spaces("test,text")
-
-            # Second call - should get fresh default list
-            result2 = fix_spaces("another.sentence")
-
-            # Both should work independently
-            assert isinstance(result1, str)
-            assert isinstance(result2, str)
-
         except ImportError:
             pytest.skip("fix_spaces not available")
+
+        # First call
+        result1 = fix_spaces("test,text")
+
+        # Second call - should get fresh default list
+        result2 = fix_spaces("another.sentence")
+
+        # Both should work independently
+        assert isinstance(result1, str)
+        assert isinstance(result2, str)
 
 
 @pytest.mark.parametrize("file_content,expected_token_count", [

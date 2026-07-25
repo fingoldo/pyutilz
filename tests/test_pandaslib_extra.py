@@ -467,11 +467,11 @@ class TestGetDfMemoryConsumptionExtra:
     def test_polars_dataframe(self):
         try:
             import polars as pl
-            df = pl.DataFrame({"a": [1, 2, 3]})
-            mem = get_df_memory_consumption(df)
-            assert mem > 0
         except ImportError:
             pytest.skip("polars not installed")
+        df = pl.DataFrame({"a": [1, 2, 3]})
+        mem = get_df_memory_consumption(df)
+        assert mem > 0
 
     def test_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Unsupported dataframe type"):
@@ -639,18 +639,18 @@ class TestEnsureFloat32Polars:
     def test_polars_conversion(self):
         try:
             import polars as pl
-            # polars.Int128 not available in all versions
-            if not hasattr(pl, "Int128"):
-                pytest.skip("polars.Int128 not available in this version")
-            df = pl.DataFrame({
-                "a": pl.Series([1, 2, 3], dtype=pl.Int64),
-                "b": pl.Series([1.0, 2.0, 3.0], dtype=pl.Float64),
-            })
-            result = ensure_dataframe_float32_convertability(df)
-            assert result["a"].dtype == pl.Float32
-            assert result["b"].dtype == pl.Float32
         except ImportError:
             pytest.skip("polars not installed")
+        # polars.Int128 not available in all versions
+        if not hasattr(pl, "Int128"):
+            pytest.skip("polars.Int128 not available in this version")
+        df = pl.DataFrame({
+            "a": pl.Series([1, 2, 3], dtype=pl.Int64),
+            "b": pl.Series([1.0, 2.0, 3.0], dtype=pl.Float64),
+        })
+        result = ensure_dataframe_float32_convertability(df)
+        assert result["a"].dtype == pl.Float32
+        assert result["b"].dtype == pl.Float32
 
 
 # ---------------------------------------------------------------------------

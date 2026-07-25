@@ -188,10 +188,10 @@ def test_distributed_module_imports_successfully():
     """Test that distributed module can be imported without errors"""
     try:
         import pyutilz.distributed
-        assert pyutilz.distributed is not None
     except ImportError as e:
         # Some dependencies might be missing
         pytest.skip(f"distributed module dependencies not available: {e}")
+    assert pyutilz.distributed is not None
 
 
 class TestIdentityRaceCondition:

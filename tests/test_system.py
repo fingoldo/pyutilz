@@ -134,31 +134,29 @@ class TestGetCpuUsage:
         """Test that get_system_info includes CPU usage (not 0.0 from first call)"""
         from pyutilz.system import get_system_info
 
-        try:
-            info = get_system_info()
-            if info is None:
-                pytest.skip("get_system_info returned None (missing dependencies)")
-            # Should include CPU info
-            if "cpu_current_load_percent" in info:
-                usage = info["cpu_current_load_percent"]
-                assert isinstance(usage, (int, float))
-                assert 0 <= usage <= 100
-        except ImportError:
-            pytest.skip("psutil not available")
+        info = get_system_info()
+        if info is None:
+            pytest.skip("get_system_info returned None (missing dependencies)")
+        # Should include CPU info
+        if "cpu_current_load_percent" in info:
+            usage = info["cpu_current_load_percent"]
+            assert isinstance(usage, (int, float))
+            assert 0 <= usage <= 100
 
     def test_psutil_cpu_percent_called_correctly(self):
         """Verify get_system_info calls psutil.cpu_percent() correctly"""
         try:
-            import psutil
-            from pyutilz.system import get_system_info
-            import inspect
-
-            source = inspect.getsource(get_system_info)
-
-            # Should call cpu_percent
-            assert "cpu_percent" in source
+            import psutil  # noqa: F401 - import presence is the guard
         except ImportError:
             pytest.skip("psutil not available")
+
+        from pyutilz.system import get_system_info
+        import inspect
+
+        source = inspect.getsource(get_system_info)
+
+        # Should call cpu_percent
+        assert "cpu_percent" in source
 
 
 @pytest.mark.parametrize("n_lines", [1, 5, 10, 20])

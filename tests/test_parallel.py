@@ -34,8 +34,6 @@ class TestMemMapArray:
 
             # Should have added temp directory to tracking list
             assert len(_TEMP_DIRS) >= initial_count, "Temp directory should be tracked for cleanup (resource leak fix)"
-        except Exception as e:
-            pytest.skip(f"mem_map_array failed: {e}")
         finally:
             # Cleanup
             if os.path.exists(temp_file.name):
@@ -115,8 +113,6 @@ class TestMemoryMappedArrayOperations:
 
             # Should have correct values
             np.testing.assert_array_equal(result, test_array)
-        except Exception as e:
-            pytest.skip(f"mem_map_array failed: {e}")
         finally:
             if os.path.exists(temp_file.name):
                 os.unlink(temp_file.name)
@@ -139,8 +135,6 @@ class TestMemoryMappedArrayOperations:
                 result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
                 assert result.dtype == dtype
                 np.testing.assert_array_equal(result, test_array)
-            except Exception as e:
-                pytest.skip(f"mem_map_array failed for {dtype}: {e}")
             finally:
                 if os.path.exists(temp_file.name):
                     os.unlink(temp_file.name)
@@ -153,24 +147,25 @@ class TestGpuConfiguration:
         """Test that GPU index is not hardcoded to 3 (line 195 fix)"""
         try:
             import pyutilz.parallel as parallel_module
-            import inspect
-
-            source = inspect.getsource(parallel_module)
-
-            # Check if cuda.select_device is used
-            if "cuda.select_device" in source:
-                # Should NOT have hardcoded select_device(3)
-                assert "select_device(3)" not in source, "GPU index should not be hardcoded to 3 (crashes on systems with <4 GPUs)"
-
-                # Should use environment variable or configuration
-                if "CUDA_VISIBLE_DEVICES" in source or "getenv" in source:
-                    # Good - uses environment
-                    pass
-                else:
-                    # Might use other configuration method
-                    pass
         except ImportError:
             pytest.skip("parallel module not available")
+
+        import inspect
+
+        source = inspect.getsource(parallel_module)
+
+        # Check if cuda.select_device is used
+        if "cuda.select_device" in source:
+            # Should NOT have hardcoded select_device(3)
+            assert "select_device(3)" not in source, "GPU index should not be hardcoded to 3 (crashes on systems with <4 GPUs)"
+
+            # Should use environment variable or configuration
+            if "CUDA_VISIBLE_DEVICES" in source or "getenv" in source:
+                # Good - uses environment
+                pass
+            else:
+                # Might use other configuration method
+                pass
 
 
 @pytest.mark.parametrize("array_size", [10, 100, 1000])
@@ -189,8 +184,6 @@ def test_mem_map_different_sizes(array_size):
         result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
         assert len(result) == array_size
         np.testing.assert_array_equal(result, test_array)
-    except Exception as e:
-        pytest.skip(f"mem_map_array failed for size {array_size}: {e}")
     finally:
         if os.path.exists(temp_file.name):
             os.unlink(temp_file.name)
@@ -200,10 +193,10 @@ def test_parallel_module_imports_successfully():
     """Test that parallel module can be imported without errors"""
     try:
         import pyutilz.parallel
-        assert pyutilz.parallel is not None
     except ImportError as e:
         # Some dependencies might be missing, but import should not crash
         pytest.skip(f"parallel module dependencies not available: {e}")
+    assert pyutilz.parallel is not None
 
 
 # ---------------------------------------------------------------------------

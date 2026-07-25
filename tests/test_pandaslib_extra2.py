@@ -240,42 +240,42 @@ class TestEnsureFloat32Extra:
     def test_pyarrow_backed_integer(self):
         """Lines 893-901: PyArrow-backed integer column conversion."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="int64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_float(self):
         """Lines 893-901: PyArrow-backed float column conversion."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1.0, 2.0], dtype="float64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_verbose(self):
         """Lines 899-900: verbose log for pyarrow column."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array([1, 2], dtype="int64[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df, verbose=1)
-            assert "float" in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df, verbose=1)
+        assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_string_not_converted(self):
         """PyArrow string column should NOT be converted to float32."""
         try:
-            import pyarrow as pa
+            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
             df = pd.DataFrame({"a": pd.array(["x", "y"], dtype="string[pyarrow]")})
-            result = ensure_dataframe_float32_convertability(df)
-            assert "float32" not in str(result["a"].dtype)
         except (ImportError, TypeError):
             pytest.skip("pyarrow-backed dtypes not supported")
+        result = ensure_dataframe_float32_convertability(df)
+        assert "float32" not in str(result["a"].dtype)
 
 
 # ---------------------------------------------------------------------------

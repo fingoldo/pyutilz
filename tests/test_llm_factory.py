@@ -69,9 +69,9 @@ class TestGetLlmProvider:
         try:
             p1 = get_llm_provider("claude-code")
             p2 = get_llm_provider("claude-code")
-            assert p1 is p2
         except Exception:
             pytest.skip("claude-code provider not available in test env")
+        assert p1 is p2
 
     def test_default_is_claude_code(self):
         import inspect
