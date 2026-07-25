@@ -122,17 +122,23 @@ def _try_body_is_best_effort_op(try_body: list[ast.stmt]) -> bool:
     return False
 
 
-_DOCUMENTED_RATIONALE_MARKERS = ("nosec", "opportunistic", "best-effort", "best effort")
+_DOCUMENTED_RATIONALE_MARKERS = (
+    "nosec", "opportunistic", "best-effort", "best effort",
+    "fallback", "fall back", "falls back",
+)
 
 
 def _handler_has_documented_rationale(handler: ast.ExceptHandler, src_lines: list[str]) -> bool:
     """True if the except line itself, or the handler body's own comment/docstring lines, name a
     documented reason the swallow is intentional (a ``# nosec ...`` bandit-suppression comment, or
     the words "opportunistic"/"best-effort" -- this project's own established vocabulary for "this
-    path is optional, any failure here is expected and handled by falling through"). A human
-    already made and recorded this call; re-flagging it every scan is pure noise, not a new signal.
-    Matches only the handler's own line + body span (not the whole enclosing function) so an
-    unrelated nosec/opportunistic comment elsewhere in a large function doesn't accidentally exempt
+    path is optional, any failure here is expected and handled by falling through"), OR
+    "fallback"/"fall back"/"falls back" -- equally common phrasing for the exact same shape (a GPU
+    kernel failing and the handler switching to a CPU path IS the escalation/handling this scanner
+    checks for, just narrated as a fallback rather than "best-effort"). A human already made and
+    recorded this call; re-flagging it every scan is pure noise, not a new signal. Matches only the
+    handler's own line + body span (not the whole enclosing function) so an unrelated
+    nosec/opportunistic/fallback comment elsewhere in a large function doesn't accidentally exempt
     a genuinely-undocumented swallow a few lines below it."""
     start = handler.lineno
     end = max((getattr(s, "end_lineno", s.lineno) or s.lineno) for s in handler.body) if handler.body else start
