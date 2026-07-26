@@ -312,6 +312,20 @@ decision a project takes rather than inherits on upgrade. Name them in
 - ``scan_thresholds_below_documented_result``: a ``test_*`` function
   whose docstring states "7 of 8" while its assertion accepts ``>= 6``.
 
+One member of this package is deliberately NOT a scanner and NOT in
+``SCANNERS``: ``field_text_agreement``. It checks a defect shape the other
+rules cannot see from source alone - a structured field that duplicates
+information also present in free text, where the two are never compared -
+and it does that over RECORDS at runtime, not over ``.py`` files. Every
+registered scanner honours ``(root: Path, exclude_dirs) -> list[Finding]``,
+and a record-level checker cannot; registering it would break ``run_all``
+rather than extend it. It lives here because the mechanism is general and
+this is where the shared audit rules are, it renders its hits as
+``Finding`` objects so a caller can report them beside source findings, and
+because it is unregistered it cannot alter any project's committed baseline
+on upgrade - which is the reason ``OPT_IN_ONLY`` exists in the first place.
+The CUE VOCABULARIES are domain knowledge and stay with the caller.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -385,6 +399,20 @@ from .provenance_flow import scan_record_field_flow
 from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .field_text_agreement import (
+    AGREE,
+    CONTRADICT,
+    KIND_OPPOSED,
+    KIND_UNFILLED,
+    UNCHECKABLE,
+    FieldTextReport,
+    FieldTextRule,
+    FieldTextVerdict,
+    check_all,
+    check_record,
+    check_records,
+    cues_in_text,
+)
 from .registry import SCANNERS, OPT_IN_ONLY, run_all, register_scanner, get_scanners
 from .cli import main
 
@@ -445,6 +473,19 @@ __all__ = [
     "scan_inconsistent_filter",
     "scan_regex_integer_parse",
     "scan_thresholds_below_documented_result",
+    # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
+    "AGREE",
+    "CONTRADICT",
+    "UNCHECKABLE",
+    "KIND_UNFILLED",
+    "KIND_OPPOSED",
+    "FieldTextRule",
+    "FieldTextVerdict",
+    "FieldTextReport",
+    "cues_in_text",
+    "check_record",
+    "check_records",
+    "check_all",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -464,6 +505,7 @@ for _submod in (
     "asymmetric_resource_guard",
     "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
     "skip_masking_except", "uncurated_star_export",
+    "field_text_agreement",
     "registry", "cli",
 ):
     globals().pop(_submod, None)

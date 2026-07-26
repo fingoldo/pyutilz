@@ -117,6 +117,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "unpicklable_resource_state": "code_audit scanner; covered by test_code_audit.py",
     "skip_masking_except": "code_audit scanner; covered by test_code_audit.py",
     "uncurated_star_export": "code_audit scanner; covered by test_code_audit.py",
+    "field_text_agreement": "code_audit field/text cross-check mechanism; covered by test_code_audit.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
