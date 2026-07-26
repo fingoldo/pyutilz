@@ -96,6 +96,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "claimed_invariants": "code_audit scanner; covered by test_code_audit.py",
     "partial_fix": "code_audit scanner; covered by test_code_audit.py",
     "measurement_hygiene": "code_audit scanner; covered by test_code_audit.py",
+    "domain_boundary": "code_audit scanner; covered by test_code_audit.py",
     "locals_globals_output": "code_audit scanner; covered by test_code_audit.py",
     "network_timeout": "code_audit scanner; covered by test_code_audit.py",
     "retry_loops": "code_audit scanner; covered by test_code_audit.py",

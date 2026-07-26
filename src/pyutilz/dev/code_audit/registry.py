@@ -47,6 +47,7 @@ from .provenance_flow import scan_record_field_flow
 from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .domain_boundary import scan_domain_vocabulary_leak
 
 # --- registry -----------------------------------------------------------
 
@@ -131,6 +132,7 @@ register_scanner("partial_guard_across_siblings", scan_partial_guard_across_sibl
 register_scanner("inconsistent_filter", scan_inconsistent_filter)
 register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
+register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
@@ -150,6 +152,7 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     "inconsistent_filter",
     "regex_integer_parse_truncation",
     "threshold_below_documented_result",
+    "domain_vocabulary_leak",
 })
 
 

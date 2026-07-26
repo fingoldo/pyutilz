@@ -4410,3 +4410,139 @@ def test_field_text_agreement_renders_a_finding():
     v = check_record(_temporal_rule(), {"subject": "x", "object": "vital hanging", "temporal_class": "postmortem"})
     f = v.as_finding(file="bench/gold/PMC13161347.json", line=1)
     assert isinstance(f, Finding) and f.check == "field_text_temporal_class" and "postmortem" in f.detail
+
+
+# --- domain boundary: domain vocabulary inside code declared domain-neutral --------------------
+
+
+_BOUNDARY_SOURCE = '''
+"""A module holding one neutral concept and one domain concept, not yet split."""
+
+
+class Envelope:
+    """Per-assertion lineage: who observed it, where it is written down."""
+
+    source_id: str = ""
+    quote: str = ""
+
+
+def pool(observations):
+    """Pool independent observations of one claim."""
+    return sum(observations)
+
+
+def rank_causes_of_death(rows):
+    """Rank the autopsy findings by how well they explain the decedent."""
+    return sorted(rows)
+'''
+
+
+def _boundary_tree(tmp_path: Path) -> Path:
+    (tmp_path / "pkg").mkdir(exist_ok=True)
+    _write(tmp_path, "pkg/envelope.py", _BOUNDARY_SOURCE)
+    return tmp_path
+
+
+def test_domain_vocabulary_leak_is_silent_until_configured(tmp_path: Path):
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    assert scan_domain_vocabulary_leak(root) == []
+    assert scan_domain_vocabulary_leak(root, boundary=[BoundarySymbol("pkg/envelope.py", "pool")], vocabulary=[]) == []
+    assert scan_domain_vocabulary_leak(root, boundary=[], vocabulary=["autopsy"]) == []
+
+
+def test_domain_vocabulary_leak_passes_a_clean_boundary_symbol(tmp_path: Path):
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    findings = scan_domain_vocabulary_leak(
+        root,
+        boundary=[BoundarySymbol("pkg/envelope.py", "Envelope"), BoundarySymbol("pkg/envelope.py", "pool")],
+        vocabulary=["autopsy", "decedent", "postmortem"],
+    )
+    assert findings == []
+
+
+def test_domain_vocabulary_leak_flags_a_term_in_a_docstring_of_a_boundary_symbol(tmp_path: Path):
+    """The leak that matters most is prose: a docstring is where a reader learns what the code is about."""
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    findings = scan_domain_vocabulary_leak(
+        root,
+        boundary=[BoundarySymbol("pkg/envelope.py", "rank_causes_of_death", note="ranking is neutral")],
+        vocabulary=["autopsy", "decedent"],
+    )
+    assert {f.check for f in findings} == {"domain_vocabulary_leak"}
+    assert sorted(f.detail.split("domain term ")[1].split(" ")[0] for f in findings) == ["'autopsy'", "'decedent'"]
+    assert "ranking is neutral" in findings[0].detail
+    # Two leaks in ONE symbol must stay distinguishable after a ratchet truncates the detail, or the
+    # second term would be silently absorbed by the first one's baseline entry.
+    assert len({f.detail[:110] for f in findings}) == 2
+
+
+def test_domain_vocabulary_leak_ignores_the_domain_outside_the_boundary(tmp_path: Path):
+    """A term in a sibling symbol is not a leak: the boundary is the claim, not the file."""
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    findings = scan_domain_vocabulary_leak(
+        root,
+        boundary=[BoundarySymbol("pkg/envelope.py", "pool")],
+        vocabulary=["autopsy", "decedent"],
+    )
+    assert findings == []
+
+
+def test_domain_vocabulary_leak_honours_an_allowed_term(tmp_path: Path):
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    kwargs = dict(boundary=[BoundarySymbol("pkg/envelope.py", "rank_causes_of_death")], vocabulary=["autopsy", "decedent"])
+    assert len(scan_domain_vocabulary_leak(root, **kwargs)) == 2
+    assert len(scan_domain_vocabulary_leak(root, allowed=["decedent"], **kwargs)) == 1
+
+
+def test_domain_vocabulary_leak_matches_on_word_boundaries_not_substrings(tmp_path: Path):
+    """`death` must not fire on `deathless` -- a substring rule would make the vocabulary unusable."""
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    _write(tmp_path, "sub.py", '''
+def pool(x):
+    """A deathless abstraction."""
+    return x
+''')
+    findings = scan_domain_vocabulary_leak(tmp_path, boundary=[BoundarySymbol("sub.py", "pool")], vocabulary=["death"])
+    assert findings == []
+
+
+def test_domain_boundary_reports_a_stale_manifest_rather_than_passing_by_vacuity(tmp_path: Path):
+    """A renamed symbol must fail loudly: a boundary that names nothing passes for the wrong reason."""
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    root = _boundary_tree(tmp_path)
+    findings = scan_domain_vocabulary_leak(
+        root,
+        boundary=[BoundarySymbol("pkg/envelope.py", "pool_renamed_away"), BoundarySymbol("pkg/gone.py", "anything")],
+        vocabulary=["autopsy"],
+    )
+    assert [f.check for f in findings] == ["boundary_symbol_missing", "boundary_symbol_missing"]
+    assert all(f.severity == "P1" for f in findings)
+
+
+def test_domain_vocabulary_leak_reaches_a_method_of_a_class(tmp_path: Path):
+    from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
+
+    _write(tmp_path, "meth.py", '''
+class Store:
+    def neutral(self, x):
+        return x
+
+    def pool(self, rows):
+        """Pool over autopsy series."""
+        return rows
+''')
+    boundary = [BoundarySymbol("meth.py", "Store.neutral"), BoundarySymbol("meth.py", "Store.pool")]
+    findings = scan_domain_vocabulary_leak(tmp_path, boundary=boundary, vocabulary=["autopsy"])
+    assert [(f.check, f.line) for f in findings] == [("domain_vocabulary_leak", 6)]

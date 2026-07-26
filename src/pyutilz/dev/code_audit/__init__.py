@@ -306,6 +306,17 @@ decision a project takes rather than inherits on upgrade. Name them in
   exclusion rule its other consumers apply. Needs ``filter_pairs``;
   silent until configured.
 
+- ``scan_domain_vocabulary_leak``: a symbol the project DECLARES domain-neutral
+  (a candidate for a later extraction into a shared library) whose source span
+  names a term from the current domain's vocabulary -- in an identifier, a
+  string, a docstring or a comment. Boundary and vocabulary are both caller
+  supplied, so the check is silent until configured. Symbol granularity, not
+  module: before the split, the neutral concept and the domain concept live in
+  the same file by definition, and a module-level rule would report every such
+  file and say nothing. A companion ``boundary_symbol_missing`` finding fires
+  when a declared symbol no longer exists, so a rename cannot silently empty
+  the boundary and leave the check passing by vacuity.
+
 - ``scan_regex_integer_parse``: a bare digit-class regex over free text converted
   to a number -- "4.10" arrives as 4 and "2,054" as 2, silently.
 
@@ -399,6 +410,7 @@ from .provenance_flow import scan_record_field_flow
 from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .domain_boundary import BoundarySymbol, scan_domain_vocabulary_leak
 from .field_text_agreement import (
     AGREE,
     CONTRADICT,
@@ -473,6 +485,8 @@ __all__ = [
     "scan_inconsistent_filter",
     "scan_regex_integer_parse",
     "scan_thresholds_below_documented_result",
+    "scan_domain_vocabulary_leak",
+    "BoundarySymbol",
     # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
     "AGREE",
     "CONTRADICT",
@@ -507,6 +521,7 @@ for _submod in (
     "skip_masking_except", "uncurated_star_export",
     "field_text_agreement",
     "registry", "cli",
+    "domain_boundary",
 ):
     globals().pop(_submod, None)
 del _submod
