@@ -26,6 +26,16 @@ def _is_trivial_default(value: ast.AST) -> bool:
         return True
     if isinstance(value, (ast.Dict, ast.List, ast.Set)) and not getattr(value, "elts", None) and not getattr(value, "keys", None):
         return True
+    # Empty-container CONSTRUCTOR CALLS (``set()``, ``list()``, ``dict()``, ``tuple()``,
+    # ``frozenset()``) are the call-form equivalent of the literal check above -- e.g.
+    # ``getattr(self, "_dropped_", None) or set()`` is the standard "lazily-initialised mutable
+    # attribute that may not exist yet, or may already be an (possibly empty) container" idiom.
+    # An empty container substituted by ``or set()`` is observably identical to the container
+    # the getter would have returned anyway (empty in, empty out); there is no distinct caller
+    # intent to clobber. Only the ZERO-ARG form counts as trivial -- ``list(some_iter) or
+    # default`` is a real computed value, not this idiom.
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in ("set", "list", "dict", "tuple", "frozenset") and not value.args and not value.keywords:
+        return True
     return False
 
 
