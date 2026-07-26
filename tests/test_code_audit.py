@@ -53,6 +53,16 @@ from pyutilz.dev.code_audit import (
     scan_tautological_is_not_none_only_tests,
     scan_except_skip_masks_call_under_test,
     scan_uncurated_star_exports,
+    scan_dead_public_callables,
+    scan_vacuous_empty_pattern_match,
+    scan_tautological_guards,
+    scan_table_header_row_drift,
+    scan_record_field_flow,
+    scan_unenforced_docstring_invariants,
+    scan_partial_guard_across_siblings,
+    scan_inconsistent_filter,
+    scan_regex_integer_parse,
+    scan_thresholds_below_documented_result,
 )
 
 
@@ -4018,3 +4028,295 @@ def process(rows):
     )
     findings = scan_log_only_except(tmp_path)
     assert findings == [], f"nosec-documented log-only except must not be flagged; got {findings}"
+
+
+# ---- dead_public_callable ------------------------------------------------
+
+
+def test_dead_public_callable_flags_a_function_only_tests_call(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    _write(src, "mod.py", """
+def used_by_entry():
+    return 1
+
+
+def measured_but_dead():
+    return 2
+
+
+def main():
+    return used_by_entry()
+""")
+    findings = scan_dead_public_callables(src)
+    assert [f.detail.split("'")[1] for f in findings] == ["measured_but_dead"], findings
+
+
+def test_dead_public_callable_respects_consumer_roots_and_decorators(tmp_path: Path):
+    src = tmp_path / "src"
+    demo = tmp_path / "demo"
+    src.mkdir()
+    demo.mkdir()
+    _write(src, "mod.py", """
+import functools
+
+
+def called_from_demo():
+    return 1
+
+
+@functools.lru_cache
+def framework_invoked():
+    return 2
+""")
+    _write(demo, "run.py", """
+from mod import called_from_demo
+
+print(called_from_demo())
+""")
+    assert scan_dead_public_callables(src, consumer_roots=(demo,)) == []
+
+
+# ---- vacuous_empty_pattern_match ----------------------------------------
+
+
+def test_vacuous_empty_pattern_match_flags_unguarded_all(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def covers(text, stems):
+    return all(stem in text for stem in stems)
+""")
+    findings = scan_vacuous_empty_pattern_match(tmp_path)
+    assert len(findings) == 1 and findings[0].check == "vacuous_empty_pattern_match", findings
+
+
+def test_vacuous_empty_pattern_match_accepts_a_guard_and_ignores_any(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def covers(text, stems):
+    return bool(stems) and all(stem in text for stem in stems)
+
+
+def touches(text, stems):
+    return any(stem in text for stem in stems)
+""")
+    assert scan_vacuous_empty_pattern_match(tmp_path) == []
+
+
+# ---- tautological_guard --------------------------------------------------
+
+
+def test_tautological_guard_flags_threshold_anded_with_identity_pin(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def label(causes, lead):
+    for c in causes:
+        if c.mean >= 0.75 * lead and c is causes[0]:
+            return "strongly supported"
+    return "weak"
+""")
+    findings = scan_tautological_guards(tmp_path)
+    assert len(findings) == 1 and findings[0].check == "tautological_guard", findings
+
+
+def test_tautological_guard_ignores_none_checks_and_distinct_targets(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def label(a, b, lead):
+    if a.mean >= 0.75 * lead and a is not None:
+        return 1
+    if a.mean >= lead and b is lead:
+        return 2
+    return 0
+""")
+    assert scan_tautological_guards(tmp_path) == []
+
+
+# ---- table_header_row_drift ---------------------------------------------
+
+
+def test_table_header_row_drift_flags_dictwriter_key_mismatch(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import csv
+
+
+def dump(fh, rows):
+    writer = csv.DictWriter(fh, fieldnames=["a", "b", "c"])
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({"a": row[0], "b": row[1]})
+""")
+    findings = scan_table_header_row_drift(tmp_path)
+    assert any(f.severity == "P1" for f in findings), findings
+
+
+def test_table_header_row_drift_accepts_matching_keys(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+import csv
+
+
+def dump(fh, rows):
+    writer = csv.DictWriter(fh, fieldnames=["a", "b"])
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({"a": row[0], "b": row[1]})
+""")
+    assert scan_table_header_row_drift(tmp_path) == []
+
+
+# ---- record_field_flow ---------------------------------------------------
+
+
+def test_record_field_flow_flags_defaulted_read_of_an_unwritten_key(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def build(hedge):
+    return {"mechanism_modality_source": hedge}
+
+
+def weight(triple):
+    return triple.get("mechanism_modality_sources", "unstated")
+""")
+    findings = scan_record_field_flow(tmp_path)
+    assert [f.check for f in findings if f.severity == "P1"] == ["field_read_never_written"], findings
+
+
+def test_record_field_flow_near_miss_only_ignores_a_foreign_schema_key(tmp_path: Path):
+    """A key of somebody else's JSON resembles nothing this tree writes, and must not be reported."""
+    _write(tmp_path, "client.py", """
+def parse(response):
+    return response.get("esearchresult", {})
+""")
+    assert scan_record_field_flow(tmp_path) == []
+    assert scan_record_field_flow(tmp_path, near_miss_only=False), "the exhaustive form must still see it"
+
+
+def test_record_field_flow_ignores_a_key_with_both_sides(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def build():
+    return {"modality_source": "code"}
+
+
+def read(row):
+    return row.get("modality_source", "")
+""")
+    assert scan_record_field_flow(tmp_path) == []
+
+
+# ---- unenforced_docstring_invariant --------------------------------------
+
+
+def test_unenforced_docstring_invariant_flags_an_unnamed_claim(tmp_path: Path):
+    src = tmp_path / "src"
+    tests_dir = tmp_path / "t"
+    src.mkdir()
+    tests_dir.mkdir()
+    _write(src, "mod.py", '''
+def decompose(x):
+    """Never decompose a posterior produced by a different model."""
+    return x
+''')
+    _write(tests_dir, "test_other.py", """
+def test_something():
+    assert True
+""")
+    findings = scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,))
+    assert len(findings) == 1 and "decompose" in findings[0].detail, findings
+
+
+def test_unenforced_docstring_invariant_accepts_a_named_symbol(tmp_path: Path):
+    src = tmp_path / "src"
+    tests_dir = tmp_path / "t"
+    src.mkdir()
+    tests_dir.mkdir()
+    _write(src, "mod.py", '''
+def decompose(x):
+    """Never decompose a posterior produced by a different model."""
+    return x
+''')
+    _write(tests_dir, "test_mod.py", """
+from mod import decompose
+
+
+def test_decompose_refuses_a_foreign_model():
+    assert decompose(1) == 1
+""")
+    assert scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,)) == []
+
+
+# ---- partial_guard_across_siblings / inconsistent_filter -----------------
+
+
+def test_partial_guard_across_siblings_flags_the_odd_one_out(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def score_a(rows):
+    if not rows:
+        return 0.0
+    return len(rows)
+
+
+def score_b(rows):
+    if not rows:
+        return 0.0
+    return len(rows) * 2
+
+
+def score_c(rows):
+    return len(rows) * 3
+""")
+    findings = scan_partial_guard_across_siblings(tmp_path)
+    assert len(findings) == 1 and "score_c" in findings[0].detail, findings
+
+
+def test_inconsistent_filter_is_silent_until_configured(tmp_path: Path):
+    _write(tmp_path, "mod.py", """
+def rank(graph):
+    return graph.causes()
+""")
+    assert scan_inconsistent_filter(tmp_path) == []
+    findings = scan_inconsistent_filter(tmp_path, filter_pairs=(("causes", "postmortem_events"),))
+    assert len(findings) == 1 and "rank" in findings[0].detail, findings
+
+
+# ---- measurement hygiene -------------------------------------------------
+
+
+def test_regex_integer_parse_truncation_flags_a_bare_digit_class(tmp_path: Path):
+    _write(tmp_path, "bad.py", r'''
+import re
+
+
+def count(text):
+    m = re.search(r"\d+", text)
+    return int(m.group()) if m else 0
+''')
+    findings = scan_regex_integer_parse(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_regex_integer_parse_truncation_accepts_a_real_number_pattern(tmp_path: Path):
+    _write(tmp_path, "ok.py", r'''
+import re
+
+
+def count(text):
+    m = re.search(r"\d[\d,]*(?:\.\d+)?", text)
+    return float(m.group().replace(",", "")) if m else 0.0
+''')
+    assert scan_regex_integer_parse(tmp_path) == []
+
+
+def test_threshold_below_documented_result_flags_a_weakened_gate(tmp_path: Path):
+    _write(tmp_path, "test_cards.py", '''
+def test_cards_recover_the_expected_cause():
+    """7 of 8 demonstration cards recover the expected cause."""
+    decided = 7
+    assert decided >= 6
+''')
+    findings = scan_thresholds_below_documented_result(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_threshold_below_documented_result_accepts_a_matching_gate(tmp_path: Path):
+    _write(tmp_path, "test_cards.py", '''
+def test_cards_recover_the_expected_cause():
+    """7 of 8 demonstration cards recover the expected cause."""
+    decided = 7
+    assert decided >= 7
+''')
+    assert scan_thresholds_below_documented_result(tmp_path) == []

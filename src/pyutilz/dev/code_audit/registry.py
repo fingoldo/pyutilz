@@ -39,6 +39,14 @@ from .dead_import import scan_possibly_dead_import
 from .unpicklable_resource_state import scan_unpicklable_resource_state
 from .skip_masking_except import scan_except_skip_masks_call_under_test
 from .uncurated_star_export import scan_uncurated_star_exports
+from .dead_wiring import scan_dead_public_callables
+from .vacuous_matching import scan_vacuous_empty_pattern_match
+from .tautological_guard import scan_tautological_guards
+from .table_drift import scan_table_header_row_drift
+from .provenance_flow import scan_record_field_flow
+from .claimed_invariants import scan_unenforced_docstring_invariants
+from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
+from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 
 # --- registry -----------------------------------------------------------
 
@@ -113,6 +121,36 @@ register_scanner("unpicklable_resource_state", scan_unpicklable_resource_state)
 register_scanner("tautological_is_not_none_only_test", scan_tautological_is_not_none_only_tests)
 register_scanner("except_skip_masks_call_under_test", scan_except_skip_masks_call_under_test)
 register_scanner("uncurated_star_export", scan_uncurated_star_exports)
+register_scanner("dead_public_callable", scan_dead_public_callables)
+register_scanner("vacuous_empty_pattern_match", scan_vacuous_empty_pattern_match)
+register_scanner("tautological_guard", scan_tautological_guards)
+register_scanner("table_header_row_drift", scan_table_header_row_drift)
+register_scanner("record_field_flow", scan_record_field_flow)
+register_scanner("unenforced_docstring_invariant", scan_unenforced_docstring_invariants)
+register_scanner("partial_guard_across_siblings", scan_partial_guard_across_siblings)
+register_scanner("inconsistent_filter", scan_inconsistent_filter)
+register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
+register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
+
+
+# Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
+# downstream project's committed baseline the moment it upgrades pyutilz: several of these need
+# project configuration to say anything at all (consumer roots, test roots, filter pairs, the fields
+# that belong to somebody else's schema), and the rest report accumulated design debt rather than a
+# fresh mistake, which is a decision a project takes deliberately rather than inherits. Name them in
+# ``checks=`` to run them.
+OPT_IN_ONLY: frozenset[str] = frozenset({
+    "dead_public_callable",
+    "vacuous_empty_pattern_match",
+    "tautological_guard",
+    "table_header_row_drift",
+    "record_field_flow",
+    "unenforced_docstring_invariant",
+    "partial_guard_across_siblings",
+    "inconsistent_filter",
+    "regex_integer_parse_truncation",
+    "threshold_below_documented_result",
+})
 
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
@@ -131,7 +169,7 @@ def run_all(
     """Run every (or selected) scanner against ``root`` and return all
     findings in encounter order. Sort by (severity, check, file, line)
     for stable rendering at the call site."""
-    selected = list(SCANNERS) if checks is None else list(checks)
+    selected = [n for n in SCANNERS if n not in OPT_IN_ONLY] if checks is None else list(checks)
     out: list[Finding] = []
     for name in selected:
         if name not in SCANNERS:

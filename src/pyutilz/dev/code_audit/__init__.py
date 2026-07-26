@@ -257,6 +257,61 @@ list[Finding]):
   the package's public surface, and same-named helpers from two
   star-imported submodules can silently shadow one another.
 
+The next block came out of a two-round adversarial audit of a research
+codebase, where a handful of shapes accounted for most of the findings.
+All of them are in ``OPT_IN_ONLY``: several need project configuration to
+say anything, and the rest report accumulated design debt, which is a
+decision a project takes rather than inherits on upgrade. Name them in
+``checks=`` to run them.
+
+- ``scan_dead_public_callables``: a public callable nothing outside the
+  test suite can reach, computed by reachability rather than grep --
+  a function called only by another dead function is dead too, and a
+  callable behind a live module IMPORT is not thereby live. Takes
+  ``consumer_roots`` for trees that count as call sites without being
+  audited (demos, a separate bench tree).
+
+- ``scan_vacuous_empty_pattern_match``: ``all(... for x in NAME)`` where
+  nothing establishes ``NAME`` is non-empty -- an empty pattern then
+  matches every input. ``any()`` is not flagged; it fails closed.
+
+- ``scan_tautological_guards``: an ``and`` combining a threshold on some
+  target with an identity/equality pin of that same target to one value,
+  so only that value can reach the threshold and the guard reduces to
+  the pin.
+
+- ``scan_table_header_row_drift``: a ``csv.DictWriter`` whose literal
+  ``fieldnames`` and literal written row disagree (the missing key
+  becomes ``restval`` silently), and a function formatting a wide table
+  from two unpaired f-strings of differing field counts.
+
+- ``scan_record_field_flow``: a record field with one side of its
+  contract. ``field_read_never_written`` (P1) is a ``.get(k, default)``
+  or ``getattr(o, k, default)`` for a key nothing writes -- the default
+  wins on every run. Restricted to NEAR MISSES by default, because
+  "this dict came from outside" is not statically decidable.
+  ``field_written_never_read`` (P2) is off by default; it measured 732
+  hits on the source project, which is an allowlist longer than the rule.
+
+- ``scan_unenforced_docstring_invariants``: a docstring stating an
+  absolute invariant (``never``, ``must not``, ``deliberately not``)
+  whose symbol no test in ``test_roots`` names. Deliberately a weak bar:
+  the target is the claim NOTHING references.
+
+- ``scan_partial_guard_across_siblings``: a family of ``prefix_*``
+  functions over the same first parameter where a majority guard it and
+  one member does not -- a fix that stopped one call short.
+
+- ``scan_inconsistent_filter``: consumers of a collection that skip an
+  exclusion rule its other consumers apply. Needs ``filter_pairs``;
+  silent until configured.
+
+- ``scan_regex_integer_parse``: a bare digit-class regex over free text converted
+  to a number -- "4.10" arrives as 4 and "2,054" as 2, silently.
+
+- ``scan_thresholds_below_documented_result``: a ``test_*`` function
+  whose docstring states "7 of 8" while its assertion accepts ``>= 6``.
+
 Each scanner is a pure function: ``(root_path: Path) -> list[Finding]``.
 The CLI ``__main__`` block wraps them with argparse and emits markdown
 or JSON.
@@ -322,12 +377,21 @@ from .dead_import import scan_possibly_dead_import
 from .unpicklable_resource_state import scan_unpicklable_resource_state
 from .skip_masking_except import scan_except_skip_masks_call_under_test
 from .uncurated_star_export import scan_uncurated_star_exports
-from .registry import SCANNERS, run_all, register_scanner, get_scanners
+from .dead_wiring import scan_dead_public_callables
+from .vacuous_matching import scan_vacuous_empty_pattern_match
+from .tautological_guard import scan_tautological_guards
+from .table_drift import scan_table_header_row_drift
+from .provenance_flow import scan_record_field_flow
+from .claimed_invariants import scan_unenforced_docstring_invariants
+from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
+from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .registry import SCANNERS, OPT_IN_ONLY, run_all, register_scanner, get_scanners
 from .cli import main
 
 __all__ = [
     "Finding",
     "SCANNERS",
+    "OPT_IN_ONLY",
     "run_all",
     "register_scanner",
     "get_scanners",
@@ -371,6 +435,16 @@ __all__ = [
     "scan_tautological_is_not_none_only_tests",
     "scan_except_skip_masks_call_under_test",
     "scan_uncurated_star_exports",
+    "scan_dead_public_callables",
+    "scan_vacuous_empty_pattern_match",
+    "scan_tautological_guards",
+    "scan_table_header_row_drift",
+    "scan_record_field_flow",
+    "scan_unenforced_docstring_invariants",
+    "scan_partial_guard_across_siblings",
+    "scan_inconsistent_filter",
+    "scan_regex_integer_parse",
+    "scan_thresholds_below_documented_result",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:

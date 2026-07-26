@@ -58,6 +58,8 @@ __all__ = [
     "assert_fields_roundtrip",
     "MARKER_LINE_RE",
     "ATTRIBUTION_RE",
+    "findings_ratchet",
+    "unbacked_audit_dispositions",
 ]
 
 # ---------------------------------------------------------------------------
@@ -566,3 +568,70 @@ def assert_fields_roundtrip(
         if actual != expected:
             mismatches.append(name)
     return mismatches
+
+
+# ---------------------------------------------------------------------------
+# Ratchets and audit-document parity
+# ---------------------------------------------------------------------------
+
+
+def findings_ratchet(findings: Iterable[str], baseline_path: Path) -> tuple[list[str], list[str]]:
+    """Diff ``findings`` against a committed JSON baseline, returning ``(new, drained)``.
+
+    The point of a ratchet, rather than a plain assertion, is that a rule with real debt behind it
+    fails on the day it is written and gets deleted the week after. The baseline records the debt
+    that existed when the rule landed; ``new`` is what must fail the build; ``drained`` is what the
+    project has since fixed and can prune from the baseline. Pair it with a separate strict-xfail
+    test asserting the baseline is EMPTY, so the debt stays visible instead of being absorbed.
+
+    A missing baseline file is treated as an empty baseline, so the first run reports everything.
+    """
+    import json
+
+    known: set[str] = set()
+    if baseline_path.exists():
+        known = set(json.loads(baseline_path.read_text(encoding="utf-8")))
+    current = set(findings)
+    return sorted(current - known), sorted(known - current)
+
+
+_DISPOSITION_RE = re.compile(r"RESOLVED", re.IGNORECASE)
+_CITATION_RE = re.compile(r"`([^`]+)`")
+
+
+def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_prefix: str = "test_") -> list[str]:
+    """Find audit rows marked RESOLVED that cite nothing which exists.
+
+    An audit disposition table is the record of what was fixed, and it is read months later by
+    somebody deciding what still needs work. A row reading RESOLVED that names no artefact -- or
+    names a file that has since moved, or a test that was never written -- converts the audit from a
+    record into a claim. The instance behind this rule: a round-1 table marked a finding resolved and
+    round 2 measured the two code paths still disagreeing.
+
+    A row passes when at least one backtick-quoted citation resolves to a path under ``repo_root``,
+    or is the name of a function starting with ``test_name_prefix`` that exists somewhere in the
+    repository. Returns one string per unbacked row.
+    """
+    unbacked: list[str] = []
+    test_corpus = ""
+    for py in sorted(repo_root.rglob("test_*.py")):
+        if "__pycache__" in py.parts:
+            continue
+        test_corpus += py.read_text(encoding="utf-8", errors="replace")
+
+    for doc in sorted(audit_dir.rglob("*.md")):
+        for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if not line.lstrip().startswith("|") or not _DISPOSITION_RE.search(line):
+                continue
+            citations = _CITATION_RE.findall(line)
+            backed = False
+            for cite in citations:
+                cite = cite.strip().split(":")[0].split("::")[0]
+                if cite.startswith(test_name_prefix) and f"def {cite}" in test_corpus:
+                    backed = True
+                elif cite and (repo_root / cite).exists():
+                    backed = True
+            if not backed:
+                cited = ", ".join(citations) if citations else "nothing"
+                unbacked.append(f"{doc.relative_to(repo_root).as_posix()}:{lineno} RESOLVED cites {cited}")
+    return unbacked

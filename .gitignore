@@ -144,3 +144,4 @@ app/all_data.pkl
 
 # Benchmark results
 .benchmarks/
+.claude/

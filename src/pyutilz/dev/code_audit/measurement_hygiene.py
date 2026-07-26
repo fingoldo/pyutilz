@@ -1,0 +1,127 @@
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+
+# --- numbers that claim more than the code behind them supports ------------------------------------
+#
+# INTEGER-ONLY PARSE OF FREE TEXT. `_count = re.search(r"\d+", text)` reads "4.10" as 4, "2,054" as 2
+# and "approaching 100%" as 100, then hands the result on as a count. Confirmed in Autopsia's
+# frequency ingestion (to_graph.py), where it was latent only because no decimal had reached it yet.
+# The shape generalises: a bare `\d+` against prose is a truncating parse wearing a parser's clothes.
+#
+# THRESHOLD PINNED BELOW THE STATED RESULT. A test docstring reads "7 of 8 demonstration cards
+# recover the expected cause" while the assertion is `>= 6`. The gate then cannot fail on the
+# regression it was written for -- it can only fail on a second, independent one. Found twice.
+#
+# Both are cheap because both compare two things already present in the source.
+
+_BARE_DIGITS_RE = re.compile(r"^\(?\\d\+\)?$")
+_NUMBER_CLAIM_RE = re.compile(r"\b(\d+)\s+(?:of|out of)\s+(\d+)\b|\bat least (\d+)\b|\ball (\d+)\b")
+
+
+def _int_or_float_conversion_nearby(fn: ast.AST, lineno: int, window: int = 3) -> bool:
+    """Whether the regex match is fed to int()/float() nearby - a bare pattern is not a parse."""
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"int", "float"} and abs(node.lineno - lineno) <= window:
+            return True
+    return False
+
+
+def scan_regex_integer_parse(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    r"""Find a bare ``\d+`` regex over free text whose match is converted to a number.
+
+    Only the exactly-bare pattern is flagged (``r"\d+"`` or ``r"(\d+)"``). A pattern that accounts
+    for decimals, thousands separators or a unit is a real parse and passes; that distinction is the
+    whole content of the rule, so widening it would destroy the signal.
+
+    Severity: P1. It does not raise, it does not log, and it produces a plausible smaller number --
+    "4.10" arrives downstream as 4 and every check on it succeeds.
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(fn):
+                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in {"search", "match", "findall", "fullmatch"}):
+                    continue
+                if not (call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)):
+                    continue
+                if not _BARE_DIGITS_RE.match(call.args[0].value.replace("\\\\", "\\")):
+                    continue
+                if not _int_or_float_conversion_nearby(fn, call.lineno):
+                    continue
+                findings.append(
+                    Finding(
+                        check="regex_integer_parse_truncation",
+                        severity="P1",
+                        file=rel,
+                        line=call.lineno,
+                        snippet=_line_text(src_lines, call.lineno),
+                        detail=(f"bare \\d+ over free text in {fn.name}() truncates silently: '4.10' -> 4, '2,054' -> 2, 'approaching 100%' -> 100. Parse decimals and separators, or refuse."),
+                    )
+                )
+    return findings
+
+
+def scan_thresholds_below_documented_result(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+) -> list[Finding]:
+    """Find a test whose docstring states a result and whose assertion accepts a weaker one.
+
+    Matches ``N of M`` / ``at least N`` / ``all N`` in a ``test_*`` function's docstring against the
+    integer literals that function compares with ``>=`` or ``>``. A strictly smaller bound is
+    reported: the gate has been set below the behaviour it documents, so the regression it was
+    written to catch passes it.
+
+    Severity: P2. The test still runs and can still fail -- just not on the thing its docstring says.
+    """
+    findings: list[Finding] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        if not py.name.startswith("test_"):
+            continue
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        rel = py.relative_to(root).as_posix()
+        for fn in ast.walk(tree):
+            if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name.startswith("test_")):
+                continue
+            match = _NUMBER_CLAIM_RE.search(ast.get_docstring(fn) or "")
+            if not match:
+                continue
+            claimed = int(next(g for g in match.groups() if g is not None))
+            for cmp_node in ast.walk(fn):
+                if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
+                    continue
+                right = cmp_node.comparators[0]
+                if not (isinstance(right, ast.Constant) and isinstance(right.value, int) and not isinstance(right.value, bool)):
+                    continue
+                if right.value < claimed:
+                    findings.append(
+                        Finding(
+                            check="threshold_below_documented_result",
+                            severity="P2",
+                            file=rel,
+                            line=cmp_node.lineno,
+                            snippet=_line_text(src_lines, cmp_node.lineno),
+                            detail=(f"{fn.name}() documents {claimed} but asserts >= {right.value}: the gate is set below the behaviour it describes, so a regression to {right.value} passes."),
+                        )
+                    )
+    return findings
