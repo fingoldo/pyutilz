@@ -299,7 +299,7 @@ dev = [
     # marker keeps `pip install .[dev]` installable there -- those cells don't need black to run
     # pytest, matching the identical py-ci-shared marker below.
     "black==26.5.1 ; python_version >= '3.10'",   # pinned exact, matching CI's uvx black==26.5.1 (black-filtered.yml)
-    "ruff==0.15.20",                # pinned exact, matching CI's uvx ruff==0.15.20 (ruff-blocking.yml) --
+    "ruff==0.15.22",                # pinned exact, matching CI's uvx ruff==0.15.22 (ruff-blocking.yml) --
                                     # an open range here is exactly how mlframe's prior v0.8.6 pre-commit-
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
     "mypy>=1.0",

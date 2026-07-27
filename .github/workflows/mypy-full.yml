@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   mypy-full:
-    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@1fd408df105f2a7d22d36a239d94a39ef888305a  # v1.2.1
+    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@51c30d35a66149085eaa430e3a269c0540e0519f  # v1.3.1
     with:
       package-name: pyutilz
       mypy-version: "2.1.0"
