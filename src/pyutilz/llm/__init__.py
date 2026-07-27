@@ -28,7 +28,14 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# Re-exported because its consumer is a DOWNSTREAM project: the runaway-decoder check is a public API of
+# this package, and a helper whose only in-repo reference is its test reads as dead to the meta-test.
+from pyutilz.llm.degeneracy import DegeneracyReport, DegeneracyThresholds, degeneracy_report
+
 __all__ = [
+    "DegeneracyReport",
+    "DegeneracyThresholds",
+    "degeneracy_report",
     "LLMProvider",
     "AnthropicProvider",
     "GeminiProvider",
