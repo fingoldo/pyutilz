@@ -6,6 +6,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    # Ungrouped, this ecosystem opened one branch + PR per action, each triggering its own CI run.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     cooldown:
       default-days: 7
 
