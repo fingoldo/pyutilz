@@ -48,6 +48,11 @@ class LLMTruncationError(ValueError):
     Retryable — caller should double ``max_tokens`` (capped) and re-issue.
     """
 
-    def __init__(self, message: str, finish_reason: str | None = None):
+    def __init__(self, message: str, finish_reason: str | None = None, partial_text: str = ""):
         super().__init__(message)
         self.finish_reason = finish_reason
+        # The text the model DID produce before the cutoff. Carried because the caller's whole reason for
+        # catching this is to salvage a paid-for call: without it, a truncation, a wrong JSON shape and a
+        # refusal are indistinguishable downstream, and the only evidence that could tell them apart was
+        # discarded at the raise site. Empty string, never None, so a caller can `or ""` without a guard.
+        self.partial_text = partial_text or ""

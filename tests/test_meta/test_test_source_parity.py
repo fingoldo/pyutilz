@@ -72,6 +72,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # dev/code_audit was split from a single >1000-LOC module into a
     # subpackage; every scanner submodule is exercised jointly by
     # tests/test_code_audit.py (positive+negative case per scanner).
+    "getattr_unknown_attribute": "code_audit scanner; covered by test_code_audit.py",
     "mutable_defaults": "code_audit scanner; covered by test_code_audit.py",
     "closures": "code_audit scanner; covered by test_code_audit.py",
     "default_via_or": "code_audit scanner; covered by test_code_audit.py",

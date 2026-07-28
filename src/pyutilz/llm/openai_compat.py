@@ -733,7 +733,12 @@ class OpenAICompatibleProvider(LLMProvider):
                 # but never actually raised anywhere -- callers catching it to auto-retry with a
                 # bigger budget never saw it fire, even on a genuine max_tokens cutoff.
                 raise LLMTruncationError(
-                    f"{self._provider_name} response truncated by max_tokens (finish_reason='length')", finish_reason=self._last_finish_reason
+                    f"{self._provider_name} response truncated by max_tokens (finish_reason='length')",
+                    finish_reason=self._last_finish_reason,
+                    # The partial content, which used to be dropped here. A caller that catches this to
+                    # re-issue with a bigger budget is one caller; a caller that catches it to keep what was
+                    # already paid for is another, and it had nothing to keep.
+                    partial_text=content or "",
                 )
             return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 

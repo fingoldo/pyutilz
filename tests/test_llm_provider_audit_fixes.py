@@ -620,3 +620,23 @@ class TestPerCallAttrDescriptor:
             asyncio.create_task(setter("third", 0.01)),
         )
         assert results == ["first", "second", "third"]
+
+
+def test_truncation_error_carries_the_text_the_model_did_produce():
+    """A caller catching this to SALVAGE a paid-for call had nothing to salvage.
+
+    `LLMTruncationError` was specified for the retry case - double max_tokens and re-issue - and the partial
+    content was discarded at the raise site. A second, equally real caller catches it to keep what was
+    already paid for, and for that one a truncation, a wrong JSON shape and a refusal were indistinguishable
+    because the only evidence that separates them was gone.
+    """
+    from pyutilz.llm.exceptions import LLMTruncationError
+
+    exc = LLMTruncationError("truncated", finish_reason="length", partial_text='{"kb_triples": [{"subject": "hypo')
+    assert exc.finish_reason == "length"
+    assert exc.partial_text.startswith('{"kb_triples"')
+
+    # Empty string, never None, so a caller can use it without a guard - and the older two-argument
+    # construction keeps working.
+    assert LLMTruncationError("truncated", finish_reason="length").partial_text == ""
+    assert LLMTruncationError("truncated").partial_text == ""

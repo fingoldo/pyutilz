@@ -4546,3 +4546,79 @@ class Store:
     boundary = [BoundarySymbol("meth.py", "Store.neutral"), BoundarySymbol("meth.py", "Store.pool")]
     findings = scan_domain_vocabulary_leak(tmp_path, boundary=boundary, vocabulary=["autopsy"])
     assert [(f.check, f.line) for f in findings] == [("domain_vocabulary_leak", 6)]
+
+
+def test_getattr_unknown_attribute_catches_a_printer_reading_a_field_that_never_existed(tmp_path):
+    """The regression this rule was written for, reduced to its shape.
+
+    A demonstration script printed two headline panels as empty because it asked one dataclass for `steps`
+    and another for `lines` - neither had ever existed - and `getattr(obj, name, None) or []` swallowed both.
+    The work behind the panels was computed and paid for on every run, and strategy was argued from a blank.
+    """
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "model.py").write_text(
+        "from dataclasses import dataclass, field\n"
+        "\n"
+        "@dataclass\n"
+        "class Sheet:\n"
+        "    ask: list = field(default_factory=list)\n"
+        "    notes: list = field(default_factory=list)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "printer.py").write_text(
+        "def show(sheet):\n"
+        "    for row in getattr(sheet, 'steps', None) or []:\n"
+        "        print(row)\n"
+        "    for row in getattr(sheet, 'ask', None) or []:\n"
+        "        print(row)\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_getattr_unknown_attribute(tmp_path)
+    assert [(f.file, f.line) for f in findings] == [("printer.py", 2)]
+    assert "'steps'" in findings[0].detail
+    assert findings[0].severity == "P1"
+
+
+def test_getattr_unknown_attribute_does_not_fire_on_names_the_tree_uses_as_attributes(tmp_path):
+    """A name assigned as an attribute anywhere is evidence it exists - including on objects we do not define.
+
+    `threading.local()` and plain namespace objects gain their attributes by assignment and by nothing else,
+    so a rule that only read class bodies would report every such lookup as a miss.
+    """
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "state.py").write_text(
+        "import threading\n"
+        "\n"
+        "CACHE_DIR = '/tmp'\n"
+        "_local = threading.local()\n"
+        "\n"
+        "def open_db():\n"
+        "    _local.handle = object()\n"
+        "\n"
+        "def read(module):\n"
+        "    a = getattr(_local, 'handle', None)\n"
+        "    b = getattr(module, 'CACHE_DIR', None)\n"
+        "    return a, b\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_unknown_attribute(tmp_path) == []
+
+
+def test_getattr_unknown_attribute_ignores_the_two_argument_form(tmp_path):
+    """A two-argument getattr raises on a miss, which is loud. The default is what makes the mistake silent."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "loud.py").write_text("def f(o):\n    return getattr(o, 'nowhere')\n", encoding="utf-8")
+    assert scan_getattr_unknown_attribute(tmp_path) == []
+
+
+def test_getattr_unknown_attribute_accepts_out_of_tree_names(tmp_path):
+    """`extra_known` is how a project states that an attribute belongs to a class it does not define."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "client.py").write_text("def f(provider):\n    return getattr(provider, 'last_generation_id', '')\n", encoding="utf-8")
+    assert len(scan_getattr_unknown_attribute(tmp_path)) == 1
+    assert scan_getattr_unknown_attribute(tmp_path, extra_known=frozenset({"last_generation_id"})) == []

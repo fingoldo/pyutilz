@@ -169,6 +169,8 @@ list[Finding]):
   so aggregating an un-cast numeric-looking string silently picks the
   wrong row (e.g. treats ``"9"`` as greater than ``"10"``).
 
+- ``scan_getattr_unknown_attribute``: ``getattr(obj, "name", default)`` where ``name`` is an
+  attribute of no class in the tree, so the call can only ever return the default.
 - ``scan_locals_get_fragile_lookup``: ``locals().get(...)``/
   ``globals().get(...)`` as a stand-in for a direct name reference --
   fragile to a rename (the target is a magic string, not a symbol a
@@ -392,6 +394,7 @@ from .unraised_exceptions import scan_unraised_exceptions
 from .credential_logging import scan_credential_shaped_log_args
 from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
+from .getattr_unknown_attribute import scan_getattr_unknown_attribute
 from .locals_get import scan_locals_get_fragile_lookup
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
@@ -464,6 +467,7 @@ __all__ = [
     "scan_docstring_args_completeness",
     "scan_return_annotation_mismatch",
     "scan_sql_aggregate_before_cast",
+    "scan_getattr_unknown_attribute",
     "scan_locals_get_fragile_lookup",
     "scan_shielded_resource_release_race",
     "scan_duplicate_credential_regex",
