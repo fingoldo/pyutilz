@@ -14,6 +14,7 @@ from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
 from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination, scan_sql_aggregate_before_cast
 from .getattr_unknown_attribute import scan_getattr_unknown_attribute
+from .getattr_literal_on_known_dataclass import scan_getattr_literal_on_known_dataclass
 from .locals_get import scan_locals_get_fragile_lookup
 from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except
@@ -96,6 +97,7 @@ register_scanner("docstring_args_incomplete", scan_docstring_args_completeness)
 register_scanner("return_annotation_mismatch", scan_return_annotation_mismatch)
 register_scanner("sql_aggregate_before_cast", scan_sql_aggregate_before_cast)
 register_scanner("getattr_unknown_attribute", scan_getattr_unknown_attribute)
+register_scanner("getattr_literal_on_known_dataclass", scan_getattr_literal_on_known_dataclass)
 register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 register_scanner("shielded_resource_release_race", scan_shielded_resource_release_race)
 # canonical_module_rel_paths designates THIS package's own scanner-definition modules as the

@@ -4622,3 +4622,79 @@ def test_getattr_unknown_attribute_accepts_out_of_tree_names(tmp_path):
     (tmp_path / "client.py").write_text("def f(provider):\n    return getattr(provider, 'last_generation_id', '')\n", encoding="utf-8")
     assert len(scan_getattr_unknown_attribute(tmp_path)) == 1
     assert scan_getattr_unknown_attribute(tmp_path, extra_known=frozenset({"last_generation_id"})) == []
+
+
+def test_getattr_literal_on_known_dataclass_catches_a_field_that_belongs_to_a_different_class(tmp_path):
+    """Sharper than scan_getattr_unknown_attribute: `steps` is a real field, just not on `Sheet`.
+
+    The union-based rule would miss this because `steps` IS an attribute of something in the tree
+    (`Plan`); only per-function local type-tracking catches that the object actually being read
+    from is the wrong class for that name.
+    """
+    from pyutilz.dev.code_audit import scan_getattr_literal_on_known_dataclass
+
+    (tmp_path / "model.py").write_text(
+        "from dataclasses import dataclass, field\n"
+        "\n"
+        "@dataclass\n"
+        "class Sheet:\n"
+        "    ask: list = field(default_factory=list)\n"
+        "    notes: list = field(default_factory=list)\n"
+        "\n"
+        "@dataclass\n"
+        "class Plan:\n"
+        "    steps: list = field(default_factory=list)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "printer.py").write_text(
+        "from model import Sheet\n" "\n" "def show():\n" "    sheet = Sheet()\n" "    for row in getattr(sheet, 'steps', None) or []:\n" "        print(row)\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_getattr_literal_on_known_dataclass(tmp_path)
+    assert [(f.file, f.line) for f in findings] == [("printer.py", 5)]
+    assert "'steps'" in findings[0].detail and "Sheet" in findings[0].detail
+
+
+def test_getattr_literal_on_known_dataclass_does_not_fire_on_its_own_real_field(tmp_path):
+    from pyutilz.dev.code_audit import scan_getattr_literal_on_known_dataclass
+
+    (tmp_path / "model.py").write_text(
+        "from dataclasses import dataclass, field\n" "\n" "@dataclass\n" "class Sheet:\n" "    ask: list = field(default_factory=list)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "printer.py").write_text(
+        "from model import Sheet\n" "\n" "def show():\n" "    sheet = Sheet()\n" "    return getattr(sheet, 'ask', None)\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_literal_on_known_dataclass(tmp_path) == []
+
+
+def test_getattr_literal_on_known_dataclass_does_not_fire_when_the_type_cannot_be_inferred(tmp_path):
+    """Duck-typing across an intentional boundary is the escape hatch, not a false positive to fix."""
+    from pyutilz.dev.code_audit import scan_getattr_literal_on_known_dataclass
+
+    (tmp_path / "model.py").write_text(
+        "from dataclasses import dataclass, field\n" "\n" "@dataclass\n" "class Sheet:\n" "    ask: list = field(default_factory=list)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "printer.py").write_text(
+        "def show(sheet):\n" "    return getattr(sheet, 'steps', None)\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_literal_on_known_dataclass(tmp_path) == []
+
+
+def test_getattr_literal_on_known_dataclass_infers_type_from_a_parameter_annotation(tmp_path):
+    from pyutilz.dev.code_audit import scan_getattr_literal_on_known_dataclass
+
+    (tmp_path / "model.py").write_text(
+        "from dataclasses import dataclass, field\n" "\n" "@dataclass\n" "class Sheet:\n" "    ask: list = field(default_factory=list)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "printer.py").write_text(
+        "from model import Sheet\n" "\n" "def show(sheet: Sheet):\n" "    return getattr(sheet, 'steps', None)\n",
+        encoding="utf-8",
+    )
+    findings = scan_getattr_literal_on_known_dataclass(tmp_path)
+    assert [(f.file, f.line) for f in findings] == [("printer.py", 4)]

@@ -171,6 +171,11 @@ list[Finding]):
 
 - ``scan_getattr_unknown_attribute``: ``getattr(obj, "name", default)`` where ``name`` is an
   attribute of no class in the tree, so the call can only ever return the default.
+- ``scan_getattr_literal_on_known_dataclass``: ``getattr(obj, "name", default)`` where ``obj`` is
+  locally inferable as an instance of a SPECIFIC ``@dataclass`` in the tree and ``name`` is not one
+  of that class's own fields -- narrower and stronger than ``scan_getattr_unknown_attribute``, which
+  only catches a name that is an attribute of NOTHING anywhere; this one catches a name that is a
+  real field of some OTHER class but not the one actually being read.
 - ``scan_locals_get_fragile_lookup``: ``locals().get(...)``/
   ``globals().get(...)`` as a stand-in for a direct name reference --
   fragile to a rename (the target is a magic string, not a symbol a
@@ -395,6 +400,7 @@ from .credential_logging import scan_credential_shaped_log_args
 from .docstring_args import scan_docstring_args_completeness
 from .return_annotation import scan_return_annotation_mismatch
 from .getattr_unknown_attribute import scan_getattr_unknown_attribute
+from .getattr_literal_on_known_dataclass import scan_getattr_literal_on_known_dataclass
 from .locals_get import scan_locals_get_fragile_lookup
 from .shielded_resource_release import scan_shielded_resource_release_race
 from .duplicate_credential_regex import scan_duplicate_credential_regex
@@ -468,6 +474,7 @@ __all__ = [
     "scan_return_annotation_mismatch",
     "scan_sql_aggregate_before_cast",
     "scan_getattr_unknown_attribute",
+    "scan_getattr_literal_on_known_dataclass",
     "scan_locals_get_fragile_lookup",
     "scan_shielded_resource_release_race",
     "scan_duplicate_credential_regex",

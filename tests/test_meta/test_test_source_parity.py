@@ -73,6 +73,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     # subpackage; every scanner submodule is exercised jointly by
     # tests/test_code_audit.py (positive+negative case per scanner).
     "getattr_unknown_attribute": "code_audit scanner; covered by test_code_audit.py",
+    "getattr_literal_on_known_dataclass": "code_audit scanner; covered by test_code_audit.py",
     "mutable_defaults": "code_audit scanner; covered by test_code_audit.py",
     "closures": "code_audit scanner; covered by test_code_audit.py",
     "default_via_or": "code_audit scanner; covered by test_code_audit.py",
