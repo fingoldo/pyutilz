@@ -275,6 +275,12 @@ def _is_in_boolean_context(node: ast.AST, parent_map: dict[int, tuple[ast.AST, s
 
 _BOOLEAN_VALUED_CALL_NAMES = frozenset({"isinstance", "issubclass", "hasattr", "callable", "all", "any"})
 
+# Attribute-form boolean reducers: ``arr.all()`` / ``series.any()`` (numpy/pandas) are exactly as
+# boolean-valued as the builtin ``all``/``any`` above, just spelled as a method call instead of a
+# call on an iterable -- ``_BOOLEAN_VALUED_CALL_NAMES`` only matched a bare ``Name`` func, missing
+# every method-call spelling.
+_BOOLEAN_VALUED_METHOD_NAMES = frozenset({"all", "any"})
+
 
 def _is_boolean_valued(node: ast.AST) -> bool:
     """True when ``node`` can only ever evaluate to an actual ``bool`` (never an arbitrary falsy
@@ -287,16 +293,86 @@ def _is_boolean_valued(node: ast.AST) -> bool:
     ``return not (hi_a < lo_b or hi_b < lo_a)`` were both flagged despite being pure boolean logic,
     not a default-substitution shape at all -- the existing boolean-CONTEXT exclusion only covers
     if/while/assert/ternary TEST positions, missing a boolean expression used as a return value or
-    assigned to a bool-typed variable."""
+    assigned to a bool-typed variable.
+
+    Also recognizes two further boolean-only shapes measured as real findings on a downstream
+    consumer: ``arr.all() or arr2.any()`` (numpy/pandas reduction *methods*, not just the builtin
+    forms), and a call whose name follows the ``is_<predicate>``/``is<Predicate>`` naming
+    convention (``is_numeric_dtype(s) or is_bool_dtype(s)``, ``is_supported_xgboost(m) or
+    is_supported_lightgbm(m)``) -- a name starting with ``is_`` or ``is`` + an uppercase letter is,
+    by the same convention ``isinstance``/``issubclass`` already rely on, a predicate that returns
+    a real bool, never an arbitrary falsy value."""
     if isinstance(node, ast.Compare):
         return True
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _BOOLEAN_VALUED_CALL_NAMES:
-        return True
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id in _BOOLEAN_VALUED_CALL_NAMES:
+                return True
+            if func.id.startswith("is_") or (func.id.startswith("is") and len(func.id) > 2 and func.id[2].isupper()):
+                return True
+        elif isinstance(func, ast.Attribute) and func.attr in _BOOLEAN_VALUED_METHOD_NAMES:
+            return True
     if isinstance(node, ast.BoolOp):
         return all(_is_boolean_valued(v) for v in node.values)
     return False
+
+
+def _get_getattr_call(node: ast.AST) -> "tuple[str, ast.AST] | None":
+    """``(attr_name, default_node)`` for a ``getattr(obj, "name", default)`` three-arg call, or
+    None when ``node`` isn't that shape."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) == 3
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    ):
+        return node.args[1].value, node.args[2]
+    return None
+
+
+def _is_getattr_alias_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """True for ``getattr(obj, "a", D) or getattr(obj, "b", D)`` -- duck-typing dispatch that tries
+    one attribute name, falling back to a differently-named one when the first doesn't exist
+    (``getattr(m, "predict_proba", None) or getattr(m, "predict", None)``). Unlike
+    ``_is_alias_key_fallback`` for dict keys, the two attribute names here are commonly UNRELATED
+    spellings (``predict_proba``/``predict``, ``get_cached_param``/``get``) rather than substring
+    variants of one field, so this only requires the getattr defaults to match (both ``None``, or
+    both the same literal) -- the intent is "try attr A, else attr B", not "default this value"."""
+    lhs_pair = _get_getattr_call(lhs)
+    rhs_pair = _get_getattr_call(rhs)
+    if lhs_pair is None or rhs_pair is None:
+        return False
+    lhs_name, lhs_default = lhs_pair
+    rhs_name, rhs_default = rhs_pair
+    if lhs_name == rhs_name:
+        return False
+    _unparse = getattr(ast, "unparse", None)
+    if _unparse is None:
+        return False
+    try:
+        return bool(_unparse(lhs_default) == _unparse(rhs_default))
+    except (ValueError, RecursionError):
+        return False
+
+
+def _is_wrapped_in_bool_call(node: ast.AST, parent_map: dict[int, tuple[ast.AST, str]]) -> bool:
+    """True when ``node`` is the sole argument of a ``bool(...)`` call. ``bool(x or D)`` coerces
+    its result to a real ``bool`` regardless of what ``x or D`` evaluates to -- a caller's
+    falsy-but-meaningful 0/""/[] would already be coerced to ``False`` by ``bool()`` even without
+    the ``or``, so there is no distinct value for the ``or`` to have clobbered. Measured: ``return
+    bool(a.size == 0 or np.isfinite(a).all())`` and ``return bool(is_numeric_dtype(s) or
+    is_bool_dtype(s))`` were both flagged despite the outer ``bool()`` making the OR's intermediate
+    value unobservable."""
+    entry = parent_map.get(id(node))
+    if entry is None:
+        return False
+    parent, field = entry
+    return field == "args" and isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) and parent.func.id == "bool" and len(parent.args) == 1
 
 
 def scan_default_via_or_trap(root: Path,
@@ -330,6 +406,10 @@ def scan_default_via_or_trap(root: Path,
                 continue
             if _is_boolean_valued(node):
                 continue
+            # Skip when the whole BoolOp is immediately coerced by bool(...) -- the OR's
+            # intermediate value is unobservable regardless of what either side evaluates to.
+            if _is_wrapped_in_bool_call(node, parent_map):
+                continue
             rhs = node.values[-1]
             # Skip when RHS is itself "trivial" (None/empty/falsy).
             if _is_trivial_default(rhs):
@@ -340,6 +420,9 @@ def scan_default_via_or_trap(root: Path,
                 continue
             # Skip alias-key dual reads: d.get("notes") or d.get("note").
             if _is_alias_key_fallback(lhs, rhs):
+                continue
+            # Skip getattr-alias dispatch: getattr(m, "predict_proba", None) or getattr(m, "predict", None).
+            if _is_getattr_alias_fallback(lhs, rhs):
                 continue
             # Skip getattr(obj, "name", D) or D / d.get("key", D) or D -- the SAME default
             # declared twice, provably a no-op widening (explicit-None coalesce), not a new
