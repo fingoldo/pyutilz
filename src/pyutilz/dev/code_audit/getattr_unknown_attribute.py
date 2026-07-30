@@ -29,7 +29,14 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
         code that works with objects it does not define: a file that reads `node.lineno` directly is
         asserting that the attribute exists, and it would crash on the first call if it did not. Without it
         the rule fires on every read of a stdlib or third-party field - measured at 49 hits on this package
-        alone, all of them `ast` node attributes.
+        alone, all of them `ast` node attributes;
+      * every ``__init__`` parameter name. The common sklearn-`BaseEstimator`-style constructor binds each
+        parameter onto ``self`` via a bulk ``for k, v in defaults.items(): setattr(self, k, v)`` (or an
+        equivalent loop) rather than one literal `self.x = x` per field - real, direct evidence the name is
+        an attribute, but invisible to a literal-assignment walk since neither `self.<name>` nor a string
+        constant naming it appears anywhere in the source. Measured: a single large sklearn-style estimator
+        with ~500 constructor parameters bound this way produced ~500 false `getattr_unknown_attribute` hits
+        for its own fields before this widening.
 
     The defect the rule exists for survives this widening precisely BECAUSE it is the defect: a name that is
     only ever reached through a defaulted `getattr` is a name nobody was ever confident enough to touch
@@ -59,6 +66,9 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
                         names.update(t.id for t in item.targets if isinstance(t, ast.Name))
                     elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         names.add(item.name)
+                        if item.name == "__init__":
+                            _args = item.args
+                            names.update(a.arg for a in (*_args.posonlyargs, *_args.args, *_args.kwonlyargs) if a.arg != "self")
             elif isinstance(node, ast.Assign):
                 names.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
