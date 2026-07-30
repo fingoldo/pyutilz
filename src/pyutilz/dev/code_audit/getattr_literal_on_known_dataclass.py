@@ -85,6 +85,14 @@ def scan_getattr_literal_on_known_dataclass(
     (an object built one way and read as if built another) is the one legitimate escape hatch this leaves
     unflagged.
 
+    A literal is also excluded when it is assigned as an attribute ANYWHERE in the tree
+    (``anything.literal = ...``), tree-wide and untyped - a dataclass instance that gains fields dynamically
+    (a sibling module doing ``state.cache = ...`` on an instance passed in) is real, direct evidence the name
+    is a legitimate attribute, even though it is invisible to ``_dataclass_fields``'s literal-annotation walk.
+    Measured: without this widening, three genuinely wired dynamic-attribute reads on one project's dataclass
+    (a batch-precompute cache and two per-call scratch flags, each set via ``instance.name = value`` from a
+    sibling module) reported as this class's flagship defect while being correct, live code.
+
     Only the THREE-argument form is reported, same reasoning as ``scan_getattr_unknown_attribute``: two-arg
     ``getattr(obj, "name")`` raises on a miss and needs no scanner.
 
@@ -95,12 +103,18 @@ def scan_getattr_literal_on_known_dataclass(
     """
     trees: dict[Path, ast.Module] = {}
     known: dict[str, set[str]] = {}
+    dynamic_attrs: set[str] = set()
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
         if tree is None:
             continue
         trees[py] = tree
         known.update(_dataclass_fields(tree))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                dynamic_attrs.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
+                dynamic_attrs.add(node.target.attr)
 
     findings: list[Finding] = []
     for py, tree in trees.items():
@@ -124,7 +138,7 @@ def scan_getattr_literal_on_known_dataclass(
                     continue
                 cls_name = local_types[obj_arg.id]
                 literal = name_arg.value
-                if literal.startswith("__") or literal in known[cls_name]:
+                if literal.startswith("__") or literal in known[cls_name] or literal in dynamic_attrs:
                     continue
                 findings.append(
                     Finding(
