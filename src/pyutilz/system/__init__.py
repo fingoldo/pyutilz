@@ -18,9 +18,9 @@ from .system import *
 # 2026-07-21 audit: `pyutilz.system.system.ensure_dir_exists`/`clean_ram` callers (core.serialization,
 # data.polarslib) were forced to have the WHOLE [system] extras stack installed just to import
 # THIS package's __init__.py, even though neither of them touches parallel/monitoring/hardware_monitor.
-__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience"]
+__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience", "single_flight_cache"]
 
-_LAZY_SUBMODULES = frozenset({"parallel", "monitoring", "hardware_monitor", "distributed", "resilience"})
+_LAZY_SUBMODULES = frozenset({"parallel", "monitoring", "hardware_monitor", "distributed", "resilience", "single_flight_cache"})
 
 
 def __getattr__(name):
