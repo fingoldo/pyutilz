@@ -496,6 +496,7 @@ DEP001 = [
     "anyio",  # llm/claude_code_provider.py -- inside the same guarded claude_code_sdk block
     "botocore",  # performance/kernel_tuning/remote.py -- guarded, S3 remote-cache is opt-in
     "wmi",  # system/system/probing.py -- guarded, Windows-only
+    "pgvector",  # database/psycopg2_pool.py -- guarded, only used if the caller's DB has the pgvector extension
 ]
 
 # DEP003 (import used but declared as transitive, not direct): same soft-import names as DEP001
