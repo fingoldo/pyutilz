@@ -51,6 +51,12 @@ from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_f
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 from .domain_boundary import scan_domain_vocabulary_leak
 from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
+from .bare_except import scan_bare_except
+from .console_unicode import scan_console_unicode
+from .mojibake import scan_mojibake
+from .resource_handle_safety import scan_resource_handle_safety
+from .todo_hygiene import scan_todo_hygiene
+from .import_cycles import scan_import_cycles
 
 # --- registry -----------------------------------------------------------
 
@@ -101,12 +107,14 @@ register_scanner("getattr_unknown_attribute", scan_getattr_unknown_attribute)
 register_scanner("getattr_literal_on_known_dataclass", scan_getattr_literal_on_known_dataclass)
 register_scanner("locals_get_fragile_lookup", scan_locals_get_fragile_lookup)
 register_scanner("shielded_resource_release_race", scan_shielded_resource_release_race)
-# canonical_module_rel_paths designates THIS package's own scanner-definition modules as the
-# credential-shaped-regex source of truth: credential_logging.py's _CREDENTIAL_NAME_RE and this
-# scanner's own DEFAULT_CREDENTIAL_KEYWORDS_RE both necessarily contain credential-shaped
-# keywords (that's their entire job as SECURITY-SCANNING META-TOOLING, not production
-# redaction/secret-handling logic) -- without this, the scanner flags itself and its sibling,
-# the only two credential-shaped re.compile(...) calls anywhere in this codebase, every run.
+# canonical_module_rel_paths designates THIS package's own scanner-definition modules, PLUS the
+# canonical secret-redaction module, as the credential-shaped-regex source of truth:
+# credential_logging.py's _CREDENTIAL_NAME_RE and this scanner's own
+# DEFAULT_CREDENTIAL_KEYWORDS_RE necessarily contain credential-shaped keywords (that's their
+# entire job as SECURITY-SCANNING META-TOOLING, not production redaction/secret-handling logic),
+# and text/secrets_scrub.py's regexes are the actual canonical production scrubber every
+# downstream project should import instead of writing its own -- without this, the scanner flags
+# all three, the only credential-shaped re.compile(...) calls anywhere in this codebase, every run.
 register_scanner(
     "duplicate_credential_regex",
     partial(
@@ -115,6 +123,7 @@ register_scanner(
             {
                 "dev/code_audit/credential_logging.py",
                 "dev/code_audit/duplicate_credential_regex.py",
+                "text/secrets_scrub.py",
             }
         ),
     ),
@@ -139,6 +148,12 @@ register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
 register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
+register_scanner("bare_except", scan_bare_except)
+register_scanner("console_unicode", scan_console_unicode)
+register_scanner("mojibake", scan_mojibake)
+register_scanner("resource_handle_safety", scan_resource_handle_safety)
+register_scanner("todo_hygiene", scan_todo_hygiene)
+register_scanner("import_cycle", scan_import_cycles)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a

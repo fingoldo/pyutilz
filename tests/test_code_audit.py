@@ -51,6 +51,12 @@ from pyutilz.dev.code_audit import (
     scan_possibly_dead_import,
     scan_unpicklable_resource_state,
     scan_readonly_to_numpy_mutation,
+    scan_bare_except,
+    scan_console_unicode,
+    scan_mojibake,
+    scan_resource_handle_safety,
+    scan_todo_hygiene,
+    scan_import_cycles,
     scan_tautological_is_not_none_only_tests,
     scan_except_skip_masks_call_under_test,
     scan_uncurated_star_exports,
@@ -4770,3 +4776,199 @@ def test_getattr_literal_on_known_dataclass_infers_type_from_a_parameter_annotat
     )
     findings = scan_getattr_literal_on_known_dataclass(tmp_path)
     assert [(f.file, f.line) for f in findings] == [("printer.py", 4)]
+
+
+# ---- bare_except -----------------------------------------------------------
+
+
+def test_bare_except_bare_colon_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f():
+    try:
+        risky()
+    except:
+        pass
+""")
+    findings = scan_bare_except(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "bare_except"
+
+
+def test_bare_except_base_exception_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f():
+    try:
+        risky()
+    except BaseException:
+        pass
+""")
+    findings = scan_bare_except(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_bare_except_base_exception_reraise_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    try:
+        risky()
+    except BaseException:
+        cleanup()
+        raise
+""")
+    assert scan_bare_except(tmp_path) == []
+
+
+def test_bare_except_narrow_exception_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f():
+    try:
+        risky()
+    except Exception:
+        pass
+""")
+    assert scan_bare_except(tmp_path) == []
+
+
+# ---- console_unicode --------------------------------------------------------
+
+
+def test_console_unicode_print_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", 'print("done → next")\n')
+    findings = scan_console_unicode(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "console_unicode"
+
+
+def test_console_unicode_logger_call_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", 'logger.warning("bad ✓ value")\n')
+    findings = scan_console_unicode(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_console_unicode_ascii_only_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", 'print("done -> next")\n')
+    assert scan_console_unicode(tmp_path) == []
+
+
+def test_console_unicode_non_console_call_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", 'save_to_file("→")\n')
+    assert scan_console_unicode(tmp_path) == []
+
+
+# ---- mojibake ---------------------------------------------------------------
+
+
+def test_mojibake_roundtrip_corruption_flagged(tmp_path: Path):
+    corrupted = "Русский".encode("utf-8").decode("cp1251")
+    _write(tmp_path, "bad.py", f"# {corrupted}\nx = 1\n")
+    findings = scan_mojibake(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "mojibake"
+
+
+def test_mojibake_genuine_cyrillic_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", "# Привет мир\nx = 1\n")
+    assert scan_mojibake(tmp_path) == []
+
+
+def test_mojibake_ascii_only_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", "# a normal comment\nx = 1\n")
+    assert scan_mojibake(tmp_path) == []
+
+
+# ---- resource_handle_safety --------------------------------------------------
+
+
+def test_resource_handle_safety_bare_open_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+def f(path):
+    fh = open(path, "w")
+    fh.write("x")
+""")
+    findings = scan_resource_handle_safety(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "resource_handle_safety"
+
+
+def test_resource_handle_safety_popen_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", """
+import subprocess
+
+def f():
+    proc = subprocess.Popen(["ls"])
+    return proc
+""")
+    findings = scan_resource_handle_safety(tmp_path)
+    assert len(findings) == 1, findings
+
+
+def test_resource_handle_safety_with_block_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", """
+def f(path):
+    with open(path, "w") as fh:
+        fh.write("x")
+""")
+    assert scan_resource_handle_safety(tmp_path) == []
+
+
+# ---- todo_hygiene -------------------------------------------------------------
+
+
+def test_todo_hygiene_unattributed_flagged(tmp_path: Path):
+    _write(tmp_path, "bad.py", "# TODO: handle empty list case\nx = 1\n")
+    findings = scan_todo_hygiene(tmp_path)
+    assert len(findings) == 1, findings
+    assert findings[0].check == "todo_hygiene"
+
+
+def test_todo_hygiene_dated_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", "# TODO 2026-04-28: handle empty list case\nx = 1\n")
+    assert scan_todo_hygiene(tmp_path) == []
+
+
+def test_todo_hygiene_assignee_not_flagged(tmp_path: Path):
+    _write(tmp_path, "ok.py", "# TODO(alice): handle empty list case\nx = 1\n")
+    assert scan_todo_hygiene(tmp_path) == []
+
+
+# ---- import_cycle -------------------------------------------------------------
+
+
+def test_import_cycles_two_node_cycle_flagged(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    _write(pkg, "__init__.py", "")
+    _write(pkg, "a.py", "import mypkg.b\n")
+    _write(pkg, "b.py", "import mypkg.a\n")
+    findings = scan_import_cycles(pkg, package_name="mypkg")
+    assert len(findings) == 1, findings
+    assert findings[0].check == "import_cycle"
+
+
+def test_import_cycles_acyclic_not_flagged(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    _write(pkg, "__init__.py", "")
+    _write(pkg, "a.py", "import mypkg.b\n")
+    _write(pkg, "b.py", "x = 1\n")
+    assert scan_import_cycles(pkg, package_name="mypkg") == []
+
+
+def test_import_cycles_deferred_cycle_not_flagged(tmp_path: Path):
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    _write(pkg, "__init__.py", "")
+    _write(pkg, "a.py", "import mypkg.b\n")
+    _write(pkg, "b.py", "import mypkg.a\n")
+    findings = scan_import_cycles(pkg, package_name="mypkg", deferred_cycles=frozenset({"mypkg.a -> mypkg.b"}))
+    assert findings == []
+
+
+def test_import_cycles_lazy_function_body_import_not_flagged(tmp_path: Path):
+    """A cycle that only closes via a lazy (function-body) import is not a module-load-time cycle."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    _write(pkg, "__init__.py", "")
+    _write(pkg, "a.py", "import mypkg.b\n")
+    _write(pkg, "b.py", "def f():\n    import mypkg.a\n    return mypkg.a\n")
+    assert scan_import_cycles(pkg, package_name="mypkg") == []

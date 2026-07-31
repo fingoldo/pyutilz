@@ -245,6 +245,35 @@ list[Finding]):
   scanner existed (mlframe's ``FeatureCache._lock`` and
   ``training/neural/ranker.py``'s trainer_/CUDA-tensor exclusion).
 
+- ``scan_bare_except``: ``except:`` (bare) or ``except BaseException:`` --
+  swallows ``KeyboardInterrupt``/``SystemExit``/``MemoryError`` and masks
+  real bugs. A bare re-raise inside the handler is not flagged.
+
+- ``scan_console_unicode``: ``print(...)``/``logger.X(...)`` first-arg
+  string literal contains a non-ASCII character -- crashes with
+  ``UnicodeEncodeError`` on Windows cp1251/cp1252 stdout.
+
+- ``scan_mojibake``: a source line contains a round-trip-detectable
+  mojibake run (UTF-8 bytes misread as CP1251 and re-saved -- a lossy
+  clipboard/terminal round-trip is the usual cause). Detected via a
+  double round-trip (encode cp1251, decode utf-8) succeeding into
+  different, non-empty text -- low false-positive by construction.
+
+- ``scan_resource_handle_safety``: ``open()``/``tempfile.NamedTemporaryFile()``/
+  ``tempfile.TemporaryFile()``/``tempfile.SpooledTemporaryFile()``/
+  ``subprocess.Popen()`` used outside a ``with`` block -- handle
+  close/cleanup on exception is not guaranteed.
+
+- ``scan_todo_hygiene``: an un-attributed ``TODO``/``FIXME``/``XXX``/``HACK``
+  comment (no assignee in parens, ISO date, or ``@mention``). Thin wrapper
+  over ``pyutilz.dev.meta_test_utils.scan_todo_markers``.
+
+- ``scan_import_cycles``: a multi-node cycle in the package's internal
+  top-level import graph (Tarjan SCC over an AST-built dependency graph,
+  lazy/function-body imports excluded). Accepts optional ``package_name``
+  (defaults to ``root.name``) and ``deferred_cycles`` (a set of reviewed,
+  runtime-safe cycles to skip) keyword arguments.
+
 - ``scan_readonly_to_numpy_mutation``: ``np.fill_diagonal(X, ...)`` /
   ``np.copyto(X, ...)`` where ``X`` was assigned, earlier in the same
   function, from an uncopied ``<pandas obj>.to_numpy()`` call. Under
@@ -430,6 +459,12 @@ from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_f
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 from .domain_boundary import BoundarySymbol, scan_domain_vocabulary_leak
 from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
+from .bare_except import scan_bare_except
+from .console_unicode import scan_console_unicode
+from .mojibake import scan_mojibake
+from .resource_handle_safety import scan_resource_handle_safety
+from .todo_hygiene import scan_todo_hygiene
+from .import_cycles import scan_import_cycles
 from .field_text_agreement import (
     AGREE,
     CONTRADICT,
@@ -509,6 +544,12 @@ __all__ = [
     "scan_domain_vocabulary_leak",
     "BoundarySymbol",
     "scan_readonly_to_numpy_mutation",
+    "scan_bare_except",
+    "scan_console_unicode",
+    "scan_mojibake",
+    "scan_resource_handle_safety",
+    "scan_todo_hygiene",
+    "scan_import_cycles",
     # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
     "AGREE",
     "CONTRADICT",
@@ -544,6 +585,8 @@ for _submod in (
     "field_text_agreement",
     "registry", "cli",
     "domain_boundary", "readonly_to_numpy_mutation",
+    "bare_except", "console_unicode", "mojibake", "resource_handle_safety",
+    "todo_hygiene", "import_cycles",
 ):
     globals().pop(_submod, None)
 del _submod
