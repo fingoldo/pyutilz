@@ -93,7 +93,13 @@ async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
     """
     if _catalogue_is_fresh():
         return
-    await asyncio.to_thread(_fetch_models_catalogue, timeout)
+    # asyncio.to_thread was added in Python 3.9; this package still supports 3.8, so run_in_executor
+    # (available since 3.4) is the equivalent off-loop dispatch on the older interpreter.
+    if sys.version_info >= (3, 9):
+        await asyncio.to_thread(_fetch_models_catalogue, timeout)
+    else:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _fetch_models_catalogue, timeout)
 
 
 def _per_token_cost_pair(model: str) -> tuple[float, float]:

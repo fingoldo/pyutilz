@@ -403,6 +403,7 @@ class TestBenchmarkDataframeCompression:
 
     def test_benchmark_return_styled(self, tmp_path):
         """Line 848-852: return_styled=True attempts style.background_gradient."""
+        pytest.importorskip("jinja2")  # pandas.io.formats.style requires jinja2 to even be importable
         from pyutilz.pandaslib import benchmark_dataframe_compression
         df = pd.DataFrame({"a": range(50), "b": np.random.rand(50)})
         result = benchmark_dataframe_compression(

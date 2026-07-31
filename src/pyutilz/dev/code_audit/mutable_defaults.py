@@ -142,7 +142,13 @@ def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> boo
     # `from __future__ import annotations`), so both must be recognized for this exemption to
     # actually cover typing.Optional-style code.
     if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
-        return _is_known_immutable_scalar_annotation(annotation.slice)
+        _slice = annotation.slice
+        # Python < 3.9 wraps Subscript.slice in ast.Index (removed as a distinct node in 3.9,
+        # where Subscript.slice holds the inner expression directly) -- unwrap it so
+        # `Optional[str]` is recognized identically on every supported Python version.
+        if isinstance(_slice, ast.Index):  # type: ignore[attr-defined]  # ast.Index only exists pre-3.9; guarded by isinstance
+            _slice = _slice.value  # type: ignore[attr-defined]
+        return _is_known_immutable_scalar_annotation(_slice)
     return False
 
 

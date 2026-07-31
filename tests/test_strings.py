@@ -545,6 +545,7 @@ class TestEmojiOperations:
 
     def test_get_ascii_emojies(self):
         """Test getting ASCII emojis"""
+        pytest.importorskip("emoji_data_python")
         from pyutilz.strings import get_ascii_emojies
 
         # Should not crash; pytest surfaces the real traceback if it does.
@@ -553,6 +554,7 @@ class TestEmojiOperations:
 
     def test_get_unicode_emojies(self):
         """Test getting Unicode emojis"""
+        pytest.importorskip("emoji_data_python")
         from pyutilz.strings import get_unicode_emojies
 
         # Should not crash; pytest surfaces the real traceback if it does.

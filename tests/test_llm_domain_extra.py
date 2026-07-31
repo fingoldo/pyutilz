@@ -9,6 +9,7 @@ pytest.importorskip("pydantic")
 
 class TestGeminiRetryPredicate:
     def test_retries_on_genai_server_error(self):
+        pytest.importorskip("google.genai")
         from google.genai.errors import ServerError
         from pyutilz.llm.gemini_provider import _is_retryable_genai_error
 
@@ -16,6 +17,7 @@ class TestGeminiRetryPredicate:
         assert _is_retryable_genai_error(exc) is True
 
     def test_retries_on_genai_client_error_429_only(self):
+        pytest.importorskip("google.genai")
         from google.genai.errors import ClientError
         from pyutilz.llm.gemini_provider import _is_retryable_genai_error
 
