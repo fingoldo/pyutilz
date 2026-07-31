@@ -507,6 +507,7 @@ DEP001 = [
 DEP003 = [
     "catboost", "IPython", "nvidia", "polars_ds", "orjson", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
     "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature; now pulled in transitively in some envs (previously genuinely absent)
+    "pgvector",  # database/psycopg2_pool.py -- guarded, only used if the caller's DB has the pgvector extension
 ]
 
 # Interrogate: docstring coverage. Blocking at --fail-under=100 since 2026-07-09 (see the CI
