@@ -50,6 +50,7 @@ from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 from .domain_boundary import scan_domain_vocabulary_leak
+from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
 
 # --- registry -----------------------------------------------------------
 
@@ -137,6 +138,7 @@ register_scanner("inconsistent_filter", scan_inconsistent_filter)
 register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
 register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
+register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a

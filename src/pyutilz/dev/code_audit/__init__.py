@@ -245,6 +245,15 @@ list[Finding]):
   scanner existed (mlframe's ``FeatureCache._lock`` and
   ``training/neural/ranker.py``'s trainer_/CUDA-tensor exclusion).
 
+- ``scan_readonly_to_numpy_mutation``: ``np.fill_diagonal(X, ...)`` /
+  ``np.copyto(X, ...)`` where ``X`` was assigned, earlier in the same
+  function, from an uncopied ``<pandas obj>.to_numpy()`` call. Under
+  pandas Copy-on-Write (default from pandas 3.0, opt-in in 2.x),
+  ``to_numpy()`` can return a read-only view -- the in-place mutation then
+  raises ``ValueError: underlying array is read-only`` at runtime, silent
+  on a non-CoW install and real on a CoW one. Fix: ``.to_numpy(copy=True)``.
+  Generalizes a real bug (2026-07-31, mlframe's ``dataset_diagnostics``).
+
 - ``scan_tautological_is_not_none_only_tests``: a ``test_*`` function whose
   ONLY unconditional assertion(s) are a bare ``X is not None``/``X != None``
   check -- confirms something came back, never that it's the RIGHT thing.
@@ -420,6 +429,7 @@ from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 from .domain_boundary import BoundarySymbol, scan_domain_vocabulary_leak
+from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
 from .field_text_agreement import (
     AGREE,
     CONTRADICT,
@@ -498,6 +508,7 @@ __all__ = [
     "scan_thresholds_below_documented_result",
     "scan_domain_vocabulary_leak",
     "BoundarySymbol",
+    "scan_readonly_to_numpy_mutation",
     # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
     "AGREE",
     "CONTRADICT",
@@ -532,7 +543,7 @@ for _submod in (
     "skip_masking_except", "uncurated_star_export",
     "field_text_agreement",
     "registry", "cli",
-    "domain_boundary",
+    "domain_boundary", "readonly_to_numpy_mutation",
 ):
     globals().pop(_submod, None)
 del _submod

@@ -25,7 +25,7 @@
   "default_via_or::llm/factory.py:125",
   "default_via_or::llm/gemini_provider.py:119",
   "default_via_or::llm/openai_provider.py:132",
-  "default_via_or::llm/openrouter_provider/_catalogue.py:136",
+  "default_via_or::llm/openrouter_provider/_catalogue.py:142",
   "default_via_or::llm/openrouter_provider/_health.py:208",
   "default_via_or::llm/openrouter_provider/_health.py:348",
   "default_via_or::llm/openrouter_provider/_health.py:509",

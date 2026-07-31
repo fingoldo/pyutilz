@@ -118,6 +118,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "hardcoded_test_path": "code_audit scanner; covered by test_code_audit.py",
     "llm_max_tokens_cap": "code_audit scanner; covered by test_code_audit.py",
     "unpicklable_resource_state": "code_audit scanner; covered by test_code_audit.py",
+    "readonly_to_numpy_mutation": "code_audit scanner; covered by test_code_audit.py",
     "skip_masking_except": "code_audit scanner; covered by test_code_audit.py",
     "uncurated_star_export": "code_audit scanner; covered by test_code_audit.py",
     "field_text_agreement": "code_audit field/text cross-check mechanism; covered by test_code_audit.py",
