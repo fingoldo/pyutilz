@@ -20,6 +20,7 @@ from .dead_cli_flags import scan_dead_cli_flags
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
+from .duplicate_function_body import scan_duplicate_function_body
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
@@ -88,6 +89,7 @@ register_scanner("dead_cli_flag", scan_dead_cli_flags)
 register_scanner("log_only_except", scan_log_only_except)
 register_scanner("sql_migration_not_idempotent", scan_sql_migration_idempotency)
 register_scanner("duplicate_condition", scan_duplicate_conditions)
+register_scanner("duplicate_function_body", scan_duplicate_function_body)
 register_scanner("missed_await", scan_missed_await)
 register_scanner("redundant_test_fit_call", scan_redundant_test_fit_calls)
 register_scanner("undeclared_import", scan_undeclared_imports)

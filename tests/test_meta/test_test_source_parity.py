@@ -85,6 +85,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "silent_escalation": "code_audit scanner; covered by test_code_audit.py",
     "sql_migrations": "code_audit scanner; covered by test_code_audit.py",
     "duplicate_conditions": "code_audit scanner; covered by test_code_audit.py",
+    "duplicate_function_body": "code_audit scanner; covered by test_code_audit.py",
     "missed_await": "code_audit scanner; covered by test_code_audit.py",
     "redundant_test_fit": "code_audit scanner; covered by test_code_audit.py",
     "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
