@@ -1,5 +1,6 @@
 [
   "asymmetric_resource_guard::performance/kernel_tuning/cache/cache_class.py:443",
+  "default_via_or::core/serialization.py:208",
   "default_via_or::dev/benchmarking.py:177",
   "default_via_or::dev/benchmarking.py:189",
   "default_via_or::dev/benchmarking.py:205",

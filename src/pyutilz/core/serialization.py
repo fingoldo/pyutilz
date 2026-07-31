@@ -19,10 +19,12 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 import sys
 import io
+import itertools
+import uuid
 import pickle, zlib, os  # nosec B403 - pickle.dumps/loads here operate on caller-provided in-process objects/paths for serialize()/unserialize(); untrusted-path loading is additionally gated via the optional verify_sidecar path (see pyutilz.core.safe_pickle)
 from pyutilz.system import system
 from pyutilz.core.safe_pickle import PickleVerificationError
@@ -154,3 +156,86 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
         raise
     except Exception as e:
         logger.exception(e)
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Atomic file writes
+# ----------------------------------------------------------------------------------------------------------------------------
+
+# Monotonic counter for the atomic-write temp-file name suffix. Combined with PID + an 8-byte uuid
+# hex this gives a unique name without paying mkstemp's O_EXCL retry loop, which on Windows is
+# roughly 30x slower than a direct os.open due to Defender / filesystem-filter-driver intercepts
+# on the secure-name-generation probe.
+_ATOMIC_WRITE_COUNTER = itertools.count(0)
+
+
+def _atomic_write_counter() -> int:
+    """Next value of the monotonic counter used (with PID + a uuid suffix) to name atomic-write
+    temp files uniquely, avoiding ``mkstemp``'s much slower O_EXCL retry loop on Windows."""
+    return next(_ATOMIC_WRITE_COUNTER)
+
+
+def atomic_write_bytes(target_path: str, writer_fn: Callable[[Any], None], *, fsync: bool = False) -> None:
+    """Atomically write to ``target_path`` via write-tmp-then-rename.
+
+    A plain ``with open(target_path, "wb") as f: ...`` lets two parallel writers truncate each
+    other mid-write -- a subsequent load then raises an opaque ``UnpicklingError``/``EOFError``,
+    with no way to tell corruption from a legitimate version mismatch.
+
+    This helper:
+      1. Creates a temp file in the SAME directory (``os.replace`` across filesystems isn't
+         atomic; same-FS is).
+      2. Invokes ``writer_fn(fileobj)`` -- the caller owns the bytes.
+      3. ``os.replace()`` atomically renames tmp -> target (works on both POSIX and Windows since
+         Python 3.3; ``os.rename`` on Windows would fail when the target already exists).
+      4. Cleans up the tmp file on any exception so a failed write doesn't leak a
+         ``target.xyz.tmp`` file alongside the real one.
+
+    The atomicity guarantee: a concurrent reader either sees the complete pre-write file or the
+    complete post-write file, never a partial one. Concurrent writers still race (last writer
+    wins), but neither produces corruption.
+
+    ``fsync``: when True, calls ``f.flush()`` + ``os.fsync(fd)`` before the rename so the new
+    contents survive a power loss BEFORE the OS page-cache commits. This is the dominant cost on
+    Windows (``FlushFileBuffers`` blocks until the disk write cache is committed -- measured
+    ~400ms per call on commodity SSDs even for ~1MB files), so it defaults to False: the atomic
+    write-tmp-then-rename semantics still hold WITHOUT fsync (concurrent readers never see a
+    partial file), only the post-rename DURABILITY window is shortened (the OS flushes the page
+    cache to physical disk within a few seconds; a power loss in that window may leave a
+    freshly-renamed file with its contents only on RAM-side pages). Pass ``fsync=True`` explicitly
+    when writing state that must survive a crash immediately after the call returns.
+    """
+    target_dir = os.path.dirname(target_path) or "."
+    _tmp_basename = f"{os.path.basename(target_path)}.tmp.{os.getpid()}.{_atomic_write_counter():d}.{uuid.uuid4().hex[:8]}"
+    tmp_path = os.path.join(target_dir, _tmp_basename)
+    fd = os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL)
+    # fd ownership: passed to os.fdopen -> the resulting BufferedWriter takes ownership and closes
+    # on context exit. But if os.fdopen itself raises (rare: MemoryError during buffer alloc, or
+    # an invalid-mode TypeError after a future refactor), the raw fd is never adopted and Python
+    # leaks it -- under sustained write pressure this exhausts the process fd ceiling. Track
+    # adoption via a flag and explicitly close in the except branch when adoption never happened.
+    _fd_adopted = False
+    try:
+        with os.fdopen(fd, "wb") as f:
+            _fd_adopted = True  # BufferedWriter now owns fd; on with-exit it closes.
+            writer_fn(f)
+            if fsync:
+                # fsync inside the with-block: pickle.dump/dill.dump/numpy.save only flush their
+                # own buffers, not the OS page cache. Without an explicit fsync, a power loss
+                # between rename and writeback can publish a visible filename whose contents are
+                # still dirty pages.
+                f.flush()
+                os.fsync(f.fileno())
+        os.replace(tmp_path, target_path)
+    except Exception:
+        if not _fd_adopted:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
