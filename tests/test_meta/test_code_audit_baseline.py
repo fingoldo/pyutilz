@@ -34,8 +34,9 @@ PYUTILZ_DIR = Path(pyutilz.__file__).resolve().parent
 _BASELINE_PATH = Path(__file__).resolve().parent / "_code_audit_baseline.json"
 
 
-def test_no_new_code_audit_findings():
+def test_no_new_code_audit_findings(request):
     assert_no_new_code_audit_findings(
         root=PYUTILZ_DIR,
         baseline_path=_BASELINE_PATH,
+        request=request,
     )
