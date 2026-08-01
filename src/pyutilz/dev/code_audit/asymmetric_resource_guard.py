@@ -89,13 +89,14 @@ class _GuardedCallVisitor(ast.NodeVisitor):
         this visitor's configured guard-name sets."""
         return _is_guard_context_expr(expr, self.guard_call_names, self.guard_attr_names)
 
-    def visit_With(self, node: ast.With) -> None:
-        """ast.NodeVisitor dispatch target for a ``with`` block."""
+    def visit_With(self, node: "ast.With | ast.AsyncWith") -> None:
+        """ast.NodeVisitor dispatch target for a ``with``/``async with`` block."""
         self._visit_with(node)
 
-    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
-        """ast.NodeVisitor dispatch target for an ``async with`` block."""
-        self._visit_with(node)
+    # ``async with`` shares the exact same handling as ``with`` -- alias the dispatch
+    # target rather than defining a second identical method (ast.NodeVisitor requires
+    # both names to exist since Python routes on the node's own class name).
+    visit_AsyncWith = visit_With  # noqa: N815 - name is fixed by the ast.NodeVisitor dispatch protocol
 
     def visit_Call(self, node: ast.Call) -> None:
         """ast.NodeVisitor dispatch target for a Call; records a hit for any

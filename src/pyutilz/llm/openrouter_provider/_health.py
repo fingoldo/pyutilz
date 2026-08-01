@@ -11,26 +11,15 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import httpx
 
-from pyutilz.llm.openrouter_provider._catalogue import _fetch_models_catalogue
+from pyutilz.llm.openrouter_provider._catalogue import _fetch_models_catalogue, _pkg
 
 logger = logging.getLogger(__name__)
-
-
-def _pkg():
-    """Return the package facade (owns mutable caches + monkeypatch targets).
-
-    Resolved via ``sys.modules`` (not a top-level import) so the static
-    import graph stays acyclic; the facade is fully initialised by the
-    time any of these functions run.
-    """
-    return sys.modules["pyutilz.llm.openrouter_provider"]
 
 
 # The process-wide health cache + its cap/lock + the endpoints URL template

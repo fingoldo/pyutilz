@@ -20,19 +20,10 @@ def _names_referenced(tree: ast.AST) -> set[str]:
 
 
 def _loop_target_names(node: ast.For | ast.AsyncFor) -> set[str]:
-    """Names bound by a for-loop target (handles tuple unpacking)."""
-    names: set[str] = set()
-    def _walk(t: ast.AST) -> None:
-        """Recursively collect Name ids bound by a (possibly nested/starred) for-loop target into the enclosing ``names`` set."""
-        if isinstance(t, ast.Name):
-            names.add(t.id)
-        elif isinstance(t, (ast.Tuple, ast.List)):
-            for el in t.elts:
-                _walk(el)
-        elif isinstance(t, ast.Starred):
-            _walk(t.value)
-    _walk(node.target)
-    return names
+    """Names bound by a for-loop target (handles tuple unpacking) -- a ``For``/``AsyncFor``
+    node's target is structurally the same shape ``_loop_target_names_from_target`` already
+    walks for comprehensions, so this just unwraps ``.target`` and delegates."""
+    return _loop_target_names_from_target(node.target)
 
 
 _SYNCHRONOUS_CONSUMERS = frozenset({

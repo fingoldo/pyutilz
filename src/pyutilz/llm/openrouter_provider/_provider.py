@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from typing import Any
 
 import httpx
@@ -43,20 +42,12 @@ from pyutilz.llm.openrouter_provider._catalogue import (
     _resolve_model_limits,
     _fetch_models_catalogue,
     _ensure_catalogue_warm_async,
+    _pkg,
 )
 from pyutilz.llm.openrouter_provider._health import _summarize_endpoints
 
 logger = logging.getLogger(__name__)
 
-
-def _pkg():
-    """Return the package facade (owns mutable caches + monkeypatch targets).
-
-    Resolved via ``sys.modules`` (not a top-level import) so the static
-    import graph stays acyclic; the facade is fully initialised by the
-    time any of these functions run.
-    """
-    return sys.modules["pyutilz.llm.openrouter_provider"]
 
 class OpenRouterProvider(OpenAICompatibleProvider):
     """OpenRouter meta-provider via OpenAI-compatible chat/completions API.
