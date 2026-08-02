@@ -72,6 +72,15 @@ dependencies = [
     # own (unlike scipy/Pillow), declaring it core (rather than refactoring six submodules'
     # worth of eager imports into a lazy, per-symbol-aware __getattr__) is the honest fix.
     "psutil>=5.9",
+    # Same eager-import-all-six-submodules design as psutil above: system/system/memory.py
+    # (one of the six) unconditionally imports pandas at module level too, and
+    # system/parallel.py's applyfunc_parallel (return_dataframe=True default path) does the
+    # same -- found 2026-08-03, downstream of the psutil fix but missed at the time. Any extras
+    # combination that doesn't happen to also pull in a "pandas" extras group (e.g. a bare
+    # install, or `[llm]` alone) broke on `import pyutilz.system.system` /
+    # `import pyutilz.system.parallel` with ModuleNotFoundError. Promoting to core, not
+    # redeclaring in yet another extras group, for the identical reason psutil was.
+    "pandas>=1.5",
     # system/config.py unconditionally imports tomllib (stdlib only since Python 3.11, PEP 680)
     # with no guard -- found 2026-07-21 audit: broke the declared Python 3.8/3.9/3.10 support
     # floor outright, on every extras combination, not just a packaging gap. `tomli` is the
