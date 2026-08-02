@@ -38,9 +38,20 @@ class SingleFlightCache(Generic[_K, _V]):
 
     def __init__(self) -> None:
         self._inflight: Dict[Hashable, "asyncio.Event"] = {}
-        self._inflight_lock = asyncio.Lock()
+        # Lazily created on first async use (see _get_inflight_lock) rather than here: on Python
+        # 3.8/3.9, asyncio.Lock()'s constructor eagerly calls get_event_loop(), which raises
+        # "There is no current event loop in thread 'MainThread'" when instantiated from sync
+        # code with no event loop yet running/set in this thread (e.g. a plain, non-async test
+        # or any other sync construction site) -- found 2026-08-03.
+        self._inflight_lock: Optional[asyncio.Lock] = None
         self.hits = 0
         self.misses = 0
+
+    def _get_inflight_lock(self) -> asyncio.Lock:
+        """Return the shared in-flight lock, creating it on first (always async) use."""
+        if self._inflight_lock is None:
+            self._inflight_lock = asyncio.Lock()
+        return self._inflight_lock
 
     def __getstate__(self) -> Dict[str, Any]:
         """Drop the unpicklable asyncio.Lock/Event state; __setstate__ rebuilds it fresh.
@@ -55,9 +66,10 @@ class SingleFlightCache(Generic[_K, _V]):
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
-        """Restore state from __getstate__ and rebuild a fresh asyncio.Lock."""
+        """Restore state from __getstate__; the lock is rebuilt lazily on next async use
+        (see __init__), not here -- unpickling itself is sync and must not eagerly construct one."""
         self.__dict__.update(state)
-        self._inflight_lock = asyncio.Lock()
+        self._inflight_lock = None
 
     def get_cache_metrics(self) -> Dict[str, float]:
         """Return current hit/miss counters and hit rate (0-100)."""
@@ -101,7 +113,7 @@ class SingleFlightCache(Generic[_K, _V]):
         self.misses += 1
         is_fetcher = False
         evt: Optional[asyncio.Event] = None
-        async with self._inflight_lock:
+        async with self._get_inflight_lock():
             # Re-check after acquiring the lock -- another coroutine may have finished the fetch
             # while we were waiting for the lock.
             if key in cache:
@@ -134,7 +146,7 @@ class SingleFlightCache(Generic[_K, _V]):
             logger.debug("SingleFlightCache.get_or_fetch: fetcher for %r raised; returning default (not cached)", key, exc_info=True)
             return default
         finally:
-            async with self._inflight_lock:
+            async with self._get_inflight_lock():
                 evt = self._inflight.pop(key, None)
             if evt is not None:
                 evt.set()

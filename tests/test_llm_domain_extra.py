@@ -181,7 +181,6 @@ class TestLLMTruncationErrorWiring:
 
         p._client = type("C", (), {"post": fake_post})()
         p.model_name = "gpt-4o"
-        p.semaphore = asyncio.Semaphore(1)
         p.total_prompt_tokens = 0
         p.total_completion_tokens = 0
         p.total_cache_hit_tokens = 0
@@ -197,6 +196,11 @@ class TestLLMTruncationErrorWiring:
         p.last_citations = []
 
         async def run():
+            # Constructed inside the running loop -- on Python 3.8/3.9, asyncio.Semaphore()'s
+            # constructor eagerly calls get_event_loop(), which raises "There is no current
+            # event loop in thread 'MainThread'" when built from this test's sync body instead
+            # (found 2026-08-03).
+            p.semaphore = asyncio.Semaphore(1)
             with pytest.raises(LLMTruncationError):
                 await p.generate("hi", max_tokens=5)
 
