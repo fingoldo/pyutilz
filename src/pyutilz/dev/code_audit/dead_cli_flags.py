@@ -36,6 +36,22 @@ def _is_add_argument_call(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument"
 
 
+def _is_self_handling_action(call: ast.Call) -> bool:
+    """True if ``call`` declares ``action="version"`` or ``action="help"``.
+
+    Both are argparse BUILT-IN actions that print their output and call
+    ``parser.exit()`` internally, entirely inside argparse's own
+    ``__call__`` -- application code never reads ``args.<dest>`` for
+    either, by design (there IS no "after parsing" for a version/help
+    flag; the process has already exited). Flagging these as "dead" would
+    be a permanent, universal false positive for the extremely common
+    ``add_argument("--version", action="version", version=...)`` idiom."""
+    for kw in call.keywords:
+        if kw.arg == "action" and isinstance(kw.value, ast.Constant) and kw.value.value in ("version", "help"):
+            return True
+    return False
+
+
 def scan_dead_cli_flags(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -99,6 +115,8 @@ def scan_dead_cli_flags(
             # Selenium's, so it's no longer flagged even if genuinely dead (a narrow, low-risk
             # gap traded for eliminating a confirmed, concrete false-positive class).
             if not node.keywords:
+                continue
+            if _is_self_handling_action(node):
                 continue
             name = _flag_dest_name(node)
             if not name or name == "help":

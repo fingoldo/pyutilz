@@ -1412,6 +1412,35 @@ def main():
     assert scan_dead_cli_flags(tmp_path) == []
 
 
+def test_dead_cli_flag_version_action_not_flagged(tmp_path: Path):
+    """--version, action="version" is a universal argparse idiom: the built-in action
+    prints and exits internally, application code never reads args.version -- must
+    never be flagged regardless of how common this exact shape is."""
+    _write(tmp_path, "ok.py", """
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--version", action="version", version="%(prog)s 1.0")
+    parser.parse_args()
+""")
+    assert scan_dead_cli_flags(tmp_path) == []
+
+
+def test_dead_cli_flag_help_action_not_flagged(tmp_path: Path):
+    """A manual add_argument("--info", action="help") is the same self-handling
+    shape as the built-in -h/--help, just under a different flag name."""
+    _write(tmp_path, "ok2.py", """
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--info", action="help")
+    parser.parse_args()
+""")
+    assert scan_dead_cli_flags(tmp_path) == []
+
+
 def test_cli_flag_explicit_dest_used(tmp_path: Path):
     _write(tmp_path, "ok.py", """
 import argparse
