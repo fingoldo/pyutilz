@@ -65,7 +65,11 @@ class TomlLiveConfig:
         self._check_interval = check_interval
         self._defaults: dict[str, dict[str, Any]] = defaults or {}
         self._log = logger or _log
-        self._lock = threading.Lock()
+        # RLock, not Lock: `_reload()` runs under `_maybe_reload()`'s lock (line ~128), and a
+        # subclass overriding `_reload()` to assign through the public `data` setter (the
+        # documented, thread-safe way to replace data, see that setter's docstring) would
+        # otherwise deadlock re-acquiring a plain Lock already held by the same thread.
+        self._lock = threading.RLock()
         self._data: dict[str, Any] = {}
         self._mtime: float = 0.0
         self._last_check: float = 0.0
@@ -80,9 +84,9 @@ class TomlLiveConfig:
         return state
 
     def __setstate__(self, state: dict) -> None:
-        """Restore state and re-create the ``threading.Lock`` dropped by ``__getstate__``."""
+        """Restore state and re-create the ``threading.RLock`` dropped by ``__getstate__``."""
         self.__dict__.update(state)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # ── Internal reload logic ──────────────────────────────────────────
 

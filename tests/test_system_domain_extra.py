@@ -163,6 +163,36 @@ class TestTomlLiveConfigDataSetterLock:
         assert acquired_during_setter, "the setter must acquire self._lock"
         assert cfg._data == {"section": {"key": 2}}
 
+    def test_reload_override_using_data_setter_does_not_deadlock(self, tmp_path):
+        """Regression: `_maybe_reload()` calls `self._reload()` while already holding
+        `self._lock` (see the `with self._lock:` block around the `_reload()` call). A subclass
+        overriding `_reload()` to assign through the public `data` setter -- the documented,
+        thread-safe way to replace `_data` -- would deadlock on a plain `threading.Lock`, which
+        is not reentrant: the setter's own `with self._lock:` blocks forever waiting on a lock
+        the same thread already holds. `self._lock` must be a `threading.RLock` so this is safe."""
+        toml_path = tmp_path / "cfg.toml"
+        toml_path.write_text("[section]\nkey = 1\n", encoding="utf-8")
+
+        class _ReloadsThroughSetter(TomlLiveConfig):
+            def _reload(self) -> None:
+                self.data = {"section": {"key": 2}}
+
+        cfg = _ReloadsThroughSetter(str(toml_path), check_interval=0.0)
+        cfg._last_check = 0.0  # force _maybe_reload() to actually run _reload()
+
+        done = threading.Event()
+
+        def _trigger():
+            cfg._maybe_reload()
+            done.set()
+
+        t = threading.Thread(target=_trigger, daemon=True)
+        t.start()
+        t.join(timeout=5.0)
+
+        assert done.is_set(), "deadlocked: _reload() running under self._lock could not re-enter it via the data setter"
+        assert cfg._data == {"section": {"key": 2}}
+
 
 class TestBenchmarkExceptionIsolation:
     def test_time_backend_raising_fn_returns_inf_not_raises(self):
