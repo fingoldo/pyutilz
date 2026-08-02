@@ -139,109 +139,73 @@ def benchmark_dataframe_parquet_compression(
     )
 
 
-def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
-    """Benchmark pickle read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
-    file_format = "pickle"
+def _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep):
+    """Run one file_format's read/write compression sweep and append each config's results to
+    ``res`` in place. ``sweep`` is an iterable of ``(compr_label, read_method, read_params,
+    write_method, write_params)`` tuples; an empty ``compr_label`` means a single default
+    config (no compression suffix in the config name/filename).
 
-    # for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
-    for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
-        config = f"{file_format}-{compr}"  # -{level}
-
-        fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
+    2026-08-02 near-duplicate-function-body finding: the pickle/hdf/csv/orc/feather compression
+    benchmarks independently duplicated this file-naming + measure + pack step around their own
+    per-config loop; only the per-format list of configs to sweep now differs between them.
+    """
+    for compr_label, read_method, read_params, write_method, write_params in sweep:
+        config = f"{file_format}-{compr_label}" if compr_label else file_format
+        suffix = f".{compr_label}" if compr_label else ""
+        fname = join(temp_folder, rf"{config}.{file_format}{suffix}")
         read_times, write_times, read_sizes, write_sizes = _facade.measure_read_write_performance(
             df=df,
             fname=fname,
-            read_method="read_pickle",
-            read_params=dict(compression={"method": compr}),
-            write_method="to_pickle",
-            write_params=dict(compression={"method": compr}, protocol=-1),  # "compresslevel": level
+            read_method=read_method,
+            read_params=read_params,
+            write_method=write_method,
+            write_params=write_params,
             nrepeats=nrepeats,
         )
-
         _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+
+
+def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
+    """Benchmark pickle read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
+    file_format = "pickle"
+    sweep = (
+        (compr, "read_pickle", dict(compression={"method": compr}), "to_pickle", dict(compression={"method": compr}, protocol=-1))
+        for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False)
+    )
+    _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 
 def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
     """Benchmark HDF5 read/write across compression libraries (zlib/lzo/bzip2/blosc) and compression levels, appending each config's results to ``res`` in place."""
     file_format = "hdf"
 
-    for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
-        for compr in tqdmu("zlib lzo bzip2 blosc".split(), desc=f"{file_format} compression method", leave=False):
-            config = f"{file_format}-{compr}"  # -{level}
+    def sweep():
+        """Yield one (compr, read_method, read_params, write_method, write_params) tuple per (level, compr) combination."""
+        for level in tqdmu(range(1, 10), desc=f"{file_format} engine", leave=False):
+            for compr in tqdmu("zlib lzo bzip2 blosc".split(), desc=f"{file_format} compression method", leave=False):
+                yield compr, "read_hdf", dict(complib=compr), "to_hdf", dict(complib=compr, complevel=level, key="test")
 
-            fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
-            read_times, write_times, read_sizes, write_sizes = _facade.measure_read_write_performance(
-                df=df,
-                fname=fname,
-                read_method="read_hdf",
-                read_params=dict(complib=compr),
-                write_method="to_hdf",
-                write_params=dict(complib=compr, complevel=level, key="test"),
-                nrepeats=nrepeats,
-            )
-
-            _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+    _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep())
 
 
 def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
     """Benchmark CSV read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "csv"
-
-    for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
-        config = f"{file_format}-{compr}"
-
-        fname = join(temp_folder, rf"{config}.{file_format}.{compr}")
-        read_times, write_times, read_sizes, write_sizes = _facade.measure_read_write_performance(
-            df=df,
-            fname=fname,
-            read_method="read_csv",
-            read_params=dict(compression={"method": compr}),
-            write_method="to_csv",
-            write_params=dict(compression={"method": compr}),
-            nrepeats=nrepeats,
-        )
-
-        _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+    sweep = (
+        (compr, "read_csv", dict(compression={"method": compr}), "to_csv", dict(compression={"method": compr}))
+        for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False)
+    )
+    _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 
 def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
     """Benchmark ORC read/write (single default config), appending the results to ``res`` in place."""
-    file_format = "orc"
-
-    config = f"{file_format}"
-
-    fname = join(temp_folder, rf"{config}.{file_format}")
-    read_times, write_times, read_sizes, write_sizes = _facade.measure_read_write_performance(
-        df=df,
-        fname=fname,
-        read_method="read_orc",
-        read_params=dict(),
-        write_method="to_orc",
-        write_params=dict(),
-        nrepeats=nrepeats,
-    )
-
-    _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+    _run_compression_sweep(res, temp_folder, df, nrepeats, "orc", [("", "read_orc", dict(), "to_orc", dict())])
 
 
 def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
     """Benchmark feather read/write (single default config), appending the results to ``res`` in place."""
-    file_format = "feather"
-
-    config = f"{file_format}"
-
-    fname = join(temp_folder, rf"{config}.{file_format}")
-    read_times, write_times, read_sizes, write_sizes = _facade.measure_read_write_performance(
-        df=df,
-        fname=fname,
-        read_method="read_feather",
-        read_params=dict(),
-        write_method="to_feather",
-        write_params=dict(),
-        nrepeats=nrepeats,
-    )
-
-    _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
+    _run_compression_sweep(res, temp_folder, df, nrepeats, "feather", [("", "read_feather", dict(), "to_feather", dict())])
 
 
 def benchmark_dataframe_compression(

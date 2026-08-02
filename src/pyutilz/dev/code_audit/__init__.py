@@ -84,8 +84,10 @@ list[Finding]):
   one changed constant, or one extra guard clause, which a byte-exact check
   cannot see. ``Finding.check`` is ``"near_duplicate_function_body"``,
   severity ``Low`` -- a human should judge unify-vs-independent before acting.
-  In ``OPT_IN_ONLY``: similarity is a judgment call, not unambiguously a fresh
-  mistake.
+  Default-on (2026-08-02): confirmed useful in the wild against a real
+  ~2000-function corpus (found and drove real fixes, not just noise), and
+  severity ``Low`` already signals "review before acting" without needing
+  an opt-in gate on top of that.
 
 - ``scan_duplicate_conditions``: three copy-paste-typo shapes, all
   emitted under this one scanner (distinct ``Finding.check`` values --

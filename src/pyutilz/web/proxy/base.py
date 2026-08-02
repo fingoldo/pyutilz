@@ -201,16 +201,23 @@ class PortHealthTracker:
         now = time.monotonic()
         with self._lock:
             self._trim_all(now)
-            ps = self._ports.setdefault(port_offset, _PortStats())
-            ps.record(now, is_error=True)
+            self._record_unlocked(port_offset, now, is_error=True)
             self._maybe_ban(port_offset, now)
 
     def report_success(self, port_offset: int) -> None:
         """Record a successful request for *port_offset*."""
         now = time.monotonic()
         with self._lock:
-            ps = self._ports.setdefault(port_offset, _PortStats())
-            ps.record(now, is_error=False)
+            self._record_unlocked(port_offset, now, is_error=False)
+
+    def _record_unlocked(self, port_offset: int, now: float, *, is_error: bool) -> None:
+        """Record one request outcome for *port_offset* (caller must hold ``_lock``).
+
+        2026-08-02 near-duplicate-function-body finding: report_error/report_success
+        independently duplicated this setdefault-then-record step.
+        """
+        ps = self._ports.setdefault(port_offset, _PortStats())
+        ps.record(now, is_error=is_error)
 
     def is_banned(self, port_offset: int) -> bool:
         """Check if *port_offset* is currently banned."""

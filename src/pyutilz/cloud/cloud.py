@@ -32,18 +32,23 @@ S3_BUCKET_NAME = None  # To be configured by user
 # --------------------------------------------------------------------------------------------------------------
 
 
-def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name, acc_file):
-    """Upload a local file to a GCS bucket using a service-account JSON key file."""
+def _gcp_storage_bucket(bucket_name, acc_file):
+    """Open a GCS bucket handle using a service-account JSON key file.
+
+    2026-08-02 near-duplicate-function-body finding: gcp_storage_upload_blob and
+    gcp_storage_download_blob independently duplicated this client/bucket setup;
+    extracted so a future change (retry config, a different auth path) lands once.
+    """
     from google.cloud import storage
 
-    # bucket_name = "your-bucket-name"
-    # source_file_name = "local/path/to/file"
-    # destination_blob_name = "storage-object-name"
-
     storage_client = storage.Client.from_service_account_json(acc_file)
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(destination_blob_name)
+    return storage_client.bucket(bucket_name)
 
+
+def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name, acc_file):
+    """Upload a local file to a GCS bucket using a service-account JSON key file."""
+    bucket = _gcp_storage_bucket(bucket_name, acc_file)
+    blob = bucket.blob(destination_blob_name)
     blob.upload_from_filename(source_file_name)
 
     logger.info("File %s uploaded to %s.", source_file_name, destination_blob_name)
@@ -51,15 +56,7 @@ def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name
 
 def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_name, acc_file):
     """Download a blob from a GCS bucket to a local file using a service-account JSON key file."""
-    from google.cloud import storage
-
-    # bucket_name = "your-bucket-name"
-    # source_blob_name = "storage-object-name"
-    # destination_file_name = "local/path/to/file"
-
-    storage_client = storage.Client.from_service_account_json(acc_file)
-
-    bucket = storage_client.bucket(bucket_name)
+    bucket = _gcp_storage_bucket(bucket_name, acc_file)
 
     # Construct a client side representation of a blob.
     # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve

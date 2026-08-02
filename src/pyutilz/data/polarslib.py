@@ -42,6 +42,19 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _cols_matching(df: pl.DataFrame, predicate: pl.Expr) -> pl.DataFrame:
+    """Return a DataFrame keeping only the columns for which ``predicate`` (a single-row-per-column
+    boolean aggregate expression, e.g. ``cs.numeric().is_infinite().any()``) evaluates True.
+
+    2026-08-02 near-duplicate-function-body finding: find_nan_cols and find_infinite_cols
+    independently duplicated this evaluate-then-filter-columns logic; extracted so a future
+    caller (a third "find X cols" helper) doesn't paste a third copy.
+    """
+    meta = df.select(predicate)
+    true_cols = meta.row(0)
+    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+
+
 def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
     """Return a DataFrame keeping only the numeric columns that contain at least one NaN or null value.
 
@@ -49,16 +62,12 @@ def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
     both), so both ``is_nan()`` and ``is_null()`` are checked -- an all-null column would otherwise
     be invisible to a caller expecting pandas-style semantics.
     """
-    meta = df.select(cs.numeric().is_nan().fill_null(False).any() | cs.numeric().is_null().any())
-    true_cols = meta.row(0)
-    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+    return _cols_matching(df, cs.numeric().is_nan().fill_null(False).any() | cs.numeric().is_null().any())
 
 
 def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
     """Return a DataFrame keeping only the numeric columns that contain at least one infinite value."""
-    meta = df.select(cs.numeric().is_infinite().any())
-    true_cols = meta.row(0)
-    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
+    return _cols_matching(df, cs.numeric().is_infinite().any())
 
 
 def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
@@ -719,19 +728,32 @@ def create_ts_features_polars(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _group_freqs(bins: pl.DataFrame, cols) -> Any:
+    """Empirical frequency array (sums to 1) for a group-by of ``cols`` (a column name or a list
+    of column names) over ``bins``.
+
+    2026-08-02 near-duplicate-function-body finding: entropy_for_column and mi_for_column
+    independently duplicated this group_by-then-normalize step (single-column for the marginal,
+    two-column for the joint); extracted alongside ``_shannon_entropy`` below.
+    """
+    return bins.group_by(cols).agg(pl.len())["len"].to_numpy() / len(bins)
+
+
+def _shannon_entropy(freqs: Any) -> float:
+    """Shannon entropy (in nats) of a discrete frequency distribution that sums to 1."""
+    return -np.sum(freqs * np.log(freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+
+
 def entropy_for_column(bins: pl.DataFrame, col: str) -> float:
     """Compute the Shannon entropy (in nats) of the discrete (already-binned) values in ``bins[col]``."""
-    marginal_freqs = bins.group_by(col).agg(pl.len())["len"].to_numpy() / len(bins)
-    return -np.sum(marginal_freqs * np.log(marginal_freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return _shannon_entropy(_group_freqs(bins, col))
 
 
 def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str) -> float:
     """Compute the mutual information between binned columns ``col`` and ``target_col``, using precomputed marginal entropies
     from ``entropies`` and the joint entropy of the two columns (mi = H(col) + H(target) - H(col, target))."""
-    joint_freqs = bins.group_by([col, target_col]).agg(pl.len())["len"].to_numpy() / len(bins)
-    joint_entropy = -np.sum(joint_freqs * np.log(joint_freqs))
-    mi = entropies[target_col] + entropies[col] - joint_entropy
-    return mi  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col]))
+    return entropies[target_col] + entropies[col] - joint_entropy  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
 _BIN_DTYPE_MAX: Dict[Any, int] = {

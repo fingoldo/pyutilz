@@ -178,10 +178,6 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     "regex_integer_parse_truncation",
     "threshold_below_documented_result",
     "domain_vocabulary_leak",
-    # Similarity is a judgment call, not a fresh mistake: two functions that are 99% alike may be
-    # deliberate copy-paste drift worth unifying, or two independently-evolved implementations that
-    # happen to still look alike -- a project opts in once it's ready to triage that distinction.
-    "near_duplicate_function_body",
 })
 
 

@@ -996,13 +996,26 @@ class KernelTuningCache:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
 
-    def _maybe_steal_migration_claim(self, claim: str) -> bool:
-        """Like ``_maybe_steal_marker`` but for the legacy-migration claim (no ``hooks``
-        callback, no kernel_name -- the migration claim is process-global, not per-kernel).
-        Steal (return True) iff the owning pid is dead OR start_ts is older than the max-sweep
-        budget; else give up (False)."""
+    def _decide_steal(self, path: str) -> tuple[bool, int, float, bool, float]:
+        """Read a claim/marker JSON file at ``path`` and decide whether it's stealable.
+
+        2026-08-02 near-duplicate-function-body finding: _maybe_steal_migration_claim and
+        _maybe_steal_marker independently duplicated this whole read-and-decide step; extracted
+        so the two callers differ only in what they do with a "yes, steal it" verdict (marker
+        removal, ``hooks`` notification, log message wording).
+
+        Returns ``(should_steal, pid, age, owner_dead, budget)``. Steal (True) iff the owning
+        pid is dead OR the claim/marker is older than the max-sweep budget; else give up
+        (False). INCOMPLETE-MARKER GUARD: a marker/claim missing pid/start_ts is either a peer
+        caught mid-creation (the legacy O_EXCL-then-write fallback's empty-file window) or a
+        process that crashed between create and write. Do NOT steal it on the empty-payload
+        heuristic alone (pid=0 -> _pid_alive False; start_ts=0 -> age=inf > budget) -- that is
+        exactly the double-sweep race. Fall back to the file mtime as the age: a FRESH
+        incomplete marker (within budget) means a live peer is publishing -> give up; only an
+        mtime-stale one is a genuine crash to steal.
+        """
         try:
-            with open(claim, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 info = json.load(f)
         except (OSError, json.JSONDecodeError):
             info = {}
@@ -1011,17 +1024,26 @@ class KernelTuningCache:
         budget = _sweep_budget_seconds()
         if pid <= 0 or start_ts <= 0.0:
             try:
-                age = time.time() - os.path.getmtime(claim)
+                age = time.time() - os.path.getmtime(path)
             except OSError:
                 age = float("inf")
             if age <= budget:
-                return False  # a peer is mid-creation -> let it finish
+                return False, pid, age, False, budget  # a peer is mid-creation -> let it finish
         else:
             age = time.time() - start_ts
         same_host = info.get("host") in (None, hw_fingerprint())
+        # Only trust the pid-liveness probe for a marker/claim written on THIS host.
         owner_dead = same_host and not _pid_alive(pid)
         if not (owner_dead or age > budget):
-            return False  # a live, in-budget migrator owns it -> give up
+            return False, pid, age, owner_dead, budget  # a live, in-budget owner -> give up
+        return True, pid, age, owner_dead, budget
+
+    def _maybe_steal_migration_claim(self, claim: str) -> bool:
+        """Like ``_maybe_steal_marker`` but for the legacy-migration claim (no ``hooks``
+        callback, no kernel_name -- the migration claim is process-global, not per-kernel)."""
+        should_steal, pid, age, owner_dead, budget = self._decide_steal(claim)
+        if not should_steal:
+            return False
         logger.info("kernel_tuning_cache: stealing stale migration claim (pid=%s alive=%s age=%.0fs budget=%.0fs)", pid, not owner_dead, age, budget)
         with contextlib.suppress(OSError):
             os.remove(claim)
@@ -1033,34 +1055,9 @@ class KernelTuningCache:
         (False). Stealing is itself racy-safe: we remove the stale marker and
         re-create via O_EXCL; if a third process beats us to the recreate, we lose
         the claim (return False) -- correct, exactly one sweeper wins."""
-        try:
-            with open(marker, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            info = {}
-        pid = int(info.get("pid", 0) or 0)
-        start_ts = float(info.get("start_ts", 0.0) or 0.0)
-        budget = _sweep_budget_seconds()
-        # INCOMPLETE-MARKER GUARD: a marker missing pid/start_ts is either a peer caught mid-creation (the
-        # legacy O_EXCL-then-write fallback's empty-file window) or a process that crashed between create and
-        # write. Do NOT steal it on the empty-payload heuristic alone (pid=0 -> _pid_alive False; start_ts=0 ->
-        # age=inf > budget) -- that is exactly the double-sweep race. Fall back to the file mtime as the age:
-        # a FRESH incomplete marker (within budget) means a live peer is publishing -> give up; only an mtime-
-        # stale one is a genuine crash to steal.
-        if pid <= 0 or start_ts <= 0.0:
-            try:
-                age = time.time() - os.path.getmtime(marker)
-            except OSError:
-                age = float("inf")
-            if age <= budget:
-                return False  # a peer is mid-creation -> let it finish
-        else:
-            age = time.time() - start_ts
-        same_host = info.get("host") in (None, hw_fingerprint())
-        # Only trust the pid-liveness probe for a marker written on THIS host.
-        owner_dead = same_host and not _pid_alive(pid)
-        if not (owner_dead or age > budget):
-            return False  # a live, in-budget sweeper owns it -> give up
+        should_steal, pid, age, owner_dead, budget = self._decide_steal(marker)
+        if not should_steal:
+            return False
         logger.info(
             "kernel_tuning_cache: stealing stale sweep marker for %s " "(pid=%s alive=%s age=%.0fs budget=%.0fs)", kernel_name, pid, not owner_dead, age, budget
         )

@@ -446,23 +446,24 @@ def list_openrouter_models(
         needle = name_contains.lower()
         rows = [r for r in rows if needle in str(r.get("id", "")).lower()]
 
+    def _price_per_1m(r: dict, pricing_key: str) -> float:
+        """Return `r`'s ``pricing_key`` price per 1M tokens (USD), or infinity if the pricing
+        field is missing/unparsable.
+
+        2026-08-02 near-duplicate-function-body finding: the input/output price lookups
+        independently duplicated this parse-and-scale step, differing only in which pricing
+        key ("prompt" vs "completion") they read.
+        """
+        try:
+            return float((r.get("pricing") or {}).get(pricing_key, "0") or "0") * 1_000_000
+        except (TypeError, ValueError):
+            return float("inf")
+
     if max_input_per_1m is not None:
-        def _input_per_1m(r: dict) -> float:
-            """Return `r`'s input price per 1M tokens (USD), or infinity if the pricing field is missing/unparsable."""
-            try:
-                return float((r.get("pricing") or {}).get("prompt", "0") or "0") * 1_000_000
-            except (TypeError, ValueError):
-                return float("inf")
-        rows = [r for r in rows if _input_per_1m(r) <= max_input_per_1m]
+        rows = [r for r in rows if _price_per_1m(r, "prompt") <= max_input_per_1m]
 
     if max_output_per_1m is not None:
-        def _output_per_1m(r: dict) -> float:
-            """Return `r`'s output price per 1M tokens (USD), or infinity if the pricing field is missing/unparsable."""
-            try:
-                return float((r.get("pricing") or {}).get("completion", "0") or "0") * 1_000_000
-            except (TypeError, ValueError):
-                return float("inf")
-        rows = [r for r in rows if _output_per_1m(r) <= max_output_per_1m]
+        rows = [r for r in rows if _price_per_1m(r, "completion") <= max_output_per_1m]
 
     if return_only_healthy and rows:
         key = _pkg()._resolve_or_api_key(api_key)

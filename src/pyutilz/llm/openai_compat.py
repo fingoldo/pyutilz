@@ -11,7 +11,7 @@ import asyncio
 import logging
 import random
 from abc import abstractmethod
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 from tenacity import retry, retry_if_exception
@@ -770,50 +770,14 @@ class OpenAICompatibleProvider(LLMProvider):
         )
         return self.extract_json(text, self._provider_name)
 
-    async def generate_batch(
-        self,
-        requests: list[dict[str, Any]],
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Generate responses in batch using concurrent requests.
-
-        On success, each yielded dict also includes this request's own ``usage``/
-        ``tool_calls``/``citations``/``finish_reason`` metadata -- captured within this
-        request's own task, so it is NOT subject to the cross-task "last_*" attribute race
-        (see ``PerCallAttr`` in ``base.py``).
-        """
-
-        async def process_request(req: dict) -> dict[str, Any]:
-            """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
-            request_id = req.get("id", "unknown")
-            try:
-                result = await self.generate(
-                    prompt=req["prompt"],
-                    system=req.get("system"),
-                    temperature=req.get("temperature", 0.7),
-                    max_tokens=req.get("max_tokens", 1024),
-                )
-                out = {"id": request_id, "result": result}
-                out.update(self._capture_percall_metadata())
-                return out
-            except Exception as e:
-                logger.error("Batch request %s failed: %s", request_id, e)
-                return {"id": request_id, "error": str(e)}
-
-        # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
-        # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
-        # — feeding Tasks instead works across versions.
-        tasks = [asyncio.create_task(process_request(req)) for req in requests]
-        try:
-            for coro in asyncio.as_completed(tasks):
-                yield await coro
-        finally:
-            # See LLMProvider.generate_batch's identical fix for why: without this, a caller
-            # stopping early (GeneratorExit at the yield above) leaves every already-scheduled
-            # task running to completion in the background as an orphaned, unobservable, billable
-            # LLM call.
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
+    # 2026-08-02 near-duplicate-function-body finding: generate_batch/process_request used to be
+    # duplicated here near-verbatim from LLMProvider.generate_batch, EXCEPT the duplicate's except
+    # branch dropped the `self._classify_batch_exception(e)` call the base version has. No
+    # OpenAICompatibleProvider subclass overrides that hook today, so the drop was latent, but it
+    # silently broke the extension point for any future one (anthropic/deepseek/openai/xai
+    # providers) that adds one -- their override would simply never fire, since this override
+    # shadowed the only generate_batch that calls it. Deleted; this class now inherits the base
+    # implementation, restoring the hook and removing the duplication in one fix.
 
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Estimate cost in USD (cache miss pricing)."""

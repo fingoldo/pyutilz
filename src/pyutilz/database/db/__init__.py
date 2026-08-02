@@ -899,10 +899,13 @@ def GetIdByKeyFieldAndInsertIfNeeded(
     )
 
 
-def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
+def _iter_partition_dates(from_date: date, to_date: date, partition_size: str):
+    """Yield ``(period_start, period_end)`` date pairs stepping from ``from_date`` to
+    ``to_date`` at ``partition_size`` granularity.
 
-    # Validate table name to prevent SQL injection
-    validate_sql_identifier(table_name)
+    2026-08-02 near-duplicate-function-body finding: create_postgres_range_partitions and
+    delete_postgres_range_partitions independently duplicated this date-walk loop.
+    """
     assert partition_size in ("day", "week", "month", "year")  # nosec B101 - partition_size only selects a relativedelta branch below, never spliced into SQL
     d = from_date
     while d <= to_date:
@@ -914,34 +917,30 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
             n = d + relativedelta(months=1)
         elif partition_size == "year":
             n = d + relativedelta(years=1)
+        yield d, n
+        d = n
+
+
+def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
+
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
+    for d, n in _iter_partition_dates(from_date, to_date, partition_size):
         if bigint_degree is None or bigint_degree == 0:
             cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
         else:
             cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
         # print(cmd)
         safe_execute(cmd)
-        d = n
 
 
 def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str) -> None:
 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
-    assert partition_size in ("day", "week", "month", "year")  # nosec B101 - partition_size only selects a relativedelta branch below, never spliced into SQL
-    d = from_date
-    while d <= to_date:
-        if partition_size == "day":
-            n = d + relativedelta(days=1)
-        elif partition_size == "week":
-            n = d + relativedelta(weeks=1)
-        elif partition_size == "month":
-            n = d + relativedelta(months=1)
-        elif partition_size == "year":
-            n = d + relativedelta(years=1)
-
+    for d, _n in _iter_partition_dates(from_date, to_date, partition_size):
         cmd = f"drop table z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
         safe_execute(cmd)
-        d = n
 
 
 def explain_table(table_name: str) -> Optional[object]:

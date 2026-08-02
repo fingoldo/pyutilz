@@ -539,6 +539,33 @@ class TestSharedBaseImplementations:
         results = {r["id"]: r async for r in p.generate_batch([{"id": "x", "prompt": "p"}])}
         assert results["x"]["error_type"] == "safety_block"
 
+    def test_openai_compat_generate_batch_is_the_base_implementation(self):
+        """2026-08-02 near-duplicate-function-body finding: OpenAICompatibleProvider used to
+        override generate_batch/process_request with a near-verbatim copy of the base
+        implementation, EXCEPT the copy dropped the `self._classify_batch_exception(e)` call
+        on the failure path -- no subclass overrode that hook at the time, so it was latent,
+        but it silently broke the extension point for any future OpenAI-compat subclass that
+        added one. Deleted; this asserts the class now inherits (not shadows) the base
+        implementation, so the hook fires for every OpenAI-compat provider going forward."""
+        from pyutilz.llm.base import LLMProvider
+        from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+        assert OpenAICompatibleProvider.generate_batch is LLMProvider.generate_batch
+
+    @pytest.mark.asyncio
+    async def test_openai_compat_generate_batch_calls_classify_batch_exception(self):
+        """Companion to the above: proves the hook is actually REACHED at runtime for an
+        OpenAI-compat subclass, not just that the method identity matches."""
+        from pyutilz.llm.openai_provider import OpenAIProvider
+        p = OpenAIProvider.__new__(OpenAIProvider)
+
+        async def fake_generate(prompt, system=None, temperature=0.7, max_tokens=0):
+            raise ValueError("boom")
+
+        p.generate = fake_generate
+        p._classify_batch_exception = lambda exc: {"error_type": "custom_classified"}
+        results = {r["id"]: r async for r in p.generate_batch([{"id": "x", "prompt": "p"}])}
+        assert results["x"]["error_type"] == "custom_classified"
+
     @pytest.mark.asyncio
     async def test_generate_json_delegates_to_extract(self):
         from pyutilz.llm.gemini_provider import GeminiProvider
