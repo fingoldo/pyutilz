@@ -81,6 +81,13 @@ dependencies = [
     # `import pyutilz.system.parallel` with ModuleNotFoundError. Promoting to core, not
     # redeclaring in yet another extras group, for the identical reason psutil was.
     "pandas>=1.5",
+    # Same eager-import-all-six-submodules design once more: system/system/misc.py (one of the
+    # six) unconditionally imports BOTH tqdm and pympler at module level -- found 2026-08-03
+    # alongside the pandas fix above, same "any extras combination missing the right group
+    # breaks `import pyutilz.system.system`" failure mode (this time via `pyutilz[llm]`, no
+    # "system" extra pulled in). Promoting both to core for the identical reason.
+    "tqdm>=4.65",
+    "pympler>=1.0",
     # system/config.py unconditionally imports tomllib (stdlib only since Python 3.11, PEP 680)
     # with no guard -- found 2026-07-21 audit: broke the declared Python 3.8/3.9/3.10 support
     # floor outright, on every extras combination, not just a packaging gap. `tomli` is the
