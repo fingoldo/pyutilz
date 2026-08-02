@@ -97,6 +97,10 @@ def init_logging(
         handlers=handlers,
         format=format,
         level=level,
+        force=True,  # basicConfig() is a silent no-op if the root logger already has handlers
+        # (e.g. another library/import configured logging first, or a prior test in the same
+        # process called init_logging()) -- without force=True, the file/stream handlers this
+        # function's docstring promises to attach would never actually get attached.
     )
 
     global logger

@@ -62,14 +62,26 @@ _DEFAULT_EXCLUDE_DIRS = frozenset({
 
 
 def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
-    """Yield every ``.py`` file under ``root``, skipping files that have any path component matching ``exclude_dirs``."""
+    """Yield every ``.py`` file under ``root`` in a stable, sorted-by-path order, skipping
+    files that have any path component matching ``exclude_dirs``.
+
+    ``Path.rglob`` iteration order is filesystem-dependent (not guaranteed, and differs
+    between platforms/filesystems in practice) -- scanners that compare files pairwise
+    (e.g. duplicate_function_body, near_duplicate_function_body) pick whichever file they
+    see first as the "reference" and flag the other as the duplicate. Without a stable
+    order, which file gets flagged is nondeterministic across machines/CI runners, breaking
+    reproducible findings and any test asserting on which file a finding names.
+    """
+    candidates = []
     for p in root.rglob("*"):
         if p.suffix not in _PY_EXTS or not p.is_file():
             continue
         # Skip if any parent name matches an excluded dir.
         if any(part in exclude_dirs for part in p.parts):
             continue
-        yield p
+        candidates.append(p)
+    candidates.sort(key=lambda p: p.as_posix())
+    yield from candidates
 
 
 def _safe_parse(path: Path) -> Optional[ast.Module]:
