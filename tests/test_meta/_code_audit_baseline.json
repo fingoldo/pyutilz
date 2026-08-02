@@ -103,6 +103,7 @@
   "mojibake::text/humanizer.py:318",
   "mutation_during_iteration::data/pandaslib/dtypes.py:119",
   "mutation_during_iteration::data/pandaslib/dtypes.py:124",
+  "near_duplicate_function_body::database/db/__init__.py:768",
   "near_duplicate_function_body::database/db/__init__.py:1197",
   "parameter_aliasing_mutation::text/similarity.py:809",
   "possibly_dead_import::data/pandaslib/__init__.py:14",
