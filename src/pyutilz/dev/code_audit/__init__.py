@@ -76,6 +76,17 @@ list[Finding]):
   a later bug fix or edge-case addition updates one copy and silently misses the rest.
   ``Finding.check`` is ``"duplicate_function_body"``.
 
+- ``scan_near_duplicate_function_body``: two or more functions/methods with a
+  NEARLY (not exactly) identical body -- ``difflib.SequenceMatcher`` ratio
+  ``>= 0.99`` over the same structural AST normalization
+  ``scan_duplicate_function_body`` uses, with exact matches excluded (that's
+  the other scanner's job). Catches copy-paste that then drifted by one line,
+  one changed constant, or one extra guard clause, which a byte-exact check
+  cannot see. ``Finding.check`` is ``"near_duplicate_function_body"``,
+  severity ``Low`` -- a human should judge unify-vs-independent before acting.
+  In ``OPT_IN_ONLY``: similarity is a judgment call, not unambiguously a fresh
+  mistake.
+
 - ``scan_duplicate_conditions``: three copy-paste-typo shapes, all
   emitted under this one scanner (distinct ``Finding.check`` values --
   ``"duplicate_condition"`` for the first two, ``"duplicate_dict_key"``
@@ -435,6 +446,7 @@ from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
 from .duplicate_function_body import scan_duplicate_function_body
+from .near_duplicate_function_body import scan_near_duplicate_function_body
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
@@ -514,6 +526,7 @@ __all__ = [
     "scan_sql_migration_idempotency",
     "scan_duplicate_conditions",
     "scan_duplicate_function_body",
+    "scan_near_duplicate_function_body",
     "scan_missed_await",
     "scan_redundant_test_fit_calls",
     "scan_undeclared_imports",
@@ -584,7 +597,7 @@ for _submod in (
     "_base", "mutable_defaults", "closures", "default_via_or",
     "broad_except", "nan_equality", "mutation_during_iteration",
     "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
-    "duplicate_conditions", "duplicate_function_body", "missed_await", "redundant_test_fit",
+    "duplicate_conditions", "duplicate_function_body", "near_duplicate_function_body", "missed_await", "redundant_test_fit",
     "undeclared_imports", "vacuous_assertions", "locals_globals_output",
     "network_timeout", "retry_loops", "module_docstring",
     "unraised_exceptions", "credential_logging",

@@ -7,6 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
+# (path, mtime_ns, size) -> parsed tree (or None for an unparsable file).
+# run_all() runs every registered scanner over the SAME file set in one
+# process; each scanner independently called _safe_parse on every file
+# before this cache existed, so a ~60-scanner registry re-read + re-parsed
+# every file up to 60x. Keying on mtime_ns+size (not just path) means an
+# in-process edit-then-rescan (e.g. a scanner's own test fixture rewriting
+# a tmp file between assertions) still gets a fresh parse instead of a
+# stale cached one.
+_PARSE_CACHE: dict[tuple[str, int, int], "Optional[ast.Module]"] = {}
+
 # --- public types --------------------------------------------------------
 
 
@@ -63,15 +73,32 @@ def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
 
 
 def _safe_parse(path: Path) -> Optional[ast.Module]:
-    """Read and ``ast.parse`` ``path`` as UTF-8, returning None on read failure (I/O, decode) or a syntax error instead of raising."""
+    """Read and ``ast.parse`` ``path`` as UTF-8, returning None on read failure (I/O, decode) or a syntax error instead of raising.
+
+    Cached per (path, mtime_ns, size) for the life of the process -- see
+    ``_PARSE_CACHE``'s module-level docstring for why this matters when
+    ``run_all()`` runs dozens of scanners over the same file set.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if cache_key in _PARSE_CACHE:
+        return _PARSE_CACHE[cache_key]
+
     try:
         src = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return None
-    try:
-        return ast.parse(src, filename=str(path))
-    except SyntaxError:
-        return None
+        tree = None
+    else:
+        try:
+            tree = ast.parse(src, filename=str(path))
+        except SyntaxError:
+            tree = None
+
+    _PARSE_CACHE[cache_key] = tree
+    return tree
 
 
 def _line_text(src_lines: list[str], lineno: int) -> str:

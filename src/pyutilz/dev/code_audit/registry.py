@@ -21,6 +21,7 @@ from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
 from .duplicate_function_body import scan_duplicate_function_body
+from .near_duplicate_function_body import scan_near_duplicate_function_body
 from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
@@ -90,6 +91,7 @@ register_scanner("log_only_except", scan_log_only_except)
 register_scanner("sql_migration_not_idempotent", scan_sql_migration_idempotency)
 register_scanner("duplicate_condition", scan_duplicate_conditions)
 register_scanner("duplicate_function_body", scan_duplicate_function_body)
+register_scanner("near_duplicate_function_body", scan_near_duplicate_function_body)
 register_scanner("missed_await", scan_missed_await)
 register_scanner("redundant_test_fit_call", scan_redundant_test_fit_calls)
 register_scanner("undeclared_import", scan_undeclared_imports)
@@ -176,6 +178,10 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     "regex_integer_parse_truncation",
     "threshold_below_documented_result",
     "domain_vocabulary_leak",
+    # Similarity is a judgment call, not a fresh mistake: two functions that are 99% alike may be
+    # deliberate copy-paste drift worth unifying, or two independently-evolved implementations that
+    # happen to still look alike -- a project opts in once it's ready to triage that distinction.
+    "near_duplicate_function_body",
 })
 
 

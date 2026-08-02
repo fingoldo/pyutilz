@@ -55,6 +55,11 @@ _PERMITTED_UNBOUNDED_DICTS: dict[str, str] = {
     "src/pyutilz/performance/kernel_tuning/registry.py:_REGISTRY": "tuner-spec registry "
     "populated by register_tuner_spec() at module discovery time -- key space is 'number of "
     "kernel-tuning modules', not runtime/user-driven input.",
+    "src/pyutilz/dev/code_audit/_base.py:_PARSE_CACHE": "keyed on (path, mtime_ns, size) for "
+    "a single code-audit run_all() invocation over one project's .py files -- key space is "
+    "'number of source files in the scanned repo', not runtime/user-driven input, and the "
+    "process this cache lives in (a one-shot CLI scan or a pytest run) exits well before that "
+    "bound could matter.",
 }
 
 
