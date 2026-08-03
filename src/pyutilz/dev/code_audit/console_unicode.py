@@ -54,6 +54,31 @@ def _has_stdio_utf8_reconfigure(source: str) -> bool:
     return "reconfigure(encoding" in source and (".stdout.reconfigure(encoding" in source or ".stderr.reconfigure(encoding" in source)
 
 
+def _ancestor_package_has_stdio_utf8_reconfigure(py: Path, root: Path) -> bool:
+    """True if any ``__init__.py`` from ``py``'s own package up through ``root`` reconfigures
+    stdio to UTF-8. A package ``__init__.py`` runs on the FIRST ``import <package>`` regardless
+    of entry point (CLI, an API server under uvicorn, a test runner, a script that merely
+    imports the package) -- so a reconfigure call there protects every module beneath it, the
+    same way it protects a script's own top-level call, just triggered on import instead of on
+    ``__main__``. Checked once per package directory (not every ancestor __init__.py needs its
+    own separate call; the outermost one that runs first is what matters), stopping at the
+    first ``__init__.py`` found reconfiguring, or at ``root`` if none do."""
+    current = py.parent
+    root = root.resolve()
+    while True:
+        init_file = current / "__init__.py"
+        if init_file.is_file():
+            try:
+                init_src = init_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                init_src = ""
+            if _has_stdio_utf8_reconfigure(init_src):
+                return True
+        if current.resolve() == root or current.parent == current:
+            return False
+        current = current.parent
+
+
 def scan_console_unicode(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -64,9 +89,13 @@ def scan_console_unicode(
     On Windows, default stdout/stderr encoding is ``cp1251``/``cp1252``; printing a fancy Unicode
     arrow, checkmark, or any non-Latin character crashes with ``UnicodeEncodeError`` -- silently
     fine on Linux/macOS dev machines, guaranteed broken on Windows. Skips files that already call
-    ``sys.stdout.reconfigure(encoding=...)`` / ``sys.stderr.reconfigure(encoding=...)`` (see
-    :func:`_has_stdio_utf8_reconfigure`) -- the established fix for this exact failure mode,
-    confirmed as this codebase's own convention across dozens of scripts.
+    ``sys.stdout.reconfigure(encoding=...)`` / ``sys.stderr.reconfigure(encoding=...)`` themselves
+    (see :func:`_has_stdio_utf8_reconfigure`) -- the established fix for this exact failure mode,
+    confirmed as this codebase's own convention across dozens of scripts -- OR whose enclosing
+    PACKAGE already does so in an ``__init__.py`` up the directory chain (see
+    :func:`_ancestor_package_has_stdio_utf8_reconfigure`): a library module imported as part of a
+    package is exactly as protected as a script with its own top-level call, just via the
+    package's own import-time guard instead of a per-file one.
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -75,6 +104,8 @@ def scan_console_unicode(
             continue
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         if _has_stdio_utf8_reconfigure("\n".join(src_lines)):
+            continue
+        if _ancestor_package_has_stdio_utf8_reconfigure(py, root):
             continue
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):

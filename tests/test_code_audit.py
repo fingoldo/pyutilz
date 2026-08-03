@@ -5235,6 +5235,32 @@ def test_console_unicode_reconfigure_without_encoding_kwarg_does_not_suppress(tm
     assert len(findings) == 1, findings
 
 
+def test_console_unicode_package_init_reconfigure_suppresses_submodule(tmp_path: Path):
+    """A package's own __init__.py reconfiguring stdio protects every module beneath it --
+    the guard fires on the package's FIRST import regardless of which submodule/entry point
+    actually runs, so a submodule needs no guard of its own."""
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    _write(pkg, "__init__.py", 'import sys\nsys.stdout.reconfigure(encoding="utf-8")\n')
+    _write(pkg, "sub.py", 'def f():\n    print("done → next")\n')
+    assert scan_console_unicode(tmp_path) == []
+
+
+def test_console_unicode_nested_package_without_init_reconfigure_still_flagged(tmp_path: Path):
+    """A sibling package with NO reconfiguring __init__.py anywhere in its own chain must still
+    be flagged -- the exemption only follows the actual package containment chain, not the
+    whole scanned tree."""
+    protected = tmp_path / "protected"
+    protected.mkdir()
+    _write(protected, "__init__.py", 'import sys\nsys.stdout.reconfigure(encoding="utf-8")\n')
+    unprotected = tmp_path / "unprotected"
+    unprotected.mkdir()
+    _write(unprotected, "__init__.py", '"""No reconfigure here."""\n')
+    _write(unprotected, "sub.py", 'def f():\n    print("done → next")\n')
+    findings = scan_console_unicode(tmp_path)
+    assert len(findings) == 1 and "unprotected/sub.py" in findings[0].file, findings
+
+
 # ---- mojibake ---------------------------------------------------------------
 
 
