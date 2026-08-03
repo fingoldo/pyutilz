@@ -102,9 +102,37 @@ def scan_unraised_exceptions(
             elif isinstance(exc, ast.Attribute):
                 raised_names.add(exc.attr)
 
+    # Pass 3: a base class whose contract fires whenever ANY of its in-tree
+    # subclasses is raised -- `except BaseError:` still catches a raised
+    # `SpecificError(BaseError)` -- so an ancestor should not be flagged just
+    # because nothing raises IT directly. Confirmed real pattern (2026-08-03
+    # glossum unraised_exception_class audit): `GlossumError` is a pure base
+    # (only `GenerationError`/`ValidationError`/etc subclasses carry meaning),
+    # and `ProviderError` is only ever raised via its own subclass
+    # `LLMProviderError` -- both false-flagged despite their documented
+    # error-signaling contract firing correctly through the subclass. Direct
+    # bases only (mirrors `_exception_base_names`'s one-level scope above);
+    # transitivity still works because this loop is a fixed-point iteration.
+    base_to_subclasses: dict[str, set[str]] = {}
+    for node, _rel in class_defs:
+        for base_name in _exception_base_names(node):
+            base_to_subclasses.setdefault(base_name, set()).add(node.name)
+
+    covered_via_subclass: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in all_classes:
+            if name in covered_via_subclass:
+                continue
+            subclasses = base_to_subclasses.get(name, set())
+            if any(sub in raised_names or sub in covered_via_subclass for sub in subclasses):
+                covered_via_subclass.add(name)
+                changed = True
+
     findings: list[Finding] = []
     for name, (rel, lineno, src_lines) in all_classes.items():
-        if name in raised_names:
+        if name in raised_names or name in covered_via_subclass:
             continue
         findings.append(Finding(
             check="unraised_exception_class",

@@ -2649,6 +2649,60 @@ def f():
     assert findings == []
 
 
+def test_unraised_exception_class_base_covered_by_raised_subclass_is_clean(tmp_path: Path):
+    """2026-08-03 glossum audit: a base class's error-signaling contract fires
+    whenever ANY in-tree subclass is raised -- `except BaseError:` still
+    catches a raised `SpecificError(BaseError)`. Flagging the never-directly-
+    raised ancestor here was a false positive (`GlossumError`/`ProviderError`
+    in glossum's exceptions.py, never raised directly, only via subclasses
+    `JobLockConflictError`/`LLMProviderError` respectively)."""
+    _write(tmp_path, "exc.py", """
+class BaseError(Exception):
+    pass
+
+class SpecificError(BaseError):
+    pass
+""")
+    _write(tmp_path, "use.py", """
+from exc import SpecificError
+
+def f():
+    raise SpecificError("boom")
+""")
+    findings = scan_unraised_exceptions(tmp_path)
+    assert findings == []
+
+
+def test_unraised_exception_class_base_without_raised_subclass_still_flagged(tmp_path: Path):
+    """The base-class exemption above must not blanket-suppress an unrelated
+    sibling base whose OWN subclasses are also never raised."""
+    _write(tmp_path, "exc.py", """
+class BaseError(Exception):
+    pass
+
+class SpecificError(BaseError):
+    pass
+
+class OtherBaseError(Exception):
+    pass
+
+class OtherSpecificError(OtherBaseError):
+    pass
+""")
+    _write(tmp_path, "use.py", """
+from exc import SpecificError
+
+def f():
+    raise SpecificError("boom")
+""")
+    findings = scan_unraised_exceptions(tmp_path)
+    flagged = {f.snippet for f in findings}
+    assert any("OtherBaseError" in s for s in flagged)
+    assert any("OtherSpecificError" in s for s in flagged)
+    assert not any("BaseError" in s and "OtherBaseError" not in s for s in flagged)
+    assert not any("SpecificError" in s and "OtherSpecificError" not in s for s in flagged)
+
+
 # ---- credential_shaped_log_arg ---------------------------------------------
 
 
