@@ -30,6 +30,20 @@ _CLAIM_RE = re.compile(
 )
 
 
+def _callers_within(tree: ast.AST) -> dict[str, set[str]]:
+    """``{callee_name -> {names of functions/methods in this module that call it}}``, one level of
+    indirection only (a caller's own caller is not chased further - see the docstring on the
+    transitive-enforcement check below for why one hop is the deliberate stopping point)."""
+    callers: dict[str, set[str]] = {}
+    for outer in ast.walk(tree):
+        if not isinstance(outer, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(outer):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                callers.setdefault(inner.func.id, set()).add(outer.name)
+    return callers
+
+
 def scan_unenforced_docstring_invariants(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -38,9 +52,18 @@ def scan_unenforced_docstring_invariants(
     """Find symbols whose docstring states an absolute invariant that no test names.
 
     ``test_roots`` are the trees searched for enforcement. A symbol is considered enforced when its
-    name appears anywhere in them -- a deliberately weak bar, because proving that a given test
-    checks a given sentence is not decidable, and the defect being targeted is the claim NOTHING
-    references at all.
+    OWN name appears anywhere in them, OR when a function in the SAME MODULE that calls it (one hop
+    only - a private helper's own direct caller, not an arbitrary chain) has its name appear there --
+    a deliberately weak bar either way, because proving that a given test checks a given sentence is
+    not decidable, and the defect being targeted is the claim NOTHING references at all.
+
+    The one-hop caller extension (2026-08-03) closes the most common false-positive shape measured in
+    practice: a PRIVATE helper (`_mondo_name_index`, `kb/gbd_prevalence.py`) whose invariant ("EXACT
+    name match only, never fuzzy") is exercised by real tests that call the PUBLIC function it lives
+    inside (`build()`) rather than the private helper directly - the normal way a private symbol gets
+    test coverage at all. Chasing more than one hop was deliberately rejected: two hops away starts
+    matching call chains a reader would not recognise as "this test covers that claim" on inspection,
+    which is the same false-confidence failure mode this whole check exists to prevent one level up.
 
     Only functions and classes are scanned, not module docstrings: a module-level essay describing
     design rationale is not a per-symbol contract, and including it made the check fire on prose.
@@ -66,12 +89,17 @@ def scan_unenforced_docstring_invariants(
             continue
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         rel = py.relative_to(root).as_posix()
+        callers_of = _callers_within(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
             doc = ast.get_docstring(node) or ""
             match = _CLAIM_RE.search(doc)
-            if not match or node.name in test_corpus:
+            if not match:
+                continue
+            if node.name in test_corpus:
+                continue
+            if any(caller in test_corpus for caller in callers_of.get(node.name, ())):
                 continue
             sentence = next((s.strip() for s in re.split(r"(?<=[.;])\s", doc) if _CLAIM_RE.search(s)), doc[:120])
             findings.append(
