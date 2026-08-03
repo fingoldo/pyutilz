@@ -65,7 +65,6 @@
   "duplicate_function_body_subset::database/db/__init__.py:422",
   "duplicate_function_body_subset::database/db/__init__.py:718",
   "duplicate_function_body_subset::database/db/__init__.py:768",
-  "duplicate_function_body_subset::database/db/__init__.py:924",
   "duplicate_function_body_subset::llm/openai_compat.py:745",
   "duplicate_function_body_subset::performance/kernel_tuning/cache/cache_class.py:1052",
   "duplicate_function_body_subset::performance/kernel_tuning/registry.py:248",
@@ -103,8 +102,6 @@
   "mojibake::text/humanizer.py:318",
   "mutation_during_iteration::data/pandaslib/dtypes.py:119",
   "mutation_during_iteration::data/pandaslib/dtypes.py:124",
-  "near_duplicate_function_body::database/db/__init__.py:768",
-  "near_duplicate_function_body::database/db/__init__.py:1197",
   "parameter_aliasing_mutation::text/similarity.py:809",
   "possibly_dead_import::data/pandaslib/__init__.py:14",
   "possibly_dead_import::data/pandaslib/__init__.py:63",
@@ -162,8 +159,5 @@
   "unthrottled_hot_loop_log::web/proxy/decodo.py:308",
   "unthrottled_hot_loop_log::web/proxy/decodo.py:313",
   "unthrottled_hot_loop_log::web/web.py:165",
-  "unthrottled_hot_loop_log::web/web.py:172",
-  "unthrottled_hot_loop_log::web/web.py:248",
-  "unthrottled_hot_loop_log::web/web.py:256",
-  "unthrottled_hot_loop_log::web/web.py:259"
+  "unthrottled_hot_loop_log::web/web.py:172"
 ]

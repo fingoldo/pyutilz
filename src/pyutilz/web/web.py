@@ -207,6 +207,13 @@ def get_ipinfo(use_urllib: bool = False, url: str = "https://api.ipify.org?forma
         return res
 
 
+def _error_log_throttle(n_errored: int, max_logged: int) -> bool:
+    """True while per-URL error logging in ``download_in_parallel`` is still under its cap --
+    a batch with a large fraction of failing URLs would otherwise log one ERROR line per failed
+    URL with no limit, compounding into thousands of lines for a large batch."""
+    return n_errored <= max_logged
+
+
 def download_in_parallel(
     urls_to_process: Sequence,
     func: Callable,
@@ -227,6 +234,9 @@ def download_in_parallel(
     if len(urls_to_process) == 0:
         return None
 
+    # The aggregate "Processed N urls, n_errored=M" line (every report_each iterations, already
+    # unconditional) and the final "Finished!" summary still report the true total either way.
+    _MAX_LOGGED_ERRORS = 20
     n_processed = 0
     errored_urls = []
     # request_timeout=: grequests.get() previously had no timeout at all -- a single stalled URL
@@ -245,7 +255,8 @@ def download_in_parallel(
         # URL as errored.
         if resp is None:
             errored_urls.append(sub_url)
-            logger.error("Response is None for url %s", sub_url)
+            if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
+                logger.error("Response is None for url %s", sub_url)
         else:
             final_status_code = resp.history[-1].status_code if len(resp.history) > 0 else resp.status_code
             if resp.status_code == http.HTTPStatus.OK:
@@ -253,10 +264,12 @@ def download_in_parallel(
                     func(resp, sub_url)
                 except Exception as e:
                     errored_urls.append(sub_url)
-                    logger.error("Error processing url %s: %s", sub_url, e)
+                    if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
+                        logger.error("Error processing url %s: %s", sub_url, e)
             else:
                 errored_urls.append(sub_url)
-                logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
+                if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
+                    logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
         if (n_processed % report_each) == 0:
             # pbar.update(report_each)
             logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))

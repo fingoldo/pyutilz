@@ -921,15 +921,23 @@ def _iter_partition_dates(from_date: date, to_date: date, partition_size: str):
         d = n
 
 
+def _partition_table_name(table_name: str, d: date) -> str:
+    """The ``z_<table>_y<YYYY>m<MM>w<WW>d<DD>`` partition-name convention shared by
+    create_postgres_range_partitions and delete_postgres_range_partitions -- both must agree on
+    exactly this name or a create/delete pair silently target different tables."""
+    return f"z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
+
+
 def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
     for d, n in _iter_partition_dates(from_date, to_date, partition_size):
+        part_name = _partition_table_name(table_name, d)
         if bigint_degree is None or bigint_degree == 0:
-            cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
+            cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
         else:
-            cmd = f"CREATE TABLE z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
+            cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
         # print(cmd)
         safe_execute(cmd)
 
@@ -939,7 +947,7 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table_name)
     for d, _n in _iter_partition_dates(from_date, to_date, partition_size):
-        cmd = f"drop table z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
+        cmd = f"drop table {_partition_table_name(table_name, d)}"
         safe_execute(cmd)
 
 
@@ -1185,19 +1193,20 @@ def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs")
     )
 
 
-def regjobs_progress(job_name: str, result: dict, table_name: str = "regular_jobs"):
+def _regjobs_update(job_name: str, result: dict, table_name: str, *, ts_column: str, result_column: str):
+    """Shared UPDATE shape behind regjobs_progress/regjobs_finalize: stamp ``ts_column`` with the
+    current UTC time and store ``result`` into ``result_column`` for the row named ``job_name``."""
     return safe_execute(
         sql.SQL("""
-        update {table_name} set last_ping_at=now() at time zone 'utc',last_result=%(result)s where name=%(job_name)s
-    """).format(table_name=sql.Identifier(table_name)),
+        update {table_name} set {ts_column}=now() at time zone 'utc',{result_column}=%(result)s where name=%(job_name)s
+    """).format(table_name=sql.Identifier(table_name), ts_column=sql.Identifier(ts_column), result_column=sql.Identifier(result_column)),
         {"job_name": job_name, "result": result},
     )
+
+
+def regjobs_progress(job_name: str, result: dict, table_name: str = "regular_jobs"):
+    return _regjobs_update(job_name, result, table_name, ts_column="last_ping_at", result_column="last_result")
 
 
 def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_jobs"):
-    return safe_execute(
-        sql.SQL("""
-        update {table_name} set finished_at=now() at time zone 'utc',result=%(result)s where name=%(job_name)s
-    """).format(table_name=sql.Identifier(table_name)),
-        {"job_name": job_name, "result": result},
-    )
+    return _regjobs_update(job_name, result, table_name, ts_column="finished_at", result_column="result")
