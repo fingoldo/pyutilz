@@ -189,20 +189,59 @@ def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     return dict(SCANNERS)
 
 
+def _run_one(args: tuple[str, Path, frozenset[str]]) -> list[Finding]:
+    """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one named
+    scanner and returns its findings. A bound/local closure can't be pickled for the
+    cross-process call, so this indirection is required, not just style."""
+    name, root, exclude_dirs = args
+    return SCANNERS[name](root, exclude_dirs=exclude_dirs)
+
+
+# Below this many scanners, process-pool startup (import pyutilz + its scanner modules in
+# each fresh interpreter) costs more than it saves -- e.g. a single-scanner unit test
+# calling run_all(checks=["default_via_or"]) stays sequential and instant.
+_MIN_SCANNERS_FOR_PARALLEL = 4
+
+
 def run_all(
     root: Path,
     checks: Optional[Iterable[str]] = None,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+    parallel: bool = True,
 ) -> list[Finding]:
     """Run every (or selected) scanner against ``root`` and return all
     findings in encounter order. Sort by (severity, check, file, line)
-    for stable rendering at the call site."""
+    for stable rendering at the call site.
+
+    ``parallel`` (default True): each scanner does its own full-corpus file walk + AST-walk
+    over the (parse-cached) tree, and with ~60 registered scanners this is almost entirely
+    CPU-bound Python-level work that holds the GIL -- a large repo's full run_all() (e.g.
+    glossum_backend_scripts's ~1500 files) took ~95s single-process. Scanners are mutually
+    independent (each just appends Findings to its own list), so distributing them across a
+    ProcessPoolExecutor is a pure wall-clock win with IDENTICAL output (same findings, same
+    final sort) -- confirmed via a byte-for-byte comparison against the sequential path
+    before landing this. Each worker process re-parses files into its own _PARSE_CACHE
+    (workers don't share memory), a real but much smaller cost than the AST-walk time saved
+    by running scanners concurrently across cores.
+    """
     selected = [n for n in SCANNERS if n not in OPT_IN_ONLY] if checks is None else list(checks)
-    out: list[Finding] = []
     for name in selected:
         if name not in SCANNERS:
             raise ValueError(f"unknown check {name!r}; available: {sorted(SCANNERS)}")
-        out.extend(SCANNERS[name](root, exclude_dirs=exclude_dirs))
+
+    out: list[Finding] = []
+    if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
+        import concurrent.futures
+        import os
+
+        max_workers = min(len(selected), os.cpu_count() or 1)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
+            for findings in pool.map(_run_one, [(name, root, exclude_dirs) for name in selected]):
+                out.extend(findings)
+    else:
+        for name in selected:
+            out.extend(SCANNERS[name](root, exclude_dirs=exclude_dirs))
+
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     out.sort(key=lambda f: (sev_order.get(f.severity, 99), f.check, f.file, f.line))
     return out

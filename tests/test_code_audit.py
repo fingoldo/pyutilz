@@ -1840,6 +1840,29 @@ def f(x=None):
     assert findings == []
 
 
+def test_run_all_parallel_matches_sequential(tmp_path: Path):
+    """run_all(parallel=True) (the default) must return the EXACT same findings as
+    parallel=False -- scanners are independent (each only appends to its own list), so
+    distributing them across a ProcessPoolExecutor must be a pure wall-clock optimization,
+    never a behavior change."""
+    _write(tmp_path, "mixed.py", """
+def bad_mutable(items=[]):
+    items.append(1)
+
+def bad_or(n=None):
+    return n or 4
+
+try:
+    risky()
+except Exception:
+    pass
+""")
+    parallel = run_all(tmp_path, parallel=True)
+    sequential = run_all(tmp_path, parallel=False)
+    assert parallel == sequential
+    assert len(parallel) > 0
+
+
 def test_excluded_dir_ignored(tmp_path: Path):
     bad = tmp_path / "build" / "bad.py"
     bad.parent.mkdir()
