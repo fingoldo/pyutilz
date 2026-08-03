@@ -5165,6 +5165,39 @@ def test_console_unicode_non_console_call_not_flagged(tmp_path: Path):
     assert scan_console_unicode(tmp_path) == []
 
 
+def test_console_unicode_stdout_reconfigure_suppresses_file(tmp_path: Path):
+    """A file that already forces UTF-8 stdio at its own entry point can't hit the
+    UnicodeEncodeError this scanner exists to catch -- confirmed as this codebase's own
+    established fix (dozens of scripts use exactly this idiom)."""
+    _write(
+        tmp_path,
+        "ok.py",
+        'import sys\nsys.stdout.reconfigure(encoding="utf-8", errors="replace")\nprint("done → next")\n',
+    )
+    assert scan_console_unicode(tmp_path) == []
+
+
+def test_console_unicode_stderr_reconfigure_suppresses_file(tmp_path: Path):
+    _write(
+        tmp_path,
+        "ok.py",
+        'import sys\nsys.stderr.reconfigure(encoding="utf-8")\nlogger.warning("bad ✓ value")\n',
+    )
+    assert scan_console_unicode(tmp_path) == []
+
+
+def test_console_unicode_reconfigure_without_encoding_kwarg_does_not_suppress(tmp_path: Path):
+    """A bare ``sys.stdout.reconfigure()`` (no ``encoding=``, e.g. line-buffering tweaks) doesn't
+    change the console encoding -- must not be mistaken for the UTF-8 fix."""
+    _write(
+        tmp_path,
+        "bad.py",
+        'import sys\nsys.stdout.reconfigure(line_buffering=True)\nprint("done → next")\n',
+    )
+    findings = scan_console_unicode(tmp_path)
+    assert len(findings) == 1, findings
+
+
 # ---- mojibake ---------------------------------------------------------------
 
 

@@ -40,6 +40,20 @@ def _has_non_ascii(s: str) -> bool:
     return any(ord(c) > 127 for c in s)
 
 
+def _has_stdio_utf8_reconfigure(source: str) -> bool:
+    """True if ``source`` calls ``sys.stdout.reconfigure(encoding=...)`` /
+    ``sys.stderr.reconfigure(encoding=...)`` anywhere in the module -- the standard idiom for
+    fixing exactly the failure mode this scanner exists to catch (Windows' cp1251/cp1252 default
+    console encoding). A file that already forces UTF-8 stdio at its own entry point cannot hit
+    the ``UnicodeEncodeError`` the scanner warns about, so flagging its non-ASCII literals is a
+    false positive. A plain substring check (not an AST walk restricted to module-top-level) is
+    deliberate: the reconfigure call is just as effective inside an ``if __name__ ==
+    "__main__":`` guard or a ``main()`` function that runs before any print/log call, which is
+    the common placement in this codebase's scripts.
+    """
+    return "reconfigure(encoding" in source and (".stdout.reconfigure(encoding" in source or ".stderr.reconfigure(encoding" in source)
+
+
 def scan_console_unicode(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -49,7 +63,10 @@ def scan_console_unicode(
 
     On Windows, default stdout/stderr encoding is ``cp1251``/``cp1252``; printing a fancy Unicode
     arrow, checkmark, or any non-Latin character crashes with ``UnicodeEncodeError`` -- silently
-    fine on Linux/macOS dev machines, guaranteed broken on Windows.
+    fine on Linux/macOS dev machines, guaranteed broken on Windows. Skips files that already call
+    ``sys.stdout.reconfigure(encoding=...)`` / ``sys.stderr.reconfigure(encoding=...)`` (see
+    :func:`_has_stdio_utf8_reconfigure`) -- the established fix for this exact failure mode,
+    confirmed as this codebase's own convention across dozens of scripts.
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -57,6 +74,8 @@ def scan_console_unicode(
         if tree is None:
             continue
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        if _has_stdio_utf8_reconfigure("\n".join(src_lines)):
+            continue
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_console_call(node):
