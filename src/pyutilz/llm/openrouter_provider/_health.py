@@ -194,7 +194,8 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
             "uptime_30m": _normalize_uptime(e.get("uptime_last_30m")),
             "uptime_1d": _normalize_uptime(e.get("uptime_last_1d")),
             "latency_p50_ms": latency.get("p50"),
-            "latency_p95_ms": latency.get("p95") or latency.get("p90"),
+            # `or`, not a None-check: a genuinely-0ms p95 would otherwise fall through to p90.
+            "latency_p95_ms": latency.get("p95") if latency.get("p95") is not None else latency.get("p90"),
             "throughput_p50_tps": throughput.get("p50"),
             "context_length": e.get("context_length"),
             "max_completion_tokens": e.get("max_completion_tokens"),
@@ -496,7 +497,10 @@ def list_openrouter_models(
                 "name": str(r.get("id", "")),
                 # Stage-2 sorts. Missing health → sort to the end.
                 "uptime": -(health.get("best_uptime_30m") or 0.0),
-                "latency": health.get("best_latency_p50_ms") or float("inf"),
+                # `or`, not a None-check, would treat a genuinely-fastest 0ms latency as
+                # "missing" and sort it to the end -- the opposite of "sort to the end" intent,
+                # which only applies to an ACTUALLY missing measurement.
+                "latency": health.get("best_latency_p50_ms") if health.get("best_latency_p50_ms") is not None else float("inf"),
                 "throughput": -(health.get("best_throughput_p50_tps") or 0.0),
             }.get(sort_by, str(r.get("id", "")))
         rows.sort(key=_key)

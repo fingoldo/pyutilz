@@ -4195,6 +4195,65 @@ def is_not_or_ne(op):
     assert findings == []
 
 
+def test_default_via_or_looks_and_has_predicate_names_not_flagged(tmp_path: Path):
+    """``_foo_looks_bar(...)`` / ``_foo_has_bar(...)`` follow the same predicate-shaped-name
+    convention as ``is_*``, just spelled differently -- both sides here are ``-> bool``."""
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def _loop_looks_bounded_retry(test):
+    return True
+
+
+def _loop_body_has_meaningful_sleep(stmts):
+    return True
+
+
+def check(test, stmts):
+    return _loop_looks_bounded_retry(test) or _loop_body_has_meaningful_sleep(stmts)
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == []
+
+
+def test_default_via_or_underscore_prefixed_is_predicate_not_flagged(tmp_path: Path):
+    """A private helper's leading underscore (``_is_known_immutable_scalar_annotation``) must not
+    defeat the ``is_*`` predicate-name recognition -- module-privacy doesn't change the naming
+    convention's meaning."""
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def _is_known_immutable_scalar_annotation(x):
+    return True
+
+
+def check(a, b):
+    return _is_known_immutable_scalar_annotation(a) or _is_known_immutable_scalar_annotation(b)
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == []
+
+
+def test_default_via_or_empty_tuple_default_not_flagged(tmp_path: Path):
+    """``x or ()`` is the tuple-literal spelling of the same trivial-empty-container idiom already
+    covered for ``[]``/``{}``/``set()`` -- empty in, empty out, no distinct value to clobber."""
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def normalize(items):
+    for g in items or ():
+        pass
+""",
+    )
+    findings = scan_default_via_or_trap(tmp_path)
+    assert findings == []
+
+
 def test_default_via_or_boolean_valued_assignment_not_flagged(tmp_path: Path):
     _write(
         tmp_path,

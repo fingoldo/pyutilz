@@ -186,6 +186,10 @@ def sweep_backend_crossover(
         except Exception:
             ref_out = None
         best_name, best_ms, best_diff = None, float("inf"), 0.0
+        # `.max() or 1.0`: same divide-by-zero guard as np.std/np.var's documented-safe idiom --
+        # abs(...).max() is 0.0 only when the reference output is all-zero, in which case
+        # substituting a scale of 1.0 for the equivalence-tolerance computation below is the
+        # intentional degenerate-case fallback, not a caller-falsy-value trap.
         ref_scale = float(np.abs(np.asarray(
             ref_out.get() if hasattr(ref_out, "get") else ref_out, dtype=np.float64)).max() or 1.0) if ref_out is not None else 1.0
         # Pass 1: warm up + equivalence-gate; survivors go into the timed rank.
@@ -202,7 +206,7 @@ def sweep_backend_crossover(
                     synchronize_gpu_if_available()
                 diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, out)
                 # equivalence gate: a faster-but-divergent variant is a bug, not a winner
-                if name != ref and not (diff <= equiv_atol + equiv_rtol * (ref_scale or 1.0)):
+                if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
                     if verbose:
                         logger.info("sweep %s=%d: %s DIVERGES (maxdiff=%.2e) -> skip", primary_axis, size, name, diff)
                     continue
@@ -431,7 +435,10 @@ def sweep_backend_grid(
             except Exception:
                 ref_out = None
             best_name, best_ms, best_diff = None, float("inf"), 0.0
-            ref_scale = float(np.abs(np.asarray(ref_out, dtype=np.float64)).max()) if ref_out is not None else 1.0
+            # `.max() or 1.0`: divide-by-zero guard (see sweep_backend_grid's sibling comment) --
+            # ref_out all-zero is the only way abs().max() is 0.0, and falling back to a scale of
+            # 1.0 for the tolerance below is the intentional degenerate-case behavior.
+            ref_scale = float(np.abs(np.asarray(ref_out, dtype=np.float64)).max() or 1.0) if ref_out is not None else 1.0
             # Pass 1: warm up + equivalence-gate every variant. Survivors (those whose
             # output matches the reference within tol) go into the timed rank; a
             # divergent-but-faster variant is a bug, never a winner, so it is dropped
@@ -445,7 +452,7 @@ def sweep_backend_grid(
                     if synchronize_gpu:
                         synchronize_gpu_if_available()
                     diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
-                    if name != ref and diff > equiv_atol + equiv_rtol * (ref_scale or 1.0):
+                    if name != ref and diff > equiv_atol + equiv_rtol * ref_scale:
                         if verbose:
                             logger.info("grid %s res=%s: %s DIVERGES (%.2e) -> skip", dims, res, name, diff)
                         continue

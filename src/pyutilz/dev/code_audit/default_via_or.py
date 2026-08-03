@@ -24,7 +24,7 @@ def _is_trivial_default(value: ast.AST) -> bool:
     """
     if isinstance(value, ast.Constant) and not value.value:
         return True
-    if isinstance(value, (ast.Dict, ast.List, ast.Set)) and not getattr(value, "elts", None) and not getattr(value, "keys", None):
+    if isinstance(value, (ast.Dict, ast.List, ast.Set, ast.Tuple)) and not getattr(value, "elts", None) and not getattr(value, "keys", None):
         return True
     # Empty-container CONSTRUCTOR CALLS (``set()``, ``list()``, ``dict()``, ``tuple()``,
     # ``frozenset()``) are the call-form equivalent of the literal check above -- e.g.
@@ -301,7 +301,12 @@ def _is_boolean_valued(node: ast.AST) -> bool:
     convention (``is_numeric_dtype(s) or is_bool_dtype(s)``, ``is_supported_xgboost(m) or
     is_supported_lightgbm(m)``) -- a name starting with ``is_`` or ``is`` + an uppercase letter is,
     by the same convention ``isinstance``/``issubclass`` already rely on, a predicate that returns
-    a real bool, never an arbitrary falsy value."""
+    a real bool, never an arbitrary falsy value. A leading underscore (private helper, e.g.
+    ``_is_known_immutable_scalar_annotation``) is stripped before the check -- the module-private
+    convention doesn't change the naming contract. Likewise ``_looks_<predicate>``/``_has_<noun>``
+    (``_loop_looks_bounded_retry``, ``_loop_body_has_meaningful_sleep``) are recognised as the same
+    predicate-shaped-name convention, confirmed on this project's own code_audit scanners, all of
+    which are declared ``-> bool`` and used exactly like ``is_*``."""
     if isinstance(node, ast.Compare):
         return True
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
@@ -311,7 +316,10 @@ def _is_boolean_valued(node: ast.AST) -> bool:
         if isinstance(func, ast.Name):
             if func.id in _BOOLEAN_VALUED_CALL_NAMES:
                 return True
-            if func.id.startswith("is_") or (func.id.startswith("is") and len(func.id) > 2 and func.id[2].isupper()):
+            name = func.id.lstrip("_")
+            if name.startswith("is_") or (name.startswith("is") and len(name) > 2 and name[2].isupper()):
+                return True
+            if "_looks_" in name or "_has_" in name or name.startswith("has_"):
                 return True
         elif isinstance(func, ast.Attribute) and func.attr in _BOOLEAN_VALUED_METHOD_NAMES:
             return True
