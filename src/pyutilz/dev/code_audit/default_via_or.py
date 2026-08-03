@@ -278,8 +278,10 @@ _BOOLEAN_VALUED_CALL_NAMES = frozenset({"isinstance", "issubclass", "hasattr", "
 # Attribute-form boolean reducers: ``arr.all()`` / ``series.any()`` (numpy/pandas) are exactly as
 # boolean-valued as the builtin ``all``/``any`` above, just spelled as a method call instead of a
 # call on an iterable -- ``_BOOLEAN_VALUED_CALL_NAMES`` only matched a bare ``Name`` func, missing
-# every method-call spelling.
-_BOOLEAN_VALUED_METHOD_NAMES = frozenset({"all", "any"})
+# every method-call spelling. ``str.startswith``/``str.endswith`` are the same class of
+# always-bool method (never an arbitrary falsy "empty" value) -- confirmed as a real
+# false-positive on a downstream consumer: ``lemma.endswith("a") or lemma.endswith("e")``.
+_BOOLEAN_VALUED_METHOD_NAMES = frozenset({"all", "any", "startswith", "endswith"})
 
 
 def _is_boolean_valued(node: ast.AST) -> bool:

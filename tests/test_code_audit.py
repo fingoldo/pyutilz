@@ -4218,6 +4218,20 @@ def is_not_or_ne(op):
     assert findings == []
 
 
+def test_default_via_or_startswith_endswith_not_flagged(tmp_path: Path):
+    """``str.startswith``/``str.endswith`` always return a real bool, never an arbitrary
+    falsy value -- same class of false positive already fixed for ``.all()``/``.any()``."""
+    _write(
+        tmp_path,
+        "ok.py",
+        """
+def is_diminutive(lemma):
+    return lemma.endswith("chen") or lemma.endswith("lein")
+""",
+    )
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
 def test_default_via_or_looks_and_has_predicate_names_not_flagged(tmp_path: Path):
     """``_foo_looks_bar(...)`` / ``_foo_has_bar(...)`` follow the same predicate-shaped-name
     convention as ``is_*``, just spelled differently -- both sides here are ``-> bool``."""
