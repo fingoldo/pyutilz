@@ -750,8 +750,9 @@ class TestEnsureIdleDevices:
             result = ensure_idle_devices(min_gpu_free_ram_gb=4.0)
         assert result is False
 
+    @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")
-    def test_gpu_ids_filter(self, mock_psutil):
+    def test_gpu_ids_filter(self, mock_psutil, mock_logger):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
         mem.total = 16 * (1024**3)
@@ -764,13 +765,18 @@ class TestEnsureIdleDevices:
         gpu1 = MagicMock(id=1, memoryTotal=8192, memoryFree=6144, load=0.05)
         mock_gputil.getGPUs.return_value = [gpu0, gpu1]
 
+        # mock the module logger too: a real logger's LogRecord creation calls time.time()
+        # internally whenever INFO-level logging is enabled (CI's logging config differs from
+        # local), silently consuming extra values from the side_effect list below and raising
+        # StopIteration once it runs out -- unrelated to the function's own clock usage.
         with patch.dict("sys.modules", {"GPUtil": mock_gputil}), patch("time.time", side_effect=[0, 0, 6]), patch("time.sleep"):
             # Only check GPU 1 which has enough memory
             result = ensure_idle_devices(duration_seconds=5, min_gpu_free_ram_gb=4.0, gpu_ids=[1])
         assert result is True
 
+    @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")
-    def test_gputil_not_available(self, mock_psutil):
+    def test_gputil_not_available(self, mock_psutil, mock_logger):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
         mem.total = 16 * (1024**3)
@@ -784,8 +790,9 @@ class TestEnsureIdleDevices:
             result = ensure_idle_devices(duration_seconds=5, min_cpu_free_ram_gb=1.0)
         assert result is True
 
+    @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")
-    def test_gpu_conditions_checked(self, mock_psutil):
+    def test_gpu_conditions_checked(self, mock_psutil, mock_logger):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
         mem.total = 16 * (1024**3)
@@ -805,8 +812,9 @@ class TestEnsureIdleDevices:
             result = ensure_idle_devices(duration_seconds=5)
         assert result is True
 
+    @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")
-    def test_gpu_high_load(self, mock_psutil):
+    def test_gpu_high_load(self, mock_psutil, mock_logger):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
         mem.total = 16 * (1024**3)
@@ -823,8 +831,9 @@ class TestEnsureIdleDevices:
             result = ensure_idle_devices(duration_seconds=5)
         assert result is True
 
+    @patch("pyutilz.system.system.misc.logger")
     @patch("pyutilz.system.system.misc.psutil")
-    def test_gpu_low_free_ram(self, mock_psutil):
+    def test_gpu_low_free_ram(self, mock_psutil, mock_logger):
         from pyutilz.system.system import ensure_idle_devices
         mem = MagicMock()
         mem.total = 16 * (1024**3)
