@@ -20,7 +20,11 @@ class ObjWithBrokenProperty:
 def test_jsonize_atrtributes_continues_past_broken_attribute(caplog):
     obj = ObjWithBrokenProperty()
 
-    with caplog.at_level(logging.ERROR):
+    # DEBUG, not ERROR: jsonize_atrtributes runs once per attribute name returned by dir(obj),
+    # recursively over the whole object graph, so a routinely-raising property (a lazy/proxy
+    # object) is normal, expected, per-attribute skip-and-continue behavior -- logging it at
+    # DEBUG avoids flooding the log with what would otherwise be one traceback per attribute.
+    with caplog.at_level(logging.DEBUG):
         res = jsonize_atrtributes(obj=obj)
 
     assert isinstance(res, dict)
