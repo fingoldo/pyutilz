@@ -861,6 +861,35 @@ def ReadTableIntoDic(dicEnums, sTable, sKeyFieldName="name", sCondition="", sIdF
     assert [f for f in findings if f.check == "duplicate_function_body_subset"] == [], findings
 
 
+def test_near_duplicate_not_flagged_for_independent_deprecated_alias_shims(tmp_path: Path):
+    """The ``near_duplicate_function_body`` shape (ratio-based, comparable-length bodies) has
+    the exact same false-positive class as the ``duplicate_function_body_subset`` shape above --
+    two independent deprecated-alias shims for DIFFERENT modern functions, near-identical in
+    BOTH length and content because they follow the same boilerplate. Confirmed in the wild
+    (2026-08-04): pyutilz's own ``ReadTableIntoDic``/``ReadTableIntoDicReversed`` shims cleared
+    the ratio threshold (not just containment) on some Python versions -- the exemption was
+    applied only in the containment branch, not here."""
+    _write(tmp_path, "a.py", """
+import warnings
+
+def modern_a(w, x, y, z, q, r):
+    pass
+
+def modern_b(w, x, y, z, q, r):
+    pass
+
+def LegacyA(w, x, y, z, q, r):
+    warnings.warn("deprecated", DeprecationWarning, stacklevel=2)
+    return modern_a(w=w, x=x, y=y, z=z, q=q, r=r)
+
+def LegacyB(w, x, y, z, q, r):
+    warnings.warn("deprecated", DeprecationWarning, stacklevel=2)
+    return modern_b(w=w, x=x, y=y, z=z, q=q, r=r)
+""")
+    findings = scan_near_duplicate_function_body(tmp_path)
+    assert [f for f in findings if f.check == "near_duplicate_function_body"] == [], findings
+
+
 def test_dict_key_non_literal_not_flagged(tmp_path: Path):
     """A computed key (``{x: 1, y: 1}`` where x/y are variables) can't be
     reliably compared statically -- must not false-positive."""

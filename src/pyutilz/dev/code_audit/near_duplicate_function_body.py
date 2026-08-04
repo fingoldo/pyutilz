@@ -293,6 +293,8 @@ def scan_near_duplicate_function_body(
         rel_j = py_j.relative_to(root).as_posix()
 
         if ratio >= min_similarity:
+            if _is_deprecated_alias_boilerplate(node_i) and _is_deprecated_alias_boilerplate(node_j):
+                continue  # both are independent deprecated-alias shims -- see docstring
             findings.append(
                 Finding(
                     check="near_duplicate_function_body",

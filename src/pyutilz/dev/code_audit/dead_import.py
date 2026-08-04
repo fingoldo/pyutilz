@@ -27,7 +27,7 @@ def _alias_own_lineno(alias: ast.alias, node: "ast.Import | ast.ImportFrom", src
         return int(own_lineno)
     name = alias.name.split(".")[0]
     pattern = re.compile(r"\b" + re.escape(name) + r"\b")
-    end_lineno = getattr(node, "end_lineno", node.lineno)
+    end_lineno = node.end_lineno if node.end_lineno is not None else node.lineno
     for lineno in range(node.lineno, end_lineno + 1):
         if lineno in claimed:
             continue
