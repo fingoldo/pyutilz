@@ -3834,6 +3834,42 @@ def f():
     assert len(flagged_lines) == 2, findings  # each dead name got its OWN line, not a shared one
 
 
+def test_alias_own_lineno_fallback_when_ast_alias_lacks_lineno():
+    """``ast.alias`` only gained ``lineno``/``col_offset`` in Python 3.10 (bpo-39235) -- on 3.8/3.9
+    (this package's own supported floor), the getattr(alias, "lineno", node.lineno) fallback used
+    to collapse every alias in a multi-line block back onto node.lineno, silently reproducing the
+    exact collision test_possibly_dead_import_multiline_block_reports_each_dead_name_separately
+    exists to prevent (confirmed failing in CI on Python 3.8, 2026-08-04). This test exercises the
+    fallback path directly (source-text line scan) regardless of which Python actually runs it,
+    by stripping ``lineno`` off a real parsed alias before calling the helper -- so the fallback's
+    correctness doesn't depend on which interpreter happens to run the test suite."""
+    import ast
+
+    from pyutilz.dev.code_audit.dead_import import _alias_own_lineno
+
+    src = "from helper_module import (\n    foo,\n    foo_bar,\n)\n"
+    tree = ast.parse(src)
+    src_lines = src.splitlines()
+    node = tree.body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    class _Py38Alias:
+        """Mimics ast.alias on Python <3.10: no lineno/col_offset attributes at all."""
+
+        def __init__(self, real: ast.alias) -> None:
+            self.name = real.name
+            self.asname = real.asname
+
+    claimed: set[int] = set()
+    linenos = [_alias_own_lineno(_Py38Alias(alias), node, src_lines, claimed) for alias in node.names]  # type: ignore[arg-type]
+
+    # Each alias gets its own distinct line, in source order -- including the substring-collision
+    # case (foo vs foo_bar) where a naive `name in line` check would wrongly match "foo"'s line
+    # against "foo_bar"'s text too.
+    assert linenos == [2, 3]
+    assert len(set(linenos)) == 2
+
+
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
     _write(tmp_path, "mod.py", """

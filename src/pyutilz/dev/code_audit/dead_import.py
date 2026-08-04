@@ -2,9 +2,39 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+
+
+def _alias_own_lineno(alias: ast.alias, node: "ast.Import | ast.ImportFrom", src_lines: list[str], claimed: set[int]) -> int:
+    """The alias's own 1-based line number.
+
+    ``ast.alias`` only gained ``lineno``/``col_offset`` in Python 3.10 (bpo-39235) -- on 3.8/3.9
+    (this package's own supported floor, see pyproject.toml ``requires-python``), every alias in
+    a multi-line ``from x import (a, b, c)`` block falls back to the SAME ``node.lineno`` with no
+    fix possible via attribute access alone. Confirmed in CI on 3.8 (2026-08-04): that collision
+    is exactly the bug the alias-own-line fix (see the caller's docstring) exists to prevent, so
+    the fallback must not just silently reproduce it. Scan the statement's own source lines (node
+    is Import/ImportFrom, which HAS had end_lineno since 3.8) for the first not-yet-claimed line
+    whose text contains the alias's own name as a whole identifier -- ``claimed`` lets sibling
+    aliases in the same block each get a distinct line even when one name is a substring of
+    another (e.g. ``foo`` / ``foo_bar``), by ruling out lines already matched to an earlier alias.
+    """
+    own_lineno = getattr(alias, "lineno", None)
+    if own_lineno is not None:
+        return int(own_lineno)
+    name = alias.name.split(".")[0]
+    pattern = re.compile(r"\b" + re.escape(name) + r"\b")
+    end_lineno = getattr(node, "end_lineno", node.lineno)
+    for lineno in range(node.lineno, end_lineno + 1):
+        if lineno in claimed:
+            continue
+        if pattern.search(_line_text(src_lines, lineno)):
+            claimed.add(lineno)
+            return lineno
+    return node.lineno
 
 
 def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str, int, str]]:
@@ -26,13 +56,14 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
         if isinstance(node, ast.Import):
             if "# noqa" in _line_text(src_lines, node.lineno):
                 continue
+            claimed: set[int] = set()
             for alias in node.names:
                 bound = alias.asname or alias.name.split(".")[0]
                 if bound.startswith("_"):
                     continue
                 # A multi-line import block's own alias may carry its own per-name rationale
                 # comment on a different physical line than node.lineno -- check both.
-                alias_lineno = getattr(alias, "lineno", node.lineno)
+                alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
                 if "# noqa" in _line_text(src_lines, alias_lineno):
                     continue
                 out.append((bound, alias_lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
@@ -41,6 +72,7 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                 continue
             if "# noqa" in _line_text(src_lines, node.lineno):
                 continue
+            claimed = set()
             for alias in node.names:
                 if alias.name == "*":
                     continue
@@ -50,7 +82,7 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                 # A multi-line parenthesized import block puts a per-name rationale comment on
                 # the ALIAS's own line, not the statement line -- check both, since this is the
                 # codebase's actual convention for per-name-reviewed re-exports.
-                alias_lineno = getattr(alias, "lineno", node.lineno)
+                alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
                 if "# noqa" in _line_text(src_lines, alias_lineno):
                     continue
                 # Report the ALIAS's own line (not the enclosing statement's node.lineno):
