@@ -333,12 +333,10 @@
       "remove_constant_columns": "callable(df:any:0:, max_log_text_width:any:1:300, verbose:any:1:False)"
     },
     "pythonlib": {
-      "CustomError": "class:pyutilz.core.pythonlib.CustomError",
       "HashableDict": "class:pyutilz.core.pythonlib.HashableDict",
       "ObjectsAndFilesProcessor": "class:pyutilz.core.pythonlib.ObjectsAndFilesProcessor",
       "ObjectsDumper": "class:pyutilz.core.pythonlib.ObjectsDumper",
       "ObjectsLoader": "class:pyutilz.core.pythonlib.ObjectsLoader",
-      "STRUCTURED_FORMAT_PARSING_ERROR": "value",
       "age": "callable(dob:any:0:)",
       "anyof_elements_in_string": "callable(elems:any:0:, target:any:0:)",
       "batch": "callable(iterable:any:0:, n:any:1:1)",
@@ -399,6 +397,7 @@
     },
     "serialization": {
       "PickleVerificationError": "class:pyutilz.core.safe_pickle.PickleVerificationError",
+      "atomic_write_bytes": "callable(target_path:any:0:, writer_fn:any:0:, fsync:kw:1:False)",
       "logger": "value",
       "serialize": "callable(obj:any:0:, fname:any:1:None, compression:any:1:9)",
       "str_to_class": "callable(classname:any:0:)",

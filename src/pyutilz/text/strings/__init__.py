@@ -114,6 +114,36 @@ from .textentropy import (
 
 _LAZY_WEBTEXT_GLOBALS = frozenset({"inflect_engine", "nlp", "ascii_emojies", "unicode_emojies"})
 
+# Explicit public surface: makes this facade's re-export intent self-documenting (rather than
+# relying on nothing but "this is __init__.py") and gives the self-scan code-audit
+# possibly_dead_import check an authoritative usage signal for names only ever consumed by
+# external repos (``from pyutilz.text.strings import X``), which its own-repo corpus scan can't
+# see.
+__all__ = [
+    "logger",
+    "ensure_installed",
+    "Any", "Iterable", "List", "Optional", "Sequence", "Union",
+    "pd", "np", "string", "json",
+    "OrderedDict", "unicodedata", "re", "math", "defaultdict", "deque", "Counter",
+    "is_float",
+    "json_serial", "sub_elem", "jsonize_atrtributes", "remove_json_attributes",
+    "leave_json_attributes", "extract_json_attribute", "remove_json_empty_attributes",
+    "remove_json_defaults", "json_pg_dumps", "get_jsonlist_property", "get_jsonlist_properties",
+    "read_config_file", "write_config_file",
+    "find_between", "parse_tokens", "make_text_from_inner_html_elements", "underscorize_variable",
+    "get_hash", "strip_characters", "strip_doubled_characters", "rpad", "shorten_path", "slugify",
+    "camel_case_split",
+    "punctuation", "eos", "spacy_sent_tokenize", "remove_videos", "fix_duplicate_tokens",
+    "unescape_html", "fix_html", "parse_html", "fix_quotations", "fix_spaces",
+    "fix_broken_sentences", "fix_missed_space_between_sentences", "merge_punctuation_signs",
+    "ensure_space_after_comma", "clean_description", "get_ascii_emojies", "get_unicode_emojies",
+    "sentencize_text", "suffixize",
+    "tokenize_text", "tokenize_source", "tokenize_to_chars", "tokenize_to_words",
+    "get_entropy_stats", "entropy", "entropy_rate", "compute_entropy_stats", "naive_entropy_rate",
+    "stringify_dict",
+    "inflect_engine", "nlp", "ascii_emojies", "unicode_emojies",  # kept in sync with _LAZY_WEBTEXT_GLOBALS above
+]
+
 
 def __getattr__(name):
     if name in _LAZY_WEBTEXT_GLOBALS:

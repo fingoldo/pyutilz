@@ -798,7 +798,7 @@ try:
         return res
 
     @nb.njit(cache=True)
-    def _sentences_similarity_batch_core(buf, offsets, word_counts, n_candidates, query_n, cMinLenTHreshold):
+    def _sentences_similarity_batch_core(buf, offsets, word_counts, n_candidates, query_n: int, cMinLenTHreshold):
         """Compare one query against multiple candidates sequentially."""
         results = np.empty(n_candidates, dtype=np.float64)
         # Pre-compute cumulative word starts for each candidate

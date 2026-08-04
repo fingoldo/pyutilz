@@ -29,7 +29,7 @@ from __future__ import annotations
 # Re-exported verbatim to preserve the historical public surface AND to
 # serve as the single late-binding target for monkeypatching (``httpx``,
 # ``get_llm_settings``).
-import asyncio
+import asyncio  # noqa: re-exported facade name (`pyutilz.llm.openrouter_provider.asyncio`), part of the historic flat-module public surface
 import logging
 import os
 import threading

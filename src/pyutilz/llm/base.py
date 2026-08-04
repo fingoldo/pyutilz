@@ -505,6 +505,27 @@ class LLMProvider(ABC):
         """
         return None
 
+    async def _generate_json_via(self, prompt: str, system: str | None, temperature: float, max_tokens: int, **generate_kwargs: Any) -> dict[str, Any]:
+        """Shared ``generate_json`` body: steer the system prompt toward JSON-only output, call
+        ``self.generate`` (forwarding any provider-specific kwargs, e.g. OpenAI-compat's
+        ``json_mode``/``json_schema``), then parse via ``extract_json``.
+
+        Factored out of ``generate_json`` so a provider that needs to forward extra kwargs to
+        ``generate`` (``OpenAICompatibleProvider.generate_json``) can reuse this exact body
+        instead of duplicating it near-verbatim -- a duplicate-function-body-subset finding in
+        the 2026-08-04 code-audit pass caught the two copies drifting only in which kwargs got
+        forwarded.
+        """
+        json_system = (system or "") + "\n\nRespond with valid JSON only."
+        text = await self.generate(
+            prompt=prompt,
+            system=json_system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **generate_kwargs,
+        )
+        return self.extract_json(text, self._provider_display_name)
+
     async def generate_json(
         self,
         prompt: str,
@@ -518,14 +539,7 @@ class LLMProvider(ABC):
         calls ``generate``, then parses via ``extract_json``. Providers with a
         hard JSON-mode toggle (OpenAI-compat) override to pass it through.
         """
-        json_system = (system or "") + "\n\nRespond with valid JSON only."
-        text = await self.generate(
-            prompt=prompt,
-            system=json_system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return self.extract_json(text, self._provider_display_name)
+        return await self._generate_json_via(prompt, system, temperature, max_tokens)
 
     async def generate_batch(
         self,

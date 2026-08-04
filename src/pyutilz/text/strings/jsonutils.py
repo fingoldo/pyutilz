@@ -107,7 +107,13 @@ def jsonize_atrtributes(
                             max_recursion_level=max_recursion_level,
                         )
                     except Exception as e:
-                        logger.exception("Failed to jsonize attribute %r of %r: %s", attr, obj, e)
+                        # debug, not exception/warning: this runs once per attribute name returned by
+                        # dir(obj), recursively over the whole object graph -- an object with a large or
+                        # deeply-nested attribute surface (or one whose properties routinely raise, e.g. a
+                        # lazy/proxy object) would otherwise emit one full traceback PER attribute, per
+                        # nesting level, flooding the log for what is normal, expected, per-attribute
+                        # skip-and-continue behavior (see the `continue` right below).
+                        logger.debug("Failed to jsonize attribute %r of %r: %s", attr, obj, e)
                         continue
     return res  # type: ignore[no-any-return]  # res is genuinely a dict on this path; typed Any to accommodate the str/dict/list branches elsewhere in this function
 

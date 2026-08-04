@@ -10,8 +10,15 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse
 
 # Maximal runs of consecutive non-ASCII characters shorter than this are skipped: a lone accented
 # character (rare but not impossible in a name/URL) round-tripping by coincidence is far more
-# plausible at length 1 than a multi-character run doing so.
-_MIN_RUN_LENGTH = 2
+# plausible at length 1 (or 2) than a multi-character run doing so. Concretely: a 2-character
+# Cyrillic-block run split out of a longer regex character class (e.g. the "..ЯЁ" tail of a
+# ``[A-ZА-ЯЁ]`` range, where the ASCII "-" breaks the run just before it) round-trips through
+# cp1251-encode -> utf-8-decode into a legible-looking but bogus recovery purely by coincidence
+# often enough at length 2 to false-positive on legitimate source; genuine mojibake corruption
+# (an actual misread word/phrase) is essentially never only 2 characters long, so 3 is the floor
+# that keeps real detections (see test_mojibake_roundtrip_corruption_flagged, a 7-char run) while
+# dropping this class of coincidental short-range false positive.
+_MIN_RUN_LENGTH = 3
 
 _NON_ASCII_RUN_RE = re.compile(r"[^\x00-\x7F]+")
 

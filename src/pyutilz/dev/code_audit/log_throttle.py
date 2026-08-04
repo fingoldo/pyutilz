@@ -65,6 +65,41 @@ def _for_loop_looks_bounded_retry(iter_node: ast.expr) -> bool:
     return any(_looks_like_retry_bound_name(arg) for arg in iter_node.args)
 
 
+def _while_test_is_unconditionally_true(test: ast.expr) -> bool:
+    """True for the ``while True:`` / ``while 1:`` spelling of an intentionally-unbounded-by-its-
+    OWN-test loop (the retry cap, if any, lives in an internal ``break``/``raise`` instead)."""
+    if isinstance(test, ast.Constant):
+        return test.value is True or test.value == 1
+    return False
+
+
+def _loop_body_has_bounded_retry_break(stmts: list[ast.stmt]) -> bool:
+    """True if ``stmts`` (walked recursively) contains an ``if <retry-hint comparison>: break``/
+    ``raise`` -- the ``while True: ... if attempts >= max_retries: break`` idiom for a bounded
+    retry loop, just spelled with the bound as an internal early-exit instead of the loop's own
+    test expression (which ``_loop_looks_bounded_retry`` already recognizes).
+
+    Confirmed false-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04, ``dev/logginglib.py``'s ``debugged()`` decorator): a `while True:` retry loop
+    whose only exit is `if not interactive or attempts >= max_retries: raise` inside the except
+    block is EXACTLY as bounded as `while attempts < max_retries:` -- arguably the more common
+    spelling for a "try body must run at least once before the first bound check" retry loop --
+    but the bound lives in the break/raise condition, not the (constant, uninformative) `while
+    True:` test itself, so it was invisible to the existing check.
+    """
+    for stmt in stmts:
+        for node in ast.walk(stmt):
+            if not isinstance(node, ast.If):
+                continue
+            # The retry-bound comparison may be combined with other conditions via `and`/`or`
+            # (e.g. `if not interactive or attempts >= max_retries: raise`), not just a bare
+            # Compare -- walk the whole test expression for a qualifying Compare anywhere in it.
+            has_retry_bound = any(isinstance(sub, ast.Compare) and _loop_looks_bounded_retry(sub) for sub in ast.walk(node.test))
+            if has_retry_bound and any(isinstance(s, (ast.Break, ast.Raise)) for s in ast.walk(node)):
+                return True
+    return False
+
+
 def _loop_body_has_meaningful_sleep(stmts: list[ast.stmt]) -> bool:
     """True if any statement in ``stmts`` (walked recursively, including inside nested
     if/try/for/while) calls ``sleep(...)``/``time.sleep(...)``/``asyncio.sleep(...)`` with at
@@ -134,7 +169,11 @@ def _visit_if_aware(
             if child is not None:
                 _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.While):
-        already_throttled = _loop_looks_bounded_retry(node.test) or _loop_body_has_meaningful_sleep(node.body)
+        already_throttled = (
+            _loop_looks_bounded_retry(node.test)
+            or _loop_body_has_meaningful_sleep(node.body)
+            or (_while_test_is_unconditionally_true(node.test) and _loop_body_has_bounded_retry_break(node.body))
+        )
         for child in (node.test, *node.body, *node.orelse):
             _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.If):

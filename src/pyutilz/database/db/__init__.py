@@ -65,13 +65,13 @@ from pyutilz.database.db.sql_helpers import (
     validate_sql_qualified_identifier,
     construct_templates_and_values,
     u,
-    nu,
+    nu,  # noqa: re-exported facade name, consumed as `pyutilz.database.db.nu`/`pyutilz.db.nu` by external repos, not referenced in-tree
     make_set_excluded_clause,
     MakeSetExcludedClause,
     update_if_now,
 )
-from pyutilz.database.db.upsert import build_upsert_query
-from pyutilz.database.db.sqlite import ensure_db_tables_created, insert_sqllite_data
+from pyutilz.database.db.upsert import build_upsert_query  # noqa: re-exported facade name, consumed as `pyutilz.database.db.build_upsert_query` by external repos, not referenced in-tree
+from pyutilz.database.db.sqlite import ensure_db_tables_created, insert_sqllite_data  # noqa: ensure_db_tables_created is a re-exported facade name, consumed by external repos, not referenced in-tree
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Global variables

@@ -180,20 +180,6 @@ def test_datetime_to_utc_timestamp():
 
 
 # ---------------------------------------------------------------------------
-# CustomError — lines 532-533
-# ---------------------------------------------------------------------------
-
-from pyutilz.pythonlib import CustomError
-
-
-def test_custom_error_str():
-    err = CustomError(404, "not found")
-    s = str(err)
-    assert "404" in s
-    assert "not found" in s
-
-
-# ---------------------------------------------------------------------------
 # lookup_in_stack — lines 549-555
 # ---------------------------------------------------------------------------
 

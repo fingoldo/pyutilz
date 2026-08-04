@@ -78,6 +78,79 @@ def _tokenize(normalized: str) -> tuple[str, ...]:
     return tuple(_TOKEN_RE.findall(normalized))
 
 
+import builtins as _builtins_module
+
+# Builtins/common dunder-protocol method names are excluded from `_called_names`: two unrelated
+# functions both calling `range()`/`len()`/`str()`, or both doing `.append()`/`.get()`, share
+# nothing meaningful -- crediting that as "delegates to a shared helper" would blind the guard
+# entirely (confirmed while adding it: a synthetic pair whose only call was `range(x)` in both
+# was wrongly exempted). Only a call to a NAMED, presumably project-defined function/method is
+# a genuine signal that both sites funnel through one already-shared implementation.
+_BUILTIN_CALL_NAMES = frozenset(dir(_builtins_module)) | {
+    "append", "extend", "update", "get", "items", "keys", "values", "pop", "join", "format",
+    "split", "strip", "lower", "upper", "replace", "startswith", "endswith", "sort", "copy",
+}
+
+
+def _called_names(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> set[str]:
+    """The simple names of every NON-builtin function/method called anywhere in ``node``'s
+    body (``foo(...)`` -> ``"foo"``, ``self.bar(...)``/``obj.bar(...)`` -> ``"bar"``), excluding
+    builtins and common dunder-protocol method names (see ``_BUILTIN_CALL_NAMES``)."""
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        name = None
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        if name and name not in _BUILTIN_CALL_NAMES:
+            names.add(name)
+    return names
+
+
+def _delegates_to_shared_helper(sub: "ast.FunctionDef | ast.AsyncFunctionDef", sup: "ast.FunctionDef | ast.AsyncFunctionDef") -> bool:
+    """True if ``sub`` and ``sup`` both call at least one function/method of the SAME name
+    somewhere in their own bodies (excluding calls to each other).
+
+    Confirmed false-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04): thin wrapper functions that both delegate their actual work to one already-
+    shared helper (e.g. ``safe_execute``/``safe_execute_values`` both calling
+    ``basic_db_execute``, or ``tune_spec``/``retune_all`` both calling ``_run_spec_tuning``)
+    necessarily have near-identical short bodies -- that's the INTENDED DRY shape (the logic
+    already lives in one place), not "someone inlined a whole helper's logic instead of
+    calling it". The subset/containment check exists to catch the OPPOSITE failure mode
+    (duplicating a helper's internals instead of importing it), so a shared-callee pair is
+    the false-positive case for this specific check, not its target.
+    """
+    sub_calls = _called_names(sub) - {sup.name}
+    sup_calls = _called_names(sup) - {sub.name}
+    return bool(sub_calls & sup_calls)
+
+
+def _is_deprecated_alias_boilerplate(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> bool:
+    """True if ``node``'s body calls ``warnings.warn(..., DeprecationWarning, ...)`` (or any
+    other ``*Warning`` class) anywhere -- the standard "deprecated alias" shim shape used
+    throughout this codebase's legacy PascalCase/Hungarian-notation function names.
+
+    Confirmed false-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04): ``EnsurePgTableExists``/``ReadTableIntoDic``/``ReadTableIntoDicReversed`` are
+    three independent deprecated aliases (for three DIFFERENT modern functions), each just
+    ``warnings.warn(...); return <modern_name>(...)``. That boilerplate is deliberately
+    reproduced identically across every deprecated alias for consistency -- it isn't one
+    alias's logic copy-pasted into another (they don't even delegate to the same callee), it's
+    every alias independently following the same documented shim convention.
+    """
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "warn":
+            for arg in list(child.args) + [kw.value for kw in child.keywords]:
+                if isinstance(arg, ast.Name) and arg.id.endswith("Warning"):
+                    return True
+    return False
+
+
 def _is_nested(outer: "ast.FunctionDef | ast.AsyncFunctionDef", inner: "ast.FunctionDef | ast.AsyncFunctionDef") -> bool:
     """True if ``inner`` is lexically defined somewhere inside ``outer``'s body (a closure,
     a decorator factory's builder function, ...). Only meaningful for two nodes from the SAME
@@ -243,6 +316,12 @@ def scan_near_duplicate_function_body(
             else:
                 sub_node, sub_rel = node_j, rel_j
                 sup_node, sup_src, sup_rel = node_i, src_i, rel_i
+
+            if _delegates_to_shared_helper(sub_node, sup_node):
+                continue  # both funnel through one already-shared helper -- see docstring
+            if _is_deprecated_alias_boilerplate(sub_node) and _is_deprecated_alias_boilerplate(sup_node):
+                continue  # both are independent deprecated-alias shims -- see docstring
+
             findings.append(
                 Finding(
                     check="duplicate_function_body_subset",

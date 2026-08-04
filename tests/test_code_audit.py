@@ -28,6 +28,7 @@ from pyutilz.dev.code_audit import (
     scan_sql_migration_idempotency,
     scan_duplicate_conditions,
     scan_duplicate_function_body,
+    scan_near_duplicate_function_body,
     scan_missed_await,
     scan_redundant_test_fit_calls,
     scan_undeclared_imports,
@@ -774,6 +775,90 @@ class B:
         self._lock = threading.Lock()
 """)
     assert scan_duplicate_function_body(tmp_path) == []
+
+
+# ---- near_duplicate_function_body / duplicate_function_body_subset -------
+
+
+def test_subset_flags_helper_logic_inlined_instead_of_called(tmp_path: Path):
+    """A genuine subset hit: the SAME multi-branch logic is copy-pasted into a bigger
+    function instead of calling the already-existing helper that has it."""
+    _write(tmp_path, "a.py", """
+def helper(x, y, z):
+    total = 0
+    for i in range(x):
+        if i % 2 == 0:
+            total += i * y
+        else:
+            total -= i * z
+        if total > 1000:
+            total -= 500
+    return total
+
+
+def caller(x, y, z, extra):
+    total = 0
+    for i in range(x):
+        if i % 2 == 0:
+            total += i * y
+        else:
+            total -= i * z
+        if total > 1000:
+            total -= 500
+    return total + extra
+""")
+    findings = scan_near_duplicate_function_body(tmp_path)
+    subset = [f for f in findings if f.check == "duplicate_function_body_subset"]
+    assert len(subset) == 1, findings
+
+
+def test_subset_not_flagged_when_both_delegate_to_shared_helper(tmp_path: Path):
+    """False-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04, e.g. ``safe_execute``/``safe_execute_values`` both calling
+    ``basic_db_execute``, ``tune_spec``/``retune_all`` both calling ``_run_spec_tuning``):
+    two thin wrappers that both call the SAME already-shared helper necessarily look
+    near-identical -- that's the intended DRY shape, not inlined duplicate logic."""
+    _write(tmp_path, "a.py", """
+def shared_helper(op, statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize=None):
+    pass
+
+
+def do_one(statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize=None):
+    return shared_helper("one", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize)
+
+
+def do_many(statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize=None, page_size=100):
+    return shared_helper("many", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize, page_size=page_size)
+""")
+    findings = scan_near_duplicate_function_body(tmp_path)
+    assert [f for f in findings if f.check == "duplicate_function_body_subset"] == [], findings
+
+
+def test_subset_not_flagged_for_independent_deprecated_alias_shims(tmp_path: Path):
+    """False-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04, ``EnsurePgTableExists``/``ReadTableIntoDic``/``ReadTableIntoDicReversed``):
+    independent deprecated-alias shims for DIFFERENT modern functions still look alike
+    because they all follow the same documented ``warnings.warn(...); return modern(...)``
+    boilerplate -- not one alias's logic copy-pasted into another."""
+    _write(tmp_path, "a.py", """
+import warnings
+
+def ensure_pg_table_exists(table, key_field_name="name", id_field_name="id", autocreate_id_type_name=None):
+    pass
+
+def read_table_into_dict(dict_enums, table, key_field_name="name", condition="", id_field_name="id", autocreate_id_type_name=None):
+    pass
+
+def EnsurePgTableExists(sTable, sKeyFieldName="name", sIdFieldName="id", sAutocreateIdTypeName=None):
+    warnings.warn("EnsurePgTableExists is deprecated; use ensure_pg_table_exists instead.", DeprecationWarning, stacklevel=2)
+    return ensure_pg_table_exists(table=sTable, key_field_name=sKeyFieldName, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName)
+
+def ReadTableIntoDic(dicEnums, sTable, sKeyFieldName="name", sCondition="", sIdFieldName="id", sAutocreateIdTypeName=None):
+    warnings.warn("ReadTableIntoDic is deprecated; use read_table_into_dict instead.", DeprecationWarning, stacklevel=2)
+    return read_table_into_dict(dict_enums=dicEnums, table=sTable, key_field_name=sKeyFieldName, condition=sCondition, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName)
+""")
+    findings = scan_near_duplicate_function_body(tmp_path)
+    assert [f for f in findings if f.check == "duplicate_function_body_subset"] == [], findings
 
 
 def test_dict_key_non_literal_not_flagged(tmp_path: Path):
@@ -3501,6 +3586,30 @@ def scan(get_next, log):
     assert len(findings) == 1
 
 
+def test_unthrottled_hot_loop_log_while_true_bounded_by_internal_retry_break_is_clean(tmp_path: Path):
+    """Real false-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04, ``dev/logginglib.py``'s ``debugged()`` decorator): a `while True:` retry loop
+    whose only exit is `if not interactive or attempts >= max_retries: raise` inside the except
+    block is EXACTLY as bounded as the already-recognized `while attempts < max_retries:` idiom --
+    the bound just lives in an internal break/raise condition instead of the loop's own
+    (constant, uninformative) test. Must stay clean; the sibling test above
+    (`test_unthrottled_hot_loop_log_while_loop_flagged`) confirms a genuinely-unbounded
+    `while True:` loop with no such internal bound is still flagged."""
+    _write(tmp_path, "retry.py", """
+def call_with_retry(func, log, max_retries=3):
+    attempts = 0
+    while True:
+        try:
+            return func()
+        except Exception as e:
+            log.exception(e)
+            attempts += 1
+            if attempts >= max_retries:
+                raise
+""")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+
+
 def test_unthrottled_hot_loop_log_else_branch_flagged(tmp_path: Path):
     """An unguarded log call in the `else` of an if/else, inside a loop, must still be flagged --
     only the `if`'s own throttle-guarded body is exempt, not its sibling `else`."""
@@ -3697,6 +3806,32 @@ import os  # noqa: F401
 from os import path  # noqa: F401
 """)
     assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_multiline_block_reports_each_dead_name_separately(tmp_path: Path):
+    """Real bug found dogfooding this scanner on pyutilz's own source (2026-08-04): a multi-line
+    `from x import (a, b, c)` block used to report every dead name at the SAME `node.lineno` (the
+    opening line of the statement), and the baseline-diff harness keys findings on exactly
+    `(check, file, line)` -- so two independently-dead names in the same block collided onto one
+    key and one silently masked the other. Confirmed in the wild: `database/db/__init__.py`'s
+    multi-line `sql_helpers` import had THREE independently-unused names (`nu`,
+    `MakeSetExcludedClause`, `update_if_now`) but only one finding ever surfaced. Each alias must
+    be reported at its OWN line so distinct dead names never collide onto one key."""
+    _write(tmp_path, "mod.py", """
+from helper_module import (
+    used_name,
+    dead_one,
+    dead_two,
+)
+
+def f():
+    return used_name()
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    flagged_names = {f.detail.split("binds '")[1].split("'")[0] for f in findings}
+    flagged_lines = {f.line for f in findings}
+    assert flagged_names == {"dead_one", "dead_two"}, findings
+    assert len(flagged_lines) == 2, findings  # each dead name got its OWN line, not a shared one
 
 
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
@@ -5086,6 +5221,39 @@ def test_getattr_unknown_attribute_does_not_fire_on_names_the_tree_uses_as_attri
     assert scan_getattr_unknown_attribute(tmp_path) == []
 
 
+def test_getattr_unknown_attribute_does_not_fire_on_module_level_def_or_import_bindings(tmp_path):
+    """Real false-positive pattern found dogfooding this scanner on pyutilz's own source
+    (2026-08-04, ``performance/kernel_tuning/cache/cache_base.py``): a common facade-patchability
+    idiom is ``getattr(some_module, "func_name", func_name)`` -- looking a name up on a LIVE
+    module object (so a test's ``monkeypatch.setattr(module, "func_name", ...)`` is honored) with
+    the in-tree function/import as the fallback. The module-level-bindings widening this scanner
+    already documents ("since `getattr(some_module, 'NAME', default)` is a legitimate pattern")
+    only walked module-level `Assign`/`AnnAssign` though, missing `def`/`class`/`import` bindings
+    entirely -- both a module-level function AND a module-level `from x import y` name must count
+    as known."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "facade.py").write_text(
+        "import sys\n"
+        "from math import sqrt\n"
+        "\n"
+        "def _probe() -> int:\n"
+        "    return 1\n"
+        "\n"
+        "class Widget:\n"
+        "    pass\n"
+        "\n"
+        "def use_facade():\n"
+        "    _facade = sys.modules[__name__]\n"
+        "    probe = getattr(_facade, '_probe', _probe)\n"
+        "    root = getattr(_facade, 'sqrt', sqrt)\n"
+        "    widget_cls = getattr(_facade, 'Widget', Widget)\n"
+        "    return probe(), root(4), widget_cls()\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_unknown_attribute(tmp_path) == []
+
+
 def test_getattr_unknown_attribute_ignores_the_two_argument_form(tmp_path):
     """A two-argument getattr raises on a miss, which is loud. The default is what makes the mistake silent."""
     from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
@@ -5333,6 +5501,16 @@ def test_mojibake_genuine_cyrillic_not_flagged(tmp_path: Path):
 
 def test_mojibake_ascii_only_not_flagged(tmp_path: Path):
     _write(tmp_path, "ok.py", "# a normal comment\nx = 1\n")
+    assert scan_mojibake(tmp_path) == []
+
+
+def test_mojibake_short_cyrillic_regex_range_not_flagged(tmp_path: Path):
+    # Real false positive found while dogfooding this scanner on pyutilz itself
+    # (src/pyutilz/text/humanizer.py): a regex character class like [A-ZА-ЯЁ] gets split
+    # by the ASCII "-" into a short 2-char Cyrillic run ("ЯЁ") that coincidentally
+    # round-trips through cp1251-encode -> utf-8-decode into different, legible-looking
+    # text -- purely by chance, not because anything is actually corrupted.
+    _write(tmp_path, "ok.py", 'hits = [m.start() for m in re.finditer(r"\\. [A-ZА-ЯЁ]", text)]\n')
     assert scan_mojibake(tmp_path) == []
 
 

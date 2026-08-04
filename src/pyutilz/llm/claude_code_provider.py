@@ -747,7 +747,13 @@ class ClaudeCodeProvider(LLMProvider):
                 )
                 yield {"id": request_id, "result": result}
             except Exception as e:
-                logger.error("Batch request %s failed: %s", request_id, e)
+                # debug, not error: this runs once per FAILED request in a caller-supplied batch that
+                # can be arbitrarily large, so a systemic failure (e.g. the provider is down) would
+                # otherwise emit one ERROR-level line per request -- a log-flood during exactly the
+                # incident an operator most needs signal, not noise. The failure itself is never
+                # silently dropped: it's yielded back to the caller via {"id":..., "error":...} right
+                # below, which is the actual per-request error channel this generator exposes.
+                logger.debug("Batch request %s failed: %s", request_id, e)
                 yield {"id": request_id, "error": str(e)}
 
     def estimate_cost(

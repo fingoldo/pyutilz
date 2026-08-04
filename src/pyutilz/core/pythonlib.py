@@ -575,20 +575,6 @@ def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
     return desired
 
 
-class CustomError(Exception):
-    """Exception carrying a numeric `code` alongside its `message`, rendered as "Error #<code>: <message>"."""
-
-    def __init__(self, code, message):
-        self.code = code
-        self.message = message
-
-    def __str__(self):
-        return repr("Error #" + str(self.code) + ": " + self.message)
-
-
-STRUCTURED_FORMAT_PARSING_ERROR = 100
-
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Stack
 # ----------------------------------------------------------------------------------------------------------------------------

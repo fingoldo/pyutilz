@@ -36,7 +36,18 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
         an attribute, but invisible to a literal-assignment walk since neither `self.<name>` nor a string
         constant naming it appears anywhere in the source. Measured: a single large sklearn-style estimator
         with ~500 constructor parameters bound this way produced ~500 false `getattr_unknown_attribute` hits
-        for its own fields before this widening.
+        for its own fields before this widening;
+      * module-level ``def``/``class``/``from X import Y`` bindings, not just module-level ``Assign``. A
+        very common facade-patchability pattern is ``getattr(some_module, "func_name", func_name)`` --
+        looking a name up on a live module object (so a test's ``monkeypatch.setattr(module, "func_name",
+        ...)`` is honored) with the LOCAL, in-tree function/import as the fallback. The module-level-bindings
+        widening above already claims to cover this ("since `getattr(some_module, "NAME", default)` is a
+        legitimate pattern"), but the implementation only walked module-level `Assign`/`AnnAssign`, missing
+        `def`/`class`/`import` bindings entirely -- confirmed in the wild dogfooding this scanner on
+        pyutilz's own source (2026-08-04): ``cache_base.py``'s ``getattr(_facade, "_cpu_model_slug",
+        _cpu_model_slug)`` (a module-level function) and ``getattr(_facade, "gpu_capability_summary",
+        gpu_capability_summary)`` (a module-level `from ... import` name) both false-positived because
+        neither kind of module-level binding was in ``names``.
 
     The defect the rule exists for survives this widening precisely BECAUSE it is the defect: a name that is
     only ever reached through a defaulted `getattr` is a name nobody was ever confident enough to touch
@@ -57,6 +68,12 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
                 names.add(item.target.id)
             elif isinstance(item, ast.Assign):
                 names.update(t.id for t in item.targets if isinstance(t, ast.Name))
+            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(item.name)
+            elif isinstance(item, ast.Import):
+                names.update((a.asname or a.name.split(".")[0]) for a in item.names)
+            elif isinstance(item, ast.ImportFrom):
+                names.update((a.asname or a.name) for a in item.names if a.name != "*")
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 for item in node.body:

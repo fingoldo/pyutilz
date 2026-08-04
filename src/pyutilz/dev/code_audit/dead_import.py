@@ -32,9 +32,10 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                     continue
                 # A multi-line import block's own alias may carry its own per-name rationale
                 # comment on a different physical line than node.lineno -- check both.
-                if "# noqa" in _line_text(src_lines, getattr(alias, "lineno", node.lineno)):
+                alias_lineno = getattr(alias, "lineno", node.lineno)
+                if "# noqa" in _line_text(src_lines, alias_lineno):
                     continue
-                out.append((bound, node.lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+                out.append((bound, alias_lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
         elif isinstance(node, ast.ImportFrom):
             if node.module is None or node.module == "__future__":
                 continue
@@ -49,9 +50,20 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                 # A multi-line parenthesized import block puts a per-name rationale comment on
                 # the ALIAS's own line, not the statement line -- check both, since this is the
                 # codebase's actual convention for per-name-reviewed re-exports.
-                if "# noqa" in _line_text(src_lines, getattr(alias, "lineno", node.lineno)):
+                alias_lineno = getattr(alias, "lineno", node.lineno)
+                if "# noqa" in _line_text(src_lines, alias_lineno):
                     continue
-                out.append((bound, node.lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+                # Report the ALIAS's own line (not the enclosing statement's node.lineno):
+                # a multi-line `from x import (a, b, c)` block has every alias share the SAME
+                # node.lineno, so two independently-dead names in one such block previously
+                # reported IDENTICAL (check, file, line) keys -- the baseline-diff harness keys
+                # findings on exactly that tuple (see py_ci_shared.code_audit_meta._key), so the
+                # second finding silently overwrote/masked the first in the results dict instead
+                # of being a second, independently-reviewable finding. Confirmed in the wild
+                # (2026-08-04): removing one dead name from such a block (via `# noqa`) caused a
+                # SECOND, previously-hidden dead import in the same block to suddenly "appear" --
+                # it was there all along, just masked by the key collision.
+                out.append((bound, alias_lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
     return out
 
 

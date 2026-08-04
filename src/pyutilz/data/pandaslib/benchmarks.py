@@ -10,6 +10,7 @@ from the package ``__init__`` to preserve the public import surface.
 from ._common import (
     Any,
     List,
+    Optional,
     gc,
     np,
     pd,
@@ -165,13 +166,22 @@ def _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep):
         _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
 
 
+def _standard_method_compression_sweep(file_format: str, read_method: str, write_method: str, extra_write_params: Optional[dict] = None):
+    """Shared ``(compr, read_method, read_params, write_method, write_params)`` generator for formats
+    (pickle, csv) whose read/write methods both accept a ``compression={"method": compr}`` kwarg over
+    the standard zip/gzip/bz2/zstd/xz/tar sweep -- factored out of the near-identical
+    ``benchmark_dataframe_pickle_compression``/``benchmark_dataframe_csv_compression`` bodies that
+    duplicated this generator verbatim aside from the method names and one extra pickle-only kwarg.
+    """
+    write_params_extra = extra_write_params or {}
+    for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False):
+        yield (compr, read_method, dict(compression={"method": compr}), write_method, dict(compression={"method": compr}, **write_params_extra))
+
+
 def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
     """Benchmark pickle read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "pickle"
-    sweep = (
-        (compr, "read_pickle", dict(compression={"method": compr}), "to_pickle", dict(compression={"method": compr}, protocol=-1))
-        for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False)
-    )
+    sweep = _standard_method_compression_sweep(file_format, "read_pickle", "to_pickle", extra_write_params={"protocol": -1})
     _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 
@@ -191,10 +201,7 @@ def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
 def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
     """Benchmark CSV read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "csv"
-    sweep = (
-        (compr, "read_csv", dict(compression={"method": compr}), "to_csv", dict(compression={"method": compr}))
-        for compr in tqdmu(["zip", "gzip", "bz2", "zstd", "xz", "tar"], desc=f"{file_format} compression method", leave=False)
-    )
+    sweep = _standard_method_compression_sweep(file_format, "read_csv", "to_csv")
     _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 

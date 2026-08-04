@@ -759,16 +759,7 @@ class OpenAICompatibleProvider(LLMProvider):
         LLM must be able to emit non-JSON sentinels like ``[REFUSE]``:
         falls back to prompt-only JSON steering plus ``extract_json``.
         """
-        json_system = (system or "") + "\n\nRespond with valid JSON only."
-        text = await self.generate(
-            prompt=prompt,
-            system=json_system,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            json_mode=force_json_mode,
-            json_schema=json_schema,
-        )
-        return self.extract_json(text, self._provider_name)
+        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=force_json_mode, json_schema=json_schema)
 
     # 2026-08-02 near-duplicate-function-body finding: generate_batch/process_request used to be
     # duplicated here near-verbatim from LLMProvider.generate_batch, EXCEPT the duplicate's except
