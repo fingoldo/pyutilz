@@ -5432,3 +5432,35 @@ def test_import_cycles_lazy_function_body_import_not_flagged(tmp_path: Path):
     _write(pkg, "a.py", "import mypkg.b\n")
     _write(pkg, "b.py", "def f():\n    import mypkg.a\n    return mypkg.a\n")
     assert scan_import_cycles(pkg, package_name="mypkg") == []
+
+
+def test_import_cycles_scc_representative_deterministic_regardless_of_graph_build_order():
+    """``scan_import_cycles`` picks ``comp[0]`` (the first element of the SCC Tarjan's algorithm
+    returns) as the representative for BOTH ``Finding.file`` and ``Finding.snippet`` -- so which
+    element that is must not depend on the ORDER ``_build_graph`` happened to insert modules/
+    edges in (which in production tracks ``Path.rglob()``'s filesystem-enumeration order, not
+    guaranteed stable across process runs on every OS/filesystem for a large multi-directory
+    tree). Confirmed by direct construction: the SAME 4-node cycle, fed to
+    ``_strongly_connected_components`` with its dict/edge-set built in forward vs. reversed
+    insertion order, previously returned a DIFFERENT first element (Tarjan's DFS visits `graph[v]`
+    -- a plain ``set`` -- in insertion-dependent order) -- so a baseline-diffing consumer (e.g. a
+    code-audit baseline JSON) could see the SAME cycle reported under a DIFFERENT
+    ``check::file:line`` key across scans of identical source, permanently flaking any "no new
+    findings" gate built on it. ``scan_import_cycles`` now sorts ``comp`` before using
+    ``comp[0]``, so the representative is the same regardless of traversal order."""
+    from pyutilz.dev.code_audit.import_cycles import _strongly_connected_components
+
+    edges = {"a": {"b"}, "b": {"c"}, "c": {"d"}, "d": {"a"}}
+    forward_order = dict(edges)
+    reverse_order = {k: edges[k] for k in reversed(list(edges))}
+    assert list(forward_order) != list(reverse_order), "test setup: insertion orders must actually differ"
+
+    forward_scc = _strongly_connected_components(forward_order)
+    reverse_scc = _strongly_connected_components(reverse_order)
+    assert len(forward_scc) == 1 and len(reverse_scc) == 1
+    assert set(forward_scc[0]) == set(reverse_scc[0]) == {"a", "b", "c", "d"}, "test setup: both must find the same 4-node cycle"
+
+    # This is exactly what scan_import_cycles now does before using comp[0] (see the `comp =
+    # sorted(comp)` line in scan_import_cycles) -- the representative must agree regardless of
+    # which insertion order produced the SCC.
+    assert sorted(forward_scc[0])[0] == sorted(reverse_scc[0])[0] == "a"

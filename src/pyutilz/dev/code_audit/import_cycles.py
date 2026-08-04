@@ -154,7 +154,16 @@ def scan_import_cycles(
     for comp in sccs:
         if len(comp) <= 1:
             continue
-        comp_key = " -> ".join(sorted(comp))
+        # Tarjan's DFS visits each SCC's edges via a plain `set` (see _build_graph /
+        # strongconnect above), whose iteration order depends on Python's per-process string
+        # hash randomization -- so the SAME cycle in the SAME code can pop off the stack in a
+        # different member order across runs. Sorting here pins a single deterministic
+        # representative (both for `file=` and for `cycle_display`), so the Finding's
+        # ``check::file:line`` key -- and therefore any baseline built from it -- is stable
+        # regardless of PYTHONHASHSEED. The SCC membership itself (which files participate) is
+        # already order-independent; only the display/key representative needed pinning.
+        comp = sorted(comp)
+        comp_key = " -> ".join(comp)
         if comp_key in deferred_cycles:
             continue
         cycle_display = " -> ".join([*comp, comp[0]])
