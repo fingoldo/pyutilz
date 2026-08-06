@@ -58,6 +58,12 @@ _DEFAULT_EXCLUDE_DIRS = frozenset({
     "__pycache__", ".git", ".venv", "venv", "env", ".env", ".tox",
     "build", "dist", "node_modules", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", ".idea", ".vscode", "htmlcov",
+    # `.claude` holds Claude Code's agent worktrees, each a COMPLETE checkout of the repo being audited.
+    # Without this, every scanner reports each violation once for the real tree and once more per nested
+    # worktree - measured on autopsia with 49 of them, which turned 12 meta-ratchet tests red with findings
+    # whose paths all read `<repo>/.claude/worktrees/agent-*/...`. A nested checkout is never the code under
+    # audit, and its own tests do not run from here.
+    ".claude",
 })
 
 

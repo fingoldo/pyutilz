@@ -56,3 +56,26 @@ class LLMTruncationError(ValueError):
         # refusal are indistinguishable downstream, and the only evidence that could tell them apart was
         # discarded at the raise site. Empty string, never None, so a caller can `or ""` without a guard.
         self.partial_text = partial_text or ""
+
+
+class LLMUnparseableResponseError(LLMProviderError):
+    """The transport succeeded but the body is not the JSON envelope the API promises.
+
+    Distinct from `JSONParsingError`, which is about the MODEL's own output being malformed inside a
+    well-formed envelope: that is the model's answer and re-issuing it usually returns the same thing.
+    This is the envelope itself missing - an empty body, a truncated one, or an HTML error page from an
+    intermediary - which is a transient transport-layer fault the same call will usually survive.
+
+    Retryable, and it has to be raised as its own type to BE retryable: `resp.json()` fails with
+    `json.JSONDecodeError`, a `ValueError`, which no HTTP/transport predicate matches, so an empty body
+    escaped the retry decorator and surfaced as a hard failure. MEASURED 2026-08-06 against OpenRouter:
+    across three runs of one live-LLM test tier a DIFFERENT test failed each time and one run was green,
+    which reads as flaky tests rather than as one retryable fault.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None, body_excerpt: str = ""):
+        super().__init__(message, {"status_code": status_code, "body_excerpt": body_excerpt})
+        self.status_code = status_code
+        # Kept because "the body was not JSON" is unactionable on its own - an HTML gateway page, an empty
+        # string and a truncated envelope need different responses from a human reading the log.
+        self.body_excerpt = body_excerpt

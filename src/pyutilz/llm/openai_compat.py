@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from tenacity import retry, retry_if_exception
 
-from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
+from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError, LLMUnparseableResponseError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 
@@ -68,7 +68,44 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
     """
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code not in _NON_RETRYABLE_STATUSES
+    # An empty or non-JSON body on an otherwise-successful response is the same class of transient fault as
+    # a transport error, but `resp.json()` reports it as `json.JSONDecodeError` (a `ValueError`), which
+    # matches neither branch above - so it used to escape this predicate entirely and fail the call outright.
+    if isinstance(exc, LLMUnparseableResponseError):
+        return True
     return isinstance(exc, httpx.TransportError)
+
+
+def parse_response_envelope(resp: Any, provider_name: str) -> dict[str, Any]:
+    """`resp.json()` as a dict, or `LLMUnparseableResponseError` so the retry decorator can see it.
+
+    Three failure shapes collapse into one raise, because the caller's response to all three is the same
+    (re-issue): an empty body, a body that is not JSON at all (an intermediary's HTML gateway page), and
+    valid JSON that is not an object (a bare string or list, which every downstream `.get` would crash on).
+    The excerpt is capped rather than dropped - a log line saying only "not JSON" cannot distinguish a
+    504 page from a truncated envelope, and that distinction is the whole reason to read the log.
+    """
+    body = resp.text or ""
+    if not body.strip():
+        raise LLMUnparseableResponseError(
+            f"{provider_name} returned an empty body with status {resp.status_code}",
+            status_code=resp.status_code,
+        )
+    try:
+        data = resp.json()
+    except (ValueError, _JSONDecodeError) as exc:
+        raise LLMUnparseableResponseError(
+            f"{provider_name} returned a non-JSON body with status {resp.status_code}: {exc}",
+            status_code=resp.status_code,
+            body_excerpt=body[:500],
+        ) from exc
+    if not isinstance(data, dict):
+        raise LLMUnparseableResponseError(
+            f"{provider_name} returned JSON of type {type(data).__name__}, not the expected object",
+            status_code=resp.status_code,
+            body_excerpt=body[:500],
+        )
+    return data
 
 
 def parse_retry_after(resp: Any) -> float | None:
@@ -692,7 +729,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     detail = resp.text
                 raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
             resp.raise_for_status()
-            data = resp.json()
+            data = parse_response_envelope(resp, self._provider_name)
 
             # Token usage tracking
             usage = data.get("usage", {})

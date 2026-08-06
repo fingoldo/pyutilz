@@ -500,3 +500,73 @@ class TestContextClamp:
         await p.generate("short", max_tokens=1000)
         body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
         assert body["max_tokens"] == 1000
+
+
+class _FakeResponse:
+    """The three response shapes an intermediary can return in place of the API's JSON envelope."""
+
+    def __init__(self, text: str, status_code: int = 200, payload: object | None = None, raises: bool = False):
+        self.text = text
+        self.status_code = status_code
+        self._payload = payload
+        self._raises = raises
+
+    def json(self) -> object:
+        if self._raises:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+        return self._payload
+
+
+def test_an_empty_body_is_raised_as_a_retryable_unparseable_response():
+    """OpenRouter intermittently returns an empty body on a 200. `resp.json()` reports that as
+    `json.JSONDecodeError` - a `ValueError` - which matches neither the HTTP-status nor the transport branch
+    of `_is_retryable_http_error`, so the call used to fail outright instead of being retried. MEASURED
+    2026-08-06 in a downstream repo: across three runs of one live-LLM tier a DIFFERENT test failed each
+    time and one run was green, which reads as flaky tests rather than one retryable fault.
+    """
+    from pyutilz.llm.exceptions import LLMUnparseableResponseError
+    from pyutilz.llm.openai_compat import _is_retryable_http_error, parse_response_envelope
+
+    with pytest.raises(LLMUnparseableResponseError) as caught:
+        parse_response_envelope(_FakeResponse(""), "OpenRouter")
+    assert caught.value.status_code == 200
+    # The point of the change: the raised type must be one the retry predicate accepts.
+    assert _is_retryable_http_error(caught.value) is True
+
+
+def test_a_non_json_body_keeps_an_excerpt_so_the_log_can_tell_a_gateway_page_from_a_truncation():
+    from pyutilz.llm.exceptions import LLMUnparseableResponseError
+    from pyutilz.llm.openai_compat import _is_retryable_http_error, parse_response_envelope
+
+    page = "<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>"
+    with pytest.raises(LLMUnparseableResponseError) as caught:
+        parse_response_envelope(_FakeResponse(page, status_code=200, raises=True), "OpenRouter")
+    assert "504 Gateway Time-out" in caught.value.body_excerpt
+    assert _is_retryable_http_error(caught.value) is True
+
+
+def test_valid_json_that_is_not_an_object_is_refused_rather_than_crashing_downstream():
+    """A bare list or string parses fine and then explodes on the first `.get` far from here."""
+    from pyutilz.llm.exceptions import LLMUnparseableResponseError
+    from pyutilz.llm.openai_compat import parse_response_envelope
+
+    with pytest.raises(LLMUnparseableResponseError, match="not the expected object"):
+        parse_response_envelope(_FakeResponse("[]", payload=[]), "OpenRouter")
+
+
+def test_a_well_formed_envelope_is_returned_unchanged():
+    """The guard must not touch the happy path."""
+    from pyutilz.llm.openai_compat import parse_response_envelope
+
+    envelope = {"choices": [{"message": {"content": "hi"}}], "usage": {"total_tokens": 3}}
+    assert parse_response_envelope(_FakeResponse('{"choices": []}', payload=envelope), "OpenRouter") == envelope
+
+
+def test_a_malformed_model_answer_inside_a_good_envelope_is_still_not_retryable():
+    """The distinction the new exception exists to preserve: JSONParsingError is the MODEL's output being
+    malformed inside a well-formed envelope - re-issuing usually returns the same thing, so it must NOT
+    become retryable as collateral of this change."""
+    from pyutilz.llm.exceptions import JSONParsingError
+    from pyutilz.llm.openai_compat import _is_retryable_http_error
+
+    assert _is_retryable_http_error(JSONParsingError("model emitted broken JSON")) is False
