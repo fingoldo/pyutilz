@@ -42,6 +42,27 @@ import typing
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+
+def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
+    """``root.rglob("test_*.py")``, skipping `_DEFAULT_EXCLUDE_DIRS` - most pointedly `.claude`, which holds
+    Claude Code's agent worktrees, each a COMPLETE checkout of the repo being scanned. Without this, a
+    caller passed the repo ROOT (rather than a narrow `tests/` subtree) walks every worktree's own test
+    suite too: measured on autopsia with 30 worktrees present, `unbacked_audit_dispositions` concatenated
+    7,989 duplicate test files into its search corpus instead of the real 295, at ~810s instead of a few.
+
+    The `code_audit._base` import is DEFERRED inside the function rather than at module top-level: this
+    module (`meta_test_utils`) is itself imported BY `pyutilz.dev.code_audit.__init__` (for
+    `todo_hygiene.py`'s `scan_todo_markers`), so a top-level import back into `code_audit` is circular -
+    `ImportError: cannot import name 'ATTRIBUTION_RE' from partially initialized module`, measured live.
+    Deferring costs nothing here since this helper is never on a hot per-call path itself.
+    """
+    from pyutilz.dev.code_audit._base import _DEFAULT_EXCLUDE_DIRS
+
+    for p in root.rglob("test_*.py"):
+        if not any(part in _DEFAULT_EXCLUDE_DIRS for part in p.relative_to(root).parts[:-1]):
+            yield p
+
+
 __all__ = [
     "consumer_corpus",
     "enumerate_test_files",
@@ -132,7 +153,7 @@ def enumerate_test_files(tests_dir: Path) -> set[str]:
     out: set[str] = set()
     if not tests_dir.exists():
         return out
-    for py in tests_dir.rglob("test_*.py"):
+    for py in _rglob_test_files(tests_dir):
         out.add(py.stem)
     return out
 
@@ -373,7 +394,7 @@ def count_user_deferred_entries(
     out: dict[str, int] = {}
     if not test_meta_dir.exists():
         return out
-    for py in sorted(test_meta_dir.rglob("test_*.py")):
+    for py in sorted(_rglob_test_files(test_meta_dir)):
         try:
             src = py.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -614,9 +635,7 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
     """
     unbacked: list[str] = []
     test_corpus = ""
-    for py in sorted(repo_root.rglob("test_*.py")):
-        if "__pycache__" in py.parts:
-            continue
+    for py in sorted(_rglob_test_files(repo_root)):
         test_corpus += py.read_text(encoding="utf-8", errors="replace")
 
     for doc in sorted(audit_dir.rglob("*.md")):

@@ -59,7 +59,7 @@
   "getattr_unknown_attribute::dev/code_audit/default_via_or.py:364",
   "getattr_unknown_attribute::dev/code_audit/redundant_test_fit.py:51",
   "getattr_unknown_attribute::dev/code_audit/undeclared_imports.py:103",
-  "getattr_unknown_attribute::dev/meta_test_utils.py:503",
+  "getattr_unknown_attribute::dev/meta_test_utils.py:524",
   "getattr_unknown_attribute::llm/anthropic_provider.py:198",
   "getattr_unknown_attribute::llm/anthropic_provider.py:199",
   "getattr_unknown_attribute::llm/anthropic_provider.py:207",
