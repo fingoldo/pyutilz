@@ -1183,23 +1183,32 @@ class TestTimeout:
 class TestThinkingRequestField:
     """The OR provider routes ``thinking=`` to OR's unified
     ``reasoning`` field. Mapping: bool ``True`` -> medium effort,
-    ``False`` / empty string -> ``exclude=True``, explicit effort
-    string -> pass through. Bool-flag upstreams (DeepSeek V4) coerce
-    non-empty strings to ``True`` via the shared ``_normalize_thinking``
-    helper."""
+    ``False`` / empty string -> minimal effort AND ``exclude=True``,
+    explicit effort string -> pass through. Bool-flag upstreams
+    (DeepSeek V4) coerce non-empty strings to ``True`` via the shared
+    ``_normalize_thinking`` helper.
+
+    ``False`` carries BOTH fields, not `exclude` alone - MEASURED 2026-08-07
+    (autopsia, deepseek/deepseek-v4-flash, default reasoning effort "high"):
+    `exclude` only hides reasoning TEXT from the response, the model still
+    REASONS and is still BILLED for it at the resolved model's own default
+    effort, so `exclude`-only calls kept intermittently burning 900-3000
+    reasoning tokens and hitting `finish_reason='length'` before writing any
+    JSON. `effort: "minimal"` is what actually shrinks the reasoning budget.
+    """
 
     def test_thinking_true_uses_medium_effort(self):
         p = _provider()
         assert p._thinking_request_field(True) == {"reasoning": {"effort": "medium"}}
 
-    def test_thinking_false_excludes_reasoning(self):
+    def test_thinking_false_uses_minimal_effort_and_excludes_reasoning(self):
         p = _provider()
-        assert p._thinking_request_field(False) == {"reasoning": {"exclude": True}}
+        assert p._thinking_request_field(False) == {"reasoning": {"effort": "minimal", "exclude": True}}
 
-    def test_thinking_empty_str_excludes_reasoning(self):
+    def test_thinking_empty_str_uses_minimal_effort_and_excludes_reasoning(self):
         """Defensive: empty string is treated as off, matching ``False``."""
         p = _provider()
-        assert p._thinking_request_field("") == {"reasoning": {"exclude": True}}
+        assert p._thinking_request_field("") == {"reasoning": {"effort": "minimal", "exclude": True}}
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "minimal"])
     def test_thinking_effort_string_passes_through(self, effort):

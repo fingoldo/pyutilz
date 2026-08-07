@@ -366,9 +366,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         ID. See https://openrouter.ai/docs/use-cases/reasoning-tokens.
 
         Mapping:
-          * ``False`` / empty string -> ``{"reasoning": {"exclude": True}}``
-            (explicit no-think; useful for hybrid models that default to
-            thinking when a stage doesn't need it).
+          * ``False`` / empty string -> ``{"reasoning": {"effort": "minimal", "exclude": True}}``
+            (smallest available reasoning budget, hidden from the response too).
           * ``True`` -> ``{"reasoning": {"effort": "medium"}}``
             (provider's middle-ground default).
           * ``"low" | "medium" | "high" | "minimal"`` (or any other str)
@@ -379,10 +378,24 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         Models that don't support reasoning ignore the field server-side,
         so emitting it on a non-reasoning model is a no-op rather than
         an error.
+
+        ``exclude`` ALONE is not "disable" - MEASURED 2026-08-07 (autopsia,
+        `bench/lay_synonym_full_run.py` against deepseek/deepseek-v4-flash,
+        whose OWN catalogue entry defaults ``reasoning.default_effort`` to
+        ``"high"``): calls sent with the previous mapping (``exclude`` only,
+        no ``effort``) kept intermittently burning 900-3000 reasoning tokens
+        - repeatedly hitting ``finish_reason='length'`` before any JSON was
+        written - because ``exclude`` only suppresses the reasoning text
+        from the RESPONSE; per OpenRouter's own docs the model still REASONS
+        and is still BILLED for it at whatever effort the resolved model
+        defaults to, unconstrained, unless ``effort`` is also set. Passing
+        both fields is the actual "spend as little as possible on thinking"
+        request - confirmed live afterward: 0 truncations across a follow-up
+        batch that previously truncated intermittently.
         """
         enabled, effort = self._normalize_thinking(thinking)
         if not enabled:
-            return {"reasoning": {"exclude": True}}
+            return {"reasoning": {"effort": "minimal", "exclude": True}}
         return {"reasoning": {"effort": effort or "medium"}}
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
