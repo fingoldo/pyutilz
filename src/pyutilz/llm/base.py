@@ -243,9 +243,27 @@ class LLMProvider(ABC):
         """
         return False
 
-    # Headroom left for the chat envelope (role/formatting tokens) and for the tokeniser
-    # approximation error, so a clamp computed from an estimated input length stays inside the window.
+    # Flat headroom left for the chat envelope (role/formatting tokens), on top of the proportional
+    # tokeniser-error margin below — see ``_context_reserve_tokens`` for why a flat constant alone is
+    # not enough.
     _CONTEXT_RESERVE_TOKENS = 1024
+
+    # ``count_tokens``'s own tokeniser is an APPROXIMATION of whatever the real upstream uses per model,
+    # and the two can disagree by a large ABSOLUTE margin on a large prompt even when they agree closely
+    # on a small one. Measured 2026-08-08 (autopsia, OpenRouter/deepseek-v3.2): a ~23.6k-token real prompt
+    # was undercounted by ``count_tokens`` at ~20.9k - a ~2.75k-token gap, 2.7x the flat 1024-token
+    # reserve alone. The resulting clamp forwarded a `max_tokens` that, added to the REAL input count,
+    # exceeded the context window by ~1.7k tokens, and the upstream rejected the whole call with HTTP 400
+    # BEFORE generating anything - clamping to fit the window is worthless if the margin it clamps by is
+    # itself smaller than the counting error it exists to absorb. A fixed fraction of the estimated input
+    # (not a fixed token count) scales the margin with the very thing that is under-measured.
+    _CONTEXT_RESERVE_FRACTION = 0.15
+
+    def _context_reserve_tokens(self, input_tokens: int) -> int:
+        """Headroom for one `fit_max_tokens_to_context` clamp: the larger of the flat envelope reserve
+        and a fraction of the estimated input length, so the margin grows with the prompt instead of
+        staying fixed while the tokeniser-estimation error it must absorb grows right along with it."""
+        return max(self._CONTEXT_RESERVE_TOKENS, int(input_tokens * self._CONTEXT_RESERVE_FRACTION))
 
     def fit_max_tokens_to_context(self, max_tokens: int, prompt: str, system: str | None = None) -> int:
         """Clamp an output budget so ``input + output`` fits the model's context window.
@@ -275,7 +293,7 @@ class LLMProvider(ABC):
             fallback = getattr(self, "model", "")
             model = fallback if isinstance(fallback, str) else ""
         input_tokens = count_tokens(prompt, model=model) + (count_tokens(system, model=model) if system else 0)
-        room = ctx - input_tokens - self._CONTEXT_RESERVE_TOKENS
+        room = ctx - input_tokens - self._context_reserve_tokens(input_tokens)
         if room <= 0 or room >= max_tokens:
             return max_tokens
         logger.debug(

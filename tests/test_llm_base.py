@@ -125,3 +125,41 @@ class TestFitMaxTokensToContext:
         # surfaces instead of a silently truncated budget.
         prov = self._Provider()
         assert prov.fit_max_tokens_to_context(4096, "x " * 200_000) == 4096
+
+    def test_reserve_scales_with_input_size_not_flat(self):
+        """`_context_reserve_tokens` must grow with the estimated input, not stay pinned at the flat
+        1024-token envelope constant - a flat reserve was too small to absorb realistic tokeniser
+        estimation error on a large prompt (see the regression test below for the measured incident)."""
+        prov = self._Provider()
+        assert prov._context_reserve_tokens(1_000) == prov._CONTEXT_RESERVE_TOKENS  # small input: flat floor wins
+        assert prov._context_reserve_tokens(100_000) > prov._CONTEXT_RESERVE_TOKENS  # large input: fraction wins
+        assert prov._context_reserve_tokens(100_000) == int(100_000 * prov._CONTEXT_RESERVE_FRACTION)
+
+    def test_clamped_budget_survives_a_realistic_tokeniser_undercount(self, monkeypatch):
+        """Regression for the incident measured 2026-08-08 (autopsia, OpenRouter/deepseek-v3.2): a real
+        ~23,617-token prompt was undercounted by `count_tokens` at ~20,864 tokens (an ~11.8% gap on a
+        163,840-token context window). The OLD flat 1024-token reserve produced a clamped `max_tokens`
+        that, added to the REAL (higher) input count, exceeded the window by ~1,729 tokens - the upstream
+        rejected the whole call with HTTP 400 before generating a single token. This test simulates the
+        same undercount ratio and asserts the clamp now leaves enough margin to survive it."""
+        prov = self._Provider()
+        real_input_tokens = 23_617
+        estimated_input_tokens = 20_864  # what count_tokens actually returned for the same real prompt
+
+        def _undercounting_count_tokens(text, model=None):
+            # Ignore the actual text; simulate the exact measured ratio from the incident regardless of
+            # what fixture text this test happens to pass in.
+            return estimated_input_tokens
+
+        monkeypatch.setattr("pyutilz.llm.token_counter.count_tokens", _undercounting_count_tokens)
+
+        fitted = prov.fit_max_tokens_to_context(prov.max_output_tokens, "irrelevant, count_tokens is patched")
+
+        # The clamp only sees the (under)estimated input; assert the REAL input would still fit alongside
+        # the fitted budget - this is the actual failure mode: input+output must fit against the TRUE
+        # count the upstream will use, not the estimate the clamp itself was computed from.
+        assert real_input_tokens + fitted <= prov.context_window, (
+            f"clamped max_tokens={fitted} + real input={real_input_tokens} = "
+            f"{real_input_tokens + fitted} > context_window={prov.context_window} - "
+            "the reserve did not absorb the tokeniser undercount"
+        )

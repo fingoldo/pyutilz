@@ -498,6 +498,13 @@ class OpenAICompatibleProvider(LLMProvider):
         await self._async_prepare()
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
+        # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
+        # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
+        # (2026-08-08, autopsia pilot): a large prompt's real token count exceeded `count_tokens`'s
+        # estimate enough to overflow the context window even after clamping. Omitting `max_tokens`
+        # entirely instead of clamping was tried and reverted: OpenRouter's own docs confirm there is no
+        # universal fixed default across models when the field is absent, so widening the reserve keeps
+        # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
 
         body: dict[str, Any] = {
@@ -694,6 +701,18 @@ class OpenAICompatibleProvider(LLMProvider):
         await self._async_prepare()
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
+        # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
+        # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
+        # (2026-08-08, autopsia pilot): a real ~23,617-token prompt was undercounted by `count_tokens` at
+        # ~20,864 (an ~11.8% gap), so the OLD flat reserve produced a clamped budget that, added to the
+        # REAL input, still overflowed the context window by ~1,729 tokens - the upstream rejected the
+        # whole call with HTTP 400 before generating a single token. A proportional reserve absorbs a
+        # tokeniser-estimation error that grows with the prompt instead of staying pinned to a constant
+        # that was only ever sized for small prompts. (Omitting `max_tokens` entirely instead of clamping
+        # was tried and reverted: OpenRouter's own docs confirm there is no universal fixed default across
+        # models when the field is absent - "the provider applies its own default," unspecified in detail
+        # - and only one model/route was verified live before this fix landed. Widening the reserve keeps
+        # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
             body: dict[str, Any] = {
