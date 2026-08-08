@@ -360,6 +360,9 @@ def list_openrouter_models(
     max_workers: int = 8,
     timeout: float = 30.0,
     health_ttl_seconds: float = 300.0,
+    group_by_provider: int | None = None,
+    group_sort_by: str = "output_price",
+    group_sort_desc: bool = True,
 ) -> list[dict[str, Any]]:
     """Return OpenRouter's model catalogue with pricing, limits and (optionally) live health.
 
@@ -422,6 +425,26 @@ def list_openrouter_models(
             (5 min) -- short enough that "model went down" detection lags
             by no more than 5 min, long enough that repeated calls in a
             tight loop reuse cache. Pass 0 to bypass cache entirely.
+        group_by_provider: Cap the result to this many rows per provider
+            (the ``id`` substring before its first ``"/"``, e.g. ``"openai"``
+            for ``"openai/gpt-5-mini"``), ranked within each provider by
+            ``group_sort_by``/``group_sort_desc`` before truncating. ``0`` or
+            ``None`` (default) disables grouping entirely -- every row that
+            survived the earlier filters is returned, exactly like before
+            this parameter existed. Applied as a FILTER before the final
+            ``sort_by`` ordering, so the returned list's overall order still
+            follows ``sort_by`` (or catalogue order, if ``sort_by`` is unset)
+            -- only WHICH rows survive per provider changes.
+        group_sort_by: Which metric ranks rows within one provider's group
+            before truncating to ``group_by_provider`` -- same field names as
+            ``sort_by`` (``"input_price"``/``"output_price"``/``"context"``/
+            ``"name"``/``"uptime"``/``"latency"``/``"throughput"``). Default
+            ``"output_price"``. Ignored when ``group_by_provider`` is falsy.
+        group_sort_desc: Direction for ``group_sort_by`` -- ``True`` (default)
+            keeps the HIGHEST-ranked value per provider (e.g. the priciest
+            model that still cleared ``max_output_per_1m``); ``False`` keeps
+            the lowest (e.g. the cheapest per provider). Ignored when
+            ``group_by_provider`` is falsy.
 
     Returns:
         List of dicts. Empty on catalogue fetch failure.
@@ -436,6 +459,16 @@ def list_openrouter_models(
         >>> top = rows[0]
         >>> print(top["id"], top["health"]["best_uptime_30m"],
         ...       top["health"]["best_latency_p50_ms"], "ms p50")
+
+        >>> # priciest-but-still-under-$1/1M-output model per provider
+        >>> rows = list_openrouter_models(
+        ...     max_output_per_1m=1.0,
+        ...     return_only_healthy=False,
+        ...     group_by_provider=1,
+        ...     group_sort_by="output_price",
+        ...     group_sort_desc=True,
+        ...     sort_by="output_price",
+        ... )
     """
     if refresh:
         with _pkg()._MODELS_LOCK:
@@ -479,29 +512,64 @@ def list_openrouter_models(
                 rows, key, min_uptime, max_workers, timeout, health_ttl_seconds,
             )
 
+    def _metric_raw(r: dict, field: str) -> float | int | str:
+        """Raw (non-negated) value of `field` on row `r` - shared by the `sort_by` ordering key below
+        and the `group_by_provider` per-provider ranking step, so the two can never drift on what a
+        field name means (2026-08-08: extracted from `sort_by`'s own `_key`, which used to be the only
+        caller of this field-name -> value mapping)."""
+        pricing = r.get("pricing") or {}
+        try:
+            in_price = float(pricing.get("prompt", "0") or "0")
+            out_price = float(pricing.get("completion", "0") or "0")
+        except (TypeError, ValueError):
+            in_price = out_price = float("inf")
+        ctx = r.get("context_length") or 0
+        health = r.get("health") or {}
+        # `or`, not a None-check, would treat a genuinely-fastest 0ms latency as "missing" and sort it
+        # to the end -- the opposite of the intended behaviour, which only applies to an ACTUALLY
+        # missing measurement.
+        raw_latency = health.get("best_latency_p50_ms")
+        latency: float = float(raw_latency) if raw_latency is not None else float("inf")
+        values: dict[str, float | int | str] = {
+            "input_price": in_price,
+            "output_price": out_price,
+            "context": int(ctx),
+            "name": str(r.get("id", "")),
+            # Stage-2 metrics. Missing health -> lowest-priority raw value (0.0), same "sorts to the
+            # end under a descending rank" intent `sort_by`'s own comment states, just expressed as a
+            # raw magnitude here instead of a pre-negated one.
+            "uptime": float(health.get("best_uptime_30m") or 0.0),
+            "latency": latency,
+            "throughput": float(health.get("best_throughput_p50_tps") or 0.0),
+        }
+        return values.get(field, str(r.get("id", "")))
+
+    if group_by_provider:
+        # Groups by the `id` substring before its first "/" (e.g. "openai" for "openai/gpt-5-mini").
+        # Ranks each provider's rows independently by `group_sort_by`/`group_sort_desc`, keeps at most
+        # `group_by_provider` of them, then flattens - a pure FILTER step, so the final `sort_by` block
+        # below still controls the returned list's overall order.
+        grouped: dict[str, list[dict]] = {}
+        for r in rows:
+            grouped.setdefault(str(r.get("id", "")).split("/", 1)[0], []).append(r)
+        survivors: list[dict] = []
+        for provider_rows in grouped.values():
+            provider_rows.sort(key=lambda r: _metric_raw(r, group_sort_by), reverse=group_sort_desc)
+            survivors.extend(provider_rows[:group_by_provider])
+        rows = survivors
+
     if sort_by:
-        def _key(r: dict):
-            """Build the sort key tuple-like dict for `r`, selecting the field named by the enclosing `sort_by`."""
-            pricing = r.get("pricing") or {}
-            try:
-                in_price = float(pricing.get("prompt", "0") or "0")
-                out_price = float(pricing.get("completion", "0") or "0")
-            except (TypeError, ValueError):
-                in_price = out_price = float("inf")
-            ctx = r.get("context_length") or 0
-            health = r.get("health") or {}
-            return {
-                "input_price": in_price,
-                "output_price": out_price,
-                "context": -int(ctx),  # biggest context first
-                "name": str(r.get("id", "")),
-                # Stage-2 sorts. Missing health → sort to the end.
-                "uptime": -(health.get("best_uptime_30m") or 0.0),
-                # `or`, not a None-check, would treat a genuinely-fastest 0ms latency as
-                # "missing" and sort it to the end -- the opposite of "sort to the end" intent,
-                # which only applies to an ACTUALLY missing measurement.
-                "latency": health.get("best_latency_p50_ms") if health.get("best_latency_p50_ms") is not None else float("inf"),
-                "throughput": -(health.get("best_throughput_p50_tps") or 0.0),
-            }.get(sort_by, str(r.get("id", "")))
+        # `context`/`uptime`/`throughput` want their HIGHEST value first under a plain ascending sort,
+        # so those three (and only those three) get negated here - `_metric_raw` itself stays
+        # direction-agnostic so `group_by_provider` above can pick its own direction per call.
+        _descending_by_default = {"context", "uptime", "throughput"}
+
+        def _key(r: dict) -> float | int | str:
+            """Sort key for row `r` under the enclosing `sort_by` field - `_metric_raw`'s raw value,
+            negated for the three fields whose most-useful default is descending."""
+            value = _metric_raw(r, sort_by)
+            if sort_by in _descending_by_default and isinstance(value, (int, float)):
+                return -value
+            return value
         rows.sort(key=_key)
     return rows

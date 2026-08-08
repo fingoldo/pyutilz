@@ -420,6 +420,100 @@ class TestListModels:
         assert "API key" in caplog.text
 
 
+class TestListModelsGroupByProvider:
+    def setup_method(self):
+        openrouter_module._MODELS_CATALOGUE = {
+            "openai/gpt-4o": {
+                "id": "openai/gpt-4o",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.0000025", "completion": "0.00001"},
+            },
+            "openai/gpt-4o-mini": {
+                "id": "openai/gpt-4o-mini",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+            },
+            "openai/gpt-3.5-turbo": {
+                "id": "openai/gpt-3.5-turbo",
+                "context_length": 16000,
+                "pricing": {"prompt": "0.0000005", "completion": "0.0000015"},
+            },
+            "anthropic/claude-sonnet-4.6": {
+                "id": "anthropic/claude-sonnet-4.6",
+                "context_length": 200000,
+                "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+            },
+            "anthropic/claude-haiku-4.5": {
+                "id": "anthropic/claude-haiku-4.5",
+                "context_length": 200000,
+                "pricing": {"prompt": "0.0000008", "completion": "0.000004"},
+            },
+            "mistralai/mistral-large": {
+                "id": "mistralai/mistral-large",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.000002", "completion": "0.000006"},
+            },
+        }
+
+    def teardown_method(self):
+        openrouter_module._MODELS_CATALOGUE = None
+
+    def test_zero_disables_grouping_same_as_none(self):
+        all_rows = list_openrouter_models(return_only_healthy=False)
+        rows_zero = list_openrouter_models(return_only_healthy=False, group_by_provider=0)
+        rows_none = list_openrouter_models(return_only_healthy=False, group_by_provider=None)
+        assert len(rows_zero) == len(all_rows) == 6
+        assert len(rows_none) == len(all_rows) == 6
+
+    def test_top_one_per_provider_by_output_price_descending_default(self):
+        # Default group_sort_by="output_price", group_sort_desc=True: the PRICIEST model per
+        # provider survives - exactly the "priciest model still under some cap" use case this
+        # parameter exists for.
+        rows = list_openrouter_models(return_only_healthy=False, group_by_provider=1)
+        ids = {r["id"] for r in rows}
+        assert ids == {"openai/gpt-4o", "anthropic/claude-sonnet-4.6", "mistralai/mistral-large"}
+
+    def test_top_one_per_provider_cheapest_when_desc_false(self):
+        rows = list_openrouter_models(
+            return_only_healthy=False, group_by_provider=1, group_sort_by="output_price", group_sort_desc=False,
+        )
+        ids = {r["id"] for r in rows}
+        assert ids == {"openai/gpt-4o-mini", "anthropic/claude-haiku-4.5", "mistralai/mistral-large"}
+
+    def test_top_two_per_provider_keeps_the_two_priciest_openai_models(self):
+        rows = list_openrouter_models(return_only_healthy=False, group_by_provider=2)
+        openai_ids = {r["id"] for r in rows if r["id"].startswith("openai/")}
+        # gpt-4o (priciest) and gpt-3.5-turbo (2nd priciest) survive; gpt-4o-mini (cheapest) does not.
+        assert openai_ids == {"openai/gpt-4o", "openai/gpt-3.5-turbo"}
+
+    def test_group_cap_larger_than_provider_size_keeps_everything_for_that_provider(self):
+        # anthropic only has 2 models - group_by_provider=5 must not error or drop any of them.
+        rows = list_openrouter_models(return_only_healthy=False, group_by_provider=5)
+        anthropic_ids = {r["id"] for r in rows if r["id"].startswith("anthropic/")}
+        assert anthropic_ids == {"anthropic/claude-sonnet-4.6", "anthropic/claude-haiku-4.5"}
+
+    def test_grouping_composes_with_max_output_filter_and_final_sort(self):
+        # The documented use case: priciest-but-still-under-a-cap model per provider, final list
+        # sorted by output_price so the result reads cheapest-to-priciest overall.
+        rows = list_openrouter_models(
+            return_only_healthy=False,
+            max_output_per_1m=10.0,  # excludes claude-sonnet-4.6 (15.0) before grouping ever runs
+            group_by_provider=1,
+            sort_by="output_price",
+        )
+        assert [r["id"] for r in rows] == [
+            "anthropic/claude-haiku-4.5",
+            "mistralai/mistral-large",
+            "openai/gpt-4o",
+        ]
+
+    def test_group_by_provider_ignored_field_falls_back_like_sort_by(self):
+        # An unrecognised group_sort_by falls back to the "name" behaviour _metric_raw's own
+        # dict.get default provides - documents the contract rather than raising.
+        rows = list_openrouter_models(return_only_healthy=False, group_by_provider=1, group_sort_by="nonsense_field")
+        assert len(rows) == 3  # one per provider, no crash
+
+
 class TestModelLimitsLookup:
     def test_resolve_unknown_returns_none_pair(self):
         openrouter_module._MODELS_CATALOGUE = {}
