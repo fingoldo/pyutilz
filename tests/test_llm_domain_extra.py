@@ -164,6 +164,8 @@ class TestLLMTruncationErrorWiring:
         p._provider_name = "OpenAI"
 
         async def fake_post(*a, **kw):
+            import json as _json
+
             class _Resp:
                 status_code = 200
                 headers = {}
@@ -176,6 +178,13 @@ class TestLLMTruncationErrorWiring:
                         "choices": [{"finish_reason": "length", "message": {"content": "truncated..."}}],
                         "usage": {"prompt_tokens": 10, "completion_tokens": 5},
                     }
+
+                # parse_response_envelope reads .text (mirrors httpx.Response) before .json() -- an
+                # empty/missing attribute here raises AttributeError instead of exercising the real
+                # truncation-error path this test targets.
+                @property
+                def text(self):
+                    return _json.dumps(self.json())
 
             return _Resp()
 

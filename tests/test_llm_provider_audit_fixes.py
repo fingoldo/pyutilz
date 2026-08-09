@@ -475,7 +475,11 @@ class TestThinkingRequestField:
 
     def test_openrouter_false_excludes(self):
         p = self._openrouter()
-        assert p._thinking_request_field(False) == {"reasoning": {"exclude": True}}
+        # 2026-08-07: exclude ALONE is not "disable" (measured against deepseek/deepseek-v4-flash --
+        # exclude only suppresses the reasoning TEXT from the response; the model still reasons and is
+        # still billed for it at the resolved model's default effort). effort="minimal" must ship
+        # alongside exclude to actually minimise spend -- see _thinking_request_field's docstring.
+        assert p._thinking_request_field(False) == {"reasoning": {"effort": "minimal", "exclude": True}}
 
     def test_openrouter_effort_passthrough_lowercased(self):
         p = self._openrouter()
