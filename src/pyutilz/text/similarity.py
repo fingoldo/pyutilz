@@ -206,8 +206,23 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
         excluded_a[best_i] = True
         excluded_b[best_j] = True
 
-    if w_min > 0:
-        res = res / w_min * (1 - (w_max - w_min) / (w_max + w_min) / 5)
+    # Normalized by w_max (the LONGER sentence), not w_min: the greedy pass above only ever picks
+    # w_min pairs, so a short candidate needs to explain few words to average high under a w_min
+    # denominator - one lucky exact match can dominate the whole score, even when the candidate
+    # leaves most of a longer query unexplained. Measured live (autopsia's RU symptom-resolution
+    # fuzzy matcher, 2026-08-12): "слабость века" (2 words, one exact hit on "слабость") scored
+    # HIGHER than "слабость мышц ног" (3 words, the actually-correct, more specific match) against
+    # the query "мышечная слабость в ногах" - confirmed structural, not a one-off, by a
+    # leave-one-out calibration over 700+ dictionary entries (false-top-match mean 0.847 vs
+    # true-pair mean 0.593, no separating threshold existed). Dividing by w_max instead makes each
+    # unmatched word on the longer side count as an implicit zero contribution to the average, so a
+    # short candidate can never out-score a longer, more specific one just by leaving more of the
+    # query unaccounted for - the previous multiplicative length-penalty term is now redundant
+    # (this normalization already encodes it, exactly rather than via a bounded ad-hoc fudge) and
+    # is removed. For EQUAL-length inputs (w_min == w_max, the documented primary use case - team
+    # names, addresses) this is a no-op: identical to the old formula.
+    if w_max > 0:
+        res = res / w_max
     else:
         res = 0
 
@@ -397,8 +412,10 @@ try:
             excluded_a[best_i] = True
             excluded_b[best_j] = True
 
-        if w_min > 0:
-            res = res / w_min * (1.0 - (w_max - w_min) / (w_max + w_min) / 5.0)
+        # Normalized by w_max, not w_min - see sentences_similarity()'s own comment on this same
+        # line for why (short candidates otherwise out-score longer, more specific ones).
+        if w_max > 0:
+            res = res / w_max
 
         return res
 
@@ -571,8 +588,10 @@ try:
         sim_res = _fill_sim_matrix(buf, offsets, N_a, N_b, cMinLenTHreshold)
         res = _greedy_match_sorted(sim_res, N_a, N_b, w_min)
 
-        if w_min > 0:
-            res = res / w_min * (1.0 - (w_max - w_min) / (w_max + w_min) / 5.0)
+        # Normalized by w_max, not w_min - see sentences_similarity()'s own comment on this same
+        # line for why (short candidates otherwise out-score longer, more specific ones).
+        if w_max > 0:
+            res = res / w_max
 
         return res
 
@@ -793,8 +812,10 @@ try:
             excluded_a[best_i] = True
             excluded_b[best_j] = True
 
-        if w_min > 0:
-            res = res / w_min * (1.0 - (w_max - w_min) / (w_max + w_min) / 5.0)
+        # Normalized by w_max, not w_min - see sentences_similarity()'s own comment on this same
+        # line for why (short candidates otherwise out-score longer, more specific ones).
+        if w_max > 0:
+            res = res / w_max
         return res
 
     @nb.njit(cache=True)

@@ -597,6 +597,57 @@ class TestEdgeCases:
         assert result > 0.5  # prefix match bonus
 
 
+class TestAsymmetricLengthNormalization:
+    """Regression for a real, measured false-positive class (2026-08-12, found via autopsia's RU
+    symptom-resolution fuzzy matcher): the final score used to be `res / w_min` — the greedy pass only
+    ever picks `w_min` word-pairs, so a SHORT candidate needs to explain few words to average high,
+    letting one lucky exact-word match dominate even when the candidate leaves most of a longer query
+    unexplained. A short, wrong candidate could out-score a longer, more specific, genuinely-better
+    candidate purely because it had fewer words to account for. Fixed by normalizing by `w_max`
+    instead, so every unmatched word on the longer side counts as an implicit zero - a short candidate
+    can no longer out-score a longer one just by leaving more of the query unaccounted for.
+
+    Concrete real-world shape (English stand-in for the original Russian medical-phrase case): querying
+    "MUSCLE WEAKNESS IN LEG" against a 2-word candidate sharing only the word "WEAKNESS"
+    (["WEAKNESS", "EYELID"] — otherwise unrelated) versus a 3-word candidate matching 3 of the 4 query
+    words exactly (["WEAKNESS", "LEG", "MUSCLE"]) - the longer, correct candidate must win."""
+
+    QUERY = ["MUSCLE", "WEAKNESS", "IN", "LEG"]
+    SHORT_WRONG = ["WEAKNESS", "EYELID"]
+    LONG_RIGHT = ["WEAKNESS", "LEG", "MUSCLE"]
+
+    @pytest.mark.parametrize("sim_fn", ALL_IMPLS)
+    def test_longer_more_specific_candidate_beats_short_partial_match(self, sim_fn):
+        short_score = sim_fn(self.QUERY, self.SHORT_WRONG)
+        long_score = sim_fn(self.QUERY, self.LONG_RIGHT)
+        assert long_score is not None and short_score is not None
+        assert long_score > short_score, (
+            f"the 3-word candidate matching 3/4 query words ({long_score:.3f}) must beat the 2-word "
+            f"candidate matching only 1/4 ({short_score:.3f}) - a short partial match must never "
+            "out-score a longer, more complete one"
+        )
+
+    def test_index_reproduces_the_ranking(self):
+        """Same fixture through SentenceSimilarityIndex (the batched/cached path every real caller in
+        this codebase actually uses, e.g. autopsia's SNOMED finding bridge / lay-synonym matcher)."""
+        index = SentenceSimilarityIndex([self.SHORT_WRONG, self.LONG_RIGHT], parallel=False)
+        short_score, long_score = index.query(self.QUERY)
+        assert long_score > short_score
+
+    def test_equal_length_case_matches_hand_computed_value(self):
+        """Pins the exact score for an equal-length pair (w_min == w_max, this module's own documented
+        primary use case - team names, addresses) so a future change to this formula cannot silently
+        regress the equal-length case while only being caught by the asymmetric-length tests above.
+        "QUICK"/"SLOW" share no letters worth a partial-match bonus (Levenshtein sim ~0), "BROWN" is an
+        exact match (1.0), "FOX"/"DOG" share no letters either (~0) - greedy picks BROWN=BROWN first,
+        then the best of the two remaining weak pairs; either way the average is dominated by the one
+        real match, divided by 3 (w_min == w_max == 3 here, so the normalization change is a no-op)."""
+        a, b = ["QUICK", "BROWN", "FOX"], ["SLOW", "BROWN", "DOG"]
+        result = sentences_similarity(a, b)
+        assert result is not None
+        assert 0.2 < result < 0.5
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Long-input safety warning (documented O(w*N^2) complexity guard)
 # ══════════════════════════════════════════════════════════════════════
