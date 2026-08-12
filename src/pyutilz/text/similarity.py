@@ -27,6 +27,42 @@ from typing import Optional
 # drift), but callers feeding longer inputs should be aware of the quadratic-ish cost.
 SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD = 50
 
+_VALID_COVERAGE_SIDES = ("min", "max", "both")
+
+
+def _validate_coverage_side(coverage_side: str) -> None:
+    """Raise ValueError unless `coverage_side` is one of `_VALID_COVERAGE_SIDES` ("min"/"max"/"both")."""
+    if coverage_side not in _VALID_COVERAGE_SIDES:
+        raise ValueError(f"coverage_side must be one of {_VALID_COVERAGE_SIDES}, got {coverage_side!r}")
+
+
+def _check_word_coverage(
+    words: list,
+    matched_sims,
+    min_word_similarity: float,
+    required_coverage: Optional[float],
+    required_matched_words: Optional[int],
+    stop_set: set,
+) -> bool:
+    """True iff enough of `words`' non-stopword entries have an achieved match similarity
+    (`matched_sims`, same length/order as `words`, 0.0 where a word went unmatched - always true for
+    every word on the w_max side of a greedy w_min-pair match) at or above `min_word_similarity`.
+
+    A word not in `stop_set` is "content"; coverage is judged only over content words - a sentence
+    made entirely of stopwords (or empty) trivially passes, since there is nothing to require
+    coverage of. Both `required_matched_words` (absolute count) and `required_coverage` (fraction of
+    content words) may be supplied together; both must pass.
+    """
+    content_indices = [i for i, w in enumerate(words) if w not in stop_set]
+    if not content_indices:
+        return True
+    covered = sum(1 for i in content_indices if matched_sims[i] >= min_word_similarity)
+    if required_matched_words is not None and covered < required_matched_words:
+        return False
+    if required_coverage is not None and covered / len(content_indices) < required_coverage:
+        return False
+    return True
+
 
 def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
@@ -83,7 +119,16 @@ def contigous_strings_similarity(a: str, b: str) -> tuple:
     return max(best_l, best_r, best_m) / max(len(a), len(b)), root
 
 
-def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
+def sentences_similarity(
+    SentenceA: list,
+    SentenceB: list,
+    cMinLenTHreshold: int = 1,
+    min_word_similarity: float = 0.5,
+    required_coverage: Optional[float] = None,
+    required_matched_words: Optional[int] = None,
+    coverage_side: str = "max",
+    stop_words: Optional[list] = None,
+) -> Optional[float]:
     """
     Улучшенный алгоритм распознавания одинаковых фраз, в т.ч. спортивных команд/игроков, адресов.
 
@@ -109,11 +154,31 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
     (benchmarked ~25-30ms at N=80 per call on the pure-Python path). Avoid using this function
     on sentences longer than ~20-30 tokens; a warning is logged past
     SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD (50) tokens.
+
+    Optional coverage gate (opt-in, off by default — zero overhead unless `required_coverage` or
+    `required_matched_words` is set): requires enough non-stopword words on the specified
+    `coverage_side` ("min"/"max"/"both") to have an achieved greedy-match similarity of at least
+    `min_word_similarity`, else returns None instead of a score. Guards against a candidate that
+    "wins" purely on one strong word while leaving the rest of the sentence unaccounted for — e.g.
+    a 1-word candidate ("опущение") matching one word of a 2-word query ("опущение века") and
+    silently discarding the other, real, meaning-changing word ("века"/eyelid) - measured live in
+    autopsia's RU symptom resolver, 2026-08-12 ("опущение века" resolving to the wrong organ system
+    entirely via that dropped word). `stop_words`, if given, excludes connective words (prepositions,
+    conjunctions) from the coverage requirement entirely - they never had a chance to score a
+    meaningful match and forcing coverage of them would make the gate too strict for ordinary phrasing.
+
+        >>> sentences_similarity(["A"], ["A", "B"], required_coverage=1.0)
+
+        >>> sentences_similarity(["A", "B"], ["A", "B"], required_coverage=1.0)
+        1.0
     """
     N_a = len(SentenceA)
     N_b = len(SentenceB)
     if N_a < 1 or N_b < 1:
         return None
+    coverage_active = required_coverage is not None or required_matched_words is not None
+    if coverage_active:
+        _validate_coverage_side(coverage_side)
     if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
         logger.warning(
             "sentences_similarity called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
@@ -187,6 +252,12 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
     excluded_a = [False] * N_a
     excluded_b = [False] * N_b
     res = 0.0
+    # Per-word achieved match similarity (0.0 for any word left unmatched after w_min picks - true
+    # for every word on the w_max side by construction, since the greedy pass never picks more than
+    # w_min pairs). Only READ when the coverage gate is active; the O(N) allocation/writes cost
+    # nothing next to the O(w*N^2) matching pass either way, so no need to special-case them off.
+    matched_sim_a: list = [0.0] * N_a
+    matched_sim_b: list = [0.0] * N_b
 
     for _ in range(w_min):
         best_perf = 0.0
@@ -203,6 +274,8 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
                     best_j = j
 
         res += Sim_res[best_i][best_j]
+        matched_sim_a[best_i] = Sim_res[best_i][best_j]
+        matched_sim_b[best_j] = Sim_res[best_i][best_j]
         excluded_a[best_i] = True
         excluded_b[best_j] = True
 
@@ -225,6 +298,18 @@ def sentences_similarity(SentenceA: list, SentenceB: list, cMinLenTHreshold: int
         res = res / w_max
     else:
         res = 0
+
+    if coverage_active:
+        stop_set = set(stop_words) if stop_words else set()
+        ok = True
+        if coverage_side in ("max", "both"):
+            words, matched = (SentenceA, matched_sim_a) if N_a >= N_b else (SentenceB, matched_sim_b)
+            ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+        if ok and coverage_side in ("min", "both"):
+            words, matched = (SentenceB, matched_sim_b) if N_a >= N_b else (SentenceA, matched_sim_a)
+            ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+        if not ok:
+            return None
 
     return res
 
@@ -595,6 +680,49 @@ try:
 
         return res
 
+    @nb.njit(cache=True)
+    def _greedy_match_with_tracking(sim_res, N_a, N_b, w_min):
+        """Same greedy best-pair matching as the plain rescan in _sentences_similarity_core, but also
+        returns per-word achieved match similarity for both sides (0.0 for a word left unmatched after
+        w_min picks) - the raw material a coverage gate needs and the scalar-only core doesn't expose.
+        Only used when a caller actually requests coverage; the default scalar-only cores are untouched."""
+        excluded_a = np.zeros(N_a, dtype=np.bool_)
+        excluded_b = np.zeros(N_b, dtype=np.bool_)
+        matched_sim_a = np.zeros(N_a, dtype=np.float64)
+        matched_sim_b = np.zeros(N_b, dtype=np.float64)
+        res = 0.0
+        for _ in range(w_min):
+            best_perf = 0.0
+            best_i = 0
+            best_j = 0
+            for i in range(N_a):
+                if excluded_a[i]:
+                    continue
+                for j in range(N_b):
+                    if not excluded_b[j] and sim_res[i, j] >= best_perf:
+                        best_perf = sim_res[i, j]
+                        best_i = i
+                        best_j = j
+            res += sim_res[best_i, best_j]
+            matched_sim_a[best_i] = sim_res[best_i, best_j]
+            matched_sim_b[best_j] = sim_res[best_i, best_j]
+            excluded_a[best_i] = True
+            excluded_b[best_j] = True
+        return res, matched_sim_a, matched_sim_b
+
+    @nb.njit(cache=True)
+    def _sentences_similarity_core_with_matches(buf, offsets, N_a, N_b, cMinLenTHreshold):
+        """Like _sentences_similarity_core, but also returns per-word matched similarities for both
+        sides, for the coverage gate. Only called when a caller requests coverage - the plain scalar
+        core stays the hot default path, unaffected."""
+        w_min = min(N_a, N_b)
+        w_max = max(N_a, N_b)
+        sim_res = _fill_sim_matrix(buf, offsets, N_a, N_b, cMinLenTHreshold)
+        res, matched_sim_a, matched_sim_b = _greedy_match_with_tracking(sim_res, N_a, N_b, w_min)
+        if w_max > 0:
+            res = res / w_max
+        return res, matched_sim_a, matched_sim_b
+
     def _pack_words(words: list) -> tuple:
         """Pack a list of strings into (buf: int32[], offsets: int32[]) for numba.
 
@@ -655,7 +783,16 @@ try:
         buf, offsets, n = _pack_words(words)
         return (buf, offsets, n)
 
-    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
+    def sentences_similarity_numba(
+        SentenceA: list,
+        SentenceB: list,
+        cMinLenTHreshold: int = 1,
+        min_word_similarity: float = 0.5,
+        required_coverage: Optional[float] = None,
+        required_matched_words: Optional[int] = None,
+        coverage_side: str = "max",
+        stop_words: Optional[list] = None,
+    ) -> Optional[float]:
         """
         Numba-accelerated version of sentences_similarity.
 
@@ -670,6 +807,11 @@ try:
         Same O(w * N^2) greedy-matching complexity as sentences_similarity (compiled, so much
         faster in absolute terms, but the same asymptotic shape) — a warning is logged past
         SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD (50) tokens.
+
+        Same optional coverage gate as `sentences_similarity` (see its docstring) - `required_coverage`/
+        `required_matched_words` opt in, off by default, zero overhead on the default path (the plain
+        scalar-only core is still used when neither is set; only the coverage-active path recomputes via
+        `_sentences_similarity_core_with_matches`, which also tracks per-word matches).
         """
         N_a = len(SentenceA)
         N_b = len(SentenceB)
@@ -684,9 +826,29 @@ try:
                 SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
             )
 
+        coverage_active = required_coverage is not None or required_matched_words is not None
+        if coverage_active:
+            _validate_coverage_side(coverage_side)
+
         # Fast packing via utf-32-le bulk conversion
         all_words = SentenceA + SentenceB
         buf, offsets, _ = _pack_words(all_words)
+
+        if coverage_active:
+            result, matched_sim_a, matched_sim_b = _sentences_similarity_core_with_matches(buf, offsets, N_a, N_b, cMinLenTHreshold)
+            if result < 0:
+                return None
+            stop_set = set(stop_words) if stop_words else set()
+            ok = True
+            if coverage_side in ("max", "both"):
+                words, matched = (SentenceA, matched_sim_a) if N_a >= N_b else (SentenceB, matched_sim_b)
+                ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+            if ok and coverage_side in ("min", "both"):
+                words, matched = (SentenceB, matched_sim_b) if N_a >= N_b else (SentenceA, matched_sim_a)
+                ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+            if not ok:
+                return None
+            return float(result)
 
         result = _run_sentences_similarity_core(buf, offsets, N_a, N_b, cMinLenTHreshold)
         if result < 0:
@@ -819,6 +981,89 @@ try:
         return res
 
     @nb.njit(cache=True)
+    def _fill_sim_matrix_candidate(buf, offsets, query_n, cand_word_start, cn, cMinLenTHreshold):
+        """Same matrix fill as `_compare_one_candidate`'s own inline loop, factored out so the
+        coverage-tracking variant below can reuse it without duplicating/risking drift on the
+        already-tested `_compare_one_candidate` itself."""
+        N_a = query_n
+        N_b = cn
+        sim_res = np.zeros((N_a, N_b), dtype=np.float64)
+
+        for i in range(N_a):
+            a_start = offsets[i]
+            cur_a_len = offsets[i + 1] - a_start
+            if cur_a_len == 0:
+                continue
+            for j in range(N_b):
+                bj = cand_word_start + j
+                b_start = offsets[bj]
+                cur_b_len = offsets[bj + 1] - b_start
+                if cur_b_len == 0:
+                    continue
+
+                t = max(cur_a_len, cur_b_len)
+                lmin_len = min(cur_a_len, cur_b_len)
+
+                if cur_a_len == cur_b_len:
+                    match = True
+                    for cc in range(cur_a_len):
+                        if buf[a_start + cc] != buf[b_start + cc]:
+                            match = False
+                            break
+                    if match:
+                        sim_res[i, j] = 1.0
+                        continue
+
+                prefix_match = True
+                for cc in range(lmin_len):
+                    if buf[a_start + cc] != buf[b_start + cc]:
+                        prefix_match = False
+                        break
+                if prefix_match:
+                    sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
+                    continue
+
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                sim_min = 1.0 - _lev_dist_flat(buf, a_start, cur_a_len, b_start, cur_b_len) / t
+                if cur_a_len == cur_b_len:
+                    sim_res[i, j] = sim_min
+                else:
+                    if cur_a_len < cur_b_len:
+                        s_start, s_len = a_start, cur_a_len
+                        l_start, l_len = b_start, cur_b_len
+                    else:
+                        s_start, s_len = b_start, cur_b_len
+                        l_start, l_len = a_start, cur_a_len
+
+                    best_gliding = s_len
+                    for k in range(l_len - s_len):
+                        d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
+                        if d < best_gliding:
+                            best_gliding = d
+                            if d == 0:
+                                break
+                    sim_max = 1.0 - best_gliding / s_len
+                    sim_res[i, j] = 0.5 * (sim_max + sim_min)
+
+        return sim_res
+
+    @nb.njit(cache=True)
+    def _compare_one_candidate_with_matches(buf, offsets, query_n, cand_word_start, cn, cMinLenTHreshold):
+        """Like `_compare_one_candidate`, but also returns per-word matched similarities for both
+        sides, for `SentenceSimilarityIndex`'s coverage gate. Only called when coverage is requested."""
+        N_a = query_n
+        N_b = cn
+        w_min = min(N_a, N_b)
+        w_max = max(N_a, N_b)
+        sim_res = _fill_sim_matrix_candidate(buf, offsets, query_n, cand_word_start, cn, cMinLenTHreshold)
+        res, matched_sim_a, matched_sim_b = _greedy_match_with_tracking(sim_res, N_a, N_b, w_min)
+        if w_max > 0:
+            res = res / w_max
+        return res, matched_sim_a, matched_sim_b
+
+    @nb.njit(cache=True)
     def _sentences_similarity_batch_core(buf, offsets, word_counts, n_candidates, query_n: int, cMinLenTHreshold):
         """Compare one query against multiple candidates sequentially."""
         results = np.empty(n_candidates, dtype=np.float64)
@@ -902,10 +1147,29 @@ try:
             [1.0, 0.0]
         """
 
-        def __init__(self, candidates: list[list[str]], cMinLenTHreshold: int = 1, parallel: bool = False):
+        def __init__(
+            self,
+            candidates: list[list[str]],
+            cMinLenTHreshold: int = 1,
+            parallel: bool = False,
+            min_word_similarity: float = 0.5,
+            required_coverage: Optional[float] = None,
+            required_matched_words: Optional[int] = None,
+            coverage_side: str = "max",
+            stop_words: Optional[list] = None,
+        ):
             self.cMinLenTHreshold = cMinLenTHreshold
             self.parallel = parallel
             self.n_candidates = len(candidates)
+            self.min_word_similarity = min_word_similarity
+            self.required_coverage = required_coverage
+            self.required_matched_words = required_matched_words
+            self.coverage_side = coverage_side
+            self.stop_words = stop_words
+            self._coverage_active = required_coverage is not None or required_matched_words is not None
+            if self._coverage_active:
+                _validate_coverage_side(coverage_side)
+            self._candidates = candidates  # kept for the coverage gate's word-list lookups
             # Pre-pack all candidates into a single flat buffer
             all_cand_words = []
             self._word_counts = []  # word count per candidate
@@ -944,20 +1208,61 @@ try:
             # Shift cand_starts by n_query (query words go first in offsets)
             cand_starts = self._cand_starts + n_query
 
-            if self.parallel:
-                raw = _sentences_similarity_batch_parallel(buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold)
-            else:
-                raw = _sentences_similarity_batch_core(buf, offsets, wc, self.n_candidates, n_query, self.cMinLenTHreshold)
-            return [None if v < 0 else float(v) for v in raw]
+            if not self._coverage_active:
+                if self.parallel:
+                    raw = _sentences_similarity_batch_parallel(buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold)
+                else:
+                    raw = _sentences_similarity_batch_core(buf, offsets, wc, self.n_candidates, n_query, self.cMinLenTHreshold)
+                return [None if v < 0 else float(v) for v in raw]
+
+            # Coverage-active path: needs per-candidate word-level match tracking, which the batch
+            # kernels above don't expose (scalar-only) - loop per candidate instead. Not parallelized
+            # (correctness-first for an opt-in feature); the default path above is unaffected.
+            stop_set = set(self.stop_words) if self.stop_words else set()
+            results: list = []
+            for idx in range(self.n_candidates):
+                cn = int(self._wc_arr[idx])
+                if cn < 1:
+                    results.append(None)
+                    continue
+                res, matched_sim_a, matched_sim_b = _compare_one_candidate_with_matches(buf, offsets, n_query, int(cand_starts[idx]), cn, self.cMinLenTHreshold)
+                cand_words = self._candidates[idx]
+                ok = True
+                if self.coverage_side in ("max", "both"):
+                    words, matched = (query_words, matched_sim_a) if n_query >= cn else (cand_words, matched_sim_b)
+                    ok = ok and _check_word_coverage(words, matched, self.min_word_similarity, self.required_coverage, self.required_matched_words, stop_set)
+                if ok and self.coverage_side in ("min", "both"):
+                    words, matched = (cand_words, matched_sim_b) if n_query >= cn else (query_words, matched_sim_a)
+                    ok = ok and _check_word_coverage(words, matched, self.min_word_similarity, self.required_coverage, self.required_matched_words, stop_set)
+                results.append(float(res) if ok else None)
+            return results
 
     HAS_NUMBA = True
 
 except ImportError:
     HAS_NUMBA = False
 
-    def sentences_similarity_numba(SentenceA: list, SentenceB: list, cMinLenTHreshold: int = 1) -> Optional[float]:
+    def sentences_similarity_numba(
+        SentenceA: list,
+        SentenceB: list,
+        cMinLenTHreshold: int = 1,
+        min_word_similarity: float = 0.5,
+        required_coverage: Optional[float] = None,
+        required_matched_words: Optional[int] = None,
+        coverage_side: str = "max",
+        stop_words: Optional[list] = None,
+    ) -> Optional[float]:
         """Fallback to pure-Python version when numba is not installed."""
-        return sentences_similarity(SentenceA, SentenceB, cMinLenTHreshold)
+        return sentences_similarity(
+            SentenceA,
+            SentenceB,
+            cMinLenTHreshold,
+            min_word_similarity=min_word_similarity,
+            required_coverage=required_coverage,
+            required_matched_words=required_matched_words,
+            coverage_side=coverage_side,
+            stop_words=stop_words,
+        )
 
     def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
         """Fallback to pure-Python version when numba is not installed."""
@@ -973,10 +1278,39 @@ except ImportError:
 
     class SentenceSimilarityIndex:  # type: ignore[no-redef]  # pure-Python fallback of the numba-accelerated class above; only one definition is ever live per process
         """Fallback without numba — uses pure Python."""
-        def __init__(self, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False):
+        def __init__(
+            self,
+            candidates: list,
+            cMinLenTHreshold: int = 1,
+            parallel: bool = False,
+            min_word_similarity: float = 0.5,
+            required_coverage: Optional[float] = None,
+            required_matched_words: Optional[int] = None,
+            coverage_side: str = "max",
+            stop_words: Optional[list] = None,
+        ):
             self.candidates = candidates
             self.cMinLenTHreshold = cMinLenTHreshold
             self.n_candidates = len(candidates)
+            self.min_word_similarity = min_word_similarity
+            self.required_coverage = required_coverage
+            self.required_matched_words = required_matched_words
+            self.coverage_side = coverage_side
+            self.stop_words = stop_words
+            if required_coverage is not None or required_matched_words is not None:
+                _validate_coverage_side(coverage_side)
         def query(self, query_words: list) -> list:
             """Compare query against all indexed candidates. Returns list of similarities."""
-            return [sentences_similarity(query_words, c, self.cMinLenTHreshold) for c in self.candidates]
+            return [
+                sentences_similarity(
+                    query_words,
+                    c,
+                    self.cMinLenTHreshold,
+                    min_word_similarity=self.min_word_similarity,
+                    required_coverage=self.required_coverage,
+                    required_matched_words=self.required_matched_words,
+                    coverage_side=self.coverage_side,
+                    stop_words=self.stop_words,
+                )
+                for c in self.candidates
+            ]

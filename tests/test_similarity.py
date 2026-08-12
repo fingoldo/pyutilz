@@ -753,3 +753,164 @@ class TestSortedGreedyMatchDifferential:
             expected = sentences_similarity(a, b)
             actual = sentences_similarity_numba(a, b)
             assert actual == pytest.approx(expected, abs=1e-10)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Coverage gate: min_word_similarity / required_coverage / required_matched_words / coverage_side /
+# stop_words - opt-in (default off, zero overhead), covered across every implementation that
+# supports it: sentences_similarity (pure Python), sentences_similarity_numba, SentenceSimilarityIndex.
+# (sentences_similarity_numba_batch/_packed do not support these params - out of scope, see the
+# similarity.py docstrings for the with-matches numba cores this gate is built on.)
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _cov_python(a, b, **kw):
+    return sentences_similarity(a, b, **kw)
+
+
+def _cov_numba(a, b, **kw):
+    return sentences_similarity_numba(a, b, **kw)
+
+
+def _cov_index(a, b, **kw):
+    idx = SentenceSimilarityIndex([b], parallel=False, **kw)
+    return idx.query(a)[0]
+
+
+COVERAGE_IMPLS = [
+    pytest.param(_cov_python, id="python"),
+    pytest.param(_cov_numba, id="numba"),
+    pytest.param(_cov_index, id="index"),
+]
+
+
+class TestCoverageGate:
+    """Coverage gate found and built after `TestAsymmetricLengthNormalization` above: fixing the
+    w_max normalization was not sufficient on its own for a QUERY-contains-CANDIDATE shape (rather
+    than two independent sentences) - a 1-word candidate fully contained in a longer query still
+    "wins" by construction (100% of the CANDIDATE's own words matched), even though a real, distinct
+    word in the QUERY was left completely unaccounted for. Measured live in autopsia's RU symptom
+    resolver, 2026-08-12: "опущение века" (eyelid ptosis) matched bare "опущение" (a real entry for
+    an unrelated concept, Pelvic organ prolapse) via exactly this shape - the dropped word "века"
+    (eyelid) is what actually determined the correct answer. English stand-in used here to keep the
+    fixture readable without requiring Cyrillic stemming context."""
+
+    QUERY = ["EYELID", "DROOPING"]
+    CANDIDATE_PARTIAL = ["DROOPING"]  # only 1 of 2 query words covered - the bug shape
+    CANDIDATE_FULL = ["EYELID", "DROOPING"]  # both query words covered
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_default_is_off_identical_score_to_no_coverage_args(self, sim_fn):
+        """Not passing required_coverage/required_matched_words must reproduce the exact pre-existing
+        score - the gate is additive, never a behavior change for existing callers."""
+        with_defaults = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL)
+        plain = sentences_similarity(self.QUERY, self.CANDIDATE_PARTIAL)
+        assert with_defaults == pytest.approx(plain, abs=1e-10)
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_full_coverage_required_refuses_a_partially_covered_query(self, sim_fn):
+        """The exact ptosis-shaped bug: a candidate contained in a longer query, leaving a real query
+        word unaccounted for, must be REFUSED (None) under required_coverage=1.0 against the query."""
+        result = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="max")
+        assert result is None
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_full_coverage_required_accepts_a_fully_covered_query(self, sim_fn):
+        result = sim_fn(self.QUERY, self.CANDIDATE_FULL, required_coverage=1.0, coverage_side="max")
+        assert result is not None
+        assert result == pytest.approx(1.0, abs=1e-10)
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_coverage_side_min_checks_the_shorter_side_not_the_longer(self, sim_fn):
+        """coverage_side="min" asks "is most of the CANDIDATE covered", not "is most of the QUERY
+        covered" - the 1-word candidate is trivially 100% covered by itself, so this must ACCEPT the
+        exact case that coverage_side="max" refuses above. Demonstrates the two are genuinely
+        different guarantees, not interchangeable synonyms of "some coverage requirement"."""
+        result = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="min")
+        assert result is not None
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_coverage_side_both_refuses_if_either_side_fails(self, sim_fn):
+        result = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="both")
+        assert result is None  # max-side check still fails
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_required_matched_words_absolute_count(self, sim_fn):
+        """2 non-stopword query words, only 1 achieves an above-floor match - requiring 2 must refuse,
+        requiring 1 must accept."""
+        assert sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_matched_words=2, coverage_side="max") is None
+        assert sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_matched_words=1, coverage_side="max") is not None
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_stop_words_exempt_a_word_from_the_coverage_requirement(self, sim_fn):
+        """"EYELID" is the query word that fails to match CANDIDATE_PARTIAL. Declaring it a stop word
+        removes it from the coverage denominator entirely, so full coverage of the one REMAINING
+        content word ("DROOPING", which does match) must now pass."""
+        refused = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="max")
+        assert refused is None
+        accepted = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="max", stop_words=["EYELID"])
+        assert accepted is not None
+
+    @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
+    def test_min_word_similarity_floor_rejects_a_weak_greedy_pairing(self, sim_fn):
+        """A greedy pick is still made even between two unrelated words (it is the "least bad"
+        available pair) - min_word_similarity must refuse to count that as covering the word."""
+        query = ["ZEBRA", "DROOPING"]
+        candidate = ["QUXQUX", "DROOPING"]  # "ZEBRA" vs "QUXQUX" greedily pair with near-zero similarity
+        # A very high floor: even a weak pairing scoring above 0 but below the floor doesn't count.
+        result = sim_fn(query, candidate, required_coverage=1.0, coverage_side="max", min_word_similarity=0.99)
+        assert result is None
+
+    def test_all_stopwords_query_trivially_passes(self):
+        """A sentence made entirely of stopwords has nothing to require coverage of - must not refuse
+        (there is no content word left unaccounted for, by definition)."""
+        result = sentences_similarity(["THE", "A"], ["THE"], required_coverage=1.0, coverage_side="max", stop_words=["THE", "A"])
+        assert result is not None
+
+    def test_invalid_coverage_side_raises(self):
+        with pytest.raises(ValueError):
+            sentences_similarity(["A"], ["A"], required_coverage=1.0, coverage_side="bogus")
+        with pytest.raises(ValueError):
+            sentences_similarity_numba(["A"], ["A"], required_coverage=1.0, coverage_side="bogus")
+        with pytest.raises(ValueError):
+            SentenceSimilarityIndex([["A"]], required_coverage=1.0, coverage_side="bogus")
+
+    def test_numba_and_python_paths_agree_on_a_larger_random_case(self):
+        """Differential check: the numba with-matches core (_sentences_similarity_core_with_matches)
+        must reach the identical accept/refuse verdict and score as the pure-Python path."""
+        import random
+
+        rng = random.Random("coverage-gate-differential")
+        words = [f"W{i}" for i in range(12)]
+        for _ in range(20):
+            n_a = rng.randint(2, 8)
+            n_b = rng.randint(2, 8)
+            a = rng.choices(words, k=n_a)
+            b = rng.choices(words, k=n_b)
+            for req_cov in (0.5, 1.0):
+                py = sentences_similarity(a, b, required_coverage=req_cov, coverage_side="max")
+                nb = sentences_similarity_numba(a, b, required_coverage=req_cov, coverage_side="max")
+                if py is None:
+                    assert nb is None
+                else:
+                    assert nb is not None
+                    assert nb == pytest.approx(py, abs=1e-10)
+
+    def test_index_agrees_with_pairwise_calls_across_multiple_candidates(self):
+        """SentenceSimilarityIndex's coverage-active loop must reproduce per-candidate
+        sentences_similarity_numba results exactly, not just for a single candidate."""
+        query = ["EYELID", "DROOPING", "SEVERE"]
+        candidates = [
+            ["DROOPING"],
+            ["EYELID", "DROOPING"],
+            ["EYELID", "DROOPING", "SEVERE"],
+            ["UNRELATED", "WORDS", "ENTIRELY"],
+        ]
+        idx = SentenceSimilarityIndex(candidates, required_coverage=0.66, coverage_side="max")
+        indexed = idx.query(query)
+        direct = [sentences_similarity_numba(query, c, required_coverage=0.66, coverage_side="max") for c in candidates]
+        for i, (got, expected) in enumerate(zip(indexed, direct)):
+            if expected is None:
+                assert got is None, f"candidate {i}"
+            else:
+                assert got == pytest.approx(expected, abs=1e-10), f"candidate {i}"
