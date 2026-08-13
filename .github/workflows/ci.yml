@@ -77,11 +77,10 @@ jobs:
         pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=60 --durations=200
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
-        fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
 
   # Blocking gate + two lint bundles, all extracted to fingoldo/py-ci-shared reusable workflows
