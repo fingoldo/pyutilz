@@ -413,8 +413,8 @@
       "logger": "value",
       "normalize_sentence": "callable(sentence:any:0:, bSports:any:1:False, replace_symbols:any:1:('.', ',', '/', '-', '\u00ab', '\u00bb'), placeholder:any:1:' ', abbreviations:any:1:None)",
       "pack_sentence": "callable(words:any:0:)",
-      "sentences_similarity": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1)",
-      "sentences_similarity_numba": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1)",
+      "sentences_similarity": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1, min_word_similarity:any:1:0.5, required_coverage:any:1:None, required_matched_words:any:1:None, coverage_side:any:1:'max', stop_words:any:1:None)",
+      "sentences_similarity_numba": "callable(SentenceA:any:0:, SentenceB:any:0:, cMinLenTHreshold:any:1:1, min_word_similarity:any:1:0.5, required_coverage:any:1:None, required_matched_words:any:1:None, coverage_side:any:1:'max', stop_words:any:1:None)",
       "sentences_similarity_numba_batch": "callable(query_words:any:0:, candidates:any:0:, cMinLenTHreshold:any:1:1, parallel:any:1:False)",
       "sentences_similarity_numba_packed": "callable(packed_a:any:0:, packed_b:any:0:, cMinLenTHreshold:any:1:1)",
       "strip_doubled_characters": "callable(text:any:0:, char_list:any:0:)"
