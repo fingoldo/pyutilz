@@ -64,6 +64,28 @@ def _check_word_coverage(
     return True
 
 
+def _strip_stop_words(words: list, stop_words: Optional[list]) -> list:
+    """`words` with every entry in `stop_words` removed, or `words` unchanged when that would empty the
+    list (a sentence made entirely of stop words has nothing else to score against) or when `stop_words`
+    is falsy.
+
+    Applied BEFORE the w_max length-normalization (2026-08-12's own fix) sees either sentence, not only
+    inside the opt-in coverage gate `_check_word_coverage` already excludes stop words from: a connective
+    word ("some", "I", "have") still counted as query LENGTH `w_max` couldn't explain, silently dragging a
+    correct single-word match below any reasonable score threshold - measured live in autopsia's complaint
+    parser, 2026-08-16 ("some nausea" scored 0.0 against "Nausea", "I have nausea" scored 0.56, both used
+    to score 1.0 before the w_max fix). `stop_words` was already a real, threaded parameter every call site
+    below accepts - this widens what it does (base score, not just the coverage gate), it does not add new
+    API surface."""
+    if not stop_words:
+        return words
+    stop_set = set(stop_words)
+    filtered = [w for w in words if w not in stop_set]
+    if not filtered:
+        return words
+    return filtered
+
+
 def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
     simple string percent similarity
@@ -172,6 +194,8 @@ def sentences_similarity(
         >>> sentences_similarity(["A", "B"], ["A", "B"], required_coverage=1.0)
         1.0
     """
+    SentenceA = _strip_stop_words(SentenceA, stop_words)
+    SentenceB = _strip_stop_words(SentenceB, stop_words)
     N_a = len(SentenceA)
     N_b = len(SentenceB)
     if N_a < 1 or N_b < 1:
@@ -813,6 +837,8 @@ try:
         scalar-only core is still used when neither is set; only the coverage-active path recomputes via
         `_sentences_similarity_core_with_matches`, which also tracks per-word matches).
         """
+        SentenceA = _strip_stop_words(SentenceA, stop_words)
+        SentenceB = _strip_stop_words(SentenceB, stop_words)
         N_a = len(SentenceA)
         N_b = len(SentenceB)
         if N_a < 1 or N_b < 1:
@@ -1169,6 +1195,12 @@ try:
             self._coverage_active = required_coverage is not None or required_matched_words is not None
             if self._coverage_active:
                 _validate_coverage_side(coverage_side)
+            # Stop words stripped BEFORE packing (2026-08-16, see `_strip_stop_words`'s own docstring for
+            # why the base w_max-normalized score, not just the opt-in coverage gate, needs this) - kept
+            # filtered here too (not just in the packed buffer) so the coverage gate's own per-word
+            # `matched_sim_b` array (built against the packed, filtered length) stays index-aligned with
+            # `self._candidates[idx]` below.
+            candidates = [_strip_stop_words(c, stop_words) for c in candidates]
             self._candidates = candidates  # kept for the coverage gate's word-list lookups
             # Pre-pack all candidates into a single flat buffer
             all_cand_words = []
@@ -1187,6 +1219,7 @@ try:
 
         def query(self, query_words: list[str]) -> list:
             """Compare query against all indexed candidates. Returns list of similarities."""
+            query_words = _strip_stop_words(query_words, self.stop_words)
             n_query = len(query_words)
             if n_query < 1:
                 return [None] * self.n_candidates

@@ -914,3 +914,52 @@ class TestCoverageGate:
                 assert got is None, f"candidate {i}"
             else:
                 assert got == pytest.approx(expected, abs=1e-10), f"candidate {i}"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# `stop_words` also strips the BASE (non-coverage) w_max-normalized score, 2026-08-16
+# ══════════════════════════════════════════════════════════════════════
+# The w_max length-normalization fix (2026-08-12) correctly stopped a short candidate label from
+# out-scoring a longer one on one lucky word - but it also means a connective word ordinary phrasing
+# carries ("some", "I", "have") counts as query length the candidate can never explain, dragging a
+# genuinely correct single-word match below any reasonable threshold. Found live in autopsia's complaint
+# parser: "some nausea" against "Nausea" scored 0.0 (used to score 1.0 pre-w_max-fix). `stop_words` was
+# already threaded through every function below for the opt-in coverage gate - these tests pin that it
+# now ALSO strips before the base score is computed, not only inside the gate.
+
+
+class TestStopWordsAffectBaseScore:
+    _STOP = {"I", "HAVE", "A", "MY", "SOME"}
+
+    def test_pure_python_recovers_the_exact_match_once_the_connective_word_is_stripped(self):
+        assert sentences_similarity(["SOME", "NAUSEA"], ["NAUSEA"], stop_words=self._STOP) == 1.0
+        # Without stop_words, the connective word still drags the score down (regression guard for the
+        # guard itself - proves the fixture actually exercises the defect, not a no-op).
+        assert sentences_similarity(["SOME", "NAUSEA"], ["NAUSEA"]) < 1.0
+
+    def test_numba_agrees_with_pure_python(self):
+        py = sentences_similarity(["I", "HAVE", "NAUSEA"], ["NAUSEA"], stop_words=self._STOP)
+        nb = sentences_similarity_numba(["I", "HAVE", "NAUSEA"], ["NAUSEA"], stop_words=self._STOP)
+        assert py == 1.0
+        assert nb == pytest.approx(py, abs=1e-10)
+
+    def test_index_recovers_the_exact_match_and_stays_index_pairwise_consistent(self):
+        candidates = [["NAUSEA"], ["ABDOMINAL", "PAIN"]]
+        idx = SentenceSimilarityIndex(candidates, stop_words=self._STOP)
+        indexed = idx.query(["SOME", "NAUSEA"])
+        assert indexed[0] == 1.0
+        direct = [sentences_similarity_numba(["SOME", "NAUSEA"], c, stop_words=self._STOP) for c in candidates]
+        for got, expected in zip(indexed, direct):
+            assert got == pytest.approx(expected, abs=1e-10)
+
+    def test_a_query_of_only_stop_words_falls_back_to_the_unfiltered_query_rather_than_scoring_nothing(self):
+        """`_strip_stop_words` refuses to empty a sentence entirely - a query that is ALL stop words keeps
+        its original words so the caller still gets a real (if low) score, never a crash on an empty list."""
+        assert sentences_similarity(["I", "HAVE"], ["NAUSEA"], stop_words=self._STOP) is not None
+
+    def test_no_stop_words_argument_is_a_true_no_op(self):
+        """Zero behavior change on the default (stop_words=None) path - the same invariant this file's
+        other coverage-gate tests already pin for required_coverage/min_word_similarity."""
+        a, b = ["SOME", "NAUSEA"], ["NAUSEA"]
+        assert sentences_similarity(a, b) == sentences_similarity(a, b, stop_words=None)
+        assert sentences_similarity_numba(a, b) == sentences_similarity_numba(a, b, stop_words=None)
