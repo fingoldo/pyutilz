@@ -1120,6 +1120,63 @@ try:
                 results[c] = _compare_one_candidate(buf, offsets, query_n, cand_starts[c], cn, cMinLenTHreshold)
         return results
 
+    @nb.njit(cache=True)
+    def _sentences_similarity_batch_with_matches_core(buf, offsets, word_counts, cand_starts, n_candidates, query_n, cMinLenTHreshold):
+        """Like `_sentences_similarity_batch_core`, but calls `_compare_one_candidate_with_matches` instead
+        of the scalar-only `_compare_one_candidate`, exposing per-word match tracking for the coverage gate.
+        Returns (results, matched_sim_a_all, matched_sim_b_flat): `matched_sim_a_all` is
+        `(n_candidates, query_n)` since every candidate compares against the same query length;
+        `matched_sim_b_flat` uses the same flat per-candidate-word layout as `buf`/`offsets` (total
+        candidate words long, one contiguous run per candidate at `cand_starts[c] - query_n`), since each
+        candidate's own word count varies and can't share a single 2-D array shape."""
+        results = np.empty(n_candidates, dtype=np.float64)
+        matched_sim_a_all = np.zeros((n_candidates, query_n), dtype=np.float64)
+        total_cand_words = 0
+        for c in range(n_candidates):
+            total_cand_words += word_counts[c + 1]
+        matched_sim_b_flat = np.zeros(total_cand_words, dtype=np.float64)
+        for c in range(n_candidates):
+            cn = word_counts[c + 1]
+            if cn < 1:
+                results[c] = -1.0
+                continue
+            res, matched_a, matched_b = _compare_one_candidate_with_matches(buf, offsets, query_n, cand_starts[c], cn, cMinLenTHreshold)
+            results[c] = res
+            matched_sim_a_all[c, :] = matched_a
+            b_start = cand_starts[c] - query_n
+            for k in range(cn):
+                matched_sim_b_flat[b_start + k] = matched_b[k]
+        return results, matched_sim_a_all, matched_sim_b_flat
+
+    @nb.njit(parallel=True, cache=True)
+    def _sentences_similarity_batch_with_matches_parallel(buf, offsets, word_counts, cand_starts, n_candidates, query_n, cMinLenTHreshold):
+        """`nb.prange`-parallel twin of `_sentences_similarity_batch_with_matches_core` - the batched
+        "with-matches" kernel the coverage gate needs at scale (`SentenceSimilarityIndex.query`'s
+        coverage-active path previously fell back to a pure-Python per-candidate loop calling the same
+        `_compare_one_candidate_with_matches`, which is what made the SNOMED bridge (383,345 candidates)
+        and complaint-parser retrieval (11,555 candidates) infeasible - see this repo's own commit history
+        and autopsia's `audits/2026-08-13-similarity-coverage-gate-survey/survey.md`). Same flat-layout
+        return convention as the sequential core above; each `c` writes only its own row/slice, so no
+        cross-thread aliasing despite the shared output arrays."""
+        results = np.empty(n_candidates, dtype=np.float64)
+        matched_sim_a_all = np.zeros((n_candidates, query_n), dtype=np.float64)
+        total_cand_words = 0
+        for c in range(n_candidates):
+            total_cand_words += word_counts[c + 1]
+        matched_sim_b_flat = np.zeros(total_cand_words, dtype=np.float64)
+        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]
+            cn = word_counts[c + 1]
+            if cn < 1:
+                results[c] = -1.0
+                continue
+            res, matched_a, matched_b = _compare_one_candidate_with_matches(buf, offsets, query_n, cand_starts[c], cn, cMinLenTHreshold)
+            results[c] = res
+            matched_sim_a_all[c, :] = matched_a
+            b_start = cand_starts[c] - query_n
+            for k in range(cn):
+                matched_sim_b_flat[b_start + k] = matched_b[k]
+        return results, matched_sim_a_all, matched_sim_b_flat
+
     def _prepare_batch(query_words, candidates):
         """Pack query + candidates into flat buffers. Returns (buf, offsets, wc, cand_starts, n_query)."""
         n_query = len(query_words)
@@ -1248,17 +1305,32 @@ try:
                     raw = _sentences_similarity_batch_core(buf, offsets, wc, self.n_candidates, n_query, self.cMinLenTHreshold)
                 return [None if v < 0 else float(v) for v in raw]
 
-            # Coverage-active path: needs per-candidate word-level match tracking, which the batch
-            # kernels above don't expose (scalar-only) - loop per candidate instead. Not parallelized
-            # (correctness-first for an opt-in feature); the default path above is unaffected.
+            # Coverage-active path: needs per-candidate word-level match tracking. Uses the batched
+            # "with-matches" kernels (`_sentences_similarity_batch_with_matches_parallel`/`_core`), which
+            # call `_compare_one_candidate_with_matches` inside a single numba call (prange-parallel when
+            # self.parallel) instead of looping per-candidate in pure Python - the latter was measured
+            # infeasible at scale (383,345/11,555-candidate pools; see autopsia's
+            # audits/2026-08-13-similarity-coverage-gate-survey/survey.md).
             stop_set = set(self.stop_words) if self.stop_words else set()
+            if self.parallel:
+                raw, matched_sim_a_all, matched_sim_b_flat = _sentences_similarity_batch_with_matches_parallel(
+                    buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold
+                )
+            else:
+                raw, matched_sim_a_all, matched_sim_b_flat = _sentences_similarity_batch_with_matches_core(
+                    buf, offsets, wc, cand_starts, self.n_candidates, n_query, self.cMinLenTHreshold
+                )
             results: list = []
+            b_flat_pos = 0
             for idx in range(self.n_candidates):
                 cn = int(self._wc_arr[idx])
                 if cn < 1:
                     results.append(None)
                     continue
-                res, matched_sim_a, matched_sim_b = _compare_one_candidate_with_matches(buf, offsets, n_query, int(cand_starts[idx]), cn, self.cMinLenTHreshold)
+                res = raw[idx]
+                matched_sim_a = matched_sim_a_all[idx]
+                matched_sim_b = matched_sim_b_flat[b_flat_pos : b_flat_pos + cn]
+                b_flat_pos += cn
                 cand_words = self._candidates[idx]
                 ok = True
                 if self.coverage_side in ("max", "both"):

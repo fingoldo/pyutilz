@@ -82,6 +82,7 @@
   "getattr_unknown_attribute::performance/kernel_tuning/code_versioning.py:52",
   "mutation_during_iteration::data/pandaslib/dtypes.py:119",
   "mutation_during_iteration::data/pandaslib/dtypes.py:124",
+  "near_duplicate_function_body::text/similarity.py:1152",
   "possibly_dead_import::database/db/__init__.py:70",
   "possibly_dead_import::database/db/__init__.py:71",
   "resource_handle_safety::llm/claude_code_provider.py:585",
