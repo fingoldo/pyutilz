@@ -749,16 +749,34 @@ class KernelTuningCache:
             # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
             # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
             # took precedence (checked above), so this never overrides a real local result.
+            #
+            # Diagnostic branch-tagging (not just a swallowed exception): a CI-only occurrence of
+            # test_register_default_cache_loads_and_local_miss_returns_default returned the hand
+            # fallback instead of the DEFAULT cache's value, with no local repro despite exhaustive
+            # static review of every function this branch touches (code_version determinism,
+            # _ensure_loaded, lookup, _region_matches -- none raise or mismatch under same-process
+            # execution as far as static reading can show). Logging exactly which branch was taken
+            # (rather than only the previous DEBUG-level swallow) turns the next occurrence into a
+            # one-line diagnosis instead of another blind investigation.
             dc = _facade()._DEFAULT_CACHE
-            if dc is not None and dc is not self:
+            if dc is None:
+                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
+            elif dc is self:
+                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
+            else:
                 try:
-                    if not dc._code_version_stale(kernel_name, code_version):
+                    if dc._code_version_stale(kernel_name, code_version):
+                        logger.warning(
+                            "DEFAULT-cache consult for kernel %s: code_version stale (requested=%r, stored=%r), falling back",
+                            kernel_name, code_version, dc._ensure_loaded().get("kernels", {}).get(kernel_name, {}).get("code_version"),
+                        )
+                    else:
                         d = dc.lookup(kernel_name, **dims)
                         if d is not None:
                             return d
+                        logger.warning("DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
                 except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
-                    logger.debug("DEFAULT-cache consult failed for kernel %s: %s", kernel_name, e)
-                    pass
+                    logger.warning("DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
             return fallback() if callable(fallback) else fallback
 
         if env_key:
