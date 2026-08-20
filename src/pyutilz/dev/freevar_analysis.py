@@ -31,6 +31,11 @@ adding one to a new function's signature. Also does not track ``import ... as X`
 the extracted range is exactly the kind of self-contained code this tool is meant to flag as needing
 no external binding).
 
+For the OTHER half of a monolith split -- moving whole top-level definitions out to a sibling module rather
+than carving a block out of one function -- see :func:`split_out_module`. It reuses the analysis above as its
+safety gate: a moved range that still reads a module-level name staying behind is exactly the ``NameError``
+on-an-untaken-branch this module exists to prevent, so such a move is refused rather than written.
+
 Typical workflow when splitting a large function:
     1. Read the block of code you want to extract; note its start/end line numbers.
     2. ``python -m pyutilz.dev.freevar_analysis <file.py> <start> <end>`` (or call
@@ -65,6 +70,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import ast
+import builtins
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -186,9 +192,181 @@ def format_report(report: FreeVarReport, path: Union[str, Path], start_line: int
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------------------------------------------------------------------------
+# Module splitting
+# ----------------------------------------------------------------------------------------------------------------------------
+
+
+def _end_line(node: ast.AST) -> int:
+    """A parsed node's last line. ``end_lineno`` is Optional on the node types only because the AST classes
+    declare it so; every node produced by ``ast.parse`` carries one. Falling back explicitly rather than with
+    ``or`` keeps a line number of 0 from being silently rewritten into the start line."""
+    end = getattr(node, "end_lineno", None)
+    return int(end) if end is not None else int(node.lineno)  # type: ignore[attr-defined]
+
+
+def _top_level_span(tree: ast.Module, name: str) -> "tuple[int, int]":
+    """The 1-indexed inclusive line range of the top-level statement defining ``name``, decorators included."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+            return min([node.lineno, *(d.lineno for d in node.decorator_list)]), _end_line(node)
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return node.lineno, _end_line(node)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+            return node.lineno, _end_line(node)
+    raise ValueError(f"{name!r} is not a top-level definition in this module")
+
+
+def _top_level_bodies(src: str) -> "dict[str, str]":
+    """Each top-level definition's own source text, keyed by the name it binds.
+
+    This is the object :func:`split_out_module`'s identity check compares before and after a move. Comparing
+    TEXT rather than a re-dumped AST is deliberate: an ``ast.unparse`` round trip normalises formatting and
+    would hide exactly the accidental edit the check exists to catch.
+    """
+    lines = src.splitlines()
+    out: "dict[str, str]" = {}
+    for node in ast.parse(src).body:
+        name = getattr(node, "name", None)
+        if name is None and isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+        if name is None and isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+        if name is not None:
+            out[name] = "\n".join(lines[node.lineno - 1 : _end_line(node)])
+    return out
+
+
+def split_out_module(source: Union[str, Path], target: Union[str, Path], first: str, last: str, *, apply: bool = True) -> "list[str]":
+    """Move the contiguous run of top-level definitions from ``first`` to ``last`` into a sibling ``target``.
+
+    The common remedy for a module past a project's size limit is "sibling module + named re-export", and the
+    risk in doing it by hand is silent drift: a body edited mid-move, a comment carrying the measurement that
+    justified the code left behind, or a module-level constant the moved code still reads. All three are
+    addressed structurally here rather than by review.
+
+    * CONTIGUOUS, by line range, so every comment and blank line BETWEEN the moved definitions travels with
+      them. A scattered set of names cannot express that, and in a well-commented module the prose between
+      two functions is often the part worth keeping most.
+    * The moved range's external reads are checked with :func:`analyze_range`, then intersected with the
+      module's OWN top-level bindings. Anything left is a module-level name the moved code reads that would
+      stay behind, and the move is REFUSED rather than written -- that is the ``NameError`` on an untaken
+      branch this module exists to prevent. Imports travel with the move, so they never count; parameters and
+      locals of the moved definitions are not module-level names, so they never count either.
+    * Every moved body is compared byte-for-byte, before and after; any difference refuses the write.
+
+    ``source`` keeps a ``from .<target> import name as name`` block in place of the moved range, so existing
+    imports keep resolving; the explicit ``as`` form is what makes those names re-exported rather than merely
+    imported. Returns the moved names. With ``apply=False`` nothing is written and every check still runs.
+    """
+    source, target = Path(source), Path(target)
+    # `open` rather than `Path.read_text(newline=...)`: that keyword is 3.13+, and newline="" is what keeps
+    # the file's own line endings visible instead of being translated on the way in.
+    with open(source, encoding="utf-8", newline="") as fh:
+        raw = fh.read()
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    flat = raw.replace("\r\n", "\n")
+    lines = flat.split("\n")
+    tree = ast.parse(flat)
+
+    start = _top_level_span(tree, first)[0]
+    while start - 1 >= 1 and lines[start - 2].lstrip().startswith("#"):
+        start -= 1
+    end = _top_level_span(tree, last)[1]
+    if start > end:
+        raise ValueError(f"{first!r} must appear before {last!r} in {source}")
+
+    moved_src = "\n".join(lines[start - 1 : end])
+    moved_names = list(_top_level_bodies(moved_src))
+    if not moved_names:
+        raise ValueError("the selected range defines no top-level name")
+
+    import_spans = [(n.lineno, _end_line(n)) for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    import_block = "\n".join("\n".join(lines[a - 1 : b]) for a, b in import_spans)
+    # `asname if asname else name`, not `asname or name`: an empty alias is not a thing the parser produces,
+    # but spelling the None case is what this repo's own default-via-or rule asks for.
+    imported = {a.asname if a.asname else a.name.split(".")[0] for n in tree.body if isinstance(n, ast.Import) for a in n.names}
+    imported |= {a.asname if a.asname else a.name for n in tree.body if isinstance(n, ast.ImportFrom) for a in n.names}
+
+    # `analyze_range` answers "what does this range read from outside itself", which for a range of whole
+    # top-level definitions includes their own PARAMETERS - external to the block, but bound by the `def`.
+    # The question that actually decides this move is narrower: does the range read a name bound at MODULE
+    # level that is staying behind? Intersecting with the module's own top-level bindings answers exactly
+    # that, and parameters/locals fall out on their own because they are not module-level names.
+    module_level = set(imported)
+    for node in tree.body:
+        name = getattr(node, "name", None)
+        if name is not None:
+            module_level.add(name)
+        elif isinstance(node, ast.Assign):
+            module_level.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            module_level.add(node.target.id)
+
+    report = analyze_range(source, start, end)
+    left_behind = sorted(
+        n for n in report.all_dependency_names() if n in module_level and n not in imported and n not in moved_names and not hasattr(builtins, n)
+    )
+    if left_behind:
+        raise ValueError(
+            f"refusing to split {source}: the moved range reads {len(left_behind)} module-level name(s) that would stay behind "
+            f"({', '.join(left_behind[:8])}). Widen the range to include them, or import them back explicitly."
+        )
+
+    header = (
+        f'"""Split out of `{source.as_posix()}` to keep both modules under the size limit.\n\n'
+        "Moved verbatim: every body was compared byte-for-byte against the pre-split file, and the moved range\n"
+        "was checked to read no module-level name left behind - see\n"
+        "`pyutilz.dev.freevar_analysis.split_out_module`.\n\n"
+        f'See `{source.as_posix()}` for the surrounding context these definitions were written in.\n"""\n\n'
+        "from __future__ import annotations\n\n"
+    )
+    new_src = header + import_block + "\n\n\n" + moved_src + "\n"
+    reexport = (
+        f"# Split out to `{target.stem}.py` for module size; re-exported by name so existing imports keep working.\n"
+        f"from .{target.stem} import (\n" + "".join(f"    {n} as {n},\n" for n in sorted(moved_names)) + ")\n"
+    )
+    rest_src = "\n".join([*lines[: start - 1], reexport.rstrip("\n"), *lines[end:]])
+
+    before = _top_level_bodies(flat)
+    after = {**_top_level_bodies(rest_src), **_top_level_bodies(new_src)}
+    drifted = [n for n in moved_names if before[n] != after.get(n)]
+    if drifted:
+        raise ValueError(f"refusing to split {source}: {len(drifted)} body/bodies changed during the move ({', '.join(drifted[:5])})")
+
+    if apply:
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            fh.write(new_src.replace("\n", newline))
+        with open(source, "w", encoding="utf-8", newline="") as fh:
+            fh.write(rest_src.replace("\n", newline))
+    return moved_names
+
+
 def _main(argv: "list[str] | None" = None) -> int:
-    """CLI entry point: ``python -m pyutilz.dev.freevar_analysis <file.py> <start_line> <end_line>``."""
+    """CLI entry point.
+
+    ``python -m pyutilz.dev.freevar_analysis <file.py> <start_line> <end_line>`` reports free variables;
+    ``python -m pyutilz.dev.freevar_analysis --split <source.py> <target.py> <first> <last> [--dry-run]``
+    moves a contiguous run of top-level definitions out to a sibling module.
+    """
     args = sys.argv[1:] if argv is None else argv
+    if args and args[0] == "--split":
+        dry = "--dry-run" in args
+        rest = [a for a in args[1:] if a != "--dry-run"]
+        if len(rest) != 4:
+            print("usage: python -m pyutilz.dev.freevar_analysis --split <source.py> <target.py> <first> <last> [--dry-run]", file=sys.stderr)  # noqa: T201 - CLI usage message
+            return 2
+        try:
+            moved = split_out_module(rest[0], rest[1], rest[2], rest[3], apply=not dry)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)  # noqa: T201 - CLI's actual output
+            return 1
+        print(f"{'would move' if dry else 'moved'} {len(moved)} top-level name(s) to {rest[1]}; every body verified byte-identical")  # noqa: T201 - CLI's actual output
+        for name in moved:
+            print(f"    {name}")  # noqa: T201 - CLI's actual output
+        return 0
     if len(args) != 3:
         print("usage: python -m pyutilz.dev.freevar_analysis <file.py> <start_line> <end_line>", file=sys.stderr)  # noqa: T201 - CLI usage message
         return 2
