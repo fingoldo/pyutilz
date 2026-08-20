@@ -283,7 +283,13 @@ def split_out_module(source: Union[str, Path], target: Union[str, Path], first: 
     if not moved_names:
         raise ValueError("the selected range defines no top-level name")
 
-    import_spans = [(n.lineno, _end_line(n)) for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    # `__future__` imports are excluded: the generated header already emits one, and a duplicate is a
+    # SyntaxError in any position but the first statement.
+    import_spans = [
+        (n.lineno, _end_line(n))
+        for n in tree.body
+        if isinstance(n, (ast.Import, ast.ImportFrom)) and not (isinstance(n, ast.ImportFrom) and n.module == "__future__")
+    ]
     import_block = "\n".join("\n".join(lines[a - 1 : b]) for a, b in import_spans)
     # `asname if asname else name`, not `asname or name`: an empty alias is not a thing the parser produces,
     # but spelling the None case is what this repo's own default-via-or rule asks for.

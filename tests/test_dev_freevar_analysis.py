@@ -288,3 +288,17 @@ def test_an_unknown_symbol_is_rejected(tmp_path):
     src = _write_splittable(tmp_path)
     with pytest.raises(ValueError, match="not a top-level definition"):
         fva.split_out_module(src, tmp_path / "big_extra.py", "move_a", "no_such_name")
+
+
+def test_the_future_import_is_not_duplicated_into_the_new_module(tmp_path):
+    """The generated header opens with `from __future__ import annotations`, and the source's own copy of it
+    would land in the copied import block right after - a SyntaxError, since a future import is only legal as
+    the first statement."""
+    src = _write_splittable(tmp_path)
+    target = tmp_path / "big_extra.py"
+
+    fva.split_out_module(src, target, "move_a", "move_b")
+
+    text = target.read_text(encoding="utf-8")
+    assert text.count("from __future__ import annotations") == 1
+    compile(text, str(target), "exec")
