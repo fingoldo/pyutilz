@@ -31,6 +31,7 @@ import warnings
 import http
 import ssl
 import threading
+from dataclasses import dataclass
 
 # Guards read-then-mutate access to the module-level scraping state below (sess, proxies,
 # headers, num_ip_queries, cur_max_ip_queries, was_blocked, proxy_* fields) when this module
@@ -170,6 +171,93 @@ def get_external_ip(
                     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
                 else:
                     logger.warning("Weird IP address received from provider %s: %s", source, res)
+    return None
+
+
+# Geolocation providers, tried in order until one answers with a country. All four are keyless and free
+# for low volume; each states a DIFFERENT JSON shape, so the field names to read are carried alongside the
+# URL rather than guessed. `{ip}` is substituted with the address to look up, or removed for a self-lookup
+# (every one of these resolves the CALLER's own address when the path is empty).
+#
+# Deliberately NOT shuffled the way IP_PROVIDERS is: those three are interchangeable echo services, while
+# these differ in accuracy and rate limit, so the order is a preference and shuffling would throw it away.
+COUNTRY_PROVIDERS: List[dict] = [
+    {"url": "https://ipapi.co/{ip}/json/", "code": "country_code", "name": "country_name", "continent": "continent_code"},
+    # `fields=` is required, not decoration: ip-api's DEFAULT response omits `continent` entirely, so the
+    # unqualified URL silently returned a blank continent for every lookup this provider answered.
+    {
+        "url": "http://ip-api.com/json/{ip}?fields=status,country,countryCode,continent,query",
+        "code": "countryCode",
+        "name": "country",
+        "continent": "continent",
+    },
+    {"url": "https://ipwho.is/{ip}", "code": "country_code", "name": "country", "continent": "continent"},
+    {"url": "https://freeipapi.com/api/json/{ip}", "code": "countryCode", "name": "countryName", "continent": "continent"},
+]
+
+
+@dataclass
+class IpGeolocation:
+    """What a geolocation lookup actually established, and from where.
+
+    `provider` is not decoration: these services disagree, and a caller acting on a country (pricing,
+    routing, a clinical prior) needs to be able to say which one said so. Country-level only - the finer
+    fields these APIs return (city, coordinates, ISP) are deliberately not surfaced, because they are the
+    fields with the worst accuracy and the highest privacy cost, and no caller in this codebase needs them.
+    """
+
+    country_code: str  # ISO 3166-1 alpha-2, uppercased
+    country_name: str  # the provider's own English name; spellings differ BETWEEN providers
+    continent: str = ""  # a code ("EU") from some providers and a name ("Europe") from others - see get_country_by_ip
+    ip: str = ""
+    provider: str = ""
+
+
+def get_country_by_ip(ip: Optional[str] = None, providers: Optional[Sequence[dict]] = None) -> Optional[IpGeolocation]:
+    """Resolve an IP address to a country, trying ``COUNTRY_PROVIDERS`` in order until one answers.
+
+    ``ip=None`` looks up the CALLER's own address (every provider here does that for an empty path), so no
+    separate `get_external_ip()` round trip is needed first.
+
+    Returns ``None`` when every provider failed or none of them stated a country - never a guess and never
+    a partial record. A geolocation miss is ordinary: private/loopback addresses, VPNs, corporate egress
+    and rate limits all produce one, so callers must treat ``None`` as "unknown", not as an error.
+
+    ACCURACY, stated plainly because callers keep assuming otherwise: IP geolocation is reliable at country
+    level and unreliable below it, and it reports where the ADDRESS is, not where the person is - a VPN,
+    a mobile carrier's national egress or a cloud host will all answer confidently and wrongly. Use it to
+    PRE-FILL a field a human can correct, never as an established fact.
+
+    ``continent`` is passed through unnormalised on purpose: ip-api and ipwho.is state a name ("Europe"),
+    ipapi.co states a code ("EU"). Normalising here would mean this function owning a continent table;
+    a caller that needs one shape should map the value it got, knowing which provider answered.
+    """
+    for provider in providers if providers is not None else COUNTRY_PROVIDERS:
+        url = provider["url"].format(ip=ip or "")
+        try:
+            data = get_ipinfo(use_urllib=True, url=url)
+        except Exception as e:
+            # debug, not exception: a provider failing is the EXPECTED case this chain exists for (all four
+            # rate-limit routinely), and logging a traceback per provider turns one successful lookup into
+            # three stack traces in the caller's log.
+            logger.debug("country lookup via %s failed: %s", url, e)
+            continue
+        if not isinstance(data, dict):
+            continue
+        code = data.get(provider["code"])
+        name = data.get(provider["name"])
+        # Both, not either: a provider that answered with an error body ({"success": false, ...}) supplies
+        # neither, and one that supplies only a code leaves the caller with nothing to show a human.
+        if not isinstance(code, str) or not isinstance(name, str) or not code.strip() or not name.strip():
+            continue
+        continent = data.get(provider["continent"])
+        return IpGeolocation(
+            country_code=code.strip().upper(),
+            country_name=name.strip(),
+            continent=continent.strip() if isinstance(continent, str) else "",
+            ip=str(data.get("ip") or data.get("query") or ip or ""),
+            provider=url.split("/")[2],
+        )
     return None
 
 

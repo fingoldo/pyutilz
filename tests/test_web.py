@@ -126,3 +126,50 @@ class TestEnsureHttpScheme:
                 mock_urlopen.assert_not_called()
         finally:
             web.IP_PROVIDERS = original_providers
+
+
+def test_get_country_by_ip_returns_the_first_provider_that_states_a_country(monkeypatch):
+    """The fallback chain is the point: providers rate-limit and 403 constantly, so a miss on the first
+    must move to the next rather than becoming the answer."""
+    from pyutilz.web import web
+
+    calls: list[str] = []
+
+    def fake_get_ipinfo(use_urllib: bool = False, url: str = "") -> object:
+        calls.append(url)
+        if "ipapi.co" in url:
+            return None  # the shape a 429 produces through get_ipinfo
+        return {"countryCode": "de", "country": " Germany ", "continent": "Europe", "query": "1.2.3.4"}
+
+    monkeypatch.setattr(web, "get_ipinfo", fake_get_ipinfo)
+
+    located = web.get_country_by_ip("1.2.3.4")
+
+    assert located is not None
+    assert located.country_code == "DE"  # normalised to ISO uppercase
+    assert located.country_name == "Germany"  # whitespace stripped, provider casing kept
+    assert located.provider == "ip-api.com"
+    assert len(calls) == 2, "the first provider's miss must not end the search"
+
+
+def test_get_country_by_ip_ignores_a_provider_that_answers_without_a_country(monkeypatch):
+    """An error body ({"success": false, ...}) is a 200 with no country - taking it would produce an
+    IpGeolocation with empty fields, which reads as an established answer."""
+    from pyutilz.web import web
+
+    monkeypatch.setattr(web, "get_ipinfo", lambda use_urllib=False, url="": {"success": False, "message": "quota"})
+
+    assert web.get_country_by_ip("1.2.3.4") is None
+
+
+def test_get_country_by_ip_substitutes_the_address_into_every_provider_url(monkeypatch):
+    """`ip=None` must query the CALLER's own address - an empty path on every provider here - rather than
+    sending the literal string "None"."""
+    from pyutilz.web import web
+
+    seen: list[str] = []
+    monkeypatch.setattr(web, "get_ipinfo", lambda use_urllib=False, url="": seen.append(url) or None)
+
+    assert web.get_country_by_ip(None) is None
+    assert all("None" not in url for url in seen)
+    assert any(url.rstrip("/").endswith("json") or url.endswith("/") or "?" in url for url in seen)
