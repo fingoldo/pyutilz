@@ -279,10 +279,22 @@ def split_out_module(
     imports keep resolving; the explicit ``as`` form is what makes those names re-exported rather than merely
     imported. Returns the moved names. With ``apply=False`` nothing is written and every check still runs.
 
-    ``back_import_ok=True`` relaxes only the third check, and only where relaxing it is provably safe: a
-    left-behind name DEFINED ABOVE the split point is already bound by the time ``source`` reaches its own
-    import of ``target``, so the new module can import it back. A name defined BELOW is still refused - that
-    one really is a circular import.
+    ``back_import_ok=True`` relaxes only the third check, and only where relaxing it is safe GIVEN AN
+    IMPORT ORDER: a left-behind name DEFINED ABOVE the split point is already bound by the time ``source``
+    reaches its own import of ``target``, so the new module can import it back. A name defined BELOW is
+    still refused - that one really is a circular import.
+
+    THE CAVEAT THAT MATTERS, and it is not decidable here: the guarantee holds only when ``source`` is
+    imported FIRST. If something imports ``target`` directly, the cycle runs the other way - ``target``
+    imports ``source``, ``source`` reaches its re-export block and asks a half-built ``target`` for a name it
+    has not defined yet, and the import dies. Measured on the first real use: a ``python -m`` entry point on
+    the source module failed exactly this way, and because the failure surfaced as a non-zero exit swallowed
+    by a shell pipeline, the build it was performing silently wrote nothing.
+
+    So a back-import is a REAL dependency, not a formality. Prefer moving the shared names, or making one
+    side's import call-time (inside the function that needs it) so no cycle exists at module level at all.
+    Reach for ``back_import_ok`` when the source is unambiguously the only entry point, and re-run whatever
+    imports the target directly before believing the split.
     """
     source, target = Path(source), Path(target)
     # `open` rather than `Path.read_text(newline=...)`: that keyword is 3.13+, and newline="" is what keeps
