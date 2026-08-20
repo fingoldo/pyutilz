@@ -302,3 +302,45 @@ def test_the_future_import_is_not_duplicated_into_the_new_module(tmp_path):
     text = target.read_text(encoding="utf-8")
     assert text.count("from __future__ import annotations") == 1
     compile(text, str(target), "exec")
+
+
+def test_back_import_is_written_for_a_name_defined_above_the_split_point(tmp_path):
+    """`CONSTANT` sits above the split point, so by the time the new module loads, the source has already
+    executed that line and the import resolves. The splitter writes it rather than refusing."""
+    src = _write_splittable(tmp_path)
+    target = tmp_path / "big_extra.py"
+
+    fva.split_out_module(src, target, "keep_me", "keep_me", back_import_ok=True)
+
+    text = target.read_text(encoding="utf-8")
+    assert "from .big import (\n    CONSTANT,\n)" in text
+    compile(text, str(target), "exec")
+
+
+def test_back_import_still_refuses_a_name_defined_below_the_split_point(tmp_path):
+    """The unsafe half: a name bound BELOW the split point has not run when the new module loads, so
+    importing it back is a real circular-import failure rather than a style question."""
+    src = tmp_path / "big.py"
+    src.write_text(
+        "from __future__ import annotations\n\n\n" "def move_me():\n" '    """Reads a constant defined after it."""\n' "    return LATER\n\n\n" "LATER = 7\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="defined BELOW the split point"):
+        fva.split_out_module(src, tmp_path / "big_extra.py", "move_me", "move_me", back_import_ok=True)
+
+
+def test_the_back_imported_module_actually_loads_and_runs(tmp_path, monkeypatch):
+    """The property the ordering rule exists for: the split package imports cleanly and the moved function
+    still sees the constant it reads."""
+    pkg = tmp_path / "backpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
+
+    fva.split_out_module(src, pkg / "big_extra.py", "keep_me", "keep_me", back_import_ok=True)
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = importlib.import_module("backpkg.big")
+    assert module.keep_me(1) == 4, "the moved function must still resolve the constant left behind"

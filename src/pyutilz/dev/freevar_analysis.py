@@ -239,7 +239,25 @@ def _top_level_bodies(src: str) -> "dict[str, str]":
     return out
 
 
-def split_out_module(source: Union[str, Path], target: Union[str, Path], first: str, last: str, *, apply: bool = True) -> "list[str]":
+def _module_level_def_line(tree: ast.Module, name: str) -> int:
+    """The line at which a module-level statement BINDS ``name``, or a large number when nothing does.
+
+    Used to decide whether a name can safely be imported back from a module that is mid-import: only a
+    binding above the split point has already run by then.
+    """
+    for node in tree.body:
+        if getattr(node, "name", None) == name:
+            return int(node.lineno)
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            return int(node.lineno)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+            return int(node.lineno)
+    return 1 << 30
+
+
+def split_out_module(
+    source: Union[str, Path], target: Union[str, Path], first: str, last: str, *, apply: bool = True, back_import_ok: bool = False
+) -> "list[str]":
     """Move the contiguous run of top-level definitions from ``first`` to ``last`` into a sibling ``target``.
 
     The common remedy for a module past a project's size limit is "sibling module + named re-export", and the
@@ -260,6 +278,11 @@ def split_out_module(source: Union[str, Path], target: Union[str, Path], first: 
     ``source`` keeps a ``from .<target> import name as name`` block in place of the moved range, so existing
     imports keep resolving; the explicit ``as`` form is what makes those names re-exported rather than merely
     imported. Returns the moved names. With ``apply=False`` nothing is written and every check still runs.
+
+    ``back_import_ok=True`` relaxes only the third check, and only where relaxing it is provably safe: a
+    left-behind name DEFINED ABOVE the split point is already bound by the time ``source`` reaches its own
+    import of ``target``, so the new module can import it back. A name defined BELOW is still refused - that
+    one really is a circular import.
     """
     source, target = Path(source), Path(target)
     # `open` rather than `Path.read_text(newline=...)`: that keyword is 3.13+, and newline="" is what keeps
@@ -315,10 +338,31 @@ def split_out_module(source: Union[str, Path], target: Union[str, Path], first: 
     left_behind = sorted(
         n for n in report.all_dependency_names() if n in module_level and n not in imported and n not in moved_names and not hasattr(builtins, n)
     )
+    back_import = ""
+    if left_behind and back_import_ok:
+        # A back-import is only sound when the name is already BOUND by the time the new module is loaded.
+        # `source` imports `target` at the split point, so `source` has executed everything above it; a name
+        # defined above the split point is therefore available, and one defined below is not - that would be
+        # a genuine circular-import failure, not a style question, so it still refuses.
+        defined_above = [n for n in left_behind if _module_level_def_line(tree, n) < start]
+        still_missing = [n for n in left_behind if n not in defined_above]
+        if still_missing:
+            raise ValueError(
+                f"refusing to split {source}: {len(still_missing)} name(s) the moved range reads are defined BELOW the split "
+                f"point ({', '.join(still_missing[:8])}), so importing them back would be a real circular import. Move the "
+                f"split point above them, or move them too."
+            )
+        back_import = (
+            f"# Imported back from `{source.stem}`, which is mid-import when this module loads: every name below is\n"
+            f"# defined above the split point, so it is already bound by then. Verified by the splitter, not assumed.\n"
+            f"from .{source.stem} import (\n" + "".join(f"    {n},\n" for n in sorted(defined_above)) + ")\n"
+        )
+        left_behind = []
     if left_behind:
         raise ValueError(
             f"refusing to split {source}: the moved range reads {len(left_behind)} module-level name(s) that would stay behind "
-            f"({', '.join(left_behind[:8])}). Widen the range to include them, or import them back explicitly."
+            f"({', '.join(left_behind[:8])}). Widen the range to include them, import them back explicitly, or pass "
+            f"back_import_ok=True to have this function write the back-import for you."
         )
 
     header = (
@@ -329,7 +373,7 @@ def split_out_module(source: Union[str, Path], target: Union[str, Path], first: 
         f'See `{source.as_posix()}` for the surrounding context these definitions were written in.\n"""\n\n'
         "from __future__ import annotations\n\n"
     )
-    new_src = header + import_block + "\n\n\n" + moved_src + "\n"
+    new_src = header + import_block + (("\n" + back_import) if back_import else "") + "\n\n\n" + moved_src + "\n"
     reexport = (
         f"# Split out to `{target.stem}.py` for module size; re-exported by name so existing imports keep working.\n"
         f"from .{target.stem} import (\n" + "".join(f"    {n} as {n},\n" for n in sorted(moved_names)) + ")\n"
