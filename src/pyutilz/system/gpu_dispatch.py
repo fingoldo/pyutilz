@@ -364,6 +364,7 @@ def occupancy_aware_block_size(
     device_id: int = 0,
     min_threads: int = WARP_SIZE,
     max_threads: Optional[int] = None,
+    power_of_two: bool = True,
 ) -> tuple[int, int]:
     """Largest warp-multiple block size that maximises RESIDENT THREADS per SM, and its shared-memory bytes.
 
@@ -384,6 +385,11 @@ def occupancy_aware_block_size(
         device_id: CUDA device id, used only when ``caps`` is not supplied.
         min_threads: Floor on the returned width (default one warp).
         max_threads: Ceiling; defaults to the device's own `max_threads_per_block`.
+        power_of_two: Restrict the answer to powers of two (the DEFAULT, because the classic tree
+            reduction - ``for (s = blockDim.x / 2; s > 0; s >>= 1)`` - silently drops elements at any other
+            width, and that is the overwhelmingly common shape for a kernel whose shared memory scales per
+            thread, i.e. exactly the kernels that call this. Pass False only for a kernel whose reduction
+            handles an odd tail, which buys the warp multiples in between.
 
     Returns:
         ``(threads_per_block, shared_bytes_per_block)``. Falls back to ``(min_threads, ...)`` on a CPU-only
@@ -420,7 +426,10 @@ def occupancy_aware_block_size(
         return max(min_threads, warp), max(0, int(bytes_per_thread)) * max(min_threads, warp)
 
     best = (0, 0, 0)  # (resident threads, width, shared bytes) - the width breaks ties, wider wins
-    width = max(min_threads, warp)
+    start = max(min_threads, warp)
+    if power_of_two and start & (start - 1):
+        start = 1 << (start - 1).bit_length()
+    width = start
     while width <= ceiling:
         shared = int(bytes_per_thread) * width
         if shared_per_block and shared > shared_per_block:
@@ -431,7 +440,7 @@ def occupancy_aware_block_size(
             resident = resident_blocks * width
             if resident >= best[0]:  # >=, not >: a tie prefers the wider block reached later
                 best = (resident, width, shared)
-        width += warp
+        width = width * 2 if power_of_two else width + warp
     if best[1] == 0:
         floor_width = max(min_threads, warp)
         return floor_width, int(bytes_per_thread) * floor_width
