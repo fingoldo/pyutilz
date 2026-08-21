@@ -345,6 +345,99 @@ def cuda_memory_guard(
 # Capability summary
 # ---------------------------------------------------------------------------
 
+# Maximum RESIDENT BLOCKS per SM, by compute capability. The one occupancy limit numba's device attributes
+# do not expose (cupy does, as `MaxBlocksPerMultiprocessor`, but requiring cupy for a constant would make
+# this module depend on it). Values are from the CUDA C Programming Guide's own occupancy table.
+CC_MAX_BLOCKS_PER_SM: dict[tuple[int, int], int] = {
+    (3, 0): 16, (3, 2): 16, (3, 5): 16, (3, 7): 16,
+    (5, 0): 32, (5, 2): 32, (5, 3): 32,
+    (6, 0): 32, (6, 1): 32, (6, 2): 32,
+    (7, 0): 32, (7, 2): 32, (7, 5): 16,
+    (8, 0): 32, (8, 6): 16, (8, 7): 16, (8, 9): 24,
+    (9, 0): 32, (10, 0): 32, (12, 0): 32,
+}
+
+
+def occupancy_aware_block_size(
+    bytes_per_thread: int,
+    caps: Optional[dict] = None,
+    device_id: int = 0,
+    min_threads: int = WARP_SIZE,
+    max_threads: Optional[int] = None,
+) -> tuple[int, int]:
+    """Largest warp-multiple block size that maximises RESIDENT THREADS per SM, and its shared-memory bytes.
+
+    For a kernel whose shared memory scales with its block width - one accumulator slot per thread, the
+    common reduction shape - block size and occupancy trade against each other, and the trade depends
+    entirely on the device: how much shared memory an SM has, how many threads it can hold, and how many
+    blocks. Picking a block width therefore cannot be done with a constant. The usual stand-in, "aim for N
+    resident blocks", encodes one device's answer as if it were every device's.
+
+    This computes it. For each candidate width it derives how many blocks the SM can actually hold - the
+    strictest of the shared-memory limit, the threads-per-SM limit and the hardware blocks-per-SM cap - and
+    keeps the width giving the most resident threads, breaking ties toward the WIDER block (fewer blocks
+    doing the same work means fewer block-level reductions and less launch bookkeeping).
+
+    Args:
+        bytes_per_thread: Shared memory the kernel needs per thread. 0 means shared memory does not bind.
+        caps: `gpu_capability_summary` output, if already queried; fetched here when omitted.
+        device_id: CUDA device id, used only when ``caps`` is not supplied.
+        min_threads: Floor on the returned width (default one warp).
+        max_threads: Ceiling; defaults to the device's own `max_threads_per_block`.
+
+    Returns:
+        ``(threads_per_block, shared_bytes_per_block)``. Falls back to ``(min_threads, ...)`` on a CPU-only
+        host or when the device reports no usable limits, so a caller never has to special-case that.
+    """
+    if caps is None:
+        summary = gpu_capability_summary(device_id=device_id)
+        caps = summary if summary is not None else {}
+
+    def _limit(key: str, fallback: int) -> int:
+        """A stated limit, treating only MISSING/None as absent - a stated 0 means the device reports none.
+
+        `caps.get(key) or fallback` would be shorter and wrong: it also replaces a genuine 0, which is the
+        value a device or a synthetic test dict uses to say "this limit is unknown to me", and silently
+        substituting a plausible number there is how an occupancy calculation starts reporting a width the
+        hardware cannot hold.
+        """
+        value = caps.get(key)
+        return fallback if value is None else int(value)
+
+    warp = _limit("warp_size", WARP_SIZE)
+    if warp <= 0:  # a device reporting no warp size cannot size a block; the architectural constant is safe
+        warp = WARP_SIZE
+    shared_per_sm = _limit("max_shared_mem_per_sm", 0)
+    shared_per_block = _limit("max_shared_mem_per_block", 0)
+    threads_per_sm = _limit("max_threads_per_sm", 0)
+    blocks_per_sm = _limit("max_blocks_per_sm", 0)
+    if max_threads is not None:
+        ceiling = int(max_threads)
+    else:
+        stated_ceiling = _limit("max_threads_per_block", 0)
+        ceiling = stated_ceiling if stated_ceiling > 0 else min_threads
+    if not (shared_per_sm and threads_per_sm and blocks_per_sm) or ceiling < min_threads:
+        return max(min_threads, warp), max(0, int(bytes_per_thread)) * max(min_threads, warp)
+
+    best = (0, 0, 0)  # (resident threads, width, shared bytes) - the width breaks ties, wider wins
+    width = max(min_threads, warp)
+    while width <= ceiling:
+        shared = int(bytes_per_thread) * width
+        if shared_per_block and shared > shared_per_block:
+            break  # every wider block needs more, so nothing past here fits either
+        by_shared = shared_per_sm // shared if shared else blocks_per_sm
+        resident_blocks = min(blocks_per_sm, threads_per_sm // width, by_shared)
+        if resident_blocks >= 1:
+            resident = resident_blocks * width
+            if resident >= best[0]:  # >=, not >: a tie prefers the wider block reached later
+                best = (resident, width, shared)
+        width += warp
+    if best[1] == 0:
+        floor_width = max(min_threads, warp)
+        return floor_width, int(bytes_per_thread) * floor_width
+    return best[1], best[2]
+
+
 def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
     """Flat summary of a GPU device's CUDA capabilities and live VRAM.
 
@@ -374,6 +467,14 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
         "total_cuda_cores": int(caps.get("TOTAL_CUDA_CORES", 0)),
         "max_threads_per_block": int(caps.get("MAX_THREADS_PER_BLOCK", 0)),
         "max_shared_mem_per_block": int(caps.get("MAX_SHARED_MEMORY_PER_BLOCK", 0)),
+        "max_shared_mem_per_block_optin": int(caps.get("MAX_SHARED_MEMORY_PER_BLOCK_OPTIN", 0)),
+        # PER-SM limits. These are what an occupancy calculation actually needs, and they were being
+        # dropped even though `get_gpu_cuda_capabilities` already returns them - a caller wanting a block
+        # size had nothing to compute one FROM and had to hardcode a target instead.
+        "max_threads_per_sm": int(caps.get("MAX_THREADS_PER_MULTI_PROCESSOR", 0)),
+        "max_shared_mem_per_sm": int(caps.get("MAX_SHARED_MEMORY_PER_MULTIPROCESSOR", 0)),
+        "max_registers_per_sm": int(caps.get("MAX_REGISTERS_PER_MULTIPROCESSOR", 0)),
+        "max_blocks_per_sm": CC_MAX_BLOCKS_PER_SM.get((cc_major, cc_minor), 16),
         "warp_size": int(caps.get("WARP_SIZE", WARP_SIZE)),
         "free_vram_gb": None,
         "total_vram_gb": None,
