@@ -345,9 +345,85 @@ def cuda_memory_guard(
 # Capability summary
 # ---------------------------------------------------------------------------
 
-# Maximum RESIDENT BLOCKS per SM, by compute capability. The one occupancy limit numba's device attributes
-# do not expose (cupy does, as `MaxBlocksPerMultiprocessor`, but requiring cupy for a constant would make
-# this module depend on it). Values are from the CUDA C Programming Guide's own occupancy table.
+# Driver attribute codes for limits numba's own `cudadrv.enums` does not define. It has no
+# `CU_DEVICE_ATTRIBUTE_MAX_BLOCKS_PER_MULTIPROCESSOR`, so `Device.__getattr__` raises for it - but the
+# driver entry point numba already binds answers perfectly well when called with the code directly
+# (`query_cuda_device_attribute` below). Codes are from the CUDA driver API's own `CUdevice_attribute` enum.
+CU_DEVICE_ATTRIBUTE_EXTRA: dict[str, int] = {
+    "MAX_BLOCKS_PER_MULTIPROCESSOR": 106,
+    "MAX_PERSISTING_L2_CACHE_SIZE": 108,
+    "MAX_ACCESS_POLICY_WINDOW_SIZE": 109,
+    "RESERVED_SHARED_MEMORY_PER_BLOCK": 111,
+    "MEMORY_POOLS_SUPPORTED": 115,
+    "GPU_DIRECT_RDMA_SUPPORTED": 116,
+}
+
+
+def query_cuda_device_attribute(name_or_code: "str | int", device_id: int = 0) -> Optional[int]:
+    """One CUDA device attribute straight from the driver, by `CUdevice_attribute` name or numeric code.
+
+    Exists because numba's `cudadrv.enums` covers only part of that enum, and the attributes it omits
+    include `MAX_BLOCKS_PER_MULTIPROCESSOR` - an occupancy limit with no substitute. The usual workaround is
+    to pull in cupy for it or hardcode a per-architecture table; neither is necessary, since numba already
+    binds `cuDeviceGetAttribute` and it takes the raw code.
+
+    Handles both of numba's driver backends: the newer `cuda.bindings` path (where the call returns the
+    value) and the classic ctypes path (where it writes through a pointer).
+
+    Args:
+        name_or_code: A `CUdevice_attribute` suffix (e.g. ``"MAX_BLOCKS_PER_MULTIPROCESSOR"``, with or
+            without the ``CU_DEVICE_ATTRIBUTE_`` prefix), or the numeric code itself.
+        device_id: CUDA device id.
+
+    Returns:
+        The attribute value, or ``None`` on a CPU-only host or when the driver refuses the query.
+    """
+    try:
+        from numba import cuda
+        from numba.cuda.cudadrv import driver as _drv
+    except ImportError:
+        return None
+
+    code: "int | None"
+    if isinstance(name_or_code, int):
+        code = name_or_code
+    else:
+        key = str(name_or_code).replace("CU_DEVICE_ATTRIBUTE_", "")
+        code = CU_DEVICE_ATTRIBUTE_EXTRA.get(key)
+        if code is None:
+            try:
+                from numba.cuda.cudadrv import enums
+
+                code = int(getattr(enums, f"CU_DEVICE_ATTRIBUTE_{key}"))
+            except (ImportError, AttributeError, TypeError, ValueError):
+                return None
+    try:
+        cuda.select_device(device_id)
+        device = cuda.get_current_device()
+        # Read the real module flag rather than `getattr(..., False)`, which would silently take the ctypes
+        # branch on a numba that renamed it - and the ctypes branch on the nv-binding backend passes a
+        # pointer where a code belongs. A numba too old to define it at all predates the flag entirely,
+        # which is exactly the ctypes case, so that is what the fallback means here.
+        try:
+            use_nv_binding = bool(_drv.USE_NV_BINDING)
+        except AttributeError:
+            use_nv_binding = False
+        if use_nv_binding:
+            # No `cuda.bindings` import needed: the code is passed as a plain int and numba's own binding
+            # layer converts it. Importing it here would add a transitive dependency for nothing.
+            return int(_drv.driver.cuDeviceGetAttribute(code, device.id))
+        from ctypes import byref, c_int
+
+        result = c_int()
+        _drv.driver.cuDeviceGetAttribute(byref(result), code, device.id)
+        return int(result.value)
+    except Exception:
+        logger.debug("query_cuda_device_attribute: driver refused attribute %s", name_or_code, exc_info=True)
+        return None
+
+
+# Maximum RESIDENT BLOCKS per SM, by compute capability - a FALLBACK only, for a driver that refuses the
+# live query above. Values are from the CUDA C Programming Guide's own occupancy table.
 CC_MAX_BLOCKS_PER_SM: dict[tuple[int, int], int] = {
     (3, 0): 16, (3, 2): 16, (3, 5): 16, (3, 7): 16,
     (5, 0): 32, (5, 2): 32, (5, 3): 32,
@@ -417,6 +493,7 @@ def occupancy_aware_block_size(
     shared_per_block = _limit("max_shared_mem_per_block", 0)
     threads_per_sm = _limit("max_threads_per_sm", 0)
     blocks_per_sm = _limit("max_blocks_per_sm", 0)
+    reserved_per_block = _limit("reserved_shared_mem_per_block", 0)
     if max_threads is not None:
         ceiling = int(max_threads)
     else:
@@ -434,7 +511,10 @@ def occupancy_aware_block_size(
         shared = int(bytes_per_thread) * width
         if shared_per_block and shared > shared_per_block:
             break  # every wider block needs more, so nothing past here fits either
-        by_shared = shared_per_sm // shared if shared else blocks_per_sm
+        # The driver's own per-block reservation counts against the SM's shared memory just as the kernel's
+        # own bytes do, so a block occupies `shared + reserved`. Ignoring it overcounts resident blocks.
+        occupied = shared + reserved_per_block if shared else 0
+        by_shared = shared_per_sm // occupied if occupied else blocks_per_sm
         resident_blocks = min(blocks_per_sm, threads_per_sm // width, by_shared)
         if resident_blocks >= 1:
             resident = resident_blocks * width
@@ -445,6 +525,14 @@ def occupancy_aware_block_size(
         floor_width = max(min_threads, warp)
         return floor_width, int(bytes_per_thread) * floor_width
     return best[1], best[2]
+
+
+def _blocks_per_sm(cc_major: int, cc_minor: int, device_id: int) -> int:
+    """Resident-block cap per SM: the driver's own answer, falling back to the per-CC table."""
+    live = query_cuda_device_attribute("MAX_BLOCKS_PER_MULTIPROCESSOR", device_id)
+    if live is not None and live > 0:
+        return live
+    return CC_MAX_BLOCKS_PER_SM.get((int(cc_major), int(cc_minor)), 16)
 
 
 def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
@@ -483,7 +571,13 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
         "max_threads_per_sm": int(caps.get("MAX_THREADS_PER_MULTI_PROCESSOR", 0)),
         "max_shared_mem_per_sm": int(caps.get("MAX_SHARED_MEMORY_PER_MULTIPROCESSOR", 0)),
         "max_registers_per_sm": int(caps.get("MAX_REGISTERS_PER_MULTIPROCESSOR", 0)),
-        "max_blocks_per_sm": CC_MAX_BLOCKS_PER_SM.get((cc_major, cc_minor), 16),
+        # LIVE from the driver, with the per-CC table only as a fallback: a table cannot know about a part
+        # released after it was written, and this attribute has no substitute in an occupancy calculation.
+        "max_blocks_per_sm": _blocks_per_sm(cc_major, cc_minor, device_id),
+        # The driver reserves shared memory per block on top of what the kernel asks for, so an occupancy
+        # calculation that ignores it overcounts resident blocks - measured on an Ada part, 23 blocks
+        # against the 17 the hardware really holds.
+        "reserved_shared_mem_per_block": query_cuda_device_attribute("RESERVED_SHARED_MEMORY_PER_BLOCK", device_id) or 0,
         "warp_size": int(caps.get("WARP_SIZE", WARP_SIZE)),
         "free_vram_gb": None,
         "total_vram_gb": None,

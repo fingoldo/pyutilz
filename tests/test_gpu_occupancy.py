@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyutilz.system.gpu_dispatch import CC_MAX_BLOCKS_PER_SM, occupancy_aware_block_size
+from pyutilz.system.gpu_dispatch import CC_MAX_BLOCKS_PER_SM, occupancy_aware_block_size, query_cuda_device_attribute
 
 # An Ada laptop part, as reported live by numba/cupy: 1536 threads, 100 KB shared and 24 blocks per SM.
 ADA = {
@@ -19,6 +19,9 @@ ADA = {
     "max_threads_per_sm": 1536,
     "max_shared_mem_per_sm": 102400,
     "max_blocks_per_sm": 24,
+    # The driver reserves this per block on top of whatever the kernel asks for; an occupancy calculation
+    # that ignores it overcounts resident blocks (measured: 23 against the 17 the hardware really holds).
+    "reserved_shared_mem_per_block": 1024,
 }
 
 
@@ -30,7 +33,8 @@ def _is_power_of_two(value: int) -> bool:
 def _resident_threads(caps: dict, threads: int, bytes_per_thread: int) -> int:
     """The occupancy the caller would actually get, computed independently of the function under test."""
     shared = bytes_per_thread * threads
-    by_shared = caps["max_shared_mem_per_sm"] // shared if shared else caps["max_blocks_per_sm"]
+    occupied = shared + caps.get("reserved_shared_mem_per_block", 0) if shared else 0
+    by_shared = caps["max_shared_mem_per_sm"] // occupied if occupied else caps["max_blocks_per_sm"]
     return min(caps["max_blocks_per_sm"], caps["max_threads_per_sm"] // threads, by_shared) * threads
 
 
@@ -120,3 +124,29 @@ def test_relaxing_the_power_of_two_constraint_can_only_help_occupancy():
         strict, _ = occupancy_aware_block_size(bytes_per_thread, caps=ADA)
         relaxed, _ = occupancy_aware_block_size(bytes_per_thread, caps=ADA, power_of_two=False)
         assert _resident_threads(ADA, relaxed, bytes_per_thread) >= _resident_threads(ADA, strict, bytes_per_thread)
+
+
+def test_the_driver_reservation_lowers_the_resident_block_count():
+    """Pins that the reservation is actually consulted - ignoring it silently overcounts occupancy."""
+    without = {**ADA, "reserved_shared_mem_per_block": 0}
+    assert _resident_threads(without, 32, 136) > _resident_threads(ADA, 32, 136)
+    assert occupancy_aware_block_size(136, caps=ADA) != occupancy_aware_block_size(136, caps=without)
+
+
+def test_querying_a_driver_attribute_numba_does_not_define():
+    """`MAX_BLOCKS_PER_MULTIPROCESSOR` has no `cudadrv.enums` entry, which is why this helper exists.
+
+    Skipped rather than failed without a device: the point is that it needs neither cupy nor a hardcoded
+    table, not that CI has a GPU.
+    """
+    value = query_cuda_device_attribute("MAX_BLOCKS_PER_MULTIPROCESSOR")
+    if value is None:
+        pytest.skip("no CUDA device on this host")
+    assert value > 0
+    assert query_cuda_device_attribute(106) == value  # by numeric code too
+    assert query_cuda_device_attribute("CU_DEVICE_ATTRIBUTE_MAX_BLOCKS_PER_MULTIPROCESSOR") == value
+
+
+def test_an_unknown_attribute_name_returns_none_rather_than_raising():
+    """A capability probe must degrade, never break the caller that was only tuning a launch."""
+    assert query_cuda_device_attribute("NO_SUCH_ATTRIBUTE_WHATSOEVER") is None
