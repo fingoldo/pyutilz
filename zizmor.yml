@@ -1,0 +1,17 @@
+# zizmor configuration.
+#
+# unpinned-uses: keep zizmor's default blanket hash-pin policy for every
+# THIRD-PARTY action -- a tag there can be moved by someone we do not
+# control, which is exactly the supply-chain attack the rule exists to
+# stop. Our OWN reusable workflows (fingoldo/*) are exempted down to
+# ref-pin so satellites can track the moving `@v1` tag: whoever could
+# move that tag could equally push to this repo directly, so the hash
+# pin buys no security here while costing a hand-copied SHA bump in
+# every satellite on each py-ci-shared release (see py-ci-shared's
+# README, "Using the reusable workflows").
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        fingoldo/*: ref-pin
+        "*": hash-pin
