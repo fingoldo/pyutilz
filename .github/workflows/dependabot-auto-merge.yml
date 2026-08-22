@@ -1,0 +1,40 @@
+name: Dependabot auto-merge
+
+# Enables EVERY Dependabot PR (github-actions ecosystem; pip is currently disabled via
+# open-pull-requests-limit: 0, see dependabot.yml) to merge itself once this repo's own CI is
+# green, without a human clicking merge or reviewing the version jump -- including major bumps.
+# Mirrors mlframe's dependabot-auto-merge.yml (2026-08-23): a manual per-PR review step is toil
+# without a real safety payoff once branch protection's required status checks (CI required
+# checks, MyPy, Black) are the actual gate -- a genuinely breaking bump fails CI and auto-merge
+# simply never fires, same outcome a human reviewer would reach by watching the same CI run.
+#
+# Uses GitHub's native auto-merge (`gh pr merge --auto`), which queues the merge and only
+# actually merges once every required check on the PR succeeds. Requires branch protection with
+# required status checks configured on master (enforce_admins: false, so direct maintainer
+# pushes stay unblocked -- only PR merges go through this gate).
+#
+# Deliberately `pull_request` (not `pull_request_target`): every branch dependabot.yml opens
+# lives in THIS repo, never a fork, so a same-repo `pull_request` trigger already gets a
+# GITHUB_TOKEN with the write permissions requested below -- no need for pull_request_target's
+# fork-secrets-exposure risk, which this workflow would otherwise carry for zero benefit (it
+# never checks out PR code).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

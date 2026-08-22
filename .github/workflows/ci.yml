@@ -141,3 +141,28 @@ jobs:
       run: |
         pip install dist/*.whl
         python -c "import pyutilz; print('pyutilz', pyutilz.__version__)"
+
+  # Single aggregation point for branch-protection required status checks: the actual gating
+  # jobs above are a python-version matrix (currently 7 versions) plus several reusable-workflow
+  # calls, so their individual check names churn whenever the matrix is resized -- listing them
+  # all as required checks would go stale silently. This job's own fixed name is the one required
+  # check; `if: always()` lets it run even after an upstream failure so it can report that failure
+  # itself rather than being skipped (a skipped required check blocks merge same as a failed one,
+  # but with no clear reason in the PR UI). lint-advisory is intentionally excluded -- it's
+  # advisory by design (see lint-advisory.yml), never a merge gate. Mirrors mlframe's ci.yml.
+  ci-required:
+    name: CI required checks
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [test, ruff-blocking, lint-blocking, build]
+    steps:
+      - name: Check all required jobs succeeded
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+          ANY_FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "$NEEDS_JSON"
+          if [[ "$ANY_FAILED" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
+            exit 1
+          fi
