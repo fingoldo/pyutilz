@@ -469,7 +469,9 @@ from .duplicate_credential_regex import scan_duplicate_credential_regex
 from .asymmetric_resource_guard import scan_asymmetric_resource_guard
 from .spy_arity import scan_stale_test_spy_arity
 from .log_throttle import scan_unthrottled_hot_loop_log
+from .assert_in_loop import scan_assert_in_loop_reports_only_the_first
 from .dead_import import scan_possibly_dead_import
+from .reexport_patch_target import scan_reexport_patch_target
 from .unpicklable_resource_state import scan_unpicklable_resource_state
 from .skip_masking_except import scan_except_skip_masks_call_under_test
 from .uncurated_star_export import scan_uncurated_star_exports
@@ -552,7 +554,9 @@ __all__ = [
     "scan_asymmetric_resource_guard",
     "scan_stale_test_spy_arity",
     "scan_unthrottled_hot_loop_log",
+    "scan_assert_in_loop_reports_only_the_first",
     "scan_possibly_dead_import",
+    "scan_reexport_patch_target",
     "scan_unpicklable_resource_state",
     "scan_tautological_is_not_none_only_tests",
     "scan_except_skip_masks_call_under_test",
@@ -607,6 +611,7 @@ for _submod in (
     "shielded_resource_release", "duplicate_credential_regex",
     "asymmetric_resource_guard",
     "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
+    "reexport_patch_target", "assert_in_loop",
     "skip_masking_except", "uncurated_star_export",
     "field_text_agreement",
     "registry", "cli",
