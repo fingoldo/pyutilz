@@ -5,6 +5,7 @@ flagged) and a negative case (constructed snippet that MUST NOT be
 flagged). Tests use tmp_path so the audit runs against a hermetic
 directory; no cross-test bleed.
 """
+
 from __future__ import annotations
 
 import sys
@@ -85,11 +86,15 @@ def _write(tmp_path: Path, name: str, source: str) -> Path:
 
 
 def test_mutable_default_mutated_list_flags_p0(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def collect(items=[]):
     items.append(1)
     return items
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert len(findings) == 1, findings
     f = findings[0]
@@ -100,20 +105,28 @@ def collect(items=[]):
 
 
 def test_mutable_default_mutated_dict_flags_p0(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def collect(cfg={}):
     cfg["k"] = 1
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
 
 
 def test_mutable_default_unmutated_list_flags_low(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def length_only(items=[]):
     return len(items)
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Low"
@@ -121,29 +134,41 @@ def length_only(items=[]):
 
 
 def test_mutable_default_call_form_list(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def collect(items=list()):
     items.append(1)
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert any(f.severity == "P0" for f in findings)
 
 
 def test_mutable_default_none_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def collect(items=None):
     items = items if items is not None else []
     items.append(1)
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert findings == [], findings
 
 
 def test_mutable_default_set_form(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def collect(seen=set()):
     seen.add(1)
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert len(findings) == 1 and findings[0].severity == "P0"
 
@@ -152,13 +177,17 @@ def collect(seen=set()):
 
 
 def test_late_binding_lambda_in_for_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def build():
     callbacks = []
     for x in range(5):
         callbacks.append(lambda: x * 2)
     return callbacks
-""")
+""",
+    )
     findings = scan_late_binding_closures(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].severity == "P1"
@@ -166,23 +195,31 @@ def build():
 
 
 def test_late_binding_lambda_with_default_arg_safe(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def build():
     callbacks = []
     for x in range(5):
         callbacks.append(lambda x=x: x * 2)
     return callbacks
-""")
+""",
+    )
     findings = scan_late_binding_closures(tmp_path)
     assert findings == [], findings
 
 
 def test_sync_lambda_in_sorted_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def order(items):
     for group in items:
         sorted(group, key=lambda k: group[k])
-""")
+""",
+    )
     # The lambda doesn't escape the iteration (sorted is synchronous).
     findings = scan_late_binding_closures(tmp_path)
     assert findings == []
@@ -192,11 +229,15 @@ def order(items):
 
 
 def test_default_via_or_int_positive_flags_p1(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(n=None):
     n_jobs = n or 4
     return n_jobs
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1, findings
@@ -205,30 +246,42 @@ def f(n=None):
 
 def test_default_via_or_zero_rhs_skipped(tmp_path: Path):
     # `or 0` is a no-op for falsy left -> no real trap.
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(n=None):
     return n or 0
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1 == []
 
 
 def test_default_via_or_call_rhs_flags_p2(tmp_path: Path):
-    _write(tmp_path, "warn.py", """
+    _write(
+        tmp_path,
+        "warn.py",
+        """
 def f(data=None):
     return data or compute_default()
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p2 = [f for f in findings if f.severity == "P2"]
     assert p2, findings
 
 
 def test_default_via_or_dict_empty_rhs_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(d=None):
     return d or {}
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     # `or {}` is exactly the null-safety idiom and is NOT a trap.
     assert all(f.severity != "P1" for f in findings)
@@ -237,23 +290,31 @@ def f(d=None):
 def test_default_via_or_os_cpu_count_allowlisted(tmp_path: Path):
     """`os.cpu_count() or 1` is documented-safe (cpu_count returns int or
     None; 0 isn't in the return set), so it must NOT be flagged as a trap."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import os
 def f():
     n = os.cpu_count() or 1
     return n
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1 == [], f"`os.cpu_count() or 1` is documented-safe; got: {p1}"
 
 
 def test_default_via_or_psutil_cpu_count_allowlisted(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import psutil
 def f():
     return psutil.cpu_count(logical=True) or 1
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1 == [], f"`psutil.cpu_count(...) or 1` is documented-safe; got: {p1}"
@@ -262,11 +323,15 @@ def f():
 def test_default_via_or_numpy_std_allowlisted(tmp_path: Path):
     """`np.std(arr) or 1.0` is the intentional divide-by-zero guard
     (std returns 0.0 only when all values equal)."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import numpy as np
 def f(arr):
     return float(np.std(arr)) or 1.0
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1 == [], f"`np.std(arr) or 1.0` is documented-safe; got: {p1}"
@@ -274,10 +339,14 @@ def f(arr):
 
 def test_default_via_or_len_allowlisted(tmp_path: Path):
     """`len(xs) or N` is the common empty-collection fallback idiom."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(xs):
     return len(xs) or 100
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1 == [], f"`len(xs) or N` is empty-fallback idiom; got: {p1}"
@@ -286,10 +355,14 @@ def f(xs):
 def test_default_via_or_user_attr_still_flagged(tmp_path: Path):
     """User-controlled attribute on the LHS is still flagged: the user
     config may legitimately pass 0 as a sentinel."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(cfg):
     return getattr(cfg, "n_jobs", 1) or 4
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1, "user-attribute LHS must still be flagged"
@@ -302,93 +375,129 @@ def test_default_via_or_if_test_skipped(tmp_path: Path):
     """`if not line or line.startswith(...):` is ordinary control flow,
     not a default-value substitution -- this shape was the single largest
     false-positive class found in a downstream large-scale triage."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(line):
     if not line or line.startswith("#"):
         return None
     return 1
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_elif_test_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x):
     if x == 1:
         return "a"
     elif x == 2 or x == 3:
         return "b"
     return "c"
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_while_test_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x, y):
     while x < 10 or y < 10:
         x += 1
         y += 1
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_assert_test_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x):
     assert x is None or isinstance(x, str)
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_ternary_test_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x, y):
     return "yes" if x == 1 or y == 1 else "no"
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_comprehension_filter_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(items):
     return [i for i in items if i.startswith("a") or i.startswith("b")]
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_nested_boolop_in_if_test_skipped(tmp_path: Path):
     """`(a or b) and c` inside an if-test: the inner Or must still resolve
     to the outer If.test boolean context by climbing through the And."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(a, b, c):
     if (a == 1 or b == 1) and c == 1:
         return 1
     return 0
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_not_wrapped_in_if_test_skipped(tmp_path: Path):
     """`not (a or b)` inside an if-test: the Or must resolve through the
     UnaryOp(Not) wrapper to the outer If.test boolean context."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(a, b):
     if not (a == 1 or b == 1):
         return 1
     return 0
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_assignment_still_flagged_despite_boolean_fix(tmp_path: Path):
     """The boolean-context exclusion must not eat genuine assignment-shape
     findings -- only test/filter positions are exempt."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(cfg):
     x = cfg.get("n") or 7
     return x
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     p1 = [f for f in findings if f.severity == "P1"]
     assert p1, "assignment-shape `or` must still be flagged after the boolean-context fix"
@@ -401,26 +510,34 @@ def test_default_via_or_inert_falsy_constant_skipped(tmp_path: Path):
     """`x or 0` / `x or ""` cannot corrupt anything: substituting the
     type's own falsy value for a falsy input is observably a no-op.
     233 findings of this shape in a downstream triage -- all benign."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(row, s):
     count = row.get("count") or 0
     score = row.get("score") or 0.0
     label = s or ""
     flag = row.get("flag") or False
     return count, score, label, flag
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
 def test_default_via_or_alias_key_get_chain_skipped(tmp_path: Path):
     """`d.get("notes") or d.get("note")` -- substring-related keys are a
     schema-drift alias idiom (canonical vs legacy spelling), not a trap."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(d):
     notes = d.get("notes") or d.get("note")
     ptype = d.get("prosody_type") or d.get("type")
     return notes, ptype
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path) == []
 
 
@@ -428,22 +545,30 @@ def test_default_via_or_non_alias_get_chain_still_flagged(tmp_path: Path):
     """Two DIFFERENT fields chained with `or` must stay flagged -- this
     exact shape (effective vs actual cost) was a confirmed real bug: a
     legitimate $0.00 cached cost silently replaced by the uncached one."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(bundle):
     cost = bundle.get("effective_cost_usd") or bundle.get("actual_cost_usd")
     return cost
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path), "non-alias .get() chain must stay flagged"
 
 
 def test_default_via_or_constructor_rhs_downgraded_to_low(tmp_path: Path):
     """`x or ClassName()` -- LHS is almost always an `X | None` object
     param (instances always truthy), so this is Low, not P2."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(schedule):
     schedule = schedule or HalvingSchedule()
     return schedule
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Low"
@@ -453,11 +578,15 @@ def test_default_via_or_lowercase_call_rhs_stays_p2(tmp_path: Path):
     """`x or float("inf")` must stay P2 -- lowercase callables CAN return
     falsy values, and this exact shape was a confirmed real bug (a 0ms
     latency ranked as the worst endpoint)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(ep):
     latency = ep.get("latency_p50_ms") or float("inf")
     return latency
-""")
+""",
+    )
     findings = scan_default_via_or_trap(tmp_path)
     assert findings and findings[0].severity == "P2"
 
@@ -466,11 +595,15 @@ def test_default_via_or_negative_int_rhs_still_flagged(tmp_path: Path):
     """`scalar() or -1` (UnaryOp RHS) must stay flagged -- this exact
     shape clobbered a legitimate MAX(sense_rank)==0 into -1 in a
     confirmed real bug."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(rank_result):
     next_rank = (rank_result.scalar() or -1) + 1
     return next_rank
-""")
+""",
+    )
     assert scan_default_via_or_trap(tmp_path), "`or -1` must stay flagged"
 
 
@@ -480,37 +613,52 @@ def f(rank_result):
 def test_duplicate_or_operand_flags(tmp_path: Path):
     """The exact confirmed-real-bug shape: same endswith suffix twice, the
     intended second suffix silently never checked."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(form):
     if form.endswith('ssions') or form.endswith('ssions'):
         return True
     return False
-""")
+""",
+    )
     findings = scan_duplicate_conditions(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P2"
 
 
 def test_duplicate_and_operand_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(a, b):
     return a > 1 and a > 1
-""")
+""",
+    )
     assert len(scan_duplicate_conditions(tmp_path)) == 1
 
 
 def test_distinct_operands_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(form):
     if form.endswith('ssions') or form.endswith('ssiez'):
         return True
     return form == "a" or form == "b" or form == "c"
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
 def test_duplicate_elif_test_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x):
     if x == 1:
         return "a"
@@ -519,14 +667,18 @@ def f(x):
     elif x == 1:
         return "dead"
     return "c"
-""")
+""",
+    )
     findings = scan_duplicate_conditions(tmp_path)
     assert len(findings) == 1
     assert "unreachable" in findings[0].detail
 
 
 def test_distinct_elif_chain_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x):
     if x == 1:
         return "a"
@@ -535,7 +687,8 @@ def f(x):
     elif x == 3:
         return "c"
     return "d"
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
@@ -543,7 +696,10 @@ def test_duplicate_elif_not_double_counted_mid_chain(tmp_path: Path):
     """ast.walk visits every If including the elif branches themselves;
     a duplicate between branches 2 and 3 must be reported exactly once
     (only the chain HEAD starts a walk)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x):
     if x == 1:
         return "a"
@@ -552,21 +708,26 @@ def f(x):
     elif x == 2:
         return "dead"
     return "c"
-""")
+""",
+    )
     assert len(scan_duplicate_conditions(tmp_path)) == 1
 
 
 def test_separate_if_statements_with_same_test_clean(tmp_path: Path):
     """Two INDEPENDENT if statements (not an elif chain) with the same
     test are legitimate -- state may change between them."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x, items):
     if x == 1:
         items.append(1)
     if x == 1:
         items.append(2)
     return items
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
@@ -574,13 +735,17 @@ def test_duplicate_dict_key_flags(tmp_path: Path):
     """The exact confirmed-real-bug shape: a correction-table dict
     redefines the same key with a different value 82 lines later,
     silently discarding the first entry (Python keeps only the last)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 FIXES = {
     "испёк": ("печь", "испечь"),
     "other": ("x", "y"),
     "испёк": ("искать", "испечь"),
 }
-""")
+""",
+    )
     findings = scan_duplicate_conditions(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "duplicate_dict_key"
@@ -590,28 +755,40 @@ FIXES = {
 def test_duplicate_dict_key_int_and_bool_alias_flags(tmp_path: Path):
     """1 == True and 0 == False in Python, and they hash equal, so a real
     dict literal collides them too -- the scanner must match that."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 d = {1: "a", True: "b"}
-""")
+""",
+    )
     findings = scan_duplicate_conditions(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "duplicate_dict_key"
 
 
 def test_distinct_dict_keys_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 d = {"a": 1, "b": 2, "c": 3}
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
 def test_dict_key_with_spread_not_crashed(tmp_path: Path):
     """``{**other, "a": 1}`` has a key=None entry for the spread -- must
     not crash comparing None."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(other):
     return {**other, "a": 1, "b": 2}
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
@@ -621,22 +798,30 @@ def f(other):
 def test_identical_body_across_files_flags(tmp_path: Path):
     """The exact confirmed-real-bug shape: the same helper's body pasted verbatim
     into a second file under a different name."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def _need_cuda():
     try:
         from pyutilz.core.pythonlib import is_cuda_available
         return is_cuda_available()
     except Exception:
         return False
-""")
-    _write(tmp_path, "b.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "b.py",
+        """
 def _has_gpu():
     try:
         from pyutilz.core.pythonlib import is_cuda_available
         return is_cuda_available()
     except Exception:
         return False
-""")
+""",
+    )
     findings = scan_duplicate_function_body(tmp_path)
     assert len(findings) == 1, findings
     f = findings[0]
@@ -646,7 +831,10 @@ def _has_gpu():
 
 
 def test_identical_body_same_file_flags(tmp_path: Path):
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def f():
     x = 1
     y = 2
@@ -656,7 +844,8 @@ def g():
     x = 1
     y = 2
     return x + y
-""")
+""",
+    )
     findings = scan_duplicate_function_body(tmp_path)
     assert len(findings) == 1
 
@@ -679,7 +868,10 @@ def f{n}():
 
 
 def test_different_bodies_clean(tmp_path: Path):
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def f():
     x = 1
     y = 2
@@ -689,14 +881,18 @@ def g():
     x = 1
     y = 3
     return x + y
-""")
+""",
+    )
     assert scan_duplicate_function_body(tmp_path) == []
 
 
 def test_trivial_bodies_not_flagged(tmp_path: Path):
     """A one-line ``pass``/``...`` stub body is legitimate interface boilerplate,
     not a duplication risk -- must not be flagged even when repeated many times."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 class Base:
     def f(self):
         ...
@@ -704,27 +900,36 @@ class Base:
 class Other:
     def f(self):
         ...
-""")
+""",
+    )
     assert scan_duplicate_function_body(tmp_path) == []
 
 
 def test_docstring_only_difference_still_flags(tmp_path: Path):
     """Two copies whose ONLY difference is docstring prose still have an identical
     executable body -- renaming/re-documenting a copy doesn't evade the check."""
-    _write(tmp_path, "a.py", '''
+    _write(
+        tmp_path,
+        "a.py",
+        '''
 def f():
     """Compute the thing."""
     x = 1
     y = 2
     return x + y
-''')
-    _write(tmp_path, "b.py", '''
+''',
+    )
+    _write(
+        tmp_path,
+        "b.py",
+        '''
 def g():
     """A completely different docstring describing the same computation."""
     x = 1
     y = 2
     return x + y
-''')
+''',
+    )
     findings = scan_duplicate_function_body(tmp_path)
     assert len(findings) == 1
 
@@ -734,16 +939,24 @@ def test_different_parameter_names_still_flags(tmp_path: Path):
     Name/arg nodes too, so genuinely identical logic with renamed parameters is NOT
     matched (this documents that boundary rather than asserting a specific outcome
     that could silently flip meaning on a refactor)."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def f(value):
     total = value * 2
     return total
-""")
-    _write(tmp_path, "b.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "b.py",
+        """
 def g(value):
     total = value * 2
     return total
-""")
+""",
+    )
     findings = scan_duplicate_function_body(tmp_path)
     assert len(findings) == 1
 
@@ -752,7 +965,10 @@ def test_dunder_methods_never_flagged(tmp_path: Path):
     """__getstate__/__setstate__ (and dunders generally) routinely converge on the same
     body shape across unrelated classes by protocol design -- e.g. every class that drops
     one unpicklable attribute looks alike. Must never be flagged, regardless of body size."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 class A:
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -762,8 +978,12 @@ class A:
     def __setstate__(self, state):
         self.__dict__.update(state)
         self._lock = threading.Lock()
-""")
-    _write(tmp_path, "b.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "b.py",
+        """
 class B:
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -773,7 +993,8 @@ class B:
     def __setstate__(self, state):
         self.__dict__.update(state)
         self._lock = threading.Lock()
-""")
+""",
+    )
     assert scan_duplicate_function_body(tmp_path) == []
 
 
@@ -783,7 +1004,10 @@ class B:
 def test_subset_flags_helper_logic_inlined_instead_of_called(tmp_path: Path):
     """A genuine subset hit: the SAME multi-branch logic is copy-pasted into a bigger
     function instead of calling the already-existing helper that has it."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def helper(x, y, z):
     total = 0
     for i in range(x):
@@ -806,7 +1030,8 @@ def caller(x, y, z, extra):
         if total > 1000:
             total -= 500
     return total + extra
-""")
+""",
+    )
     findings = scan_near_duplicate_function_body(tmp_path)
     subset = [f for f in findings if f.check == "duplicate_function_body_subset"]
     assert len(subset) == 1, findings
@@ -818,7 +1043,10 @@ def test_subset_not_flagged_when_both_delegate_to_shared_helper(tmp_path: Path):
     ``basic_db_execute``, ``tune_spec``/``retune_all`` both calling ``_run_spec_tuning``):
     two thin wrappers that both call the SAME already-shared helper necessarily look
     near-identical -- that's the intended DRY shape, not inlined duplicate logic."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 def shared_helper(op, statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize=None):
     pass
 
@@ -829,7 +1057,8 @@ def do_one(statement, data=None, auto_commit=True, cursor_factory=None, cursor_n
 
 def do_many(statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize=None, page_size=100):
     return shared_helper("many", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize, page_size=page_size)
-""")
+""",
+    )
     findings = scan_near_duplicate_function_body(tmp_path)
     assert [f for f in findings if f.check == "duplicate_function_body_subset"] == [], findings
 
@@ -840,7 +1069,10 @@ def test_subset_not_flagged_for_independent_deprecated_alias_shims(tmp_path: Pat
     independent deprecated-alias shims for DIFFERENT modern functions still look alike
     because they all follow the same documented ``warnings.warn(...); return modern(...)``
     boilerplate -- not one alias's logic copy-pasted into another."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 import warnings
 
 def ensure_pg_table_exists(table, key_field_name="name", id_field_name="id", autocreate_id_type_name=None):
@@ -856,7 +1088,8 @@ def EnsurePgTableExists(sTable, sKeyFieldName="name", sIdFieldName="id", sAutocr
 def ReadTableIntoDic(dicEnums, sTable, sKeyFieldName="name", sCondition="", sIdFieldName="id", sAutocreateIdTypeName=None):
     warnings.warn("ReadTableIntoDic is deprecated; use read_table_into_dict instead.", DeprecationWarning, stacklevel=2)
     return read_table_into_dict(dict_enums=dicEnums, table=sTable, key_field_name=sKeyFieldName, condition=sCondition, id_field_name=sIdFieldName, autocreate_id_type_name=sAutocreateIdTypeName)
-""")
+""",
+    )
     findings = scan_near_duplicate_function_body(tmp_path)
     assert [f for f in findings if f.check == "duplicate_function_body_subset"] == [], findings
 
@@ -869,7 +1102,10 @@ def test_near_duplicate_not_flagged_for_independent_deprecated_alias_shims(tmp_p
     (2026-08-04): pyutilz's own ``ReadTableIntoDic``/``ReadTableIntoDicReversed`` shims cleared
     the ratio threshold (not just containment) on some Python versions -- the exemption was
     applied only in the containment branch, not here."""
-    _write(tmp_path, "a.py", """
+    _write(
+        tmp_path,
+        "a.py",
+        """
 import warnings
 
 def modern_a(w, x, y, z, q, r):
@@ -885,7 +1121,8 @@ def LegacyA(w, x, y, z, q, r):
 def LegacyB(w, x, y, z, q, r):
     warnings.warn("deprecated", DeprecationWarning, stacklevel=2)
     return modern_b(w=w, x=x, y=y, z=z, q=q, r=r)
-""")
+""",
+    )
     findings = scan_near_duplicate_function_body(tmp_path)
     assert [f for f in findings if f.check == "near_duplicate_function_body"] == [], findings
 
@@ -893,20 +1130,28 @@ def LegacyB(w, x, y, z, q, r):
 def test_dict_key_non_literal_not_flagged(tmp_path: Path):
     """A computed key (``{x: 1, y: 1}`` where x/y are variables) can't be
     reliably compared statically -- must not false-positive."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x, y):
     return {x: 1, y: 2}
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
 def test_dict_key_separate_dict_literals_not_conflated(tmp_path: Path):
     """Two separate dict literals reusing the same key are unrelated --
     must not be flagged as a collision within one literal."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 d1 = {"a": 1}
 d2 = {"a": 2}
-""")
+""",
+    )
     assert scan_duplicate_conditions(tmp_path) == []
 
 
@@ -917,14 +1162,18 @@ def test_missed_await_discarded_coroutine_flags(tmp_path: Path):
     """The true-positive shape: a bare-statement call to a same-module
     async def -- the coroutine is created and discarded, the body never
     runs, and the caller carries on as if the save happened."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 async def do_save(item):
     ...
 
 async def process(item):
     do_save(item)
     return True
-""")
+""",
+    )
     findings = scan_missed_await(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
@@ -933,31 +1182,42 @@ async def process(item):
 
 def test_missed_await_from_sync_caller_also_flags(tmp_path: Path):
     """Discarding a coroutine from a SYNC function is the same bug."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 async def notify(msg):
     ...
 
 def handler(msg):
     notify(msg)
-""")
+""",
+    )
     assert scan_missed_await(tmp_path), "sync caller discarding a coroutine must be flagged"
 
 
 def test_missed_await_awaited_call_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 async def do_save(item):
     ...
 
 async def process(item):
     await do_save(item)
-""")
+""",
+    )
     assert scan_missed_await(tmp_path) == []
 
 
 def test_missed_await_gather_list_pattern_clean(tmp_path: Path):
     """FP shape #1 from corpus validation: coroutines collected into a
     list and gathered later -- assignment-level calls are never flagged."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import asyncio
 
 async def work(x):
@@ -966,48 +1226,61 @@ async def work(x):
 async def run(xs):
     tasks = [work(x) for x in xs]
     return await asyncio.gather(*tasks)
-""")
+""",
+    )
     assert scan_missed_await(tmp_path) == []
 
 
 def test_missed_await_local_import_shadow_clean(tmp_path: Path):
     """FP shape #2 from corpus validation: a function-local import of a
     SYNC function that shares its name with a module-level async def."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 async def count_tokens(text):
     ...
 
 def fallback(text):
     from other_module import count_tokens
     count_tokens(text)
-""")
+""",
+    )
     assert scan_missed_await(tmp_path) == []
 
 
 def test_missed_await_local_assignment_shadow_clean(tmp_path: Path):
     """FP shape #3: the name is locally rebound to something else."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 async def refresh():
     ...
 
 def run(callbacks):
     refresh = callbacks["refresh"]
     refresh()
-""")
+""",
+    )
     assert scan_missed_await(tmp_path) == []
 
 
 def test_missed_await_attribute_call_not_flagged(tmp_path: Path):
     """Attribute calls (self.method(), obj.fn()) are out of scope -- no
     reliable static resolution to a same-module async def."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 class Svc:
     async def ping(self):
         ...
 
     def run(self):
         self.ping()
-""")
+""",
+    )
     assert scan_missed_await(tmp_path) == []
 
 
@@ -1018,24 +1291,32 @@ def test_broad_except_import_guard_skipped(tmp_path: Path):
     """Optional-dep import guards are legitimate broad-except patterns;
     the WHOLE POINT of the swallow is to silently degrade when the dep
     is missing. Don't flag these."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 try:
     import torch
     import torch.nn
 except Exception:
     pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == [], f"import-guard try-block must not be flagged; got {findings}"
 
 
 def test_broad_except_import_from_guard_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 try:
     from numba import cuda
 except Exception:
     pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == []
 
@@ -1043,34 +1324,45 @@ except Exception:
 def test_broad_except_best_effort_chmod_skipped(tmp_path: Path):
     """Best-effort filesystem ops (chmod / unlink / makedirs) legitimately
     swallow OSError-class failures."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import os
 def cleanup(path):
     try:
         os.unlink(path)
     except Exception:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == [], f"best-effort filesystem op must not be flagged; got {findings}"
 
 
 def test_broad_except_best_effort_method_skipped(tmp_path: Path):
     """``proc.kill()`` / ``file.close()`` swallows are legitimate."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def teardown(proc):
     try:
         proc.terminate()
     except Exception:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == []
 
 
 def test_broad_except_real_data_swallow_still_flagged(tmp_path: Path):
     """Data-path swallow with non-trivial body MUST still be flagged."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def process(rows):
     out = []
     for r in rows:
@@ -1079,7 +1371,8 @@ def process(rows):
         except Exception:
             continue
     return out
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     # The try body is a single Call, but it's `out.append(...)` which is
     # in our STORING_METHODS set, not in BEST_EFFORT_OPS. Should still flag.
@@ -1091,12 +1384,16 @@ def process(rows):
 
 def test_nan_equality_float_nan_call_flagged(tmp_path: Path):
     """``x == float("nan")`` is always False; must be flagged P0."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x):
     if x == float("nan"):
         return "missing"
     return "ok"
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
@@ -1105,22 +1402,30 @@ def f(x):
 
 def test_nan_equality_np_nan_attr_flagged(tmp_path: Path):
     """``x == np.nan`` (attribute form) must be flagged."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 def f(x):
     return x == np.nan
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
 
 
 def test_nan_equality_neq_form_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 def f(x):
     if x != np.nan:
         return "valid"
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
     assert "NotEq" in findings[0].detail
@@ -1128,11 +1433,15 @@ def f(x):
 
 def test_nan_equality_nan_on_left_flagged(tmp_path: Path):
     """Reversed form ``np.nan == x`` must also be caught."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 def f(x):
     return np.nan == x
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
     assert "left" in findings[0].detail
@@ -1140,31 +1449,43 @@ def f(x):
 
 def test_nan_equality_correct_isnan_clean(tmp_path: Path):
     """``np.isnan(x)`` is the correct idiom; must NOT be flagged."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import numpy as np
 def f(x):
     return np.isnan(x)
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert findings == []
 
 
 def test_nan_equality_inf_not_flagged(tmp_path: Path):
     """``x == float("inf")`` is well-defined (inf == inf is True), not a bug."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x):
     return x == float("inf")
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert findings == []
 
 
 def test_nan_equality_math_nan_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import math
 def f(x):
     return x == math.nan
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
 
@@ -1173,12 +1494,16 @@ def f(x):
 
 
 def test_mut_iter_del_dict_during_iter_flags_p0(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(d):
     for k in d:
         if k.startswith("_"):
             del d[k]
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
@@ -1186,24 +1511,32 @@ def f(d):
 
 
 def test_mut_iter_list_append_during_iter_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(items):
     for x in items:
         if cond(x):
             items.append(transform(x))
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
 
 
 def test_mut_iter_dict_pop_during_iter_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(d):
     for k, v in d.items():
         if v < 0:
             d.pop(k)
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
@@ -1211,23 +1544,31 @@ def f(d):
 
 def test_mut_iter_list_copy_pattern_safe(tmp_path: Path):
     """Defensive copy via list(d) is correctly NOT flagged."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(d):
     for k in list(d):
         if k.startswith("_"):
             del d[k]
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert findings == []
 
 
 def test_mut_iter_copy_method_pattern_safe(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(d):
     for k, v in d.copy().items():
         if cond(v):
             del d[k]
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert findings == []
 
@@ -1235,11 +1576,15 @@ def f(d):
 def test_mut_iter_mutation_on_different_collection_safe(tmp_path: Path):
     """Iterating one collection + mutating a different one is the
     typical correct case."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(src, dst):
     for k in src:
         dst[k] = compute(k)
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert findings == []
 
@@ -1248,23 +1593,31 @@ def test_mut_iter_assign_existing_key_flags_p1(tmp_path: Path):
     """Reassigning an EXISTING key is size-preserving and safe (CPython),
     but we can't statically tell new vs existing. Flag P1 (lower than
     del/pop) so reviewers can verify."""
-    _write(tmp_path, "warn.py", """
+    _write(
+        tmp_path,
+        "warn.py",
+        """
 def f(d):
     for k in d:
         d[k] = transform(d[k])
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
 
 
 def test_mut_iter_set_add_during_iter_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(s):
     for x in s:
         if cond(x):
             s.add(transform(x))
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
 
@@ -1273,13 +1626,17 @@ def test_broad_except_import_plus_setup_flagged(tmp_path: Path):
     """Import-guard suppression should NOT fire when the try body mixes
     imports with side-effecting setup (the swallow then hides real setup
     failures, not just missing-dep failures)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 try:
     import torch
     torch.cuda.set_device(0)
 except Exception:
     pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings, "import + side-effect must NOT be allowlisted as pure import guard"
 
@@ -1288,20 +1645,27 @@ except Exception:
 
 
 def test_broad_except_pass_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     try:
         do_thing()
     except Exception:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
 
 
 def test_broad_except_with_logger_warning_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1310,20 +1674,25 @@ def f():
         do_thing()
     except Exception as exc:
         logger.warning("do_thing failed: %s", exc)
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == [], findings
 
 
 def test_broad_except_with_reraise_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     try:
         do_thing()
     except Exception:
         cleanup()
         raise
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == []
 
@@ -1334,7 +1703,10 @@ def test_broad_except_debug_only_log_clean(tmp_path: Path):
     equivalent to a truly silent ``except: pass``. This shape was the
     single largest source of false positives in a downstream large-scale
     triage (2026-07): 13 handlers that DID log, just at debug level."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1343,44 +1715,57 @@ def f():
         install_optional_filter()
     except Exception as exc:
         logger.debug("Could not install optional filter: %s", exc)
-""")
+""",
+    )
     assert scan_broad_except_swallows(tmp_path) == []
 
 
 def test_broad_except_no_log_at_all_still_flagged(tmp_path: Path):
     """The debug-only exemption must not widen into a blanket exemption --
     a handler with NO log call whatsoever (any level) is still flagged."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     try:
         do_thing()
     except Exception:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings, "truly silent except: pass must still be flagged"
 
 
 def test_narrow_except_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     try:
         do_thing()
     except KeyError:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert findings == []
 
 
 def test_bare_except_pass_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     try:
         do_thing()
     except:
         pass
-""")
+""",
+    )
     findings = scan_broad_except_swallows(tmp_path)
     assert len(findings) == 1
     assert "bare except" in findings[0].detail
@@ -1390,14 +1775,18 @@ def f():
 
 
 def test_sql_limit_without_order_by_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        '''
 from sqlalchemy import text
 
 def f(session):
     return session.execute(text("""
         SELECT id FROM widgets WHERE flag IS NULL LIMIT :n
     """))
-''')
+''',
+    )
     findings = scan_sql_limit_without_order_by(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "sql_limit_without_order_by"
@@ -1405,27 +1794,39 @@ def f(session):
 
 
 def test_sql_limit_with_order_by_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        '''
 def f(session):
     return session.execute("""
         SELECT id FROM widgets WHERE flag IS NULL ORDER BY id LIMIT :n
     """)
-''')
+''',
+    )
     assert scan_sql_limit_without_order_by(tmp_path) == []
 
 
 def test_sql_limit_1_exempted(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(session):
     return session.execute("SELECT id FROM widgets LIMIT 1")
-''')
+""",
+    )
     assert scan_sql_limit_without_order_by(tmp_path) == []
 
 
 def test_sql_limit_non_sql_string_ignored(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 LIMIT_MSG = "please stay under the LIMIT of 10 items"
-''')
+""",
+    )
     assert scan_sql_limit_without_order_by(tmp_path) == []
 
 
@@ -1433,13 +1834,17 @@ LIMIT_MSG = "please stay under the LIMIT of 10 items"
 
 
 def test_sql_offset_pagination_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        '''
 def f(session, offset):
     return session.execute("""
         SELECT id FROM widgets WHERE flag IS NULL
         ORDER BY id LIMIT :n OFFSET :offset
     """)
-''')
+''',
+    )
     findings = scan_sql_offset_pagination(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "sql_offset_pagination"
@@ -1447,39 +1852,54 @@ def f(session, offset):
 
 
 def test_sql_limit_without_offset_not_flagged_by_offset_scanner(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(session):
     return session.execute("SELECT id FROM widgets ORDER BY id LIMIT :n")
-''')
+""",
+    )
     assert scan_sql_offset_pagination(tmp_path) == []
 
 
 def test_sql_offset_pagination_ignores_module_docstring_mentioning_sql_keywords(tmp_path: Path):
-    _write(tmp_path, "pkg_init.py", '''
+    _write(
+        tmp_path,
+        "pkg_init.py",
+        '''
 """Documents this package's scanners.
 
 ``scan_sql_offset_pagination``: a SQL literal combining ``LIMIT`` and ``OFFSET``. Advisory --
 flags the pattern so a reviewer can confirm the query is a SELECT with a stable filtered set.
 """
-''')
+''',
+    )
     assert scan_sql_offset_pagination(tmp_path) == []
     assert scan_sql_limit_without_order_by(tmp_path) == []
 
 
 def test_sql_offset_pagination_ignores_class_and_function_docstrings(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        '''
 class Foo:
     """A SELECT with LIMIT and OFFSET is discussed here, not executed."""
 
     def bar(self):
         """Same SELECT/LIMIT/OFFSET vocabulary, still just prose."""
         return 1
-''')
+''',
+    )
     assert scan_sql_offset_pagination(tmp_path) == []
 
 
 def test_sql_offset_pagination_still_flags_real_sql_after_a_docstring(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        '''
 """This module talks about SELECT, LIMIT and OFFSET in prose."""
 
 def f(session, offset):
@@ -1487,7 +1907,8 @@ def f(session, offset):
         SELECT id FROM widgets WHERE flag IS NULL
         ORDER BY id LIMIT :n OFFSET :offset
     """)
-''')
+''',
+    )
     findings = scan_sql_offset_pagination(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "sql_offset_pagination"
@@ -1497,7 +1918,10 @@ def f(session, offset):
 
 
 def test_dead_cli_flag_never_read_flags(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import argparse
 
 def main():
@@ -1505,7 +1929,8 @@ def main():
     parser.add_argument("--resume", action="store_true", default=True)
     args = parser.parse_args()
     print(args.batch_size)
-""")
+""",
+    )
     findings = scan_dead_cli_flags(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "dead_cli_flag"
@@ -1513,7 +1938,10 @@ def main():
 
 
 def test_cli_flag_read_via_args_attr_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import argparse
 
 def main():
@@ -1522,7 +1950,8 @@ def main():
     args = parser.parse_args()
     if args.resume:
         print("resuming")
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
@@ -1530,33 +1959,44 @@ def test_dead_cli_flag_version_action_not_flagged(tmp_path: Path):
     """--version, action="version" is a universal argparse idiom: the built-in action
     prints and exits internally, application code never reads args.version -- must
     never be flagged regardless of how common this exact shape is."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import argparse
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", action="version", version="%(prog)s 1.0")
     parser.parse_args()
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
 def test_dead_cli_flag_help_action_not_flagged(tmp_path: Path):
     """A manual add_argument("--info", action="help") is the same self-handling
     shape as the built-in -h/--help, just under a different flag name."""
-    _write(tmp_path, "ok2.py", """
+    _write(
+        tmp_path,
+        "ok2.py",
+        """
 import argparse
 
 def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--info", action="help")
     parser.parse_args()
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
 def test_cli_flag_explicit_dest_used(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import argparse
 
 def main():
@@ -1564,24 +2004,33 @@ def main():
     parser.add_argument("-r", dest="resume_flag", action="store_true")
     args = parser.parse_args()
     print(args.resume_flag)
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
 def test_cli_flag_used_in_other_file_of_tree_clean(tmp_path: Path):
-    _write(tmp_path, "cli_def.py", """
+    _write(
+        tmp_path,
+        "cli_def.py",
+        """
 import argparse
 
 def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", action="store_true")
     return parser
-""")
-    _write(tmp_path, "consumer.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "consumer.py",
+        """
 def run(args):
     if args.resume:
         pass
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
@@ -1592,7 +2041,10 @@ def test_dead_cli_flag_ignores_selenium_options_add_argument(tmp_path: Path):
     the external Chrome/Firefox binary, with no dest=/action=/etc. concept at all, so
     `.no_sandbox` is never expected to appear anywhere in this codebase's own Python source.
     Distinguished from real argparse usage by the absence of ANY keyword argument."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 from selenium.webdriver.chrome.options import Options
 
 def start_selenium():
@@ -1601,7 +2053,8 @@ def start_selenium():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--remote-debugging-port=0")
     return options
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
@@ -1610,7 +2063,10 @@ def test_dead_cli_flag_still_flags_argparse_flag_with_a_keyword(tmp_path: Path):
     add_argument) must not blind the scanner to a genuine dead argparse flag that carries at
     least one argparse-specific keyword -- the shape virtually all real argparse declarations
     use in practice (default=/action=/type=/help=/dest=)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import argparse
 
 def main():
@@ -1618,7 +2074,8 @@ def main():
     parser.add_argument("--resume", default=False)
     args = parser.parse_args()
     print(args.batch_size)
-""")
+""",
+    )
     findings = scan_dead_cli_flags(tmp_path)
     assert len(findings) == 1
     assert "resume" in findings[0].detail
@@ -1631,7 +2088,10 @@ def test_dead_cli_flag_known_limitation_zero_kwarg_argparse_flag_not_flagged(tmp
     if genuinely dead. Real argparse declarations in this codebase always carry at least one
     keyword (see dev/code_audit/cli.py), so this is a narrow, low-risk gap traded for
     eliminating a confirmed, concrete false-positive class."""
-    _write(tmp_path, "bad_but_unflagged.py", """
+    _write(
+        tmp_path,
+        "bad_but_unflagged.py",
+        """
 import argparse
 
 def main():
@@ -1639,7 +2099,8 @@ def main():
     parser.add_argument("--resume")
     args = parser.parse_args()
     print(args.batch_size)
-""")
+""",
+    )
     assert scan_dead_cli_flags(tmp_path) == []
 
 
@@ -1647,7 +2108,10 @@ def main():
 
 
 def test_log_only_except_flags_when_convention_used(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1657,7 +2121,8 @@ def save(result):
         do_write()
     except Exception as e:
         logger.warning("write failed: %s", e)
-""")
+""",
+    )
     findings = scan_log_only_except(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "log_only_except"
@@ -1665,7 +2130,10 @@ def save(result):
 
 
 def test_log_only_except_escalated_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1676,12 +2144,16 @@ def save(result):
     except Exception as e:
         logger.warning("write failed: %s", e)
         result.validation_errors.append(f"write_failed: {e}")
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_reraise_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1692,7 +2164,8 @@ def save(result):
     except Exception as e:
         logger.warning("write failed: %s", e)
         raise
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
@@ -1700,7 +2173,10 @@ def test_log_only_except_no_convention_in_file_is_clean(tmp_path: Path):
     """The escalation convention (validation_errors / errors / etc) isn't
     used anywhere in the file, so silence here is a design choice, not a
     detected gap."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1709,20 +2185,25 @@ def save():
         do_write()
     except Exception as e:
         logger.warning("write failed: %s", e)
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_no_log_call_not_double_flagged(tmp_path: Path):
     """No log call at all is scan_broad_except_swallows' territory, not this scanner's."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def save(result):
     result.validation_errors = []
     try:
         do_write()
     except Exception:
         pass
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
@@ -1735,7 +2216,10 @@ def test_log_only_except_error_counter_increment_is_clean(tmp_path: Path):
     recognise -- the file's OWN naming (``validation_errors`` elsewhere)
     triggers the file-level scope gate, but the actual handler escalates
     via a differently-shaped counter."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1749,14 +2233,18 @@ def process(items):
             logger.warning("failed: %s", e)
             stats["errors"] += 1
     return stats
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_return_false_sentinel_is_clean(tmp_path: Path):
     """A Phase0-style ``return False`` on failure is a caller-visible
     escalation contract even though nothing gets appended to a list."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1767,12 +2255,16 @@ def run_test(errors):
     except Exception as e:
         logger.warning("check failed: %s", e)
         return False
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_return_error_dict_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1782,14 +2274,18 @@ def run(errors):
     except Exception as e:
         logger.warning("failed: %s", e)
         return {"error": str(e)}
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_warn_method_call_is_clean(tmp_path: Path):
     """``results.warn(...)`` -- a distinct object-method escalation
     convention -- is recognised regardless of the base object's name."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1799,7 +2295,8 @@ def run(errors, results):
     except Exception as e:
         logger.warning("failed: %s", e)
         results.warn(f"skipped: {e}")
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
@@ -1807,7 +2304,10 @@ def test_log_only_except_local_error_var_assignment_is_clean(tmp_path: Path):
     """Stashing the failure into a local ``error_message``-named variable
     (persisted after the loop) is a real escalation path even without an
     immediate append/return."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1819,14 +2319,18 @@ def run(errors):
         logger.warning("failed: %s", e)
         error_message = str(e)
     return error_message
-""")
+""",
+    )
     assert scan_log_only_except(tmp_path) == []
 
 
 def test_log_only_except_no_escalation_at_all_still_flagged(tmp_path: Path):
     """None of the recognised escalation conventions apply -- must still
     be flagged (the fix must not become a blanket exemption)."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
@@ -1836,7 +2340,8 @@ def save(result):
         do_write()
     except Exception as e:
         logger.warning("write failed: %s", e)
-""")
+""",
+    )
     findings = scan_log_only_except(tmp_path)
     assert findings, "handler with no escalation path at all must still be flagged"
 
@@ -1877,12 +2382,16 @@ def test_migration_add_primary_key_without_do_block_flags(tmp_path: Path):
 
 
 def test_migration_add_primary_key_with_do_block_clean(tmp_path: Path):
-    _write(tmp_path, "ok.sql", """
+    _write(
+        tmp_path,
+        "ok.sql",
+        """
 DO $$
 BEGIN
     ALTER TABLE widgets ADD PRIMARY KEY (id);
 END $$;
-""")
+""",
+    )
     assert scan_sql_migration_idempotency(tmp_path) == []
 
 
@@ -1891,7 +2400,10 @@ def test_migration_add_column_in_existence_guarded_do_block_clean(tmp_path: Path
     information_schema via IF NOT EXISTS is idempotent at the block level,
     even though the ALTER statement's own line has no IF NOT EXISTS
     keyword -- the classic existence-probe idiom."""
-    _write(tmp_path, "ok.sql", """
+    _write(
+        tmp_path,
+        "ok.sql",
+        """
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -1901,19 +2413,24 @@ BEGIN
         ALTER TABLE widgets ADD COLUMN status TEXT;
     END IF;
 END $$;
-""")
+""",
+    )
     assert scan_sql_migration_idempotency(tmp_path) == []
 
 
 def test_migration_add_column_in_plain_do_block_without_guard_flags(tmp_path: Path):
     """A DO block with no existence check at all does not make the ALTER
     inside it idempotent -- must still be flagged."""
-    _write(tmp_path, "bad.sql", """
+    _write(
+        tmp_path,
+        "bad.sql",
+        """
 DO $$
 BEGIN
     ALTER TABLE widgets ADD COLUMN status TEXT;
 END $$;
-""")
+""",
+    )
     findings = scan_sql_migration_idempotency(tmp_path)
     assert len(findings) == 1
     assert "ADD COLUMN" in findings[0].detail
@@ -1928,13 +2445,17 @@ def test_migration_non_sql_file_ignored(tmp_path: Path):
 
 
 def test_run_all_returns_sorted_by_severity(tmp_path: Path):
-    _write(tmp_path, "mixed.py", """
+    _write(
+        tmp_path,
+        "mixed.py",
+        """
 def bad_mutable(items=[]):
     items.append(1)
 
 def bad_or(n=None):
     return n or 4
-""")
+""",
+    )
     findings = run_all(tmp_path)
     # P0 (mutable_default mutated) should come before P1 (default_via_or).
     severities = [f.severity for f in findings]
@@ -1944,12 +2465,16 @@ def bad_or(n=None):
 
 
 def test_run_all_empty_on_clean_tree(tmp_path: Path):
-    _write(tmp_path, "clean.py", """
+    _write(
+        tmp_path,
+        "clean.py",
+        """
 def f(x=None):
     if x is None:
         x = []
     return x
-""")
+""",
+    )
     findings = run_all(tmp_path)
     assert findings == []
 
@@ -1959,7 +2484,10 @@ def test_run_all_parallel_matches_sequential(tmp_path: Path):
     parallel=False -- scanners are independent (each only appends to its own list), so
     distributing them across a ProcessPoolExecutor must be a pure wall-clock optimization,
     never a behavior change."""
-    _write(tmp_path, "mixed.py", """
+    _write(
+        tmp_path,
+        "mixed.py",
+        """
 def bad_mutable(items=[]):
     items.append(1)
 
@@ -1970,7 +2498,8 @@ try:
     risky()
 except Exception:
     pass
-""")
+""",
+    )
     parallel = run_all(tmp_path, parallel=True)
     sequential = run_all(tmp_path, parallel=False)
     assert parallel == sequential
@@ -2027,8 +2556,12 @@ def test_excluded_dir_ignored(tmp_path: Path):
 
 def test_finding_md_row_format():
     f = Finding(
-        check="x", severity="P0", file="src/a.py", line=42,
-        snippet="def f(x=[])", detail="bad",
+        check="x",
+        severity="P0",
+        file="src/a.py",
+        line=42,
+        snippet="def f(x=[])",
+        detail="bad",
     )
     row = f.as_md_row()
     assert row.startswith("| P0 | x | src/a.py:42 |")
@@ -2041,6 +2574,7 @@ def test_finding_md_row_format():
 def test_cli_exits_nonzero_on_p1(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
     from pyutilz.dev.code_audit import main as cli_main
+
     rc = cli_main([str(tmp_path), "--format", "markdown"])
     assert rc == 1
     out = capsys.readouterr().out
@@ -2051,6 +2585,7 @@ def test_cli_exits_nonzero_on_p1(tmp_path: Path, capsys):
 def test_cli_exits_zero_on_clean(tmp_path: Path, capsys):
     _write(tmp_path, "ok.py", "def f(x=None):\n    return x\n")
     from pyutilz.dev.code_audit import main as cli_main
+
     rc = cli_main([str(tmp_path)])
     assert rc == 0
 
@@ -2066,7 +2601,10 @@ def test_redundant_identical_fit_call_across_two_tests_flags(tmp_path: Path):
     """The exact confirmed-real-bug shape (mlframe MRMR biz_value suite): two sibling
     test functions each independently call the SAME deterministic helper with the SAME
     literal seed to check a different assertion on the identical fit result."""
-    _write(tmp_path, "test_bad.py", """
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
 def _build_data(seed):
     return seed
 
@@ -2082,7 +2620,8 @@ def test_b():
     X = _build_data(seed=101)
     sel = _fit_model(X, seed=101)
     assert sel
-""")
+""",
+    )
     findings = scan_redundant_test_fit_calls(tmp_path)
     checks = {f.check for f in findings}
     assert "redundant_test_fit_call" in checks
@@ -2092,7 +2631,10 @@ def test_b():
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_different_seeds_not_flagged(tmp_path: Path):
     """Different literal args -> genuinely different computations, not a duplicate."""
-    _write(tmp_path, "test_ok.py", """
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
 def _build_data(seed):
     return seed
 
@@ -2103,7 +2645,8 @@ def test_a():
 def test_b():
     X = _build_data(seed=202)
     assert X
-""")
+""",
+    )
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
@@ -2111,7 +2654,10 @@ def test_b():
 def test_redundant_call_same_test_not_flagged(tmp_path: Path):
     """The SAME call appearing twice within one test function (e.g. a sanity re-check)
     is not a cross-test duplication -- only 2+ DIFFERENT test functions count."""
-    _write(tmp_path, "test_ok.py", """
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
 def _build_data(seed):
     return seed
 
@@ -2119,14 +2665,18 @@ def test_a():
     X1 = _build_data(seed=101)
     X2 = _build_data(seed=101)
     assert X1 == X2
-""")
+""",
+    )
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_already_cached_not_flagged(tmp_path: Path):
     """A helper already decorated with @cache/@lru_cache has already been fixed."""
-    _write(tmp_path, "test_ok.py", """
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
 from functools import cache
 
 @cache
@@ -2140,13 +2690,17 @@ def test_a():
 def test_b():
     X = _build_data(seed=101)
     assert X
-""")
+""",
+    )
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
 def test_redundant_call_non_test_file_not_scanned(tmp_path: Path):
     """This scanner only applies to test_*.py / *_test.py files."""
-    _write(tmp_path, "helpers.py", """
+    _write(
+        tmp_path,
+        "helpers.py",
+        """
 def _build_data(seed):
     return seed
 
@@ -2157,14 +2711,18 @@ def test_a():
 def test_b():
     X = _build_data(seed=101)
     assert X
-""")
+""",
+    )
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
 def test_redundant_call_public_function_not_flagged(tmp_path: Path):
     """Only underscore-prefixed local helpers are tracked -- repeated identical calls to a
     public/third-party-style function (no leading underscore) are a normal, cheap pattern."""
-    _write(tmp_path, "test_ok.py", """
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
 def build_data(seed):
     return seed
 
@@ -2175,7 +2733,8 @@ def test_a():
 def test_b():
     X = build_data(seed=101)
     assert X
-""")
+""",
+    )
     assert scan_redundant_test_fit_calls(tmp_path) == []
 
 
@@ -2229,8 +2788,10 @@ def test_facade_reexports_are_same_objects():
 def test_cli_json_output(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
     from pyutilz.dev.code_audit import main as cli_main
+
     cli_main([str(tmp_path), "--format", "json"])
     import json as _json
+
     out = capsys.readouterr().out
     payload = _json.loads(out)
     assert isinstance(payload, list)
@@ -2245,49 +2806,68 @@ def test_cli_min_severity_does_not_weaken_exit_code(tmp_path: Path):
     so a real P1 finding silently exited 0 once filtered out of the display."""
     from pyutilz.dev.code_audit import main as cli_main
 
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 async def process(item):
     await item.save()
 
 def caller(item):
     process(item)
-""")
+""",
+    )
     assert cli_main([str(tmp_path), "--min-severity", "Low"]) == 1
     assert cli_main([str(tmp_path), "--min-severity", "P0"]) == 1
 
 
 def test_mutable_default_not_flagged_when_only_shadowing_nested_func_mutates(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def outer(x=[]):
     def inner(x):
         x.append(1)
         return x
     return inner([1, 2, 3])
-""")
+""",
+    )
     findings = scan_mutable_defaults(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Low"  # not P0: outer's own x is never mutated
 
 
 def test_late_binding_closure_flags_list_comprehension(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 handlers = [lambda: x for x in range(3)]
-""")
+""",
+    )
     findings = scan_late_binding_closures(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
 
 
 def test_late_binding_closure_flags_dict_comprehension(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 handlers = {i: (lambda: i) for i in range(3)}
-""")
+""",
+    )
     findings = scan_late_binding_closures(tmp_path)
     assert len(findings) == 1
 
 
 def test_missed_await_not_flagged_when_shadowed_by_nested_def(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 async def process(item):
     await item.save()
 
@@ -2295,20 +2875,25 @@ def sync_wrapper(item):
     def process(x):
         x.touch()
     process(item)
-""")
+""",
+    )
     findings = scan_missed_await(tmp_path)
     assert findings == []
 
 
 def test_dead_cli_flag_not_flagged_when_read_via_literal_getattr(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--resume", action="store_true")
 args = parser.parse_args()
 if getattr(args, "resume"):
     print("resuming")
-""")
+""",
+    )
     findings = scan_dead_cli_flags(tmp_path)
     assert findings == []
 
@@ -2357,44 +2942,60 @@ def test_registry_register_scanner_rejects_collision():
 
 
 def test_duplicate_conditions_not_flagged_for_impure_bare_function_retry(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     success = attempt() or attempt()
     return success
-""")
+""",
+    )
     findings = scan_duplicate_conditions(tmp_path)
     assert findings == []
 
 
 def test_nan_equality_ignores_unrelated_dot_nan_attribute(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(result, expected):
     if result.nan == expected.nan:
         return True
     return False
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert findings == []
 
 
 def test_nan_equality_still_flags_np_nan(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 def f(x):
     if x == np.nan:
         return True
     return False
-""")
+""",
+    )
     findings = scan_nan_equality(tmp_path)
     assert len(findings) == 1
 
 
 def test_mutation_during_iteration_list_message_is_backend_agnostic(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(mylist):
     for x in mylist:
         mylist[0] = x * 2
-""")
+""",
+    )
     findings = scan_mutation_during_iteration(tmp_path)
     assert len(findings) == 1
     assert "RuntimeError on dict/set" not in findings[0].detail
@@ -2405,12 +3006,16 @@ def f(mylist):
 
 def test_undeclared_import_cross_domain_flags_p1(tmp_path: Path):
     (tmp_path / "web").mkdir()
-    _write(tmp_path, "web/bad.py", """
+    _write(
+        tmp_path,
+        "web/bad.py",
+        """
 import pandas as pd
 
 def f():
     return pd.DataFrame()
-""")
+""",
+    )
     findings = scan_undeclared_imports(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "undeclared_import"
@@ -2419,12 +3024,16 @@ def f():
 
 def test_undeclared_import_own_domain_is_clean(tmp_path: Path):
     (tmp_path / "web").mkdir()
-    _write(tmp_path, "web/ok.py", """
+    _write(
+        tmp_path,
+        "web/ok.py",
+        """
 import requests
 
 def f():
     return requests.get("http://x", timeout=5)
-""")
+""",
+    )
     findings = scan_undeclared_imports(tmp_path)
     assert findings == []
 
@@ -2433,31 +3042,43 @@ def f():
 
 
 def test_vacuous_assertion_bare_true_flagged(tmp_path: Path):
-    _write(tmp_path, "test_bad.py", """
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
 def test_thing():
     result = compute()
     assert True
-""")
+""",
+    )
     findings = scan_vacuous_assertions(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "vacuous_assertion"
 
 
 def test_vacuous_assertion_full_domain_or_flagged(tmp_path: Path):
-    _write(tmp_path, "test_bad.py", """
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
 def test_thing(result):
     assert result is None or result == {} or isinstance(result, dict)
-""")
+""",
+    )
     findings = scan_vacuous_assertions(tmp_path)
     assert len(findings) == 1
 
 
 def test_vacuous_assertion_real_check_is_clean(tmp_path: Path):
-    _write(tmp_path, "test_ok.py", """
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
 def test_thing():
     result = compute()
     assert result == 42
-""")
+""",
+    )
     findings = scan_vacuous_assertions(tmp_path)
     assert findings == []
 
@@ -2466,21 +3087,29 @@ def test_thing():
 
 
 def test_locals_globals_as_output_kwarg_flagged_p1(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def connect(session):
     session.apply(object=locals())
-""")
+""",
+    )
     findings = scan_locals_globals_as_output(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
 
 
 def test_locals_globals_as_output_never_passed_to_a_call_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def debug_dump():
     snapshot = locals()
     return snapshot
-""")
+""",
+    )
     findings = scan_locals_globals_as_output(tmp_path)
     assert findings == []
 
@@ -2490,10 +3119,14 @@ def test_locals_globals_as_output_read_only_builtin_consumer_is_clean(tmp_path: 
     __dir__()): passing globals()/locals() to a builtin that only ever READS its argument
     (set/list/dict/sorted/len/etc.) is never the "callee writes into it expecting write-back"
     bug this scanner targets."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def __dir__():
     return sorted(set(globals()))
-""")
+""",
+    )
     findings = scan_locals_globals_as_output(tmp_path)
     assert findings == []
 
@@ -2501,10 +3134,14 @@ def __dir__():
 def test_locals_globals_as_output_still_flags_positional_to_user_function(tmp_path: Path):
     """The read-only-builtin exclusion must not blind the scanner to the real bug shape:
     locals()/globals() passed positionally to a user-defined (non-builtin) function."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def connect():
     read_config_file(path, locals())
-""")
+""",
+    )
     findings = scan_locals_globals_as_output(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Low"
@@ -2512,10 +3149,14 @@ def connect():
 
 def test_locals_globals_as_output_skips_unparseable_file(tmp_path: Path):
     """A file with a syntax error must be skipped (via _safe_parse returning None), not raise."""
-    _write(tmp_path, "broken.py", """
+    _write(
+        tmp_path,
+        "broken.py",
+        """
 def connect(:
     session.apply(object=locals())
-""")
+""",
+    )
     findings = scan_locals_globals_as_output(tmp_path)
     assert findings == []
 
@@ -2524,24 +3165,32 @@ def connect(:
 
 
 def test_missing_network_timeout_flags_bare_get(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import requests
 
 def f():
     return requests.get("http://example.com")
-""")
+""",
+    )
     findings = scan_missing_network_timeout(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "missing_network_timeout"
 
 
 def test_missing_network_timeout_with_timeout_kwarg_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import requests
 
 def f():
     return requests.get("http://example.com", timeout=5)
-""")
+""",
+    )
     findings = scan_missing_network_timeout(tmp_path)
     assert findings == []
 
@@ -2550,12 +3199,16 @@ def f():
 
 
 def test_parameter_aliasing_mutation_flags_p0(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def upsert(history_fields, hash_field):
     returning_fields = history_fields
     returning_fields += [hash_field]
     return returning_fields
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "parameter_aliasing_mutation"
@@ -2563,12 +3216,16 @@ def upsert(history_fields, hash_field):
 
 
 def test_parameter_aliasing_mutation_copy_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def upsert(history_fields, hash_field):
     returning_fields = history_fields.copy()
     returning_fields += [hash_field]
     return returning_fields
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert findings == []
 
@@ -2576,12 +3233,16 @@ def upsert(history_fields, hash_field):
 def test_parameter_aliasing_mutation_immutable_scalar_union_syntax_is_clean(tmp_path: Path):
     """``X | None``-annotated params: += always rebinds (never in-place mutates), so aliasing
     one is not the leak shape this scanner targets."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(total: float | None = None):
     remaining = total
     remaining -= 1.0
     return remaining
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert findings == []
 
@@ -2593,25 +3254,33 @@ def test_parameter_aliasing_mutation_immutable_scalar_optional_syntax_is_clean(t
     spelling, so both must be recognized for this exemption to actually cover
     typing.Optional-style code (needed for Python < 3.10 compatibility, where ``X | None``
     isn't valid at runtime without ``from __future__ import annotations``)."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 from typing import Optional
 
 def f(sentinel_field: Optional[str] = None):
     current = sentinel_field
     current += "1"
     return current
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert findings == []
 
 
 def test_parameter_aliasing_mutation_bare_immutable_scalar_annotation_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(total: float):
     remaining = total
     remaining -= 1.0
     return remaining
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert findings == []
 
@@ -2619,14 +3288,18 @@ def f(total: float):
 def test_parameter_aliasing_mutation_still_flags_mutable_container_despite_annotation(tmp_path: Path):
     """A container-typed (list) parameter must still be flagged -- the immutable-scalar
     exemption must not over-fire onto genuinely mutable types."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 from typing import Optional
 
 def f(items: Optional[list] = None):
     local = items
     local += [1]
     return local
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P0"
@@ -2635,12 +3308,16 @@ def f(items: Optional[list] = None):
 def test_parameter_aliasing_mutation_unannotated_param_stays_conservative(tmp_path: Path):
     """No annotation at all -- the type is unknown, so the scanner's conservative default
     (flag the AugAssign) must stay in effect rather than silently assuming immutability."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x):
     local = x
     local += 1
     return local
-""")
+""",
+    )
     findings = scan_parameter_aliasing_mutation(tmp_path)
     assert len(findings) == 1
 
@@ -2649,25 +3326,33 @@ def f(x):
 
 
 def test_sync_blocking_in_async_flags_bare_requests(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import requests
 
 async def generate():
     return requests.get("http://example.com")
-""")
+""",
+    )
     findings = scan_sync_blocking_in_async(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P1"
 
 
 def test_sync_blocking_in_async_awaited_httpx_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import httpx
 
 async def generate():
     async with httpx.AsyncClient() as client:
         return await client.get("http://example.com")
-""")
+""",
+    )
     findings = scan_sync_blocking_in_async(tmp_path)
     assert findings == []
 
@@ -2676,14 +3361,18 @@ async def generate():
 
 
 def test_retry_loop_busy_loop_flagged_p1(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def connect():
     while True:
         try:
             return do_connect()
         except ConnectionError:
             continue
-""")
+""",
+    )
     findings = scan_retry_loops(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "busy_retry_loop"
@@ -2691,7 +3380,10 @@ def connect():
 
 
 def test_retry_loop_with_sleep_and_break_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import time
 
 def connect():
@@ -2702,13 +3394,17 @@ def connect():
         except ConnectionError:
             time.sleep(1)
     return result
-""")
+""",
+    )
     findings = scan_retry_loops(tmp_path)
     assert findings == []
 
 
 def test_retry_loop_sleep_backed_no_break_flagged_low(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import time
 
 def connect():
@@ -2717,7 +3413,8 @@ def connect():
             return do_connect()
         except ConnectionError:
             time.sleep(1)
-""")
+""",
+    )
     findings = scan_retry_loops(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "unbounded_retry_loop"
@@ -2730,7 +3427,10 @@ def test_retry_loop_bounded_via_raise_not_break_is_clean(tmp_path: Path):
     once an attempt counter is exceeded (checked BEFORE the loop's own try/except, so nothing
     inside the SAME loop catches it) is just as bounded as one using `break` -- the scanner
     used to only recognize `break`, flagging every raise-bounded retry loop as unbounded."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import time
 
 def connect(max_attempts=5):
@@ -2743,7 +3443,8 @@ def connect(max_attempts=5):
             return do_connect()
         except ConnectionError:
             time.sleep(1)
-""")
+""",
+    )
     findings = scan_retry_loops(tmp_path)
     assert findings == []
 
@@ -2752,25 +3453,33 @@ def connect(max_attempts=5):
 
 
 def test_duplicate_module_docstring_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        '''
 """First docstring."""
 """Second docstring, silently discarded."""
 
 def f():
     pass
-''')
+''',
+    )
     findings = scan_duplicate_module_docstring(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Low"
 
 
 def test_duplicate_module_docstring_single_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        '''
 """Only docstring."""
 
 def f():
     pass
-''')
+''',
+    )
     findings = scan_duplicate_module_docstring(tmp_path)
     assert findings == []
 
@@ -2779,26 +3488,38 @@ def f():
 
 
 def test_unraised_exception_class_never_raised_flagged(tmp_path: Path):
-    _write(tmp_path, "exc.py", """
+    _write(
+        tmp_path,
+        "exc.py",
+        """
 class LLMTruncationError(Exception):
     pass
-""")
+""",
+    )
     findings = scan_unraised_exceptions(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "Medium"
 
 
 def test_unraised_exception_class_raised_in_different_file_is_clean(tmp_path: Path):
-    _write(tmp_path, "exc.py", """
+    _write(
+        tmp_path,
+        "exc.py",
+        """
 class RetryableError(Exception):
     pass
-""")
-    _write(tmp_path, "use.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "use.py",
+        """
 from exc import RetryableError
 
 def f():
     raise RetryableError("boom")
-""")
+""",
+    )
     findings = scan_unraised_exceptions(tmp_path)
     assert findings == []
 
@@ -2810,19 +3531,27 @@ def test_unraised_exception_class_base_covered_by_raised_subclass_is_clean(tmp_p
     raised ancestor here was a false positive (`GlossumError`/`ProviderError`
     in glossum's exceptions.py, never raised directly, only via subclasses
     `JobLockConflictError`/`LLMProviderError` respectively)."""
-    _write(tmp_path, "exc.py", """
+    _write(
+        tmp_path,
+        "exc.py",
+        """
 class BaseError(Exception):
     pass
 
 class SpecificError(BaseError):
     pass
-""")
-    _write(tmp_path, "use.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "use.py",
+        """
 from exc import SpecificError
 
 def f():
     raise SpecificError("boom")
-""")
+""",
+    )
     findings = scan_unraised_exceptions(tmp_path)
     assert findings == []
 
@@ -2830,7 +3559,10 @@ def f():
 def test_unraised_exception_class_base_without_raised_subclass_still_flagged(tmp_path: Path):
     """The base-class exemption above must not blanket-suppress an unrelated
     sibling base whose OWN subclasses are also never raised."""
-    _write(tmp_path, "exc.py", """
+    _write(
+        tmp_path,
+        "exc.py",
+        """
 class BaseError(Exception):
     pass
 
@@ -2842,13 +3574,18 @@ class OtherBaseError(Exception):
 
 class OtherSpecificError(OtherBaseError):
     pass
-""")
-    _write(tmp_path, "use.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "use.py",
+        """
 from exc import SpecificError
 
 def f():
     raise SpecificError("boom")
-""")
+""",
+    )
     findings = scan_unraised_exceptions(tmp_path)
     flagged = {f.snippet for f in findings}
     assert any("OtherBaseError" in s for s in flagged)
@@ -2861,27 +3598,35 @@ def f():
 
 
 def test_credential_shaped_log_arg_unredacted_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
 def f(proxy):
     logger.info(proxy)
-""")
+""",
+    )
     findings = scan_credential_shaped_log_args(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P2"
 
 
 def test_credential_shaped_log_arg_redacted_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import logging
 logger = logging.getLogger(__name__)
 
 def f(proxy):
     redacted = proxy.split("@")[1]
     logger.info(redacted)
-""")
+""",
+    )
     findings = scan_credential_shaped_log_args(tmp_path)
     assert findings == []
 
@@ -2890,7 +3635,10 @@ def f(proxy):
 
 
 def test_docstring_args_incomplete_missing_param_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        '''
 def f(a, b):
     """Do a thing.
 
@@ -2898,7 +3646,8 @@ def f(a, b):
         a: the first thing.
     """
     return a + b
-''')
+''',
+    )
     findings = scan_docstring_args_completeness(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "docstring_args_incomplete"
@@ -2906,7 +3655,10 @@ def f(a, b):
 
 
 def test_docstring_args_incomplete_all_documented_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        '''
 def f(a, b):
     """Do a thing.
 
@@ -2915,17 +3667,22 @@ def f(a, b):
         b: the second thing.
     """
     return a + b
-''')
+''',
+    )
     findings = scan_docstring_args_completeness(tmp_path)
     assert findings == []
 
 
 def test_docstring_args_incomplete_no_args_section_is_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        '''
 def f(a, b):
     """Do a thing."""
     return a + b
-''')
+''',
+    )
     findings = scan_docstring_args_completeness(tmp_path)
     assert findings == []
 
@@ -2934,59 +3691,79 @@ def f(a, b):
 
 
 def test_return_annotation_mismatch_tuple_literal_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x) -> float:
     if x < 0:
         return (0.0, 1.0)
     return x
-""")
+""",
+    )
     findings = scan_return_annotation_mismatch(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "P2"
 
 
 def test_return_annotation_mismatch_bare_return_none_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(x) -> str:
     if not x:
         return
     return x
-""")
+""",
+    )
     findings = scan_return_annotation_mismatch(tmp_path)
     assert len(findings) == 1
 
 
 def test_return_annotation_mismatch_consistent_scalar_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x) -> float:
     if x < 0:
         return 0.0
     return x
-""")
+""",
+    )
     findings = scan_return_annotation_mismatch(tmp_path)
     assert findings == []
 
 
 def test_return_annotation_mismatch_optional_annotation_is_skipped(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 from typing import Optional
 
 def f(x) -> Optional[float]:
     if x < 0:
         return None
     return x
-""")
+""",
+    )
     findings = scan_return_annotation_mismatch(tmp_path)
     assert findings == []
 
 
 def test_return_annotation_mismatch_nested_function_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(x) -> float:
     def helper():
         return [1, 2, 3]
     return x + len(helper())
-""")
+""",
+    )
     findings = scan_return_annotation_mismatch(tmp_path)
     assert findings == []
 
@@ -2995,10 +3772,14 @@ def f(x) -> float:
 
 
 def test_sql_aggregate_before_cast_json_extract_no_cast_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", '''
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def latest_count(cur):
     cur.execute("SELECT MAX(data->>'count') FROM events")
-''')
+""",
+    )
     findings = scan_sql_aggregate_before_cast(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "sql_aggregate_before_cast"
@@ -3006,19 +3787,27 @@ def latest_count(cur):
 
 
 def test_sql_aggregate_before_cast_with_cast_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def latest_count(cur):
     cur.execute("SELECT MAX((data->>'count')::int) FROM events")
-''')
+""",
+    )
     findings = scan_sql_aggregate_before_cast(tmp_path)
     assert findings == []
 
 
 def test_sql_aggregate_before_cast_no_json_extract_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", '''
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def latest(cur):
     cur.execute("SELECT MAX(created_at) FROM events")
-''')
+""",
+    )
     findings = scan_sql_aggregate_before_cast(tmp_path)
     assert findings == []
 
@@ -3027,12 +3816,16 @@ def latest(cur):
 
 
 def test_locals_get_fragile_lookup_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(flag):
     if flag:
         cached_result = compute()
     return locals().get("cached_result", None)
-""")
+""",
+    )
     findings = scan_locals_get_fragile_lookup(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "locals_get_fragile_lookup"
@@ -3040,32 +3833,44 @@ def f(flag):
 
 
 def test_globals_get_fragile_lookup_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     return globals().get("some_name", None)
-""")
+""",
+    )
     findings = scan_locals_get_fragile_lookup(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "locals_get_fragile_lookup"
 
 
 def test_locals_get_normal_variable_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(flag):
     cached_result = None
     if flag:
         cached_result = compute()
     return cached_result
-""")
+""",
+    )
     findings = scan_locals_get_fragile_lookup(tmp_path)
     assert findings == []
 
 
 def test_locals_dict_other_method_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     return list(locals().keys())
-""")
+""",
+    )
     findings = scan_locals_get_fragile_lookup(tmp_path)
     assert findings == []
 
@@ -3074,7 +3879,10 @@ def f():
 
 
 def test_shielded_resource_release_race_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import asyncio
 
 async def save_and_notify(pool):
@@ -3085,7 +3893,8 @@ async def save_and_notify(pool):
         await asyncio.shield(_do_work())
     finally:
         release_conn(conn)
-""")
+""",
+    )
     findings = scan_shielded_resource_release_race(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "shielded_resource_release_race"
@@ -3093,7 +3902,10 @@ async def save_and_notify(pool):
 
 
 def test_shielded_resource_release_race_own_resource_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import asyncio
 
 async def save_and_notify(pool):
@@ -3108,13 +3920,17 @@ async def save_and_notify(pool):
         await asyncio.shield(_do_work())
     finally:
         release_conn(conn)
-""")
+""",
+    )
     findings = scan_shielded_resource_release_race(tmp_path)
     assert findings == []
 
 
 def test_shielded_resource_release_race_no_shield_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import asyncio
 
 async def save_and_notify(pool):
@@ -3125,13 +3941,17 @@ async def save_and_notify(pool):
         await _do_work()
     finally:
         release_conn(conn)
-""")
+""",
+    )
     findings = scan_shielded_resource_release_race(tmp_path)
     assert findings == []
 
 
 def test_shielded_resource_release_race_custom_release_names(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import asyncio
 
 async def save_and_notify(pool):
@@ -3142,7 +3962,8 @@ async def save_and_notify(pool):
         await asyncio.shield(_do_work())
     finally:
         my_custom_release(conn)
-""")
+""",
+    )
     assert scan_shielded_resource_release_race(tmp_path) == []
     findings = scan_shielded_resource_release_race(tmp_path, release_call_names=frozenset({"my_custom_release"}))
     assert len(findings) == 1
@@ -3152,11 +3973,15 @@ async def save_and_notify(pool):
 
 
 def test_duplicate_credential_regex_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import re
 
 _TOKEN_RE = re.compile(r"token=\\\\w+")
-""")
+""",
+    )
     findings = scan_duplicate_credential_regex(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "duplicate_credential_regex"
@@ -3164,21 +3989,29 @@ _TOKEN_RE = re.compile(r"token=\\\\w+")
 
 
 def test_duplicate_credential_regex_inside_canonical_module_is_clean(tmp_path: Path):
-    _write(tmp_path, "secrets_scrub.py", """
+    _write(
+        tmp_path,
+        "secrets_scrub.py",
+        """
 import re
 
 _TOKEN_RE = re.compile(r"token=\\\\w+")
-""")
+""",
+    )
     findings = scan_duplicate_credential_regex(tmp_path, canonical_module_rel_paths=frozenset({"secrets_scrub.py"}))
     assert findings == []
 
 
 def test_duplicate_credential_regex_non_credential_pattern_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import re
 
 _DATE_RE = re.compile(r"\\\\d{4}-\\\\d{2}-\\\\d{2}")
-""")
+""",
+    )
     findings = scan_duplicate_credential_regex(tmp_path)
     assert findings == []
 
@@ -3332,14 +4165,21 @@ class Store:
 
 
 def test_stale_test_spy_arity_flagged(tmp_path: Path):
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node):
@@ -3348,7 +4188,8 @@ def spy(tables, cid, node):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "stale_test_spy_arity"
@@ -3356,14 +4197,21 @@ def test_foo():
 
 
 def test_stale_test_spy_arity_matching_arity_is_clean(tmp_path: Path):
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node, memo=None):
@@ -3372,20 +4220,28 @@ def spy(tables, cid, node, memo=None):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
 
 def test_stale_test_spy_arity_varargs_spy_is_clean(tmp_path: Path):
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(*args):
@@ -3394,17 +4250,25 @@ def spy(*args):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
 
 def test_stale_test_spy_arity_unrelated_patch_target_not_matched(tmp_path: Path):
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(a):
@@ -3413,7 +4277,8 @@ def spy(a):
 def test_foo():
     with patch("prod_module.other_function", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
@@ -3421,15 +4286,22 @@ def test_foo():
 def test_stale_test_spy_arity_attribute_call_form_matched(tmp_path: Path):
     """A production call site using attribute form (obj.build_rows(...)) must be matched by
     short name the same as a bare-Name call site."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 class Caller:
     def run(self):
         self.build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node):
@@ -3438,7 +4310,8 @@ def spy(tables, cid, node):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert len(findings) == 1
 
@@ -3446,14 +4319,21 @@ def test_foo():
 def test_stale_test_spy_arity_starred_call_arg_skipped_not_counted(tmp_path: Path):
     """A production call site using `*args` unpacking has an unknowable static arg count --
     must be skipped (not crash, not spuriously counted as 0)."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller(args_tuple):
     build_rows(*args_tuple)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node):
@@ -3462,7 +4342,8 @@ def spy(tables, cid, node):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []  # no resolvable real call site -> nothing to compare against
 
@@ -3470,27 +4351,38 @@ def test_foo():
 def test_stale_test_spy_arity_call_with_unmatchable_func_expr_skipped(tmp_path: Path):
     """A call whose func expression is neither a bare Name nor an Attribute (e.g. the result of
     a subscript or another call) can't be short-name-matched -- must not crash."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller(dispatch_table):
     dispatch_table["build_rows"](1, 2, 3)
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
 
 def test_stale_test_spy_arity_skips_production_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node):
@@ -3499,19 +4391,24 @@ def spy(tables, cid, node):
 def test_foo():
     with patch("prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert len(findings) == 1
 
 
 def test_stale_test_spy_arity_skips_test_file_with_syntax_error(tmp_path: Path):
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
+""",
+    )
     _write(tmp_path, "test_broken.py", "def f(:\n    pass\n")
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []  # broken test file skipped, no crash
@@ -3520,14 +4417,21 @@ def caller():
 def test_stale_test_spy_arity_patch_call_with_no_positional_args_skipped(tmp_path: Path):
     """A patch(...) call with no positional args at all (e.g. patch(target=..., side_effect=...))
     has no target string to resolve -- must be skipped, not crash on an index error."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def spy(tables, cid, node):
@@ -3536,7 +4440,8 @@ def spy(tables, cid, node):
 def test_foo():
     with patch(target="prod_module.build_rows", side_effect=spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
@@ -3544,20 +4449,28 @@ def test_foo():
 def test_stale_test_spy_arity_side_effect_not_a_bare_name_skipped(tmp_path: Path):
     """side_effect=<a lambda / call expression>, not a bare Name referencing a local def --
     can't resolve to a spy function's own arity, must be skipped."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 
 def test_foo():
     with patch("prod_module.build_rows", side_effect=lambda *a: None):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
@@ -3565,21 +4478,29 @@ def test_foo():
 def test_stale_test_spy_arity_side_effect_name_not_a_local_def_skipped(tmp_path: Path):
     """side_effect references a Name that isn't a local function def in this test file (e.g.
     imported from elsewhere) -- can't inspect its arity, must be skipped, not crash."""
-    _write(tmp_path, "prod_module.py", """
+    _write(
+        tmp_path,
+        "prod_module.py",
+        """
 def build_rows(tables, cid, node, memo=None):
     pass
 
 def caller():
     build_rows(1, 2, 3, 4)
-""")
-    _write(tmp_path, "test_prod_module.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_prod_module.py",
+        """
 from unittest.mock import patch
 from some_helpers import imported_spy
 
 def test_foo():
     with patch("prod_module.build_rows", side_effect=imported_spy):
         pass
-""")
+""",
+    )
     findings = scan_stale_test_spy_arity(tmp_path)
     assert findings == []
 
@@ -3588,12 +4509,16 @@ def test_foo():
 
 
 def test_unthrottled_hot_loop_log_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def scan(items, log):
     for item in items:
         if item.bad:
             log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "unthrottled_hot_loop_log"
@@ -3601,56 +4526,76 @@ def scan(items, log):
 
 
 def test_unthrottled_hot_loop_log_throttled_guard_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def scan(items, log):
     for item in items:
         if item.bad:
             if _log_throttle("key"):
                 log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
 
 def test_unthrottled_hot_loop_log_modulo_guard_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok2.py", """
+    _write(
+        tmp_path,
+        "ok2.py",
+        """
 def scan(items, log):
     for i, item in enumerate(items):
         if i % 100 == 0:
             log.warning("progress %s", i)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
 
 def test_unthrottled_hot_loop_log_outside_loop_is_clean(tmp_path: Path):
-    _write(tmp_path, "ok3.py", """
+    _write(
+        tmp_path,
+        "ok3.py",
+        """
 def scan(item, log):
     if item.bad:
         log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
 
 def test_unthrottled_hot_loop_log_debug_call_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok4.py", """
+    _write(
+        tmp_path,
+        "ok4.py",
+        """
 def scan(items, log):
     for item in items:
         log.debug("processing %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
 
 def test_unthrottled_hot_loop_log_while_loop_flagged(tmp_path: Path):
-    _write(tmp_path, "bad2.py", """
+    _write(
+        tmp_path,
+        "bad2.py",
+        """
 def scan(get_next, log):
     while True:
         item = get_next()
         if item.bad:
             log.error("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
 
@@ -3664,7 +4609,10 @@ def test_unthrottled_hot_loop_log_while_true_bounded_by_internal_retry_break_is_
     (constant, uninformative) test. Must stay clean; the sibling test above
     (`test_unthrottled_hot_loop_log_while_loop_flagged`) confirms a genuinely-unbounded
     `while True:` loop with no such internal bound is still flagged."""
-    _write(tmp_path, "retry.py", """
+    _write(
+        tmp_path,
+        "retry.py",
+        """
 def call_with_retry(func, log, max_retries=3):
     attempts = 0
     while True:
@@ -3675,21 +4623,26 @@ def call_with_retry(func, log, max_retries=3):
             attempts += 1
             if attempts >= max_retries:
                 raise
-""")
+""",
+    )
     assert scan_unthrottled_hot_loop_log(tmp_path) == []
 
 
 def test_unthrottled_hot_loop_log_else_branch_flagged(tmp_path: Path):
     """An unguarded log call in the `else` of an if/else, inside a loop, must still be flagged --
     only the `if`'s own throttle-guarded body is exempt, not its sibling `else`."""
-    _write(tmp_path, "bad3.py", """
+    _write(
+        tmp_path,
+        "bad3.py",
+        """
 def scan(items, log):
     for item in items:
         if item.ok:
             pass
         else:
             log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
 
@@ -3698,13 +4651,17 @@ def test_unthrottled_hot_loop_log_attribute_receiver_and_throttle_call_covered(t
     """Both the log receiver AND the throttle-check call are attribute access
     (self.log.warning(...), self.limiter.should_throttle(...)) -- exercises the Attribute
     branches of _call_name/_is_log_call, not just the bare-Name ones."""
-    _write(tmp_path, "ok5.py", """
+    _write(
+        tmp_path,
+        "ok5.py",
+        """
 class Scanner:
     def scan(self, items):
         for item in items:
             if self.limiter.should_throttle(item):
                 self.log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
@@ -3713,11 +4670,15 @@ def test_unthrottled_hot_loop_log_non_log_named_receiver_not_flagged(tmp_path: P
     """A `.warning(...)` call on a receiver whose name doesn't end in log/logger (e.g. a
     warnings-module-shaped object) is out of scope for this scanner -- not every `.warning(...)`
     call is a logger call."""
-    _write(tmp_path, "ok6.py", """
+    _write(
+        tmp_path,
+        "ok6.py",
+        """
 def scan(items, notifier):
     for item in items:
         notifier.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
@@ -3726,11 +4687,15 @@ def test_unthrottled_hot_loop_log_receiver_from_a_call_not_flagged(tmp_path: Pat
     """A `.warning(...)` call whose receiver is itself a Call (e.g. `get_logger().warning(...)`)
     can't be name-matched by this scanner's simple Name/Attribute receiver check -- exercises the
     receiver_name-stays-None fallthrough."""
-    _write(tmp_path, "ok7.py", """
+    _write(
+        tmp_path,
+        "ok7.py",
+        """
 def scan(items):
     for item in items:
         get_logger().warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert findings == []
 
@@ -3739,11 +4704,15 @@ def test_unthrottled_hot_loop_log_skips_file_with_syntax_error(tmp_path: Path):
     """A file with a syntax error must be skipped, not crash the whole scan -- and a sibling
     valid file in the same directory must still be scanned normally."""
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
-    _write(tmp_path, "bad4.py", """
+    _write(
+        tmp_path,
+        "bad4.py",
+        """
 def scan(items, log):
     for item in items:
         log.error("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
     assert findings[0].file == "bad4.py"
@@ -3753,12 +4722,16 @@ def test_unthrottled_hot_loop_log_guard_call_via_subscript_not_a_throttle_hint(t
     """The guard's Call func is neither a bare Name nor an Attribute (e.g. a subscripted
     dispatch-table lookup) -- can't name-match it as a throttle hint, so the log call inside
     stays flagged (exercises _call_name's final None fallthrough)."""
-    _write(tmp_path, "bad5.py", """
+    _write(
+        tmp_path,
+        "bad5.py",
+        """
 def scan(items, log, checks):
     for item in items:
         if checks["ok"](item):
             log.warning("bad item %s", item)
-""")
+""",
+    )
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
 
@@ -3767,9 +4740,13 @@ def scan(items, log, checks):
 
 
 def test_possibly_dead_import_flagged(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import os
-""")
+""",
+    )
     findings = scan_possibly_dead_import(tmp_path)
     assert len(findings) == 1
     assert findings[0].check == "possibly_dead_import"
@@ -3777,32 +4754,44 @@ import os
 
 
 def test_possibly_dead_import_bare_name_usage_is_clean(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import os
 
 def f():
     return os.getcwd()
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_from_import_usage_is_clean(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from pathlib import Path
 
 def f():
     return Path(".")
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_aliased_usage_is_clean(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import numpy as np
 
 def f():
     return np.array([1, 2, 3])
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
@@ -3810,70 +4799,106 @@ def test_possibly_dead_import_facade_reexport_suppressed_by_corpus_attribute_acc
     """The exact confirmed-real bug class this scanner exists for: `helper` is imported into
     `facade.py` purely to be re-exported, unused within facade.py itself, but consumed elsewhere
     as `facade.helper` -- must NOT be flagged."""
-    _write(tmp_path, "facade.py", """
+    _write(
+        tmp_path,
+        "facade.py",
+        """
 from _impl import helper
-""")
-    _write(tmp_path, "test_facade.py", """
+""",
+    )
+    _write(
+        tmp_path,
+        "test_facade.py",
+        """
 import facade
 
 def test_it():
     facade.helper()
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_dunder_all_reexport_is_clean(tmp_path: Path):
-    _write(tmp_path, "facade.py", """
+    _write(
+        tmp_path,
+        "facade.py",
+        """
 from _impl import helper
 
 __all__ = ["helper"]
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_underscore_alias_skipped(tmp_path: Path):
     """`import x as _` is a conventional "explicitly discard" marker, not a name meant to be
     referenced -- must not be flagged as a dead import."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import os as _
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_from_import_underscore_alias_skipped(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from os import path as _
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_star_import_skipped(tmp_path: Path):
     """A star import can't be usage-checked by name -- must not crash or be flagged."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from os import *
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_future_annotations_skipped(tmp_path: Path):
     """`from __future__ import annotations` is a compiler directive, never referenced as a
     name by design -- must never be flagged."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from __future__ import annotations
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_noqa_line_skipped(tmp_path: Path):
     """A line already carrying `# noqa` has already been reviewed and explicitly exempted --
     re-flagging it is pure noise."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import os  # noqa: F401
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
-    _write(tmp_path, "mod2.py", """
+    _write(
+        tmp_path,
+        "mod2.py",
+        """
 from os import path  # noqa: F401
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
@@ -3886,7 +4911,10 @@ def test_possibly_dead_import_multiline_block_reports_each_dead_name_separately(
     multi-line `sql_helpers` import had THREE independently-unused names (`nu`,
     `MakeSetExcludedClause`, `update_if_now`) but only one finding ever surfaced. Each alias must
     be reported at its OWN line so distinct dead names never collide onto one key."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from helper_module import (
     used_name,
     dead_one,
@@ -3895,7 +4923,8 @@ from helper_module import (
 
 def f():
     return used_name()
-""")
+""",
+    )
     findings = scan_possibly_dead_import(tmp_path)
     flagged_names = {f.detail.split("binds '")[1].split("'")[0] for f in findings}
     flagged_lines = {f.line for f in findings}
@@ -3941,28 +4970,40 @@ def test_alias_own_lineno_fallback_when_ast_alias_lacks_lineno():
 
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 import os
-""")
+""",
+    )
     findings = scan_possibly_dead_import(tmp_path)
     assert len(findings) == 1
     assert findings[0].file == "mod.py"
 
 
 def test_possibly_dead_import_no_imports_is_clean(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 def f():
     return 1
-""")
+""",
+    )
     assert scan_possibly_dead_import(tmp_path) == []
 
 
 def test_possibly_dead_import_relative_import_with_no_module_skipped(tmp_path: Path):
     """`from . import x` (ImportFrom with module=None) is a relative package import -- skipped
     rather than crashing on the None module attribute."""
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 from . import helper
-""")
+""",
+    )
     findings = scan_possibly_dead_import(tmp_path)
     assert findings == []
 
@@ -3971,14 +5012,18 @@ from . import helper
 
 
 def test_unpicklable_resource_state_lock_without_getstate_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import threading
 
 class Cache:
     def __init__(self):
         self._lock = threading.Lock()
         self._mem = {}
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert len(findings) == 1, findings
     f = findings[0]
@@ -3991,30 +5036,41 @@ class Cache:
 def test_unpicklable_resource_state_bare_rlock_import_flagged(tmp_path: Path):
     """A directly-imported ``RLock`` (not ``threading.RLock()``) must match on the constructor
     name alone, not require the ``threading.`` prefix."""
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 from threading import RLock
 
 class Guarded:
     def __init__(self):
         self._lock = RLock()
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert len(findings) == 1, findings
 
 
 def test_unpicklable_resource_state_open_file_handle_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 class LogWriter:
     def __init__(self, path):
         self._fh = open(path, "w")
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert len(findings) == 1, findings
     assert "_fh" in findings[0].detail
 
 
 def test_unpicklable_resource_state_with_getstate_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import threading
 
 class Cache:
@@ -4030,36 +5086,48 @@ class Cache:
     def __setstate__(self, state):
         self.__dict__.update(state)
         self._lock = threading.Lock()
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert findings == [], f"class with __getstate__ must not be flagged; got {findings}"
 
 
 def test_unpicklable_resource_state_plain_attribute_not_flagged(tmp_path: Path):
     """A class whose __init__ only assigns plain data (no lock/thread/file) must not be flagged."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 class Config:
     def __init__(self, name):
         self.name = name
         self.values = {}
         self.count = 0
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert findings == []
 
 
 def test_unpicklable_resource_state_no_init_not_flagged(tmp_path: Path):
     """A class with no __init__ at all must not crash the scanner or be flagged."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 class Bare:
     x = 1
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert findings == []
 
 
 def test_unpicklable_resource_state_thread_ctor_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import threading
 
 class Worker:
@@ -4068,20 +5136,25 @@ class Worker:
 
     def _run(self):
         pass
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert len(findings) == 1, findings
     assert "_thread" in findings[0].detail
 
 
 def test_unpicklable_resource_state_dotted_cuda_stream_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import torch
 
 class GpuBuffer:
     def __init__(self):
         self._stream = torch.cuda.Stream()
-""")
+""",
+    )
     findings = scan_unpicklable_resource_state(tmp_path)
     assert len(findings) == 1, findings
 
@@ -4090,14 +5163,18 @@ class GpuBuffer:
 
 
 def test_readonly_to_numpy_mutation_fill_diagonal_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 
 def dataset_diagnostics(df):
     C = df.corr().to_numpy()
     np.fill_diagonal(C, 0.0)
     return C
-""")
+""",
+    )
     findings = scan_readonly_to_numpy_mutation(tmp_path)
     assert len(findings) == 1, findings
     f = findings[0]
@@ -4107,26 +5184,34 @@ def dataset_diagnostics(df):
 
 
 def test_readonly_to_numpy_mutation_copy_true_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import numpy as np
 
 def dataset_diagnostics(df):
     C = df.corr().to_numpy(copy=True)
     np.fill_diagonal(C, 0.0)
     return C
-""")
+""",
+    )
     findings = scan_readonly_to_numpy_mutation(tmp_path)
     assert findings == []
 
 
 def test_readonly_to_numpy_mutation_copyto_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import numpy as np
 
 def f(df, other):
     C = df.to_numpy()
     np.copyto(C, other)
-""")
+""",
+    )
     findings = scan_readonly_to_numpy_mutation(tmp_path)
     assert len(findings) == 1, findings
 
@@ -4134,25 +5219,33 @@ def f(df, other):
 def test_readonly_to_numpy_mutation_fresh_numpy_array_not_flagged(tmp_path: Path):
     """A ``fill_diagonal`` target that never came from ``.to_numpy()`` (e.g. built via
     ``np.corrcoef``) is out of scope for this scanner."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import numpy as np
 
 def f(X):
     C = np.corrcoef(X, rowvar=False)
     np.fill_diagonal(C, 0.0)
     return C
-""")
+""",
+    )
     findings = scan_readonly_to_numpy_mutation(tmp_path)
     assert findings == []
 
 
 def test_readonly_to_numpy_mutation_unrelated_to_numpy_not_flagged(tmp_path: Path):
     """An uncopied ``.to_numpy()`` result that is never passed to an in-place mutator is fine."""
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(df):
     arr = df.to_numpy()
     return arr.sum()
-""")
+""",
+    )
     findings = scan_readonly_to_numpy_mutation(tmp_path)
     assert findings == []
 
@@ -4696,7 +5789,10 @@ def process(rows):
 def test_dead_public_callable_flags_a_function_only_tests_call(tmp_path: Path):
     src = tmp_path / "src"
     src.mkdir()
-    _write(src, "mod.py", """
+    _write(
+        src,
+        "mod.py",
+        """
 def used_by_entry():
     return 1
 
@@ -4707,7 +5803,8 @@ def measured_but_dead():
 
 def main():
     return used_by_entry()
-""")
+""",
+    )
     findings = scan_dead_public_callables(src)
     assert [f.detail.split("'")[1] for f in findings] == ["measured_but_dead"], findings
 
@@ -4717,7 +5814,10 @@ def test_dead_public_callable_respects_consumer_roots_and_decorators(tmp_path: P
     demo = tmp_path / "demo"
     src.mkdir()
     demo.mkdir()
-    _write(src, "mod.py", """
+    _write(
+        src,
+        "mod.py",
+        """
 import functools
 
 
@@ -4728,12 +5828,17 @@ def called_from_demo():
 @functools.lru_cache
 def framework_invoked():
     return 2
-""")
-    _write(demo, "run.py", """
+""",
+    )
+    _write(
+        demo,
+        "run.py",
+        """
 from mod import called_from_demo
 
 print(called_from_demo())
-""")
+""",
+    )
     assert scan_dead_public_callables(src, consumer_roots=(demo,)) == []
 
 
@@ -4741,23 +5846,31 @@ print(called_from_demo())
 
 
 def test_vacuous_empty_pattern_match_flags_unguarded_all(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def covers(text, stems):
     return all(stem in text for stem in stems)
-""")
+""",
+    )
     findings = scan_vacuous_empty_pattern_match(tmp_path)
     assert len(findings) == 1 and findings[0].check == "vacuous_empty_pattern_match", findings
 
 
 def test_vacuous_empty_pattern_match_accepts_a_guard_and_ignores_any(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def covers(text, stems):
     return bool(stems) and all(stem in text for stem in stems)
 
 
 def touches(text, stems):
     return any(stem in text for stem in stems)
-""")
+""",
+    )
     assert scan_vacuous_empty_pattern_match(tmp_path) == []
 
 
@@ -4765,26 +5878,34 @@ def touches(text, stems):
 
 
 def test_tautological_guard_flags_threshold_anded_with_identity_pin(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def label(causes, lead):
     for c in causes:
         if c.mean >= 0.75 * lead and c is causes[0]:
             return "strongly supported"
     return "weak"
-""")
+""",
+    )
     findings = scan_tautological_guards(tmp_path)
     assert len(findings) == 1 and findings[0].check == "tautological_guard", findings
 
 
 def test_tautological_guard_ignores_none_checks_and_distinct_targets(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def label(a, b, lead):
     if a.mean >= 0.75 * lead and a is not None:
         return 1
     if a.mean >= lead and b is lead:
         return 2
     return 0
-""")
+""",
+    )
     assert scan_tautological_guards(tmp_path) == []
 
 
@@ -4792,7 +5913,10 @@ def label(a, b, lead):
 
 
 def test_table_header_row_drift_flags_dictwriter_key_mismatch(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import csv
 
 
@@ -4801,13 +5925,17 @@ def dump(fh, rows):
     writer.writeheader()
     for row in rows:
         writer.writerow({"a": row[0], "b": row[1]})
-""")
+""",
+    )
     findings = scan_table_header_row_drift(tmp_path)
     assert any(f.severity == "P1" for f in findings), findings
 
 
 def test_table_header_row_drift_accepts_matching_keys(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 import csv
 
 
@@ -4816,7 +5944,8 @@ def dump(fh, rows):
     writer.writeheader()
     for row in rows:
         writer.writerow({"a": row[0], "b": row[1]})
-""")
+""",
+    )
     assert scan_table_header_row_drift(tmp_path) == []
 
 
@@ -4824,37 +5953,49 @@ def dump(fh, rows):
 
 
 def test_record_field_flow_flags_defaulted_read_of_an_unwritten_key(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def build(hedge):
     return {"mechanism_modality_source": hedge}
 
 
 def weight(triple):
     return triple.get("mechanism_modality_sources", "unstated")
-""")
+""",
+    )
     findings = scan_record_field_flow(tmp_path)
     assert [f.check for f in findings if f.severity == "P1"] == ["field_read_never_written"], findings
 
 
 def test_record_field_flow_near_miss_only_ignores_a_foreign_schema_key(tmp_path: Path):
     """A key of somebody else's JSON resembles nothing this tree writes, and must not be reported."""
-    _write(tmp_path, "client.py", """
+    _write(
+        tmp_path,
+        "client.py",
+        """
 def parse(response):
     return response.get("esearchresult", {})
-""")
+""",
+    )
     assert scan_record_field_flow(tmp_path) == []
     assert scan_record_field_flow(tmp_path, near_miss_only=False), "the exhaustive form must still see it"
 
 
 def test_record_field_flow_ignores_a_key_with_both_sides(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def build():
     return {"modality_source": "code"}
 
 
 def read(row):
     return row.get("modality_source", "")
-""")
+""",
+    )
     assert scan_record_field_flow(tmp_path) == []
 
 
@@ -4866,15 +6007,23 @@ def test_unenforced_docstring_invariant_flags_an_unnamed_claim(tmp_path: Path):
     tests_dir = tmp_path / "t"
     src.mkdir()
     tests_dir.mkdir()
-    _write(src, "mod.py", '''
+    _write(
+        src,
+        "mod.py",
+        '''
 def decompose(x):
     """Never decompose a posterior produced by a different model."""
     return x
-''')
-    _write(tests_dir, "test_other.py", """
+''',
+    )
+    _write(
+        tests_dir,
+        "test_other.py",
+        """
 def test_something():
     assert True
-""")
+""",
+    )
     findings = scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,))
     assert len(findings) == 1 and "decompose" in findings[0].detail, findings
 
@@ -4884,18 +6033,26 @@ def test_unenforced_docstring_invariant_accepts_a_named_symbol(tmp_path: Path):
     tests_dir = tmp_path / "t"
     src.mkdir()
     tests_dir.mkdir()
-    _write(src, "mod.py", '''
+    _write(
+        src,
+        "mod.py",
+        '''
 def decompose(x):
     """Never decompose a posterior produced by a different model."""
     return x
-''')
-    _write(tests_dir, "test_mod.py", """
+''',
+    )
+    _write(
+        tests_dir,
+        "test_mod.py",
+        """
 from mod import decompose
 
 
 def test_decompose_refuses_a_foreign_model():
     assert decompose(1) == 1
-""")
+""",
+    )
     assert scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,)) == []
 
 
@@ -4907,7 +6064,10 @@ def test_unenforced_docstring_invariant_accepts_a_private_helper_via_its_public_
     tests_dir = tmp_path / "t"
     src.mkdir()
     tests_dir.mkdir()
-    _write(src, "mod.py", '''
+    _write(
+        src,
+        "mod.py",
+        '''
 def _match_index(name):
     """EXACT name match only - never fuzzy/substring, an ambiguous name is refused rather than guessed."""
     return name
@@ -4915,14 +6075,19 @@ def _match_index(name):
 
 def build(name):
     return _match_index(name)
-''')
-    _write(tests_dir, "test_mod.py", """
+''',
+    )
+    _write(
+        tests_dir,
+        "test_mod.py",
+        """
 from mod import build
 
 
 def test_build_refuses_an_ambiguous_name():
     assert build("x") == "x"
-""")
+""",
+    )
     assert scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,)) == []
 
 
@@ -4934,7 +6099,10 @@ def test_unenforced_docstring_invariant_does_not_chase_two_hops(tmp_path: Path):
     tests_dir = tmp_path / "t"
     src.mkdir()
     tests_dir.mkdir()
-    _write(src, "mod.py", '''
+    _write(
+        src,
+        "mod.py",
+        '''
 def _match_index(name):
     """EXACT name match only - never fuzzy/substring."""
     return name
@@ -4946,14 +6114,19 @@ def _build_one(name):
 
 def build_all(names):
     return [_build_one(n) for n in names]
-''')
-    _write(tests_dir, "test_mod.py", """
+''',
+    )
+    _write(
+        tests_dir,
+        "test_mod.py",
+        """
 from mod import build_all
 
 
 def test_build_all_refuses_an_ambiguous_name():
     assert build_all(["x"]) == ["x"]
-""")
+""",
+    )
     findings = scan_unenforced_docstring_invariants(src, test_roots=(tests_dir,))
     assert len(findings) == 1 and "_match_index" in findings[0].detail, findings
 
@@ -4962,7 +6135,10 @@ def test_build_all_refuses_an_ambiguous_name():
 
 
 def test_partial_guard_across_siblings_flags_the_odd_one_out(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def score_a(rows):
     if not rows:
         return 0.0
@@ -4977,16 +6153,21 @@ def score_b(rows):
 
 def score_c(rows):
     return len(rows) * 3
-""")
+""",
+    )
     findings = scan_partial_guard_across_siblings(tmp_path)
     assert len(findings) == 1 and "score_c" in findings[0].detail, findings
 
 
 def test_inconsistent_filter_is_silent_until_configured(tmp_path: Path):
-    _write(tmp_path, "mod.py", """
+    _write(
+        tmp_path,
+        "mod.py",
+        """
 def rank(graph):
     return graph.causes()
-""")
+""",
+    )
     assert scan_inconsistent_filter(tmp_path) == []
     findings = scan_inconsistent_filter(tmp_path, filter_pairs=(("causes", "postmortem_events"),))
     assert len(findings) == 1 and "rank" in findings[0].detail, findings
@@ -4996,48 +6177,64 @@ def rank(graph):
 
 
 def test_regex_integer_parse_truncation_flags_a_bare_digit_class(tmp_path: Path):
-    _write(tmp_path, "bad.py", r'''
+    _write(
+        tmp_path,
+        "bad.py",
+        r"""
 import re
 
 
 def count(text):
     m = re.search(r"\d+", text)
     return int(m.group()) if m else 0
-''')
+""",
+    )
     findings = scan_regex_integer_parse(tmp_path)
     assert len(findings) == 1, findings
 
 
 def test_regex_integer_parse_truncation_accepts_a_real_number_pattern(tmp_path: Path):
-    _write(tmp_path, "ok.py", r'''
+    _write(
+        tmp_path,
+        "ok.py",
+        r"""
 import re
 
 
 def count(text):
     m = re.search(r"\d[\d,]*(?:\.\d+)?", text)
     return float(m.group().replace(",", "")) if m else 0.0
-''')
+""",
+    )
     assert scan_regex_integer_parse(tmp_path) == []
 
 
 def test_threshold_below_documented_result_flags_a_weakened_gate(tmp_path: Path):
-    _write(tmp_path, "test_cards.py", '''
+    _write(
+        tmp_path,
+        "test_cards.py",
+        '''
 def test_cards_recover_the_expected_cause():
     """7 of 8 demonstration cards recover the expected cause."""
     decided = 7
     assert decided >= 6
-''')
+''',
+    )
     findings = scan_thresholds_below_documented_result(tmp_path)
     assert len(findings) == 1, findings
 
 
 def test_threshold_below_documented_result_accepts_a_matching_gate(tmp_path: Path):
-    _write(tmp_path, "test_cards.py", '''
+    _write(
+        tmp_path,
+        "test_cards.py",
+        '''
 def test_cards_recover_the_expected_cause():
     """7 of 8 demonstration cards recover the expected cause."""
     decided = 7
     assert decided >= 7
-''')
+''',
+    )
     assert scan_thresholds_below_documented_result(tmp_path) == []
 
 
@@ -5227,11 +6424,15 @@ def test_domain_vocabulary_leak_matches_on_word_boundaries_not_substrings(tmp_pa
     """`death` must not fire on `deathless` -- a substring rule would make the vocabulary unusable."""
     from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
 
-    _write(tmp_path, "sub.py", '''
+    _write(
+        tmp_path,
+        "sub.py",
+        '''
 def pool(x):
     """A deathless abstraction."""
     return x
-''')
+''',
+    )
     findings = scan_domain_vocabulary_leak(tmp_path, boundary=[BoundarySymbol("sub.py", "pool")], vocabulary=["death"])
     assert findings == []
 
@@ -5253,7 +6454,10 @@ def test_domain_boundary_reports_a_stale_manifest_rather_than_passing_by_vacuity
 def test_domain_vocabulary_leak_reaches_a_method_of_a_class(tmp_path: Path):
     from pyutilz.dev.code_audit import BoundarySymbol, scan_domain_vocabulary_leak
 
-    _write(tmp_path, "meth.py", '''
+    _write(
+        tmp_path,
+        "meth.py",
+        '''
 class Store:
     def neutral(self, x):
         return x
@@ -5261,7 +6465,8 @@ class Store:
     def pool(self, rows):
         """Pool over autopsy series."""
         return rows
-''')
+''',
+    )
     boundary = [BoundarySymbol("meth.py", "Store.neutral"), BoundarySymbol("meth.py", "Store.pool")]
     findings = scan_domain_vocabulary_leak(tmp_path, boundary=boundary, vocabulary=["autopsy"])
     assert [(f.check, f.line) for f in findings] == [("domain_vocabulary_leak", 6)]
@@ -5277,20 +6482,11 @@ def test_getattr_unknown_attribute_catches_a_printer_reading_a_field_that_never_
     from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
 
     (tmp_path / "model.py").write_text(
-        "from dataclasses import dataclass, field\n"
-        "\n"
-        "@dataclass\n"
-        "class Sheet:\n"
-        "    ask: list = field(default_factory=list)\n"
-        "    notes: list = field(default_factory=list)\n",
+        "from dataclasses import dataclass, field\n" "\n" "@dataclass\n" "class Sheet:\n" "    ask: list = field(default_factory=list)\n" "    notes: list = field(default_factory=list)\n",
         encoding="utf-8",
     )
     (tmp_path / "printer.py").write_text(
-        "def show(sheet):\n"
-        "    for row in getattr(sheet, 'steps', None) or []:\n"
-        "        print(row)\n"
-        "    for row in getattr(sheet, 'ask', None) or []:\n"
-        "        print(row)\n",
+        "def show(sheet):\n" "    for row in getattr(sheet, 'steps', None) or []:\n" "        print(row)\n" "    for row in getattr(sheet, 'ask', None) or []:\n" "        print(row)\n",
         encoding="utf-8",
     )
 
@@ -5456,50 +6652,66 @@ def test_getattr_literal_on_known_dataclass_infers_type_from_a_parameter_annotat
 
 
 def test_bare_except_bare_colon_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     try:
         risky()
     except:
         pass
-""")
+""",
+    )
     findings = scan_bare_except(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "bare_except"
 
 
 def test_bare_except_base_exception_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f():
     try:
         risky()
     except BaseException:
         pass
-""")
+""",
+    )
     findings = scan_bare_except(tmp_path)
     assert len(findings) == 1, findings
 
 
 def test_bare_except_base_exception_reraise_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     try:
         risky()
     except BaseException:
         cleanup()
         raise
-""")
+""",
+    )
     assert scan_bare_except(tmp_path) == []
 
 
 def test_bare_except_narrow_exception_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f():
     try:
         risky()
     except Exception:
         pass
-""")
+""",
+    )
     assert scan_bare_except(tmp_path) == []
 
 
@@ -5592,7 +6804,7 @@ def test_console_unicode_nested_package_without_init_reconfigure_still_flagged(t
 
 
 def test_mojibake_roundtrip_corruption_flagged(tmp_path: Path):
-    corrupted = "Русский".encode("utf-8").decode("cp1251")
+    corrupted = "Русский".encode().decode("cp1251")
     _write(tmp_path, "bad.py", f"# {corrupted}\nx = 1\n")
     findings = scan_mojibake(tmp_path)
     assert len(findings) == 1, findings
@@ -5623,34 +6835,46 @@ def test_mojibake_short_cyrillic_regex_range_not_flagged(tmp_path: Path):
 
 
 def test_resource_handle_safety_bare_open_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 def f(path):
     fh = open(path, "w")
     fh.write("x")
-""")
+""",
+    )
     findings = scan_resource_handle_safety(tmp_path)
     assert len(findings) == 1, findings
     assert findings[0].check == "resource_handle_safety"
 
 
 def test_resource_handle_safety_popen_flagged(tmp_path: Path):
-    _write(tmp_path, "bad.py", """
+    _write(
+        tmp_path,
+        "bad.py",
+        """
 import subprocess
 
 def f():
     proc = subprocess.Popen(["ls"])
     return proc
-""")
+""",
+    )
     findings = scan_resource_handle_safety(tmp_path)
     assert len(findings) == 1, findings
 
 
 def test_resource_handle_safety_with_block_not_flagged(tmp_path: Path):
-    _write(tmp_path, "ok.py", """
+    _write(
+        tmp_path,
+        "ok.py",
+        """
 def f(path):
     with open(path, "w") as fh:
         fh.write("x")
-""")
+""",
+    )
     assert scan_resource_handle_safety(tmp_path) == []
 
 
@@ -5747,3 +6971,47 @@ def test_import_cycles_scc_representative_deterministic_regardless_of_graph_buil
     # sorted(comp)` line in scan_import_cycles) -- the representative must agree regardless of
     # which insertion order produced the SCC.
     assert sorted(forward_scc[0])[0] == sorted(reverse_scc[0])[0] == "a"
+
+
+def test_threshold_below_documented_result_reads_a_comma_grouped_number_whole(tmp_path: Path):
+    """A docstring saying "7,297 of 12,121" documents 7,297 - not 297.
+
+    The leading word boundary matched only the LAST group, so the claim was read as 297 and every message
+    quoted that. The reported number is what a reader checks the finding against, so a wrong one sends them
+    looking for a gate that does not exist.
+
+    This does NOT assert the finding disappears, and that is deliberate: the scanner pairs a documented count
+    with any `>=` in the same function without knowing whether the two measure the same quantity, so a
+    docstring about 7,297 priors beside an assertion about 2 classes per entry still reports. That is a
+    separate limitation of the heuristic, and papering over it here by asserting an empty list would hide it.
+    """
+    _write(
+        tmp_path,
+        "test_grouped.py",
+        '''
+def test_most_priors_carry_no_basis():
+    """7,297 of 12,121 stated priors carry no basis at all."""
+    for entry in ([1, 2],):
+        assert len(entry) >= 2
+''',
+    )
+    findings = scan_thresholds_below_documented_result(tmp_path)
+    assert len(findings) == 1, findings
+    assert "documents 7297" in findings[0].detail, findings[0].detail
+    assert "documents 297 " not in findings[0].detail, findings[0].detail
+
+
+def test_threshold_below_documented_result_still_flags_a_grouped_claim_that_is_genuinely_weakened(tmp_path: Path):
+    """The negative control: reading the number whole must not stop the check firing when it should."""
+    _write(
+        tmp_path,
+        "test_grouped_bad.py",
+        '''
+def test_rows_recovered():
+    """1,200 of 1,500 rows recover their source."""
+    recovered = 1200
+    assert recovered >= 900
+''',
+    )
+    findings = scan_thresholds_below_documented_result(tmp_path)
+    assert len(findings) == 1, findings

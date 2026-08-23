@@ -22,7 +22,12 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # Both are cheap because both compare two things already present in the source.
 
 _BARE_DIGITS_RE = re.compile(r"^\(?\\d\+\)?$")
-_NUMBER_CLAIM_RE = re.compile(r"\b(\d+)\s+(?:of|out of)\s+(\d+)\b|\bat least (\d+)\b|\ball (\d+)\b")
+# Digits may be GROUPED - "7,297 of 12,121", "7 297", "7_297". Without allowing the separator the leading
+# \b matched only the last group, so a docstring documenting 7,297 read as documenting 297, and any
+# assertion above 297 then looked like a gate set below its own documented result. Separators are stripped
+# before the int(), so the claim compares as the number a reader actually sees.
+_GROUPED_INT = r"\d{1,3}(?:[,_ ]\d{3})+|\d+"
+_NUMBER_CLAIM_RE = re.compile(rf"\b({_GROUPED_INT})\s+(?:of|out of)\s+({_GROUPED_INT})\b|\bat least ({_GROUPED_INT})\b|\ball ({_GROUPED_INT})\b")
 
 
 def _int_or_float_conversion_nearby(fn: ast.AST, lineno: int, window: int = 3) -> bool:
@@ -106,7 +111,7 @@ def scan_thresholds_below_documented_result(
             match = _NUMBER_CLAIM_RE.search(ast.get_docstring(fn) or "")
             if not match:
                 continue
-            claimed = int(next(g for g in match.groups() if g is not None))
+            claimed = int(re.sub(r"[,_ ]", "", next(g for g in match.groups() if g is not None)))
             for cmp_node in ast.walk(fn):
                 if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
                     continue
