@@ -1977,6 +1977,46 @@ except Exception:
     assert len(parallel) > 0
 
 
+class TestWorkerPoolSizing:
+    """Each worker pays a fixed spawn + import + full-corpus-re-parse cost that does NOT
+    shrink as workers are added, so the pool must be sized off PHYSICAL cores and a minimum
+    batch of scanners per worker -- not off ``os.cpu_count()`` (logical) or the raw scanner
+    count. Sizing it off the logical count measurably made the scan SLOWER (see
+    ``_MIN_SCANNERS_PER_WORKER``'s sweep); these pin the fix so it cannot silently regress."""
+
+    def _workers_for(self, n_scanners: int) -> int:
+        from pyutilz.dev.code_audit.registry import _MIN_SCANNERS_PER_WORKER, _physical_cpu_count
+
+        return max(2, min(_physical_cpu_count(), n_scanners // _MIN_SCANNERS_PER_WORKER))
+
+    def test_physical_count_does_not_exceed_logical(self):
+        import os
+
+        from pyutilz.dev.code_audit.registry import _physical_cpu_count
+
+        physical = _physical_cpu_count()
+        assert physical >= 1
+        assert physical <= (os.cpu_count() or 1), "physical cores cannot exceed logical CPUs"
+
+    def test_worker_count_never_reaches_one_per_scanner(self):
+        """The pre-fix formula was min(len(selected), os.cpu_count()), which on a big machine
+        spawned an interpreter per scanner. Every worker beyond the batch threshold adds a
+        whole corpus re-parse for a shrinking slice of scan work."""
+        for n in (20, 49, 200):
+            assert self._workers_for(n) <= n // 5, f"{n} scanners spawned too many workers"
+
+    def test_worker_count_is_capped_by_physical_cores(self):
+        from pyutilz.dev.code_audit.registry import _physical_cpu_count
+
+        assert self._workers_for(10_000) == _physical_cpu_count()
+
+    def test_small_scanner_sets_still_get_at_least_two_workers(self):
+        """The floor keeps a small-but-parallel run (>= _MIN_SCANNERS_FOR_PARALLEL scanners)
+        from degenerating into a single-worker pool, which would be strictly worse than the
+        sequential path it already opted out of."""
+        assert self._workers_for(4) == 2
+
+
 def test_excluded_dir_ignored(tmp_path: Path):
     bad = tmp_path / "build" / "bad.py"
     bad.parent.mkdir()

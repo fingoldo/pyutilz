@@ -202,6 +202,39 @@ def _run_one(args: tuple[str, Path, frozenset[str]]) -> list[Finding]:
 # calling run_all(checks=["default_via_or"]) stays sequential and instant.
 _MIN_SCANNERS_FOR_PARALLEL = 4
 
+# Each worker pays a FIXED cost that does not shrink as workers are added: a fresh
+# interpreter spawn, `import pyutilz.dev.code_audit`, and a full re-parse of the corpus into
+# that process's own _PARSE_CACHE (workers share no memory). Measured on glossum_backend_
+# scripts' 300-file package: ~1.07s parse + ~0.3s import per worker, against ~45.8s of total
+# scan work. So past a point each extra worker costs more than the slice of scan work it
+# takes off the critical path, and throughput goes DOWN -- confirmed by a worker-count sweep
+# (best-of-2 each, identical 262 findings at every setting):
+#     w=4 22.9s | w=6 15.8s | w=8 12.0s | w=10 11.7s | w=12 12.2s | w=16 14.4s | w=22 13.4s
+# Giving each worker a batch of at least this many scanners keeps it on the flat part of that
+# curve instead of spawning one interpreter per scanner.
+_MIN_SCANNERS_PER_WORKER = 5
+
+
+def _physical_cpu_count() -> int:
+    """Physical cores, falling back to ``os.cpu_count()``.
+
+    ``os.cpu_count()`` reports LOGICAL CPUs (22 on the machine measured above, vs 16 physical).
+    These scanners are CPU-bound pure-Python AST walks that gain nothing from hyperthread
+    siblings, so sizing the pool off the logical count just over-subscribes the physical cores
+    while adding another full corpus re-parse per extra worker.
+    """
+    import os
+
+    try:
+        import psutil
+
+        physical = psutil.cpu_count(logical=False)
+        if physical:
+            return int(physical)
+    except Exception:  # psutil missing or unable to introspect -- fall back, never fail the scan
+        pass
+    return os.cpu_count() or 1
+
 
 def run_all(
     root: Path,
@@ -232,9 +265,11 @@ def run_all(
     out: list[Finding] = []
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
         import concurrent.futures
-        import os
 
-        max_workers = min(len(selected), os.cpu_count() or 1)
+        # See _MIN_SCANNERS_PER_WORKER: cap by physical cores AND by "enough scanners per
+        # worker to amortize its fixed spawn+import+re-parse cost", never by the raw
+        # scanner count (which used to spawn one interpreter per scanner on a big machine).
+        max_workers = max(2, min(_physical_cpu_count(), len(selected) // _MIN_SCANNERS_PER_WORKER))
         with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
             for findings in pool.map(_run_one, [(name, root, exclude_dirs) for name in selected]):
                 out.extend(findings)
