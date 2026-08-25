@@ -392,19 +392,45 @@ def humanize(
         longer be found and is logged (WARNING) and NOT protected -- silent partial protection
         would defeat the whole point of this parameter for a compliance-verification use case.
     """
-    original_snippets = [text[s:e] for s, e in protected_spans]
+    # Snippets are taken in POSITIONAL order and re-located with a forward-only cursor.
+    #
+    # 2026-08-26 BUG FIX. This used to be an unanchored `text.find(snippet)` per snippet, which
+    # returns the FIRST occurrence every time. When two protected spans hold the same substring --
+    # a term the writer used twice, e.g. "PostgreSQL" in two sentences -- both spans remapped onto
+    # the first occurrence, so the first was protected twice and the SECOND was not protected at
+    # all and could be corrupted by typo injection ("PostgreAQL"). It surfaced as a ~10%-flaky test
+    # in the caller (`realtime_applications`, whose own protection loop is a correct `finditer`)
+    # and would otherwise have shipped a mangled technical term to a real client, at random.
+    #
+    # Sorting first because the caller's spans need not arrive in order; the cursor then guarantees
+    # each occurrence is claimed at most once. Cleaning never reorders text, so positional order in
+    # the original is positional order in the cleaned text.
+    ordered = sorted((s, e) for s, e in protected_spans if e > s)
+    original_snippets = [text[s:e] for s, e in ordered]
     text = strip_ai_patterns(text)
     text = fix_dashes(text)
     text = strip_emojis(text)
     remapped_spans: list[tuple[int, int]] = []
+    lost: list[str] = []
+    cursor = 0
     for snippet in original_snippets:
         if not snippet:
             continue
-        idx = text.find(snippet)
+        idx = text.find(snippet, cursor)
         if idx == -1:
-            logger.warning("humanize(): protected span content %r not found after cleaning -- not protected from typo injection.", snippet[:60])
+            # Fall back to a global search before giving up: a cleaning stage that DELETED an
+            # earlier protected span would otherwise push the cursor past a later one that is still
+            # present, turning one lost span into every subsequent span being lost too.
+            idx = text.find(snippet)
+        if idx == -1:
+            lost.append(snippet[:60])
             continue
         remapped_spans.append((idx, idx + len(snippet)))
+        cursor = idx + len(snippet)
+    # Reported once, after the loop, rather than once per miss: a caller that passes many spans
+    # through a stage that rewrites all of them would otherwise emit one warning line each.
+    if lost:
+        logger.warning("humanize(): %d protected span(s) not found after cleaning -- NOT protected from typo injection: %s", len(lost), lost)
     if typo_count > 0:
         text = introduce_typos(text, count=typo_count, rng=rng, protected_spans=remapped_spans)
     return text

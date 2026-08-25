@@ -1,5 +1,6 @@
 """Tests for pyutilz.text.humanizer."""
 
+import re
 import random
 
 from pyutilz.text.humanizer import (
@@ -316,6 +317,41 @@ class TestHumanize:
         text = "ABRACADABRA ;-) I am a skilled developer."
         result = humanize(text, typo_count=3, rng=random.Random(42), protected_spans=[(0, 15)])
         assert result.startswith("ABRACADABRA ;-)")
+
+    def test_a_repeated_protected_term_is_protected_at_every_occurrence(self):
+        """2026-08-26 regression. Remapping used an unanchored `text.find(snippet)`, which returns
+        the FIRST occurrence every time -- so two spans holding the same substring both landed on
+        occurrence one, leaving occurrence two unprotected and corruptible.
+
+        Found as a ~10%-flaky test in a caller that generates client-facing text: the second
+        "PostgreSQL" came back as "PostgreAQL". Swept over seeds rather than pinned to one, because
+        a single lucky seed is exactly how the bug survived in the first place.
+        """
+        text = "I use PostgreSQL daily. My PostgreSQL expertise spans 5 years."
+        spans = [(m.start(), m.end()) for m in re.finditer("PostgreSQL", text)]
+        assert len(spans) == 2
+        for seed in range(200):
+            result = humanize(text, typo_count=3, rng=random.Random(seed), protected_spans=spans)
+            assert result.count("PostgreSQL") == 2, f"seed {seed} corrupted an occurrence: {result!r}"
+
+    def test_spans_are_remapped_in_positional_order_not_argument_order(self):
+        """The caller's spans need not arrive sorted, and the forward-only cursor would otherwise
+        claim the wrong occurrence for an out-of-order pair."""
+        text = "alpha KEEPME beta KEEPME gamma delta epsilon zeta eta theta"
+        spans = [(m.start(), m.end()) for m in re.finditer("KEEPME", text)]
+        for seed in range(50):
+            result = humanize(text, typo_count=3, rng=random.Random(seed), protected_spans=list(reversed(spans)))
+            assert result.count("KEEPME") == 2, f"seed {seed}: {result!r}"
+
+    def test_a_span_lost_to_cleaning_does_not_cost_the_spans_after_it(self):
+        """A cleaning stage that DELETES an earlier protected span must not push the cursor past a
+        later one that is still present."""
+        text = "Let's leverage KEEPME to deliver KEEPME results for the whole team here."
+        spans = [(text.index("leverage"), text.index("leverage") + len("leverage"))]
+        spans += [(m.start(), m.end()) for m in re.finditer("KEEPME", text)]
+        for seed in range(50):
+            result = humanize(text, typo_count=3, rng=random.Random(seed), protected_spans=spans)
+            assert result.count("KEEPME") == 2, f"seed {seed}: {result!r}"
 
     def test_no_typos_mode(self):
         text = "A simple test sentence with nothing special."
