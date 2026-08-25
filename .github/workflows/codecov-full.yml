@@ -1,0 +1,133 @@
+name: codecov-full
+
+# ci.yml's "codecov" badge and numba-coverage.yml's "codecov-numba" badge measure overlapping,
+# not disjoint, slices of the same codebase (ci.yml runs the whole suite under normal JIT, where
+# every @njit body is invisible to coverage.py; numba-coverage.yml re-runs a NARROWER subset --
+# test_numbalib.py/test_similarity.py/stats/test_normality.py/performance/kernel_tuning/ -- under
+# NUMBA_DISABLE_JIT=1 specifically to see inside those bodies). Their percentages cannot be added
+# together to get a combined figure. This job downloads both jobs' raw `.coverage` data, merges
+# them with `coverage combine` (a line counts as covered if EITHER run executed it), and uploads
+# the result to Codecov under its own `combined` flag -- the `codecov-full` badge. Mirrors
+# mlframe's identical codecov-full.yml.
+#
+# Auto-fires on completion of numba-coverage-nightly (chaining CI -> numba-coverage-nightly ->
+# this job). This job carries CODECOV_TOKEN, so the workflow_run trigger is gated (job-level
+# `if:`, not just the `on:` filter) on BOTH conclusion == 'success' AND event == 'push' -- the
+# latter can't be forged by an external fork PR (GitHub sets it server-side from what actually
+# triggered the upstream workflow), so it collapses the trigger to "a real push to master
+# happened", the same trust boundary a direct push already requires. Mirrors the identical
+# mitigation on numba-coverage.yml's own workflow_run trigger (see that file + zizmor.yml's
+# dangerous-triggers ignore comment for the fuller writeup). The daily cron stays as a fallback.
+#
+# Falls back to the latest successful ci.yml run on master for the OTHER side's data, which need
+# not be the exact same commit as the nightly's -- acceptable drift for a coverage trend badge,
+# not a per-commit gate.
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_run:
+    workflows: ["numba-coverage-nightly"]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  merge-and-upload:
+    name: Merge ci.yml + numba-coverage.yml raw coverage, upload combined flag
+    runs-on: ubuntu-latest
+    # workflow_run fires on EVERY completion of numba-coverage-nightly regardless of outcome --
+    # only chain off a genuinely green run, and only one that itself started from a real push
+    # (see the on: block comment above for the full security writeup).
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install coverage
+        run: pip install "coverage[toml]>=7.0"
+
+      - name: Find the latest completed numba-coverage-nightly run
+        id: find_numba_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_id=$(gh run list --repo "${{ github.repository }}" --workflow numba-coverage.yml \
+            --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          if [ -z "$run_id" ]; then
+            echo "No completed numba-coverage-nightly run found."
+          fi
+
+      - name: Download numba-coverage-nightly's raw data
+        if: steps.find_numba_run.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: raw-coverage-numba
+          path: raw-coverage/numba
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_numba_run.outputs.run_id }}
+          repository: ${{ github.repository }}
+
+      - name: Find the latest completed ci.yml run on master
+        id: find_ci_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --status completed (any conclusion), not --status success: the raw-coverage-ci
+          # artifact only exists if the 3.11 leg's own "Upload raw coverage data" step ran
+          # (success-or-failure), so a run where some OTHER version's leg failed still
+          # contributes real, valid data.
+          run_id=$(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch master \
+            --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ]; then
+            echo "No completed ci.yml run found on master -- skipping the combined upload this time."
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download ci.yml's raw data
+        if: steps.find_ci_run.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: raw-coverage-ci
+          path: raw-coverage/ci
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.find_ci_run.outputs.run_id }}
+          repository: ${{ github.repository }}
+
+      - name: Combine and render the merged report
+        run: |
+          find raw-coverage -name '.coverage' | sort
+          mkdir -p combined_input
+          i=0
+          while IFS= read -r -d '' f; do
+            i=$((i + 1))
+            cp "$f" "combined_input/.coverage.shard$i"
+          done < <(find raw-coverage -name '.coverage' -print0)
+          if [ "$i" -eq 0 ]; then
+            echo "No raw coverage data downloaded from either workflow -- nothing to combine."
+            exit 1
+          fi
+          echo "Combining $i data file(s)"
+          coverage combine combined_input
+          coverage xml -o coverage-full.xml
+          coverage report
+
+      - name: Upload combined coverage to Codecov
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
+        with:
+          files: ./coverage-full.xml
+          flags: combined
+          token: ${{ secrets.CODECOV_TOKEN }}

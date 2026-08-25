@@ -83,6 +83,24 @@ jobs:
         files: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
 
+    # Raw sqlite `.coverage` (not the derived coverage.xml above) so codecov-full.yml can
+    # `coverage combine` this run's data with numba-coverage-nightly's into one genuinely unioned
+    # line-coverage report -- summing the two flags' already-published percentages double-counts
+    # every line both jobs happen to exercise, which is most of the codebase (mirrors mlframe's
+    # identical codecov-full.yml). `.coverage` is a dotfile -- upload-artifact needs
+    # include-hidden-files to pick it up. Only the 3.11 leg (same one Codecov itself gets, and the
+    # only version numba-coverage.yml runs) contributes; a different version's coverage.py
+    # database format/line-numbering context isn't guaranteed compatible for `coverage combine`.
+    - name: Upload raw coverage data (for the cross-workflow merged report)
+      if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest' && (success() || failure())
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      with:
+        name: raw-coverage-ci
+        path: .coverage
+        retention-days: 3
+        include-hidden-files: true
+        if-no-files-found: ignore
+
   # Blocking gate + two lint bundles, all extracted to fingoldo/py-ci-shared reusable workflows
   # (2026-07-09) since their logic is identical across mlframe/pyutilz -- see
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.

@@ -87,6 +87,19 @@ jobs:
           name: coverage-numba-disabled
           path: coverage.xml
 
+      # Raw sqlite `.coverage` (not the coverage.xml above) so codecov-full.yml can `coverage
+      # combine` this run's data with ci.yml's -- see that file's own comment for the full
+      # rationale. Mirrors mlframe's identical raw-coverage-numba upload.
+      - name: Upload raw coverage data (for the cross-workflow merged report)
+        if: success() || failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: raw-coverage-numba
+          path: .coverage
+          retention-days: 3
+          include-hidden-files: true
+          if-no-files-found: ignore
+
       - name: Upload coverage to Codecov (numba-disabled flag)
         uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
         if: success()

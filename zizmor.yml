@@ -17,6 +17,7 @@ rules:
   dangerous-triggers:
     ignore:
       - numba-coverage.yml
+      - codecov-full.yml
   unpinned-uses:
     config:
       policies:
