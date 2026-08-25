@@ -6091,3 +6091,37 @@ def test_an_excluded_name_BELOW_the_scan_root_is_still_skipped(tmp_path: Path):
     (inner / "mod.py").write_text("def obviously_dead_helper(x):\n    return x\n", encoding="utf-8")
 
     assert not [f for f in scan_dead_public_callables(tmp_path) if "obviously_dead_helper" in f.detail]
+
+
+def test_every_tree_walking_scanner_agrees_between_a_relative_and_absolute_root(tmp_path: Path):
+    """A scan must not depend on how its root was spelled.
+
+    `_iter_py_files` was fixed first, and two scanners turned out to carry their OWN copy of the
+    exclude check against the absolute path - so the same tree scanned as `Path("tests")` and as
+    `Path("tests").resolve()` gave different answers whenever the checkout sat under an excluded
+    ancestor. Both are routed through `_is_excluded` now; this pins that they cannot drift apart again.
+    """
+    import os
+
+    from pyutilz.dev.code_audit import scan_import_cycles, scan_redundant_test_fit_calls
+
+    pkg = tmp_path / ".claude" / "worktrees" / "agent-1" / "proj"
+    (pkg / "tests").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "tests" / "test_thing.py").write_text(
+        "from functools import lru_cache\n\n\n"
+        "@lru_cache\ndef fit(a):\n    return a\n\n\n"
+        "def test_one():\n    assert fit(1) == 1\n\n\n"
+        "def test_two():\n    assert fit(1) == 1\n",
+        encoding="utf-8",
+    )
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(pkg)
+        for scan, args in ((scan_redundant_test_fit_calls, (Path("tests"),)), (scan_import_cycles, (Path("."), "proj"))):
+            relative = len(list(scan(*args)))
+            absolute = len(list(scan(args[0].resolve(), *args[1:])))
+            assert relative == absolute, f"{scan.__name__} saw {relative} findings via a relative root and {absolute} via an absolute one"
+    finally:
+        os.chdir(cwd)

@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import FrozenSet
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _is_excluded
 
 # --- internal import-graph cycle detection ----------------------------------
 
@@ -65,7 +65,7 @@ def _build_graph(root: Path, package_name: str, exclude_dirs: FrozenSet[str]) ->
     """``{module_name: set_of_imported_internal_module_names}``."""
     graph: dict = defaultdict(set)
     for py in root.rglob("*.py"):
-        if any(part in exclude_dirs for part in py.parts):
+        if _is_excluded(py, root, exclude_dirs):
             continue
         tree = _safe_parse(py)
         if tree is None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _line_text, _is_excluded
 
 # --- redundant test computation (expensive fit re-run across test functions) -----
 #
@@ -84,7 +84,7 @@ def scan_redundant_test_fit_calls(
     for py in root.rglob("*.py"):
         if not py.is_file():
             continue
-        if any(part in exclude_dirs for part in py.parts):
+        if _is_excluded(py, root, exclude_dirs):
             continue
         if not (py.name.startswith("test_") or py.name.endswith("_test.py")):
             continue
