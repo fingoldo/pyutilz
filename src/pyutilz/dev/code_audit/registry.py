@@ -53,6 +53,9 @@ from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_f
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
 from .domain_boundary import scan_domain_vocabulary_leak
 from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 from .bare_except import scan_bare_except
 from .console_unicode import scan_console_unicode
 from .mojibake import scan_mojibake
@@ -158,6 +161,9 @@ register_scanner("mojibake", scan_mojibake)
 register_scanner("resource_handle_safety", scan_resource_handle_safety)
 register_scanner("todo_hygiene", scan_todo_hygiene)
 register_scanner("import_cycle", scan_import_cycles)
+register_scanner("hardcoded_absolute_path_in_test", scan_hardcoded_absolute_path_in_test)
+register_scanner("async_primitive_reinit_per_call", scan_async_primitive_reinit_per_call)
+register_scanner("llm_call_missing_max_tokens_cap", scan_llm_call_missing_max_tokens_cap)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a

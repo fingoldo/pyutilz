@@ -491,6 +491,9 @@ from .mojibake import scan_mojibake
 from .resource_handle_safety import scan_resource_handle_safety
 from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
+from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+from .async_primitive_reinit import scan_async_primitive_reinit_per_call
+from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
 from .field_text_agreement import (
     AGREE,
     CONTRADICT,
@@ -580,6 +583,9 @@ __all__ = [
     "scan_resource_handle_safety",
     "scan_todo_hygiene",
     "scan_import_cycles",
+    "scan_hardcoded_absolute_path_in_test",
+    "scan_async_primitive_reinit_per_call",
+    "scan_llm_call_missing_max_tokens_cap",
     # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
     "AGREE",
     "CONTRADICT",
@@ -618,6 +624,7 @@ for _submod in (
     "domain_boundary", "readonly_to_numpy_mutation",
     "bare_except", "console_unicode", "mojibake", "resource_handle_safety",
     "todo_hygiene", "import_cycles",
+    "hardcoded_test_path", "async_primitive_reinit", "llm_max_tokens_cap",
 ):
     globals().pop(_submod, None)
 del _submod

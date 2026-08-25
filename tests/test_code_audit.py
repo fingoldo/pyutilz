@@ -72,6 +72,9 @@ from pyutilz.dev.code_audit import (
     scan_inconsistent_filter,
     scan_regex_integer_parse,
     scan_thresholds_below_documented_result,
+    scan_hardcoded_absolute_path_in_test,
+    scan_async_primitive_reinit_per_call,
+    scan_llm_call_missing_max_tokens_cap,
 )
 
 
@@ -5791,3 +5794,271 @@ def test_rows_recovered():
     )
     findings = scan_thresholds_below_documented_result(tmp_path)
     assert len(findings) == 1, findings
+
+
+# ---- hardcoded_absolute_path_in_test -------------------------------------
+
+
+def test_hardcoded_absolute_path_windows_drive_letter_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture():
+    p = "D:\\\\Machine Learning\\\\data.csv"
+    assert p
+''')
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "hardcoded_absolute_path_in_test"
+    assert findings[0].severity == "P2"
+
+
+def test_hardcoded_absolute_path_posix_home_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture():
+    p = "/home/alice/data.csv"
+    assert p
+''')
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+
+
+def test_hardcoded_absolute_path_macos_users_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture():
+    p = "/Users/bob/data.csv"
+    assert p
+''')
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+
+
+def test_hardcoded_absolute_path_root_flagged(tmp_path: Path):
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture():
+    p = "/root/data.csv"
+    assert p
+''')
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+
+
+def test_hardcoded_absolute_path_ignores_non_test_file(tmp_path: Path):
+    """The same literal in a non-test module is not flagged -- only test files are scanned."""
+    _write(tmp_path, "helper.py", '''
+def get_default_path():
+    return "D:\\\\Machine Learning\\\\data.csv"
+''')
+    assert scan_hardcoded_absolute_path_in_test(tmp_path) == []
+
+
+def test_hardcoded_absolute_path_tmp_var_rooted_is_clean(tmp_path: Path):
+    """A /tmp/-rooted or /var/-rooted literal is common/portable and NOT flagged."""
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture():
+    p = "/tmp/scratch/data.csv"
+    assert p
+''')
+    assert scan_hardcoded_absolute_path_in_test(tmp_path) == []
+
+
+def test_hardcoded_absolute_path_tmp_path_fixture_is_clean(tmp_path: Path):
+    """The correct pattern (tmp_path/Path(__file__).parent-derived) is never flagged."""
+    _write(tmp_path, "test_thing.py", '''
+def test_uses_fixture(tmp_path):
+    p = tmp_path / "data.csv"
+    assert p
+''')
+    assert scan_hardcoded_absolute_path_in_test(tmp_path) == []
+
+
+def test_hardcoded_absolute_path_detects_by_tests_directory(tmp_path: Path):
+    """A file under a 'tests' directory is scanned even without a test_/​_test.py name."""
+    sub = tmp_path / "tests"
+    sub.mkdir()
+    _write(sub, "fixtures.py", '''
+DATA_PATH = "C:/Users/carol/fixture.csv"
+''')
+    findings = scan_hardcoded_absolute_path_in_test(tmp_path)
+    assert len(findings) == 1
+
+
+# ---- async_primitive_reinit_per_call --------------------------------------
+
+
+def test_async_primitive_reinit_lock_inside_function_flagged(tmp_path: Path):
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def handle():
+    lock = asyncio.Lock()
+    async with lock:
+        pass
+''')
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "async_primitive_reinit_per_call"
+    assert findings[0].severity == "P1"
+
+
+def test_async_primitive_reinit_semaphore_default_arg_flagged(tmp_path: Path):
+    """A primitive constructed as a default-argument expression inside the function body is also flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def handle():
+    sem = asyncio.Semaphore(3)
+    async with sem:
+        pass
+''')
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert len(findings) == 1
+
+
+def test_async_primitive_reinit_module_scope_is_clean(tmp_path: Path):
+    """A primitive created at module scope (the correct pattern) is not flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+_LOCK = asyncio.Lock()
+
+async def handle():
+    async with _LOCK:
+        pass
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_init_attribute_is_clean(tmp_path: Path):
+    """A primitive assigned to self in __init__ (created once per instance, shared across calls) is not flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+class Worker:
+    def __init__(self):
+        self._lock = asyncio.Lock()
+
+    async def handle(self):
+        async with self._lock:
+            pass
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_global_lazy_singleton_is_clean(tmp_path: Path):
+    """The global-declared lazy-module-singleton idiom is the safe shared-instance case."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+_sem = None
+
+async def get_sem():
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(5)
+    return _sem
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_non_primitive_call_is_clean(tmp_path: Path):
+    """An asyncio call that is NOT one of the coordination primitives (e.g. asyncio.sleep) is not flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def handle():
+    await asyncio.sleep(0.1)
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_custom_primitive_names(tmp_path: Path):
+    """The primitive_names parameter can narrow/widen which asyncio.* constructors are tracked."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def handle():
+    lock = asyncio.Lock()
+    async with lock:
+        pass
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path, primitive_names=frozenset({"Event"})) == []
+
+
+# ---- llm_call_missing_max_tokens_cap ---------------------------------------
+
+
+def test_llm_max_tokens_cap_missing_kwarg_flagged(tmp_path: Path):
+    _write(tmp_path, "mod.py", '''
+provider = get_llm_provider("anthropic")
+provider.generate("hello")
+''')
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].check == "llm_call_missing_max_tokens_cap"
+    assert findings[0].severity == "P2"
+
+
+def test_llm_max_tokens_cap_zero_literal_flagged(tmp_path: Path):
+    """An explicit max_tokens=0 is the same as omitting it -- still flagged."""
+    _write(tmp_path, "mod.py", '''
+provider = get_llm_provider("anthropic")
+provider.generate("hello", max_tokens=0)
+''')
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 1
+
+
+def test_llm_max_tokens_cap_generate_json_and_generate_batch_flagged(tmp_path: Path):
+    """generate_json and generate_batch are also tracked capped methods."""
+    _write(tmp_path, "mod.py", '''
+provider = get_llm_provider("anthropic")
+provider.generate_json("hello")
+provider.generate_batch(["a", "b"])
+''')
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 2
+
+
+def test_llm_max_tokens_cap_explicit_nonzero_is_clean(tmp_path: Path):
+    _write(tmp_path, "mod.py", '''
+provider = get_llm_provider("anthropic")
+provider.generate("hello", max_tokens=2000)
+''')
+    assert scan_llm_call_missing_max_tokens_cap(tmp_path) == []
+
+
+def test_llm_max_tokens_cap_non_provider_variable_is_clean(tmp_path: Path):
+    """A .generate(...) call on a variable NOT assigned from get_llm_provider(...) is not tracked."""
+    _write(tmp_path, "mod.py", '''
+other = SomeUnrelatedClass()
+other.generate("hello")
+''')
+    assert scan_llm_call_missing_max_tokens_cap(tmp_path) == []
+
+
+def test_llm_max_tokens_cap_no_provider_in_module_short_circuits(tmp_path: Path):
+    """A module with no get_llm_provider(...) assignment at all is skipped entirely (cheap early-out)."""
+    _write(tmp_path, "mod.py", '''
+def f():
+    return 1
+''')
+    assert scan_llm_call_missing_max_tokens_cap(tmp_path) == []
+
+
+# ---- __main__ module-execution guard ---------------------------------------
+
+
+def test_dunder_main_module_execution_delegates_to_cli_main(tmp_path: Path):
+    """``python -m pyutilz.dev.code_audit <root>`` runs the ``if __name__ == '__main__'`` guard in
+    __main__.py, which only executes under real module execution (never when pytest imports the
+    module normally) -- exercised here via a real subprocess."""
+    import subprocess
+    import sys
+
+    _write(tmp_path, "ok.py", "def f(x=None):\n    return x\n")
+    result = subprocess.run(  # nosec B603 -- fixed local argv, no shell, no untrusted input
+        [sys.executable, "-m", "pyutilz.dev.code_audit", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
