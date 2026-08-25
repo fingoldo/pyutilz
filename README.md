@@ -5,7 +5,6 @@
 [![Black](https://github.com/fingoldo/pyutilz/workflows/Black/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
 [![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
 [![codecov-numba](https://img.shields.io/codecov/c/github/fingoldo/pyutilz?flag=numba-disabled&label=codecov-numba)](https://codecov.io/gh/fingoldo/pyutilz/flags)
-[![numba coverage](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/numba-coverage.yml)
 [![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
