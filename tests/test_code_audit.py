@@ -6062,3 +6062,32 @@ def test_dunder_main_module_execution_delegates_to_cli_main(tmp_path: Path):
         timeout=60,
     )
     assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+# ---- exclude_dirs must judge the path BELOW the root, never the root's own ancestors --------
+
+
+def test_an_excluded_name_ABOVE_the_scan_root_does_not_silence_the_scan(tmp_path: Path):
+    """A scan root living inside a directory named in ``exclude_dirs`` must still be scanned.
+
+    The check used to match ``exclude_dirs`` against the ABSOLUTE path's components, so every file
+    under a checkout at ``.../.claude/worktrees/<agent>/`` matched on the ancestor ``.claude`` and
+    the scan returned nothing at all - for a whole package, silently, with every audit built on it
+    passing vacuously. That is where Claude Code agent worktrees live, and the same trap sits one
+    directory away for any project under ``build/``, ``dist/``, ``env/`` or ``venv/``.
+    """
+    buried = tmp_path / ".claude" / "worktrees" / "agent-1" / "pkg"
+    buried.mkdir(parents=True)
+    (buried / "mod.py").write_text("def obviously_dead_helper(x):\n    return x\n", encoding="utf-8")
+
+    findings = scan_dead_public_callables(buried)
+    assert [f.detail for f in findings if "obviously_dead_helper" in f.detail], "a root under a `.claude` ancestor was scanned as if empty"
+
+
+def test_an_excluded_name_BELOW_the_scan_root_is_still_skipped(tmp_path: Path):
+    """The negative control: the exclusion itself must keep working for real build/cache dirs."""
+    inner = tmp_path / "__pycache__"
+    inner.mkdir()
+    (inner / "mod.py").write_text("def obviously_dead_helper(x):\n    return x\n", encoding="utf-8")
+
+    assert not [f for f in scan_dead_public_callables(tmp_path) if "obviously_dead_helper" in f.detail]

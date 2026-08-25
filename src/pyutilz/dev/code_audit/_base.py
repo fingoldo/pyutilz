@@ -69,7 +69,8 @@ _DEFAULT_EXCLUDE_DIRS = frozenset({
 
 def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
     """Yield every ``.py`` file under ``root`` in a stable, sorted-by-path order, skipping
-    files that have any path component matching ``exclude_dirs``.
+    files whose path BELOW ``root`` has a component matching ``exclude_dirs``. Where the root
+    itself lives is never a reason to skip anything - see the comment on the check below.
 
     ``Path.rglob`` iteration order is filesystem-dependent (not guaranteed, and differs
     between platforms/filesystems in practice) -- scanners that compare files pairwise
@@ -79,11 +80,20 @@ def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
     reproducible findings and any test asserting on which file a finding names.
     """
     candidates = []
+    root_resolved = root.resolve()
     for p in root.rglob("*"):
         if p.suffix not in _PY_EXTS or not p.is_file():
             continue
-        # Skip if any parent name matches an excluded dir.
-        if any(part in exclude_dirs for part in p.parts):
+        # Match against the path BELOW `root` only. Matching the absolute path's parts let any ANCESTOR of
+        # the scan root silence the entire scan: a checkout living under `.claude/worktrees/<agent>/` (where
+        # every Claude Code agent worktree lives) excluded every file in it, so `scan_dead_public_callables`
+        # returned zero findings for a whole package and every audit built on it passed vacuously. The same
+        # trap is one directory away for anyone whose project sits under `build/`, `dist/`, `env/` or `venv/`.
+        try:
+            relative = p.resolve().relative_to(root_resolved)
+        except ValueError:  # a symlink pointing outside the tree - judge it by its own path, as before
+            relative = p
+        if any(part in exclude_dirs for part in relative.parts):
             continue
         candidates.append(p)
     candidates.sort(key=lambda p: p.as_posix())
