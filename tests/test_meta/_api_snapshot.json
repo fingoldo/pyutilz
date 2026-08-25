@@ -48,7 +48,7 @@
     },
     "dashlib": {
       "AG_GRID_LOCALE_RU": "value",
-      "create_tabs": "callable(tabsName:any:0:, tabsList:any:0:, draw_tab_content_function:any:0:, content:any:1:'', prefix:any:1:'tab', roles_separator:any:1:',', tabsClassName:any:1:None, contentClassName:any:1:None, activeLabelClassName:any:1:None, use_cardstyle:any:1:False)",
+      "create_tabs": "callable(tabsName:any:0:, tabsList:any:0:, draw_tab_content_function:any:0:, content:any:1:'', prefix:any:1:'tab', roles_separator:any:1:',', tabsClassName:any:1:None, contentClassName:any:1:None, activeLabelClassName:any:1:None, use_cardstyle:any:1:False, show_loading:any:1:True)",
       "get_active_tab_var_name": "callable(tabsName:any:0:, prefix:any:1:'tab')",
       "logger": "value",
       "session": "callable<no-signature>"

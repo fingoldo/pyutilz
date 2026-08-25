@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 from flask import session
 
-from dash import html
+from dash import html, dcc
+from dash.development.base_component import Component
 import dash_bootstrap_components as dbc
 from typing import Optional
 
@@ -294,10 +295,16 @@ def create_tabs(
     contentClassName: Optional[str] = None,
     activeLabelClassName: Optional[str] = None,
     use_cardstyle: bool = False,
+    show_loading: bool = True,
 ):
     """
     Used for easy creation of tabs in Dash, including nested tabs.
     Expected tabs format: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)
+
+    show_loading wraps the content area in a dcc.Loading overlay (default on). The tab header
+    switches instantly on click since that is client-side, while the body waits on the callback --
+    without the overlay a slow tab shows the PREVIOUS tab's content under the new tab's header,
+    which reads as finished rather than pending. Pass False to opt out.
     """
     # print('In create_tabs of %s' % tabsName)
     # user starts unauthenticated (None), not just unassigned: if flask_login is absent (or
@@ -364,7 +371,19 @@ def create_tabs(
 
     if len(tabs) > 0:
         header = dbc.Tabs(tabs, id=prefix + "s" + tabsName, active_tab=active_tab, className=tabsClassName)  # , card=use_cardstyle : deprecated
-        body = html.Div(draw_tab_content_function(active_tab), id=prefix + "s" + tabsName + "Content")
+        content_div = html.Div(draw_tab_content_function(active_tab), id=prefix + "s" + tabsName + "Content")
+        # 2026-08-25: the tab HEADER switches the instant it is clicked, because that is pure
+        # client-side state, while the body waits on the callback -- which can be seconds when a tab
+        # queries a large database. The user is shown a tab that has visibly switched while still
+        # displaying the PREVIOUS tab's content, which reads as "this is the new tab and it looks
+        # like the old one" rather than "still loading".
+        #
+        # dcc.Loading must WRAP the component whose children the callback replaces, so it goes here
+        # rather than around the returned content -- by the time the content exists, the wait is over.
+        #
+        # delay_show suppresses the spinner for callbacks that finish quickly, so tabs that are
+        # already fast do not gain a distracting flash.
+        body: Component = dcc.Loading(content_div, delay_show=250, overlay_style={"visibility": "visible", "opacity": 0.45}) if show_loading else content_div
         if use_cardstyle:
             data = dbc.Card([dbc.CardHeader(header, className="pt-0"), dbc.CardBody(body, className="px-2 py-0")], className="p-0")
         else:
