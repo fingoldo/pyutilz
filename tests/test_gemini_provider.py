@@ -8,8 +8,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyutilz.llm.gemini_provider as gemini_provider_module
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm.gemini_provider import GeminiProvider, _is_retryable_genai_error
+
+
+@pytest.fixture(autouse=True)
+def _ensure_genai_types_available():
+    """``types`` (``from google.genai import types``) is a module-level global set to None when
+    GENAI_AVAILABLE is False -- e.g. on any CI leg without the real google-genai package
+    installed. ``generate()`` calls ``types.GenerateContentConfig(...)`` unconditionally, so
+    every test exercising it needs a real (or mocked) ``types`` regardless of whether the actual
+    optional dependency is present. Individual tests that patch ``types`` themselves for a
+    stricter assertion (e.g. checking constructor kwargs) simply nest their own patch inside
+    this one -- harmless, not a conflict."""
+    if gemini_provider_module.types is not None:
+        yield
+        return
+    with patch("pyutilz.llm.gemini_provider.types", MagicMock()):
+        yield
 
 
 def _make_provider(**overrides):
