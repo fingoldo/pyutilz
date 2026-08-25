@@ -13,9 +13,16 @@ from pyutilz.llm.gemini_provider import GeminiProvider, _is_retryable_genai_erro
 
 
 def _make_provider(**overrides):
+    # GENAI_AVAILABLE is a module-level flag set once at import time from whether the real
+    # google-genai package was importable -- False on any CI leg where it's not installed
+    # (e.g. an unsupported Python version). Patched True here so these tests exercise
+    # GeminiProvider's own logic via a mocked `genai` client regardless of whether the real
+    # optional dependency is present in this environment.
     mock_settings = MagicMock()
     mock_settings.gemini_api_key = None
-    with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.genai") as mock_genai:
+    with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True), patch(
+        "pyutilz.llm.gemini_provider.genai"
+    ) as mock_genai:
         mock_genai.Client.return_value = MagicMock()
         p = GeminiProvider(api_key="test-key", **overrides)  # pragma: allowlist secret -- test placeholder, not a real credential
     return p
@@ -25,7 +32,7 @@ class TestInitAndConfig:
     def test_missing_api_key_raises(self):
         mock_settings = MagicMock()
         mock_settings.gemini_api_key = None
-        with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings):
+        with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
             with pytest.raises(ValueError, match="API key not provided"):
                 GeminiProvider(api_key=None)
 
@@ -70,22 +77,22 @@ class TestIsRetryableGenaiError:
         assert _is_retryable_genai_error(ConnectionError("x")) is False
 
     def test_server_error_always_retryable(self):
-        from google.genai.errors import ServerError
+        errors = pytest.importorskip("google.genai.errors")
 
-        err = ServerError.__new__(ServerError)
+        err = errors.ServerError.__new__(errors.ServerError)
         assert _is_retryable_genai_error(err) is True
 
     def test_client_error_429_retryable(self):
-        from google.genai.errors import ClientError
+        errors = pytest.importorskip("google.genai.errors")
 
-        err = ClientError.__new__(ClientError)
+        err = errors.ClientError.__new__(errors.ClientError)
         err.code = 429
         assert _is_retryable_genai_error(err) is True
 
     def test_client_error_400_not_retryable(self):
-        from google.genai.errors import ClientError
+        errors = pytest.importorskip("google.genai.errors")
 
-        err = ClientError.__new__(ClientError)
+        err = errors.ClientError.__new__(errors.ClientError)
         err.code = 400
         assert _is_retryable_genai_error(err) is False
 
