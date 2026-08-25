@@ -11,6 +11,14 @@ name: numba-coverage-nightly
 on:
   schedule:
     - cron: "0 4 * * *"
+  # Auto-fires on every completed run of the main CI workflow on master -- kept alongside the
+  # nightly cron as a fallback. Unlike mlframe's numba-coverage-nightly (5-8h, 8-way sharded, has
+  # its own documented Actions-minutes-budget incident), this job is a single ~1-4min job, so
+  # firing it after every CI-triggering push carries negligible minutes risk.
+  workflow_run:
+    workflows: ["CI"]
+    branches: [master]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +32,14 @@ jobs:
   numba-disabled-coverage:
     name: pytest with NUMBA_DISABLE_JIT=1 (kernel-body coverage)
     runs-on: ubuntu-latest
+    # workflow_run fires on EVERY completion of the CI workflow regardless of outcome -- only
+    # chain off a genuinely green main CI run, not a red one. Also gated on
+    # workflow_run.event == 'push': this repo is public and CI also triggers on pull_request, so
+    # an unfiltered workflow_run would let an external fork's PR trigger this job with
+    # checkout/write access to the base repo (the classic "pwn request" pattern -- zizmor's
+    # dangerous-triggers audit flags bare workflow_run for exactly this). A push to master
+    # already requires write access, so this leg is no more exposed than schedule/dispatch.
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     timeout-minutes: 30
     env:
       NUMBA_DISABLE_JIT: "1"
@@ -33,6 +49,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0

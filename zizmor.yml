@@ -10,6 +10,13 @@
 # every satellite on each py-ci-shared release (see py-ci-shared's
 # README, "Using the reusable workflows").
 rules:
+  # dangerous-triggers: numba-coverage.yml's workflow_run is gated (job-level `if:`) on both
+  # conclusion == 'success' AND event == 'push' -- a push to master already requires write
+  # access, so this leg is no more exposed than the schedule/workflow_dispatch triggers it sits
+  # alongside. zizmor's static check can't see that job-level condition, hence the ignore.
+  dangerous-triggers:
+    ignore:
+      - numba-coverage.yml
   unpinned-uses:
     config:
       policies:
