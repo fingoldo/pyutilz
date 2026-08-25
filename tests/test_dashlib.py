@@ -111,3 +111,67 @@ class TestCreateTabsTooltip:
         result = create_tabs("mytabs", tabsList, _draw_content)
         tooltip_children = [c for c in result.children if type(c).__name__ == "Tooltip"]
         assert len(tooltip_children) == 0
+
+
+# ── 2026-08-25: loading overlay on tab content ──────────────────────────────
+
+
+def _tabs(**kwargs):
+    from pyutilz.dev.dashlib import create_tabs
+
+    return create_tabs(
+        tabsName="T",
+        tabsList=[["One", "One", None], ["Two", "Two", None]],
+        draw_tab_content_function=lambda tab: f"body-{tab}",
+        **kwargs,
+    )
+
+
+def _find(node, predicate):
+    """Depth-first search over a Dash component tree."""
+    if predicate(node):
+        return node
+    children = getattr(node, "children", None)
+    if children is None:
+        return None
+    for child in children if isinstance(children, (list, tuple)) else [children]:
+        found = _find(child, predicate)
+        if found is not None:
+            return found
+    return None
+
+
+class TestTabContentLoadingOverlay:
+    """The tab HEADER switches the instant it is clicked -- that is client-side state -- while the
+    body waits on a callback, which can be seconds against a large database. Without an overlay the
+    user sees the new tab's header above the PREVIOUS tab's content, which reads as finished rather
+    than pending.
+    """
+
+    def test_content_is_wrapped_by_default(self, app_context):
+        from dash import dcc
+
+        tabs = _tabs()
+        loading = _find(tabs, lambda n: isinstance(n, dcc.Loading))
+        assert loading is not None, "tab content should carry a loading overlay out of the box"
+        # The overlay must WRAP the div the callback replaces -- wrapping the returned content
+        # instead would only appear once the wait was already over.
+        inner = loading.children
+        assert getattr(inner, "id", None) == "tabsTContent"
+
+    def test_can_be_opted_out(self, app_context):
+        from dash import dcc
+
+        assert _find(_tabs(show_loading=False), lambda n: isinstance(n, dcc.Loading)) is None
+
+    def test_content_div_keeps_its_id_either_way(self, app_context):
+        """The id is the callback's Output; wrapping must not move or rename it."""
+        for kwargs in ({}, {"show_loading": False}):
+            tabs = _tabs(**kwargs)
+            assert _find(tabs, lambda n: getattr(n, "id", None) == "tabsTContent") is not None, kwargs
+
+    def test_spinner_is_delayed_so_fast_tabs_do_not_flash(self, app_context):
+        from dash import dcc
+
+        loading = _find(_tabs(), lambda n: isinstance(n, dcc.Loading))
+        assert loading.delay_show >= 100
