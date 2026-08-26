@@ -2093,6 +2093,44 @@ def test_b():
 
 
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
+def test_a_literal_data_factory_is_not_flagged(tmp_path: Path):
+    """A helper that fills in a dict literal is the opposite of the expensive fit this scanner hunts: it
+    costs microseconds, and its result is a FRESH MUTABLE object each caller then edits. Acting on the
+    finding here - caching it, or sharing one fixture - would hand every test the same dict and let one
+    test's mutation reach another, so a flag on this shape recommends a bug."""
+    _write(tmp_path, "test_factory.py", """
+def _item(**over):
+    base = {"name": "x", "hits": 13, "denominator": 142}
+    base.update(over)
+    return base
+
+def test_a():
+    assert _item()["hits"] == 13
+
+def test_b():
+    assert _item()["denominator"] == 142
+""")
+    assert [f for f in scan_redundant_test_fit_calls(tmp_path) if f.check == "redundant_test_fit_call"] == []
+
+
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
+def test_a_helper_with_no_calls_is_still_flagged(tmp_path: Path):
+    """The exemption must key on BUILDING a literal, not merely on containing no expensive-looking call:
+    `def _build_data(seed): return seed` is what an expensive builder is reduced to in a scanner test."""
+    _write(tmp_path, "test_stub.py", """
+def _build_data(seed):
+    return seed
+
+def test_a():
+    assert _build_data(seed=101) == 101
+
+def test_b():
+    assert _build_data(seed=101) is not None
+""")
+    assert "redundant_test_fit_call" in {f.check for f in scan_redundant_test_fit_calls(tmp_path)}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_redundant_call_different_seeds_not_flagged(tmp_path: Path):
     """Different literal args -> genuinely different computations, not a duplicate."""
     _write(tmp_path, "test_ok.py", """

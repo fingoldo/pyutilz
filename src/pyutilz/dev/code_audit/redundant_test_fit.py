@@ -37,6 +37,42 @@ def _is_cached(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
+# Calls a data factory may make while still being a data factory: constructing or mutating a literal
+# container costs nothing, so their presence says nothing about expensiveness either way.
+_CHEAP_CALLEES = frozenset(
+    {"dict", "list", "set", "tuple", "str", "int", "float", "bool", "len", "range", "sorted", "update", "append", "extend", "copy", "add", "setdefault", "get", "format", "join"}
+)
+
+
+def _is_literal_data_factory(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True if this helper only assembles literal data - no computation an author would want shared.
+
+    The pattern this scanner exists for is an EXPENSIVE deterministic call (a model fit, a synthetic-corpus
+    build) re-run by sibling tests. A helper that fills in a dict literal and returns it is the opposite:
+    microseconds, and re-running it is the POINT. Its return value is a fresh mutable object that each test
+    then edits, so the remedy the finding recommends - `@cache`, or one shared fixture - would hand every
+    test the same dict and let one test's mutation reach another. Flagging these does not merely add noise;
+    acting on the advice introduces a bug, which is why the exemption belongs in the scanner rather than in
+    each caller's baseline.
+    """
+    builds_a_literal_container = False
+    for node in ast.walk(func_node):
+        if isinstance(node, ast.Dict) and node.keys:
+            builds_a_literal_container = True
+        elif isinstance(node, (ast.List, ast.Set, ast.Tuple)) and node.elts:
+            builds_a_literal_container = True
+        elif isinstance(node, ast.Call):
+            callee = node.func
+            name = callee.attr if isinstance(callee, ast.Attribute) else callee.id if isinstance(callee, ast.Name) else None
+            if name not in _CHEAP_CALLEES:
+                return False
+    # Constructing the container inline is what separates a data factory from a helper that merely LOOKS
+    # cheap in a fixture: `def _build_data(seed): return seed` has no calls either, and it is exactly the
+    # stub an expensive builder is reduced to in a test of this scanner. Requiring a literal keeps the
+    # exemption to helpers whose whole output is data written out in the source.
+    return builds_a_literal_container
+
+
 def _enclosing_test_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     """Every ``def test_*`` / ``async def test_*`` at module or class level (pytest discovery convention)."""
     return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
@@ -94,7 +130,11 @@ def scan_redundant_test_fit_calls(
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         rel = py.relative_to(root).as_posix()
 
-        cached_names = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_cached(node)}
+        cached_names = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (_is_cached(node) or _is_literal_data_factory(node))
+        }
 
         # signature -> [(test_qualname, lineno), ...]
         occurrences: dict[str, list[tuple[str, int]]] = {}
