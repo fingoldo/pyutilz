@@ -2093,6 +2093,44 @@ def test_b():
 
 
 @pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
+def test_a_loop_variable_argument_is_not_a_repeated_call(tmp_path: Path):
+    """Two functions each looping over their own data unparse to the same signature - `_resolves(x)` -
+    while sharing no call at all. The check is for a deterministic repeat of ONE call, and a loop variable
+    takes a different value every iteration."""
+    _write(tmp_path, "test_loop.py", """
+def _resolves(x):
+    return bool(x)
+
+def test_a():
+    assert all(_resolves(x) for x in [1, 2, 3])
+
+def test_b():
+    bad = [x for x in [4, 5] if not _resolves(x)]
+    assert not bad
+""")
+    assert [f for f in scan_redundant_test_fit_calls(tmp_path) if f.check == "redundant_test_fit_call"] == []
+
+
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
+def test_a_module_level_constant_argument_is_still_a_repeated_call(tmp_path: Path):
+    """The exemption must key on ITERATION binding, not on "the argument is a name": a constant passed by
+    name really is the same value in both callers, which is the genuine duplicate this check exists for."""
+    _write(tmp_path, "test_const.py", """
+SEED = 101
+
+def _fit(seed):
+    return seed
+
+def test_a():
+    assert _fit(SEED)
+
+def test_b():
+    assert _fit(SEED) == 101
+""")
+    assert "redundant_test_fit_call" in {f.check for f in scan_redundant_test_fit_calls(tmp_path)}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="scan_redundant_test_fit_calls needs ast.unparse (python>=3.9)")
 def test_a_literal_data_factory_is_not_flagged(tmp_path: Path):
     """A helper that fills in a dict literal is the opposite of the expensive fit this scanner hunts: it
     costs microseconds, and its result is a FRESH MUTABLE object each caller then edits. Acting on the

@@ -73,6 +73,28 @@ def _is_literal_data_factory(func_node: ast.FunctionDef | ast.AsyncFunctionDef) 
     return builds_a_literal_container
 
 
+def _iteration_bound_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Names bound by a `for` statement or a comprehension inside this function.
+
+    A call whose argument is one of these takes a DIFFERENT value on every iteration, so two functions
+    that each loop over their own data produce the same unparsed signature - `_resolves(x)` - while sharing
+    no call at all. The check is for a deterministic repeat of ONE call, and its own docstring says "same
+    literal args"; a loop variable is the opposite of a literal. Requiring literals outright would be too
+    strong, because a module-level constant passed by name IS the same value in both callers and that is a
+    genuine duplicate; binding-by-iteration is the precise distinction.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(func_node):
+        targets = []
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            targets = [node.target]
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            targets = [gen.target for gen in node.generators]
+        for target in targets:
+            bound |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+    return bound
+
+
 def _enclosing_test_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     """Every ``def test_*`` / ``async def test_*`` at module or class level (pytest discovery convention)."""
     return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
@@ -139,11 +161,14 @@ def scan_redundant_test_fit_calls(
         # signature -> [(test_qualname, lineno), ...]
         occurrences: dict[str, list[tuple[str, int]]] = {}
         for test_fn in _enclosing_test_functions(tree):
+            loop_bound = _iteration_bound_names(test_fn)
             for node in ast.walk(test_fn):
                 if not isinstance(node, ast.Call):
                     continue
                 sig = _call_signature(node)
                 if sig is None:
+                    continue
+                if any(isinstance(n, ast.Name) and n.id in loop_bound for arg in (*node.args, *(kw.value for kw in node.keywords)) for n in ast.walk(arg)):
                     continue
                 func_name = sig.split("(", 1)[0]
                 if func_name in cached_names:
