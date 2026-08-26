@@ -12,11 +12,18 @@ name: codecov-full
 #
 # Auto-fires on completion of numba-coverage-nightly (chaining CI -> numba-coverage-nightly ->
 # this job). This job carries CODECOV_TOKEN, so the workflow_run trigger is gated (job-level
-# `if:`, not just the `on:` filter) on BOTH conclusion == 'success' AND event == 'push' -- the
-# latter can't be forged by an external fork PR (GitHub sets it server-side from what actually
-# triggered the upstream workflow), so it collapses the trigger to "a real push to master
-# happened", the same trust boundary a direct push already requires. Mirrors the identical
-# mitigation on numba-coverage.yml's own workflow_run trigger (see that file + zizmor.yml's
+# `if:`, not just the `on:` filter) on conclusion == 'success' AND event in ('push',
+# 'workflow_run') -- github.event.workflow_run.event here reflects what triggered
+# numba-coverage-nightly ITSELF, which is 'workflow_run' when IT was chain-triggered off CI (the
+# common case) and 'push' only on its schedule/dispatch fallback legs (which don't set this field
+# at all, hence the event_name != 'workflow_run' escape hatch above). numba-coverage-nightly's
+# OWN trigger already carries the identical event=='push' mitigation one level up (see that
+# file), so by the time IT completes and fires this job, the chain has already been vetted back
+# to a real push -- allowing 'workflow_run' here doesn't reopen the fork-PR hole, it just trusts
+# the already-verified upstream link instead of re-deriving it (which the 'event' field can't do
+# past one hop anyway). Neither value can be forged by an external fork PR (GitHub sets this
+# field server-side from what actually triggered the upstream workflow). Mirrors the identical
+# mitigation class on numba-coverage.yml's own workflow_run trigger (see that file + zizmor.yml's
 # dangerous-triggers ignore comment for the fuller writeup). The daily cron stays as a fallback.
 #
 # Falls back to the latest successful ci.yml run on master for the OTHER side's data, which need
@@ -41,9 +48,12 @@ jobs:
     name: Merge ci.yml + numba-coverage.yml raw coverage, upload combined flag
     runs-on: ubuntu-latest
     # workflow_run fires on EVERY completion of numba-coverage-nightly regardless of outcome --
-    # only chain off a genuinely green run, and only one that itself started from a real push
-    # (see the on: block comment above for the full security writeup).
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    # only chain off a genuinely green run that itself came from an already-vetted trigger
+    # (see the on: block comment above for why 'workflow_run' is accepted here, not just 'push').
+    if: |
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       contains(fromJSON('["push", "workflow_run"]'), github.event.workflow_run.event))
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
