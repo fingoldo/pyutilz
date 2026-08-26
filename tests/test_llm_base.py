@@ -135,16 +135,35 @@ class TestFitMaxTokensToContext:
         assert prov._context_reserve_tokens(100_000) > prov._CONTEXT_RESERVE_TOKENS  # large input: fraction wins
         assert prov._context_reserve_tokens(100_000) == int(100_000 * prov._CONTEXT_RESERVE_FRACTION)
 
-    def test_clamped_budget_survives_a_realistic_tokeniser_undercount(self, monkeypatch):
-        """Regression for the incident measured 2026-08-08 (autopsia, OpenRouter/deepseek-v3.2): a real
-        ~23,617-token prompt was undercounted by `count_tokens` at ~20,864 tokens (an ~11.8% gap on a
-        163,840-token context window). The OLD flat 1024-token reserve produced a clamped `max_tokens`
-        that, added to the REAL (higher) input count, exceeded the window by ~1,729 tokens - the upstream
-        rejected the whole call with HTTP 400 before generating a single token. This test simulates the
-        same undercount ratio and asserts the clamp now leaves enough margin to survive it."""
-        prov = self._Provider()
-        real_input_tokens = 23_617
-        estimated_input_tokens = 20_864  # what count_tokens actually returned for the same real prompt
+    # Every REAL tokeniser-undercount incident this reserve exists to absorb, as
+    # `(label, context_window, estimated_input, real_input)`. Both entries are measured, not constructed:
+    # the estimate is what `count_tokens` returned for that exact prompt, and the real count is the one the
+    # upstream itself reported when it rejected (or accepted) the call. Each new incident is APPENDED here
+    # rather than replacing the previous one - the reserve has to clear the worst of them, and a table that
+    # forgets the earlier cases cannot enforce that.
+    _MEASURED_UNDERCOUNTS = [
+        ("2026-08-08 deepseek-v3.2", 163_840, 20_864, 23_617),
+        ("2026-08-26 gpt-oss-120b", 131_072, 19_920, 24_077),
+    ]
+
+    @pytest.mark.parametrize(("label", "window", "estimated_input_tokens", "real_input_tokens"), _MEASURED_UNDERCOUNTS)
+    def test_clamped_budget_survives_a_realistic_tokeniser_undercount(self, monkeypatch, label, window, estimated_input_tokens, real_input_tokens):
+        """Regression for every measured incident in `_MEASURED_UNDERCOUNTS`.
+
+        The shape is identical in both: `count_tokens` undercounts a large real prompt, the clamp computes
+        its budget from that undercount, and the upstream then rejects the whole call with HTTP 400 before
+        generating a single token because REAL input + granted output exceeds the window. 2026-08-08
+        (deepseek-v3.2) overflowed by ~1,729 tokens against the then-flat 1024-token reserve; 2026-08-26
+        (gpt-oss-120b) overflowed by 1,169 against the 0.15 fraction that replaced it, because that
+        incident's own undercount was 20.9% of the estimate - larger than the fraction meant to absorb it.
+        """
+
+        class _Prov(self._Provider):  # type: ignore[name-defined]
+            @property
+            def context_window(self) -> int:
+                return window
+
+        prov = _Prov()
 
         def _undercounting_count_tokens(text, model=None):
             # Ignore the actual text; simulate the exact measured ratio from the incident regardless of

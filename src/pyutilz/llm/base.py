@@ -257,7 +257,15 @@ class LLMProvider(ABC):
     # BEFORE generating anything - clamping to fit the window is worthless if the margin it clamps by is
     # itself smaller than the counting error it exists to absorb. A fixed fraction of the estimated input
     # (not a fixed token count) scales the margin with the very thing that is under-measured.
-    _CONTEXT_RESERVE_FRACTION = 0.15
+    #
+    # The fraction is set from the WORST undercount measured so far, not from the average, because a single
+    # underestimate is enough to lose the whole call to an HTTP 400. Two real incidents, both expressed as a
+    # fraction of what ``count_tokens`` returned: 13.2% (2026-08-08, deepseek-v3.2, 20,864 estimated vs 23,617
+    # real) and 20.9% (2026-08-26, gpt-oss-120b, 19,920 estimated vs 24,077 real - the 0.15 in force at the
+    # time was BELOW this and the call was rejected). 0.30 clears the worse of the two by ~44%. Raising it is
+    # close to free: it only binds when the input is large, and even then the surviving budget stays far above
+    # any output these callers actually request - whereas being a few hundred tokens short costs the call.
+    _CONTEXT_RESERVE_FRACTION = 0.30
 
     def _context_reserve_tokens(self, input_tokens: int) -> int:
         """Headroom for one `fit_max_tokens_to_context` clamp: the larger of the flat envelope reserve
