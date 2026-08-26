@@ -67,16 +67,32 @@ jobs:
       - name: Install coverage
         run: pip install "coverage[toml]>=7.0"
 
-      - name: Find the latest completed numba-coverage-nightly run
+      - name: Find the latest completed numba-coverage-nightly run with real data
         id: find_numba_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          run_id=$(gh run list --repo "${{ github.repository }}" --workflow numba-coverage.yml \
-            --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
+          # The single most-recent "completed" run (any conclusion) can be one that got
+          # cancelled before its upload step ran -- still "completed", but no raw-coverage-numba
+          # artifact (mirrors mlframe's identical codecov-full.yml fix, confirmed live there:
+          # run 32923232739 picked exactly such a cancelled run and failed with "No raw coverage
+          # data downloaded"). Walk back through the last 10 completed runs and pick the first
+          # that actually has the artifact, instead of trusting "latest" blindly.
+          run_id=""
+          for candidate in $(gh run list --repo "${{ github.repository }}" --workflow numba-coverage.yml \
+              --status completed --limit 10 --json databaseId --jq '.[].databaseId'); do
+            count=$(gh api "repos/${{ github.repository }}/actions/runs/$candidate/artifacts" \
+              --jq '[.artifacts[] | select(.name == "raw-coverage-numba")] | length')
+            if [ "$count" -gt 0 ]; then
+              run_id="$candidate"
+              echo "Using run $run_id"
+              break
+            fi
+            echo "Skipping run $candidate (no raw-coverage-numba artifact)"
+          done
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           if [ -z "$run_id" ]; then
-            echo "No completed numba-coverage-nightly run found."
+            echo "No completed numba-coverage-nightly run with real data found in the last 10 runs."
           fi
 
       - name: Download numba-coverage-nightly's raw data
@@ -89,7 +105,7 @@ jobs:
           run-id: ${{ steps.find_numba_run.outputs.run_id }}
           repository: ${{ github.repository }}
 
-      - name: Find the latest completed ci.yml run on master
+      - name: Find the latest completed ci.yml run on master with real data
         id: find_ci_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,11 +113,24 @@ jobs:
           # --status completed (any conclusion), not --status success: the raw-coverage-ci
           # artifact only exists if the 3.11 leg's own "Upload raw coverage data" step ran
           # (success-or-failure), so a run where some OTHER version's leg failed still
-          # contributes real, valid data.
-          run_id=$(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch master \
-            --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
+          # contributes real, valid data. But the single most-recent completed run can be one
+          # that got CANCELLED before that step ran at all -- still "completed", zero artifacts
+          # (mirrors mlframe's identical codecov-full.yml fix, confirmed live there). Walk back
+          # through the last 10 completed runs and pick the first with a real artifact.
+          run_id=""
+          for candidate in $(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch master \
+              --status completed --limit 10 --json databaseId --jq '.[].databaseId'); do
+            count=$(gh api "repos/${{ github.repository }}/actions/runs/$candidate/artifacts" \
+              --jq '[.artifacts[] | select(.name == "raw-coverage-ci")] | length')
+            if [ "$count" -gt 0 ]; then
+              run_id="$candidate"
+              echo "Using run $run_id"
+              break
+            fi
+            echo "Skipping run $candidate (no raw-coverage-ci artifact)"
+          done
           if [ -z "$run_id" ]; then
-            echo "No completed ci.yml run found on master -- skipping the combined upload this time."
+            echo "No completed ci.yml run with real data found in the last 10 runs -- skipping the combined upload this time."
             echo "run_id=" >> "$GITHUB_OUTPUT"
           else
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
