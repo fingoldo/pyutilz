@@ -223,6 +223,15 @@ class TestPolarsdfInfo:
 
         assert "dtypes" in result
 
+    def test_does_not_claim_a_pandas_index(self):
+        """The summary must not describe a RangeIndex: a polars frame has no index at all, so borrowing
+        pandas' wording invites readers to reason about index alignment/reindexing that cannot apply."""
+        df = pl.DataFrame({"a": [1, 2, 3, 4, 5]})
+        result = polars_df_info(df)
+
+        assert "RangeIndex" not in result
+        assert "Rows: 5" in result
+
     def test_empty_dataframe(self):
         """Test with empty DataFrame"""
         df = pl.DataFrame({"a": pl.Series([], dtype=pl.Float64)})

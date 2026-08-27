@@ -1073,7 +1073,10 @@ def polars_df_info(df: pl.DataFrame) -> str:
     """Build a pandas-``.info()``-style multi-line summary string for a polars DataFrame (shape, columns, dtype counts, estimated memory usage)."""
     lines = []
     lines.append(f"{type(df)}")
-    lines.append(f"RangeIndex: {df.height} entries, 0 to {df.height - 1 if df.height > 0 else 0}")
+    # "Rows:", not pandas' "RangeIndex: N entries, 0 to N-1": polars has no index at all, so borrowing
+    # that line described a structure the frame does not have and invited readers to reason about
+    # index alignment / reindexing semantics that simply do not exist here.
+    lines.append(f"Rows: {df.height}")
     if df.width > 0:
         first_col = df.columns[0]
         last_col = df.columns[-1]
