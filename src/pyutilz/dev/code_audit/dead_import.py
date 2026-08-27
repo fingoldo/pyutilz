@@ -21,6 +21,9 @@ def _alias_own_lineno(alias: ast.alias, node: "ast.Import | ast.ImportFrom", src
     whose text contains the alias's own name as a whole identifier -- ``claimed`` lets sibling
     aliases in the same block each get a distinct line even when one name is a substring of
     another (e.g. ``foo`` / ``foo_bar``), by ruling out lines already matched to an earlier alias.
+    Comment-only lines are skipped: a why-comment justifying an otherwise-flagged import routinely
+    repeats the name in prose (e.g. "consumed via `from x import foo`"), which would otherwise
+    match before the scan reaches the real import line and misattribute the finding.
     """
     own_lineno = getattr(alias, "lineno", None)
     if own_lineno is not None:
@@ -31,7 +34,15 @@ def _alias_own_lineno(alias: ast.alias, node: "ast.Import | ast.ImportFrom", src
     for lineno in range(node.lineno, end_lineno + 1):
         if lineno in claimed:
             continue
-        if pattern.search(_line_text(src_lines, lineno)):
+        text = _line_text(src_lines, lineno)
+        # A same-block explanatory comment (this project's own convention for documenting
+        # otherwise-"dead" facade re-exports) routinely repeats the imported name in prose --
+        # e.g. "consumed via `from x import clear_numeric_code_cache`" -- which would satisfy
+        # the pattern on a comment line BEFORE the scan ever reaches the real import line,
+        # misattributing the finding several lines off. Skip comment-only lines.
+        if text.startswith("#"):
+            continue
+        if pattern.search(text):
             claimed.add(lineno)
             return lineno
     return node.lineno

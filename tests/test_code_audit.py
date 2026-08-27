@@ -4018,6 +4018,35 @@ def test_alias_own_lineno_fallback_when_ast_alias_lacks_lineno():
     assert len(set(linenos)) == 2
 
 
+def test_alias_own_lineno_fallback_skips_comment_line_repeating_the_name():
+    """A same-block why-comment documenting an otherwise-flagged import routinely repeats the
+    bound name in prose (this project's own convention: "consumed via `from x import foo`"),
+    which would satisfy the fallback's name-pattern match on the COMMENT line, several lines
+    before the scan ever reaches the real import line -- misattributing the finding. Confirmed
+    live in CI on Python 3.9 (2026-08-27): mlframe's discretization/__init__.py and
+    hermite_fe/__init__.py both carry exactly this comment style, and the fallback reported
+    findings on the comment lines instead of the actual import lines."""
+    import ast
+
+    from pyutilz.dev.code_audit.dead_import import _alias_own_lineno
+
+    src = "from helper_module import (\n    # consumed via `from x import foo` by tests/test_x.py\n    foo,\n)\n"
+    tree = ast.parse(src)
+    src_lines = src.splitlines()
+    node = tree.body[0]
+    assert isinstance(node, ast.ImportFrom)
+
+    class _Py38Alias:
+        def __init__(self, real: ast.alias) -> None:
+            self.name = real.name
+            self.asname = real.asname
+
+    claimed: set[int] = set()
+    lineno = _alias_own_lineno(_Py38Alias(node.names[0]), node, src_lines, claimed)  # type: ignore[arg-type]
+
+    assert lineno == 3  # the real `foo,` line, not the line-2 comment mentioning "foo"
+
+
 def test_possibly_dead_import_skips_file_with_syntax_error(tmp_path: Path):
     _write(tmp_path, "broken.py", "def f(:\n    pass\n")
     _write(tmp_path, "mod.py", """
