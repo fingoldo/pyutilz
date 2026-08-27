@@ -52,6 +52,21 @@ PROXY_TYPES = (
     "rtc_universal_core_proxies",
 )
 
+# Decodo endpoints this account may exit through, as returned by their locations API.
+#
+# The country is selected by MODIFYING THE PROXY USERNAME rather than by a separate setting --
+# `user-<account>-country-us-city-new_york` exits New York, a bare `<account>` exits somewhere
+# random -- so `country_iso` here is the exact segment to splice into the username, city and all.
+#
+# `random_port` gives a new exit IP per request; the sticky range holds one IP for the life of a
+# session, which is what a multi-request flow behind a WAF wants.
+#
+# NOT ALL OF THESE ARE SAFE FOR EVERY CALLER. The list is the account's full inventory, and it
+# includes Russian and Belarusian exits; anything scraping a site that geo-blocks those must
+# filter the pool rather than rotate blindly across it. Kept complete here because this module
+# describes what the ACCOUNT has -- deciding what a given job may use is the caller's business.
+ALLOWED_LOCATIONS = [{"domain":"gate.decodo.com","country_iso":"country-us-city-new_york","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21049,"country_name":"New York"},{"domain":"gate.decodo.com","country_iso":"country-us-city-los_angeles","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21099,"country_name":"Los Angeles"},{"domain":"gate.decodo.com","country_iso":"country-us-city-chicago","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21149,"country_name":"Chicago"},{"domain":"gate.decodo.com","country_iso":"country-us-city-houston","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21199,"country_name":"Houston"},{"domain":"gate.decodo.com","country_iso":"country-us-city-miami","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21249,"country_name":"Miami"},{"domain":"gate.decodo.com","country_iso":"country-gb-city-london","random_port":10000,"sticky_port_first":10001,"sticky_port_last":21299,"country_name":"London"},{"domain":"gate.decodo.com","country_iso":"country-th-city-bangkok","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bangkok"},{"domain":"gate.decodo.com","country_iso":"country-in-city-guwahati","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Guwahati"},{"domain":"gate.decodo.com","country_iso":"country-in-city-kochi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kochi"},{"domain":"gate.decodo.com","country_iso":"country-in-city-bhubaneswar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bhubaneswar"},{"domain":"gate.decodo.com","country_iso":"country-ro-city-bucharest","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bucharest"},{"domain":"gate.decodo.com","country_iso":"country-br-city-belo_horizonte","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Belo Horizonte"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-quezon_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Quezon City"},{"domain":"gate.decodo.com","country_iso":"country-br-city-campinas","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Campinas"},{"domain":"gate.decodo.com","country_iso":"country-in-city-ludhiana","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Ludhiana"},{"domain":"gate.decodo.com","country_iso":"country-lt-city-vilnius","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Vilnius"},{"domain":"gate.decodo.com","country_iso":"country-vn-city-ho_chi_minh_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Ho Chi Minh City"},{"domain":"gate.decodo.com","country_iso":"country-lk-city-colombo","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Colombo"},{"domain":"gate.decodo.com","country_iso":"country-vn-city-hanoi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Hanoi"},{"domain":"gate.decodo.com","country_iso":"country-pe-city-lima","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Lima"},{"domain":"gate.decodo.com","country_iso":"country-br-city-curitiba","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Curitiba"},{"domain":"gate.decodo.com","country_iso":"country-cz-city-prague","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Prague"},{"domain":"gate.decodo.com","country_iso":"country-uz-city-tashkent","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Tashkent"},{"domain":"gate.decodo.com","country_iso":"country-co-city-bogota","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bogota"},{"domain":"gate.decodo.com","country_iso":"country-tw-city-taipei","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Taipei"},{"domain":"gate.decodo.com","country_iso":"country-in-city-new_delhi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"New Delhi"},{"domain":"gate.decodo.com","country_iso":"country-br-city-brasilia","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Brasilia"},{"domain":"gate.decodo.com","country_iso":"country-za-city-johannesburg","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Johannesburg"},{"domain":"gate.decodo.com","country_iso":"country-id-city-surabaya","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Surabaya"},{"domain":"gate.decodo.com","country_iso":"country-br-city-porto_alegre","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Porto Alegre"},{"domain":"gate.decodo.com","country_iso":"country-id-city-bandung","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bandung"},{"domain":"gate.decodo.com","country_iso":"country-ng-city-lagos","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Lagos"},{"domain":"gate.decodo.com","country_iso":"country-ru-city-moscow","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Moscow"},{"domain":"gate.decodo.com","country_iso":"country-hu-city-budapest","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Budapest"},{"domain":"gate.decodo.com","country_iso":"country-in-city-chandigarh","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Chandigarh"},{"domain":"gate.decodo.com","country_iso":"country-kw-city-kuwait_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kuwait City"},{"domain":"gate.decodo.com","country_iso":"country-in-city-indore","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Indore"},{"domain":"gate.decodo.com","country_iso":"country-br-city-fortaleza","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Fortaleza"},{"domain":"gate.decodo.com","country_iso":"country-kr-city-seoul","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Seoul"},{"domain":"gate.decodo.com","country_iso":"country-bg-city-sofia","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Sofia"},{"domain":"gate.decodo.com","country_iso":"country-br-city-recife","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Recife"},{"domain":"gate.decodo.com","country_iso":"country-hk-city-central","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Central"},{"domain":"gate.decodo.com","country_iso":"country-id-city-medan","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Medan"},{"domain":"gate.decodo.com","country_iso":"country-za-city-pretoria","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Pretoria"},{"domain":"gate.decodo.com","country_iso":"country-br-city-salvador","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Salvador"},{"domain":"gate.decodo.com","country_iso":"country-id-city-semarang","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Semarang"},{"domain":"gate.decodo.com","country_iso":"country-kh-city-phnom_penh","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Phnom Penh"},{"domain":"gate.decodo.com","country_iso":"country-in-city-coimbatore","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Coimbatore"},{"domain":"gate.decodo.com","country_iso":"country-pt-city-lisbon","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Lisbon"},{"domain":"gate.decodo.com","country_iso":"country-bd-city-dhaka","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Dhaka"},{"domain":"gate.decodo.com","country_iso":"country-mn-city-ulan_bator","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Ulan Bator"},{"domain":"gate.decodo.com","country_iso":"country-pl-city-warsaw","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Warsaw"},{"domain":"gate.decodo.com","country_iso":"country-it-city-milan","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Milan"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-talavera","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Talavera"},{"domain":"gate.decodo.com","country_iso":"country-gh-city-accra","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Accra"},{"domain":"gate.decodo.com","country_iso":"country-in-city-aizawl","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Aizawl"},{"domain":"gate.decodo.com","country_iso":"country-tw-city-taichung","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Taichung"},{"domain":"gate.decodo.com","country_iso":"country-in-city-nagpur","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Nagpur"},{"domain":"gate.decodo.com","country_iso":"country-in-city-raipur","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Raipur"},{"domain":"gate.decodo.com","country_iso":"country-ua-city-kyiv","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kyiv"},{"domain":"gate.decodo.com","country_iso":"country-fr-city-paris","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Paris"},{"domain":"gate.decodo.com","country_iso":"country-rs-city-belgrade","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Belgrade"},{"domain":"gate.decodo.com","country_iso":"country-ma-city-casablanca","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Casablanca"},{"domain":"gate.decodo.com","country_iso":"country-tw-city-kaohsiung","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kaohsiung City"},{"domain":"gate.decodo.com","country_iso":"country-in-city-shimla","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Shimla"},{"domain":"gate.decodo.com","country_iso":"country-br-city-belem","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Belem"},{"domain":"gate.decodo.com","country_iso":"country-lv-city-riga","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Riga"},{"domain":"gate.decodo.com","country_iso":"country-sg-city-singapore","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Singapore"},{"domain":"gate.decodo.com","country_iso":"country-my-city-petaling_jaya","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Petaling Jaya"},{"domain":"gate.decodo.com","country_iso":"country-in-city-surat","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Surat"},{"domain":"gate.decodo.com","country_iso":"country-zm-city-lusaka","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Lusaka"},{"domain":"gate.decodo.com","country_iso":"country-ke-city-nairobi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Nairobi"},{"domain":"gate.decodo.com","country_iso":"country-za-city-durban","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Durban"},{"domain":"gate.decodo.com","country_iso":"country-fi-city-helsinki","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Helsinki"},{"domain":"gate.decodo.com","country_iso":"country-tw-city-new_taipei_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"New Taipei"},{"domain":"gate.decodo.com","country_iso":"country-br-city-goiania","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Goiania"},{"domain":"gate.decodo.com","country_iso":"country-do-city-santo_domingo","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Santo Domingo"},{"domain":"gate.decodo.com","country_iso":"country-br-city-manaus","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Manaus"},{"domain":"gate.decodo.com","country_iso":"country-co-city-medellin","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Medellin"},{"domain":"gate.decodo.com","country_iso":"country-pk-city-islamabad","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Islamabad"},{"domain":"gate.decodo.com","country_iso":"country-eg-city-cairo","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cairo"},{"domain":"gate.decodo.com","country_iso":"country-kg-city-bishkek","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bishkek"},{"domain":"gate.decodo.com","country_iso":"country-ge-city-tbilisi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Tbilisi"},{"domain":"gate.decodo.com","country_iso":"country-ng-city-port_harcourt","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Port Harcourt"},{"domain":"gate.decodo.com","country_iso":"country-dz-city-algiers","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Algiers"},{"domain":"gate.decodo.com","country_iso":"country-az-city-baku","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Baku"},{"domain":"gate.decodo.com","country_iso":"country-tr-city-istanbul","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Istanbul"},{"domain":"gate.decodo.com","country_iso":"country-md-city-chisinau","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Chisinau"},{"domain":"gate.decodo.com","country_iso":"country-gr-city-athens","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Athens"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-batangas","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Batangas"},{"domain":"gate.decodo.com","country_iso":"country-cl-city-concepcion","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Concepcion"},{"domain":"gate.decodo.com","country_iso":"country-in-city-jodhpur","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Jodhpur"},{"domain":"gate.decodo.com","country_iso":"country-es-city-madrid","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Madrid"},{"domain":"gate.decodo.com","country_iso":"country-in-city-kanpur","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kanpur"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-davao_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Davao City"},{"domain":"gate.decodo.com","country_iso":"country-ng-city-katsina","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Katsina"},{"domain":"gate.decodo.com","country_iso":"country-jm-city-kingston","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kingston"},{"domain":"gate.decodo.com","country_iso":"country-si-city-ljubljana","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Ljubljana"},{"domain":"gate.decodo.com","country_iso":"country-sa-city-riyadh","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Riyadh"},{"domain":"gate.decodo.com","country_iso":"country-ar-city-cordoba","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cordoba"},{"domain":"gate.decodo.com","country_iso":"country-pk-city-lahore","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Lahore"},{"domain":"gate.decodo.com","country_iso":"country-co-city-barranquilla","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Barranquilla"},{"domain":"gate.decodo.com","country_iso":"country-ru-city-st_petersburg","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"St Petersburg"},{"domain":"gate.decodo.com","country_iso":"country-in-city-thrissur","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Thrissur"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-cebu_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cebu City"},{"domain":"gate.decodo.com","country_iso":"country-id-city-makassar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Makassar"},{"domain":"gate.decodo.com","country_iso":"country-za-city-cape_town","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cape Town"},{"domain":"gate.decodo.com","country_iso":"country-br-city-florianopolis","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Florianopolis"},{"domain":"gate.decodo.com","country_iso":"country-in-city-hisar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Hisar"},{"domain":"gate.decodo.com","country_iso":"country-hr-city-zagreb","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Zagreb"},{"domain":"gate.decodo.com","country_iso":"country-es-city-barcelona","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Barcelona"},{"domain":"gate.decodo.com","country_iso":"country-be-city-brussels","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Brussels"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-bacolod_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bacolod City"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-general_trias","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"General Trias"},{"domain":"gate.decodo.com","country_iso":"country-kr-city-gangnam_gu","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Gangnam Gu"},{"domain":"gate.decodo.com","country_iso":"country-in-city-malappuram","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Malappuram"},{"domain":"gate.decodo.com","country_iso":"country-in-city-koch_bihar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Koch Bihar"},{"domain":"gate.decodo.com","country_iso":"country-ru-city-krasnodar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Krasnodar"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-iloilo_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Iloilo City"},{"domain":"gate.decodo.com","country_iso":"country-al-city-tirana","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Tirana"},{"domain":"gate.decodo.com","country_iso":"country-in-city-varanasi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Varanasi"},{"domain":"gate.decodo.com","country_iso":"country-jo-city-amman","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Amman"},{"domain":"gate.decodo.com","country_iso":"country-by-city-minsk","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Minsk"},{"domain":"gate.decodo.com","country_iso":"country-it-city-rome","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Rome"},{"domain":"gate.decodo.com","country_iso":"country-sv-city-san_salvador","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"San Salvador"},{"domain":"gate.decodo.com","country_iso":"country-co-city-santiago_de_cali","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Santiago De Cali"},{"domain":"gate.decodo.com","country_iso":"country-in-city-sikar","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Sikar"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-caloocan_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Caloocan City"},{"domain":"gate.decodo.com","country_iso":"country-ae-city-dubai","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Dubai"},{"domain":"gate.decodo.com","country_iso":"country-br-city-cuiaba","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cuiaba"},{"domain":"gate.decodo.com","country_iso":"country-ru-city-yekaterinburg","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Yekaterinburg"},{"domain":"gate.decodo.com","country_iso":"country-in-city-bhopal","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bhopal"},{"domain":"gate.decodo.com","country_iso":"country-us-city-dallas","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Dallas"},{"domain":"gate.decodo.com","country_iso":"country-qa-city-doha","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Doha"},{"domain":"gate.decodo.com","country_iso":"country-dz-city-oran","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Oran"},{"domain":"gate.decodo.com","country_iso":"country-il-city-tel_aviv","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Tel Aviv"},{"domain":"gate.decodo.com","country_iso":"country-my-city-puchong_batu_dua_belas","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Puchong Batu Dua Belas"},{"domain":"gate.decodo.com","country_iso":"country-ie-city-dublin","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Dublin"},{"domain":"gate.decodo.com","country_iso":"country-de-city-berlin","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Berlin"},{"domain":"gate.decodo.com","country_iso":"country-sk-city-bratislava","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Bratislava"},{"domain":"gate.decodo.com","country_iso":"country-my-city-kuching","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Kuching"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-tuguegarao_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Tuguegarao City"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-cagayan_de_oro","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Cagayan De Oro"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-makati_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Makati City"},{"domain":"gate.decodo.com","country_iso":"country-mu-city-port_louis","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Port Louis"},{"domain":"gate.decodo.com","country_iso":"country-mk-city-skopje","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Skopje"},{"domain":"gate.decodo.com","country_iso":"country-sa-city-jeddah","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Jeddah"},{"domain":"gate.decodo.com","country_iso":"country-uy-city-montevideo","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Montevideo"},{"domain":"gate.decodo.com","country_iso":"country-pa-city-panama_city","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Panama City"},{"domain":"gate.decodo.com","country_iso":"country-id-city-yogyakarta","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Yogyakarta"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-carmona","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Carmona"},{"domain":"gate.decodo.com","country_iso":"country-pl-city-katowice","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Katowice"},{"domain":"gate.decodo.com","country_iso":"country-nl-city-rotterdam","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Rotterdam"},{"domain":"gate.decodo.com","country_iso":"country-et-city-addis_ababa","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Addis Ababa"},{"domain":"gate.decodo.com","country_iso":"country-ph-city-butuan","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Butuan"},{"domain":"gate.decodo.com","country_iso":"country-at-city-vienna","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Vienna"},{"domain":"gate.decodo.com","country_iso":"country-bh-city-manama","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Manama"},{"domain":"gate.decodo.com","country_iso":"country-pl-city-poznan","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Poznan"},{"domain":"gate.decodo.com","country_iso":"country-in-city-rajkot","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Rajkot"},{"domain":"gate.decodo.com","country_iso":"country-py-city-asuncion","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Asuncion"},{"domain":"gate.decodo.com","country_iso":"country-br-city-uberlandia","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Uberlandia"},{"domain":"gate.decodo.com","country_iso":"country-pk-city-karachi","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Karachi"},{"domain":"gate.decodo.com","country_iso":"country-tr-city-ankara","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Ankara"},{"domain":"gate.decodo.com","country_iso":"country-pt-city-porto","random_port":10000,"sticky_port_first":10001,"sticky_port_last":49999,"country_name":"Porto"}]
+
 
 # ── API data classes ────────────────────────────────────────────────────────
 
@@ -412,3 +427,165 @@ def _parse_traffic_response(data: Any, group_by: str) -> DecodoTrafficReport:
         total_bytes += traffic
 
     return DecodoTrafficReport(rows=rows, total_requests=total_reqs, total_bytes=total_bytes)
+
+
+# Exit countries available on the DATACENTER endpoint (dc.decodo.com).
+#
+# Separate from ALLOWED_LOCATIONS above, and not derivable from it, because the two products
+# differ in what they accept. Verified against this account's live endpoint:
+#
+#     user-<account>-country-br                      at dc.decodo.com  ->  BR / Sao Paulo
+#     user-<account>-country-br-city-belo_horizonte  at dc.decodo.com  ->  ProxyError
+#
+# City-level targeting is a residential-gateway feature; on datacenter only the country works.
+# ALLOWED_LOCATIONS spells every entry with a city and names gate.decodo.com, so a datacenter
+# caller must use THIS list rather than stripping cities off that one.
+#
+# The leading `random` entry is a real option, not a placeholder: omitting the country segment
+# entirely gives an unpinned exit, which is the default state and something a rotation may want
+# to return to.
+ALLOWED_COUNTRIES = [
+    {"country": "random", "name": "Random"},
+    {"country": "us", "name": "USA"},
+    {"country": "ca", "name": "Canada"},
+    {"country": "gb", "name": "GB"},
+    {"country": "de", "name": "Germany"},
+    {"country": "fr", "name": "France"},
+    {"country": "es", "name": "Spain"},
+    {"country": "it", "name": "Italy"},
+    {"country": "se", "name": "Sweden"},
+    {"country": "gr", "name": "Greece"},
+    {"country": "pt", "name": "Portugal"},
+    {"country": "nl", "name": "Netherlands"},
+    {"country": "be", "name": "Belgium"},
+    {"country": "ru", "name": "Russia"},
+    {"country": "ua", "name": "Ukraine"},
+    {"country": "pl", "name": "Poland"},
+    {"country": "il", "name": "Israel"},
+    {"country": "tr", "name": "Turkey"},
+    {"country": "au", "name": "Australia"},
+    {"country": "my", "name": "Malaysia"},
+    {"country": "th", "name": "Thailand"},
+    {"country": "kr", "name": "South Korea"},
+    {"country": "jp", "name": "Japan"},
+    {"country": "ph", "name": "Philippines"},
+    {"country": "sg", "name": "Singapore"},
+    {"country": "cn", "name": "China"},
+    {"country": "hk", "name": "Hong Kong"},
+    {"country": "tw", "name": "Taiwan"},
+    {"country": "in", "name": "India"},
+    {"country": "pk", "name": "Pakistan"},
+    {"country": "ir", "name": "Iran"},
+    {"country": "id", "name": "Indonesia"},
+    {"country": "az", "name": "Azerbaijan"},
+    {"country": "kz", "name": "Kazakhstan"},
+    {"country": "ae", "name": "UAE"},
+    {"country": "mx", "name": "Mexico"},
+    {"country": "br", "name": "Brazil"},
+    {"country": "ar", "name": "Argentina"},
+    {"country": "cl", "name": "Chile"},
+    {"country": "pe", "name": "Peru"},
+    {"country": "ec", "name": "Ecuador"},
+    {"country": "co", "name": "Colombia"},
+    {"country": "za", "name": "South Africa"},
+    {"country": "eg", "name": "Egypt"},
+    {"country": "ao", "name": "Angola"},
+    {"country": "cm", "name": "Cameroon"},
+    {"country": "cf", "name": "Central African Republic"},
+    {"country": "td", "name": "Chad"},
+    {"country": "bj", "name": "Benin"},
+    {"country": "et", "name": "Ethiopia"},
+    {"country": "dj", "name": "Djibouti"},
+    {"country": "gm", "name": "Gambia"},
+    {"country": "gh", "name": "Ghana"},
+    {"country": "ke", "name": "Kenya"},
+    {"country": "lr", "name": "Liberia"},
+    {"country": "mg", "name": "Madagascar"},
+    {"country": "ml", "name": "Mali"},
+    {"country": "mr", "name": "Mauritania"},
+    {"country": "mu", "name": "Mauritius"},
+    {"country": "ma", "name": "Morocco"},
+    {"country": "mz", "name": "Mozambique"},
+    {"country": "ng", "name": "Nigeria"},
+    {"country": "sn", "name": "Senegal"},
+    {"country": "sl", "name": "Sierra Leone"},
+    {"country": "sc", "name": "Seychelles"},
+    {"country": "zw", "name": "Zimbabwe"},
+    {"country": "ss", "name": "South Sudan"},
+    {"country": "sd", "name": "Sudan"},
+    {"country": "tg", "name": "Togo"},
+    {"country": "tn", "name": "Tunisia"},
+    {"country": "ug", "name": "Uganda"},
+    {"country": "zm", "name": "Zambia"},
+    {"country": "af", "name": "Afghanistan"},
+    {"country": "bh", "name": "Bahrain"},
+    {"country": "bd", "name": "Bangladesh"},
+    {"country": "bt", "name": "Bhutan"},
+    {"country": "mm", "name": "Myanmar"},
+    {"country": "kh", "name": "Cambodia"},
+    {"country": "iq", "name": "Iraq"},
+    {"country": "jo", "name": "Jordan"},
+    {"country": "lb", "name": "Lebanon"},
+    {"country": "mv", "name": "Maldives"},
+    {"country": "mn", "name": "Mongolia"},
+    {"country": "om", "name": "Oman"},
+    {"country": "qa", "name": "Qatar"},
+    {"country": "sa", "name": "Saudi Arabia"},
+    {"country": "tm", "name": "Turkmenistan"},
+    {"country": "uz", "name": "Uzbekistan"},
+    {"country": "ye", "name": "Yemen"},
+    {"country": "al", "name": "Albania"},
+    {"country": "ad", "name": "Andorra"},
+    {"country": "at", "name": "Austria"},
+    {"country": "am", "name": "Armenia"},
+    {"country": "ba", "name": "Bosnia and Herzegovina"},
+    {"country": "bg", "name": "Bulgaria"},
+    {"country": "by", "name": "Belarus"},
+    {"country": "hr", "name": "Croatia"},
+    {"country": "cy", "name": "Cyprus"},
+    {"country": "cz", "name": "Czech Republic"},
+    {"country": "dk", "name": "Denmark"},
+    {"country": "ee", "name": "Estonia"},
+    {"country": "fi", "name": "Finland"},
+    {"country": "ge", "name": "Georgia"},
+    {"country": "hu", "name": "Hungary"},
+    {"country": "is", "name": "Iceland"},
+    {"country": "ie", "name": "Ireland"},
+    {"country": "lv", "name": "Latvia"},
+    {"country": "li", "name": "Liechtenstein"},
+    {"country": "lt", "name": "Lithuania"},
+    {"country": "lu", "name": "Luxembourg"},
+    {"country": "mc", "name": "Monaco"},
+    {"country": "md", "name": "Moldova"},
+    {"country": "me", "name": "Montenegro"},
+    {"country": "no", "name": "Norway"},
+    {"country": "ro", "name": "Romania"},
+    {"country": "rs", "name": "Serbia"},
+    {"country": "sk", "name": "Slovakia"},
+    {"country": "si", "name": "Slovenia"},
+    {"country": "ch", "name": "Switzerland"},
+    {"country": "mk", "name": "Macedonia"},
+    {"country": "bs", "name": "Bahamas"},
+    {"country": "bz", "name": "Belize"},
+    {"country": "vg", "name": "British Virgin Islands"},
+    {"country": "cr", "name": "Costa Rica"},
+    {"country": "cu", "name": "Cuba"},
+    {"country": "dm", "name": "Dominica"},
+    {"country": "ht", "name": "Haiti"},
+    {"country": "hn", "name": "Honduras"},
+    {"country": "jm", "name": "Jamaica"},
+    {"country": "aw", "name": "Aruba"},
+    {"country": "pa", "name": "Panama"},
+    {"country": "pr", "name": "Puerto Rico"},
+    {"country": "tt", "name": "Trinidad and Tobago"},
+    {"country": "fj", "name": "Fiji"},
+    {"country": "nz", "name": "New Zealand"},
+    {"country": "bo", "name": "Bolivia"},
+    {"country": "py", "name": "Paraguay"},
+    {"country": "uy", "name": "Uruguay"},
+    {"country": "ci", "name": "C\xf4te d'Ivoire"},
+    {"country": "sy", "name": "Syria"},
+    {"country": "vn", "name": "Vietnam"},
+    {"country": "mt", "name": "Malta"},
+    {"country": "eu", "name": "Europe"},
+]
