@@ -81,6 +81,9 @@ from .per_call_state_on_shared_instance import scan_per_call_state_on_shared_ins
 from .uncached_constant_cost_probe import scan_uncached_constant_cost_probe
 from .source_text_assertions import scan_source_text_assertions
 from .docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_config
+from .additive_epsilon_denominator import scan_additive_epsilon_denominator
+from .non_neutral_except_fallback import scan_non_neutral_except_fallback
+from .nondiscriminating_test import scan_nondiscriminating_test_functions
 
 # --- registry -----------------------------------------------------------
 
@@ -118,6 +121,9 @@ register_scanner("missed_await", scan_missed_await)
 register_scanner("redundant_test_fit_call", scan_redundant_test_fit_calls)
 register_scanner("undeclared_import", scan_undeclared_imports)
 register_scanner("vacuous_assertion", scan_vacuous_assertions)
+register_scanner("additive_epsilon_denominator", scan_additive_epsilon_denominator)
+register_scanner("non_neutral_except_fallback", scan_non_neutral_except_fallback)
+register_scanner("nondiscriminating_test", scan_nondiscriminating_test_functions)
 register_scanner("locals_globals_as_output", scan_locals_globals_as_output)
 register_scanner("missing_network_timeout", scan_missing_network_timeout)
 register_scanner("parameter_aliasing_mutation", scan_parameter_aliasing_mutation)

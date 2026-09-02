@@ -133,6 +133,27 @@ list[Finding]):
   so the assertion can never fail regardless of what the code under test
   actually returns.
 
+- ``scan_additive_epsilon_denominator``: a division guarded by ADDING a
+  small constant to its denominator. The pad is harmless only while the
+  denominator's natural scale stays far above it -- an assumption about the
+  data, not the code -- and it does not guard the division, it replaces the
+  answer with a plausible finite value for every input.
+
+- ``scan_non_neutral_except_fallback``: an ``except`` handler that returns or
+  assigns a non-neutral literal without logging above debug level. The
+  substituted value is indistinguishable downstream from a real result, and
+  is often the exact value that DISABLES the check consuming it (``0.0`` for
+  a max error, ``True`` for a permission guard, ``-inf`` for a minimised
+  score). Complements ``scan_log_only_except``, which asks instead whether a
+  handler escalates what it logged.
+
+- ``scan_nondiscriminating_test_functions``: a ``test_*`` function that cannot
+  fail for the reason it names -- no assertion at all, every assertion behind
+  an ``if``, ``except AssertionError: pass``, an ``if`` body of ``pass``, or an
+  imperative ``pytest.xfail(...)`` discarding the measurement just taken.
+  Where ``scan_vacuous_assertions`` judges the assertion EXPRESSION, this one
+  judges structure: whether any assertion is reachable and unconditional.
+
 - ``scan_locals_globals_as_output``: ``locals()``/``globals()`` passed as
   an argument whose name suggests it's meant to be an output/mutation
   channel (``object=``, ``out=``, ``target=``, ...) -- both are
@@ -481,6 +502,9 @@ from .missed_await import scan_missed_await, scan_sync_blocking_in_async
 from .redundant_test_fit import scan_redundant_test_fit_calls
 from .undeclared_imports import scan_undeclared_imports
 from .vacuous_assertions import scan_vacuous_assertions, scan_tautological_is_not_none_only_tests
+from .additive_epsilon_denominator import scan_additive_epsilon_denominator
+from .non_neutral_except_fallback import scan_non_neutral_except_fallback
+from .nondiscriminating_test import scan_nondiscriminating_test_functions
 from .locals_globals_output import scan_locals_globals_as_output
 from .network_timeout import scan_missing_network_timeout
 from .retry_loops import scan_retry_loops
@@ -569,6 +593,9 @@ __all__ = [
     "scan_redundant_test_fit_calls",
     "scan_undeclared_imports",
     "scan_vacuous_assertions",
+    "scan_additive_epsilon_denominator",
+    "scan_non_neutral_except_fallback",
+    "scan_nondiscriminating_test_functions",
     "scan_locals_globals_as_output",
     "scan_missing_network_timeout",
     "scan_parameter_aliasing_mutation",
@@ -644,6 +671,7 @@ for _submod in (
     "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
     "duplicate_conditions", "duplicate_function_body", "near_duplicate_function_body", "missed_await", "redundant_test_fit",
     "undeclared_imports", "vacuous_assertions", "locals_globals_output",
+    "additive_epsilon_denominator", "non_neutral_except_fallback", "nondiscriminating_test",
     "network_timeout", "retry_loops", "module_docstring",
     "unraised_exceptions", "credential_logging",
     "docstring_args", "return_annotation", "locals_get",
