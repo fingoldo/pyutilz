@@ -147,6 +147,8 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "guard_decidable_from_constants": "code_audit scanner; covered by test_code_audit.py",
     "sql_selects_unread_column": "code_audit scanner; covered by test_code_audit.py",
     "count_then_fetch_same_table": "code_audit scanner; covered by test_code_audit.py",
+    "sentinel_cached_as_answer": "code_audit scanner; covered by test_code_audit.py",
+    "accumulator_helper_bypassed": "code_audit scanner; covered by test_code_audit.py",
     "asymmetric_except_siblings": "code_audit scanner; covered by test_code_audit.py",
     "unreachable_import_fallback": "code_audit scanner; covered by test_code_audit.py",
     "comment_names_missing_symbol": "code_audit scanner; covered by test_code_audit.py",

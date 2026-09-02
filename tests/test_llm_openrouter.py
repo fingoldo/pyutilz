@@ -1294,27 +1294,27 @@ class TestThinkingRequestField:
     (DeepSeek V4) coerce non-empty strings to ``True`` via the shared
     ``_normalize_thinking`` helper.
 
-    ``False`` carries BOTH fields, not `exclude` alone - MEASURED 2026-08-07
-    (autopsia, deepseek/deepseek-v4-flash, default reasoning effort "high"):
-    `exclude` only hides reasoning TEXT from the response, the model still
-    REASONS and is still BILLED for it at the resolved model's own default
-    effort, so `exclude`-only calls kept intermittently burning 900-3000
-    reasoning tokens and hitting `finish_reason='length'` before writing any
-    JSON. `effort: "minimal"` is what actually shrinks the reasoning budget.
+    ``False`` asks for NO reasoning, not a small budget - RE-MEASURED 2026-09-02 across eight models. The
+    older mapping (`effort: "minimal"` with `exclude: True`, itself a 2026-08-07 fix for `exclude` alone,
+    which hides the reasoning TEXT while the model still reasons and is still billed) shrinks the budget
+    without closing it: 13-348 billed reasoning tokens per call, and on z-ai/glm-4.7-flash an EMPTY answer
+    cut off by `length`. `enabled: False` bills zero on every model that accepts it. Two of the eight
+    (google/gemini-3.7-flash, openai/gpt-oss-120b) refuse the call outright - see
+    `TestThinkingOffMeansNotBilledForThinking` for that fallback.
     """
 
     def test_thinking_true_uses_medium_effort(self):
         p = _provider()
         assert p._thinking_request_field(True) == {"reasoning": {"effort": "medium"}}
 
-    def test_thinking_false_uses_minimal_effort_and_excludes_reasoning(self):
+    def test_thinking_false_asks_for_no_reasoning(self):
         p = _provider()
-        assert p._thinking_request_field(False) == {"reasoning": {"effort": "minimal", "exclude": True}}
+        assert p._thinking_request_field(False) == {"reasoning": {"enabled": False}}
 
-    def test_thinking_empty_str_uses_minimal_effort_and_excludes_reasoning(self):
+    def test_thinking_empty_str_asks_for_no_reasoning(self):
         """Defensive: empty string is treated as off, matching ``False``."""
         p = _provider()
-        assert p._thinking_request_field("") == {"reasoning": {"effort": "minimal", "exclude": True}}
+        assert p._thinking_request_field("") == {"reasoning": {"enabled": False}}
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "minimal"])
     def test_thinking_effort_string_passes_through(self, effort):
@@ -1953,3 +1953,39 @@ class TestSubpackageSplitSensor:
         assert mod_path == "pyutilz.llm.openrouter_provider"
         mod = importlib.import_module(mod_path)
         assert getattr(mod, cls_name).__name__ == "OpenRouterProvider"
+
+
+class TestThinkingOffMeansNotBilledForThinking:
+    """Measured 2026-09-02 across eight models: `effort=minimal, exclude=true` still bills 13-348 reasoning
+    tokens (and on z-ai/glm-4.7-flash returns nothing at all), while `enabled: false` bills zero - except on
+    the two endpoints that refuse the whole call, which is what the fallback exists for."""
+
+    def _provider(self, model="z-ai/glm-4.7-flash"):
+        from pyutilz.llm.openrouter_provider._provider import OpenRouterProvider
+
+        return OpenRouterProvider(api_key="test-key", model=model)
+
+    def test_thinking_off_asks_for_no_reasoning_at_all(self):
+        assert self._provider()._thinking_request_field(False) == {"reasoning": {"enabled": False}}
+
+    def test_thinking_on_is_unchanged(self):
+        assert self._provider()._thinking_request_field(True) == {"reasoning": {"effort": "medium"}}
+        assert self._provider()._thinking_request_field("high") == {"reasoning": {"effort": "high"}}
+
+    def test_an_endpoint_that_mandates_reasoning_gets_the_budget_form_instead(self):
+        from pyutilz.llm.openrouter_provider import _provider as mod
+
+        p = self._provider("google/gemini-3.7-flash")
+        body = {"model": p.model_name, "reasoning": {"enabled": False}}
+        mod._REASONING_CANNOT_BE_DISABLED.discard(p.model_name)
+        try:
+            repaired = p._body_after_rejected_request(body, 404, "Reasoning is mandatory for this endpoint and cannot be disabled")
+            assert repaired["reasoning"] == {"effort": "minimal", "exclude": True}
+            assert p._thinking_request_field(False) == {"reasoning": {"effort": "minimal", "exclude": True}}, "and remembered, so the refusal is paid once"
+        finally:
+            mod._REASONING_CANNOT_BE_DISABLED.discard(p.model_name)
+
+    def test_an_unrelated_rejection_is_not_repaired(self):
+        p = self._provider()
+        assert p._body_after_rejected_request({"reasoning": {"enabled": False}}, 400, "context length exceeded") is None
+        assert p._body_after_rejected_request({"temperature": 5}, 400, "reasoning is mandatory") is None

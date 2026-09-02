@@ -68,18 +68,8 @@ from random import random
 last_session_updated_at: Optional[datetime] = None
 
 version_main = None
-# `str`, not `Optional[str]`: these are passed straight to `send_keys`, which takes a `str`.
-# Nothing in this package ever compares them against None -- every reader tests them for
-# truthiness -- so the empty string carries the same "not configured yet" meaning with a type
-# the checker accepts.
-#
-# A runtime guard belongs in `LoginAndGetCookies` too: with credentials unset, `send_keys`
-# fails inside the best-effort handler around it and the failure is then reported as "could
-# not locate the field" -- a misleading diagnosis for a credential that was never supplied.
-# That guard is NOT added here because it is one more branch and that function sits at
-# complexity 33 under a ratchet that only turns down. It needs the function decomposed first.
-login: str = ""
-pwd: str = ""
+login: Optional[str] = None
+pwd: Optional[str] = None
 # Annotated individually rather than as one six-way tuple unpack: without annotations mypy infers
 # the type of each as exactly `None`, which makes every `if browser is not None:` guard in this
 # module provably dead to the checker AND removes all checking of selenium/dict attribute access
@@ -471,7 +461,9 @@ def LoginAndGetCookies(
             elem_login = find_element_by_name(browser, login_input_name)
             elem_login.send_keys(Keys.CONTROL, "a")
             elem_login.send_keys(Keys.DELETE)
-            elem_login.send_keys(login)
+            # `login`/`pwd` are module-level Optionals set by the caller; sending None types the literal
+            # string "None" into the field, which fails the login with no diagnosis.
+            elem_login.send_keys(login or "")
             pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
             elem_login.send_keys(Ret)
         except Exception as e:  # nosec B110 - best-effort login-by-name-field attempt; the code below explicitly falls back to find_element_by_xpath, and if elem_login stays None it is logged and reported as an error a few lines down
@@ -494,7 +486,7 @@ def LoginAndGetCookies(
             elem_pwd = find_element_by_name(browser, password_input_name)
             elem_pwd.send_keys(Keys.CONTROL, "a")
             elem_pwd.send_keys(Keys.DELETE)
-            elem_pwd.send_keys(pwd)
+            elem_pwd.send_keys(pwd or "")
         except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
             logger.debug("find_element_by_name password attempt failed: %s", e)
         if elem_pwd is None:

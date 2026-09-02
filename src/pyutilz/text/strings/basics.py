@@ -9,7 +9,10 @@ from ._logproxy import logger
 from typing import Any, Optional, Sequence
 import unicodedata
 import re
-import pandas as pd
+# pandas is imported INSIDE the one function that needs it. `pyutilz/system/__init__.py` eagerly imports
+# its lightweight psutil helpers, and that chain reaches this module through `system/probing.py`, so a
+# module-level pandas here made EVERY `pyutilz.system.*` import depend on pandas - and therefore on
+# dateutil, which no optional-dep group declares.
 
 def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Optional[int] = None) -> Optional[str]:
     """Finds a substring located in a text between the start and end strings, optionally from indices idx1 till idx2."""
@@ -158,6 +161,8 @@ def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", defa
     'AgQAAOSwIZ5fC-Dp/s-l225.jpg'
 
     """
+    import pandas as pd
+
     if pd.notnull(path):
         if path == default:
             return default_replacement

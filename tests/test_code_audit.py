@@ -90,6 +90,8 @@ from pyutilz.dev.code_audit.asymmetric_except_siblings import scan_asymmetric_ex
 from pyutilz.dev.code_audit.effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
 from pyutilz.dev.code_audit.guard_decidable_from_constants import scan_guard_decidable_from_constants
 from pyutilz.dev.code_audit.count_then_fetch_same_table import scan_count_then_fetch_same_table
+from pyutilz.dev.code_audit.accumulator_helper_bypassed import scan_accumulator_helper_bypassed
+from pyutilz.dev.code_audit.sentinel_cached_as_answer import scan_sentinel_cached_as_answer
 from pyutilz.dev.code_audit.sql_selects_unread_column import scan_sql_selects_unread_column
 from pyutilz.dev.code_audit.comment_names_missing_symbol import (
     scan_comment_cites_absolute_line,
@@ -8042,3 +8044,227 @@ def scan(cur, table):
 ''',
     )
     assert scan_count_then_fetch_same_table(tmp_path) == []
+
+
+# ---- sentinel_cached_as_answer -------------------------------------------
+
+
+def test_sentinel_cached_as_answer_flags_the_canonical_case(tmp_path: Path):
+    """One transient failure pins the key to None for the lifetime of the process."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_cache = {}
+
+def lookup(key):
+    if key not in _cache:
+        try:
+            _cache[key] = fetch(key)
+        except Exception:
+            _cache[key] = None
+    return _cache[key]
+""",
+    )
+    findings = scan_sentinel_cached_as_answer(tmp_path)
+    assert len(findings) == 1, findings
+    assert "None" in findings[0].detail
+
+
+def test_sentinel_cached_as_answer_flags_an_empty_container(tmp_path: Path):
+    """`{}` cached on a build failure is the same defect wearing a different sentinel."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_map_cache = {}
+
+def maps(src):
+    try:
+        _map_cache[src] = build(src)
+    except Exception:
+        _map_cache[src] = {}
+    return _map_cache[src]
+""",
+    )
+    assert len(scan_sentinel_cached_as_answer(tmp_path)) == 1
+
+
+def test_sentinel_cached_as_answer_ignores_a_real_value(tmp_path: Path):
+    """A handler that caches a genuine fallback is not caching a failure."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_cache = {}
+
+def lookup(key):
+    try:
+        _cache[key] = fetch(key)
+    except Exception:
+        _cache[key] = DEFAULT_FOR[key]
+    return _cache[key]
+""",
+    )
+    assert scan_sentinel_cached_as_answer(tmp_path) == []
+
+
+def test_sentinel_cached_as_answer_ignores_a_plain_local(tmp_path: Path):
+    """Assigning None to something that is not a cache costs nothing after the call returns."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def lookup(key, results):
+    try:
+        results[key] = fetch(key)
+    except Exception:
+        results[key] = None
+    return results[key]
+""",
+    )
+    assert scan_sentinel_cached_as_answer(tmp_path) == []
+
+
+def test_sentinel_cached_as_answer_ignores_a_write_outside_a_handler(tmp_path: Path):
+    """Caching None on a path that did not fail says nothing about a swallowed error."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_cache = {}
+
+def reset(key):
+    _cache[key] = None
+""",
+    )
+    assert scan_sentinel_cached_as_answer(tmp_path) == []
+
+HELPER = '\nclass Stats:\n    def _inc_stat(self, key, delta=1):\n        with self._lock:\n            self.stats[key] += delta\n\n    def use(self):\n        self._inc_stat("pages")\n'
+
+# ---- accumulator_helper_bypassed -----------------------------------------
+
+
+def test_accumulator_helper_bypassed_flags_a_sibling_module(tmp_path: Path):
+    """The canonical shape: `_inc_stat` in a mixin, a direct `+=` in its sibling.
+
+    Package-wide on purpose -- a per-file rule saw a helper with no bypasses and bypasses with no
+    helper, and reported nothing on the very defect it was written for.
+    """
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    _write(
+        tmp_path,
+        "parallel_mixin.py",
+        """
+class Parallel:
+    def paginate(self, ids):
+        self.stats["total_paginated"] += len(ids)
+""",
+    )
+    findings = scan_accumulator_helper_bypassed(tmp_path)
+    assert len(findings) == 1, findings
+    assert "_inc_stat" in findings[0].detail
+
+
+def test_accumulator_helper_bypassed_accepts_a_write_under_the_lock(tmp_path: Path):
+    """The helper here is a lock plus the write, so a caller already holding it skips nothing."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    _write(
+        tmp_path,
+        "parallel_mixin.py",
+        """
+class Parallel:
+    def paginate(self, ids):
+        with self._lock:
+            self.stats["total_paginated"] += len(ids)
+""",
+    )
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_accepts_assigning_a_measurement(tmp_path: Path):
+    """`stats["root_total_count"] = count` stores a value just computed; routing it through an
+    incrementing helper would be wrong, not safer. All four surviving hits in one codebase were
+    this shape."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    _write(
+        tmp_path,
+        "crawler.py",
+        """
+class Crawler:
+    def crawl(self, count):
+        self.stats["root_total_count"] = count
+""",
+    )
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_accepts_a_test_fixture(tmp_path: Path):
+    """A test arranging state before asserting on it is building a fixture, not bypassing."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    _write(
+        tmp_path,
+        "test_crawler.py",
+        """
+def test_pagination(c):
+    c.stats["total_paginated"] += 1
+""",
+    )
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_ignores_a_local_accumulator(tmp_path: Path):
+    """A local is shared with nobody, so writing it directly bypasses nothing.
+
+    Two earlier versions of this test proved nothing and were replaced: one used
+    `findings.append(...)`, which stopped being a candidate at all once the rule narrowed to
+    accumulation, and one defined a helper no other function called, which the rule skips before
+    it ever reaches the shared-structure question.
+    """
+    _write(
+        tmp_path,
+        "scanner.py",
+        """
+def collect(key):
+    counts = {}
+    counts[key] += 1
+    return counts
+
+
+def other():
+    counts = {}
+    counts["fixed"] += 1
+    return counts
+
+
+def run(key):
+    return collect(key), other()
+""",
+    )
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_needs_a_parameter_keyed_owner(tmp_path: Path):
+    """With every writer using a literal key there is no helper, and nobody bypasses anything.
+
+    `record` here mutates two structures, so it can never be an owner itself -- which is what
+    makes it the site the rule WOULD report if it accepted a literal-keyed writer as the owner.
+    """
+    _write(
+        tmp_path,
+        "crawler.py",
+        """
+class Crawler:
+    def paginate(self, ids):
+        self.stats["total_paginated"] += len(ids)
+
+    def record(self, ids, seen):
+        self.stats["total_dup"] += len(ids)
+        self.audit_log["last"] = seen
+
+    def run(self, ids, seen):
+        self.paginate(ids)
+        self.record(ids, seen)
+""",
+    )
+    assert scan_accumulator_helper_bypassed(tmp_path) == []

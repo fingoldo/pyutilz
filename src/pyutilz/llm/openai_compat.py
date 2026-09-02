@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 # requirements).
 _json_backend: Any
 try:
-    import orjson as _json_backend  # type: ignore[import-not-found,no-redef]  # absent in a minimal install (import-not-found), resolvable in CI where it redefines the annotation above (no-redef)
+    import orjson as _json_backend  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError
 except ImportError:
-    import json as _json_backend  # type: ignore[no-redef]
+    import json as _json_backend
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError
@@ -768,9 +768,22 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
             return content
 
-    async def _post_and_unwrap(self, body: dict[str, Any]) -> str | None:
+    def _body_after_rejected_request(self, _body: dict[str, Any], _status: int, _detail: str) -> dict[str, Any] | None:
+        """A replacement body for a request this upstream refused over a PARAMETER, or ``None`` to raise.
+
+        The catalogue says which parameters a model accepts, never which VALUES of them its resolved endpoint
+        will take, so this is keyed on the rejection itself. Default: no repair, the error propagates - the
+        parameters are named for the subclasses that read them.
+        """
+        return None
+
+    async def _post_and_unwrap(self, body: dict[str, Any], repairing: bool = False) -> str | None:
         """One POST plus envelope unwrapping. ``None`` means the model returned no text and no tool calls -
-        an empty completion, which the caller decides how to treat; a tool-call-only reply returns ``""``."""
+        an empty completion, which the caller decides how to treat; a tool-call-only reply returns ``""``.
+
+        ``repairing`` marks the single re-issue `_body_after_rejected_request` is allowed, so a repaired body
+        that is itself refused raises instead of looping.
+        """
         resp = await self._client.post("/chat/completions", json=body)
 
         # Snapshot rate-limit headers before any status check, so a
@@ -787,6 +800,13 @@ class OpenAICompatibleProvider(LLMProvider):
                 detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
             except (ValueError, _JSONDecodeError):
                 detail = resp.text
+            repaired = self._body_after_rejected_request(body, resp.status_code, detail)
+            if repaired is not None and not repairing:
+                logger.warning(
+                    "%s/%s rejected a request parameter (HTTP %s) - re-issuing once with it adjusted: %s",
+                    self._provider_name, self.model_name, resp.status_code, detail[:160],
+                )
+                return await self._post_and_unwrap(repaired, repairing=True)
             raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
         resp.raise_for_status()
         data = parse_response_envelope(resp, self._provider_name)
@@ -824,8 +844,9 @@ class OpenAICompatibleProvider(LLMProvider):
             # Tool-call-only response (no assistant text). Return empty
             # string but keep tool_calls accessible via the attribute.
             return ""
-        if not content:
-            return None
+        # ORDER MATTERS: a length-capped answer with NO text is still a truncation, and reporting it as an
+        # empty completion sent the caller looking for a broken model rather than a spent budget. Measured
+        # 2026-09-02: z-ai/glm-4.7-flash spent all 15,775 output tokens on reasoning and returned nothing.
         if self._last_finish_reason == "length":
             # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified
             # (finish_reason field, "caller should double max_tokens and re-issue" contract)
@@ -839,6 +860,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 # already paid for is another, and it had nothing to keep.
                 partial_text=content or "",
             )
+        if not content:
+            return None
         return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     async def generate_json(

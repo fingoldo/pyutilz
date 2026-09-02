@@ -50,6 +50,11 @@ from pyutilz.llm.openrouter_provider._health import _summarize_endpoints
 logger = logging.getLogger(__name__)
 
 
+# Model ids whose resolved endpoint answered "Reasoning is mandatory for this endpoint and cannot be
+# disabled" to `reasoning: {enabled: false}` - a per-process note so that refusal is paid once, not per call.
+_REASONING_CANNOT_BE_DISABLED: set[str] = set()
+
+
 class OpenRouterProvider(OpenAICompatibleProvider):
     """OpenRouter meta-provider via OpenAI-compatible chat/completions API.
 
@@ -417,11 +422,47 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         both fields is the actual "spend as little as possible on thinking"
         request - confirmed live afterward: 0 truncations across a follow-up
         batch that previously truncated intermittently.
+
+        AND "as little as possible" is still not "none". Re-measured 2026-09-02 on one identical question
+        across eight models, comparing that mapping against ``{"enabled": False}`` - billed reasoning tokens,
+        then what the same call returned:
+
+        z-ai/glm-4.7-flash 348 tok and an EMPTY answer cut off by `length`, against 0 tok and an answer;
+        deepseek/deepseek-v3.2 259 -> 0; xiaomi/mimo-v2.5 202 -> 0; nvidia/nemotron-3.5-lightning 162 -> 0;
+        deepseek/deepseek-v4-flash 13 -> 0; qwen/qwen3.8-flash rate-limited -> 0. So ``enabled: False`` is
+        the real switch, worth 150-350 billed tokens a call on a reasoning model and, on glm, the difference
+        between an answer and nothing.
+
+        The other two of the eight - google/gemini-3.7-flash and openai/gpt-oss-120b - answer "Reasoning is
+        mandatory for this endpoint and cannot be disabled" and fail the WHOLE call. Neither the catalogue's
+        ``supported_parameters`` nor its reasoning block distinguishes them from the six, so the fallback is
+        keyed on that refusal (`_body_after_rejected_request`) and remembered per model id for the process.
         """
         enabled, effort = self._normalize_thinking(thinking)
         if not enabled:
-            return {"reasoning": {"effort": "minimal", "exclude": True}}
+            if self.model_name in _REASONING_CANNOT_BE_DISABLED:
+                return {"reasoning": {"effort": "minimal", "exclude": True}}
+            return {"reasoning": {"enabled": False}}
         return {"reasoning": {"effort": effort or "medium"}}
+
+    def _body_after_rejected_request(self, body: dict[str, Any], status: int, detail: str) -> dict[str, Any] | None:
+        """Re-issue a ``reasoning: {enabled: false}`` call this endpoint refuses, with the budget form instead.
+
+        The model id is remembered, so an endpoint that mandates reasoning costs one refused call per process
+        rather than one per request.
+        """
+        if status not in (400, 404, 422):
+            # A refusal of the PARAMETER, not a server fault: repairing a 500 or a 429 would re-issue a call
+            # the upstream never rejected on its content, and hide a retryable failure as a permanent one.
+            return None
+        reasoning = body.get("reasoning")
+        if not isinstance(reasoning, dict) or reasoning.get("enabled") is not False:
+            return None
+        said = detail.lower()
+        if "reasoning" not in said or not ("mandatory" in said or "cannot be disabled" in said):
+            return None
+        _REASONING_CANNOT_BE_DISABLED.add(self.model_name)
+        return {**body, "reasoning": {"effort": "minimal", "exclude": True}}
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
         """Log a warning when ``resp`` signals HTTP 402 (OpenRouter account out of credits)."""
