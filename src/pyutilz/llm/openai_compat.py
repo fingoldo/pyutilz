@@ -28,12 +28,12 @@ logger = logging.getLogger(__name__)
 # requirements).
 _json_backend: Any
 try:
-    import orjson as _json_backend  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
+    import orjson as _json_backend  # type: ignore[import-not-found,no-redef]  # absent in a minimal install (import-not-found), resolvable in CI where it redefines the annotation above (no-redef)
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError
 except ImportError:
-    import json as _json_backend
+    import json as _json_backend  # type: ignore[no-redef]
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError

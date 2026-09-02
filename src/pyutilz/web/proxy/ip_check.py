@@ -26,7 +26,7 @@ _IP_SHAPE_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$")
 # blew up when the import itself had failed).
 _json_backend: Any
 try:
-    import orjson as _json_backend
+    import orjson as _json_backend  # type: ignore[no-redef]  # only flagged where orjson IS installed, i.e. in CI but not in a minimal env
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError

@@ -50,7 +50,7 @@ if _HAVE_NUMBA:
         sums = np.empty(n_cols, dtype=np.float64)
         mins = np.empty(n_cols, dtype=np.float64)
         maxs = np.empty(n_cols, dtype=np.float64)
-        for j in prange(n_cols):
+        for j in prange(n_cols):  # type: ignore[attr-defined]  # numba types prange as non-iterable; only surfaces where numba ships the stub
             acc = np.float64(0.0)
             lo = np.float64(a2[0, j])
             hi = lo
