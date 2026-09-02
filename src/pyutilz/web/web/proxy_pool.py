@@ -7,7 +7,7 @@ Named ``proxy_pool`` rather than ``proxies`` on purpose: the package exposes a m
 by ordinary import machinery.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from ._common import joblib_hash, logger
@@ -20,7 +20,7 @@ import pyutilz.web.web as _facade
 def set_proxy_last_use_time(last_used_dict: Optional[dict], proxies: Optional[dict]) -> None:
     """Record the current UTC time as the last-use timestamp for ``proxies`` (keyed by its joblib hash) in ``last_used_dict``, if it's a dict."""
     if isinstance(last_used_dict, dict):
-        last_used_dict[joblib_hash(proxies)] = datetime.utcnow()  # noqa: DTZ003 -- naive-UTC is this module's public dict-timestamp convention (see get_new_smartproxy/tests, which store/compare naive datetime.utcnow() values); switching to aware would break subtraction against caller-supplied entries
+        last_used_dict[joblib_hash(proxies)] = datetime.now(timezone.utc).replace(tzinfo=None)  # naive-UTC is this module's public dict-timestamp convention (see get_new_smartproxy/tests, which store/compare naive-UTC values); switching to aware would break subtraction against caller-supplied entries
 
 
 def make_proxies_dict(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: str, proxy_port: int, proxy_type: str = "https") -> dict:
@@ -70,7 +70,7 @@ def get_new_smartproxy(
     if last_used_dict is None:
         last_used_dict = {}
     n = 0
-    now_time = datetime.utcnow()  # noqa: DTZ003 -- must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
+    now_time = datetime.now(timezone.utc).replace(tzinfo=None)  # must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
     wait_started_at: Optional[datetime] = None
     # Captured once: rebinding the `proxy_port` PARAMETER inside the loop froze the first random
     # draw forever, so the "keeps re-rolling a random port" contract above never held.
@@ -125,8 +125,8 @@ def get_new_smartproxy(
                 )
                 if max_wait_seconds is not None:
                     if wait_started_at is None:
-                        wait_started_at = datetime.utcnow()  # noqa: DTZ003 -- naive-UTC, matches now_time's convention above
-                    elif (datetime.utcnow() - wait_started_at).total_seconds() > max_wait_seconds:  # noqa: DTZ003
+                        wait_started_at = datetime.now(timezone.utc).replace(tzinfo=None)  # naive-UTC, matches now_time's convention above
+                    elif (datetime.now(timezone.utc).replace(tzinfo=None) - wait_started_at).total_seconds() > max_wait_seconds:  # naive-UTC, matches now_time's convention above
                         raise TimeoutError(
                             f"get_new_smartproxy: no eligible proxy found within {max_wait_seconds}s "
                             f"(pool [{proxy_min_port}, {proxy_max_port}] may be exhausted or too small "

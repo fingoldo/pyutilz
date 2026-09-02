@@ -39,7 +39,7 @@ class TestWebUtilities:
 
     def test_set_proxy_last_use_time(self):
         """Test setting proxy last use time"""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from pyutilz.web import set_proxy_last_use_time
         from joblib import hash as joblib_hash
@@ -52,7 +52,7 @@ class TestWebUtilities:
         key = joblib_hash(proxies)
         assert key in last_used
         assert isinstance(last_used[key], datetime)
-        assert datetime.utcnow() - last_used[key] < timedelta(seconds=5)
+        assert datetime.now(timezone.utc).replace(tzinfo=None) - last_used[key] < timedelta(seconds=5)
 
 
 class TestWebConstants:

@@ -17,6 +17,7 @@ import threading
 import numpy as np
 
 from pyutilz.system.system import get_own_memory_usage, get_nvidia_smi_info
+from pyutilz.system.psutil_compat import get_cpu_freq_current_mhz, missing_psutil_functions
 from pyutilz.core.pythonlib import to_float
 from typing import Any as _Any, List as _List, Optional
 
@@ -125,10 +126,15 @@ class UtilizationMonitor:
         """Take one CPU/RAM/GPU sample and append it to the accumulators."""
         # CPU
         self.cpu_utilizaton.append(psutil.cpu_percent(percpu=False))
-        # cpu_freq() can return None on platforms/VMs where the frequency
-        # is unavailable; fall back to 0.0 rather than crashing the thread.
-        cpu_freq = psutil.cpu_freq(percpu=False)
-        self.cpu_clocks.append(cpu_freq.current if cpu_freq is not None else 0.0)
+        # CPU frequency is optional twice over: psutil has no cpu_freq attribute at all on some
+        # platforms (macOS), and where it exists it can still return None on VMs/containers that
+        # do not expose the counter. Both are handled absences, not sampling errors -- and neither
+        # is recorded as 0.0, which would be averaged in later as a real "CPU ran at 0 MHz"
+        # reading. A sample with no clock simply contributes no clock, and get_average_utilization
+        # reports cpu_clocks_mhz=None plus the unavailable-metric list.
+        cpu_clock_mhz = get_cpu_freq_current_mhz(psutil_module=psutil)
+        if cpu_clock_mhz is not None:
+            self.cpu_clocks.append(cpu_clock_mhz)
 
         # RAM
         # get_own_memory_usage() documents returning None if psutil raises AND there's no
@@ -254,8 +260,9 @@ class UtilizationMonitor:
             return dict(
                 n_samples=len(self.cpu_utilizaton),
                 n_sampling_errors=self.n_sampling_errors,
+                unavailable_metrics=missing_psutil_functions(psutil),
                 cpu_utilizaton_percent=round(np.mean(self.cpu_utilizaton), ndigits),
-                cpu_clocks_mhz=round(np.mean(self.cpu_clocks), ndigits),
+                cpu_clocks_mhz=round(np.mean(self.cpu_clocks), ndigits) if self.cpu_clocks else None,
                 own_ram_used_gb=round(np.mean(self.own_ram_used), ndigits),
                 total_ram_used_gb=round(np.mean(self.total_ram_used) / 1024**3, ndigits),
                 total_ram_free_gb=round(np.mean(self.total_ram_free) / 1024**3, ndigits),
@@ -270,6 +277,7 @@ class UtilizationMonitor:
             return dict(
                 n_samples=0,
                 n_sampling_errors=self.n_sampling_errors,
+                unavailable_metrics=missing_psutil_functions(psutil),
                 cpu_utilizaton_percent=None,
                 cpu_clocks_mhz=None,
                 own_ram_used_gb=None,

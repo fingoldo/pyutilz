@@ -4,7 +4,7 @@ import pytest
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def test_imitate_delay_force_no_last_call():
 
 def test_imitate_delay_with_last_call():
     # line 488
-    ts = datetime.utcnow()
+    ts = datetime.now(timezone.utc).replace(tzinfo=None)
     with patch("time.sleep"):
         result = imitate_delay(0.001, 0.002, last_call_ts=ts, b_force=False)
     assert isinstance(result, datetime)
@@ -196,7 +196,7 @@ def test_imitate_delay_with_last_call():
 
 def test_imitate_delay_big_delay():
     # lines 482-484
-    ts = datetime.utcnow()
+    ts = datetime.now(timezone.utc).replace(tzinfo=None)
     with patch("time.sleep"):
         result = imitate_delay(0.001, 0.002, last_call_ts=ts, b_force=True, big_delay_prob=1.0, big_delay_multiplier=2.0)
     assert isinstance(result, datetime)

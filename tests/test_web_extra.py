@@ -2,7 +2,7 @@
 
 import http
 import ssl
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -322,7 +322,7 @@ class TestGetNewSmartproxy:
         # Build a proxy dict for fixed port and mark it as recently used
         proxies = mod.make_proxies_dict("u", "p", "srv", 5555, "http")
         key = jl_hash(proxies)
-        last_used = {key: datetime.utcnow()}
+        last_used = {key: datetime.now(timezone.utc).replace(tzinfo=None)}
         # With fixed port and recent use, it would loop forever.
         # Use random port range so it eventually gets a different port.
         r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000, last_used_dict=last_used, min_idle_interval_minutes=999, failed_dict={})
@@ -333,7 +333,7 @@ class TestGetNewSmartproxy:
         from joblib import hash as jl_hash
         proxies = mod.make_proxies_dict("u", "p", "srv", 5555, "http")
         key = jl_hash(proxies)
-        failed = {key: datetime.utcnow()}
+        failed = {key: datetime.now(timezone.utc).replace(tzinfo=None)}
         # Random port range so it eventually gets through
         r = mod.get_new_smartproxy("u", "p", "srv", 5000, 6000, last_used_dict={}, min_idle_interval_minutes=999, failed_dict=failed)
         assert "http" in r
@@ -348,7 +348,7 @@ class TestGetNewSmartproxy:
 
         proxies = mod.make_proxies_dict("u", "p", "srv", 9999, "http")
         key = jl_hash(proxies)
-        failed = {key: datetime.utcnow()}
+        failed = {key: datetime.now(timezone.utc).replace(tzinfo=None)}
         with patch("pyutilz.web.web.sleep"):
             with pytest.raises(TimeoutError, match="no eligible proxy found"):
                 mod.get_new_smartproxy(
@@ -368,7 +368,7 @@ class TestGetNewSmartproxy:
 
         proxies = mod.make_proxies_dict("u", "p", "srv", 9999, "http")
         key = jl_hash(proxies)
-        failed = {key: datetime.utcnow()}
+        failed = {key: datetime.now(timezone.utc).replace(tzinfo=None)}
         with patch("pyutilz.web.web.sleep"), caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
             with pytest.raises(TimeoutError):
                 mod.get_new_smartproxy(

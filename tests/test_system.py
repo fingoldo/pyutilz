@@ -221,6 +221,36 @@ class TestGetCpuUsage:
         assert info["cpu_current_load_percent"] == 42.5
         assert info["cpu_current_threads_load_percents"] == [11.0, 12.0]
 
+    def test_usage_stats_survive_a_platform_without_cpu_freq(self, monkeypatch):
+        """Missing psutil.cpu_freq must cost only the frequency fields, not the whole result.
+
+        psutil gates cpu_freq on the platform backend (macOS has none), so the unguarded call
+        raised AttributeError inside get_system_info's function-wide try -- which returned the
+        half-built dict, so CPU load, per-core load and RAM stats all silently vanished. Deleting
+        the attribute reproduces that module surface.
+        """
+        pytest.importorskip("psutil")
+
+        from pyutilz.system.system import sysinfo as sysinfo_mod
+
+        monkeypatch.delattr(sysinfo_mod.psutil, "cpu_freq", raising=False)
+
+        calls = []
+
+        def fake_cpu_percent(percpu=False):
+            calls.append(percpu)
+            return [11.0, 12.0] if percpu else 42.5
+
+        monkeypatch.setattr(sysinfo_mod.psutil, "cpu_percent", fake_cpu_percent)
+
+        info = sysinfo_mod.get_system_info(return_usage_stats=True)
+
+        assert sorted(calls) == [False, True], f"expected one aggregate and one per-core query, got {calls!r}"
+        assert info["cpu_current_load_percent"] == 42.5
+        assert info["cpu_current_threads_load_percents"] == [11.0, 12.0]
+        assert info["cpu_current_frequency_hz"] is None, "an unmeasurable frequency must be reported as unknown, not fabricated"
+        assert "ram_free_gb" in info
+
 
 @pytest.mark.parametrize("n_lines", [1, 5, 10, 20])
 def test_tracemalloc_snapshot_n_parameter(n_lines):

@@ -215,10 +215,14 @@ class TestTimeoutExecutorAtexit:
 
 
 class TestHardwareMonitorGuards:
-    """Finding 9: cpu_freq()->None guard and safe-int gpu_module_id."""
+    """cpu_freq() absence/None guards and safe-int gpu_module_id."""
 
     def test_cpu_freq_none_does_not_crash(self):
         psutil = pytest.importorskip("psutil")
+        if not hasattr(psutil, "cpu_freq"):
+            # Patching a name psutil never defined on this platform would only test the mock. The
+            # platforms without it are covered by test_missing_cpu_freq_attribute_is_a_reported_absence.
+            pytest.skip("this psutil build has no cpu_freq (platform-gated upstream); nothing to make return None")
         from pyutilz.system.hardware_monitor import UtilizationMonitor
 
         mon = UtilizationMonitor()
@@ -233,7 +237,40 @@ class TestHardwareMonitorGuards:
             # single loop iteration then stop; pre-fix crashed on None.current
             mon.query_utilization()
 
-        assert mon.cpu_clocks[-1] == 0.0
+        assert mon.n_sampling_errors == 0, "an unreported CPU frequency is a known absence, not a sampling failure"
+        # No clock is recorded rather than a fabricated 0.0: a zero would be averaged in later as a
+        # genuine "the CPU ran at 0 MHz" measurement.
+        assert mon.cpu_clocks == []
+        assert mon.get_average_utilization()["cpu_clocks_mhz"] is None
+
+    def test_missing_cpu_freq_attribute_is_a_reported_absence(self, monkeypatch):
+        """A platform whose psutil has no cpu_freq at all (macOS) must still sample everything else.
+
+        psutil defines cpu_freq only ``if hasattr(_psplatform, "cpu_freq")``, so on macOS the
+        attribute is missing from the module and an unguarded call raised AttributeError on EVERY
+        sample -- turning the whole monitor into a stream of swallowed exceptions with no data.
+        Deleting the attribute here reproduces exactly that module surface.
+        """
+        psutil = pytest.importorskip("psutil")
+        from pyutilz.system.hardware_monitor import UtilizationMonitor
+
+        monkeypatch.delattr(psutil, "cpu_freq", raising=False)
+
+        mon = UtilizationMonitor()
+        with patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)), patch(
+            "pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1
+        ), patch(
+            "pyutilz.system.hardware_monitor.get_nvidia_smi_info",
+            side_effect=lambda **kwargs: mon.stop_flag.set(),
+        ):
+            mon.query_utilization()
+
+        assert mon.n_sampling_errors == 0, "a missing platform capability must not be reported as a sampling error"
+        assert mon.cpu_utilizaton == [1.0], "the rest of the sample must still be collected"
+        assert mon.cpu_clocks == []
+        stats = mon.get_average_utilization()
+        assert stats["cpu_clocks_mhz"] is None
+        assert "cpu_freq" in stats["unavailable_metrics"], stats["unavailable_metrics"]
 
     def test_bad_gpu_module_id_does_not_crash(self):
         psutil = pytest.importorskip("psutil")
@@ -241,9 +278,12 @@ class TestHardwareMonitorGuards:
 
         gpu_stats = {"gpu": [{"gpu_module_id": "N/A"}]}
         mon = UtilizationMonitor(gpu_ids=[0])
-        with patch.object(psutil, "cpu_freq", return_value=MagicMock(current=1000.0)), patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(
-            psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)
-        ), patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), patch(
+        # cpu_freq is deliberately NOT patched here: this test is about gpu_module_id parsing, and
+        # patching a platform-gated psutil name would make it fail on platforms lacking it (macOS)
+        # for a reason unrelated to what it asserts. The real (or absent) cpu_freq is handled.
+        with patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)), patch(
+            "pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1
+        ), patch(
             "pyutilz.system.hardware_monitor.get_nvidia_smi_info",
             side_effect=lambda **kwargs: (mon.stop_flag.set(), gpu_stats)[1],
         ):

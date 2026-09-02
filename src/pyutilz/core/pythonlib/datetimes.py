@@ -48,7 +48,7 @@ def utc_ts_2_locstr(
         if isinstance(dst, int):
             if dst > 0:
                 if dst in dst_names:
-                    utc_now = datetime.utcnow()  # must stay naive to subtract against utc_dt (naive-UTC from strptime above); switching to an aware value would raise offset-naive/-aware TypeError
+                    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)  # must stay naive to subtract against utc_dt (naive-UTC from strptime above); switching to an aware value would raise offset-naive/-aware TypeError
                     res += f" ({(utc_now - utc_dt).total_seconds() // dst:.0f} {dst_names.get(dst)}. тому назад)"
     return res
 
@@ -102,7 +102,7 @@ def imitate_delay(
     >>>last_call_ts=None;last_call_ts=imitate_delay(2,4,last_call_ts);last_call_ts=imitate_delay(2,4,last_call_ts);
 
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     from random import uniform, random
     from time import sleep
 
@@ -120,11 +120,11 @@ def imitate_delay(
             cur_delay = 0.0
         else:
             assert last_call_ts is not None  # guaranteed by the `if last_call_ts or b_force:` guard above combined with this branch
-            cur_delay = (datetime.utcnow() - last_call_ts).total_seconds()  # noqa: DTZ003 -- last_call_ts is a caller-supplied naive-UTC datetime (public API contract, see tests); must stay naive to subtract
+            cur_delay = (datetime.now(timezone.utc).replace(tzinfo=None) - last_call_ts).total_seconds()  # last_call_ts is a caller-supplied naive-UTC datetime (public API contract, see tests); must stay naive to subtract
         if cur_delay < random_delay:
             logger.debug("Sleeping %.2f sec.", random_delay - cur_delay)
             sleep(random_delay - cur_delay)
-    return datetime.utcnow()  # noqa: DTZ003 -- return value feeds back into this function's own last_call_ts (naive-UTC contract, see tests); must stay naive
+    return datetime.now(timezone.utc).replace(tzinfo=None)  # return value feeds back into this function's own last_call_ts (naive-UTC contract, see tests); must stay naive
 
 
 def weekofmonth(date: date):

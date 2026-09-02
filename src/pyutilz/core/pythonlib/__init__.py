@@ -142,7 +142,19 @@ from .hardware import (
 
 from . import _common, packages, objects, numerics, datetimes, stackutils, filesystem, hardware
 
-del _common, packages, objects, numerics, datetimes, stackutils, filesystem, hardware
+# Deleting these bindings would make ``dir()`` depend on import ORDER rather than on a fixed
+# property of the module: any later access through the import system (a
+# ``mock.patch("<pkg>.<submodule>.name")`` target, a plain ``import <pkg>.<submodule>``
+# anywhere in the process) re-sets the deleted attribute as a side effect, while code that
+# runs before that sees an AttributeError. A ``__dir__`` hook (PEP 562) reports the same
+# curated surface without ever removing the real attribute, so every access path stays
+# reliable no matter what has been imported first -- the idiom pyutilz.system.system uses.
+_SUBMODULE_NAMES = frozenset({"_common", "packages", "objects", "numerics", "datetimes", "stackutils", "filesystem", "hardware"})
+
+
+def __dir__() -> list:
+    """Reports the facade's curated surface, hiding the submodule names the re-exports came from."""
+    return sorted(n for n in globals() if n not in _SUBMODULE_NAMES)
 
 # Explicit public surface: makes this facade's re-export intent self-documenting and gives the
 # self-scan code-audit possibly_dead_import check an authoritative usage signal for names only

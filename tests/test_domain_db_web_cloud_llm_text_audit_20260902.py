@@ -280,7 +280,7 @@ def test_f46_live_backend_pid_is_used():
 # F05 / F06 / F48 / F51 -- web.py
 # ---------------------------------------------------------------------------
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pyutilz.web.web as webmod
 
@@ -306,7 +306,7 @@ def test_f05_random_port_is_rerolled_every_iteration(monkeypatch):
             return True
 
         def __getitem__(self, key):
-            return datetime.utcnow()
+            return datetime.now(timezone.utc).replace(tzinfo=None)
 
     with pytest.raises(TimeoutError):
         webmod.get_new_smartproxy(
@@ -335,7 +335,7 @@ def test_f06_failed_proxy_respects_its_own_longer_cooldown(monkeypatch):
     marked failed was handed straight back on the next rotation."""
     proxies = webmod.make_proxies_dict("u", "p", "host", 31337, "http")
     key = webmod.joblib_hash(proxies)
-    failed = {key: datetime.utcnow() - timedelta(minutes=5)}
+    failed = {key: datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)}
     monkeypatch.setattr(webmod, "sleep", lambda *a, **kw: None)
     with pytest.raises(TimeoutError):
         webmod.get_new_smartproxy(
@@ -351,7 +351,7 @@ def test_f06_failed_proxy_respects_its_own_longer_cooldown(monkeypatch):
 def test_f06_failed_proxy_is_eligible_once_its_cooldown_elapsed(monkeypatch):
     proxies = webmod.make_proxies_dict("u", "p", "host", 31337, "http")
     key = webmod.joblib_hash(proxies)
-    failed = {key: datetime.utcnow() - timedelta(minutes=90)}
+    failed = {key: datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=90)}
     got = webmod.get_new_smartproxy(
         "u", "p", "host", 31337, 31337,
         failed_dict=failed,

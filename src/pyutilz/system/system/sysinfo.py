@@ -48,6 +48,7 @@ from .probing import (
     parse_dmidecode_info,
 )
 from .fsutils import get_max_singledisk_free_space_gb, list_linux_devices
+from pyutilz.system.psutil_compat import get_cpu_freq as _get_cpu_freq  # private alias: keeps the facade's public surface unchanged
 
 def get_system_info(
     return_hdd_info: bool = False,
@@ -186,7 +187,12 @@ def get_system_info(
                     info["host_external_ip"] = web.get_external_ip()
 
         if return_hardware_info or return_usage_stats:
-            cpu_freq = psutil.cpu_freq()
+            # psutil.cpu_freq does not exist on every platform (macOS has none), and where it does
+            # it may still return None. Calling it unguarded raised AttributeError here, which the
+            # function-wide except swallowed -- so a single missing capability silently truncated
+            # the ENTIRE system-info dict, usage stats and all. Absent frequency now costs only the
+            # frequency fields.
+            cpu_freq = _get_cpu_freq(psutil_module=psutil)
             ram = psutil.virtual_memory()
 
         if return_hardware_info:
@@ -213,8 +219,8 @@ def get_system_info(
             info["cpu_num_cores"] = psutil.cpu_count(logical=False)
             info["cpu_num_threads"] = psutil.cpu_count(logical=True)
 
-            info["cpu_min_frequency_hz"] = cpu_freq.min
-            info["cpu_max_frequency_hz"] = cpu_freq.max
+            info["cpu_min_frequency_hz"] = cpu_freq.min if cpu_freq is not None else None
+            info["cpu_max_frequency_hz"] = cpu_freq.max if cpu_freq is not None else None
 
             # RAM
             info["ram_total_gb"] = ram.total / 2**30
@@ -237,7 +243,7 @@ def get_system_info(
 
         if return_usage_stats:
 
-            info["cpu_current_frequency_hz"] = cpu_freq.current
+            info["cpu_current_frequency_hz"] = cpu_freq.current if cpu_freq is not None else None
             info["cpu_current_load_percent"] = psutil.cpu_percent(percpu=False)
             info["cpu_current_threads_load_percents"] = psutil.cpu_percent(percpu=True)
 

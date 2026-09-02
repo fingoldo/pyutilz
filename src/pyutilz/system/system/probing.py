@@ -33,6 +33,7 @@ from pyutilz.text.strings import remove_json_defaults, remove_json_attributes, f
 from typing import Any as _Any, List as _List, Optional, Union
 
 from ._common import remove_nas, summarize_devices, dict_to_tuple
+from pyutilz.system.psutil_compat import has_psutil_function as _has_psutil_function  # private alias: keeps the facade's public surface unchanged
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # CPU
@@ -519,8 +520,14 @@ def get_battery_info() -> Optional[dict]:
     """Get battery information if available.
 
     Returns:
-        dict: Battery status (percent, secsleft, power_plugged) or None if no battery
+        dict: Battery status (percent, secsleft, power_plugged) or None if no battery, or if this
+        platform's psutil has no sensors_battery() at all (the attribute is platform-gated upstream)
     """
+    if not _has_psutil_function("sensors_battery", psutil):
+        # Absent capability, not a failure: reporting it through the exception handler below logged
+        # a full traceback on every call on platforms that simply do not implement the sensor.
+        logger.debug("psutil.sensors_battery() is not available on this platform; no battery info")
+        return None
     try:
         battery_info = psutil.sensors_battery()
         if battery_info:
