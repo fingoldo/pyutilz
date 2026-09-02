@@ -62,6 +62,16 @@ from .mojibake import scan_mojibake
 from .resource_handle_safety import scan_resource_handle_safety
 from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
+from .effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
+from .asymmetric_except_siblings import scan_asymmetric_except_siblings
+from .unreachable_import_fallback import scan_unreachable_import_fallback
+from .comment_names_missing_symbol import scan_comment_names_missing_symbol, scan_comment_cites_absolute_line
+from .unit_suffix_mismatch import scan_unit_suffix_mismatch
+from .sentinel_guard_mismatch import scan_sentinel_guard_mismatch
+from .stats_key_coverage import scan_stats_key_coverage
+from .constructor_param_overwritten import scan_constructor_param_overwritten
+from .lazy_log_assertion import scan_lazy_log_assertion
+from .raising_stub_swallowed import scan_raising_stub_swallowed
 from .per_call_state_on_shared_instance import scan_per_call_state_on_shared_instance
 from .uncached_constant_cost_probe import scan_uncached_constant_cost_probe
 from .source_text_assertions import scan_source_text_assertions
@@ -161,6 +171,17 @@ register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
 register_scanner("source_text_assertion", scan_source_text_assertions)
 register_scanner("docstring_numbers_moved_to_config", scan_docstring_numbers_moved_to_config)
+register_scanner("raising_stub_swallowed", scan_raising_stub_swallowed)
+register_scanner("lazy_log_assertion", scan_lazy_log_assertion)
+register_scanner("constructor_param_overwritten", scan_constructor_param_overwritten)
+register_scanner("stats_key_coverage", scan_stats_key_coverage)
+register_scanner("sentinel_guard_mismatch", scan_sentinel_guard_mismatch)
+register_scanner("unit_suffix_mismatch", scan_unit_suffix_mismatch)
+register_scanner("comment_names_missing_symbol", scan_comment_names_missing_symbol)
+register_scanner("comment_cites_absolute_line", scan_comment_cites_absolute_line)
+register_scanner("unreachable_import_fallback", scan_unreachable_import_fallback)
+register_scanner("asymmetric_except_siblings", scan_asymmetric_except_siblings)
+register_scanner("effect_flag_outside_its_effect", scan_effect_flag_outside_its_effect)
 register_scanner("bare_except", scan_bare_except)
 register_scanner("console_unicode", scan_console_unicode)
 register_scanner("mojibake", scan_mojibake)
@@ -181,6 +202,11 @@ register_scanner("uncached_constant_cost_probe", scan_uncached_constant_cost_pro
 # fresh mistake, which is a decision a project takes deliberately rather than inherits. Name them in
 # ``checks=`` to run them.
 OPT_IN_ONLY: frozenset[str] = frozenset({
+    # Opt-in: 225 hits in one package, and most are legitimate -- coverage annotations in
+    # tests ("lines 54-90"), and prose citing a line in a file it is discussing. The rule
+    # cannot tell those from a rotted pointer, and the rotted ones are better caught by
+    # citing symbols instead, which comment_names_missing_symbol then validates.
+    "comment_cites_absolute_line",
     # Opt-in because its precision is not good enough to run unattended, and that was measured rather than
     # guessed. Against four repos it produced three hits, ALL false: two docstrings naming a threshold that
     # belongs to a DIFFERENT function, and one reading "12-permutation" as a tunable because "per-call"

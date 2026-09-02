@@ -80,7 +80,12 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     "speedups": ["orjson"],
     "dash": ["flask", "dash", "dash_bootstrap_components", "pydantic"],
     # requests is listed here as well as under "web": prefect depends on it, so a real
-    # `pip install pyutilz[prefect]` always brings it in and masking it would test an impossible state.
+    # `pip install pyutilz[prefect]` always brings it in and masking it would test an impossible
+    # state. It is also declared in the prefect extra as of 2026-09-03, which is the stronger
+    # reason: `pyutilz.system.scheduling.prefect` imports `pyutilz.web.graphql` at module scope,
+    # so the module needs the "web" group outright and said nothing about it -- installing that
+    # extra alone could not import the module it is named for. That is the defect this scenario
+    # exists to catch, not bookkeeping.
     "prefect": ["prefect", "requests"],
     "tensorflow": ["tensorflow"],
 }

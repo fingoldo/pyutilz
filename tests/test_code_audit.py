@@ -79,6 +79,19 @@ from pyutilz.dev.code_audit import (
 
 
 from pyutilz.dev.code_audit.source_text_assertions import scan_source_text_assertions
+from pyutilz.dev.code_audit.raising_stub_swallowed import scan_raising_stub_swallowed
+from pyutilz.dev.code_audit.lazy_log_assertion import scan_lazy_log_assertion
+from pyutilz.dev.code_audit.constructor_param_overwritten import scan_constructor_param_overwritten
+from pyutilz.dev.code_audit.stats_key_coverage import scan_stats_key_coverage
+from pyutilz.dev.code_audit.sentinel_guard_mismatch import scan_sentinel_guard_mismatch
+from pyutilz.dev.code_audit.unit_suffix_mismatch import scan_unit_suffix_mismatch
+from pyutilz.dev.code_audit.unreachable_import_fallback import scan_unreachable_import_fallback
+from pyutilz.dev.code_audit.asymmetric_except_siblings import scan_asymmetric_except_siblings
+from pyutilz.dev.code_audit.effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
+from pyutilz.dev.code_audit.comment_names_missing_symbol import (
+    scan_comment_cites_absolute_line,
+    scan_comment_names_missing_symbol,
+)
 from pyutilz.dev.code_audit.docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_config
 
 
@@ -6677,3 +6690,902 @@ def test_docstring_numbers_moved_to_config_is_opt_in():
 
     assert "docstring_numbers_moved_to_config" in get_scanners()
     assert "docstring_numbers_moved_to_config" in OPT_IN_ONLY
+
+
+# ---- raising_stub_swallowed ---------------------------------------------
+#
+# A test says "this must never be called" by raising, and a broad handler downstream turns the
+# raise into a benign path. Confirmed: a cache was re-probed on every run behind a green test.
+
+
+def test_raising_stub_swallowed_flags_the_shape(tmp_path: Path):
+    _write(tmp_path, "prod.py", """
+def part_has_upwork(part):
+    try:
+        return ParquetFile(part).probe()
+    except Exception:
+        return None
+""")
+    _write(tmp_path, "test_cache.py", """
+from unittest.mock import patch
+
+def test_locate_uses_cache_when_not_stale():
+    def _boom(*a, **k):
+        raise AssertionError("must not be called")
+    with patch("prod.ParquetFile", _boom) as spy:
+        locate()
+    assert spy.called is False
+""")
+    findings = scan_raising_stub_swallowed(tmp_path)
+    assert len(findings) == 1
+    assert "ParquetFile" in findings[0].detail
+
+
+def test_raising_stub_swallowed_scopes_stub_names_to_the_test(tmp_path: Path):
+    """`_gql` is a name every test in a file defines for itself. Collected module-wide, one
+    raising definition tainted five harmless ones and produced the rule's only false positive on a
+    real repository."""
+    _write(tmp_path, "prod.py", """
+def go():
+    try:
+        return gql(1)
+    except Exception:
+        return None
+""")
+    _write(tmp_path, "test_x.py", """
+from unittest.mock import patch
+
+def test_harmless():
+    def _gql(*a, **k):
+        return {"ok": True}
+    with patch("prod.gql", _gql) as spy:
+        go()
+    assert spy.called
+
+def test_raising():
+    def _gql(*a, **k):
+        raise AssertionError("no")
+    with patch("prod.gql", _gql) as spy:
+        go()
+    assert spy.called is False
+""")
+    findings = scan_raising_stub_swallowed(tmp_path)
+    assert len(findings) == 1, [f.line for f in findings]
+
+
+def test_raising_stub_swallowed_ignores_a_test_expecting_the_raise(tmp_path: Path):
+    _write(tmp_path, "prod.py", """
+def go():
+    try:
+        return gql(1)
+    except Exception:
+        return None
+""")
+    _write(tmp_path, "test_x.py", """
+import pytest
+from unittest.mock import patch
+
+def test_it_propagates():
+    def _gql(*a, **k):
+        raise ValueError("boom")
+    with patch("prod.gql", _gql) as spy:
+        with pytest.raises(ValueError):
+            go()
+    assert spy.called
+""")
+    assert scan_raising_stub_swallowed(tmp_path) == []
+
+
+def test_raising_stub_swallowed_ignores_a_narrow_handler(tmp_path: Path):
+    """A handler that catches a specific type is not the swallow this rule is about."""
+    _write(tmp_path, "prod.py", """
+def go():
+    try:
+        return gql(1)
+    except KeyError:
+        return None
+""")
+    _write(tmp_path, "test_x.py", """
+from unittest.mock import patch
+
+def test_x():
+    def _gql(*a, **k):
+        raise AssertionError("no")
+    with patch("prod.gql", _gql) as spy:
+        go()
+    assert spy.called is False
+""")
+    assert scan_raising_stub_swallowed(tmp_path) == []
+
+
+# ---- lazy_log_assertion --------------------------------------------------
+
+
+def test_lazy_log_assertion_flags_a_formatted_expectation(tmp_path: Path):
+    _write(tmp_path, "prod.py", """
+def go(label, r, t):
+    log.warning("%s: reached only %d/%d", label, r, t)
+""")
+    _write(tmp_path, "test_x.py", """
+def test_shortfall_is_warned():
+    assert "reached only 0/3" in str(log.warning.call_args)
+""")
+    findings = scan_lazy_log_assertion(tmp_path)
+    assert len(findings) == 1
+    assert "reached only 0/3" in findings[0].detail
+
+
+def test_lazy_log_assertion_ignores_an_fstring_rendering(tmp_path: Path):
+    """f-strings format EAGERLY, so the values DO reach the record and the assertion can match.
+    Both of this rule's first hits on a real repository were this."""
+    _write(tmp_path, "prod.py", """
+def go(n):
+    log.info(f"Found {n} on-disk checkpoint(s) -- these will resume")
+""")
+    _write(tmp_path, "test_x.py", """
+def test_inventory_is_logged():
+    assert any("Found 2 on-disk checkpoint" in str(c) for c in log.info.call_args_list)
+""")
+    assert scan_lazy_log_assertion(tmp_path) == []
+
+
+def test_lazy_log_assertion_ignores_a_bare_value(tmp_path: Path):
+    """`"j1"` is an id the test supplied, with no message text around it -- production logs it
+    through an f-string, so it really is in args[0]."""
+    _write(tmp_path, "prod.py", """
+def go(jid, e):
+    log.warning(f"Reconcile sample failed for {jid}: {e}")
+""")
+    _write(tmp_path, "test_x.py", """
+def test_error_logged():
+    assert "j1" in log.warning.call_args[0][0]
+""")
+    assert scan_lazy_log_assertion(tmp_path) == []
+
+
+def test_lazy_log_assertion_ignores_a_format_that_carries_its_own_digit(tmp_path: Path):
+    _write(tmp_path, "prod.py", """
+def go(host):
+    log.warning("HTTP 429 from %s", host)
+""")
+    _write(tmp_path, "test_x.py", """
+def test_rate_limit_logged():
+    assert "HTTP 429 from" in str(log.warning.call_args)
+""")
+    assert scan_lazy_log_assertion(tmp_path) == []
+
+
+# ---- constructor_param_overwritten ---------------------------------------
+
+
+def test_constructor_param_overwritten_follows_one_call_hop(tmp_path: Path):
+    """The worked example assigns through a second method: `_refresh_rate` reads config and calls
+    `update_rate(rate)`, which does the assignment. Requiring both in one statement missed it."""
+    _write(tmp_path, "bucket.py", """
+class TokenBucket:
+    def __init__(self, rate):
+        self._rate = rate
+
+    def update_rate(self, rate):
+        self._rate = rate
+
+    def _refresh_rate(self):
+        self.update_rate(cfg().get("traffic", "max_rps", 10.0, float))
+""")
+    findings = scan_constructor_param_overwritten(tmp_path)
+    assert len(findings) == 1
+    assert "_refresh_rate" in findings[0].detail
+    assert "update_rate" in findings[0].detail
+
+
+def test_constructor_param_overwritten_ignores_a_stable_attribute(tmp_path: Path):
+    _write(tmp_path, "bucket.py", """
+class Plain:
+    def __init__(self, rate):
+        self._rate = rate
+
+    def use(self):
+        return self._rate * 2
+""")
+    assert scan_constructor_param_overwritten(tmp_path) == []
+
+
+def test_constructor_param_overwritten_ignores_a_reassignment_not_from_config(tmp_path: Path):
+    """Reassigning from an argument is ordinary mutation, not the deployment overriding a test."""
+    _write(tmp_path, "bucket.py", """
+class Plain:
+    def __init__(self, rate):
+        self._rate = rate
+
+    def set_rate(self, rate):
+        self._rate = rate
+""")
+    assert scan_constructor_param_overwritten(tmp_path) == []
+
+
+# ---- stats_key_coverage --------------------------------------------------
+#
+# The audited crawler recorded two incidents on one dict: a lazily-created counter that was
+# cumulative since process start while every sibling was per-cycle, and an unregistered key that
+# turned an increment helper into a KeyError. A third happened while this rule was being written.
+
+
+def test_stats_key_coverage_flags_an_undeclared_accumulating_key(tmp_path: Path):
+    _write(
+        tmp_path,
+        "crawler.py",
+        """
+class Crawler:
+    def _reset_stats(self):
+        self.stats = {"pages": 0, "dups": 0}
+
+    def note(self, n):
+        self.stats["skipped_small"] = self.stats.get("skipped_small", 0) + n
+""",
+    )
+    findings = scan_stats_key_coverage(tmp_path)
+    assert len(findings) == 1
+    assert "skipped_small" in findings[0].detail
+
+
+def test_stats_key_coverage_matches_across_mixins(tmp_path: Path):
+    """The real shape: one class declares the dict, another increments it, and they are one
+    object only at runtime. Scoped per class, this rule missed the bug it was written from."""
+    _write(
+        tmp_path,
+        "stats_mixin.py",
+        """
+class StatsMixin:
+    def _reset_stats(self):
+        self.stats = {"pages": 0}
+""",
+    )
+    _write(
+        tmp_path,
+        "split_mixin.py",
+        """
+class SplitMixin:
+    def split(self):
+        self._inc_stat("overlapping_axis_skipped")
+""",
+    )
+    findings = scan_stats_key_coverage(tmp_path)
+    assert len(findings) == 1
+    assert "overlapping_axis_skipped" in findings[0].detail
+
+
+def test_stats_key_coverage_ignores_a_plain_assignment(tmp_path: Path):
+    """`self.stats["k"] = value` overwrites completely every cycle, so it is safe undeclared.
+    Four such keys in the audited crawler were this rule's only false positives."""
+    _write(
+        tmp_path,
+        "crawler.py",
+        """
+class Crawler:
+    def _reset_stats(self):
+        self.stats = {"pages": 0}
+
+    def finish(self, recovered):
+        self.stats["recovered"] = recovered
+""",
+    )
+    assert scan_stats_key_coverage(tmp_path) == []
+
+
+def test_stats_key_coverage_ignores_a_declared_key(tmp_path: Path):
+    _write(
+        tmp_path,
+        "crawler.py",
+        """
+class Crawler:
+    def _reset_stats(self):
+        self.stats = {"pages": 0, "skipped_small": 0}
+
+    def note(self, n):
+        self.stats["skipped_small"] += n
+""",
+    )
+    assert scan_stats_key_coverage(tmp_path) == []
+
+
+def test_stats_key_coverage_ignores_a_class_that_declares_nothing(tmp_path: Path):
+    """A dict with no declared shape has no contract to violate."""
+    _write(
+        tmp_path,
+        "loose.py",
+        """
+class Loose:
+    def note(self, n):
+        self.counts["whatever"] = self.counts.get("whatever", 0) + n
+""",
+    )
+    assert scan_stats_key_coverage(tmp_path) == []
+
+
+# ---- sentinel_guard_mismatch ---------------------------------------------
+#
+# A failure path returns a falsy value while the caller guards `is None`, so the failure reads as
+# a legitimate answer. One transient HTML error page retired a discovery source permanently.
+
+
+def test_sentinel_guard_mismatch_flags_the_canonical_case(tmp_path: Path):
+    _write(
+        tmp_path,
+        "cdx.py",
+        """
+def fetch_num_pages(url):
+    try:
+        return int(get(url).text)
+    except ValueError:
+        return 0
+""",
+    )
+    _write(
+        tmp_path,
+        "driver.py",
+        """
+def run(state):
+    pages_total = fetch_num_pages(state.url)
+    if pages_total is None or (pages_total > 0 and state.done):
+        return
+    mark_source_empty(state)
+""",
+    )
+    findings = scan_sentinel_guard_mismatch(tmp_path)
+    assert len(findings) == 1
+    assert "fetch_num_pages" in findings[0].detail
+
+
+def test_sentinel_guard_mismatch_allows_none_as_a_third_answer(tmp_path: Path):
+    """The accepted fix for this shape was, verbatim, to make None a third answer. A function that
+    returns None for the failure and a falsy value for a real outcome is the FIXED form."""
+    _write(
+        tmp_path,
+        "cdx.py",
+        """
+def fetch_num_pages(url):
+    try:
+        return int(get(url).text)
+    except ValueError:
+        return None
+""",
+    )
+    _write(
+        tmp_path,
+        "driver.py",
+        """
+def run(state):
+    pages_total = fetch_num_pages(state.url)
+    if pages_total is None:
+        return
+""",
+    )
+    assert scan_sentinel_guard_mismatch(tmp_path) == []
+
+
+def test_sentinel_guard_mismatch_ignores_a_falsy_return_on_the_ordinary_path(tmp_path: Path):
+    """A function returning 0 from its normal path is returning a number, not signalling."""
+    _write(
+        tmp_path,
+        "counts.py",
+        """
+def how_many(items):
+    if not items:
+        return 0
+    return len(items)
+""",
+    )
+    _write(
+        tmp_path,
+        "driver.py",
+        """
+def run(items):
+    n = how_many(items)
+    if n is None:
+        return
+""",
+    )
+    assert scan_sentinel_guard_mismatch(tmp_path) == []
+
+
+def test_sentinel_guard_mismatch_needs_a_caller_that_guards_on_none(tmp_path: Path):
+    """Returning 0 on failure is fine if nobody tests the result for None."""
+    _write(
+        tmp_path,
+        "cdx.py",
+        """
+def fetch_num_pages(url):
+    try:
+        return int(get(url).text)
+    except ValueError:
+        return 0
+""",
+    )
+    _write(
+        tmp_path,
+        "driver.py",
+        """
+def run(state):
+    pages_total = fetch_num_pages(state.url)
+    if pages_total > 0:
+        go(pages_total)
+""",
+    )
+    assert scan_sentinel_guard_mismatch(tmp_path) == []
+
+
+# ---- unit_suffix_mismatch ------------------------------------------------
+#
+# A quantity stored under one unit and read from another. A `duration_s` column measured cycle
+# wall-clock while the real work time sat one JSONB level away as `extra.minutes`.
+
+
+def test_unit_suffix_mismatch_flags_a_bare_cross_unit_read(tmp_path: Path):
+    _write(
+        tmp_path,
+        "obs.py",
+        """
+def record(totals):
+    work_s = totals["minutes"]
+    return work_s
+""",
+    )
+    findings = scan_unit_suffix_mismatch(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "P2"
+
+
+def test_unit_suffix_mismatch_is_silent_on_a_conversion(tmp_path: Path):
+    """`work_s = totals["minutes"] * 60` is the CORRECT form. Any arithmetic counts as a
+    conversion -- assuming otherwise would flag every correct conversion in a tree."""
+    _write(
+        tmp_path,
+        "obs.py",
+        """
+def record(totals):
+    work_s = totals["minutes"] * 60
+    return work_s
+""",
+    )
+    assert scan_unit_suffix_mismatch(tmp_path) == []
+
+
+def test_unit_suffix_mismatch_treats_synonyms_as_one_unit(tmp_path: Path):
+    _write(
+        tmp_path,
+        "obs.py",
+        """
+def record(totals):
+    elapsed_secs = totals["seconds"]
+    return elapsed_secs
+""",
+    )
+    assert scan_unit_suffix_mismatch(tmp_path) == []
+
+
+def test_unit_suffix_mismatch_covers_keyword_arguments(tmp_path: Path):
+    """The audited case passed the wrong unit as a keyword to the recorder, not via assignment."""
+    _write(
+        tmp_path,
+        "obs.py",
+        """
+def record(extra):
+    record_run(duration_s=extra["minutes"])
+""",
+    )
+    assert len(scan_unit_suffix_mismatch(tmp_path)) == 1
+
+
+def test_unit_suffix_mismatch_ranks_a_cross_family_pair_lower(tmp_path: Path):
+    """Seconds against bytes is more likely a naming coincidence than a real conversion bug."""
+    _write(
+        tmp_path,
+        "obs.py",
+        """
+def record(totals):
+    payload_bytes = totals["seconds"]
+    return payload_bytes
+""",
+    )
+    findings = scan_unit_suffix_mismatch(tmp_path)
+    assert len(findings) == 1 and findings[0].severity == "Low"
+
+
+# ---- comment_names_missing_symbol ----------------------------------------
+#
+# Prose that points somewhere is trusted. One such comment WAS the accepted mitigation for an
+# earlier SQL-injection finding and named a helper that had since been renamed.
+
+
+def test_comment_names_missing_symbol_flags_a_rotted_private_pointer(tmp_path: Path):
+    _write(
+        tmp_path,
+        "perm.py",
+        """
+# The SQL is built by `_perm_err_sql()`, which escapes every pattern.
+def perm_err_text_like_sql(patterns):
+    return " OR ".join(patterns)
+""",
+    )
+    findings = scan_comment_names_missing_symbol(tmp_path)
+    assert len(findings) == 1
+    assert "_perm_err_sql" in findings[0].detail
+
+
+def test_comment_names_missing_symbol_ignores_library_methods(tmp_path: Path):
+    """Unrestricted, this rule gave 52 hits in one package with no rotted pointer among them:
+    `close()`, `min()`, `utcnow()`, `is_nan()`, `to_plotly_json()`, `model_dump()`. A leading
+    underscore is the only reliable "this must be local" signal."""
+    _write(
+        tmp_path,
+        "frames.py",
+        """
+# Values are dropped with `dropna()` and checked with `is_nan()` before `to_numpy()`.
+def clean(df):
+    return df
+""",
+    )
+    assert scan_comment_names_missing_symbol(tmp_path) == []
+
+
+def test_comment_names_missing_symbol_resolves_across_the_tree(tmp_path: Path):
+    """A comment may cite a private helper defined in another module."""
+    _write(
+        tmp_path,
+        "helpers.py",
+        """
+def _capped(n):
+    return min(n, 100)
+""",
+    )
+    _write(
+        tmp_path,
+        "user.py",
+        """
+# Capped by `_capped()` before use.
+def go(n):
+    return n
+""",
+    )
+    assert scan_comment_names_missing_symbol(tmp_path) == []
+
+
+def test_comment_cites_absolute_line_is_opt_in():
+    """225 hits in one package, most of them legitimate coverage annotations. It reports rather
+    than gates, so it cannot reach a project's default run or its baseline."""
+    from pyutilz.dev.code_audit import OPT_IN_ONLY, get_scanners
+
+    assert "comment_cites_absolute_line" in get_scanners()
+    assert "comment_cites_absolute_line" in OPT_IN_ONLY
+
+
+def test_comment_cites_absolute_line_finds_a_citation(tmp_path: Path):
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+# The unlink happens at line 619, after the flush.
+def go():
+    pass
+""",
+    )
+    findings = scan_comment_cites_absolute_line(tmp_path)
+    assert len(findings) == 1 and "619" in findings[0].detail
+
+
+# ---- unreachable_import_fallback -----------------------------------------
+
+
+def test_unreachable_import_fallback_flags_a_dead_guard(tmp_path: Path):
+    """The handler cannot run, and its comment advertises a degradation path that never has."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+import struct
+
+def parse(b):
+    try:
+        import struct
+    except ImportError:
+        return None
+    return struct.unpack("<I", b)
+""",
+    )
+    findings = scan_unreachable_import_fallback(tmp_path)
+    assert len(findings) == 1
+    assert "struct" in findings[0].detail
+
+
+def test_unreachable_import_fallback_allows_an_optional_submodule(tmp_path: Path):
+    """`import pkg.optional` can fail on a missing dependency where `import pkg` cannot. Comparing
+    only the top-level package reported thirteen honest optional-dependency guards as dead."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+import pkg
+
+def go():
+    try:
+        import pkg.optional
+    except ImportError:
+        return None
+    return pkg.optional
+""",
+    )
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_allows_a_genuinely_optional_import(tmp_path: Path):
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+def go():
+    try:
+        import orjson
+    except ImportError:
+        import json as orjson
+    return orjson
+""",
+    )
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_ignores_an_import_guarded_everywhere(tmp_path: Path):
+    """If EVERY import of the module is itself inside a try, none of them is certain."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+try:
+    import cupy
+except ImportError:
+    cupy = None
+
+def go():
+    try:
+        import cupy
+    except ImportError:
+        return None
+    return cupy
+""",
+    )
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+# ---- asymmetric_except_siblings ------------------------------------------
+#
+# Run against a real repository this found `SafeDB.rollback` calling `_reconnect()` bare while
+# `_retry_resource_error` wrapped the identical call -- and 21 of that package's 51 rollback call
+# sites are inside an `except`, so a failing reconnect aborted whatever was recovering.
+
+
+def test_asymmetric_except_siblings_flags_the_unguarded_twin(tmp_path: Path):
+    _write(
+        tmp_path,
+        "batch.py",
+        """
+class Scanner:
+    def already_in_db(self, cid):
+        try:
+            return self.db.query(cid)
+        except psycopg2.Error:
+            self.db.rollback()
+            return False
+
+    def already_in_db_batch(self, cids):
+        try:
+            return self.db.query_many(cids)
+        except psycopg2.Error:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            return []
+""",
+    )
+    findings = scan_asymmetric_except_siblings(tmp_path)
+    assert len(findings) == 1
+    assert "already_in_db" in findings[0].detail
+    assert "rollback" in findings[0].detail
+
+
+def test_asymmetric_except_siblings_needs_the_same_exception_type(tmp_path: Path):
+    """Two handlers doing genuinely different jobs share neither the type nor the call, and
+    comparing them would report every class with two try blocks in it."""
+    _write(
+        tmp_path,
+        "batch.py",
+        """
+class Scanner:
+    def a(self):
+        try:
+            go()
+        except psycopg2.Error:
+            self.db.rollback()
+
+    def b(self):
+        try:
+            go()
+        except OSError:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+""",
+    )
+    assert scan_asymmetric_except_siblings(tmp_path) == []
+
+
+def test_asymmetric_except_siblings_is_silent_when_both_guard(tmp_path: Path):
+    _write(
+        tmp_path,
+        "batch.py",
+        """
+class Scanner:
+    def a(self):
+        try:
+            go()
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+
+    def b(self):
+        try:
+            go()
+        except Exception:
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+""",
+    )
+    assert scan_asymmetric_except_siblings(tmp_path) == []
+
+
+def test_asymmetric_except_siblings_needs_two_siblings(tmp_path: Path):
+    """A lone unguarded handler is a judgement call, not drift. The rule reports only where the
+    same class already does it the other way."""
+    _write(
+        tmp_path,
+        "batch.py",
+        """
+class Scanner:
+    def a(self):
+        try:
+            go()
+        except Exception:
+            self.db.rollback()
+""",
+    )
+    assert scan_asymmetric_except_siblings(tmp_path) == []
+
+
+# ---- effect_flag_outside_its_effect --------------------------------------
+#
+# A success record set beside, rather than inside, the conditional work it records. An empty crawl
+# advertised a parquet file it had never written.
+
+
+def test_effect_flag_outside_its_effect_flags_the_canonical_case(tmp_path: Path):
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def write_kinds(table, _kind_ok, path):
+    if table.num_rows:
+        write_parquet(table, path, "pq")
+    _kind_ok["pq"] = True
+""",
+    )
+    findings = scan_effect_flag_outside_its_effect(tmp_path)
+    assert len(findings) == 1
+    assert "pq" in findings[0].detail
+
+
+def test_effect_flag_outside_its_effect_accepts_the_record_inside_the_block(tmp_path: Path):
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def write_kinds(table, _kind_ok, path):
+    if table.num_rows:
+        write_parquet(table, path, "pq")
+        _kind_ok["pq"] = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_understands_an_early_exit(tmp_path: Path):
+    """A failure branch ending in `continue` puts the record on the other path by construction.
+    That is the shape the audited codebase adopted when it FIXED this defect, and without modelling
+    it the rule reports the fix as the bug -- which it did, twice, on real code."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def write_kinds(crawls, _kind_ok):
+    for crawl in crawls:
+        if not wrote(crawl, "pq"):
+            log("skipped")
+            continue
+        _kind_ok["pq"] = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_requires_a_shared_name(tmp_path: Path):
+    """Without the shared token this would flag every assignment that follows an `if`."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def go(table, flags, path):
+    if table.num_rows:
+        write_parquet(table, path)
+    flags["something_else"] = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_ignores_a_self_only_link(tmp_path: Path):
+    """`self` is mentioned by nearly every statement in a method, so it links nothing.
+
+    Found against the repo itself: `self._ready = True` after an unrelated
+    `if self._process.stdout:` was reported purely because both mention `self`.
+    """
+    _write(
+        tmp_path,
+        "out.py",
+        """
+class C:
+    def start(self):
+        if self.stdout:
+            self.stream = wrap(self.stdout)
+        self.ready = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_ignores_a_logging_only_guard(tmp_path: Path):
+    """A guard whose body only logs guards no work, so the statement after it is not a record.
+
+    Found against the repo itself: `if verbose: logger.info(...)` followed by the unconditional
+    `res.add(str(obj))` -- reporting that inverts the rule.
+    """
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def go(obj, res, verbose):
+    if verbose:
+        logger.info("Processing %s of size %s", type(obj), len(str(obj)))
+    res.add(str(obj))
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_ignores_list_building(tmp_path: Path):
+    """`.append` on a list is ordinary accumulation; it gave 44 of this rule's 50 first hits with
+    no success record among them."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+def go(rows, out):
+    for row in rows:
+        if row.ok:
+            process(row)
+        out.append(row)
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []

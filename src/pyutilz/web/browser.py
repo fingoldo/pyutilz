@@ -68,8 +68,18 @@ from random import random
 last_session_updated_at: Optional[datetime] = None
 
 version_main = None
-login: Optional[str] = None
-pwd: Optional[str] = None
+# `str`, not `Optional[str]`: these are passed straight to `send_keys`, which takes a `str`.
+# Nothing in this package ever compares them against None -- every reader tests them for
+# truthiness -- so the empty string carries the same "not configured yet" meaning with a type
+# the checker accepts.
+#
+# A runtime guard belongs in `LoginAndGetCookies` too: with credentials unset, `send_keys`
+# fails inside the best-effort handler around it and the failure is then reported as "could
+# not locate the field" -- a misleading diagnosis for a credential that was never supplied.
+# That guard is NOT added here because it is one more branch and that function sits at
+# complexity 33 under a ratchet that only turns down. It needs the function decomposed first.
+login: str = ""
+pwd: str = ""
 # Annotated individually rather than as one six-way tuple unpack: without annotations mypy infers
 # the type of each as exactly `None`, which makes every `if browser is not None:` guard in this
 # module provably dead to the checker AND removes all checking of selenium/dict attribute access

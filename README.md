@@ -29,7 +29,7 @@ pip install pyutilz[system]           # scipy + Pillow + py-cpuinfo + GPUtil + x
 pip install pyutilz[stats]            # documented empty alias -- pyutilz.stats needs only core numpy
 pip install pyutilz[speedups]         # orjson -- drop-in accelerator, every use site falls back to stdlib json without it
 pip install pyutilz[dash]             # flask + dash + dash-bootstrap-components (pyutilz.dev.dashlib)
-pip install pyutilz[prefect]          # prefect (pyutilz.system.scheduling.prefect)
+pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.scheduling.prefect)
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
