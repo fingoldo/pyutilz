@@ -41,3 +41,11 @@ This is a general engineering-discipline rule, not a project-specific one — it
 **Why:** raised during the 2026-07-21 full-repo audit, which flagged their absence as a Medium/Low finding per standard OSS-repo-hygiene conventions. The user explicitly said this is intentional behavior for this project and asked that it be documented so future audits/sessions stop proposing them.
 
 **How to apply:** if an audit, linter, or template-completeness check surfaces "missing SECURITY.md" / "missing CODE_OF_CONDUCT.md" / "no issue or PR templates" / "no CITATION.cff" for this repo, treat it as already dispositioned (won't-fix) — do not create the file, and do not re-raise it as an open item.
+
+## Python 3.8 support is a hard constraint; do NOT migrate to PEP 639 licence metadata (2026-09-02)
+
+`requires-python = ">=3.8"` stays, and nothing may raise the floor of `[build-system] requires` above what Python 3.8 can install. Concretely: `license = {text = "MIT"}` plus the `License :: OSI Approved :: MIT License` classifier stay as they are, even though setuptools deprecates both and states a removal date of 2027-Feb-18. Do not "modernise" them.
+
+**Why:** the 2026-09-02 audit did exactly that migration (finding 03/F04). `license = "MIT"` as an SPDX expression requires setuptools>=77, and the newest setuptools published for Python 3.8 is 75.3.4 - so `pip install -e .`, which builds from source on every CI leg, could not start at all. The change carried a note claiming this was "a BUILD-time requirement only" that "does not narrow requires-python"; that reasoning was wrong, and the newly added Windows/macOS CI matrix caught it on its first run. The user was offered the alternative of dropping 3.8 (EOL since October 2024) to let PEP 639 back in, and chose to keep 3.8.
+
+**How to apply:** treat 03/F04 as dispositioned REVERTED, not open - see `audits/implemented/2026-09-02/03-packaging-dependencies.md`. If an audit, linter or packaging check flags the deprecated licence table again, do not act on it; the deadline to revisit is set by setuptools' 2027-Feb-18 removal, not by tidiness. More generally: any version pin added to `[build-system] requires` or to an extras group without a `python_version` marker must have a release that installs on 3.8, or it must carry the marker - the `[dev]` mypy pin needed exactly that treatment in the same incident.
