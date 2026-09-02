@@ -77,12 +77,21 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     if version is None:
         # get content-based version of the calling file (hash)
         import hashlib
+        import sys
         frame = inspect.stack()[1]
         module = inspect.getmodule(frame[0])
         if module is None or module.__file__ is None:
             raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
         with open(module.__file__, "rb") as f:
-            file_hash = hashlib.md5(f.read(), usedforsecurity=False).hexdigest()[:8]
+            payload = f.read()
+        # `usedforsecurity=` arrived in python 3.9 (bpo-9216); on 3.8 hashlib.md5 rejects it with TypeError. The flag is purely declarative -- it says this
+        # digest is a content tag, not a security primitive -- so it is passed wherever the interpreter can express it and omitted on 3.8, where the
+        # resulting digest is byte-for-byte identical.
+        if sys.version_info >= (3, 9):
+            digest = hashlib.md5(payload, usedforsecurity=False)
+        else:
+            digest = hashlib.md5(payload)  # nosec B324 - content tag, not a security primitive; the 3.9+ branch above says so via usedforsecurity=False, which 3.8 cannot accept
+        file_hash = digest.hexdigest()[:8]
         version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"  # noqa: DTZ005 -- date-only (%Y.%m.%d) version tag, not a point-in-time value; local calendar date is intentional
     if app_name is None:
         app_name = pythonlib.lookup_in_stack("app_name")

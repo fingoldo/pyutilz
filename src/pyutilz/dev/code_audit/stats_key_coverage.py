@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
 
 # --- a counter written but never initialised by the reset that owns its dict --------------------
 #
@@ -79,7 +79,7 @@ def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
         if isinstance(node, ast.AugAssign):
             target = node.target
             if isinstance(target, ast.Subscript) and _is_counter_attribute(target.value) == attr:
-                _record(target.slice, node.lineno)
+                _record(_subscript_index(target), node.lineno)
         # self.stats.get("k", 0) / self.stats.setdefault("k", 0)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr in ("get", "setdefault") and _is_counter_attribute(node.func.value) == attr:

@@ -83,7 +83,7 @@ def test_f10_repeated_usage_blocks_are_recorded_once():
     p.total_cache_hit_tokens = 0
     p.total_reasoning_tokens = 0
     p._call_count = 0
-    p.semaphore = asyncio.Semaphore(1)
+    p._max_concurrent = 1
 
     usage_chunk = '{"usage": {"prompt_tokens": 100, "completion_tokens": 10}, "choices": []}'
     lines = [
@@ -222,7 +222,6 @@ def test_f29_max_tokens_beats_the_empty_text_safety_branch():
     p = GeminiProvider.__new__(GeminiProvider)
     p.model_name = "gemini-2.5-flash"
     p._max_concurrent = 1
-    p.semaphore = asyncio.Semaphore(1)
     p._candidate_count = 1
     p._cached_content = None
     p.total_cached_content_tokens = 0
@@ -261,7 +260,6 @@ def _anthropic_provider_with_response(response):
     p = AnthropicProvider.__new__(AnthropicProvider)
     p.model = "claude-sonnet-4-5"
     p._max_concurrent = 1
-    p.semaphore = asyncio.Semaphore(1)
     p._call_count = 0
     p.total_input_tokens = 0
     p.total_output_tokens = 0

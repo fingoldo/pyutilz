@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
 
 # --- a runtime guard whose answer is already fixed at import time ------------------------------
 #
@@ -83,7 +83,7 @@ def _externally_written_names(trees: dict[str, ast.Module]) -> set[str]:
             if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
                 written.add(node.attr)
             elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-                index = node.slice
+                index = _subscript_index(node)
                 if isinstance(index, ast.Constant) and isinstance(index.value, str):
                     written.add(index.value)
             elif isinstance(node, ast.Call):

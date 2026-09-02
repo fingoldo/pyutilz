@@ -2,7 +2,7 @@
   "except_skip_masks_call_under_test::test_llm_live.py:182",
   "except_skip_masks_call_under_test::test_llm_live.py:205",
   "except_skip_masks_call_under_test::test_meta/test_complexity_ratchet.py:47",
-  "except_skip_masks_call_under_test::test_pandaslib_extra2.py:242",
+  "except_skip_masks_call_under_test::test_pandaslib_extra2.py:243",
   "except_skip_masks_call_under_test::test_strings_extra2.py:500",
   "hardcoded_absolute_path_in_test::test_deltalakes.py:45",
   "hardcoded_absolute_path_in_test::test_deltalakes.py:46",

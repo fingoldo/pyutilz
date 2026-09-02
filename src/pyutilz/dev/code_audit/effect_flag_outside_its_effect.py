@@ -81,11 +81,13 @@ def _tests_membership_of(test: ast.expr, record: ast.stmt) -> bool:
     """
     if not (isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], (ast.In, ast.NotIn))):
         return False
-    container = ast.unparse(test.comparators[0])
+    # ast.dump rather than ast.unparse: unparse needs python>=3.9, and all this comparison needs is
+    # "is it the same expression", which the position-free dump answers identically on every version.
+    container = ast.dump(test.comparators[0])
     if isinstance(record, ast.Expr) and isinstance(record.value, ast.Call):
         func = record.value.func
         if isinstance(func, ast.Attribute):
-            return ast.unparse(func.value) == container
+            return ast.dump(func.value) == container
     return False
 
 

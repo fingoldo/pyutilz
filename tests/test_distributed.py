@@ -122,7 +122,9 @@ class TestVersioning:
 
         version = distributed_module.m_version
         # THIS test file is the calling module, so its content hash is the expected suffix.
-        expected_hash = hashlib.md5(open(__file__, "rb").read(), usedforsecurity=False).hexdigest()[:8]
+        # No `usedforsecurity=` here: the keyword needs python>=3.9 and this is a plain content
+        # tag, so the digest is identical without it on every supported version.
+        expected_hash = hashlib.md5(open(__file__, "rb").read()).hexdigest()[:8]
         expected_date = datetime.now().strftime("%Y.%m.%d")  # noqa: DTZ005 - matches the production call's local-date tag
 
         assert re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.[0-9a-f]{8}", version), f"unexpected version shape {version!r}"

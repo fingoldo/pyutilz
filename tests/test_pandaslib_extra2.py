@@ -1,5 +1,6 @@
 """Additional coverage tests for pyutilz.data.pandaslib — targeting uncovered lines."""
 
+import io
 import pytest
 import pandas as pd
 import numpy as np
@@ -362,9 +363,32 @@ class TestBenchmarkCsvCompression:
         assert res[0][0].startswith("csv-")
 
 
+def _require_orc_timezone_database():
+    """Skip unless pyarrow can reach an IANA time zone database, which its ORC writer requires.
+
+    Writing ORC makes Arrow resolve a timezone, and on a runner image with no tz database the write
+    dies with `Time zone file /usr/share/zoneinfo/UTC does not exist. Please install IANA time zone
+    database and set TZDIR env.` -- missing system data, not a defect here. It cannot be checked by
+    looking for that path: on Windows pyarrow reads the database from the `tzdata` package or TZDIR
+    instead, so the only reliable precondition is a throwaway ORC write.
+    """
+    pa = pytest.importorskip("pyarrow")
+    orc = pytest.importorskip("pyarrow.orc")
+    missing_tz_database = None
+    try:
+        orc.write_table(pa.table({"a": [1]}), io.BytesIO())
+    except pa.lib.ArrowException as exc:  # pragma: no cover - only on an image without tzdata
+        if "time zone" not in str(exc).lower():
+            raise
+        missing_tz_database = str(exc)
+    if missing_tz_database is not None:  # pragma: no cover - only on an image without tzdata
+        pytest.skip(f"IANA time zone database not available to pyarrow, which its ORC writer needs: {missing_tz_database}")
+
+
 class TestBenchmarkOrcCompression:
     def test_orc_benchmark(self, tmp_path):
         """Lines 756-771."""
+        _require_orc_timezone_database()
         from pyutilz.pandaslib import benchmark_dataframe_orc_compression
         df = pd.DataFrame({"a": range(20), "b": np.random.rand(20)})
         res = []

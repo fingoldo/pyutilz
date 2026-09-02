@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
 
 # --- a quantity stored under one unit and read from another ------------------------------------
 #
@@ -80,6 +80,20 @@ def _unit_of(name: str) -> tuple[str, str] | None:
     return _SYNONYMS.get(token, token), family
 
 
+def _subscript_key(node: ast.Subscript) -> str | None:
+    """The literal string key of `d["key"]`, on every supported python.
+
+    Until 3.8, the parser wrapped a plain subscript in ``ast.Index`` (``Subscript(slice=Index(value=
+    Constant('key')))``); 3.9 removed that wrapper and put the expression on ``.slice`` directly
+    (bpo-34822). Reading ``.slice`` alone therefore saw an ``Index`` node on 3.8 and matched nothing,
+    which silently disabled this whole rule for dict reads on that version.
+    """
+    key = _subscript_index(node)
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        return key.value
+    return None
+
+
 def _source_name(node: ast.AST) -> str | None:
     """The name a value is read FROM: `x`, `obj.attr`, or `d["key"]`."""
     if isinstance(node, ast.Name):
@@ -87,9 +101,7 @@ def _source_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Attribute):
         return node.attr
     if isinstance(node, ast.Subscript):
-        key = node.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return key.value
+        return _subscript_key(node)
     return None
 
 
@@ -101,9 +113,9 @@ def _target_names(node: ast.AST) -> list[str]:
     elif isinstance(node, ast.Attribute):
         out.append(node.attr)
     elif isinstance(node, ast.Subscript):
-        key = node.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            out.append(key.value)
+        key_name = _subscript_key(node)
+        if key_name is not None:
+            out.append(key_name)
     return out
 
 

@@ -7194,6 +7194,28 @@ def record(totals):
     assert len(findings) == 1 and findings[0].severity == "Low"
 
 
+def test_unit_suffix_mismatch_reads_the_pre_3_9_subscript_shape():
+    """Up to python 3.8 the parser wrapped `d["key"]` in an `ast.Index` node, which 3.9 removed
+    (bpo-34822). Reading `.slice` without unwrapping matched nothing on 3.8, so the whole rule went
+    quiet there rather than erroring. Simulated with a legacy-shaped node, since the interpreter
+    running this test builds the modern shape."""
+    import ast as _ast
+
+    from pyutilz.dev.code_audit._base import _subscript_index
+    from pyutilz.dev.code_audit.unit_suffix_mismatch import _source_name, _target_names
+
+    class Index(_ast.AST):  # the node class python<=3.8 actually produced, named exactly as it was
+        _fields = ("value",)
+
+    read = _ast.parse('totals["minutes"]', mode="eval").body
+    assert isinstance(read, _ast.Subscript)
+    legacy = _ast.Subscript(value=read.value, slice=Index(value=read.slice), ctx=read.ctx)
+
+    assert isinstance(_subscript_index(legacy), _ast.Constant)
+    assert _source_name(legacy) == "minutes"
+    assert _target_names(legacy) == ["minutes"]
+
+
 # ---- comment_names_missing_symbol ----------------------------------------
 #
 # Prose that points somewhere is trusted. One such comment WAS the accepted mitigation for an

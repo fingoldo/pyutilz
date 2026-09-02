@@ -191,3 +191,18 @@ def _sql_text(node: ast.expr, constants: dict[str, str]) -> "Optional[str]":
         if left is not None and right is not None:
             return left + right
     return None
+
+
+def _subscript_index(node: ast.Subscript) -> ast.expr:
+    """The expression inside ``obj[...]``, on every supported python.
+
+    Up to 3.8 the parser wrapped a plain subscript in ``ast.Index``
+    (``Subscript(slice=Index(value=Constant("k")))``); 3.9 removed the wrapper and stores the
+    expression on ``.slice`` directly (bpo-34822). A scanner that reads ``.slice`` and expects a
+    ``Constant`` therefore matched nothing at all on 3.8 -- no error, just a rule that quietly
+    stopped firing. Shared so every scanner unwraps the same way instead of each rediscovering it.
+    """
+    index = node.slice
+    if index.__class__.__name__ == "Index":  # ast.Index exists only pre-3.9
+        return getattr(index, "value", index)  # type: ignore[no-any-return]
+    return index

@@ -6,7 +6,7 @@ import ast
 import difflib
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
 
 # --- a record field with only one side of the contract --------------------------------------------
 #
@@ -53,8 +53,8 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
                     note(writes, k.value, node.lineno)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
-                    note(writes, target.slice.value, node.lineno)
+                if isinstance(target, ast.Subscript) and isinstance(key := _subscript_index(target), ast.Constant):
+                    note(writes, key.value, node.lineno)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "setdefault" and node.args and isinstance(node.args[0], ast.Constant):
                 note(writes, node.args[0].value, node.lineno)
@@ -63,8 +63,8 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) == 3:
             if isinstance(node.args[1], ast.Constant):
                 note(reads, node.args[1].value, node.lineno)
-        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and isinstance(node.ctx, ast.Load):
-            note(reads, node.slice.value, node.lineno)
+        elif isinstance(node, ast.Subscript) and isinstance(key := _subscript_index(node), ast.Constant) and isinstance(node.ctx, ast.Load):
+            note(reads, key.value, node.lineno)
     return writes, reads
 
 
