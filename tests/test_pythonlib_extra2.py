@@ -16,20 +16,64 @@ from pyutilz.pythonlib import ensure_installed
 
 
 def test_ensure_installed_single_string():
-    # line 55: single package string (no sep)
-    with patch("pyutilz.core.pythonlib.importlib.util.find_spec", return_value=True):
-        ensure_installed("numpy")  # should not install
+    """An already-importable package must NOT trigger a pip subprocess.
+
+    The old version patched find_spec and left a `# should not install` comment without ever
+    inspecting subprocess.check_call -- so a regression that ignored find_spec and shelled out
+    to pip on every call (one wasted subprocess per import) passed silently.
+    """
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec", return_value=True):
+        with patch("pyutilz.core.pythonlib.packages.subprocess.check_call") as mock_call:
+            ensure_installed("numpy")
+    mock_call.assert_not_called()
 
 
 def test_ensure_installed_missing_package():
-    # lines 58-64: missing packages trigger pip install
-    with patch("pyutilz.core.pythonlib.importlib.util.find_spec", return_value=None):
-        with patch("pyutilz.core.pythonlib.subprocess.check_call", side_effect=Exception("mock")):
-            ensure_installed("nonexistent_pkg_xyz")  # should not raise
+    """A missing package is pip-installed BY NAME, into this very interpreter."""
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec", return_value=None):
+        with patch("pyutilz.core.pythonlib.packages.subprocess.check_call") as mock_call:
+            ensure_installed("nonexistent_pkg_xyz")
+
+    mock_call.assert_called_once()
+    argv = mock_call.call_args[0][0]
+    assert argv[:3] == [sys.executable, "-m", "pip"], f"must install into the running interpreter, got {argv!r}"
+    assert argv[3] == "install"
+    assert "nonexistent_pkg_xyz" in argv, f"the requested package name never reached pip: {argv!r}"
+
+
+def test_ensure_installed_swallows_install_failure():
+    """An install failure is logged, not raised (documented contract) -- but it IS attempted."""
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec", return_value=None):
+        with patch("pyutilz.core.pythonlib.packages.subprocess.check_call", side_effect=Exception("mock")) as mock_call:
+            ensure_installed("nonexistent_pkg_xyz")
+    mock_call.assert_called_once()
+
+
+def test_ensure_installed_resolves_known_import_name_mismatches():
+    """scikit-learn is probed under its IMPORT name (sklearn), not its distribution name."""
+    probed = []
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec", side_effect=lambda n: probed.append(n) or True):
+        with patch("pyutilz.core.pythonlib.packages.subprocess.check_call") as mock_call:
+            ensure_installed("scikit-learn")
+    assert probed == ["sklearn"], f"expected the import-name mapping to be applied, probed {probed!r}"
+    mock_call.assert_not_called()
+
+
+def test_ensure_installed_splits_a_separated_string():
+    """A `sep`-separated string is split into individual packages, each probed on its own."""
+    probed = []
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec", side_effect=lambda n: probed.append(n) or True):
+        ensure_installed("numpy pandas")
+    assert probed == ["numpy", "pandas"]
 
 
 def test_ensure_installed_none():
-    ensure_installed(None)  # no-op
+    """packages=None is a no-op: nothing probed, nothing installed."""
+    with patch("pyutilz.core.pythonlib.packages.importlib.util.find_spec") as mock_spec:
+        with patch("pyutilz.core.pythonlib.packages.subprocess.check_call") as mock_call:
+            ensure_installed(None)
+    mock_spec.assert_not_called()
+    mock_call.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -569,3 +613,73 @@ def test_ensure_installed_uses_running_interpreter_pip():
             args = mock_call.call_args[0][0]
             assert args[0] == sys.executable
             assert args[1:3] == ["-m", "pip"]
+
+
+# ---------------------------------------------------------------------------
+# load_file -- public, in core/pythonlib/filesystem.py, previously never mentioned
+# anywhere under tests/ AND called from nowhere in src/ (audit F20, 2026-09-02).
+# Kept rather than deleted: it is a documented, exported convenience loader (the
+# read-side counterpart of the ObjectsAndFilesProcessor save path in the same module)
+# whose whole behaviour is extension dispatch -- cheap to pin, and deleting an exported
+# public symbol is an API break for downstream consumers this repo cannot see.
+# ---------------------------------------------------------------------------
+
+
+class TestLoadFile:
+    def test_joblib_roundtrip(self, tmp_path):
+        import joblib
+
+        from pyutilz.pythonlib import load_file
+
+        payload = {"a": 1, "b": [2, 3]}
+        path = tmp_path / "obj.joblib"
+        joblib.dump(payload, path)
+
+        assert load_file(str(path)) == payload
+
+    def test_pckl_is_read_as_a_dataframe_by_default(self, tmp_path):
+        pd = pytest.importorskip("pandas")
+
+        from pyutilz.pythonlib import load_file
+
+        df = pd.DataFrame({"x": [1, 2, 3]})
+        path = tmp_path / "frame.pckl"
+        df.to_pickle(path)
+
+        loaded = load_file(str(path))
+        assert isinstance(loaded, pd.DataFrame)
+        pd.testing.assert_frame_equal(loaded, df)
+
+    def test_pckl_with_unpickle_to_pd_false_uses_the_safe_loader(self, tmp_path):
+        from pyutilz.pythonlib import load_file
+
+        path = tmp_path / "obj.pckl"
+        with patch("pyutilz.core.safe_pickle.safe_load", return_value="SENTINEL") as mock_safe_load:
+            path.write_bytes(b"not really a pickle")
+            assert load_file(str(path), unpickle_to_pd=False) == "SENTINEL"
+        mock_safe_load.assert_called_once()
+
+    def test_extension_matching_is_case_insensitive(self, tmp_path):
+        import joblib
+
+        from pyutilz.pythonlib import load_file
+
+        path = tmp_path / "obj.JOBLIB"
+        joblib.dump([1, 2], path)
+        assert load_file(str(path)) == [1, 2]
+
+    def test_missing_file_raises_filenotfound(self, tmp_path):
+        from pyutilz.pythonlib import load_file
+
+        with pytest.raises(FileNotFoundError):
+            load_file(str(tmp_path / "nope.joblib"))
+
+    def test_unsupported_extension_raises_instead_of_returning_none(self, tmp_path):
+        """Falling off the end used to return None, which the caller only discovered far away as
+        an AttributeError on None."""
+        from pyutilz.pythonlib import load_file
+
+        path = tmp_path / "data.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="unsupported extension"):
+            load_file(str(path))

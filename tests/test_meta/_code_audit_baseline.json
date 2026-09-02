@@ -88,7 +88,7 @@
   "unthrottled_hot_loop_log::data/pandaslib/benchmarks.py:265",
   "unthrottled_hot_loop_log::data/pandaslib/dtypes.py:154",
   "unthrottled_hot_loop_log::data/pandaslib/io_ops.py:143",
-  "unthrottled_hot_loop_log::data/polarslib/aggregations.py:442",
+  "unthrottled_hot_loop_log::data/polarslib/aggregations.py:440",
   "unthrottled_hot_loop_log::data/polarslib/binning.py:125",
   "unthrottled_hot_loop_log::database/db/execution.py:362",
   "unthrottled_hot_loop_log::database/db/execution.py:368",

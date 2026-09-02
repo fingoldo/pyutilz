@@ -186,3 +186,105 @@ class TestFitMaxTokensToContext:
             f"{real_input_tokens + fitted} > context_window={prov.context_window} - "
             "the reserve did not absorb the tokeniser undercount"
         )
+
+
+# ---------------------------------------------------------------------------
+# is_llm_refusal / longest_prefix_lookup -- both public, both previously never
+# mentioned anywhere under tests/ (audit F20, 2026-09-02). longest_prefix_lookup
+# resolves Anthropic's max-output-token limits (llm/anthropic_provider.py:129), so a
+# wrong prefix match silently caps generation at the fallback.
+# ---------------------------------------------------------------------------
+
+
+class TestIsLlmRefusal:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I cannot help with that request.",
+            "I can't assist with this.",
+            "Unfortunately I am unable comply, sorry.",
+            "I will not help you do that.",
+            "I won't comply.",
+            "I'm not able to help with that.",
+            "I'm unable to process this request.",
+            "I cannot provide that.",
+            "I can't generate this.",
+            "Sorry. I Cannot Help with it.",  # case-insensitive
+        ],
+    )
+    def test_recognises_refusal_phrasings(self, text):
+        from pyutilz.llm.base import is_llm_refusal
+
+        assert is_llm_refusal(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "Here is the answer you asked for.",
+            "The function cannot return None, so we raise instead.",  # 'cannot' mid-sentence, not a refusal
+            "I can help with that!",
+            "Assistance is provided by the helper module.",
+        ],
+    )
+    def test_ordinary_answers_are_not_flagged(self, text):
+        from pyutilz.llm.base import is_llm_refusal
+
+        assert is_llm_refusal(text) is False
+
+    def test_non_string_input_is_false_not_a_crash(self):
+        from pyutilz.llm.base import is_llm_refusal
+
+        assert is_llm_refusal(None) is False
+        assert is_llm_refusal(123) is False
+
+    @pytest.mark.parametrize("text", ["I am unable to comply.", "I am not able to help you."])
+    def test_documented_conservative_boundary(self, text):
+        """Phrasings a human reads as refusals but _REFUSAL_PATTERNS deliberately does NOT match.
+
+        Each pattern requires the verb to follow the modal immediately ("I am unable HELP"), so an
+        intervening "to"/"you" defeats it. That is the module's stated design -- "err on the strict
+        side", because a false positive silently downgrades a valid answer to a fallback. Pinned
+        here so the boundary is a measured, visible decision rather than an unnoticed gap; widening
+        the patterns is a deliberate change that should flip these assertions on purpose.
+        """
+        from pyutilz.llm.base import is_llm_refusal
+
+        assert is_llm_refusal(text) is False
+
+
+class TestLongestPrefixLookup:
+    TABLE = {
+        "claude-3-5-sonnet": 8192,
+        "claude-3": 4096,
+        "claude-opus-4-1": 32000,
+    }
+
+    def test_exact_match_wins(self):
+        from pyutilz.llm.base import longest_prefix_lookup
+
+        assert longest_prefix_lookup("claude-3", self.TABLE, default=64000) == 4096
+
+    def test_longest_prefix_wins_over_a_shorter_one(self):
+        """"claude-3-5-sonnet-20241022" starts with BOTH "claude-3" and "claude-3-5-sonnet";
+        the longer key must win, or every dated Sonnet build silently gets the 4096 limit."""
+        from pyutilz.llm.base import longest_prefix_lookup
+
+        assert longest_prefix_lookup("claude-3-5-sonnet-20241022", self.TABLE, default=64000) == 8192
+
+    def test_trailing_segment_trimmed_prefix_is_the_second_chance(self):
+        """No full key is a prefix of "claude-opus-4-20250101", but trimming the last "-"
+        segment off "claude-opus-4-1" yields "claude-opus-4", which is."""
+        from pyutilz.llm.base import longest_prefix_lookup
+
+        assert longest_prefix_lookup("claude-opus-4-20250101", self.TABLE, default=64000) == 32000
+
+    def test_unknown_model_falls_back_to_the_default(self):
+        from pyutilz.llm.base import longest_prefix_lookup
+
+        assert longest_prefix_lookup("gpt-4o-mini", self.TABLE, default=64000) == 64000
+
+    def test_empty_table_returns_the_default(self):
+        from pyutilz.llm.base import longest_prefix_lookup
+
+        assert longest_prefix_lookup("anything", {}, default="fallback") == "fallback"

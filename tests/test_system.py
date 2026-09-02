@@ -14,33 +14,72 @@ import tracemalloc
 class TestGetSystemInfo:
     """Test get_system_info function - command injection fix"""
 
-    def test_no_shell_true_in_mac_uuid_extraction(self):
-        """Verify shell=True is not used for Mac UUID extraction (line 130 fix)"""
-        from pyutilz.system import get_system_info
-        import inspect
+    def test_no_shell_true_in_mac_uuid_extraction(self, monkeypatch):
+        """The macOS UUID probe chains ioreg|grep through pipes, never through a shell.
 
-        source = inspect.getsource(get_system_info)
+        Behavioural replacement for an ``inspect.getsource()`` walk. That walk was doubly
+        broken: every assertion sat inside ``if in_mac_section:``, and ``in_mac_section`` was
+        only ever set by a line containing ``current_system == "Mac"`` -- but the source says
+        ``current_system == "Darwin"`` (``platform.system()`` never returns "Mac"), so the flag
+        stayed False and NOT ONE assertion ever ran. Here the Darwin branch is actually
+        executed with ``subprocess.Popen`` stubbed, and the recorded calls asserted directly.
+        """
+        import subprocess as _subprocess
 
-        # Check that Mac UUID extraction uses subprocess.PIPE, not shell=True
-        # The fix replaced shell=True with proper Popen chaining
-        if "ioreg" in source:  # Mac-specific code exists
-            # Find the Mac UUID extraction section
-            lines = source.split("\n")
-            in_mac_section = False
-            for line in lines:
-                if 'current_system == "Mac"' in line or 'elif current_system == "Mac"' in line:
-                    in_mac_section = True
-                elif in_mac_section and "elif current_system" in line:
-                    in_mac_section = False
+        from pyutilz.system.system import sysinfo as sysinfo_mod
 
-                # In Mac section, check for proper implementation
-                if in_mac_section:
-                    if "ioreg" in line and "Popen" in line:
-                        # Should use subprocess.PIPE, not shell=True
-                        assert "subprocess.PIPE" in source or "stdout=subprocess.PIPE" in source, "Mac UUID extraction should use subprocess.PIPE"
-                    if "grep" in line and "Popen" in line:
-                        # Should chain grep command, not use shell=True
-                        assert "stdin=" in source, "Should chain grep with stdin parameter"
+        calls = []
+
+        class _FakeStdout:
+            def close(self):
+                pass
+
+        real_popen = _subprocess.Popen
+
+        class _FakePopen:
+            # Only the two probe binaries are intercepted: `subprocess` is a shared stdlib
+            # module, and `platform.platform()` (called from get_os_info earlier in the same
+            # get_system_info run) spawns its own child on Windows.
+            def __new__(cls, args, **kwargs):
+                if not (isinstance(args, (list, tuple)) and args and args[0] in ("ioreg", "grep")):
+                    return real_popen(args, **kwargs)
+                return super().__new__(cls)
+
+            def __init__(self, args, **kwargs):
+                calls.append((args, kwargs))
+                self.stdout = _FakeStdout()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def communicate(self):
+                return (b'"IOPlatformUUID" = "AAAA-BBBB-CCCC"\n', b"")
+
+        monkeypatch.setattr(sysinfo_mod.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(sysinfo_mod.subprocess, "Popen", _FakePopen)
+
+        info = sysinfo_mod.get_system_info(return_os_info=True, return_sensitive_info=True)
+
+        assert len(calls) == 2, f"expected the ioreg|grep pair, got {calls!r}"
+        (ioreg_args, ioreg_kwargs), (grep_args, grep_kwargs) = calls
+
+        # argv passed as a LIST (no shell word-splitting), and shell= never enabled anywhere.
+        assert ioreg_args == ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"]
+        assert grep_args == ["grep", "-E", "(UUID)"]
+        for _args, kwargs in calls:
+            assert kwargs.get("shell", False) is False, "shell=True reintroduces the command-injection hole this fix closed"
+
+        # The pipeline is wired process-to-process, not through a shell pipe character.
+        assert ioreg_kwargs.get("stdout") is _subprocess.PIPE
+        assert isinstance(grep_kwargs.get("stdin"), _FakeStdout), "grep must read ioreg's stdout handle directly"
+        assert grep_kwargs.get("stdout") is _subprocess.PIPE
+
+        # And the parsed UUID really lands in the fields distributed.py requires.
+        assert info["os_machine_guid"] == "AAAA-BBBB-CCCC"
+        assert info["os_serial"] == "AAAA-BBBB-CCCC"
 
     def test_returns_dict_with_expected_keys(self):
         """Test that function returns dict with expected system info keys"""
@@ -109,22 +148,37 @@ class TestShowTraceMallocSnapshot:
 class TestPlatformCompatibility:
     """Test platform-specific code is properly guarded"""
 
-    def test_wintypes_import_guarded(self):
-        """Test that ctypes.wintypes import is platform-specific (Windows only)"""
-        import sys
+    def test_windows_only_memory_trim_is_platform_gated(self, monkeypatch):
+        """``clean_ram()`` reaches the ``ctypes.wintypes``/``windll`` path on Windows ONLY.
 
-        # Read system.py source to check import guards
-        import pyutilz.system as system_module
-        import inspect
+        Behavioural replacement for an ``inspect.getsource()`` check whose assertion was
+        ``"platform.system()" in source or "try:" in source`` -- satisfied by literally any
+        module containing a ``try:`` anywhere, and which additionally only ran on non-Windows
+        boxes. What actually matters is the runtime gate: ``clean_ram()`` must call
+        ``trim_windows_process_memory()`` (the sole consumer of ``ctypes.wintypes`` /
+        ``ctypes.windll``) on Windows and must NOT touch it on any other platform, where those
+        symbols do not exist.
+        """
+        from pyutilz.system.system import memory as memory_mod
 
-        source = inspect.getsource(system_module)
+        # ``import ctypes.wintypes`` itself is portable (it is pure stdlib on every platform);
+        # the non-portable part is ctypes.windll, reached only via trim_windows_process_memory.
+        import ctypes.wintypes  # noqa: F401 - importability on this platform IS the assertion
 
-        if platform.system() != "Windows":
-            # On non-Windows systems, wintypes should be conditionally imported
-            # or the code should handle ImportError
-            if "ctypes.wintypes" in source:
-                # Should have platform check or try/except
-                assert "platform.system()" in source or "try:" in source, "ctypes.wintypes import should be guarded on non-Windows systems"
+        trims = []
+        monkeypatch.setattr(memory_mod, "trim_windows_process_memory", lambda *a, **kw: trims.append(1) or True)
+
+        for system_name, expect_trim in (("Windows", True), ("Linux", False), ("Darwin", False)):
+            trims.clear()
+            monkeypatch.setattr(memory_mod.platform, "system", lambda name=system_name: name)
+            if system_name == "Windows":
+                memory_mod.clean_ram()
+            else:
+                # The non-Windows branch calls ctypes.CDLL("libc.so.6"), absent here -- the
+                # function swallows and logs that; what is asserted is that it never took the
+                # Windows path.
+                memory_mod.clean_ram()
+            assert bool(trims) is expect_trim, f"platform.system()=={system_name!r}: trim called={bool(trims)}, expected {expect_trim}"
 
 
 class TestGetCpuUsage:
@@ -143,20 +197,30 @@ class TestGetCpuUsage:
             assert isinstance(usage, (int, float))
             assert 0 <= usage <= 100
 
-    def test_psutil_cpu_percent_called_correctly(self):
-        """Verify get_system_info calls psutil.cpu_percent() correctly"""
-        try:
-            import psutil  # noqa: F401 - import presence is the guard
-        except ImportError:
-            pytest.skip("psutil not available")
+    def test_psutil_cpu_percent_called_correctly(self, monkeypatch):
+        """get_system_info asks psutil for BOTH the aggregate and the per-core CPU load.
 
-        from pyutilz.system import get_system_info
-        import inspect
+        Behavioural replacement for ``assert "cpu_percent" in inspect.getsource(...)``, which a
+        mere comment mentioning the name satisfied. The stubbed psutil returns distinguishable
+        values so the mapping into the returned dict is pinned too.
+        """
+        pytest.importorskip("psutil")
 
-        source = inspect.getsource(get_system_info)
+        from pyutilz.system.system import sysinfo as sysinfo_mod
 
-        # Should call cpu_percent
-        assert "cpu_percent" in source
+        calls = []
+
+        def fake_cpu_percent(percpu=False):
+            calls.append(percpu)
+            return [11.0, 12.0] if percpu else 42.5
+
+        monkeypatch.setattr(sysinfo_mod.psutil, "cpu_percent", fake_cpu_percent)
+
+        info = sysinfo_mod.get_system_info(return_usage_stats=True)
+
+        assert sorted(calls) == [False, True], f"expected one aggregate and one per-core query, got {calls!r}"
+        assert info["cpu_current_load_percent"] == 42.5
+        assert info["cpu_current_threads_load_percents"] == [11.0, 12.0]
 
 
 @pytest.mark.parametrize("n_lines", [1, 5, 10, 20])
@@ -328,32 +392,36 @@ class TestSystemUtilities:
             f"avoid the working-set-trim artifact."
         )
 
-    def test_get_own_memory_usage_uses_private_bytes_on_windows(self):
-        """Structural check: on Windows, ``get_own_memory_usage`` must
-        pull from ``memory_info().private``, not ``.rss``.
+    def test_get_own_memory_usage_uses_private_bytes_on_windows(self, monkeypatch):
+        """On Windows, ``get_own_memory_usage`` reads ``memory_info().private``, not ``.rss``.
 
-        Implementation check (rather than end-to-end behavioural)
-        because on a quiet process the rss/private values can be
-        numerically close enough that the behavioural difference is
-        indistinguishable — the structural guard catches refactors
-        that silently revert to ``.rss``.
+        Behavioural replacement for an ``inspect.getsource()`` check for the literal text
+        ``"mi.private"``, which passed on any file merely containing that string and would have
+        failed on a behaviour-preserving rename. A stubbed ``psutil.Process`` returns rss and
+        private values an order of magnitude apart, so the field actually read is unambiguous
+        from the returned number. Runs on every platform (the Windows branch is selected by the
+        module's ``_IS_WINDOWS`` flag, which is what gets forced here) instead of skipping
+        everywhere but Windows.
         """
-        import platform
+        from unittest.mock import MagicMock
 
-        if platform.system() != "Windows":
-            pytest.skip("Windows-specific implementation detail")
+        from pyutilz.system.system import memory as memory_mod
 
-        from pyutilz.system import system as _sys_mod
+        private_gb, rss_gb = 4.0, 0.25
+        mem_info = MagicMock(private=int(private_gb * 2**30), rss=int(rss_gb * 2**30))
+        monkeypatch.setattr(memory_mod.psutil, "Process", lambda _pid: MagicMock(memory_info=lambda: mem_info))
+        monkeypatch.setattr(memory_mod, "_LAST_OWN_MEMORY_USAGE_GB", 0.0)
 
-        # Inspect the source — cheaper and more robust than spinning up
-        # a mock psutil.Process.
-        import inspect
-        src = inspect.getsource(_sys_mod.get_own_memory_usage)
-        assert "mi.private" in src or "memory_info().private" in src, (
-            "get_own_memory_usage must use memory_info().private on Windows "
-            "to avoid the working-set-trim RSS glitch triggered by "
-            "clean_ram()'s SetProcessWorkingSetSizeEx call."
+        monkeypatch.setattr(memory_mod, "_IS_WINDOWS", True)
+        assert memory_mod.get_own_memory_usage() == pytest.approx(private_gb), (
+            "get_own_memory_usage must read memory_info().private on Windows -- .rss is the "
+            "working set, which clean_ram()'s SetProcessWorkingSetSizeEx call trims to near zero."
         )
+
+        # The counterpart: everywhere else, .rss is the correct (and only available) field.
+        monkeypatch.setattr(memory_mod, "_LAST_OWN_MEMORY_USAGE_GB", 0.0)
+        monkeypatch.setattr(memory_mod, "_IS_WINDOWS", False)
+        assert memory_mod.get_own_memory_usage() == pytest.approx(rss_gb)
 
     def test_tqdmu_basic(self):
         """Test tqdmu wrapper"""

@@ -77,44 +77,58 @@ class TestModuleLevelVariables:
     """Test module-level variable naming conventions"""
 
     def test_no_self_at_module_level(self):
-        """Test that module doesn't use 'self' as module-level variable (line 31 fix)"""
-        try:
-            import pyutilz.distributed as distributed_module
-            import inspect
-        except ImportError:
-            pytest.skip("distributed module not available")
+        """The module binds no global named ``self``; node identity lives on ``_container``.
 
-        source = inspect.getsource(distributed_module)
+        Behavioural replacement for a line-by-line ``inspect.getsource()`` scan for a
+        ``"self ="`` prefix, which a reformat (``self  =``, a continuation line, a walrus) would
+        walk straight past. The actual namespace is what matters, and it can be read directly.
+        """
+        import pyutilz.system.distributed as distributed_module
 
-        # Check for module-level 'self ='
-        lines = source.split("\n")
-        for i, line in enumerate(lines):
-            if line.startswith("self =") and not line.startswith("    "):
-                # Found module-level 'self =' (not indented)
-                pytest.fail(f"Line {i+1}: Module-level variable should not be named 'self' (confusing)")
+        assert not hasattr(distributed_module, "self"), "module-level variable named 'self' is back (confusing shadow of the method receiver)"
+        # ...and the real holder it was replaced by is present and shaped as documented.
+        assert hasattr(distributed_module._container, "node_id")
 
 
 class TestVersioning:
     """Test content-based versioning vs mtime"""
 
-    def test_version_not_using_mtime(self):
-        """Test that versioning uses content hash, not file mtime (clock skew issue)"""
-        try:
-            import pyutilz.distributed as distributed_module
-            import inspect
-        except ImportError:
-            pytest.skip("distributed module not available")
+    def test_version_is_content_hash_not_mtime(self, monkeypatch):
+        """``register_scraper(version=None)`` derives the version from the caller file's CONTENT.
 
-        source = inspect.getsource(distributed_module)
+        Behavioural replacement for an ``inspect.getsource()`` scan (``if "getmtime" in source:
+        assert "hashlib" in source``) whose assertion never ran, because the module contains no
+        ``getmtime`` at all. The real contract -- ``<YYYY.MM.DD>.<md5(caller file)[:8]>`` -- is
+        computed independently here and compared, which is what makes it clock-skew-proof: two
+        machines with different clocks but the same file produce the same hash suffix.
+        """
+        import hashlib
+        import re
+        from datetime import datetime
 
-        # Check if versioning/caching code exists
-        if "version" in source.lower() or "cache" in source.lower():
-            # If using file-based versioning, should use hash not mtime
-            if "getmtime" in source:
-                # Should also have hash-based alternative
-                assert (
-                    "hashlib" in source or "md5" in source or "sha" in source
-                ), "Should use content-based versioning (hash), not just mtime (clock skew issues)"
+        import pyutilz.system.distributed as distributed_module
+
+        def fake_db_command(action, table, *args, **kwargs):
+            fetch_into = kwargs.get("fetch_into")
+            if fetch_into is not None and table == "nodes":
+                fetch_into.node_id = 4242
+
+        monkeypatch.setattr(distributed_module.db, "db_command", fake_db_command)
+        monkeypatch.setattr(distributed_module.db, "safe_execute", lambda *_a, **_k: None)
+        monkeypatch.setattr(distributed_module.system, "get_system_info", lambda only_stats=False: {"host_name": "h", "os_machine_guid": "g", "os_serial": "s"})
+        monkeypatch.setattr(distributed_module.pythonlib, "lookup_in_stack", lambda *_a, **_k: None)
+        monkeypatch.setattr(distributed_module.web, "get_external_ip", lambda: "0.0.0.0")
+        monkeypatch.setattr(distributed_module._container, "node_id", None)
+
+        distributed_module.register_scraper(scraper_name="s1", app_name="app")
+
+        version = distributed_module.m_version
+        # THIS test file is the calling module, so its content hash is the expected suffix.
+        expected_hash = hashlib.md5(open(__file__, "rb").read(), usedforsecurity=False).hexdigest()[:8]
+        expected_date = datetime.now().strftime("%Y.%m.%d")  # noqa: DTZ005 - matches the production call's local-date tag
+
+        assert re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.[0-9a-f]{8}", version), f"unexpected version shape {version!r}"
+        assert version == f"{expected_date}.{expected_hash}", "version must be a content hash of the calling file, not a timestamp/mtime"
 
 
 class TestDistributedModulePublicSurface:
@@ -139,27 +153,45 @@ class TestDistributedModulePublicSurface:
 class TestSqlInjectionProtection:
     """Test SQL injection protection across distributed module"""
 
-    def test_no_string_formatting_in_sql(self):
-        """Test that SQL queries don't use dangerous string formatting"""
-        try:
-            import pyutilz.distributed as distributed_module
-            import inspect
-        except ImportError:
-            pytest.skip("distributed module not available")
+    def test_untrusted_values_are_bound_as_parameters_never_interpolated(self):
+        """Hostile status/ip strings reach the driver as bound params, never inside the SQL text.
 
-        source = inspect.getsource(distributed_module)
+        Behavioural replacement for a line scan of ``inspect.getsource()`` looking for SQL
+        keywords next to an f-string. That could not see interpolation performed anywhere other
+        than on one physical line, and never executed the query builder at all. Here the real
+        builder is driven with injection payloads and the split between the (constant) statement
+        and the (variable) parameters is asserted directly.
+        """
+        import pyutilz.system.distributed as distributed_module
 
-        # Look for SQL-related code
-        lines = source.split("\n")
-        for i, line in enumerate(lines):
-            # Check for SQL keywords
-            if any(kw in line.upper() for kw in ["SELECT", "INSERT", "UPDATE", "DELETE"]):
-                # If it's a SQL statement, check it's not using format() or %
-                if '= f"' in line or "= f'" in line:
-                    # f-string SQL - potential injection risk
-                    # Should use parameterized queries instead
-                    if "WHERE" in line.upper():
-                        pytest.fail(f"Line {i+1}: SQL with WHERE clause should use parameterized query, not f-string")
+        hostile_status = "ok'); DROP TABLE scrapers; --"
+        hostile_ip = "1.2.3.4' OR '1'='1"
+
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = 1
+
+        sql, params = distributed_module.get_heartbeat_sql(status=hostile_status, ip=hostile_ip)
+
+        assert params is not None
+        assert hostile_status in params and hostile_ip in params, "untrusted values must be bound, not dropped"
+        assert hostile_status not in sql and hostile_ip not in sql, "untrusted value was interpolated into the SQL text"
+        assert "DROP TABLE" not in sql.upper()
+        # The statement is a constant template: every value slot is a %s placeholder, and the
+        # placeholder count matches the bound tuple exactly (no silent mismatch).
+        assert sql.count("%s") == len(params)
+
+    def test_sql_text_is_identical_regardless_of_the_values_bound(self):
+        """The generated statement does not vary with its inputs -- the definition of parameterised."""
+        import pyutilz.system.distributed as distributed_module
+
+        with distributed_module._identity_lock:
+            distributed_module._container.node_id = 1
+
+        sql_a, params_a = distributed_module.get_heartbeat_sql(status="ok", ip="10.0.0.1")
+        sql_b, params_b = distributed_module.get_heartbeat_sql(status="error", ip="192.168.0.99")
+
+        assert sql_a == sql_b
+        assert params_a != params_b
 
 
 @pytest.mark.parametrize("status,ip", [

@@ -1,7 +1,16 @@
-"""Behavioral coverage for pyutilz.stats.normality (previously untested -- no test_normality.py
-existed at all). Validates the njit kernels against scipy.stats where a reference exists
-(dagostino_k2 matches scipy.stats.normaltest to floating point per the module docstring) and
-exercises normality_verdict's classification/degenerate/subsampling branches directly."""
+"""Kernel-level coverage for pyutilz.stats.normality.
+
+Companion to ``tests/stats/test_normality.py`` (the statistical CALIBRATION suite: false-reject
+rates on Normal samples, rejection of Laplace / Student-t(5) / contaminated mixtures). This file
+covers the numerical kernels instead -- ``phi_cdf`` / ``log_phi_cdf`` tail accuracy, the exact
+scipy.stats parity of ``dagostino_k2``, and ``normality_verdict``'s branch structure
+(short-circuits, degenerate input, non-finite dropping, deterministic subsampling).
+
+Lives in ``tests/stats/`` per TESTING.md's "Test layout" rule (tests for ``stats/*`` sources go in
+this folder). It previously sat at flat-root as a second ``test_normality.py`` -- the only
+duplicate test-file basename in the repo -- under a docstring claiming the module was "previously
+untested -- no test_normality.py existed at all", which was never true: the calibration suite next
+to this file predates it. That claim is what caused the duplicated effort; it is deleted here."""
 
 from __future__ import annotations
 
@@ -67,6 +76,7 @@ class TestDagostinoK2:
     def test_below_minimum_n_returns_nan(self):
         x = np.arange(19, dtype=np.float64)
         result = dagostino_k2(x)
+        assert len(result) == 4, "dagostino_k2 always returns (k2, p, skew, kurt)"
         assert all(math.isnan(v) for v in result)
 
     def test_constant_sample_returns_zero_stat_and_p_one(self):

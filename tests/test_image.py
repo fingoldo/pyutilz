@@ -38,8 +38,18 @@ def _stub_pil():
         "PIL.ImageFile": MagicMock(),
     }
 
+    import pyutilz.core as _pyutilz_core
+
     saved = {k: sys.modules.get(k) for k in stubs}
     saved_image_mod = sys.modules.pop("pyutilz.core.image", None)
+    # sys.modules.pop() does NOT clear the submodule binding on the PARENT package, so the
+    # re-import triggered inside this fixture rebinds ``pyutilz.core.image`` to the
+    # stub-built module -- and restoring sys.modules alone never undoes that. Anything later
+    # doing ``from pyutilz.core import image`` would then silently get the MagicMock-PIL
+    # version, with behaviour depending on file order (order IS randomised here, see
+    # requirements-dev.txt / pytest-randomly). Save and restore the attribute explicitly.
+    _HAD_ATTR = hasattr(_pyutilz_core, "image")
+    saved_image_attr = getattr(_pyutilz_core, "image", None)
     sys.modules.update(stubs)
     yield
     # Restore originals
@@ -51,6 +61,12 @@ def _stub_pil():
     sys.modules.pop("pyutilz.core.image", None)
     if saved_image_mod is not None:
         sys.modules["pyutilz.core.image"] = saved_image_mod
+    if _HAD_ATTR:
+        setattr(_pyutilz_core, "image", saved_image_attr)
+    else:
+        # Nothing was bound before; drop whatever the stubbed re-import left behind.
+        if hasattr(_pyutilz_core, "image"):
+            delattr(_pyutilz_core, "image")
 
 
 def _get_func():

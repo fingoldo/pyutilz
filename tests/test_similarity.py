@@ -129,6 +129,7 @@ class TestLevenshteinStringsSimilarity:
 
     @given(s=st.text(min_size=1, max_size=20, alphabet=st.characters(categories=("L", "N"))))
     @settings(max_examples=50)
+    @pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
     def test_self_similarity_is_one(self, s):
         assert levenshtein_strings_similarity(s, s) == 1.0
 
@@ -827,7 +828,11 @@ class TestCoverageGate:
         exact case that coverage_side="max" refuses above. Demonstrates the two are genuinely
         different guarantees, not interchangeable synonyms of "some coverage requirement"."""
         result = sim_fn(self.QUERY, self.CANDIDATE_PARTIAL, required_coverage=1.0, coverage_side="min")
-        assert result is not None
+        # Pinned to the actual score, not merely `is not None`: a bare not-None check also passes
+        # if the gate degenerates into "accept everything", which is precisely the confusion this
+        # test exists to rule out. 0.5 = one of the query's two words matched, no coverage penalty
+        # applied (coverage_side="max" refuses this same pair -- see the test above).
+        assert result == pytest.approx(0.5, abs=1e-10)
 
     @pytest.mark.parametrize("sim_fn", COVERAGE_IMPLS)
     def test_coverage_side_both_refuses_if_either_side_fails(self, sim_fn):
@@ -865,7 +870,9 @@ class TestCoverageGate:
         """A sentence made entirely of stopwords has nothing to require coverage of - must not refuse
         (there is no content word left unaccounted for, by definition)."""
         result = sentences_similarity(["THE", "A"], ["THE"], required_coverage=1.0, coverage_side="max", stop_words=["THE", "A"])
-        assert result is not None
+        # A real, positive score -- not just "not refused". `_strip_stop_words` declines to empty
+        # the sentence, so the unfiltered words are scored and the shared "THE" carries the match.
+        assert result == pytest.approx(0.5, abs=1e-10)
 
     def test_invalid_coverage_side_raises(self):
         with pytest.raises(ValueError):
@@ -955,7 +962,11 @@ class TestStopWordsAffectBaseScore:
     def test_a_query_of_only_stop_words_falls_back_to_the_unfiltered_query_rather_than_scoring_nothing(self):
         """`_strip_stop_words` refuses to empty a sentence entirely - a query that is ALL stop words keeps
         its original words so the caller still gets a real (if low) score, never a crash on an empty list."""
-        assert sentences_similarity(["I", "HAVE"], ["NAUSEA"], stop_words=self._STOP) is not None
+        result = sentences_similarity(["I", "HAVE"], ["NAUSEA"], stop_words=self._STOP)
+        # A real (low) score from the UNFILTERED query, pinned exactly: `is not None` alone would
+        # also pass if the fallback started returning a meaningless 1.0 or 0.0 sentinel.
+        assert result == pytest.approx(0.14583333333333334, abs=1e-10)
+        assert 0.0 < result < 0.5
 
     def test_no_stop_words_argument_is_a_true_no_op(self):
         """Zero behavior change on the default (stop_words=None) path - the same invariant this file's

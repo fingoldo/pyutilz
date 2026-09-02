@@ -482,6 +482,7 @@ except ImportError:
 
 
 @pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 class TestBuildAggregateFeatures:
     def test_returns_tuple_of_three(self):
         df = pl.DataFrame({"a": [1.0, 2.0, 3.0]})

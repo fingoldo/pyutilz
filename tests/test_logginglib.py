@@ -18,8 +18,13 @@ class TestFunctionLog:
 
         log = initialize_function_log(explicit_only=False)
 
+        # The documented shape: a "results" sub-dict (where log_result/log_results/log_activity
+        # write), the calling function's name and module, and its captured parameters. The
+        # previous `... or len(log) >= 0` tail made the whole assertion unfalsifiable.
         assert isinstance(log, dict)
-        assert "start_time" in log or "clocks" in log or len(log) >= 0
+        assert set(log) == {"function", "module", "parameters", "results"}
+        assert log["function"] == "test_initialize_function_log"
+        assert "started_at" in log["results"]["timing"]
 
     def test_initialize_function_log_explicit_only(self):
         """Test with explicit_only flag"""
@@ -36,12 +41,12 @@ class TestFunctionLog:
         log = initialize_function_log()
         log_result(log, "test_key", 42, verbose=False)
 
-        # Results stored in nested dict
-        assert "results" in log or "test_key" in log
-        if "results" in log:
-            assert log["results"]["test_key"] == 42
-        else:
-            assert log["test_key"] == 42
+        # log_result writes into the nested log["results"] dict -- pinned unconditionally.
+        # The either-shape form this replaced ("results" in log or "test_key" in log) accepted
+        # values moving between the nested dict and the top level, which is a breaking change
+        # for every consumer that reads log["results"].
+        assert log["results"]["test_key"] == 42
+        assert "test_key" not in log
 
     def test_log_results(self):
         """Test logging multiple results"""
@@ -51,12 +56,10 @@ class TestFunctionLog:
         results = {"key1": "value1", "key2": 123}
         log_results(log, results, verbose=False)
 
-        # Results stored in nested dict
-        if "results" in log:
-            assert "key1" in log["results"]
-            assert "key2" in log["results"]
-        else:
-            assert "key1" in log or "key2" in log
+        # Merged into the nested log["results"] dict, values intact -- pinned unconditionally.
+        assert log["results"]["key1"] == "value1"
+        assert log["results"]["key2"] == 123
+        assert "key1" not in log and "key2" not in log
 
     def test_finalize_function_log(self):
         """Test finalizing function log"""
@@ -93,11 +96,61 @@ class TestLoggingActivities:
         assert isinstance(elapsed, (int, float))
         assert elapsed >= 0
 
-    @pytest.mark.skip(reason="Requires inflect module")
-    def test_log_loaded_rows(self):
-        """Test logging loaded rows"""
-        # Requires inflect module
-        pass
+    def test_log_loaded_rows_records_row_count(self):
+        """log_loaded_rows records the row count under results["loaded"][source_type][source].
+
+        Runs everywhere: the recording contract (the part every consumer reads) needs no
+        third-party dependency. Only the ENGLISH display message goes through
+        ``suffixize()`` -> ``inflect``, so ``lang="ru"`` exercises the full function body
+        without it -- see test_log_loaded_rows_english_message for the inflect-gated half.
+        """
+        from pyutilz.logginglib import initialize_function_log, log_loaded_rows
+
+        log = initialize_function_log()
+        log_loaded_rows(["a", "b", "c"], source="my_table", source_type="db_table", results_log=log, lang="ru", verbose=False)
+
+        assert log["results"]["loaded"]["db_table"]["my_table"] == {"rows": 3}
+
+        # A second source of a different type lands beside the first, not on top of it.
+        log_loaded_rows([1] * 7, source="data.csv", source_type="file", results_log=log, lang="ru", verbose=False)
+        assert log["results"]["loaded"]["file"]["data.csv"] == {"rows": 7}
+        assert log["results"]["loaded"]["db_table"]["my_table"] == {"rows": 3}
+
+    def test_log_loaded_rows_defaults_results_log(self):
+        """results_log=None must not raise: the function substitutes its own {"results": {}}."""
+        from pyutilz.logginglib import log_loaded_rows
+
+        log_loaded_rows([1, 2], source="t", source_type="db_table", results_log=None, lang="ru", verbose=False)
+
+    def test_log_loaded_rows_rejects_unknown_source_type(self):
+        from pyutilz.logginglib import log_loaded_rows
+
+        with pytest.raises(AssertionError):
+            log_loaded_rows([1], source="t", source_type="carrier_pigeon", lang="ru", verbose=False)
+
+    def test_log_loaded_rows_english_message(self, caplog):
+        """The English message pluralises the noun via inflect and thousands-separates the count.
+
+        ``pytest.importorskip`` rather than an unconditional ``@pytest.mark.skip``: inflect is
+        declared in the ``nlp`` extra, so this runs wherever that extra is installed instead of
+        never running anywhere.
+        """
+        pytest.importorskip("inflect")
+
+        import logging
+
+        from pyutilz.logginglib import initialize_function_log, log_loaded_rows
+
+        log = initialize_function_log()
+        with caplog.at_level(logging.INFO):
+            log_loaded_rows([0] * 1234, source="my_table", source_type="db_table", results_log=log, lang="en", verbose=True)
+
+        text = caplog.text
+        assert "1_234" in text  # underscore thousands separator, per the f-string's `:_` spec
+        assert "rows" in text  # pluralised -- "row" would mean suffixize() was bypassed
+        assert "my_table" in text
+        assert "DB table" in text
+        assert log["results"]["loaded"]["db_table"]["my_table"] == {"rows": 1234}
 
 
 class TestLoggingDecorators:
@@ -156,11 +209,10 @@ class TestEdgeCases:
         log = initialize_function_log()
         log_result(log, "none_key", None, verbose=False)
 
-        # Results stored in nested dict
-        if "results" in log:
-            assert log["results"]["none_key"] is None
-        else:
-            assert "none_key" in log
+        # A None value must be STORED (key present, value None), not dropped -- pinned
+        # unconditionally; the old else-branch only checked key presence at the top level.
+        assert "none_key" in log["results"]
+        assert log["results"]["none_key"] is None
 
     def test_log_results_empty_dict(self):
         """Test logging empty results"""

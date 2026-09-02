@@ -1,5 +1,7 @@
 import time
 import logging
+
+import pytest
 from unittest.mock import patch, MagicMock
 
 # ── job_completed (lines 39-72) ──
@@ -236,6 +238,7 @@ class TestTimeoutWrapperExceptions:
             result = quick()
             assert result == 42
 
+    @pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
     def test_genuine_timeouts_do_not_starve_unrelated_calls(self):
         """Regression sensor: timeout_wrapper must not share a bounded worker pool across calls.
 

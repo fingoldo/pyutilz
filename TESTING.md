@@ -16,10 +16,26 @@ pytest                                          # full suite
 pytest tests/test_meta/                          # static meta-tests only, ~2 min
 pytest tests/test_pandaslib.py -v                # one module
 pytest --run-live -m live                        # live LLM smoke tests (real API calls)
+pytest -m "not slow"                             # fast inner loop: drops the multi-second tests
 pytest --cov=src/pyutilz --cov-report=term-missing
 ```
 
-Coverage is uploaded to Codecov on every CI run.
+**On Windows, add `--no-cov` to every local run.** pytest-cov raises `PermissionError` when it
+writes its data file here; coverage is measured in CI on `ubuntu-latest`, so the `--cov` recipe
+above is the CI form. If you do need a local number, `python -m coverage run -m pytest --no-cov`
+followed by `python -m coverage report` works, because it keeps coverage out of the pytest
+plugin path entirely.
+
+Coverage is uploaded to Codecov on every CI run. The CI gate is `--cov-fail-under`; the same
+floor is mirrored as `fail_under` under `[tool.coverage.report]` in `pyproject.toml` so a local
+`coverage report` enforces it too. Treat it as a ratchet: raise it when coverage rises, never
+lower it to make a run pass.
+
+`slow` marks the tests that spend seconds sleeping or driving real timeouts rather than doing
+work -- deliberate `time.sleep` budgets, timeout-saturation loops, and child-interpreter spawns.
+They stay in the default run (nothing is skipped by default); `-m "not slow"` is the documented
+way to drop them while iterating. The `gpu` marker is deselected in CI (no GPU runner) and
+`live` is skipped unless `--run-live` is passed.
 
 ## Static meta-tests
 

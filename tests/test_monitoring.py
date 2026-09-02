@@ -13,16 +13,34 @@ import threading
 class TestTimeoutWrapper:
     """Test timeout_wrapper decorator - ThreadPoolExecutor optimization"""
 
-    def test_executor_is_module_level(self):
-        """Test that ThreadPoolExecutor is created at module level (not per call)"""
+    def test_executor_is_module_level_and_shared(self):
+        """The heartbeat executor is ONE module-level pool, reused across calls.
+
+        Behavioural replacement for an ``inspect.getsource(...)`` string match on
+        ``"_TIMEOUT_EXECUTOR"``, which passed on any module merely mentioning the name and
+        failed on a pure rename. Here the pool object identity is checked directly, and
+        ``job_completed`` is driven twice to prove each non-blocking send is *submitted to
+        that same pool* rather than to a freshly constructed executor per call.
+        """
+        import concurrent.futures
+        from unittest.mock import patch
+
         import pyutilz.monitoring as monitoring_module
-        import inspect
 
-        source = inspect.getsource(monitoring_module)
+        executor = monitoring_module._TIMEOUT_EXECUTOR
+        assert isinstance(executor, concurrent.futures.ThreadPoolExecutor)
 
-        # Should have module-level executor
-        # The fix moved executor creation outside timeout_wrapper
-        assert "_TIMEOUT_EXECUTOR" in source or "_executor" in source.lower(), "Should have module-level ThreadPoolExecutor (performance fix)"
+        submitted = []
+        with patch.object(executor, "submit", side_effect=lambda fn, *a, **kw: submitted.append(fn)) as spy, patch.object(
+            concurrent.futures, "ThreadPoolExecutor", side_effect=AssertionError("a new ThreadPoolExecutor must not be built per call")
+        ):
+            monitoring_module.job_completed(job_id="j1", blocking=False)
+            monitoring_module.job_completed(job_id="j2", blocking=False)
+
+        assert spy.call_count == 2, "both non-blocking heartbeats must go through the shared module-level pool"
+        assert len(submitted) == 2
+        # And the pool object itself is still the same one after the calls -- not rebuilt.
+        assert monitoring_module._TIMEOUT_EXECUTOR is executor
 
     def test_timeout_wrapper_executes_function(self):
         """Test that wrapped function executes correctly"""
@@ -93,8 +111,18 @@ class TestTimeoutWrapper:
         # Should succeed without creating multiple executors
         assert results == list(range(10))
 
-    def test_timeout_wrapper_report_duration(self):
-        """Test report_actual_duration parameter"""
+    def test_timeout_wrapper_report_duration(self, caplog):
+        """``report_actual_duration=True`` LOGS the measured duration; the return value is unchanged.
+
+        Reframed against the real contract (src/pyutilz/system/monitoring.py:227-229): the flag
+        emits ``"<func> completed in <N>s"`` at INFO and still returns the bare result -- it does
+        NOT wrap it in a ``(result, duration)`` tuple. The previous version guarded on
+        ``if isinstance(result, tuple)`` and, on the else branch, asserted only ``result ==
+        "done"``, i.e. it passed identically whether the flag did anything at all.
+        """
+        import logging
+        import re
+
         from pyutilz.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5, report_actual_duration=True)
@@ -102,16 +130,31 @@ class TestTimeoutWrapper:
             time.sleep(0.1)
             return "done"
 
-        result = timed_function()
+        with caplog.at_level(logging.INFO, logger="pyutilz.system.monitoring"):
+            result = timed_function()
 
-        # When report_actual_duration=True, should return tuple (result, duration)
-        if isinstance(result, tuple):
-            actual_result, duration = result
-            assert actual_result == "done"
-            assert duration >= 0.1
-        else:
-            # Or just the result if not reporting duration
-            assert result == "done"
+        assert result == "done"
+        assert not isinstance(result, tuple)
+        match = re.search(r"timed_function completed in ([0-9.]+)s", caplog.text)
+        assert match is not None, f"report_actual_duration=True must log the duration; got: {caplog.text!r}"
+        assert float(match.group(1)) >= 0.1
+
+    def test_timeout_wrapper_without_report_duration_logs_nothing(self, caplog):
+        """The counterpart: with the flag off, no duration line is emitted at all."""
+        import logging
+
+        from pyutilz.monitoring import timeout_wrapper
+
+        @timeout_wrapper(timeout=5)
+        def quiet_function():
+            time.sleep(0.1)
+            return "done"
+
+        with caplog.at_level(logging.INFO, logger="pyutilz.system.monitoring"):
+            result = quiet_function()
+
+        assert result == "done"
+        assert "completed in" not in caplog.text
 
 
 class TestConcurrentExecution:

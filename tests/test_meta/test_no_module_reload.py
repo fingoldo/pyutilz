@@ -47,13 +47,75 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
-    "tests/test_pythonlib_extra2.py:487": "deliberately reloads pyutilz.core.pythonlib to prove "
+    "tests/test_pythonlib_extra2.py:531": "deliberately reloads pyutilz.core.pythonlib to prove "
     "get_attr() survives it -- pythonlib.py's only historical sentinel hazard was "
     "_GET_ATTR_UNSET, and get_attr() now captures a second `_unset` parameter from the SAME "
     "name at the SAME def-time as its own default (comparing against that, not a bare global "
     "lookup), making it provably immune to reload-driven rebinding; verified via grep that no "
     "other '= object()' sentinel exists in pythonlib.py for this reload to still endanger.",
 }
+
+
+# "path/to/file.py:lineno" -> reason this ``sys.modules.pop(<a pyutilz module>)`` is safe.
+#
+# Added 2026-09-02 (audit F15): ``sys.modules.pop("pkg.sub")`` followed by a re-import is the
+# reload ban's blind spot. It splits module identity exactly the same way -- and worse, it does
+# NOT clear the submodule binding on the PARENT package, so ``from pkg import sub`` keeps
+# handing out the OLD object while ``import pkg.sub`` builds a NEW one. Any entry here must say
+# how the parent-package attribute is restored, not merely that sys.modules is.
+_PERMITTED_SYS_MODULES_POP_SITES: dict[str, str] = {
+    "tests/test_image.py:44": "the _stub_pil fixture pops pyutilz.core.image so it re-imports "
+    "against this file's MagicMock PIL stubs; teardown restores BOTH the sys.modules entry and "
+    "the pyutilz.core.image PARENT-PACKAGE attribute (setattr/delattr), so no stub-built module "
+    "outlives the fixture by either lookup route.",
+    "tests/test_image.py:61": "the teardown half of the same fixture -- pops the stub-built "
+    "module back out before reinstating the saved one; paired with the entry above.",
+    "tests/test_dev_fixes_regression.py:195": "re-imports pyutilz.system.monitoring under a "
+    "patched atexit.register to observe the shared executor's shutdown being registered at "
+    "import time (unobservable any other way -- atexit has no introspection API). The finally "
+    "block shuts down the throwaway executor and restores both sys.modules and the "
+    "pyutilz.system.monitoring parent-package attribute, so tests asserting _TIMEOUT_EXECUTOR "
+    "identity (tests/test_monitoring.py) are unaffected by execution order.",
+    "tests/test_dev_fixes_regression.py:207": "the restore half of the same finally block.",
+}
+
+# Only pops of a pyutilz-owned module can split OUR identity; popping a third-party stub key
+# (e.g. "PIL.Image") is ordinary test scaffolding and is not flagged.
+_POP_PREFIXES = ("pyutilz",)
+
+
+def _popped_pyutilz_module(node: ast.Call) -> "str | None":
+    """Return the pyutilz module name in a ``sys.modules.pop(...)`` call, else None."""
+    func = node.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "pop"):
+        return None
+    target = func.value
+    if not (isinstance(target, ast.Attribute) and target.attr == "modules" and isinstance(target.value, ast.Name) and target.value.id == "sys"):
+        return None
+    if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+        return None
+    name = node.args[0].value
+    return name if name.split(".")[0] in _POP_PREFIXES else None
+
+
+def _find_sys_modules_pops(root: Path) -> list[str]:
+    out: list[str] = []
+    for py in root.rglob("*.py"):
+        if "__pycache__" in py.parts:
+            continue
+        try:
+            src = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        rel = py.relative_to(_REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _popped_pyutilz_module(node) is not None:
+                out.append(f"{rel}:{node.lineno}")
+    return out
 
 
 def _is_reload_call(node: ast.Call) -> bool:
@@ -112,3 +174,36 @@ def test_permitted_reload_sites_still_exist():
     stale = sorted(set(_PERMITTED_RELOAD_SITES) - found)
     if stale:
         pytest.fail(f"_PERMITTED_RELOAD_SITES has entries for site(s) that no longer call reload -- clean up after the underlying edit:\n  " + "\n  ".join(stale))
+
+
+def test_no_unreviewed_sys_modules_pop_of_a_pyutilz_module():
+    """``sys.modules.pop("pyutilz...")`` + re-import splits module identity just like reload().
+
+    The reload ban above does not cover it, and it is strictly worse in one respect: popping the
+    sys.modules entry leaves the PARENT package's attribute pointing at the old object, so the
+    two import routes (``import pkg.sub`` vs ``from pkg import sub``) can hand out different
+    module objects for the rest of the session -- order-dependently, since test order is
+    randomised here.
+    """
+    found = sorted(set(_find_sys_modules_pops(_SRC_DIR)) | set(_find_sys_modules_pops(_TESTS_DIR)))
+    unreviewed = [site for site in found if site not in _PERMITTED_SYS_MODULES_POP_SITES]
+    if unreviewed:
+        pytest.fail(
+            f"{len(unreviewed)} sys.modules.pop() call(s) on a pyutilz module with no reviewed "
+            f"justification in _PERMITTED_SYS_MODULES_POP_SITES. Popping the sys.modules entry "
+            f"does NOT clear the submodule attribute on the parent package, so a subsequent "
+            f"re-import rebinds that attribute to the newly built module and nothing restores "
+            f"it -- `from pkg import sub` and `import pkg.sub` then disagree. Either avoid the "
+            f"pop (monkeypatch the specific symbol, or build an unregistered module copy via "
+            f"importlib.util.module_from_spec + exec_module), OR add a reviewed entry saying "
+            f"how the parent-package attribute is restored:\n  " + "\n  ".join(unreviewed)
+        )
+
+
+def test_permitted_sys_modules_pop_sites_still_exist():
+    """Keep the pop whitelist an accurate record: a stale entry means the pop moved or went away."""
+    found = set(_find_sys_modules_pops(_SRC_DIR)) | set(_find_sys_modules_pops(_TESTS_DIR))
+    stale = sorted(set(_PERMITTED_SYS_MODULES_POP_SITES) - found)
+    if stale:
+        pytest.fail("_PERMITTED_SYS_MODULES_POP_SITES has entries for site(s) that no longer pop -- clean up after the underlying edit:\n  " + "\n  ".join(stale)
+)

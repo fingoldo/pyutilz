@@ -150,6 +150,7 @@ def test_check_cpu_flag_missing_flags_key_warns(monkeypatch, caplog):
     assert any("no 'flags' key" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 def test_check_cpu_flag_present_flag_is_reported():
     import cpuinfo
 

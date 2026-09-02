@@ -38,8 +38,16 @@ class TestProviderModules:
             assert isinstance(entry, tuple) and len(entry) == 3, f"Entry for '{name}' should be (module_path, class_name, settings_api_key_attr)"
             mod_path, cls_name, key_attr = entry
             assert isinstance(mod_path, str) and isinstance(cls_name, str)
-            # None means "this provider needs no API key" (claude-code), which is data, not a gap.
-            assert key_attr is None or isinstance(key_attr, str)
+            # None means "this provider needs no API key". claude-code is the only such provider
+            # (it drives the local Claude Code CLI/SDK, no key involved); for everyone else the
+            # attribute must be a real, non-empty pyutilz Settings field name. The previous
+            # `key_attr is None or isinstance(key_attr, str)` accepted BOTH shapes for every
+            # provider, so a key-requiring provider silently losing its key attribute passed.
+            if name == "claude-code":
+                assert key_attr is None
+            else:
+                assert isinstance(key_attr, str) and key_attr, f"Provider '{name}' must name a settings API-key attribute"
+                assert key_attr.endswith("_api_key"), f"Provider '{name}' key attr '{key_attr}' does not follow the <provider>_api_key convention"
 
 
 class TestGetLlmProvider:
@@ -70,12 +78,21 @@ class TestGetLlmProvider:
                 pytest.fail(f"Provider '{name}' should be recognized")
 
     def test_cache_returns_same_instance(self):
-        try:
-            p1 = get_llm_provider("claude-code")
-            p2 = get_llm_provider("claude-code")
-        except Exception:
-            pytest.skip("claude-code provider not available in test env")
+        """Two lookups of the same provider name return the identical cached instance.
+
+        The construction calls are deliberately NOT wrapped in try/except+pytest.skip any more:
+        that swallowed every genuine regression (an unhashable cache key, a broken constructor)
+        as an "environment" skip, leaving the caching contract -- the entire point of this test
+        -- unverified. Only the provider MODULE's importability is treated as an environment
+        precondition, which is what importorskip is for.
+        """
+        mod_path, _cls_name, _key_attr = _PROVIDER_MODULES["claude-code"]
+        pytest.importorskip(mod_path)
+
+        p1 = get_llm_provider("claude-code")
+        p2 = get_llm_provider("claude-code")
         assert p1 is p2
+        assert _provider_cache  # the instance really came from the cache, not a fresh build each time
 
     def test_default_is_claude_code(self):
         import inspect

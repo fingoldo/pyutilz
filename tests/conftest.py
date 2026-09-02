@@ -3,12 +3,42 @@ import warnings
 import pytest
 import pandas as pd
 import numpy as np
-import tempfile
-from pathlib import Path
+
+# ===========================================================================
+# Warning policy (F12, 2026-09-02)
+# ===========================================================================
+# pyproject.toml's [tool.pytest.ini_options] carries no ``filterwarnings`` key, so pyutilz's own
+# DeprecationWarnings -- the ones test_db_extra.py's PascalCase->snake_case tests and
+# test_meta/test_deprecation_warnings_present.py exist to police -- were indistinguishable from
+# third-party noise (weasel/Click, GPUtil, ...). Registered here rather than in pyproject.toml so
+# the policy sits next to the suite it governs.
+#
+# Ratchet form: everything pyutilz itself emits is an ERROR (a stray internal DeprecationWarning
+# fails the test that triggers it); third-party DeprecationWarning/PendingDeprecationWarning is
+# ignored, since it is neither actionable here nor suppressible at the source. Order matters --
+# pytest applies ini filters LAST-to-first, so the pyutilz-specific ``error`` must come after the
+# broad ``ignore`` to win.
+def pytest_configure(config):
+    """Install the suite's warning policy (see the block comment above)."""
+    for spec in (
+        "ignore::DeprecationWarning",
+        "ignore::PendingDeprecationWarning",
+        "error::DeprecationWarning:pyutilz",
+        "error::DeprecationWarning:pyutilz.*",
+    ):
+        config.addinivalue_line("filterwarnings", spec)
+
 
 # ===========================================================================
 # thinc / pytest-randomly seed-overflow compat shim (ported from mlframe)
 # ===========================================================================
+# pytest-randomly IS installed and active in the reference environment (plugin banner shows
+# ``randomly-4.0.1``); the 2026-09-02 audit's claim that it was absent came from a run that
+# passed ``-p no:randomly``. It is declared in requirements-dev.txt (not pyproject's [dev]
+# extra, which is published metadata) so the order-randomisation the comments in test_image.py
+# and test_pandaslib_extra.py rely on is a documented part of the contributor environment
+# rather than an accident of whatever happens to be installed. The shim below is therefore live
+# and load-bearing, not dead infrastructure.
 # Root cause: thinc (spacy/explosion.ai dep) ships a
 # ``pytest_randomly.random_seeder`` entry point -> ``thinc.util.fix_random_seed``,
 # which calls ``numpy.random.seed(seed)`` WITHOUT the ``% 2**32`` clamp that
@@ -207,32 +237,9 @@ def sample_df():
     return pd.DataFrame({"int_col": [1, 2, 3, 4, 5], "float_col": [1.1, 2.2, 3.3, 4.4, 5.5], "str_col": ["a", "b", "c", "d", "e"]})
 
 
-@pytest.fixture
-def mixed_types_df():
-    """DataFrame with various dtypes for optimization testing"""
-    return pd.DataFrame({
-        'large_int': np.array([1, 2, 3], dtype=np.int64),
-        'small_int': [1, 2, 3],
-        'float64_col': np.array([1.0, 2.0, 3.0], dtype=np.float64),
-        'category': pd.Categorical(['a', 'b', 'a']),
-        'object_col': ['x', 'y', 'z']
-    })
-
-
-@pytest.fixture
-def temp_dir():
-    """Temporary directory for file I/O tests"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
-
-
-@pytest.fixture
-def float_with_integers_df():
-    """DataFrame with float columns that have no fractional part"""
-    return pd.DataFrame({"float_int": [1.0, 2.0, 3.0, 4.0], "float_real": [1.1, 2.2, 3.3, 4.4], "float_with_nan": [1.0, 2.0, np.nan, 4.0]})
-
-
-@pytest.fixture
-def constant_columns_df():
-    """DataFrame with some constant columns"""
-    return pd.DataFrame({"const1": [1, 1, 1, 1], "const2": ["a", "a", "a", "a"], "varying": [1, 2, 3, 4], "varying2": ["a", "b", "c", "d"]})
+# Removed 2026-09-02: the `mixed_types_df`, `temp_dir`, `float_with_integers_df` and
+# `constant_columns_df` fixtures were requested by no test anywhere under tests/ (only
+# `sample_df` above is, by test_pandaslib.py). They read as "these DataFrame shapes are covered
+# somewhere" when nothing exercised them, and `temp_dir` duplicated pytest's builtin `tmp_path`
+# while inviting new tests to use a hand-rolled fixture instead. New tests needing a temporary
+# directory should use `tmp_path`; new DataFrame shapes belong next to the tests that use them.

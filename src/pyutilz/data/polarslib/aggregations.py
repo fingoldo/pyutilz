@@ -66,7 +66,6 @@ def compute_concentrations(
         columns_to_unnest.extend(
             [
                 pl.col(f"{label}").list.to_struct(
-                    n_field_strategy="max_width",
                     upper_bound=top_n,
                     fields=[f"{label}_top{i+1}" for i in range(top_n)],
                 ),  # Convert list to struct
@@ -81,7 +80,6 @@ def compute_concentrations(
 
         columns_to_unnest.append(
             pl.col(f"{label}_r{fields_remap.get(by,by)}").list.to_struct(
-                n_field_strategy="max_width",
                 upper_bound=top_n,
                 fields=[f"{label}_top{i+1}_conc" for i in range(top_n)],
             )
@@ -450,7 +448,6 @@ def build_aggregate_features_polars(
                             [
                                 pl.col(alias).list.mean().cast(dtype).alias(f"{alias}_avg_conc"),
                                 pl.col(alias).list.to_struct(
-                                    n_field_strategy="max_width",
                                     upper_bound=field_concentration_top_n,
                                     fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(field_concentration_top_n)],
                                 ),
@@ -491,11 +488,7 @@ def build_aggregate_features_polars(
                         if "query_first_digit_cnt" in pds_numaggs:
                             NDIGITS = 9
                             alias = f"{fpref}{fields_remap.get(field,field)}_{'query_first_digit_cnt'.replace('query_','')}"
-                            columns_to_unnest.append(
-                                pl.col(alias).list.to_struct(
-                                    n_field_strategy="max_width", upper_bound=NDIGITS, fields=[f"{alias}_{i+1}" for i in range(NDIGITS)]
-                                )
-                            )
+                            columns_to_unnest.append(pl.col(alias).list.to_struct(upper_bound=NDIGITS, fields=[f"{alias}_{i+1}" for i in range(NDIGITS)]))
                             unnest_rules.append(alias)
 
                     # stats with params
@@ -529,7 +522,6 @@ def build_aggregate_features_polars(
                         columns_to_unnest.extend(
                             [
                                 pl.col(alias).list.to_struct(
-                                    n_field_strategy="max_width",
                                     upper_bound=2,
                                     fields=[f"{alias}_k", f"{alias}_b"],
                                 )
@@ -548,7 +540,6 @@ def build_aggregate_features_polars(
                             columns_to_unnest.extend(
                                 [
                                     pl.col(alias).list.to_struct(
-                                        n_field_strategy="max_width",
                                         upper_bound=2,
                                         fields=[f"{alias}_k", f"{alias}_b"],
                                     )

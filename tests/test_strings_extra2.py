@@ -1,6 +1,7 @@
 """Extra tests for strings.py — covers uncovered lines."""
 
 import json
+import pytest
 import os
 import tempfile
 from unittest.mock import patch, MagicMock
@@ -442,3 +443,70 @@ def test_tokenize_to_words_file():
         assert "hello" in result
     finally:
         os.unlink(fname)
+
+
+# ---------------------------------------------------------------------------
+# tokenize_text / spacy_sent_tokenize -- both public and re-exported, both previously
+# never mentioned anywhere under tests/ (audit F20, 2026-09-02).
+# ---------------------------------------------------------------------------
+
+
+class TestTokenizeText:
+    @staticmethod
+    def _split(source):
+        return source.split()
+
+    def test_delegates_to_the_given_tokenizer_and_yields_lazily(self):
+        import types
+
+        from pyutilz.text.strings import tokenize_text
+
+        out = tokenize_text("  Hello World  ", tokenizer=self._split)
+        assert isinstance(out, types.GeneratorType), "must stay lazy -- callers stream large sources through it"
+        assert list(out) == ["hello", "world"]
+
+    def test_lowercase_can_be_switched_off(self):
+        from pyutilz.text.strings import tokenize_text
+
+        assert list(tokenize_text("Hello World", tokenizer=self._split, lowercase=False)) == ["Hello", "World"]
+
+    def test_strip_can_be_switched_off(self):
+        """With strip=False the leading/trailing whitespace reaches the tokenizer verbatim -- a
+        tokenizer that is whitespace-sensitive must see it."""
+        from pyutilz.text.strings import tokenize_text
+
+        seen = []
+
+        def spy(text):
+            seen.append(text)
+            return text.split()
+
+        list(tokenize_text("  padded  ", tokenizer=spy, strip=False))
+        assert seen == ["  padded  "]
+
+        seen.clear()
+        list(tokenize_text("  padded  ", tokenizer=spy, strip=True))
+        assert seen == ["padded"]
+
+    def test_empty_source_yields_nothing(self):
+        from pyutilz.text.strings import tokenize_text
+
+        assert list(tokenize_text("   ", tokenizer=self._split)) == []
+
+
+class TestSpacySentTokenize:
+    def test_splits_into_sentences(self):
+        """Requires the spaCy English small model, which is a heavyweight optional asset -- the
+        precondition is an explicit skip naming exactly what is missing, not an if/else."""
+        spacy = pytest.importorskip("spacy")
+        try:
+            spacy.load("en_core_web_sm")
+        except OSError:
+            pytest.skip("spaCy model 'en_core_web_sm' is not downloaded on this host")
+
+        from pyutilz.text.strings import spacy_sent_tokenize
+
+        sents = spacy_sent_tokenize("The cat sat. The dog barked! Did it rain?")
+
+        assert isinstance(sents, list)
+        assert [s.text.strip() for s in sents] == ["The cat sat.", "The dog barked!", "Did it rain?"]

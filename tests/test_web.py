@@ -171,5 +171,6 @@ def test_get_country_by_ip_substitutes_the_address_into_every_provider_url(monke
     monkeypatch.setattr(web, "get_ipinfo", lambda use_urllib=False, url="": seen.append(url) or None)
 
     assert web.get_country_by_ip(None) is None
+    assert seen, "no provider URL was attempted at all"
     assert all("None" not in url for url in seen)
     assert any(url.rstrip("/").endswith("json") or url.endswith("/") or "?" in url for url in seen)

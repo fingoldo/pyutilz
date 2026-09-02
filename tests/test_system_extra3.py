@@ -4,6 +4,7 @@ import platform
 import pytest
 from unittest.mock import patch, MagicMock, mock_open
 import types
+import logging
 
 # ── parse_dmidecode_info (lines 757-832) ──
 
@@ -689,38 +690,65 @@ class TestListLinuxDevices:
 # ── report_large_objects (lines 1659-1678) ──
 
 class TestReportLargeObjects:
+    """report_large_objects logs a size report; these assert on that log, not just on coverage.
+
+    All four tests here previously called the function and ended -- no assertion, no caplog, no
+    mock-call check -- so an inverted threshold or a swallowed exception passed all of them, and
+    the 100-byte and 300 MB cases were literally indistinguishable.
+    """
+
+    LOGGER = "pyutilz.system.system.misc"
+
     @patch("pyutilz.system.system.misc.asizeof")
-    def test_no_big_objects(self, mock_asizeof):
+    def test_no_big_objects(self, mock_asizeof, caplog):
         from pyutilz.system.system import report_large_objects
         mock_asizeof.asizeof.return_value = 100  # 100 bytes, way under 200MB
-        report_large_objects(min_size_mb=200)
+        with caplog.at_level(logging.INFO, logger=self.LOGGER):
+            report_large_objects(min_size_mb=200)
+        assert "Large objects in RAM" not in caplog.text, "nothing exceeds the threshold, so nothing must be reported"
 
     @patch("pyutilz.system.system.misc.asizeof")
-    def test_with_big_objects(self, mock_asizeof):
+    def test_with_big_objects(self, mock_asizeof, caplog):
         from pyutilz.system.system import report_large_objects
         mock_asizeof.asizeof.return_value = 300 * 1024 * 1024  # 300 MB
-        report_large_objects(min_size_mb=200)
+        with caplog.at_level(logging.INFO, logger=self.LOGGER):
+            report_large_objects(min_size_mb=200)
+        assert "Large objects in RAM" in caplog.text
+        assert "300.0 MB" in caplog.text, f"the offending size must be named; got {caplog.text!r}"
+        # Every reported line names the global it measured, so the report is actionable.
+        reported = [ln for ln in caplog.text.splitlines() if " MB" in ln]
+        assert reported
+        assert all(":" in ln for ln in reported)
+        assert "asizeof:" not in caplog.text, "the measuring module itself is excluded from the report"
 
     @patch("pyutilz.system.system.misc.asizeof")
-    def test_with_memory_snapshot(self, mock_asizeof):
+    def test_with_memory_snapshot(self, mock_asizeof, caplog):
         from pyutilz.system.system import report_large_objects
         mock_asizeof.asizeof.return_value = 300 * 1024 * 1024
         mock_snapshot = MagicMock()
-        import tracemalloc
         with patch("pyutilz.system.system.misc.tracemalloc") as mock_tm:
             mock_tm.take_snapshot.return_value.compare_to.return_value = []
-            report_large_objects(min_size_mb=200, initial_memory_snapshot=mock_snapshot)
+            with caplog.at_level(logging.INFO, logger=self.LOGGER):
+                report_large_objects(min_size_mb=200, initial_memory_snapshot=mock_snapshot)
+        # The snapshot really was compared against the one the caller handed in.
+        mock_tm.take_snapshot.assert_called_once_with()
+        mock_tm.take_snapshot.return_value.compare_to.assert_called_once_with(mock_snapshot, "lineno")
+        assert "Large objects in RAM" in caplog.text
+        assert "Top stats" in caplog.text
 
     @patch("pyutilz.system.system.misc.asizeof")
-    def test_with_memory_snapshot_exception(self, mock_asizeof):
+    def test_with_memory_snapshot_exception(self, mock_asizeof, caplog):
+        """A tracemalloc failure is logged and contained -- the size report still gets out."""
         from pyutilz.system.system import report_large_objects
         mock_asizeof.asizeof.return_value = 300 * 1024 * 1024
         mock_snapshot = MagicMock()
         with patch("pyutilz.system.system.misc.tracemalloc") as mock_tm:
             mock_tm.take_snapshot.side_effect = Exception("tracemalloc fail")
-            report_large_objects(min_size_mb=200, initial_memory_snapshot=mock_snapshot)
-
-
+            with caplog.at_level(logging.INFO, logger=self.LOGGER):
+                report_large_objects(min_size_mb=200, initial_memory_snapshot=mock_snapshot)  # must not propagate
+        assert "Large objects in RAM" in caplog.text, "the size report must survive a tracemalloc failure"
+        assert "tracemalloc fail" in caplog.text, "the swallowed exception must still be logged, not silently dropped"
+        assert "Top stats" not in caplog.text
 # ── ensure_idle_devices (lines 1731, 1734-1806) ──
 
 class TestEnsureIdleDevices:

@@ -59,6 +59,7 @@ async def test_concurrent_fetches_for_same_key_dedup_to_one_call():
 
     results = await asyncio.gather(*[sfc.get_or_fetch(cache, "shared", fetcher) for _ in range(10)])
     assert call_count == 1, "concurrent fetches for the same key must dedup to a single call"
+    assert len(results) == 10, "every gathered waiter must have produced a value"
     assert all(r == 123 for r in results)
 
 

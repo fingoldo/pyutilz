@@ -77,6 +77,7 @@ def _run_workers(procs, timeout=300):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.timeout(480)
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 def test_same_kernel_exactly_one_sweep_no_lost_update(host_dir, tmp_path):
     """(a) N processes tuning the SAME kernel -> exactly ONE sweep runs and
     every process reads the SAME persisted result (single-winner claim)."""
@@ -307,6 +308,7 @@ def test_concurrent_async_sweep_threads_spawn_exactly_once(host_dir):
             t.join()
 
     assert spawn_mock.call_count == 1, f"expected exactly one async sweep spawn across {n} racing threads, got {spawn_mock.call_count}"
+    assert len(results) == n, f"every worker must have recorded a result, got {len(results)} of {n}"
     assert all(r == {"backend": "FB"} for r in results)
 
 

@@ -39,19 +39,38 @@ class TestMemMapArray:
             if os.path.exists(temp_file.name):
                 os.unlink(temp_file.name)
 
-    def test_atexit_cleanup_handler_registered(self):
-        """Test that atexit handler is registered for cleanup"""
-        import atexit
-        import pyutilz.parallel as parallel_module
-        import inspect
+    def test_atexit_cleanup_handler_actually_runs_on_interpreter_exit(self, tmp_path):
+        """A directory tracked in ``_TEMP_DIRS`` is really gone after the process exits.
 
-        source = inspect.getsource(parallel_module)
+        Behavioural replacement for an ``inspect.getsource()`` scan for the literal strings
+        ``"atexit.register"`` / ``"cleanup"``: that passed on a module that merely mentioned
+        them (or registered a handler that cleaned nothing), and failed on a pure rename. The
+        registration can only be observed end-to-end -- atexit exposes no public introspection
+        API -- so this drives a real child interpreter that imports the module, tracks a
+        directory, and exits normally; the parent then checks the directory is gone.
+        """
+        import subprocess
+        import sys
+        import textwrap
 
-        # Should have atexit.register decorator or call
-        assert "@atexit.register" in source or "atexit.register" in source, "Should have atexit cleanup handler (resource leak fix)"
+        victim = tmp_path / "tracked_temp_dir"
+        victim.mkdir()
+        (victim / "payload.bin").write_bytes(b"x" * 16)
+        survivor = tmp_path / "untracked_temp_dir"
+        survivor.mkdir()
 
-        # Should have cleanup function
-        assert "_cleanup_temp_dirs" in source or "cleanup" in source.lower(), "Should have temp directory cleanup function"
+        child = textwrap.dedent(
+            f"""
+            import pyutilz.parallel as p
+            p._TEMP_DIRS.append(r{str(victim)!r})
+            # NOT appended: r{str(survivor)!r} -- the handler must only remove what it tracks.
+            """
+        )
+        proc = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True, timeout=180)
+
+        assert proc.returncode == 0, f"child interpreter failed: {proc.stderr[-2000:]}"
+        assert not victim.exists(), "the atexit-registered handler did not remove the tracked temp directory"
+        assert survivor.exists(), "the handler removed a directory that was never tracked in _TEMP_DIRS"
 
     def test_cleanup_function_removes_directories(self):
         """Test that cleanup function properly removes temp directories"""
@@ -143,29 +162,52 @@ class TestMemoryMappedArrayOperations:
 class TestGpuConfiguration:
     """Test GPU selection configuration"""
 
-    def test_gpu_selection_not_hardcoded(self):
-        """Test that GPU index is not hardcoded to 3 (line 195 fix)"""
-        try:
-            import pyutilz.parallel as parallel_module
-        except ImportError:
-            pytest.skip("parallel module not available")
+    def test_gpu_selection_follows_the_caller_supplied_device_id(self, monkeypatch):
+        """``cuda.select_device`` receives the caller's ``device_id``, never a hardcoded index.
 
-        import inspect
+        Rewritten twice over. (1) It was an ``inspect.getsource()`` scan whose only assertion
+        sat under ``if "cuda.select_device" in source:`` -- and inside that, an ``if/else``
+        whose BOTH branches were ``pass``. (2) The outer guard is false today anyway: no
+        ``select_device`` call remains anywhere in ``pyutilz.parallel``; the two live call sites
+        are ``system/system/probing.py`` (``get_gpu_cuda_capabilities``) and
+        ``system/gpu_dispatch.py``, both taking ``device_id`` as a parameter. So the whole test
+        had degraded into a no-op guarding a check for code that had moved. It now drives the
+        real function with a stubbed numba.cuda and asserts the index that arrives at the
+        driver is exactly the one the caller asked for -- which is what "not hardcoded to 3"
+        means behaviourally, and which a later regression to a literal index would fail.
+        """
+        numba = pytest.importorskip("numba")
+        pytest.importorskip("numba.cuda.cudadrv.enums")
 
-        source = inspect.getsource(parallel_module)
+        from pyutilz.system.system.probing import get_gpu_cuda_capabilities
 
-        # Check if cuda.select_device is used
-        if "cuda.select_device" in source:
-            # Should NOT have hardcoded select_device(3)
-            assert "select_device(3)" not in source, "GPU index should not be hardcoded to 3 (crashes on systems with <4 GPUs)"
+        selected = []
 
-            # Should use environment variable or configuration
-            if "CUDA_VISIBLE_DEVICES" in source or "getenv" in source:
-                # Good - uses environment
-                pass
-            else:
-                # Might use other configuration method
-                pass
+        class _FakeDevice:
+            def __getattr__(self, _name):
+                return 0
+
+        class _FakeCuda:
+            @staticmethod
+            def select_device(device_id):
+                selected.append(device_id)
+
+            @staticmethod
+            def get_current_device():
+                return _FakeDevice()
+
+        monkeypatch.setattr(numba, "cuda", _FakeCuda)
+
+        for requested in (0, 2, 7):
+            selected.clear()
+            get_gpu_cuda_capabilities(device_id=requested)
+            assert selected == [requested], f"device_id={requested} must reach cuda.select_device, got {selected}"
+
+        # And the default is device 0 -- the only index guaranteed to exist on any CUDA host
+        # (a hardcoded 3 crashes every box with fewer than four GPUs, the original bug).
+        selected.clear()
+        get_gpu_cuda_capabilities()
+        assert selected == [0]
 
 
 @pytest.mark.parametrize("array_size", [10, 100, 1000])

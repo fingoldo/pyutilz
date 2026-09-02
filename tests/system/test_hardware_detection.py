@@ -38,45 +38,75 @@ class TestCPUDetection:
     """Test CPU detection functions."""
 
     def test_get_cpu_info(self):
-        """Test get_cpu_info() returns CPU information."""
+        """get_cpu_info() returns a populated, filtered CPU dict.
+
+        The availability precondition (py-cpuinfo installed) is an explicit importorskip; the
+        structure is then asserted UNCONDITIONALLY. The previous ``if cpu_info: ... else:
+        print("[WARN] ...")`` shape passed green on exactly the regression that matters most --
+        the probe returning None/{} because an exception was swallowed inside it.
+        """
+        pytest.importorskip("cpuinfo")
         from pyutilz.system.system import get_cpu_info
 
         cpu_info = get_cpu_info()
-        if cpu_info:
-            assert isinstance(cpu_info, dict)
-            # Should not include these filtered keys
-            assert "python_version" not in cpu_info
-            assert "cpuinfo_version" not in cpu_info
-            print(f"[OK] CPU Info: {cpu_info.get('brand_raw', 'Unknown')}")
-        else:
-            print("[WARN] py-cpuinfo not available")
+
+        assert isinstance(cpu_info, dict)
+        assert cpu_info, "get_cpu_info() returned an empty dict -- the probe found nothing"
+        assert "arch" in cpu_info, f"expected an 'arch' key, got {sorted(cpu_info)}"
+        # Filtered-out keys: version strings, hz variants and count are stripped on purpose.
+        for dropped in ("python_version", "cpuinfo_version", "hz_advertised", "hz_actual", "count"):
+            assert dropped not in cpu_info, f"{dropped!r} should have been filtered out"
+        # `flags`, when present, is flattened from a list to a sorted space-joined string.
+        if "flags" in cpu_info:
+            assert isinstance(cpu_info["flags"], str)
+            flags = cpu_info["flags"].split(" ")
+            assert flags == sorted(flags)
 
     @pytest.mark.skipif(platform.system() != "Windows", reason="Windows only")
     def test_get_wmi_cpuinfo(self):
-        """Test get_wmi_cpuinfo() on Windows."""
+        """get_wmi_cpuinfo() returns a summarised, non-empty Win32_Processor list.
+
+        ``wmi`` is the availability precondition (importorskip); everything else is asserted
+        unconditionally, so a probe that starts returning None fails instead of printing a
+        warning and passing.
+        """
+        pytest.importorskip("wmi")
         from pyutilz.system.system import get_wmi_cpuinfo
 
         cpu_info = get_wmi_cpuinfo()
-        if cpu_info:
-            assert isinstance(cpu_info, list)
-            assert len(cpu_info) > 0
-            assert "Count" in cpu_info[0]
-            print(f"[OK] WMI CPU Info: {cpu_info[0].get('Name', 'Unknown')}")
-        else:
-            print("[WARN] WMI not available")
+
+        assert isinstance(cpu_info, list)
+        assert len(cpu_info) > 0
+        assert "Count" in cpu_info[0]
+        assert isinstance(cpu_info[0]["Count"], int) and cpu_info[0]["Count"] >= 1
+        assert "Name" in cpu_info[0], f"summarize_devices output shape changed: {sorted(cpu_info[0])}"
+        # Excluded per-instance/volatile/identifying properties must not leak into the summary.
+        for excluded in ("SerialNumber", "ProcessorId", "LoadPercentage", "DeviceID", "Status", "AssetTag", "Description"):
+            assert excluded not in cpu_info[0], f"{excluded!r} should have been excluded by get_wmi_cpuinfo"
 
     @pytest.mark.skipif(platform.system() != "Linux", reason="Linux only")
     def test_get_lscpu_info(self):
-        """Test get_lscpu_info() on Linux."""
+        """get_lscpu_info() parses `lscpu` into a non-empty, type-converted dict.
+
+        The precondition is the `lscpu` binary being on PATH (named explicitly in the skip);
+        the parse result is then asserted unconditionally rather than warned about.
+        """
+        import shutil
+
+        if shutil.which("lscpu") is None:
+            pytest.skip("the `lscpu` binary is not installed on this host")
+
         from pyutilz.system.system import get_lscpu_info
 
         lscpu_info = get_lscpu_info()
-        if lscpu_info:
-            assert isinstance(lscpu_info, dict)
-            assert "Architecture" in lscpu_info
-            print(f"[OK] lscpu Info: {lscpu_info.get('Model name', 'Unknown')}")
-        else:
-            print("[WARN] lscpu not available")
+
+        assert isinstance(lscpu_info, dict)
+        assert lscpu_info, "lscpu is installed but get_lscpu_info() parsed nothing out of it"
+        assert "Architecture" in lscpu_info
+        assert isinstance(lscpu_info["Architecture"], str)
+        # Numeric fields are converted, not left as strings (the documented behaviour).
+        if "CPU(s)" in lscpu_info:
+            assert isinstance(lscpu_info["CPU(s)"], (int, float))
 
     def test_get_nix_cpu_sockets_number_parses_real_output(self, monkeypatch):
         """get_nix_cpu_sockets_number() must parse a well-formed `lscpu` `Socket(s):` line."""
@@ -111,31 +141,54 @@ class TestGPUDetection:
 
     @pytest.mark.gpu
     def test_get_nvidia_smi_info(self):
-        """Test get_nvidia_smi_info() returns GPU information."""
+        """get_nvidia_smi_info() returns a populated GPU dict on a host that HAS nvidia-smi.
+
+        Precondition made explicit (the `nvidia-smi` binary on PATH) instead of the old
+        ``if gpu_info: ... else: print("[WARN] nvidia-smi not available")``, which reported a
+        probe returning nothing as a pass on a machine that genuinely has an NVIDIA GPU.
+        """
+        import shutil
+
+        if shutil.which("nvidia-smi") is None:
+            pytest.skip("the `nvidia-smi` binary is not installed on this host")
+
         from pyutilz.system.system import get_nvidia_smi_info
 
         gpu_info = get_nvidia_smi_info(include_stats=False)
-        if gpu_info:
-            assert isinstance(gpu_info, dict)
-            assert "gpu" in gpu_info or "driver_version" in gpu_info
-            if "gpu" in gpu_info:
-                print(f"[OK] GPU Info: {len(gpu_info['gpu'])} GPU(s) detected")
-        else:
-            print("[WARN] nvidia-smi not available (no NVIDIA GPU or drivers)")
+
+        assert isinstance(gpu_info, dict)
+        assert gpu_info, "nvidia-smi is installed but get_nvidia_smi_info() parsed nothing out of it"
+        assert "gpu" in gpu_info or "driver_version" in gpu_info, f"unexpected keys: {sorted(gpu_info)}"
+        if "gpu" in gpu_info:
+            assert isinstance(gpu_info["gpu"], list) and gpu_info["gpu"]
 
     @pytest.mark.gpu
     def test_get_cuda_gpu_details(self):
-        """Test get_cuda_gpu_details() returns CUDA capabilities."""
-        from pyutilz.system.system import get_nvidia_smi_info, get_cuda_gpu_details
+        """get_cuda_gpu_details() returns per-device CUDA capabilities on a real CUDA host.
+
+        Unconditional assertions after an explicit binary precondition -- the old form asserted
+        nothing at all whenever ``get_nvidia_smi_info`` came back empty, i.e. exactly when the
+        upstream probe had broken.
+        """
+        import shutil
+
+        if shutil.which("nvidia-smi") is None:
+            pytest.skip("the `nvidia-smi` binary is not installed on this host")
+
+        pytest.importorskip("numba.cuda")
+
+        from pyutilz.system.system import get_cuda_gpu_details, get_nvidia_smi_info
 
         gpu_info = get_nvidia_smi_info(include_stats=False)
-        if gpu_info:
-            cuda_details = get_cuda_gpu_details(gpu_info)
-            assert isinstance(cuda_details, dict)
-            if cuda_details:
-                print(f"[OK] CUDA Details: {len(cuda_details)} device(s) with CUDA capabilities")
-        else:
-            print("[WARN] No GPU info available for CUDA details test")
+        assert gpu_info, "nvidia-smi is installed but returned no GPU info to derive CUDA details from"
+
+        cuda_details = get_cuda_gpu_details(gpu_info)
+
+        assert isinstance(cuda_details, dict)
+        for device_id, caps in cuda_details.items():
+            assert device_id is not None
+            assert isinstance(caps, dict) and caps, f"device {device_id!r} yielded no CUDA capabilities"
+            assert "COMPUTE_CAPABILITY_MAJOR" in caps
 
     def test_get_gpuutil_gpu_info(self):
         """Test get_gpuutil_gpu_info() returns GPU stats."""
@@ -191,26 +244,70 @@ class TestPowerAndLargePages:
             print("[WARN] Large pages check not supported on this OS")
 
     def test_get_power_plan(self):
-        """Test get_power_plan() cross-platform."""
+        """get_power_plan() returns None or a dict/list -- and always the right platform probe.
+
+        A desktop/VM legitimately has no power-plan data, so "None" is a valid ANSWER here, not
+        an excuse to assert nothing: the shape is pinned unconditionally, and a second,
+        deterministic half asserts the platform dispatch itself (which the old
+        ``if power_plan: ... else: print("[WARN] ...")`` never touched).
+        """
         from pyutilz.system.system import get_power_plan
 
         power_plan = get_power_plan()
-        if power_plan:
-            assert isinstance(power_plan, (dict, list))
-            print(f"[OK] Power plan: {power_plan}")
-        else:
-            print("[WARN] Power plan info not available")
+        assert power_plan is None or isinstance(power_plan, (dict, list))
+        if isinstance(power_plan, dict):
+            assert power_plan, "a returned power-plan dict must not be empty"
+
+    @pytest.mark.parametrize(
+        "system_name,expected_delegate",
+        [("Windows", "get_windows_power_plan"), ("Darwin", "get_macos_power_plan"), ("Linux", "get_linux_power_plan")],
+    )
+    def test_get_power_plan_dispatches_per_platform(self, monkeypatch, system_name, expected_delegate):
+        """Each platform is routed to its own probe, and the delegate's value is returned as-is."""
+        from pyutilz.system.system import probing as probing_mod
+
+        sentinel = {"plan": f"from-{expected_delegate}"}
+        called = []
+        for name in ("get_windows_power_plan", "get_macos_power_plan", "get_linux_power_plan"):
+            monkeypatch.setattr(probing_mod, name, lambda n=name: called.append(n) or (sentinel if n == expected_delegate else {"plan": "WRONG"}))
+        monkeypatch.setattr(probing_mod.platform, "system", lambda: system_name)
+
+        assert probing_mod.get_power_plan() == sentinel
+        assert called == [expected_delegate]
 
     def test_get_battery_info(self):
-        """Test get_battery_info()."""
+        """get_battery_info() returns None (no battery) or a dict carrying the documented keys.
+
+        Both outcomes are real answers on different hardware, so both are asserted -- unlike the
+        old ``if battery_info: ... else: print("[WARN] No battery detected")``, which passed
+        even when a laptop's probe silently started returning None.
+        """
         from pyutilz.system.system import get_battery_info
 
         battery_info = get_battery_info()
-        if battery_info:
-            assert isinstance(battery_info, dict)
-            print(f"[OK] Battery: {battery_info.get('percent', 'N/A')}%")
-        else:
-            print("[WARN] No battery detected (desktop system)")
+
+        assert battery_info is None or isinstance(battery_info, dict)
+        if battery_info is not None:
+            assert {"percent", "secsleft", "power_plugged"} <= set(battery_info)
+            assert 0 <= battery_info["percent"] <= 100
+            assert isinstance(battery_info["power_plugged"], (bool, type(None)))
+
+    def test_get_battery_info_converts_the_psutil_namedtuple(self, monkeypatch):
+        """The psutil namedtuple is converted to a plain dict (deterministic, hardware-free)."""
+        from collections import namedtuple
+
+        from pyutilz.system.system import probing as probing_mod
+
+        sbattery = namedtuple("sbattery", ["percent", "secsleft", "power_plugged"])
+        monkeypatch.setattr(probing_mod.psutil, "sensors_battery", lambda: sbattery(percent=77.0, secsleft=3600, power_plugged=False))
+
+        assert probing_mod.get_battery_info() == {"percent": 77.0, "secsleft": 3600, "power_plugged": False}
+
+    def test_get_battery_info_returns_none_without_a_battery(self, monkeypatch):
+        from pyutilz.system.system import probing as probing_mod
+
+        monkeypatch.setattr(probing_mod.psutil, "sensors_battery", lambda: None)
+        assert probing_mod.get_battery_info() is None
 
 
 class TestOSAndSoftware:
@@ -252,6 +349,7 @@ class TestSystemInfo:
         assert "os_serial" in info
         print(f"[OK] System info (backward compat): host={info['host_name']}")
 
+    @pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
     def test_get_system_info_hardware(self):
         """Test get_system_info() with return_hardware_info=True."""
         from pyutilz.system.system import get_system_info

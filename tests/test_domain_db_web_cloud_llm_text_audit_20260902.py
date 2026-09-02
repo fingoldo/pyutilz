@@ -421,7 +421,12 @@ def test_f48_none_timeout_falls_back_to_a_finite_value(monkeypatch):
     monkeypatch.setattr(webmod.requests, "get", fake_get)
     monkeypatch.setattr(webmod, "timeout", None)
     webmod.get_url("http://x/", max_retries=1, b_use_session=False, b_use_proxy=False, b_random_ua=False)
-    assert captured["timeout"] is not None
+    # The point is a FINITE, positive timeout reaching requests -- `is not None` alone would also
+    # be satisfied by a 0 (which requests rejects) or by a non-numeric sentinel.
+    passed = captured["timeout"]
+    assert isinstance(passed, (int, float, tuple))
+    seconds = max(passed) if isinstance(passed, tuple) else passed
+    assert 0 < float(seconds) < 3600
 
 
 def test_f20_retry_after_header_is_parsed():

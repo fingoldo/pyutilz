@@ -258,6 +258,7 @@ def test_get_url_concurrent_proxy_rotation_on_error_no_corruption():
     assert web_module.sess is not None
 
 
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 def test_get_url_proxy_snapshot_group_read_is_never_torn():
     """Regression (2026-07-21 audit round 2, HIGH): get_url()'s snapshot block reads SEVEN
     separate proxy_* module globals (proxy_user, proxy_pass, proxy_server, proxy_min_port,

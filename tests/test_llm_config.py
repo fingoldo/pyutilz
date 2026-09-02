@@ -90,4 +90,5 @@ class TestConcurrentAccess:
             results = [f.result() for f in as_completed(futures)]
 
         first = results[0]
+        assert len(results) == 10, "every submitted caller must have returned"
         assert all(r is first for r in results)

@@ -308,3 +308,57 @@ class TestEdgeCases:
         assert not np.isfinite(result[0]) or np.isnan(result[0])
         assert result[1] == 4.0  # (10-2)/2=4
         assert not np.isfinite(result[2]) or np.isnan(result[2])
+
+
+# ---------------------------------------------------------------------------
+# div0 -- previously never mentioned anywhere under tests/ (audit F20, 2026-09-02),
+# despite smart_ratios() being built directly on top of it.
+# ---------------------------------------------------------------------------
+
+
+class TestDiv0:
+    def test_ordinary_division_is_untouched(self):
+        from pyutilz.data.numpylib import div0
+
+        np.testing.assert_allclose(div0(np.array([1.0, 4.0, 9.0]), np.array([2.0, 4.0, 3.0])), [0.5, 1.0, 3.0])
+
+    def test_zero_denominator_positions_get_the_fill(self):
+        from pyutilz.data.numpylib import div0
+
+        out = div0(np.array([-1.0, 0.0, 1.0]), np.array([0.0, 2.0, 0.0]))
+        assert np.isnan(out[0]) and np.isnan(out[2])
+        assert out[1] == 0.0
+
+    def test_custom_na_fill_is_used_verbatim(self):
+        from pyutilz.data.numpylib import div0
+
+        out = div0(np.array([1.0, 1.0]), np.array([0.0, 4.0]), na_fill=-999.0)
+        np.testing.assert_allclose(out, [-999.0, 0.25])
+
+    def test_scalar_zero_denominator_returns_the_fill_itself(self):
+        from pyutilz.data.numpylib import div0
+
+        assert div0(1, 0, na_fill=np.inf) == np.inf
+        assert np.isnan(div0(1, 0))
+
+    def test_non_finite_denominators_are_also_filled(self):
+        from pyutilz.data.numpylib import div0
+
+        out = div0(np.array([1.0, 1.0, 1.0]), np.array([np.nan, np.inf, -np.inf]), na_fill=-1.0)
+        np.testing.assert_allclose(out, [-1.0, -1.0, -1.0])
+
+    def test_an_infinity_arriving_in_the_numerator_survives(self):
+        """Only a bad DENOMINATOR triggers the fill. Masking on the quotient (the old behaviour)
+        also rewrote legitimately-infinite results, turning "unbounded" into "missing" -- which
+        downstream imputation treats completely differently."""
+        from pyutilz.data.numpylib import div0
+
+        out = div0(np.array([np.inf, 2.0]), np.array([2.0, 2.0]), na_fill=-1.0)
+        assert out[0] == np.inf
+        assert out[1] == 1.0
+
+    def test_broadcast_scalar_denominator_fills_every_position(self):
+        from pyutilz.data.numpylib import div0
+
+        out = div0(np.array([-1.0, 0.0, 1.0]), 0)
+        assert np.isnan(out).all()

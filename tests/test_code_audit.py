@@ -6232,3 +6232,110 @@ def test_every_tree_walking_scanner_agrees_between_a_relative_and_absolute_root(
             assert relative == absolute, f"{scan.__name__} saw {relative} findings via a relative root and {absolute} via an absolute one"
     finally:
         os.chdir(cwd)
+
+
+# ---------------------------------------------------------------------------
+# check_all / normalise_text / get_scanners -- all three are in dev.code_audit's __all__
+# and were previously never mentioned anywhere under tests/ (audit F20, 2026-09-02).
+# get_scanners and the registry it copies are part of the shared meta-test harness pyutilz
+# exports to its downstream consumers, so a regression here breaks six other repos.
+# ---------------------------------------------------------------------------
+
+
+def test_normalise_text_deletes_intra_word_hyphens_so_both_spellings_are_one_token():
+    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+
+    assert normalise_text("Ante-Mortem") == normalise_text("antemortem") == "antemortem"
+    assert normalise_text("POST-mortem") == "postmortem"
+
+
+def test_normalise_text_leaves_edge_and_digit_adjacent_hyphens_alone():
+    """Only a hyphen BETWEEN two letters joins a compound; a leading/trailing one or a
+    letter-digit boundary is meaningful punctuation, not a spelling variant."""
+    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+
+    assert normalise_text("co-2") == "co-2"
+    assert normalise_text("-lead") == "-lead"
+    assert normalise_text("trail-") == "trail-"
+
+
+def test_normalise_text_collapses_whitespace_and_underscores():
+    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+
+    assert normalise_text("  Multiple   spaces\tand\nnewlines  ") == "multiple spaces and newlines"
+    assert normalise_text("snake_case_name") == "snake case name"
+
+
+def test_normalise_text_handles_none_and_non_strings():
+    from pyutilz.dev.code_audit.field_text_agreement import normalise_text
+
+    assert normalise_text(None) == ""
+    assert normalise_text("") == ""
+    assert normalise_text(42) == "42"
+
+
+def test_check_all_returns_one_report_per_rule_keyed_by_name():
+    from pyutilz.dev.code_audit import FieldTextRule, check_all
+
+    rows = [
+        {"subject": "haemorrhage", "object": "vital hanging", "temporal_class": "antemortem"},
+        {"subject": "", "object": "putrefaction", "temporal_class": "postmortem"},
+    ]
+    manner = FieldTextRule(name="manner", field="manner", text_fields=("object",))
+    reports = check_all([_temporal_rule(), manner], rows)
+
+    assert set(reports) == {"temporal_class", "manner"}
+    assert reports["temporal_class"].agree == 2
+    assert reports["temporal_class"].contradict == 0
+    assert reports["temporal_class"].n_records == 2
+
+
+def test_check_all_includes_vocabulary_less_rules_instead_of_dropping_them():
+    """A rule with no cues must appear as 100% uncheckable, not vanish from the output -- an
+    unmeasured pair silently missing from a report reads as a pair that passed."""
+    from pyutilz.dev.code_audit import FieldTextRule, check_all
+
+    rows = [{"object": "anything", "manner": "blunt"}]
+    reports = check_all([FieldTextRule(name="manner", field="manner", text_fields=("object",))], rows)
+
+    assert "manner" in reports
+    assert reports["manner"].has_vocabulary is False
+    assert reports["manner"].uncheckable == 1
+    assert reports["manner"].coverage == 0.0
+
+
+def test_check_all_accepts_explicit_record_ids():
+    from pyutilz.dev.code_audit import check_all
+
+    rows = [{"subject": "", "object": "vital hanging", "temporal_class": "postmortem"}]
+    reports = check_all([_temporal_rule()], rows, ids=["record-7"])
+
+    assert reports["temporal_class"].contradict == 1
+    assert reports["temporal_class"].contradictions[0].record_id == "record-7"
+
+
+def test_get_scanners_returns_a_populated_registry_of_callables():
+    from pyutilz.dev.code_audit import get_scanners
+
+    scanners = get_scanners()
+    assert isinstance(scanners, dict)
+    assert scanners, "the scanner registry must not be empty"
+    assert all(callable(fn) for fn in scanners.values())
+    # A few names every consumer's baseline depends on.
+    for expected in ("vacuous_assertion", "except_skip_masks_call_under_test", "bare_except"):
+        assert expected in scanners, f"{expected!r} missing from the registry: {sorted(scanners)}"
+
+
+def test_get_scanners_returns_a_copy_so_callers_cannot_corrupt_the_shared_registry():
+    """The documented reason this accessor exists at all: ``get_scanners().pop(...)`` must not
+    silently disarm a scanner for every subsequent run_all() in the same process."""
+    from pyutilz.dev.code_audit import get_scanners
+
+    first = get_scanners()
+    victim = next(iter(first))
+    first.pop(victim)
+    first["definitely_not_a_real_scanner"] = lambda *a, **kw: []
+
+    second = get_scanners()
+    assert victim in second
+    assert "definitely_not_a_real_scanner" not in second

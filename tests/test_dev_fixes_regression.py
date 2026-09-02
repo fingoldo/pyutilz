@@ -181,11 +181,32 @@ class TestTimeoutExecutorAtexit:
         # Pre-fix there was no atexit registration -> the executor leaked.
         registered = []
         real_register = atexit.register
-        with patch.object(atexit, "register", side_effect=lambda f, *a, **k: registered.append((f, a, k)) or real_register(f, *a, **k)):
-            sys.modules.pop("pyutilz.system.monitoring", None)
-            mon = importlib.import_module("pyutilz.system.monitoring")
+        # The pop+re-import builds a SECOND monitoring module with its own _TIMEOUT_EXECUTOR.
+        # Both the sys.modules entry AND the parent package's attribute must be put back
+        # afterwards, or every later test (and every already-imported consumer) sees a
+        # different module object than `from pyutilz.system import monitoring` returns --
+        # the identity split tests/test_meta/test_no_module_reload.py exists to prevent.
+        import pyutilz.system as _pyutilz_system
 
-        assert any(f == mon._TIMEOUT_EXECUTOR.shutdown for f, _, _ in registered)
+        saved_mod = sys.modules.get("pyutilz.system.monitoring")
+        saved_attr = getattr(_pyutilz_system, "monitoring", None)
+        try:
+            with patch.object(atexit, "register", side_effect=lambda f, *a, **k: registered.append((f, a, k)) or real_register(f, *a, **k)):
+                sys.modules.pop("pyutilz.system.monitoring", None)
+                mon = importlib.import_module("pyutilz.system.monitoring")
+
+            assert any(f == mon._TIMEOUT_EXECUTOR.shutdown for f, _, _ in registered)
+        finally:
+            # Shut down the throwaway pool this test created, then restore both bindings.
+            mon_created = sys.modules.get("pyutilz.system.monitoring")
+            if mon_created is not None and mon_created is not saved_mod:
+                mon_created._TIMEOUT_EXECUTOR.shutdown(wait=False)
+            if saved_mod is not None:
+                sys.modules["pyutilz.system.monitoring"] = saved_mod
+            else:
+                sys.modules.pop("pyutilz.system.monitoring", None)
+            if saved_attr is not None:
+                setattr(_pyutilz_system, "monitoring", saved_attr)
 
 
 # ---------------------------------------------------------------------------

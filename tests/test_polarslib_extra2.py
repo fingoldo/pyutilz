@@ -194,6 +194,7 @@ class TestComputeConcentrations:
 
 
 @pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 class TestBuildAggregateFeaturesAdvanced:
     """Covers lines 287, 289, 293, 326-328, 388-391, 394-411, 427, 456-457."""
 
@@ -369,6 +370,7 @@ class TestBuildAggregateFeaturesAdvanced:
 
 @pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed")
 @patch("pyutilz.data.polarslib.clean_ram")
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 class TestCreateTsFeaturesPolars:
     """Covers lines 596-658."""
 

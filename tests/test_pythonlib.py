@@ -543,7 +543,11 @@ class TestDelayFunctions:
         imitate_delay(min_delay_seconds=0, max_delay_seconds=0)
         elapsed = time.time() - start
 
-        assert elapsed < 0.5  # Should be very fast
+        # Upper bound raised from 0.5s to 5s: the meaningful contract is "a zero delay does not
+        # sleep for a nonzero interval", and 5s still catches any real regression (e.g. a
+        # min/max mix-up falling back to a default delay) while a half-second budget was close
+        # enough to scheduler noise on a loaded runner to go red for no code reason.
+        assert elapsed < 5.0
 
     def test_imitate_delay_small(self):
         """Test with small delay"""
@@ -554,5 +558,8 @@ class TestDelayFunctions:
         imitate_delay(min_delay_seconds=0.01, max_delay_seconds=0.02)
         elapsed = time.time() - start
 
+        # The LOWER bound is the real contract (the delay actually happened) and stays tight.
+        # The upper bound is loosened to 5s for the same flakiness reason as the zero-delay case
+        # above -- it only needs to rule out a wildly wrong scale, not to time the scheduler.
         assert elapsed >= 0.01
-        assert elapsed < 0.5
+        assert elapsed < 5.0

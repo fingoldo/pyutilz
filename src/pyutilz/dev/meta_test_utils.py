@@ -616,7 +616,7 @@ def findings_ratchet(findings: Iterable[str], baseline_path: Path) -> tuple[list
     return sorted(current - known), sorted(known - current)
 
 
-_DISPOSITION_RE = re.compile(r"RESOLVED", re.IGNORECASE)
+_DISPOSITION_RE = re.compile(r"\bRESOLVED\b", re.IGNORECASE)
 _CITATION_RE = re.compile(r"`([^`]+)`")
 
 

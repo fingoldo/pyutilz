@@ -116,20 +116,36 @@ class TestArr2Str:
         assert "5" in result
 
     def test_uses_join_not_concatenation(self):
-        """Test that implementation uses O(N) join, not O(N²) concatenation"""
-        from pyutilz.numbalib import arr2str
+        """arr2str scales sub-quadratically: 10x the input must not cost ~100x the time.
+
+        Asserting a COMPLEXITY RATIO rather than the previous absolute ``elapsed < 0.1``. That
+        wall-clock threshold was tiny in absolute terms (100ms) and so could go red on a loaded
+        CI runner or a paging Windows box for reasons unrelated to any code change, while the
+        property it existed to police -- O(N) join vs O(N**2) repeated concatenation -- is
+        scale-invariant and therefore machine-independent. The best of several timing repeats is
+        used on each size, which discards scheduler noise without discarding the signal.
+        """
         import time
 
-        # Large array to detect O(N²) behavior
-        large_arr = list(range(1000))
+        from pyutilz.numbalib import arr2str
 
-        start = time.perf_counter()
-        result = arr2str(large_arr)
-        elapsed = time.perf_counter() - start
+        def best_of(n, repeats=5):
+            arr = list(range(n))
+            best = float("inf")
+            for _ in range(repeats):
+                start = time.perf_counter()
+                result = arr2str(arr)
+                best = min(best, time.perf_counter() - start)
+            assert isinstance(result, str)
+            return best
 
-        # Should complete quickly (O(N) with join)
-        assert elapsed < 0.1  # 100ms should be plenty for O(N)
-        assert isinstance(result, str)
+        small = best_of(1_000)
+        large = best_of(10_000)
+
+        # Quadratic would be ~100x; linear ~10x. 30x leaves generous headroom for constant
+        # factors and timer granularity while still failing an O(N**2) regression outright.
+        ratio = large / max(small, 1e-6)
+        assert ratio < 30, f"arr2str looks super-linear: 10x input cost {ratio:.1f}x the time (small={small:.6f}s, large={large:.6f}s)"
 
     def test_no_njit_decorator(self):
         """Test that arr2str is NOT compiled with @njit (removed for performance)"""

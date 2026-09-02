@@ -334,15 +334,23 @@ class TestClassifyColumnTypesDtype:
         assert mapping[expected_field] is True
 
     def test_dtype_param_string(self):
+        """A string column must classify as object, never as numeric.
+
+        The former version of this test guarded on ``if "object" in dtype.name`` and, on the
+        else branch, asserted only ``is_bool is False`` under a comment claiming StringDtype was
+        "classified as numeric by default (known limitation)". Both halves were wrong: pandas
+        reports ``dtype.name == "str"`` here (so the else branch is the one that runs), and
+        classify_column_types already returns is_obj=True / is_num=False for it. Feeding strings
+        into a numeric pipeline is exactly the failure this must catch, so it is asserted
+        unconditionally now.
+        """
         dtype = pd.Series(["x"]).dtype
         is_bool, is_obj, is_dt, is_cat, is_num = classify_column_types(dtype=dtype)
-        # pandas 2.x StringDtype has name="string", not "object"
-        # so is_obj may be False on newer pandas — test that it's at least not numeric
-        if "object" in dtype.name:
-            assert is_obj is True
-        else:
-            # StringDtype: classified as numeric by default (known limitation)
-            assert is_bool is False
+        assert is_obj is True
+        assert is_num is False
+        assert is_bool is False
+        assert is_dt is False
+        assert is_cat is False
 
 
 # ---------------------------------------------------------------------------

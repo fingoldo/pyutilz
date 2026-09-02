@@ -422,6 +422,14 @@ exclude_lines = [
 precision = 2
 show_missing = true
 
+# Coverage ratchet. Measured 84.87% on 2026-09-02 over the whole suite (Windows dev box,
+# `python -m coverage run -m pytest --no-cov`); set just under that, with a couple of points of
+# headroom for the platform delta (CI runs ubuntu-latest, where the Windows-only probes in
+# system/ go uncovered and the Linux-only ones do not). RAISE this when coverage rises; never
+# lower it to make a run pass. The CI job passes its own --cov-fail-under on the command line,
+# which overrides this value -- keep the two in step.
+fail_under = 82
+
 # Black code formatter
 [tool.black]
 line-length = 160

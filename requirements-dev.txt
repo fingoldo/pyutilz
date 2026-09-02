@@ -11,3 +11,13 @@
 # (format_warn, black_filtered_apply, advisory_warn). py-ci-shared itself requires Python >=3.9;
 # the marker keeps this file usable on a py3.8 interpreter, where those hooks are not needed.
 py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'
+
+# pytest-randomly: randomises test ORDER each run, which is what makes order-dependence
+# (shared module state such as pyutilz.llm.factory._provider_cache, or a sys.modules stub
+# leaking between files) actually surface instead of hiding behind a fixed alphabetical order.
+# tests/conftest.py ships a thinc seed-overflow compat shim for it, and tests/test_image.py +
+# tests/test_pandaslib_extra.py both justify their design by it -- so it is a real requirement,
+# not an optional nicety. Declared here rather than in pyproject.toml's [dev] extra alongside
+# the other pytest plugins purely to keep this file the single place a contributor is told to
+# install from together with it; `pip install -e ".[dev]" -r requirements-dev.txt` gets both.
+pytest-randomly>=3.12

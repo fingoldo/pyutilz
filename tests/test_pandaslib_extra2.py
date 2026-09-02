@@ -234,6 +234,23 @@ class TestReadStatsEdgeCases:
 # ensure_dataframe_float32_convertability — uncovered branches
 # ---------------------------------------------------------------------------
 
+def _pyarrow_array(values, dtype: str):
+    """Build a pyarrow-backed pandas array, or skip when this pandas/pyarrow pair cannot.
+
+    Deliberately NOT a ``try: <build df>; <call function under test>; except: pytest.skip``
+    block (the shape the four tests below used to share, and one this repo's own
+    ``scan_except_skip_masks_call_under_test`` flags as P1): that also swallowed any failure
+    of ``ensure_dataframe_float32_convertability`` itself and reported it as an environment
+    skip. Only the dtype-availability precondition is skippable here; the call under test runs
+    outside any handler.
+    """
+    pytest.importorskip("pyarrow")
+    try:
+        return pd.array(values, dtype=dtype)
+    except TypeError as e:  # pandas too old to express this pyarrow-backed dtype
+        pytest.skip(f"pyarrow-backed dtype {dtype!r} unsupported by this pandas/pyarrow pair ({e})")
+
+
 class TestEnsureFloat32Extra:
     def test_verbose_pandas_numeric(self):
         """Line 888: verbose log for numeric column conversion."""
@@ -243,41 +260,25 @@ class TestEnsureFloat32Extra:
 
     def test_pyarrow_backed_integer(self):
         """Lines 893-901: PyArrow-backed integer column conversion."""
-        try:
-            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
-            df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="int64[pyarrow]")})
-        except (ImportError, TypeError):
-            pytest.skip("pyarrow-backed dtypes not supported")
+        df = pd.DataFrame({"a": _pyarrow_array([1, 2, 3], "int64[pyarrow]")})
         result = ensure_dataframe_float32_convertability(df)
         assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_float(self):
         """Lines 893-901: PyArrow-backed float column conversion."""
-        try:
-            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
-            df = pd.DataFrame({"a": pd.array([1.0, 2.0], dtype="float64[pyarrow]")})
-        except (ImportError, TypeError):
-            pytest.skip("pyarrow-backed dtypes not supported")
+        df = pd.DataFrame({"a": _pyarrow_array([1.0, 2.0], "float64[pyarrow]")})
         result = ensure_dataframe_float32_convertability(df)
         assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_backed_verbose(self):
         """Lines 899-900: verbose log for pyarrow column."""
-        try:
-            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
-            df = pd.DataFrame({"a": pd.array([1, 2], dtype="int64[pyarrow]")})
-        except (ImportError, TypeError):
-            pytest.skip("pyarrow-backed dtypes not supported")
+        df = pd.DataFrame({"a": _pyarrow_array([1, 2], "int64[pyarrow]")})
         result = ensure_dataframe_float32_convertability(df, verbose=1)
         assert "float" in str(result["a"].dtype)
 
     def test_pyarrow_string_not_converted(self):
         """PyArrow string column should NOT be converted to float32."""
-        try:
-            import pyarrow as pa  # noqa: F401 - import presence is the guard, pandas is what actually needs it
-            df = pd.DataFrame({"a": pd.array(["x", "y"], dtype="string[pyarrow]")})
-        except (ImportError, TypeError):
-            pytest.skip("pyarrow-backed dtypes not supported")
+        df = pd.DataFrame({"a": _pyarrow_array(["x", "y"], "string[pyarrow]")})
         result = ensure_dataframe_float32_convertability(df)
         assert "float32" not in str(result["a"].dtype)
 
@@ -341,6 +342,7 @@ class TestBenchmarkParquetCompression:
         assert isinstance(result, pd.DataFrame)
 
 
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 class TestBenchmarkPickleCompression:
     def test_pickle_benchmark(self, tmp_path):
         """Lines 694-711."""
@@ -353,6 +355,7 @@ class TestBenchmarkPickleCompression:
         assert res[0][0].startswith("pickle-")
 
 
+@pytest.mark.slow  # >3s measured (pytest --durations, 2026-09-02)
 class TestBenchmarkCsvCompression:
     def test_csv_benchmark(self, tmp_path):
         """Lines 736-752."""

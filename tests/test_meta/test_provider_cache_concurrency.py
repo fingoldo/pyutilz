@@ -87,6 +87,7 @@ def test_concurrent_callers_share_one_instance(monkeypatch, reset_factory_state)
 
     # All callers got the same instance (identity check, not equality).
     first = instances[0]
+    assert len(instances) == n_callers, f"every caller must have returned an instance, got {len(instances)} of {n_callers}"
     assert all(inst is first for inst in instances), (
         f"got {len(set(id(i) for i in instances))} distinct instances " f"under contention — cache lookup not properly synchronised"
     )

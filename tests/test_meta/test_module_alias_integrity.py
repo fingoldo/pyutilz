@@ -180,10 +180,10 @@ def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
         # fact about the colliding package, not about whether pyutilz shadowed it, which the
         # sys.modules assertion above already verified. Treat that as inconclusive-but-not-a-
         # pyutilz-bug rather than an uncaught failure.
-        try:
-            real_toplevel = importlib.import_module(alias)
-        except ImportError as e:
-            pytest.skip(f"real top-level package {alias!r} failed to import for reasons unrelated to pyutilz's proxy ({e!r})")
+        # ``importorskip`` rather than try/except+skip: identical precondition semantics, but it
+        # cannot widen into a handler that also swallows the assertion below (this repo's own
+        # ``scan_except_skip_masks_call_under_test`` flagged the old shape as P1).
+        real_toplevel = pytest.importorskip(alias)
         assert not _is_pyutilz_file(real_toplevel), (
             f"``import {alias}`` resolved to the pyutilz module {getattr(real_toplevel,'__file__','?')} " f"instead of the real top-level package."
         )

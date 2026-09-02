@@ -47,15 +47,13 @@ def test_module_imports_and_exposes_at_least_one_public_symbol(
     one public (non-underscore) symbol on it. Adds the
     ``expected_symbols`` callable-existence check when known.
     """
-    try:
-        mod = importlib.import_module(module_path)
-    except ImportError as e:
-        # Optional-dep absence is acceptable — the module file itself
-        # still has to import (which has already happened by the time
-        # ImportError is raised from a deeper import line). Convert to
-        # ``pytest.skip`` so the smoke test doesn't fail on environments
-        # missing the optional extra.
-        pytest.skip(f"{module_path} requires optional dep ({e})")
+    # Optional-dep absence is acceptable -- the module file itself still has to import (which
+    # has already happened by the time ImportError is raised from a deeper import line).
+    # ``importorskip`` expresses exactly that precondition and, unlike the hand-rolled
+    # ``try: import_module(...) except ImportError: pytest.skip(...)`` it replaces, cannot grow
+    # into a handler that also swallows the assertions below (this repo's own
+    # ``scan_except_skip_masks_call_under_test`` flagged the old shape as P1).
+    mod = pytest.importorskip(module_path)
 
     public = [n for n in dir(mod) if not n.startswith("_")]
     assert public, f"{module_path} imports but exposes no public symbols — " f"either delete the file or add real content"
