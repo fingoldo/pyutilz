@@ -53,19 +53,19 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # Masking a CORE dependency does not simulate "the user skipped an extra"; it simulates a
     # broken install, and it made the prefect leaf-module scenario fail on a dependency
     # `pip install pyutilz[prefect]` genuinely does provide.
-    "pandas": ["pyarrow", "polars", "dateutil"],
-    "polars": ["polars", "dateutil"],
-    "database": ["sqlalchemy", "psycopg2", "pymysql", "dateutil", "redis"],
+    "pandas": ["pyarrow", "polars"],
+    "polars": ["polars"],
+    "database": ["sqlalchemy", "psycopg2", "pymysql", "redis"],
     "web": ["selenium", "undetected_chromedriver", "requests", "grequests", "fake_useragent", "curl_cffi"],
     "cloud": ["google.cloud.storage", "boto3"],
-    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python", "dateutil"],
+    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python"],
     "llm": ["anthropic", "google.genai", "httpx", "tenacity", "pydantic", "pydantic_settings"],
     # Found 2026-07-21 audit: "system" and "gpu" were missing from this dict entirely, so
     # tqdm/pympler/Pillow/scipy/py-cpuinfo/GPUtil/xmltodict/cupy were never
     # masked/simulated-absent by ANY scenario below -- a structural blind spot that let
     # core/pythonlib.py's undeclared numba/joblib/portalocker imports ship undetected (those
     # three, plus psutil/numpy, used to live in this list before being promoted to core deps).
-    "system": ["PIL", "scipy", "cpuinfo", "GPUtil", "xmltodict", "dateutil"],
+    "system": ["PIL", "scipy", "cpuinfo", "GPUtil", "xmltodict"],
     "gpu": ["cupy"],
     # Added 2026-09-02 audit: the same structural blind spot documented for "system"/"gpu" just
     # above still applied to the last three declared extras groups -- flask/dash/
@@ -79,12 +79,17 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # it must leave every module importable -- that is exactly what this scenario pins.
     "speedups": ["orjson"],
     "dash": ["flask", "dash", "dash_bootstrap_components", "pydantic"],
-    "prefect": ["prefect"],
+    # requests is listed here as well as under "web": prefect depends on it, so a real
+    # `pip install pyutilz[prefect]` always brings it in and masking it would test an impossible state.
+    "prefect": ["prefect", "requests"],
     "tensorflow": ["tensorflow"],
 }
 
-# dateutil is a real (transitive, via pandas) declared requirement of "pandas"/"database"/"nlp"/"system"
-# above, but python-dateutil itself has no lazy-import story to test -- unlike spacy/nltk/etc
+# dateutil is deliberately masked by NO scenario: pandas is a CORE dependency, so python-dateutil
+# arrives with the base install and no `pip install pyutilz[<group>]` can ever be missing it.
+# Masking it modelled a state that cannot occur, and made pandas raise "Unable to import required
+# dependencies: dateutil" from inside any leaf module that touches pandas. The scenarios below
+# describe genuinely optional packages -- unlike spacy/nltk/etc
 # below, which text/strings/webtext.py genuinely defers to call-site (`global X; if X is None:
 # import Y`). _NLP_LAZY_ONLY_DEPS is the narrower subset used by
 # test_tokenizers_module_imports_without_nlp_group_deps below, which specifically verifies that
