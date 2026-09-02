@@ -202,6 +202,31 @@ _REFUSAL_PATTERNS = [
 ]
 
 
+def normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
+    """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
+
+    - ``False`` / empty string -> ``(False, None)`` (explicitly off)
+    - ``True`` -> ``(True, None)`` (on, provider picks its default effort)
+    - non-empty str -> ``(True, str.lower())`` (on with an explicit effort)
+
+    Lives here rather than on one provider class because every provider that
+    supports reasoning has to agree on what the caller's argument MEANS, even
+    though each maps it to a different request field (OpenRouter's
+    ``reasoning.effort``, DeepSeek's ``thinking.type``, Anthropic's
+    ``thinking.budget_tokens``). A second copy of this contract is how the two
+    halves drift apart.
+    """
+    if thinking is False or thinking == "":
+        return (False, None)
+    if thinking is True:
+        return (True, None)
+    if isinstance(thinking, str):
+        return (True, thinking.lower())
+    # The annotation admits int precisely because callers do pass one (0 -> (False, None));
+    # a narrower `bool | str` made this line read as dead code when it is reached and covered.
+    return (bool(thinking), None)
+
+
 def is_llm_refusal(text: str) -> bool:
     """Return True if ``text`` contains a recognizable LLM refusal sentinel.
 

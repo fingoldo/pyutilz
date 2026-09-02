@@ -18,7 +18,7 @@ from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError, LLMUnparseableResponseError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
-from pyutilz.llm.base import LLMProvider, PerCallAttr
+from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +188,10 @@ class OpenAICompatibleProvider(LLMProvider):
     # unvalidated output.
     _last_json_schema_applied: PerCallAttr = PerCallAttr(lambda: False)
 
-    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (*LLMProvider._PERCALL_METADATA_ATTRS, "_last_json_schema_applied")
+    # True when a json_mode call came back with NO content and was re-issued without response_format.
+    last_json_mode_fallback: PerCallAttr = PerCallAttr(bool)
+
+    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (*LLMProvider._PERCALL_METADATA_ATTRS, "_last_json_schema_applied", "last_json_mode_fallback")
 
     def __init__(
         self,
@@ -464,28 +467,10 @@ class OpenAICompatibleProvider(LLMProvider):
         return None
 
     @staticmethod
-    def _normalize_thinking(
-        thinking: bool | str | int,
-    ) -> tuple[bool, str | None]:
-        """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
-
-        - ``False`` / empty string -> ``(False, None)`` (explicitly off)
-        - ``True`` -> ``(True, None)`` (on, provider picks default effort)
-        - non-empty str -> ``(True, str.lower())`` (on with explicit effort)
-
-        Helper used by upstream-specific overrides so each provider only
-        picks the half of the contract its API requires.
-        """
-        if thinking is False or thinking == "":
-            return (False, None)
-        if thinking is True:
-            return (True, None)
-        if isinstance(thinking, str):
-            return (True, thinking.lower())
-        # Reachable, and covered: the parameter annotation says `bool | str | int` precisely
-        # because callers do pass a plain int (0 -> (False, None)); a narrower `bool | str`
-        # made this line look like dead code when it is not.
-        return (bool(thinking), None)
+    def _normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
+        """Delegates to :func:`pyutilz.llm.base.normalize_thinking` -- kept as a
+        method so existing subclass overrides and call sites keep working."""
+        return normalize_thinking(thinking)
 
     async def generate_stream(
         self,
@@ -745,6 +730,7 @@ class OpenAICompatibleProvider(LLMProvider):
         # - and only one model/route was verified live before this fix landed. Widening the reserve keeps
         # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        rf = self._response_format(json_mode, json_schema)
         async with self.semaphore:
             body: dict[str, Any] = {
                 "model": self.model_name,
@@ -752,7 +738,6 @@ class OpenAICompatibleProvider(LLMProvider):
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            rf = self._response_format(json_mode, json_schema)
             if rf is not None:
                 body["response_format"] = rf
             body.update(self._extra_request_body(self.model_name))
@@ -760,74 +745,101 @@ class OpenAICompatibleProvider(LLMProvider):
                 thinking_field = self._thinking_request_field(thinking)
                 if thinking_field is not None:
                     body.update(thinking_field)
-
-            resp = await self._client.post("/chat/completions", json=body)
-
-            # Snapshot rate-limit headers before any status check, so a
-            # 429/5xx error response's headers are captured too — that's
-            # exactly when they matter most for backoff/quota decisions.
-            self._capture_rate_limit_headers(resp.headers)
-
-            # Provider-specific status handling (e.g. DeepSeek 402)
-            self._handle_special_status(resp)
-
-            if resp.status_code in _NON_RETRYABLE_STATUSES:
-                try:
-                    err_body = resp.json()
-                    detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
-                except (ValueError, _JSONDecodeError):
-                    detail = resp.text
-                raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
-            resp.raise_for_status()
-            data = parse_response_envelope(resp, self._provider_name)
-
-            # Token usage tracking
-            usage = data.get("usage", {})
-            if usage:
-                self._record_usage(usage)
-
-            self._track_provider_specific_response(data)
-
-            choices = data.get("choices", [])
-            if not choices:
-                raise LLMProviderError(f"{self._provider_name} returned no choices")
-
-            self._last_finish_reason = choices[0].get("finish_reason", "unknown")
-            message = choices[0].get("message") or {}
-            # Capture function-calling output before unwrapping content -- these
-            # silently disappeared previously; pyutilz returned only the bare
-            # text (often empty when the model chose tool_calls path).
-            tool_calls = message.get("tool_calls")
-            if isinstance(tool_calls, list):
-                self.last_tool_calls = tool_calls
-            else:
-                self.last_tool_calls = []
-            # xAI live-search citations + OpenAI annotations (which OR also
-            # uses for web-search) live on the message.
-            citations = message.get("citations")
-            if isinstance(citations, list):
-                self.last_citations = citations
-            else:
-                self.last_citations = []
-            content = message.get("content")
-            if content is None:
-                # Tool-call-only response (no assistant text). Return empty
-                # string but keep tool_calls accessible via the attribute.
-                return ""
-            if self._last_finish_reason == "length":
-                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified
-                # (finish_reason field, "caller should double max_tokens and re-issue" contract)
-                # but never actually raised anywhere -- callers catching it to auto-retry with a
-                # bigger budget never saw it fire, even on a genuine max_tokens cutoff.
-                raise LLMTruncationError(
-                    f"{self._provider_name} response truncated by max_tokens (finish_reason='length')",
-                    finish_reason=self._last_finish_reason,
-                    # The partial content, which used to be dropped here. A caller that catches this to
-                    # re-issue with a bigger budget is one caller; a caller that catches it to keep what was
-                    # already paid for is another, and it had nothing to keep.
-                    partial_text=content or "",
+            content = await self._post_and_unwrap(body)
+            if content is None and rf is not None:
+                # Measured live 2026-09-02 on OpenRouter ``z-ai/glm-4.7-flash``: the catalogue lists
+                # ``response_format`` as supported, the call returns ``finish_reason="stop"``, ``content=None``,
+                # 52 reasoning tokens (with ``reasoning.exclude`` requested) - and the same prompt without
+                # ``response_format`` answers in a fenced JSON block. 58 of 60 benchmark questions were lost to
+                # this before it was caught, each reported by the caller as "unparsable JSON" rather than as an
+                # empty completion. The catalogue check cannot see it, so the fallback keys on the response.
+                self.last_json_mode_fallback = True
+                logger.warning(
+                    "%s/%s returned an empty completion under response_format - re-issuing once without it",
+                    self._provider_name, self.model_name,
                 )
-            return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                content = await self._post_and_unwrap({k: v for k, v in body.items() if k != "response_format"})
+            if content is None:
+                reasoning = (self._last_usage or {}).get("reasoning_tokens")
+                sent = "dropped" if self.last_json_mode_fallback else ("sent" if rf is not None else "not sent")
+                raise LLMProviderError(
+                    f"{self._provider_name}/{self.model_name} returned an empty completion "
+                    f"(finish_reason={self._last_finish_reason!r}, reasoning_tokens={reasoning}, response_format={sent})"
+                )
+            return content
+
+    async def _post_and_unwrap(self, body: dict[str, Any]) -> str | None:
+        """One POST plus envelope unwrapping. ``None`` means the model returned no text and no tool calls -
+        an empty completion, which the caller decides how to treat; a tool-call-only reply returns ``""``."""
+        resp = await self._client.post("/chat/completions", json=body)
+
+        # Snapshot rate-limit headers before any status check, so a
+        # 429/5xx error response's headers are captured too — that's
+        # exactly when they matter most for backoff/quota decisions.
+        self._capture_rate_limit_headers(resp.headers)
+
+        # Provider-specific status handling (e.g. DeepSeek 402)
+        self._handle_special_status(resp)
+
+        if resp.status_code in _NON_RETRYABLE_STATUSES:
+            try:
+                err_body = resp.json()
+                detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
+            except (ValueError, _JSONDecodeError):
+                detail = resp.text
+            raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
+        resp.raise_for_status()
+        data = parse_response_envelope(resp, self._provider_name)
+
+        # Token usage tracking
+        usage = data.get("usage", {})
+        if usage:
+            self._record_usage(usage)
+
+        self._track_provider_specific_response(data)
+
+        choices = data.get("choices", [])
+        if not choices:
+            raise LLMProviderError(f"{self._provider_name} returned no choices")
+
+        self._last_finish_reason = choices[0].get("finish_reason", "unknown")
+        message = choices[0].get("message") or {}
+        # Capture function-calling output before unwrapping content -- these
+        # silently disappeared previously; pyutilz returned only the bare
+        # text (often empty when the model chose tool_calls path).
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            self.last_tool_calls = tool_calls
+        else:
+            self.last_tool_calls = []
+        # xAI live-search citations + OpenAI annotations (which OR also
+        # uses for web-search) live on the message.
+        citations = message.get("citations")
+        if isinstance(citations, list):
+            self.last_citations = citations
+        else:
+            self.last_citations = []
+        content = message.get("content")
+        if content is None and self.last_tool_calls:
+            # Tool-call-only response (no assistant text). Return empty
+            # string but keep tool_calls accessible via the attribute.
+            return ""
+        if not content:
+            return None
+        if self._last_finish_reason == "length":
+            # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified
+            # (finish_reason field, "caller should double max_tokens and re-issue" contract)
+            # but never actually raised anywhere -- callers catching it to auto-retry with a
+            # bigger budget never saw it fire, even on a genuine max_tokens cutoff.
+            raise LLMTruncationError(
+                f"{self._provider_name} response truncated by max_tokens (finish_reason='length')",
+                finish_reason=self._last_finish_reason,
+                # The partial content, which used to be dropped here. A caller that catches this to
+                # re-issue with a bigger budget is one caller; a caller that catches it to keep what was
+                # already paid for is another, and it had nothing to keep.
+                partial_text=content or "",
+            )
+        return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     async def generate_json(
         self,

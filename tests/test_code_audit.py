@@ -78,6 +78,10 @@ from pyutilz.dev.code_audit import (
 )
 
 
+from pyutilz.dev.code_audit.source_text_assertions import scan_source_text_assertions
+from pyutilz.dev.code_audit.docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_config
+
+
 def _write(tmp_path: Path, name: str, source: str) -> Path:
     p = tmp_path / name
     p.write_text(source.lstrip("\n"), encoding="utf-8")
@@ -6077,6 +6081,92 @@ async def handle():
     assert scan_async_primitive_reinit_per_call(tmp_path) == []
 
 
+def test_async_primitive_reinit_module_level_registry_is_clean(tmp_path: Path):
+    """Publishing a primitive INTO a module-level container is the single-flight
+    idiom -- every caller finds the same Event through the shared dict, which is
+    the opposite of a private per-call copy. Needs no `global` (never rebound)."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+_inflight: dict = {}
+_inflight_lock = asyncio.Lock()
+
+async def cached_get(key):
+    async with _inflight_lock:
+        if key not in _inflight:
+            _inflight[key] = asyncio.Event()
+            return None
+        evt = _inflight[key]
+    await evt.wait()
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_local_dict_registry_is_still_flagged(tmp_path: Path):
+    """Guard on the exemption above: a FUNCTION-LOCAL dict is not shared, so
+    publishing into it is still a private per-call copy and stays flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def cached_get(key):
+    inflight = {}
+    inflight[key] = asyncio.Event()
+    await inflight[key].wait()
+''')
+    assert len(scan_async_primitive_reinit_per_call(tmp_path)) == 1
+
+
+def test_async_primitive_reinit_bounded_gather_closure_is_clean(tmp_path: Path):
+    """The bounded-gather idiom: the semaphore bounds the tasks THIS call
+    spawns, so one per call is correct and deliberate."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def bounded_gather(factories, limit):
+    sem = asyncio.Semaphore(limit)
+
+    async def _run(factory):
+        async with sem:
+            return await factory()
+
+    return await asyncio.gather(*[_run(f) for f in factories])
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_handed_to_helper_is_clean(tmp_path: Path):
+    """Same idiom written with a helper instead of a closure."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def run_round(session, payload):
+    sem = asyncio.Semaphore(4)
+    return await _run_pipeline_for(session, sem, payload)
+''')
+    assert scan_async_primitive_reinit_per_call(tmp_path) == []
+
+
+def test_async_primitive_reinit_direct_use_still_flagged_alongside_a_closure(tmp_path: Path):
+    """Non-vacuousness guard for BOTH fan-out exemptions: a function that also
+    defines a closure must not become a blanket amnesty. The lock here is used
+    directly in the body and never reaches the closure, so it stays flagged."""
+    _write(tmp_path, "mod.py", '''
+import asyncio
+
+async def handle(items):
+    lock = asyncio.Lock()
+
+    async def _work(i):
+        return i * 2
+
+    async with lock:
+        pass
+    return await asyncio.gather(*[_work(i) for i in items])
+''')
+    findings = scan_async_primitive_reinit_per_call(tmp_path)
+    assert len(findings) == 1, [f.detail for f in findings]
+
+
 def test_async_primitive_reinit_custom_primitive_names(tmp_path: Path):
     """The primitive_names parameter can narrow/widen which asyncio.* constructors are tracked."""
     _write(tmp_path, "mod.py", '''
@@ -6339,3 +6429,251 @@ def test_get_scanners_returns_a_copy_so_callers_cannot_corrupt_the_shared_regist
     second = get_scanners()
     assert victim in second
     assert "definitely_not_a_real_scanner" not in second
+# ---- source_text_assertion ----------------------------------------------
+#
+# The defect this scanner exists for has shipped twice: a test asserted a fix was present in a
+# function's SOURCE, the source did contain it, and the function was never reached. Every case
+# below is written from a real spelling seen in the audited repos rather than from the shape the
+# scanner happens to implement -- the first version of the scanner matched only the inline form
+# and reported zero offences in a repo full of them.
+
+
+def test_source_text_assertion_flags_read_into_a_variable(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_the_fix_landed():
+    src = inspect.getsource(mod.handler)
+    assert "AT TIME ZONE 'utc'" in src
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].line == 6
+    assert "getsource" in findings[0].detail
+
+
+def test_source_text_assertion_flags_the_inline_form(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_it():
+    assert "retries=3" in inspect.getsource(mod.fetch)
+""",
+    )
+    assert len(scan_source_text_assertions(tmp_path)) == 1
+
+
+def test_source_text_assertion_flags_reading_a_sql_file(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+from pathlib import Path
+
+def test_the_index_exists():
+    sql = Path("sql/schema.sql").read_text()
+    assert "CREATE INDEX ix_jobs_ts" in sql
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1
+    assert ".sql" in findings[0].detail
+
+
+def test_source_text_assertion_ignores_a_behavioural_assertion(tmp_path: Path):
+    """The honest version of the same test: call the code, assert on what comes back."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import mod
+
+def test_the_fix_landed():
+    assert "AT TIME ZONE 'utc'" in mod.build_query()
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_calling_an_unwrapped_callable(tmp_path: Path):
+    """Reaching through `__code__` to pull a decorated function out of its closure, then CALLING
+    it, is behavioural testing -- an earlier version of the scanner mislabelled it."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+def test_a_real_tab_switch_still_rebuilds(app):
+    wrapped = app.callback_map["k"]["callback"]
+    fn = wrapped.__closure__[wrapped.__code__.co_freevars.index("func")].cell_contents
+    assert fn("tabMarket") == "body:tabMarket"
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_reading_source_without_claiming_content(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_it_is_introspectable():
+    assert inspect.getsource(mod.handler)
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_non_test_files(tmp_path: Path):
+    """A code generator or build script manipulates source text as its actual job."""
+    _write(
+        tmp_path,
+        "codegen.py",
+        """
+import inspect
+import mod
+
+def check():
+    src = inspect.getsource(mod.handler)
+    assert "def handler" in src
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_scopes_bound_names_per_function(tmp_path: Path):
+    """`src` is an ordinary local name that recurs across a file. Binding it file-wide made an
+    unrelated behavioural assertion in a later test look like a source-text claim."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_one():
+    src = inspect.getsource(mod.handler)
+    assert "marker" in src
+
+def test_two():
+    src = mod.render_template()
+    assert "marker" in src
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1, [f.line for f in findings]
+    assert findings[0].line == 6
+
+
+# ---- docstring_numbers_moved_to_config (opt-in) --------------------------
+#
+# Opt-in, so these tests are the only place it is exercised by default. Its precision was measured
+# rather than assumed: three hits across four repos, all false, which is why it is not in a ratchet.
+# The negative cases below are those three, kept as tests so a future widening of the rule cannot
+# quietly reintroduce them.
+
+
+def test_docstring_numbers_moved_to_config_flags_the_stale_prose(tmp_path: Path):
+    _write(
+        tmp_path,
+        "prune.py",
+        """
+def _prune_disappearance_counts(state):
+    \"\"\"Drop sources that have disappeared.
+
+    Prunes a source after 10 consecutive misses, or 5 for a rare source.
+    \"\"\"
+    from live_config import cfg
+    common = cfg().get("prune", "common_misses", None, int)
+    rare = cfg().get("prune", "rare_misses", None, int)
+    return {k: v for k, v in state.items() if v < (rare if k in state else common)}
+""",
+    )
+    findings = scan_docstring_numbers_moved_to_config(tmp_path)
+    assert len(findings) == 1
+    assert "10" in findings[0].detail and "5" in findings[0].detail
+
+
+def test_docstring_numbers_moved_to_config_ignores_a_named_source(tmp_path: Path):
+    """Naming the constant is the RECOMMENDED form; flagging it would punish the fix."""
+    _write(
+        tmp_path,
+        "resolve.py",
+        """
+def resolve_min_days(cli=None):
+    \"\"\"Resolve the rescan floor in days.
+
+    Precedence: CLI > config key > compiled default (``MIN_WH_RESCAN_FREQ_DAYS`` = 14).
+    \"\"\"
+    from live_config import cfg
+    return int(cfg().get("intervals", "min_days", MIN_WH_RESCAN_FREQ_DAYS, int))
+""",
+    )
+    assert scan_docstring_numbers_moved_to_config(tmp_path) == []
+
+
+def test_docstring_numbers_moved_to_config_ignores_a_document_reference(tmp_path: Path):
+    """ "audit 04.1" is a citation, not a threshold -- it got through because the same line said
+    "after"."""
+    _write(
+        tmp_path,
+        "banners.py",
+        """
+def _mode_banners(settings):
+    \"\"\"Banners built from a fresh settings read.
+
+    The confirmation modal (audit 04.1) closes the window after every tick.
+    \"\"\"
+    from live_config import cfg
+    return cfg().get("submission", "dry_run", None, bool)
+""",
+    )
+    assert scan_docstring_numbers_moved_to_config(tmp_path) == []
+
+
+def test_docstring_numbers_moved_to_config_ignores_numbers_still_in_the_body(tmp_path: Path):
+    """If the number is in the code, the prose can be checked against it by reading."""
+    _write(
+        tmp_path,
+        "prune.py",
+        """
+def prune(state):
+    \"\"\"Prunes a source after 10 consecutive misses.\"\"\"
+    from live_config import cfg
+    limit = cfg().get("prune", "misses", 10, int)
+    return {k: v for k, v in state.items() if v < limit}
+""",
+    )
+    assert scan_docstring_numbers_moved_to_config(tmp_path) == []
+
+
+def test_docstring_numbers_moved_to_config_ignores_a_function_reading_no_config(tmp_path: Path):
+    _write(
+        tmp_path,
+        "prune.py",
+        """
+def describe():
+    \"\"\"The batch size limit is 500 per call.\"\"\"
+    return LIMIT
+""",
+    )
+    assert scan_docstring_numbers_moved_to_config(tmp_path) == []
+
+
+def test_docstring_numbers_moved_to_config_is_opt_in():
+    """It must not reach any project's default run, and therefore any project's baseline."""
+    from pyutilz.dev.code_audit import OPT_IN_ONLY, get_scanners
+
+    assert "docstring_numbers_moved_to_config" in get_scanners()
+    assert "docstring_numbers_moved_to_config" in OPT_IN_ONLY

@@ -411,6 +411,13 @@ decision a project takes rather than inherits on upgrade. Name them in
 - ``scan_thresholds_below_documented_result``: a ``test_*`` function
   whose docstring states "7 of 8" while its assertion accepts ``>= 6``.
 
+- ``scan_docstring_numbers_moved_to_config`` (OPT-IN): a docstring still
+  spelling out threshold values the body no longer contains, because they
+  were made configurable and the prose was not updated. The prose is then
+  the only surviving record of a number that does not exist. Opt-in: on
+  four repos it produced three hits and all three were false, so it is a
+  tool to point at a suspect file, not a ratchet.
+
 One member of this package is deliberately NOT a scanner and NOT in
 ``get_scanners()``: ``field_text_agreement``. It checks a defect shape the other
 rules cannot see from source alone - a structured field that duplicates

@@ -64,6 +64,8 @@ from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
 from .per_call_state_on_shared_instance import scan_per_call_state_on_shared_instance
 from .uncached_constant_cost_probe import scan_uncached_constant_cost_probe
+from .source_text_assertions import scan_source_text_assertions
+from .docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_config
 
 # --- registry -----------------------------------------------------------
 
@@ -157,6 +159,8 @@ register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
 register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
+register_scanner("source_text_assertion", scan_source_text_assertions)
+register_scanner("docstring_numbers_moved_to_config", scan_docstring_numbers_moved_to_config)
 register_scanner("bare_except", scan_bare_except)
 register_scanner("console_unicode", scan_console_unicode)
 register_scanner("mojibake", scan_mojibake)
@@ -177,6 +181,14 @@ register_scanner("uncached_constant_cost_probe", scan_uncached_constant_cost_pro
 # fresh mistake, which is a decision a project takes deliberately rather than inherits. Name them in
 # ``checks=`` to run them.
 OPT_IN_ONLY: frozenset[str] = frozenset({
+    # Opt-in because its precision is not good enough to run unattended, and that was measured rather than
+    # guessed. Against four repos it produced three hits, ALL false: two docstrings naming a threshold that
+    # belongs to a DIFFERENT function, and one reading "12-permutation" as a tunable because "per-call"
+    # earlier in the line matched the keyword list. Its one true positive is a real defect that has since
+    # been fixed, so it can only be demonstrated on a reconstruction. Useful pointed at a file you already
+    # suspect; not useful in a ratchet, where three false alarms would teach everyone to refresh the
+    # baseline without reading it.
+    "docstring_numbers_moved_to_config",
     "dead_public_callable",
     "vacuous_empty_pattern_match",
     "tautological_guard",

@@ -134,6 +134,57 @@ class TestGenerate:
         assert p._last_usage["reasoning_tokens"] == 1
 
     @pytest.mark.asyncio
+    async def test_empty_json_mode_completion_is_reissued_without_response_format(self):
+        """Live shape (OpenRouter z-ai/glm-4.7-flash, 2026-09-02): finish_reason=stop, content=None, no tool
+        calls, under response_format - and a real answer once response_format is dropped."""
+        p = _make_provider()
+        empty = _mock_response(body={"choices": [{"message": {"content": None}, "finish_reason": "stop"}], "usage": {}})
+        answered = _mock_response(body={"choices": [{"message": {"content": '{"pick": 2}'}, "finish_reason": "stop"}], "usage": {}})
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(side_effect=[empty, answered])
+
+        assert await p.generate("q", json_mode=True) == '{"pick": 2}'
+        assert p.last_json_mode_fallback is True
+        first, second = (c.kwargs["json"] for c in p._client.post.call_args_list)
+        assert "response_format" in first
+        assert "response_format" not in second
+
+    @pytest.mark.asyncio
+    async def test_empty_completion_without_tool_calls_raises_after_the_fallback(self):
+        """Returning "" here used to surface downstream as "unparsable JSON" 58 times in one benchmark;
+        the caller must see an empty completion for what it is."""
+        p = _make_provider()
+        empty = _mock_response(body={"choices": [{"message": {"content": None}, "finish_reason": "stop"}], "usage": {"completion_tokens_details": {"reasoning_tokens": 52}}})
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=empty)
+
+        with pytest.raises(LLMProviderError, match=r"empty completion.*reasoning_tokens=52.*response_format=dropped"):
+            await p.generate("q", json_mode=True)
+        assert p._client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_completion_without_json_mode_raises_without_a_retry(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": ""}, "finish_reason": "stop"}], "usage": {}}))
+
+        with pytest.raises(LLMProviderError, match="response_format=not sent"):
+            await p.generate("q")
+        assert p._client.post.call_count == 1
+        assert p.last_json_mode_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_tool_call_only_response_still_returns_empty_text(self):
+        p = _make_provider()
+        body = {"choices": [{"message": {"content": None, "tool_calls": [{"id": "t1"}]}, "finish_reason": "tool_calls"}], "usage": {}}
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body=body))
+
+        assert await p.generate("q", json_mode=True) == ""
+        assert p.last_tool_calls == [{"id": "t1"}]
+        assert p._client.post.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_empty_choices_raises(self):
         p = _make_provider()
         resp = _mock_response(body={"choices": [], "usage": {}})
@@ -517,7 +568,7 @@ class _FakeResponse:
         return self._payload
 
 
-def test_an_empty_body_is_raised_as_a_retryable_unparseable_response():
+def test_an_empty_body_is_raised_as_a_retryable_unparsable_response():
     """OpenRouter intermittently returns an empty body on a 200. `resp.json()` reports that as
     `json.JSONDecodeError` - a `ValueError` - which matches neither the HTTP-status nor the transport branch
     of `_is_retryable_http_error`, so the call used to fail outright instead of being retried. MEASURED
