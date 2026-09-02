@@ -78,6 +78,9 @@ from pyutilz.dev.code_audit import (
 )
 
 
+from pyutilz.dev.code_audit.source_text_assertions import scan_source_text_assertions
+
+
 def _write(tmp_path: Path, name: str, source: str) -> Path:
     p = tmp_path / name
     p.write_text(source.lstrip("\n"), encoding="utf-8")
@@ -6316,3 +6319,150 @@ def test_every_tree_walking_scanner_agrees_between_a_relative_and_absolute_root(
             assert relative == absolute, f"{scan.__name__} saw {relative} findings via a relative root and {absolute} via an absolute one"
     finally:
         os.chdir(cwd)
+
+
+# ---- source_text_assertion ----------------------------------------------
+#
+# The defect this scanner exists for has shipped twice: a test asserted a fix was present in a
+# function's SOURCE, the source did contain it, and the function was never reached. Every case
+# below is written from a real spelling seen in the audited repos rather than from the shape the
+# scanner happens to implement -- the first version of the scanner matched only the inline form
+# and reported zero offences in a repo full of them.
+
+
+def test_source_text_assertion_flags_read_into_a_variable(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_the_fix_landed():
+    src = inspect.getsource(mod.handler)
+    assert "AT TIME ZONE 'utc'" in src
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].line == 6
+    assert "getsource" in findings[0].detail
+
+
+def test_source_text_assertion_flags_the_inline_form(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_it():
+    assert "retries=3" in inspect.getsource(mod.fetch)
+""",
+    )
+    assert len(scan_source_text_assertions(tmp_path)) == 1
+
+
+def test_source_text_assertion_flags_reading_a_sql_file(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+from pathlib import Path
+
+def test_the_index_exists():
+    sql = Path("sql/schema.sql").read_text()
+    assert "CREATE INDEX ix_jobs_ts" in sql
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1
+    assert ".sql" in findings[0].detail
+
+
+def test_source_text_assertion_ignores_a_behavioural_assertion(tmp_path: Path):
+    """The honest version of the same test: call the code, assert on what comes back."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import mod
+
+def test_the_fix_landed():
+    assert "AT TIME ZONE 'utc'" in mod.build_query()
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_calling_an_unwrapped_callable(tmp_path: Path):
+    """Reaching through `__code__` to pull a decorated function out of its closure, then CALLING
+    it, is behavioural testing -- an earlier version of the scanner mislabelled it."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+def test_a_real_tab_switch_still_rebuilds(app):
+    wrapped = app.callback_map["k"]["callback"]
+    fn = wrapped.__closure__[wrapped.__code__.co_freevars.index("func")].cell_contents
+    assert fn("tabMarket") == "body:tabMarket"
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_reading_source_without_claiming_content(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_it_is_introspectable():
+    assert inspect.getsource(mod.handler)
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_ignores_non_test_files(tmp_path: Path):
+    """A code generator or build script manipulates source text as its actual job."""
+    _write(
+        tmp_path,
+        "codegen.py",
+        """
+import inspect
+import mod
+
+def check():
+    src = inspect.getsource(mod.handler)
+    assert "def handler" in src
+""",
+    )
+    assert scan_source_text_assertions(tmp_path) == []
+
+
+def test_source_text_assertion_scopes_bound_names_per_function(tmp_path: Path):
+    """`src` is an ordinary local name that recurs across a file. Binding it file-wide made an
+    unrelated behavioural assertion in a later test look like a source-text claim."""
+    _write(
+        tmp_path,
+        "test_thing.py",
+        """
+import inspect
+import mod
+
+def test_one():
+    src = inspect.getsource(mod.handler)
+    assert "marker" in src
+
+def test_two():
+    src = mod.render_template()
+    assert "marker" in src
+""",
+    )
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1, [f.line for f in findings]
+    assert findings[0].line == 6

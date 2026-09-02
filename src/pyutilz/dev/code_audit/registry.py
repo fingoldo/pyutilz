@@ -62,6 +62,7 @@ from .mojibake import scan_mojibake
 from .resource_handle_safety import scan_resource_handle_safety
 from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
+from .source_text_assertions import scan_source_text_assertions
 
 # --- registry -----------------------------------------------------------
 
@@ -155,6 +156,7 @@ register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
 register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
+register_scanner("source_text_assertion", scan_source_text_assertions)
 register_scanner("bare_except", scan_bare_except)
 register_scanner("console_unicode", scan_console_unicode)
 register_scanner("mojibake", scan_mojibake)
