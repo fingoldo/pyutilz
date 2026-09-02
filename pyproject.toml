@@ -525,6 +525,8 @@ DEP003 = [
     "catboost", "IPython", "nvidia", "polars_ds", "orjson", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
     "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature; now pulled in transitively in some envs (previously genuinely absent)
     "pgvector",  # database/psycopg2_pool.py -- guarded, only used if the caller's DB has the pgvector extension
+    "claude_code_sdk",  # llm/claude_code_provider.py -- guarded SDK monkey-patch block; present in dev envs with the CLI SDK installed
+    "wmi",  # system/system/probing.py -- guarded, Windows-only; present on Windows dev boxes, absent in Linux CI
 ]
 
 # Interrogate: docstring coverage. Blocking at --fail-under=100 since 2026-07-09 (see the CI
@@ -545,7 +547,7 @@ verbose = 1
 # .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py),
 # the sole confirmed false positive as of the 2026-07-05 codespell setup.
 [tool.codespell]
-ignore-words-list = "coo"
+ignore-words-list = "coo,caf,re-uses"
 
 # MyPy type checker
 [tool.mypy]
