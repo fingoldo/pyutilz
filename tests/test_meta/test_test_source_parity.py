@@ -126,6 +126,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "todo_hygiene": "code_audit scanner; covered by test_code_audit.py",
     "import_cycles": "code_audit scanner; covered by test_code_audit.py",
     "source_text_assertions": "code_audit scanner; covered by test_code_audit.py",
+    "docstring_numbers_moved_to_config": "code_audit scanner; covered by test_code_audit.py",
     "readonly_to_numpy_mutation": "code_audit scanner; covered by test_code_audit.py",
     "skip_masking_except": "code_audit scanner; covered by test_code_audit.py",
     "uncurated_star_export": "code_audit scanner; covered by test_code_audit.py",
