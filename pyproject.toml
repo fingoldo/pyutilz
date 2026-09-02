@@ -1,14 +1,15 @@
 [build-system]
-# setuptools>=77 is where PEP 639 support lands (`license = "MIT"` as an SPDX expression plus
-# `license-files`), replacing the deprecated `license = {text = ...}` table and the
-# `License :: OSI Approved ::` classifier -- setuptools announced a hard removal date of
-# 2027-Feb-18 for both, at which point `python -m build` would start failing outright.
+# PEP 639 (`license = "MIT"` as an SPDX expression plus `license-files`) needs setuptools>=77,
+# and no setuptools that supports Python 3.8 is anywhere near that -- 75.3.4 is the last one
+# published for it. `pip install -e .` builds from source on every leg, so requiring 77 made the
+# package uninstallable on a Python this project still declares support for; the three-OS CI
+# matrix caught it on its first run (the earlier "BUILD-time only, does not narrow requires-python"
+# reasoning was simply wrong). The deprecated `license` table is kept until either 3.8 support is
+# dropped or setuptools' 2027-Feb-18 removal date approaches, whichever comes first.
 # `wheel` is deliberately not listed: setuptools.build_meta declares it itself via
 # get_requires_for_build_wheel(), so an explicit entry is the legacy `setup.py bdist_wheel`
-# pattern and only pins an extra package into every isolated build env. This is a BUILD-time
-# requirement only (setuptools 77 itself needs Python >=3.9); it does not narrow the package's
-# own runtime requires-python = ">=3.8", and CI/publish both build on 3.11.
-requires = ["setuptools>=77.0"]
+# pattern and only pins an extra package into every isolated build env.
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -16,8 +17,7 @@ name = "pyutilz"
 version = "1.0.0"
 description = "Modular utilities for dataframes, databases, web scraping, cloud storage, system introspection, parallelism, and a unified async LLM-provider interface (Anthropic, OpenAI, Gemini, and more) — few hard dependencies, install only what you need beyond the core"
 authors = [{name = "Anatoly Alexeev"}]
-license = "MIT"
-license-files = ["LICENSE"]
+license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = [
@@ -30,6 +30,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -357,7 +358,7 @@ dev = [
     "ruff==0.15.22",                # pinned exact, matching CI's uvx ruff==0.15.22 (ruff-blocking.yml) --
                                     # an open range here is exactly how mlframe's prior v0.8.6 pre-commit-
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
-    "mypy==2.3.1",                  # pinned exact, matching CI's mypy-full.yml `mypy-version` and .pre-commit-config.yaml's
+    "mypy==2.3.1 ; python_version >= '3.10'",  # no mypy 2.x is published for 3.8/3.9, and the gate runs on 3.11; pinned exact, matching CI's mypy-full.yml `mypy-version` and .pre-commit-config.yaml's
                                     # mirrors-mypy `rev: v2.3.1`. Was an open `mypy>=1.0`, which spanned a MAJOR version
                                     # boundary (1.x vs the 2.x this config is written against, see [tool.mypy] below) on the
                                     # one whole-project blocking gate -- the same drift class the ruff pin above documents.
