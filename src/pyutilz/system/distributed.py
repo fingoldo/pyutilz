@@ -60,6 +60,8 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     Raises:
         Exception: propagates any error raised while gathering system info, so the
             caller learns the scraper did NOT register instead of failing silently.
+        RuntimeError: when the ``nodes`` table yields no id from either the select or the
+            insert -- for the same reason.
     """
     global pid
     global _container, pid, m_app_name, m_scraper_name, m_version, m_ip
@@ -118,7 +120,12 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
                 if _container.node_id is None:
                     db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
                 if _container.node_id is None:
-                    return None
+                    # Same contract as the get_system_info branch above: returning None here left
+                    # the caller with a scraper that never registered, never heartbeats and is
+                    # invisible to the monitoring system, without one log line saying why.
+                    raise RuntimeError(
+                        f"register_scraper: nodes table returned no id for scraper {scraper_name!r} (both select and insert failed to yield one); NOT registered"
+                    )
 
                 db.db_command(
                     "insert",

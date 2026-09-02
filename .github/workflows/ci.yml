@@ -36,40 +36,22 @@ jobs:
         cache-dependency-path: pyproject.toml
 
     - name: Install dependencies
-      # [nlp] pulls in spacy -> thinc>=8.3.12, which requires python>=3.10; drop it on
-      # 3.8/3.9 legs (pre-existing gap: this was failing "Install dependencies" outright
-      # on those legs, unrelated to python_version's own end of upstream support).
-      # [llm] pulls in google-genai>=1.0, which requires python>=3.9 (PyPI-declared
-      # Requires-Python floor, true since google-genai's first release) -- unusable on
-      # the 3.8 leg. Rather than dropping [llm] wholesale (factory.py eagerly imports
-      # pydantic-settings, breaking collection for every llm test), install the same
-      # [llm] package set MINUS google-genai directly on 3.8: gemini-specific tests
-      # already guard with pytest.importorskip("google.genai") (see test_llm_provider_audit_fixes.py,
-      # test_llm_account_credits.py, test_llm_live.py), so they skip cleanly instead of
-      # erroring, and every other provider's tests run unaffected.
-      # PYVER is passed via env: rather than interpolated directly into the script (${{ }}
-      # inside a shell command is a documented anti-pattern -- shellcheck/actionlint flag
-      # it (SC2102) and it's a latent injection risk if the expression value were ever
-      # less trusted).
-      shell: bash
-      env:
-        PYVER: ${{ matrix.python-version }}
+      # Single unconditional install for every matrix leg. The two Python-floor incompatibilities
+      # that used to force a per-leg hand-edited install command are now expressed as environment
+      # markers in pyproject.toml itself (`spacy ; python_version >= '3.10'` for [nlp]'s
+      # thinc>=8.3.12 floor, `google-genai ; python_version >= '3.9'` for [llm]), so pip resolves
+      # each leg correctly from metadata rather than from a hand-transcribed package list here
+      # that silently drifts whenever those groups change (2026-09-02 packaging audit).
       run: |
         python -m pip install --upgrade pip
-        if [[ "$PYVER" == "3.8" ]]; then
-          pip install -e ".[pandas,polars,database,system,cloud,dev]"
-          pip install "anthropic>=0.40" "httpx>=0.25" "tenacity>=8.0" "pydantic>=2.0" "pydantic-settings>=2.0" "tiktoken>=0.5"
-        elif [[ "$PYVER" == "3.9" ]]; then
-          pip install -e ".[pandas,polars,database,system,llm,cloud,dev]"
-        else
-          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
-        fi
+        pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
 
     - name: Download nltk punkt_tab data
-      # [nlp] (3.10-3.14 legs only) installs the nltk PACKAGE but not its corpora -- those are a
-      # separate runtime download, never bundled by pip. tests/test_tokenizers_extra.py's
+      # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
+      # download, never bundled by pip. tests/test_tokenizers_extra.py's
       # AdvancedTokenizer.tokenize() calls nltk.sent_tokenize(), which needs punkt_tab on disk.
-      if: matrix.python-version != '3.8' && matrix.python-version != '3.9'
+      # Runs on every leg now that [nlp] itself installs everywhere (only spacy is
+      # marker-gated to >=3.10); nltk has no such floor.
       run: python -c "import nltk; nltk.download('punkt_tab')"
 
     - name: Run tests with coverage
@@ -154,6 +136,21 @@ jobs:
       run: |
         pip install twine
         twine check dist/*
+
+    - name: Verify sdist ships tests + changelog
+      # MANIFEST.in is the only thing putting these in the tarball, and a MANIFEST typo fails
+      # silently (setuptools just omits the files). Found 2026-09-02: the sdist contained neither,
+      # so downstream redistributors could not run the suite against their own build.
+      run: |
+        python - <<'PY'
+        import glob, sys, tarfile
+        sdist = glob.glob("dist/*.tar.gz")[0]
+        names = tarfile.open(sdist).getnames()
+        missing = [w for w in ("/tests/", "/CHANGELOG.md") if not any(w in n for n in names)]
+        if missing:
+            sys.exit(f"sdist {sdist} is missing {missing} -- check MANIFEST.in")
+        print(f"sdist OK: {len(names)} entries, tests/ and CHANGELOG.md present")
+        PY
 
     - name: Install wheel + smoke import
       run: |

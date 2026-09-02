@@ -78,6 +78,11 @@ def build_upsert_query(
     validate_sql_identifier(table_name)
     if history_table_name:
         validate_sql_identifier(history_table_name)
+        # Without history_fields the fresh_data CTE gets no RETURNING clause, so the history INSERT
+        # below would emit `insert into <hist>() select  from fresh_data` -- a syntax error only
+        # discovered at execution time.
+        if not history_fields:
+            raise ValueError("history_table_name requires a non-empty history_fields list")
     for _identifier_list in (
         fields_names,
         conflict_fields,
@@ -217,9 +222,12 @@ def build_upsert_query(
                 if new_field not in f_:
                     f_ = [*f_, new_field]
 
-        if hash_fields:
-            join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
+        # The join predicate is the conflict key in BOTH branches: without it the trailing
+        # UPDATE ... FROM changed_data below degenerates into a cross join that overwrites the
+        # timestamp column on every row of the table.
+        join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
 
+        if hash_fields:
             hash_changing_conds = [
                 f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
                 for hash_field in hash_fields
@@ -228,18 +236,18 @@ def build_upsert_query(
 
             hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
         else:
-            join_condtion = None
             hist_query += f" returning {','.join(f_)}"
 
         hist_query += ")"
         query += hist_query
 
         if len(timestamp_update_fields) > 0:
-            assert len(timestamp_update_fields) == len(timestamp_check_fields)  # nosec B101 - arity guard so the zip() below pairs fields 1:1; both lists were already identifier-validated above
+            if len(timestamp_update_fields) != len(timestamp_check_fields):
+                raise ValueError(
+                    f"timestamp_update_fields ({len(timestamp_update_fields)}) and timestamp_check_fields ({len(timestamp_check_fields)}) must pair 1:1"
+                )
 
-            upd_fields_and_vals = ",".join(
-                [f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields + timestamp_check_fields)]
-            )
+            upd_fields_and_vals = ",".join([f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields)])
 
             the_join_condtion = f"where {join_condtion}" if join_condtion else ""
 

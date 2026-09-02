@@ -201,15 +201,14 @@ class TestEdgeCases:
                 os.remove(file_path)
 
     def test_unserialize_nonexistent_file(self):
-        """Test unserializing from non-existent file path returns None"""
-        result = unserialize("/nonexistent/path/to/file.pkl")
-        assert result is None
+        """A missing path raises: None is reserved for a successfully-unpickled None."""
+        with pytest.raises(FileNotFoundError):
+            unserialize("/nonexistent/path/to/file.pkl")
 
     def test_unserialize_unexpected_type(self):
-        """Test unserializing non-bytes non-str input"""
-        # Passing an integer (unexpected type) should log warning and return None
-        result = unserialize(42)
-        assert result is None
+        """An unsupported input type raises TypeError rather than returning None."""
+        with pytest.raises(TypeError):
+            unserialize(42)
 
     def test_unserialize_uncompressed_data(self):
         """Raw (non-zlib) pickle bytes must fall back to being read as raw pickle and decode

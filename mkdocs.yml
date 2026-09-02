@@ -8,6 +8,13 @@ copyright: Copyright &copy; Anatoly Alexeev — MIT License
 
 docs_dir: docs
 
+# Fail the build on any MkDocs warning -- a nav entry pointing at a missing file, a broken
+# internal link, or an unrecognised config key. Default is strict: false, i.e. warn-and-exit-0,
+# which made docs.yml's per-PR "validation" run structurally incapable of catching a renamed or
+# mistyped page (it would just ship a 404 on the published site). All five nav targets currently
+# resolve, so this is a no-cost ratchet (2026-09-02 audit).
+strict: true
+
 theme:
   name: material
   palette:

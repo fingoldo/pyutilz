@@ -33,6 +33,12 @@ jobs:
     uses: fingoldo/py-ci-shared/.github/workflows/docs.yml@v1
     with:
       default-branch: master
+      # Installs the [docs] extra rather than a hand-copied duplicate of its single pin, so a
+      # plugin later added to pyproject.toml's `docs` group (mkdocstrings, mkdocs-gen-files, ...)
+      # is actually present when the site builds instead of silently missing here. This drops the
+      # previous `--no-deps` (pip has no "extras only, skip the base package's own requirements"
+      # mode), so the job now also installs pyutilz's core runtime deps -- a few extra wheels on
+      # a job that runs once per PR, in exchange for the docs toolchain having exactly one
+      # declared source of truth.
       install-command: |
-        pip install -e . --no-deps
-        pip install "mkdocs-material>=9.5"
+        pip install -e ".[docs]"

@@ -204,9 +204,10 @@ class TestHardwareMonitorGuards:
         with patch.object(psutil, "cpu_freq", return_value=None), patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(
             psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)
         ), patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), patch(
-            "pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=None
-        ), patch(
-            "pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()
+            # Stopping from inside the sample keeps this to exactly one loop iteration; the loop
+            # waits on stop_flag instead of sleeping, so patching sleep no longer terminates it.
+            "pyutilz.system.hardware_monitor.get_nvidia_smi_info",
+            side_effect=lambda **kwargs: mon.stop_flag.set(),
         ):
             # single loop iteration then stop; pre-fix crashed on None.current
             mon.query_utilization()
@@ -222,9 +223,8 @@ class TestHardwareMonitorGuards:
         with patch.object(psutil, "cpu_freq", return_value=MagicMock(current=1000.0)), patch.object(psutil, "cpu_percent", return_value=1.0), patch.object(
             psutil, "virtual_memory", return_value=MagicMock(used=1, free=1)
         ), patch("pyutilz.system.hardware_monitor.get_own_memory_usage", return_value=1), patch(
-            "pyutilz.system.hardware_monitor.get_nvidia_smi_info", return_value=gpu_stats
-        ), patch(
-            "pyutilz.system.hardware_monitor.time.sleep", side_effect=lambda s: mon.stop_flag.set()
+            "pyutilz.system.hardware_monitor.get_nvidia_smi_info",
+            side_effect=lambda **kwargs: (mon.stop_flag.set(), gpu_stats)[1],
         ):
             # Pre-fix: int("N/A") -> ValueError crashed the thread function.
             mon.query_utilization()

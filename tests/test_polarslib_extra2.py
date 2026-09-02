@@ -581,11 +581,15 @@ class TestBinNumericalColumnsAdvanced:
         assert isinstance(bins, pl.DataFrame)
 
     def test_stats_empty_df(self, mock_clean):
-        # line 753: empty stats dict when no rows — triggers error in polars,
-        # so we just verify it raises or handles gracefully
+        # A frame with no rows has no min/max, so every column is dead and nothing is left to bin.
+        # This used to escape as a raw polars OutOfBoundsError from a .row(0) on a 0-column frame;
+        # an empty-in/empty-out result is the contract a caller can actually act on.
         df = pl.DataFrame({"a": pl.Series([], dtype=pl.Float64)}).lazy()
-        with pytest.raises(Exception):
-            bin_numerical_columns(df, target_columns=[], verbose=0)
+        bins, binned_targets, public_clips, columns_to_drop, _ = bin_numerical_columns(df, target_columns=[], verbose=0)
+        assert bins.width == 0
+        assert columns_to_drop == ["a"]
+        assert public_clips == {}
+        assert binned_targets is None
 
     def test_verbose_level2(self, mock_clean):
         # lines 731, 839: verbose > 1 triggers info logs

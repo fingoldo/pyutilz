@@ -11,7 +11,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 ## Findings
 
 ### F01. [High] `np.allclose`'s default rtol=1e-5 makes the "constant column" test drop columns with real variation — src/pyutilz/data/polarslib.py:1055 (and the identical check at :872)
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — both `np.allclose` guards replaced with exact `min_val == max_val` (relative rtol=1e-5 no longer drops large-magnitude varying columns), src/pyutilz/data/polarslib.py:889 (bin_numerical_columns) and :1084 (drop_constant_columns).
 - **Category**: statistical-formula-error / silent-data-loss
 - **Problem**: Both `drop_constant_columns` (line 1055) and `bin_numerical_columns` (line 872) decide "no change" with `np.allclose(min_val, max_val)`. `np.allclose` is a *relative* comparison (`|a-b| <= atol + rtol*|b|`, atol=1e-8, rtol=1e-5), not an equality test, so any column whose value range is under 1e-5 of its own magnitude is declared constant and dropped. Observed:
 
@@ -28,7 +28,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Use exact equality (`min_val == max_val`) — polars min/max return the actual stored values and the `None` pre-check already covers all-null columns — or, if a tolerance is genuinely wanted, make it explicit and caller-supplied (`np.isclose(min_val, max_val, rtol=rtol, atol=atol)` with `rtol=0.0` default) rather than inheriting numpy's 1e-5.
 
 ### F02. [High] `bin_numerical_columns` crashes with a raw polars `OutOfBoundsError` on empty, single-row, or all-constant frames — src/pyutilz/data/polarslib.py:966
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `bin_numerical_columns` now returns early with empty bins when every column was dropped, instead of hitting `.row(0)` on a 0-column frame, src/pyutilz/data/polarslib.py:975.
 - **Category**: empty-input-edge-case / crash
 - **Problem**: After the dead-column pass drops every constant column, `df` can have zero columns. Line 966 (`fill_nulls=True`, the default) then runs `df.lazy().select(pl.all().null_count()).collect().row(0, named=True)`; `pl.all()` over a zero-column frame collects to a 0-row 0-column frame, and `.row(0)` raises. Observed for three separate inputs:
 
@@ -46,7 +46,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Guard the post-drop block on `df.width == 0` (return `(pl.DataFrame(), binned_targets, public_clips, columns_to_drop, stats)` early), and/or width-check before the `.row(0, named=True)` reads at lines 966 and 968.
 
 ### F03. [Medium] `clean_numeric` silently converts NULL to `nans_filler`, conflating "not computable" with a real value — src/pyutilz/data/polarslib.py:82
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `clean_numeric` preserves nulls by default (explicit `is_null` branch) with an opt-in `fill_nulls=True` for the old behavior, src/pyutilz/data/polarslib.py:72.
 - **Category**: null-vs-nan-handling
 - **Problem**: The docstring promises "Replace non-finite floats (inf, -inf, NaN) with `nans_filler`", but `pl.when(expr.is_finite()).then(expr).otherwise(...)` also catches nulls: `null.is_finite()` is null, and polars treats a null `when` predicate as false, so the `otherwise` branch fires. Observed:
 
@@ -60,7 +60,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Either let nulls pass through explicitly (`pl.when(expr.is_null()).then(expr).when(expr.is_finite()).then(expr).otherwise(lit)`) behind an opt-in `fill_nulls: bool = False` parameter, or keep the behavior but document it and give callers a way to distinguish "was null" — silently filling is the one option that hides it.
 
 ### F04. [Medium] `optimize_dtypes(..., inplace=False)` still mutates the caller's DataFrame in the object->numeric branch — src/pyutilz/data/pandaslib/dtypes.py:118, 123
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `optimize_dtypes` copies the frame up front when `inplace=False`, so the object->int64/float64 probing no longer writes through to the caller, src/pyutilz/data/pandaslib/dtypes.py:93.
 - **Category**: copy-vs-view / inplace-contract-violation
 - **Problem**: The size-reduction branch correctly guards its writes with `if inplace: df[col] = ...` (lines 230-231) and returns `df.astype(new_dtypes)` when `inplace=False`. But the earlier object/string handling writes `df[col] = candidate` (line 118) and `df[col] = df[col].astype(np.float64)` (line 123) unconditionally, with no `inplace` check. Observed:
 
@@ -76,7 +76,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: In the `max_categories` block, compute the candidate into a local and assign back only under `if inplace:`; when `inplace=False`, record the target dtype in `new_dtypes` (as the size-reduction branch already does) and let the final `df.astype(new_dtypes)` apply it.
 
 ### F05. [Medium] `share_dataframe` silently discards the caller's index — src/pyutilz/data/pandaslib/frames.py:389
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `share_dataframe` restores the caller's index on the shared frame (index assignment, no buffer copy), src/pyutilz/data/pandaslib/frames.py:394.
 - **Category**: index-alignment
 - **Problem**: The shared pieces are built from `sub.values` (positional) and reassembled with `pd.DataFrame({c: pieces[c] for c in df.columns})`, which gives the result a fresh `RangeIndex`. Nothing in the docstring mentions the index. Observed:
 
@@ -89,7 +89,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Pass the original index through (`pd.DataFrame({...}, index=df.index)`), or document loudly that the returned frame is positionally indexed and callers must reset their own frames to match.
 
 ### F06. [Medium] `remove_constant_columns` and `get_non_stale_columns` disagree on null semantics, so one drops a column the other keeps — src/pyutilz/data/pandaslib/frames.py:440 vs :407
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `get_suspiciously_constant_columns` (both the vectorized and the per-column fallback path) and `remove_constant_columns`'s full-column recheck now use `nunique(dropna=False)`, matching `get_non_stale_columns` and the docstring, src/pyutilz/data/pandaslib/frames.py:451,461,489.
 - **Category**: null-handling / api-inconsistency
 - **Problem**: `get_non_stale_columns` uses `df.nunique(dropna=False)` (with an inline comment explaining exactly why). Its sibling `get_suspiciously_constant_columns` — the screening step for `remove_constant_columns` — uses bare `df.nunique()`, i.e. `dropna=True`. A column with one real value plus nulls therefore has nunique 2 for one function and 1 for the other. Observed on the same frame:
 
@@ -105,14 +105,14 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Make `get_suspiciously_constant_columns` use `nunique(dropna=False)` to match its sibling and its own docstring (the all-NaN case still yields nunique==1 and stays flagged), or add an explicit `dropna` parameter threaded from `remove_constant_columns` with the same default in both.
 
 ### F07. [Low] `normality_verdict` reports "too-few-samples" for 8 <= n < 20 although Anderson-Darling is valid there — src/pyutilz/stats/normality.py:274
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `normality_verdict`'s early return lowered to `n_total < 8` and the 8..19 range now reports an `AD-only (n<20)`-prefixed verdict, src/pyutilz/stats/normality.py:288 and :329.
 - **Category**: degenerate-input / stats
 - **Problem**: `anderson_darling_normal` explicitly supports `n >= 8` (lines 195-197), and `dagostino_k2` returns NaN below 20 which the `np.isfinite` guards on `reject_k2`/`reject_ad` already handle. But `normality_verdict` short-circuits the whole function at `n_total < 20`, so A-D never runs on samples of 8..19. Observed: `normality_verdict(rng.normal(size=10))["verdict"] -> 'too-few-samples'`, with `ad_stat`/`ad_p` both NaN even though `anderson_darling_normal` would have produced a finite statistic.
 - **Failure scenario**: A per-group residual audit on small groups (n=10..19) reports "too-few-samples" and `reject_normal=False` for every such group, so a strongly non-Normal small group is indistinguishable from an untested one.
 - **Suggested fix**: Lower the early-return threshold to `n_total < 8`, letting the existing `np.isfinite(k2_p)` guard handle the still-NaN K2 half, and use a distinct verdict string (e.g. "AD-only (n<20)") so the caller knows only one test ran.
 
 ### F08. [Low] `div0` replaces legitimately infinite *inputs*, not just division-by-zero results — src/pyutilz/data/numpylib.py:85
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `div0` masks on the denominator (`b == 0` or non-finite `b`) instead of on the quotient, so infinite inputs and overflow results survive, src/pyutilz/data/numpylib.py:81.
 - **Category**: nan-inf-handling
 - **Problem**: The docstring frames the function as "a / b, divide by 0 -> fill", but the implementation masks on the *result* being non-finite, which also catches an inf that arrived in `a` or came from overflow. Observed:
 
@@ -126,7 +126,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Mask on the denominator (`b == 0` / `~np.isfinite(b)`) rather than on the quotient, or document that any non-finite result — including from non-finite inputs and from overflow — is replaced.
 
 ### F09. [Low] `optimize_dtypes`'s float32 precision guard rounds the mantissa to 14 significant digits, so it cannot see losses beyond that — src/pyutilz/data/pandaslib/dtypes.py:213
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — the 15-significant-digit limit of the mantissa heuristic is documented and an opt-in `exact_float_roundtrip=True` adds a bit-exact float32->float64 round-trip gate; left off by default because a strict round-trip also rejects ordinary decimals (0.1) the decimal heuristic deliberately accepts, src/pyutilz/data/pandaslib/dtypes.py:80,236.
 - **Category**: dtype-precision
 - **Problem**: `ensure_float64_precision=True` (default) is described as ensuring "we are not losing precision", but the check first does `np.round(values / 10**int_part, np.finfo('float64').precision - 1)` — 14 decimals of the mantissa — so any distinction living in digits 15-17 of a float64 is erased *before* the test. Observed with default settings (`float_to_int=False`):
 
@@ -140,7 +140,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Add a direct round-trip check alongside the mantissa heuristic — `np.array_equal(values.astype(f'float{p}').astype(np.float64), values, equal_nan=True)` — or at minimum document that the guard protects decimal-repr fidelity to 14 significant digits, not bit-exactness.
 
 ### F10. [Low] `classify_column_types` reports period / interval / timedelta dtypes as numeric — src/pyutilz/data/pandaslib/dtypes.py:269
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `col_is_numeric` is now a positive `pd.api.types.is_numeric_dtype` test minus the bool/object/datetime/category buckets, so period/interval/timedelta are no longer numeric (Sparse[float64] stays numeric -- pandas itself calls it numeric), src/pyutilz/data/pandaslib/dtypes.py:292.
 - **Category**: dtype-classification
 - **Problem**: `col_is_numeric` is computed by exclusion (`not (bool or object or datetime or category)`), so every dtype outside those four buckets falls through to "numeric". Observed:
 
@@ -156,7 +156,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Compute `col_is_numeric` positively via `pd.api.types.is_numeric_dtype(dtype)`, keeping the existing boolean/object/datetime/categorical flags as they are.
 
 ### F11. [Low] `get_non_stale_columns` returns ALL columns for a 0-row frame but NONE for a 1-row frame — src/pyutilz/data/pandaslib/frames.py:401, 407
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `get_non_stale_columns` returns all columns for `len(df) <= 1` (a single row carries no evidence of staleness), documented in the docstring, src/pyutilz/data/pandaslib/frames.py:405.
 - **Category**: empty-input-edge-case
 - **Problem**: The explicit `len(df) == 0` early return hands back every column, while a single-row frame falls into `nunique(dropna=False) <= 1`, true for every column by construction. Observed:
 
@@ -170,7 +170,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Return all columns for `len(df) <= 1` (matching the 0-row convention — a single row carries no evidence of staleness) and say so in the docstring.
 
 ### F12. [Low] `showcase_df_columns`'s uninformative-fraction divides by the full row count even when `dropna=True` — src/pyutilz/data/pandaslib/frames.py:266 (polars) and :300 (pandas)
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `showcase_df_columns` derives both `rare_threshold` and the uninformative-fraction denominator per column from the value_counts total actually in play, in the polars and the pandas branch alike, src/pyutilz/data/pandaslib/frames.py:262 and :297.
 - **Category**: null-handling / statistic-denominator
 - **Problem**: `height` is `len(df)` / `df.height` regardless of `dropna`, while the counts it divides come from `value_counts(dropna=dropna)`, which excluded nulls. `rare_threshold = max_unique_percent * height` has the same mismatch. Observed on `{"c": ["a"]*97 + ["b"]*1 + [None]*2}` with `max_unique_percent=0.02`:
 
@@ -184,7 +184,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Take the denominator from the value_counts total actually in play (`sum(counts)` / `vc["count"].sum()`) rather than the frame height, and derive `rare_threshold` from that same total.
 
 ### F13. [Low] `polars_df_info` always prints GB (local misnamed `size_kb`), showing "0.0+ GB" for anything under ~50 MB — src/pyutilz/data/polarslib.py:1089
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `polars_df_info` auto-scales bytes/KB/MB/GB like pandas `.info()` and the local is renamed `size`, src/pyutilz/data/polarslib.py:1108.
 - **Category**: reporting / naming
 - **Problem**: `size_kb = df.estimated_size(unit="gb")` then `f"memory usage: {size_kb:.1f}+ GB"` — the unit is hardcoded to gigabytes at one decimal, so a function whose docstring calls itself "pandas-`.info()`-style" reports nothing usable for ordinary frames, unlike pandas which auto-scales bytes/KB/MB. Observed:
 
@@ -199,7 +199,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Pick the unit by magnitude (bytes/KB/MB/GB) the way `pandas.DataFrame.info()` does, and rename the local to `size`.
 
 ### F14. [Low] `convert_float64_to_float32` mutates its input in place while presenting a return-value API — src/pyutilz/data/pandaslib/dtypes.py:373
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `convert_float64_to_float32` copies the frame first, matching its documented sibling's never-mutates contract, src/pyutilz/data/pandaslib/dtypes.py:389.
 - **Category**: copy-vs-view
 - **Problem**: The function assigns `df[col] = df[col].astype(np.float32)` on the caller's frame and also returns it, with no `.copy()` and no note in the docstring — while its documented replacement `ensure_dataframe_float32_convertability` explicitly promises "Always returns a NEW object and never mutates the input in place". Observed:
 
@@ -212,14 +212,14 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: `df = df.copy()` at the top (matching the sibling's documented contract), or document the in-place mutation in the docstring.
 
 ### F15. [Low] `ensure_dataframe_float32_convertability` references `pl.Int128` unguarded while the sibling `cast_f64_to_f32` guards it with `hasattr` — src/pyutilz/data/pandaslib/dtypes.py:335
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — new shared `polars_castable_int_dtypes()` helper (hasattr-guarded Int128) in src/pyutilz/data/polarslib.py:96, consumed by `cast_f64_to_f32` and by `ensure_dataframe_float32_convertability` src/pyutilz/data/pandaslib/dtypes.py:349.
 - **Category**: version-compat-inconsistency
 - **Problem**: `polarslib.cast_f64_to_f32` builds its dtype list defensively (`if hasattr(pl, "Int128"): int_types.append(pl.Int128)`, with a comment noting Int128 is absent in older polars), but `dtypes.py:335` hardcodes `pl.Int128` inside the selector list. On the installed polars 1.33.1 both work; in any environment where the `hasattr` guard is actually needed, this line raises `AttributeError` at call time. The two functions are documented as mirrors of each other (see `cast_f64_to_f32`'s docstring), so the divergence is unintentional.
 - **Failure scenario**: A consumer pinned to an older polars — the exact case the guard exists for — gets `AttributeError: module 'polars' has no attribute 'Int128'` from `ensure_dataframe_float32_convertability`'s polars branch, while the pandas branch and `cast_f64_to_f32` work fine.
 - **Suggested fix**: Build the dtype list the same way in both places — a shared module-level helper returning the int dtype list, used by `cast_f64_to_f32` and by this function.
 
 ### F16. [Low] `get_topk_indices` returns arbitrary indices for an all-NaN slice with no signal — src/pyutilz/data/numpylib.py:429-446
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — degenerate all-NaN/partially-NaN behavior documented, plus an opt-in `require_finite=True` that returns -1 for slots with no finite value, src/pyutilz/data/numpylib.py:25,71.
 - **Category**: nan-handling / degenerate-input
 - **Problem**: The NaN substitution maps every element to the same sentinel (`-inf` for `highest`, `+inf` for `lowest`), so on an all-NaN input the argpartition order is arbitrary and the caller gets a valid-looking index. Observed:
 
@@ -234,7 +234,7 @@ Findings: 2 High, 4 Medium, 11 Low (17 total).
 - **Suggested fix**: Document the behavior precisely, and/or offer an opt-in that returns `-1` (or raises) for slices with fewer than `k` finite values — the information is already available from the `np.isnan` mask that is computed anyway.
 
 ### F17. [Low] `entropy_for_column` / `mi_for_column` count null as an ordinary bin category — src/pyutilz/data/polarslib.py:747, 752
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED — `drop_nulls` parameter threaded through `_group_freqs`/`entropy_for_column`/`mi_for_column` (default False preserves the current null-as-its-own-bin behavior, now stated in the docstrings), src/pyutilz/data/polarslib.py:742,769,779.
 - **Category**: null-handling
 - **Problem**: `_group_freqs` uses `bins.group_by(cols)`, and polars `group_by` emits null as its own group, so nulls contribute real probability mass to the Shannon entropy. Observed:
 

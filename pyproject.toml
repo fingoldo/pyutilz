@@ -1,5 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# setuptools>=77 is where PEP 639 support lands (`license = "MIT"` as an SPDX expression plus
+# `license-files`), replacing the deprecated `license = {text = ...}` table and the
+# `License :: OSI Approved ::` classifier -- setuptools announced a hard removal date of
+# 2027-Feb-18 for both, at which point `python -m build` would start failing outright.
+# `wheel` is deliberately not listed: setuptools.build_meta declares it itself via
+# get_requires_for_build_wheel(), so an explicit entry is the legacy `setup.py bdist_wheel`
+# pattern and only pins an extra package into every isolated build env. This is a BUILD-time
+# requirement only (setuptools 77 itself needs Python >=3.9); it does not narrow the package's
+# own runtime requires-python = ">=3.8", and CI/publish both build on 3.11.
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +16,8 @@ name = "pyutilz"
 version = "1.0.0"
 description = "Modular utilities for dataframes, databases, web scraping, cloud storage, system introspection, parallelism, and a unified async LLM-provider interface (Anthropic, OpenAI, Gemini, and more) — few hard dependencies, install only what you need beyond the core"
 authors = [{name = "Anatoly Alexeev"}]
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = [
@@ -20,7 +30,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -111,16 +120,14 @@ pandas = [
     # declared explicitly rather than relying on that transitive pull, matching the project's
     # existing convention for pandas' other hard transitive deps (see numpy's note above).
     "python-dateutil>=2.8",
-    # data/pandaslib/_common.py also does `from pyutilz.system.system import tqdmu,
-    # ensure_dir_exists` -- and pyutilz.system.system's own __init__.py eagerly imports ALL SIX
-    # of its submodules (not just fsutils/misc, whichever one actually defines these two names),
-    # so importing pyutilz.system.system AT ALL (for any single symbol) unconditionally needs
-    # every one of its submodules' own hard deps, including misc.py's tqdm+pympler. A full lazy,
-    # per-symbol-aware refactor of that package's __init__.py is out of scope for this fix;
-    # declaring the transitive requirement here (same "declare over invasive refactor" choice
-    # made throughout this dependency cleanup) is the proportionate fix.
-    "tqdm>=4.65",
-    "pympler>=1.0",
+    # pandas/tqdm/pympler are NOT redeclared here: all three are core [project.dependencies]
+    # (see their rationale there), so every install of this extra already has them. Why this
+    # group needs them at all is still worth recording: data/pandaslib/_common.py does
+    # `from pyutilz.system.system import tqdmu, ensure_dir_exists`, and pyutilz.system.system's
+    # own __init__.py eagerly imports ALL SIX of its submodules, so reaching it for any single
+    # symbol pulls misc.py's tqdm+pympler and memory.py's pandas. Redeclaring a core dep inside
+    # an extra buys nothing and creates up-to-six-place floor drift on the next bump
+    # (2026-09-02 packaging audit).
 ]
 polars = [
     # Bumped from the stale 0.18.0 floor (2026-07-21 audit): data/polarslib.py uses
@@ -139,10 +146,8 @@ polars = [
     # data/polarslib.py also does `from pyutilz.system.system import clean_ram`, which -- for
     # the same "eager-imports-all-six-submodules" reason documented on the "pandas" extras
     # group above -- transitively needs misc.py's tqdm+pympler AND memory.py's own pandas
-    # (+ pandas' own dateutil requirement), not just psutil (now core).
-    "tqdm>=4.65",
-    "pympler>=1.0",
-    "pandas>=1.5",
+    # (+ pandas' own dateutil requirement), not just psutil (now core). tqdm/pympler/pandas are
+    # themselves core dependencies now, so only pandas' own dateutil is declared here.
     "python-dateutil>=2.8",
 ]
 
@@ -166,8 +171,8 @@ database = [
     "python-dateutil>=2.8",
     "redis>=4.0",
     # database/db/__init__.py also unconditionally imports pandas (pd.read_sql calls) -- found
-    # 2026-07-21 audit, same undeclared-import class as dateutil/redis above.
-    "pandas>=1.5",
+    # 2026-07-21 audit, same undeclared-import class as dateutil/redis above; pandas is a core
+    # dependency now, so it is not redeclared here.
 ]
 
 # Web scraping packages
@@ -208,7 +213,14 @@ tensorflow = [
 
 # NLP packages
 nlp = [
-    "spacy>=3.0",
+    # spacy pulls thinc>=8.3.12, whose own Requires-Python floor is >=3.10 -- without this
+    # marker `pip install pyutilz[nlp]` is simply unresolvable on the 3.8/3.9 interpreters this
+    # package still declares support for (requires-python = ">=3.8"), and CI had to hand-drop
+    # [nlp] from those matrix legs. Expressing the constraint in metadata (matching the
+    # black/google-genai markers elsewhere in this file) makes the extra installable everywhere:
+    # every spacy import site in the codebase is already try/except-guarded (text/tokenizers.py),
+    # so 3.8/3.9 users get the rest of the group and a clean skip of the spacy-backed paths.
+    "spacy>=3.0 ; python_version >= '3.10'",
     "nltk>=3.8",
     "jellyfish>=0.9",
     "tiktoken>=0.5",
@@ -228,17 +240,20 @@ nlp = [
     # text/strings/__init__.py, webtext.py, basics.py, and textentropy.py all unconditionally
     # import pandas (numpy moved to core [project.dependencies], transitively required by numba)
     # -- found 2026-07-21 audit: no dedicated "text"/"strings" extras group exists, and this is
-    # the closest-matching domain extra for the text/strings subpackage. python-dateutil is
-    # pandas' own hard transitive dependency, declared explicitly for the same reason noted on
-    # the "pandas" extras group above.
-    "pandas>=1.5",
+    # the closest-matching domain extra for the text/strings subpackage. pandas is core now, so
+    # only its own hard transitive dependency python-dateutil is declared here, for the same
+    # reason noted on the "pandas" extras group above.
     "python-dateutil>=2.8",
 ]
 
 # LLM providers
 llm = [
     "anthropic>=0.40",
-    "google-genai>=1.0",
+    # google-genai declares Requires-Python >=3.9 (true since its first release), so an
+    # unmarked entry made `pip install pyutilz[llm]` fail outright on 3.8. The gemini-specific
+    # tests already guard with pytest.importorskip("google.genai"), and factory.py imports the
+    # provider lazily, so a 3.8 install just loses the Gemini provider rather than the group.
+    "google-genai>=1.0 ; python_version >= '3.9'",
     "httpx>=0.25",
     "tenacity>=8.0",
     "pydantic>=2.0",
@@ -248,16 +263,14 @@ llm = [
 
 # System utilities
 system = [
-    "tqdm>=4.65",
-    "pympler>=1.0",
-    # numba, joblib, portalocker, psutil moved to the core [project.dependencies] list above --
-    # required unconditionally by core/pythonlib.py / pyutilz.system.system, not specific to
-    # this "system" domain.
-    # system/parallel.py (applyfunc_parallel's return_dataframe=True default path) and
-    # system/system/memory.py both unconditionally import pandas -- found 2026-07-21 audit.
+    # numba, joblib, portalocker, psutil, tqdm, pympler and pandas all moved to the core
+    # [project.dependencies] list above -- required unconditionally by core/pythonlib.py /
+    # pyutilz.system.system (whose __init__.py eagerly imports all six submodules, including
+    # misc.py's tqdm+pympler and memory.py's pandas), not specific to this "system" domain, and
+    # deliberately not redeclared here (2026-09-02 packaging audit: a core dep re-listed in an
+    # extra is pure floor-drift surface -- the extra can never be installed without it).
     # python-dateutil is pandas' own hard transitive dependency, declared explicitly for the
     # same reason noted on the "pandas" extras group above (numpy itself is core, see above).
-    "pandas>=1.5",
     "python-dateutil>=2.8",
     # core/image.py and core/matrix.py import Pillow/scipy unconditionally at module level;
     # neither maps to an existing domain extra, so they'd otherwise be genuinely undeclared
@@ -278,20 +291,38 @@ system = [
 # [[tool.mypy.overrides]] below) with its own minimal numpy-only requirement, distinct from the
 # heavier pandas/system stacks. Found 2026-07-21 audit: stats/normality.py unconditionally
 # imports numpy with no matching extras group of its own.
-stats = [
-    "numpy>=1.20",
-]
+# Its sole member, numpy, is a core [project.dependencies] entry now, so this group is an empty,
+# documented alias: `pip install pyutilz[stats]` keeps working (and keeps the subpackage
+# discoverable) without a second copy of a floor that would then have to be bumped twice.
+stats = []
 
 # GPU acceleration (cupy). Every cupy import site in the codebase is already
 # try/except-guarded (kernel_tuning device probing, gpu_dispatch.py) -- this extra
 # exists purely for discoverability (`pip install pyutilz[gpu]`) rather than to make
 # cupy required. Deliberately excluded from `all` (mirrors mlframe's [gpu] extra):
 # cupy's cudaXX-specific wheel resolution doesn't belong in a default "everything" install.
+# Installability caveat (2026-09-02 audit): the `cupy` project on PyPI publishes an SDIST ONLY --
+# the prebuilt binaries live under the CUDA-version-specific names (cupy-cuda12x, cupy-cuda11x,
+# cupy-rocm-*). `pip install pyutilz[gpu]` therefore triggers a full local NVCC source build,
+# needing a complete CUDA toolkit rather than just a driver. Callers who want a wheel should
+# install the matching binary package themselves (`pip install cupy-cuda12x`) and skip this extra
+# entirely; nothing breaks without it, since every cupy import site in the codebase is
+# try/except-guarded.
 gpu = [
     "cupy>=12.0",
 ]
 
-# All optional dependencies (self-referential to avoid duplication/drift)
+# All optional dependencies (self-referential to avoid duplication/drift).
+#
+# Deliberately EXCLUDED, and this comment is the single source of truth for why (previously it was
+# recorded only in .github/workflows/mypy-full.yml): `gpu` (source-only cupy, see its own note
+# above), `dash` (flask + dash + dash-bootstrap-components -- a whole web-server stack for one
+# niche notebook-dashboard helper, dev/dashlib.py), `prefect` (a full workflow-orchestration
+# runtime with a large transitive tree, for system/scheduling/prefect.py) and `tensorflow` (a
+# multi-hundred-MB ML framework used by exactly one function, system/parallel.py's set_tf_gpu()).
+# Consequence to keep in mind: `pip install pyutilz[all]` canNOT import pyutilz.dev.dashlib or
+# pyutilz.system.scheduling.prefect -- add the matching extra explicitly, e.g.
+# `pip install "pyutilz[all,dash]"`.
 all = [
     "pyutilz[pandas,polars,database,web,cloud,nlp,llm,system,stats]",
 ]
@@ -299,9 +330,8 @@ all = [
 # Development dependencies
 dev = [
     # dev/benchmarking.py unconditionally imports numpy -- found 2026-07-21 audit: no extras
-    # group covering the dev domain declared it (a contributor running `pip install .[dev]`
-    # alone, without also `[pandas]`/`[system]`/etc., could not import this module).
-    "numpy>=1.20",
+    # group covering the dev domain declared it. numpy is a core dependency now (numba needs it
+    # at import time), so `pip install .[dev]` alone gets it without a redundant redeclaration.
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
@@ -320,10 +350,14 @@ dev = [
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
     "mypy>=1.0",
     "bandit>=1.7",
-    # needed by .pre-commit-config.yaml's local hooks; py-ci-shared itself requires-python >=3.9,
-    # so the marker keeps `pip install .[dev]` installable on the py3.8 CI matrix cell (dev-only
-    # tooling, not a runtime dependency -- py3.8 CI coverage doesn't need pre-commit hooks to work).
-    "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'"
+    # py-ci-shared (needed by .pre-commit-config.yaml's local hooks) is deliberately NOT declared
+    # here: PyPI rejects any distribution whose metadata carries a PEP 440 direct reference
+    # (`400 ... Can't have direct dependency`), and `twine check` does not catch it -- so a
+    # `git+https://` requirement anywhere in [project] (even in a dev-only extra, since extras
+    # still land in the wheel's Requires-Dist) makes the whole package unpublishable, failing only
+    # at the final upload step of publish.yml. It lives in requirements-dev.txt instead; install
+    # contributor tooling with `pip install -e ".[dev]" -r requirements-dev.txt`. publish.yml has
+    # a metadata gate that fails the release build if a direct reference ever reappears here.
 ]
 
 # Documentation site (MkDocs Material). Build with `mkdocs build` / serve with `mkdocs serve`.
@@ -547,7 +581,7 @@ verbose = 1
 # .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py),
 # the sole confirmed false positive as of the 2026-07-05 codespell setup.
 [tool.codespell]
-ignore-words-list = "coo,caf,re-uses"
+ignore-words-list = "coo,caf,re-uses,re-using,unparseable"
 
 # MyPy type checker
 [tool.mypy]

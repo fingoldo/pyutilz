@@ -86,6 +86,13 @@ def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=No
     except_flow_id - can be used to check if instance if OTHER flows with some labels are already running.
     ie, allows training flow to wait till other ML tasks have completed
 
+    anyof_labels - a flow run matches when it carries AT LEAST ONE of these labels.
+
+    allof_labels - a flow run matches when it carries ALL of these labels.
+
+    Both label filters are independent and are applied CONJUNCTIVELY when both are supplied
+    (anyof_labels used to win outright, silently ignoring allof_labels). When neither is
+    supplied, every running flow run matches.
     """
     flows = get_flows_and_runs(status="Running")
     if flows:
@@ -102,16 +109,12 @@ def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=No
                 if except_flowrun_id:
                     if except_flowrun_id==flow_run_id: continue
                 flow_labels=set(flow_run.get("labels",[]))
-                if len(anyof_labels)>0:
-                    if anyof_labels.intersection(flow_labels):
-                        results.append(flow)
-                        break
-                elif len(allof_labels) > 0:
-                    if allof_labels.issubset(flow_labels):
-                        results.append(flow)
-                        break
-                else:
-                    results.append(flow)
+                if len(anyof_labels) > 0 and not anyof_labels.intersection(flow_labels):
+                    continue
+                if len(allof_labels) > 0 and not allof_labels.issubset(flow_labels):
+                    continue
+                results.append(flow)
+                break
         return results
     return []
 
@@ -123,7 +126,13 @@ def wait_for_absense_of_tasks(
     max_retries: int = 60,
     logger: Optional[logging.Logger] = None,
 ):
-    """Poll (sleeping ``sleep_seconds`` between attempts, up to ``max_retries`` times) until no flow run carrying ALL of ``labels`` (default ``{"ml", "gpu"}``) is running; returns True once clear, False if retries are exhausted."""
+    """Wait until no flow run carrying ALL of ``labels`` (default ``{"ml", "gpu"}``) is running.
+
+    Sleeps ``sleep_seconds`` at most ``max_retries`` times; the state is re-checked after each
+    sleep (so there is one final check after the last sleep) and the total wait never exceeds
+    ``max_retries * sleep_seconds``. Returns True once clear, False once the retries are
+    exhausted.
+    """
     if labels is None:
         labels = {"ml", "gpu"}
     n = 0

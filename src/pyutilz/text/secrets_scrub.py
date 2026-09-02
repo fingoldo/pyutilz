@@ -26,13 +26,17 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # DSN credentials, "scheme://user:pass@host" form (any scheme).  # pragma: allowlist secret
 # ---------------------------------------------------------------------------
-# The middle ``.+`` is greedy and the trailing group anchors to the LAST ``@``. This is
-# deliberate: it guarantees the credential is ALWAYS fully masked, even when the password itself
-# contains ``@`` (e.g. ``user:p@ss@host``). The trade-off is cosmetic over-masking when an
-# unrelated ``@`` (e.g. an email address) appears later in the same string -- that errs on the
-# safe side (never under-masks / never leaks the password) over a non-greedy ``.+?`` which would
-# stop at the first ``@`` and leak the tail of an ``@``-containing password.
-DSN_PASSWORD_RE = re.compile(r"(://[^:]+:).+(@)")
+# The middle password run is greedy and the trailing group anchors to the LAST ``@`` within the
+# same non-whitespace run. This is deliberate: it guarantees the credential is ALWAYS fully
+# masked, even when the password itself contains ``@`` (e.g. ``user:p@ss@host``). The trade-off is
+# cosmetic over-masking when an unrelated ``@`` (e.g. an email address) appears later in the same
+# token -- that errs on the safe side (never under-masks / never leaks the password) over a
+# non-greedy match which would stop at the first ``@`` and leak the tail of the password.
+# The username part is ``*`` not ``+``: ``redis://:password@host`` (empty user) is the standard
+# password-only Redis/valkey URL form, and the old ``[^:]+`` skipped it entirely. The password
+# run is bounded to non-whitespace so a greedy match cannot span two DSNs separated by ordinary
+# text -- that deleted the intervening prose and the first DSN's host.
+DSN_PASSWORD_RE = re.compile(r"(://[^:@/\s]*:)[^\s]+(@)")
 
 # libpq also accepts the password as a query-string parameter (``?password=...``); without this,
 # DSNs using that form leak in full.
@@ -41,13 +45,22 @@ DSN_PASSWORD_QUERY_RE = re.compile(r"([?&]password=)[^&\s]+", re.I)
 # Scheme-qualified belt-and-suspenders DSN pattern -- catches a raw DSN embedded mid-sentence in
 # free-form exception text, fully redacting it (host included) rather than trying to preserve
 # DSN shape.
-DSN_SCHEME_RE = re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb)://[^\s:@/]+:[^\s@/]+@\S+")
+# ``*`` on the username for the same empty-username reason as DSN_PASSWORD_RE above; redis/amqp
+# are the schemes where the password-only DSN form is the common case.
+DSN_SCHEME_RE = re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb|rediss?|amqps?)://[^\s:@/]*:[^\s@/]+@\S+")
 
 # ---------------------------------------------------------------------------
 # Telegram bot tokens / Bearer / Authorization headers / token & api_key query params.
 # ---------------------------------------------------------------------------
 TELEGRAM_TOKEN_RE = re.compile(
-    r"/bot[A-Za-z0-9:_-]+/" r"|(?<=[?&])token=[^&\s]+" r"|(?<=[?&])api[_-]?key=[^&\s]+" r"|\bBearer\s+\S+" r"|Authorization:\s*Bearer\s+\S+",
+    # ``Basic`` is included alongside ``Bearer``: without it an ``Authorization: Basic <b64>``
+    # header fell through to SECRET_KEY_VALUE_RE, whose value pattern consumed only the word
+    # "Basic" and printed the base64-encoded user:pass in full.
+    r"/bot[A-Za-z0-9:_-]+/"
+    r"|(?<=[?&])token=[^&\s]+"
+    r"|(?<=[?&])api[_-]?key=[^&\s]+"
+    r"|\b(?:Bearer|Basic)\s+\S+"
+    r"|Authorization:\s*(?:Bearer|Basic)\s+\S+",
     re.IGNORECASE,
 )
 
@@ -66,7 +79,7 @@ TELEGRAM_TOKEN_RE = re.compile(
 # re-match that already-redacted text (value = the literal word "Bearer") and mangle it into
 # "Authorization=*** ***" (double redaction). "authorization: <token>" with no "Bearer" word is
 # unaffected and still redacted normally.
-SECRET_KEY_VALUE_RE = re.compile(r"(?i)(password|passwd|api[_-]?key|token|secret|authorization|auth)\s*[:=]\s*(?!Bearer\b)\S+")
+SECRET_KEY_VALUE_RE = re.compile(r"(?i)(password|passwd|api[_-]?key|token|secret|authorization|auth)\s*[:=]\s*(?!(?:Bearer|Basic)\b)\S+")
 
 
 def sanitize_dsn(text: str) -> str:
@@ -100,9 +113,12 @@ def _telegram_sub(m: "re.Match[str]") -> str:
     matched = m.group(0)
     lower = matched.lower()
     if lower.startswith("authorization:"):
-        return "Authorization: Bearer ***"
+        scheme = "Basic" if "basic" in lower else "Bearer"
+        return f"Authorization: {scheme} ***"
     if lower.startswith("bearer"):
         return "Bearer ***"
+    if lower.startswith("basic"):
+        return "Basic ***"
     return "***"
 
 

@@ -127,6 +127,13 @@ class GeminiProvider(LLMProvider):
         # PerCallAttr class-level descriptors (declared above __init__) provide the defaults;
         # nothing to initialize here.
         self.total_cached_content_tokens = 0
+        # Cumulative session accounting, so get_session_cost() can report spend the same way every
+        # other provider does. Without these the class had no get_session_cost at all, and a
+        # provider-agnostic cost dashboard raised AttributeError on Gemini alone.
+        self._call_count = 0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_reasoning_tokens = 0
         # Phase-4 multi-candidate + cache support.
         # ``candidate_count``: how many response candidates to ask for in
         # one call (Gemini supports up to ~8). The first is returned by
@@ -161,6 +168,46 @@ class GeminiProvider(LLMProvider):
         defaults pointing there, so True is safe across the supported
         catalogue."""
         return True
+
+    async def generate_json(
+        self,
+        prompt: str,
+        system: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 0,
+    ) -> dict[str, Any]:
+        """Generate structured JSON output, using Gemini's NATIVE JSON mode.
+
+        Without this override, base.generate_json forwarded no generate_kwargs, so ``json_mode``
+        stayed False and ``response_mime_type="application/json"`` was never sent: a caller
+        branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
+        output that extract_json then mis-parsed looked like a model failure.
+        """
+        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True)
+
+    def get_session_cost(self) -> dict[str, Any]:
+        """Return cumulative token usage and cost breakdown for this session.
+
+        Cached prompt tokens are billed at the ``_CACHE_HIT_COST`` rate (which was otherwise
+        unreferenced dead code) rather than the full input rate.
+        """
+        in_rate, out_rate = self._get_pricing()
+        cache_hit = min(self.total_cached_content_tokens, self.total_prompt_tokens)
+        cache_miss = self.total_prompt_tokens - cache_hit
+        cache_rate = self._CACHE_HIT_COST.get(self.model_name, in_rate)
+        input_cost = (cache_miss / 1_000_000) * in_rate + (cache_hit / 1_000_000) * cache_rate
+        output_cost = ((self.total_completion_tokens + self.total_reasoning_tokens) / 1_000_000) * out_rate
+        return {
+            "calls": self._call_count,
+            "prompt_tokens": self.total_prompt_tokens,
+            "cache_hit_tokens": cache_hit,
+            "cache_miss_tokens": cache_miss,
+            "completion_tokens": self.total_completion_tokens,
+            "reasoning_tokens": self.total_reasoning_tokens,
+            "input_cost_usd": input_cost,
+            "output_cost_usd": output_cost,
+            "total_cost_usd": input_cost + output_cost,
+        }
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)) | retry_if_exception(_is_retryable_genai_error),
@@ -225,6 +272,10 @@ class GeminiProvider(LLMProvider):
                 }
                 self.last_cached_content_tokens = self._last_usage["cached_content_token_count"]
                 self.total_cached_content_tokens += self.last_cached_content_tokens
+                self._call_count += 1
+                self.total_prompt_tokens += self._last_usage["input_tokens"]
+                self.total_completion_tokens += self._last_usage["output_tokens"]
+                self.total_reasoning_tokens += self._last_usage["reasoning_tokens"]
 
             # Safety-filter detection: Gemini returns finish_reason=SAFETY
             # when the response is blocked. response.text may be empty or
@@ -240,6 +291,14 @@ class GeminiProvider(LLMProvider):
                         "finish_reason": self._last_finish_reason,
                         "safety_ratings": self.last_safety_ratings,
                     },
+                )
+            # Checked BEFORE the empty-text branches below: a thinking-enabled model with a tight
+            # max_tokens returns finish_reason=MAX_TOKENS with empty text, and reporting that as
+            # LLMSafetyBlockError ("do not retry") permanently abandoned a call whose documented
+            # remedy is "double max_tokens and re-issue".
+            if "MAX_TOKENS" in _fr:
+                raise LLMTruncationError(
+                    f"Gemini response truncated by max_tokens (finish_reason={self._last_finish_reason})", finish_reason=self._last_finish_reason
                 )
             try:
                 text_out = response.text
@@ -259,12 +318,6 @@ class GeminiProvider(LLMProvider):
                         "finish_reason": self._last_finish_reason,
                         "safety_ratings": self.last_safety_ratings,
                     },
-                )
-            if "MAX_TOKENS" in _fr:
-                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
-                # never actually raised anywhere -- see openai_compat.py's identical fix.
-                raise LLMTruncationError(
-                    f"Gemini response truncated by max_tokens (finish_reason={self._last_finish_reason})", finish_reason=self._last_finish_reason
                 )
             return text_out  # type: ignore[no-any-return]  # untyped upstream source (google.genai response text); return value verified correct at runtime
 

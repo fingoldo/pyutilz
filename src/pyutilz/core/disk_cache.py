@@ -176,8 +176,11 @@ def _feed(h: Any, obj: Any) -> None:
         h.update(tag + struct.pack("<Q", len(obj)))
         for item in obj:
             _feed(h, item)
-    elif isinstance(obj, set):
-        h.update(b"S" + struct.pack("<Q", len(obj)))
+    elif isinstance(obj, (set, frozenset)):
+        # frozenset is NOT a set subclass, so without it here a frozenset fell through to the
+        # repr() last resort, whose iteration order varies with PYTHONHASHSEED -- a different
+        # cache key in every process for the same content.
+        h.update((b"S" if isinstance(obj, set) else b"Z") + struct.pack("<Q", len(obj)))
         for item in sorted(obj, key=lambda x: repr(x)):
             _feed(h, item)
     elif isinstance(obj, np.ndarray):
@@ -244,6 +247,7 @@ class DiskCache:
         self.hits = 0
         self.misses = 0
         self.evictions = 0
+        self.put_failures = 0
         # Per-key locks so a (payload replace, sidecar write) pair is atomic as a unit across
         # threads sharing this instance -- see the class docstring.
         self._key_locks: Dict[str, threading.Lock] = {}
@@ -322,6 +326,13 @@ class DiskCache:
             os.utime(path, None)
         except OSError:
             pass
+        try:
+            # The sidecar shares the entry's fate during eviction, so its mtime must track the
+            # payload's; otherwise a frequently-read entry's sidecar looks like the oldest file in
+            # the directory and gets evicted out from under its own payload.
+            os.utime(str(path) + ".sha256", None)
+        except OSError:
+            pass
         self.hits += 1
         logger.debug("DiskCache: hit key=%s", key)
         return value
@@ -346,8 +357,11 @@ class DiskCache:
           2. ``os.replace`` to the final ``<key>.pkl``. Atomic on POSIX and on Windows when source
              + destination share the filesystem.
 
-        If the post-write directory size exceeds the cap, oldest files (by mtime) are removed
-        until back under cap. The just-written file is protected from eviction in the same call.
+        If the post-write directory size exceeds the cap, oldest entries (by mtime) are removed
+        until back under cap. The just-written entry is protected from eviction in the same call.
+
+        Never raises: a write failure (unpicklable value, full volume) is logged at WARNING and
+        counted in ``put_failures``; the value is simply not cached.
         """
         path = self._key_path(key)
         tmp_name = f"tmp_{uuid.uuid4().hex}.pkl"
@@ -360,20 +374,36 @@ class DiskCache:
                 try:
                     write_sidecar(str(path))
                 except OSError as exc:
-                    logger.debug("DiskCache: sidecar write failed for %s: %s", path, exc)
-            except (OSError, pickle.PicklingError) as exc:
-                logger.debug("DiskCache: put failed for key=%s: %s", key, exc)
+                    # A payload with no sidecar is refused (fail-closed) by the very next get(),
+                    # so this is a real cache failure, not a cosmetic one.
+                    self.put_failures += 1
+                    logger.warning("DiskCache: sidecar write failed for %s: %s", path, exc)
+            except Exception as exc:
+                # Deliberately broad: an unpicklable payload raises TypeError (locks, sockets,
+                # generators), AttributeError or RecursionError at least as often as
+                # PicklingError, and any of those escaping here would strand the tmp_ file, which
+                # neither eviction nor total_size() accounts for.
+                self.put_failures += 1
+                logger.warning("DiskCache: put failed for key=%s: %s", key, exc)
+                return
+            finally:
                 try:
                     tmp_path.unlink()
                 except OSError:
                     pass
-                return
         self._evict_if_needed(protect=path)
 
     def _evict_if_needed(self, protect: Optional[Path] = None) -> None:
-        """LRU-evict by file mtime until total size <= max_size_bytes."""
-        files = []
-        total = 0
+        """LRU-evict by payload mtime until total size <= max_size_bytes.
+
+        A cache entry is the indivisible pair ``(<key>.pkl, <key>.pkl.sha256)``: the sidecar is
+        never an eviction candidate in its own right, its size counts towards the owning payload,
+        and both files are unlinked together. A sidecar whose payload is already gone is an orphan
+        that no lookup can ever revive, so it is swept unconditionally.
+        """
+        payload_sizes: Dict[Path, int] = {}
+        sidecar_sizes: Dict[Path, int] = {}
+        mtimes: Dict[Path, float] = {}
         try:
             with os.scandir(self.cache_dir) as it:
                 for entry in it:
@@ -385,24 +415,45 @@ class DiskCache:
                         st = entry.stat()
                     except OSError:
                         continue
-                    files.append((st.st_mtime, st.st_size, Path(entry.path)))
-                    total += st.st_size
+                    path = Path(entry.path)
+                    if entry.name.endswith(".sha256"):
+                        sidecar_sizes[Path(str(path)[: -len(".sha256")])] = st.st_size
+                    else:
+                        payload_sizes[path] = st.st_size
+                        mtimes[path] = st.st_mtime
         except OSError:
             return
-        if total <= self.max_size_bytes:
-            return
-        files.sort(key=lambda r: r[0])  # oldest first
-        for _mtime, size, fpath in files:
-            if total <= self.max_size_bytes:
-                break
-            if protect is not None and fpath.resolve() == protect.resolve():
+
+        total = sum(payload_sizes.values())
+        for owner, size in sidecar_sizes.items():
+            if owner in payload_sizes:
+                total += size
                 continue
             try:
+                Path(str(owner) + ".sha256").unlink()
+            except OSError:
+                total += size
+
+        if total <= self.max_size_bytes:
+            return
+        entries = sorted(payload_sizes, key=lambda p: mtimes[p])  # oldest first
+        protect_resolved = protect.resolve() if protect is not None else None
+        for fpath in entries:
+            if total <= self.max_size_bytes:
+                break
+            if protect_resolved is not None and fpath.resolve() == protect_resolved:
+                continue
+            size = payload_sizes[fpath] + sidecar_sizes.get(fpath, 0)
+            try:
                 fpath.unlink()
-                total -= size
-                self.evictions += 1
+            except OSError:
+                continue
+            try:
+                Path(str(fpath) + ".sha256").unlink()
             except OSError:
                 pass
+            total -= size
+            self.evictions += 1
 
     def clear(self) -> None:
         """Remove every entry in the cache directory.

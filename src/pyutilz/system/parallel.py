@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import threading
 from typing import Any, Callable, Iterator, List, Optional, Sequence, Sized, Union
 
 import numpy as np
@@ -32,6 +33,9 @@ from joblib import Parallel, parallel_backend
 
 # Module-level tracking of temporary directories for cleanup
 _TEMP_DIRS: List[Any] = []
+# Single shared directory for every mem_map_array() mapping in this process (see that function).
+_MEM_MAP_DIR: Optional[str] = None
+_MEM_MAP_DIR_LOCK = threading.Lock()
 
 @atexit.register
 def _cleanup_temp_dirs():
@@ -70,10 +74,15 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> Iterator[list]:
 
 
 def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[tuple]:
+    """Yield ``(left, right)`` index bounds of ``the_list`` split into ``chunk_size``-sized chunks.
+
+    >>> list(split_list_into_chunks_indices(list(range(10)), 3))
+    [(0, 3), (3, 6), (6, 9), (9, 10)]
     """
-    >>>list(split_list_into_chunks(list(range(10)),3))
-    [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
-    """
+    # Same clamp as the value-returning sibling: chunk_size == 0 otherwise divided by zero here
+    # while returning one-element chunks there, for identical input.
+    if chunk_size == 0:
+        chunk_size = 1
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
@@ -91,6 +100,11 @@ def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tu
     [(0, 3), (3, 6), (6, 10)]
     """
     total_length = len(the_list)
+    if nchunks <= 0:
+        raise ValueError(f"split_list_into_nchunks_indices: nchunks must be >= 1, got {nchunks}")
+    # More chunks than items would make step == 0, silently yielding nchunks-1 empty bands and one
+    # band holding the whole list -- a silent collapse of parallelism with no diagnostic.
+    nchunks = min(nchunks, total_length) or 1
     step = total_length // nchunks
     for chunk in range(nchunks):
         if chunk == nchunks - 1:
@@ -215,9 +229,12 @@ def applyfunc_parallel(
         )
         if n_jobs is None:
             n_jobs = n_cores
+    if not iterable:
+        # An empty work list is the natural no-op, but Pool(processes=0) rejects it outright.
+        return pd.DataFrame() if return_dataframe else []
     if n_jobs is None:
         detected = psutil.cpu_count(logical=logical)
-        n_jobs = min(detected if detected and detected > 0 else 1, len(iterable))
+        n_jobs = max(1, min(detected if detected and detected > 0 else 1, len(iterable)))
     try:
         fname = func.__name__
     except Exception:
@@ -270,11 +287,21 @@ def set_tf_gpu(gpu: int):
 def mem_map_array(obj: np.ndarray, file_name: str, mmap_mode: str = "r") -> object:
     """Maps a numpy array to memory.
 
-    Note: Temporary directories are tracked and cleaned up on program exit via atexit handler.
+    All calls share ONE process-wide temp directory, keyed by ``file_name`` inside it: a fresh
+    ``mkdtemp()`` per call meant N calls held N full serialized copies of the data on disk until
+    process exit (a 20-fold CV over a 4 GB array left 80 GB behind). Re-using ``file_name``
+    therefore overwrites the previous mapping of that name -- pass distinct names for arrays that
+    must coexist.
+
+    Note: The shared directory is cleaned up on program exit via an atexit handler.
     """
-    temp_folder = tempfile.mkdtemp()
-    # Track temp directory for cleanup on exit
-    _TEMP_DIRS.append(temp_folder)
+    global _MEM_MAP_DIR
+    with _MEM_MAP_DIR_LOCK:
+        if _MEM_MAP_DIR is None or not os.path.isdir(_MEM_MAP_DIR):
+            _MEM_MAP_DIR = tempfile.mkdtemp()
+            _TEMP_DIRS.append(_MEM_MAP_DIR)
+            logger.info("mem_map_array: created memory-mapping directory %s", _MEM_MAP_DIR)
+        temp_folder = _MEM_MAP_DIR
 
     filename = os.path.join(temp_folder, f"{file_name}.mmap")
     if os.path.exists(filename):

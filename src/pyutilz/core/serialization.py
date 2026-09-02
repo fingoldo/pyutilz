@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional, Union
 
 import sys
 import io
+import errno
 import itertools
 import uuid
 import pickle, zlib, os  # nosec B403 - pickle.dumps/loads here operate on caller-provided in-process objects/paths for serialize()/unserialize(); untrusted-path loading is additionally gated via the optional verify_sidecar path (see pyutilz.core.safe_pickle)
@@ -39,10 +40,13 @@ def str_to_class(classname: str) -> Any:
     """
     pos1 = classname.find("(")
     init_data = ""
-    if pos1 > 0:
+    if pos1 >= 0:
         pos2 = classname.find(")", pos1)
-        if pos2 > 0:
-            init_data = classname[pos1:pos2]
+        if pos2 >= 0:
+            # Both are indexes OF the bracket characters, so the closing one must be included to
+            # honour the documented "including the parentheses" contract -- an end-exclusive
+            # slice handed the constructor an unbalanced "(arg".
+            init_data = classname[pos1 : pos2 + 1]
             classname = classname[:pos1]
     opts = classname.split(".")
     if len(opts) > 1:
@@ -110,6 +114,10 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     Write the sidecar for a trusted file with ``pyutilz.core.safe_pickle.write_sidecar(path)``.
     Has no effect when ``obj`` is already bytes/a file-like object (there's no "path" to check a
     sidecar against; that in-memory data was already produced within the same process/caller).
+
+    Raises ``FileNotFoundError`` for a missing path, ``TypeError`` for an unsupported input type,
+    and propagates any deserialization/I/O error. A ``None`` return therefore means exactly one
+    thing: the stored object itself was ``None``.
     """
     if compression is not None:
         assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard mirroring serialize()'s compression arg check, not a security boundary
@@ -117,8 +125,11 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     try:
         if isinstance(obj, str):
             if not os.path.isfile(obj):
+                # None is a perfectly valid unpickled value, so it cannot double as the
+                # error signal: a missing file must be distinguishable from a successful
+                # round-trip of None.
                 logger.error("File %s not found", obj)
-                return
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), obj)
             else:
                 if verify_sidecar:
                     from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar
@@ -148,14 +159,17 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
             # in-memory bytes/file-like input is the caller's own data, produced within the same process
             return data
         else:
-            logger.warning("Unexpected input data type: %s", type(obj))
+            raise TypeError(f"unserialize: unexpected input data type {type(obj)}; expected str path, bytes or a file-like object")
     except PickleVerificationError:
         # Deliberately NOT swallowed into the blanket handler below: a tamper/corruption signal
         # from an opted-in sidecar check must stay distinguishable from "file not found" or any
         # other I/O error, so callers can `except PickleVerificationError` specifically.
         raise
     except Exception as e:
+        # Genuine deserialization/I/O failures are re-raised rather than folded into a None
+        # return, which a caller cannot tell apart from a legitimately-unpickled None.
         logger.exception(e)
+        raise
 
 
 # ----------------------------------------------------------------------------------------------------------------------------

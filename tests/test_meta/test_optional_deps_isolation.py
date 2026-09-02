@@ -46,28 +46,39 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # would no longer simulate a real "missing extra" scenario. Same reasoning for
     # numba/joblib/portalocker.
     #
-    # tqdm/pympler appear in "pandas"/"polars" (not just "system") because
-    # pyutilz.system.system's eager all-six-submodules import means ANY reach into that
-    # subpackage (data/pandaslib/_common.py's `tqdmu`/`ensure_dir_exists`, data/polarslib.py's
-    # `clean_ram`) transitively needs misc.py's tqdm+pympler too, regardless of which single
-    # symbol was actually wanted.
-    "pandas": ["pandas", "pyarrow", "polars", "dateutil", "tqdm", "pympler"],
-    "polars": ["polars", "tqdm", "pympler", "pandas", "dateutil"],
-    "database": ["sqlalchemy", "psycopg2", "pymysql", "dateutil", "redis", "pandas"],
+    # pandas/tqdm/pympler were removed from every list below on 2026-09-02, for the same reason
+    # numpy/psutil are absent: all three were promoted to core [project.dependencies] (2026-08-03,
+    # driven by pyutilz.system.system's eager all-six-submodules import -- misc.py needs
+    # tqdm+pympler and memory.py needs pandas, so ANY reach into that subpackage needs them).
+    # Masking a CORE dependency does not simulate "the user skipped an extra"; it simulates a
+    # broken install, and it made the prefect leaf-module scenario fail on a dependency
+    # `pip install pyutilz[prefect]` genuinely does provide.
+    "pandas": ["pyarrow", "polars", "dateutil"],
+    "polars": ["polars", "dateutil"],
+    "database": ["sqlalchemy", "psycopg2", "pymysql", "dateutil", "redis"],
     "web": ["selenium", "undetected_chromedriver", "requests", "grequests", "fake_useragent", "curl_cffi"],
     "cloud": ["google.cloud.storage", "boto3"],
-    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python", "pandas", "dateutil"],
+    "nlp": ["spacy", "nltk", "jellyfish", "tiktoken", "bs4", "inflect", "emoji_data_python", "dateutil"],
     "llm": ["anthropic", "google.genai", "httpx", "tenacity", "pydantic", "pydantic_settings"],
     # Found 2026-07-21 audit: "system" and "gpu" were missing from this dict entirely, so
     # tqdm/pympler/Pillow/scipy/py-cpuinfo/GPUtil/xmltodict/cupy were never
     # masked/simulated-absent by ANY scenario below -- a structural blind spot that let
     # core/pythonlib.py's undeclared numba/joblib/portalocker imports ship undetected (those
     # three, plus psutil/numpy, used to live in this list before being promoted to core deps).
-    "system": ["tqdm", "pympler", "PIL", "scipy", "cpuinfo", "GPUtil", "xmltodict", "pandas", "dateutil"],
+    "system": ["PIL", "scipy", "cpuinfo", "GPUtil", "xmltodict", "dateutil"],
     "gpu": ["cupy"],
+    # Added 2026-09-02 audit: the same structural blind spot documented for "system"/"gpu" just
+    # above still applied to the last three declared extras groups -- flask/dash/
+    # dash_bootstrap_components/prefect/tensorflow were masked by NO scenario at all, so a new
+    # unguarded module-level import in dev/dashlib.py or system/scheduling/prefect.py could ship
+    # undeclared exactly the way the 2026-07-21 bugs did. _EXTRAS_WITHOUT_MASKING_SCENARIO below
+    # now pins the dict against pyproject.toml so a newly ADDED extra cannot be forgotten either.
+    "dash": ["flask", "dash", "dash_bootstrap_components"],
+    "prefect": ["prefect"],
+    "tensorflow": ["tensorflow"],
 }
 
-# dateutil is a real (transitive, via pandas) requirement of "pandas"/"database"/"nlp"/"system"
+# dateutil is a real (transitive, via pandas) declared requirement of "pandas"/"database"/"nlp"/"system"
 # above, but python-dateutil itself has no lazy-import story to test -- unlike spacy/nltk/etc
 # below, which text/strings/webtext.py genuinely defers to call-site (`global X; if X is None:
 # import Y`). _NLP_LAZY_ONLY_DEPS is the narrower subset used by
@@ -104,7 +115,64 @@ _LEAF_MODULE_OWN_GROUP: dict[str, str] = {
     "pyutilz.web.web": "web",
     "pyutilz.system.parallel": "system",
     "pyutilz.system.system.memory": "system",
+    # The two leaf modules behind the "dash"/"prefect" groups added above. Both are excluded from
+    # the `all` extra (see pyproject.toml's comment on `all`), so nothing else in this suite ever
+    # imported them; each does an unguarded module-level import of its group's packages.
+    "pyutilz.dev.dashlib": "dash",
+    "pyutilz.system.scheduling.prefect": "prefect",
 }
+
+# Extras groups deliberately NOT given a masking scenario in _OPTIONAL_DEP_GROUPS above, with the
+# reason. Anything else declared in pyproject.toml must appear in that dict -- enforced by
+# test_every_declared_extra_has_a_masking_scenario, so the "a new extra silently escapes this
+# suite" failure mode cannot recur (2026-09-02 audit).
+_EXTRAS_WITHOUT_MASKING_SCENARIO = {
+    "dataframes": "pure alias for pyutilz[pandas,polars]; both members are covered individually",
+    "all": "pure alias aggregating the domain groups, all covered individually",
+    "stats": "empty documented alias -- its former sole member numpy is a core dependency now",
+    "dev": "test/lint tooling, not importable-feature deps: nothing in src/pyutilz imports it",
+    "docs": "mkdocs-material, a site-build tool never imported by the package",
+}
+
+
+def _declared_extras() -> list[str]:
+    """Extras group names read straight out of pyproject.toml (the source of truth)."""
+    import pathlib
+
+    try:
+        import tomllib  # Python >= 3.11
+    except ModuleNotFoundError:  # pragma: no cover - exercised only on the 3.8-3.10 CI legs
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    pyproject = pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject.is_file():  # installed-package run, no repo checkout around
+        return []
+    with pyproject.open("rb") as f:
+        data = tomllib.load(f)
+    return sorted(data.get("project", {}).get("optional-dependencies", {}))
+
+
+def test_every_declared_extra_has_a_masking_scenario():
+    """Every `[project.optional-dependencies]` group must either be masked by a scenario in
+    ``_OPTIONAL_DEP_GROUPS`` or be listed in ``_EXTRAS_WITHOUT_MASKING_SCENARIO`` with a reason.
+
+    Found 2026-09-02 audit: "dash"/"prefect"/"tensorflow" had been declared as extras for months
+    while this suite silently ignored them -- the identical omission that let the 2026-07-21
+    undeclared-import bugs ship for "system"/"gpu". Deriving the check from pyproject.toml turns
+    that recurring blind spot into a hard failure the moment a new extra is added.
+    """
+    declared = _declared_extras()
+    if not declared:
+        pytest.skip("pyproject.toml not available (running against an installed package)")
+    covered = set(_OPTIONAL_DEP_GROUPS) | set(_EXTRAS_WITHOUT_MASKING_SCENARIO)
+    uncovered = [e for e in declared if e not in covered]
+    assert not uncovered, (
+        f"extras {uncovered} are declared in pyproject.toml but no scenario in this suite ever "
+        f"masks their packages -- add them to _OPTIONAL_DEP_GROUPS (plus the leaf module they "
+        f"gate, in _LEAF_MODULE_OWN_GROUP), or to _EXTRAS_WITHOUT_MASKING_SCENARIO with a reason."
+    )
+    stale = [e for e in covered if e not in declared]
+    assert not stale, f"{stale} listed in this suite but no longer declared in pyproject.toml"
 
 
 def _deps_to_mask_except(own_group: str) -> list[str]:

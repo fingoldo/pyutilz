@@ -86,7 +86,9 @@ def benchmark_algos_by_runtime(
                 min_duration = duration
         durations.append(min_duration)
         if verbose > 1:
-            mes_parts.append(f"{algo.__name__}: {duration:.3f} sec.")
+            # Report the same min-over-reps estimator that is sorted and returned; the loop
+            # variable `duration` holds only the LAST repetition and is unbound when n_reps == 0.
+            mes_parts.append(f"{algo.__name__}: {min_duration:.3f} sec.")
 
     if verbose > 1:
         logger.info("Benchmark timings: %s", ", ".join(mes_parts))
@@ -183,8 +185,12 @@ def sweep_backend_crossover(
         try:
             ref_out = variants[ref](*args)
             synchronize_gpu_if_available() if synchronize_gpu else None
-        except Exception:
-            ref_out = None
+        except Exception as exc:
+            # Without a reference output there is nothing to gate candidates against, so every
+            # candidate would record a fabricated max_abs_diff of 0.0 and a divergent-but-faster
+            # backend could be persisted as a tuned decision. Skip the size instead.
+            logger.warning("sweep %s=%s: reference variant %r raised (%s) -> size skipped (no equivalence gate possible)", primary_axis, size, ref, exc)
+            continue
         best_name, best_ms, best_diff = None, float("inf"), 0.0
         # `.max() or 1.0`: same divide-by-zero guard as np.std/np.var's documented-safe idiom --
         # abs(...).max() is 0.0 only when the reference output is all-zero, in which case
@@ -432,8 +438,11 @@ def sweep_backend_grid(
                 ref_out = _to_host(variants[ref](*args))
                 if synchronize_gpu:
                     synchronize_gpu_if_available()
-            except Exception:
-                ref_out = None
+            except Exception as exc:
+                # Same reasoning as sweep_backend_crossover: no reference output means no
+                # equivalence gate, and an ungated winner must never be emitted as tuned.
+                logger.warning("grid %s res=%s: reference variant %r raised (%s) -> combination skipped", dims, res, ref, exc)
+                continue
             best_name, best_ms, best_diff = None, float("inf"), 0.0
             # `.max() or 1.0`: divide-by-zero guard (see sweep_backend_grid's sibling comment) --
             # ref_out all-zero is the only way abs().max() is 0.0, and falling back to a scale of

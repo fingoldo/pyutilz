@@ -1,0 +1,17 @@
+# Controls what the SDIST ships beyond setuptools' defaults (which cover only the package tree
+# under src/, README.md, LICENSE and pyproject.toml). Verified 2026-09-02: without this file the
+# tarball's top level was exactly LICENSE / PKG-INFO / README.md / pyproject.toml / setup.cfg /
+# src -- no tests, no changelog -- so a downstream redistributor (conda-forge, a distro package,
+# a vendored-source consumer) could not run the suite to validate their build, and could not read
+# offline the changelog that project.urls.Changelog advertises.
+#
+# Only *.py and *.json are collected from tests/ (the suite's only two file types today -- test
+# modules plus test_meta/'s API/annotation baseline snapshots); widening the pattern set just
+# makes every build print a "no files found matching" warning.
+
+include CHANGELOG.md
+include CONTRIBUTING.md
+include TESTING.md
+include requirements-dev.txt
+
+recursive-include tests *.py *.json

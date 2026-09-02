@@ -76,15 +76,30 @@ def optimize_dtypes(
     inplace: bool = True,
     skip_halffloat: bool = True,
     ensure_float64_precision: bool = True,
+    exact_float_roundtrip: bool = False,
 ) -> pd.DataFrame:
     """Compress datatypes in a pandas dataframe to save space while keeping precision.
     Optionally attempts converting floats to ints where feasible.
     Optionally converts object fields with nuniques less than max_categories to categorical.
+
+    With ``inplace=False`` the caller's frame is never touched: the object->int64/float64 probing
+    below has to materialize its candidate columns (the size-reduction pass reads them back), so
+    it runs on a copy rather than writing through to the original as it used to.
+
+    ``ensure_float64_precision`` compares mantissas rounded to float64's 15 significant decimal
+    digits, i.e. it protects decimal-repr fidelity, NOT bit-exactness: two float64 values differing
+    only in their last few bits look identical to it and can be collapsed by a float32 downcast.
+    Pass ``exact_float_roundtrip=True`` to additionally require a bit-exact float32->float64
+    round-trip (much stricter -- it also rejects ordinary decimals like 0.1, which the decimal
+    heuristic deliberately accepts).
     """
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Inits
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
+
+    if not inplace:
+        df = df.copy()
 
     old_dtypes = {}
     new_dtypes = {}
@@ -222,6 +237,15 @@ def optimize_dtypes(
                                     if verbose:
                                         logger.info("Column %s can't be converted to float%s due to precision loss.", col, p)
                                     break
+                                if exact_float_roundtrip:
+                                    # The mantissa heuristic above rounds to 15 significant decimals, so
+                                    # differences living in float64's last bits are erased BEFORE it looks;
+                                    # near-tied values used as ranking keys would silently become exact ties.
+                                    orig = df[col].values
+                                    if not np.array_equal(orig.astype("float" + str(p)).astype(np.float64), orig.astype(np.float64), equal_nan=True):
+                                        if verbose:
+                                            logger.info("Column %s can't be converted to float%s: float64 round-trip is not exact.", col, p)
+                                        break
                             if type_name in ("uint", "int"):
                                 uint_fields.append(col)  # successfully converted, so won't need to consider anymore
                             if verbose:
@@ -266,7 +290,10 @@ def classify_column_types(df: Optional[pd.DataFrame] = None, col: Optional[str] 
     col_is_object = "object" in type_name or "str" in type_name
     col_is_datetime = "datetime" in type_name
     col_is_categorical = "category" in type_name
-    col_is_numeric = not (col_is_boolean or col_is_object or col_is_datetime or col_is_categorical)
+    # Positive test, not "everything that isn't bool/object/datetime/category": by exclusion,
+    # period[D], interval, timedelta64 and Sparse all fell through to "numeric" and a caller
+    # routing them into .mean()/corr()/a scaler got a pandas TypeError (or an unrequested densification).
+    col_is_numeric = bool(pd.api.types.is_numeric_dtype(dtype)) and not (col_is_boolean or col_is_object or col_is_datetime or col_is_categorical)
 
     return col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric
 
@@ -332,7 +359,11 @@ def ensure_dataframe_float32_convertability(
 
     if isinstance(df, pl.DataFrame):
         # Convert integer and float64-like types to float32
-        df = df.with_columns(pl.col([pl.UInt32, pl.Int32, pl.Int64, pl.UInt64, pl.Int128, pl.Float64]).cast(pl.Float32))
+        # Imported here rather than at module scope: pandaslib must stay usable without paying
+        # polarslib's import-time setup, and this is the only polars-specific branch in the file.
+        from pyutilz.data.polarslib import polars_castable_int_dtypes
+
+        df = df.with_columns(pl.col([*polars_castable_int_dtypes(), pl.Float64]).cast(pl.Float32))
 
     elif isinstance(df, pd.DataFrame):
         df = df.copy()
@@ -367,7 +398,12 @@ def convert_float64_to_float32(df: pd.DataFrame) -> pd.DataFrame:
 
     Note: Consider using ensure_dataframe_float32_convertability() instead,
     which handles more numeric types comprehensively.
+
+    Returns a NEW frame and never mutates the input, matching that sibling's documented contract
+    -- it used to downcast the caller's own columns in place while presenting a return-value API,
+    so a frame kept as the float64 reference silently lost its float64 originals.
     """
+    df = df.copy()
     float64_cols = df.select_dtypes(include=["float64"]).columns
     for col in float64_cols:
         df[col] = df[col].astype(np.float32)

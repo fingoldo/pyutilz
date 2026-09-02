@@ -41,6 +41,17 @@ EXTERNAL_IP = None
 logger: Logger = logging.getLogger(__name__)
 
 
+def _log_filename(caller_name: str) -> str:
+    """Replace only the trailing ``.py`` extension with ``.log``.
+
+    A plain ``.replace(".py", ".log")`` is unanchored, so a filename like ``run.pytest_smoke.py``
+    became ``run.logtest_smoke.log`` and distinct scripts could collide onto one log file.
+    """
+    if caller_name.endswith(".py"):
+        return caller_name[: -len(".py")] + ".log"
+    return caller_name + ".log"
+
+
 def init_logging(
     custom_logger: Optional[logging.Logger] = None,
     level=logging.INFO,
@@ -83,12 +94,10 @@ def init_logging(
         try:
             from concurrent_log_handler import ConcurrentRotatingFileHandler
         except Exception:
-            handlers.append(RotatingFileHandler(filename=caller_name.replace(".py", ".log"), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes))
+            handlers.append(RotatingFileHandler(filename=_log_filename(caller_name), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes))
         else:
             handlers.append(
-                ConcurrentRotatingFileHandler(
-                    filename=caller_name.replace(".py", ".log"), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes, use_gzip=True
-                )
+                ConcurrentRotatingFileHandler(filename=_log_filename(caller_name), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes, use_gzip=True)
             )
 
     handlers.append(logging.StreamHandler())
@@ -183,10 +192,12 @@ def _stop_clocks(obj: dict) -> float:
     return duration  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def _message(activity_name: str):
+def _message(activity_name: str) -> None:
     """Log ``activity_name`` at INFO level, appending "..." unless it already ends in punctuation."""
-    if activity_name:
-        logger.info("%s%s", activity_name, "" if activity_name.strip()[-1] in "!.?," else "...")
+    # Guard on the STRIPPED text: a whitespace-only name is truthy but has no last character.
+    stripped = activity_name.strip()
+    if stripped:
+        logger.info("%s%s", activity_name, "" if stripped[-1] in "!.?," else "...")
 
 
 def _close_opened_activities(activities: dict) -> Optional[float]:
@@ -269,7 +280,10 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
     Optionally logs a human-readable (English or Russian) message about how many rows were loaded.
     """
     if results_log is None:
-        results_log = {}
+        # The substituted dict must already carry "results", since the recording below indexes it
+        # unconditionally -- otherwise the documented default always raised KeyError.
+        results_log = {"results": {}}
+    ensure_dict_elem(obj=results_log, name="results", value={})
     assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
     if lang is None:
         # globals() inside this module always resolves to pyutilz.dev.logginglib's OWN
@@ -386,8 +400,15 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             results_log["results"] = {"timing": {}}
             _init_clocks(results_log["results"]["timing"])
 
-            value = func(*args, **kwargs)
-            finalize_function_log(kwargs["results_log"], db_path=db_path)
+            try:
+                value = func(*args, **kwargs)
+            except Exception as exc:
+                # A failed call is exactly the one worth a log row; record the error and finalize
+                # before re-raising, otherwise the log silently contains successes only.
+                results_log["results"]["error"] = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                finalize_function_log(kwargs["results_log"], db_path=db_path)
             return value
 
         return wrapper_logged

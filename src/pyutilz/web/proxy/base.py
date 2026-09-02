@@ -208,6 +208,9 @@ class PortHealthTracker:
         """Record a successful request for *port_offset*."""
         now = time.monotonic()
         with self._lock:
+            # Trim here too: a pool that mostly succeeds otherwise retained one sample per
+            # request per port for the process lifetime, since only report_error ever trimmed.
+            self._trim_all(now)
             self._record_unlocked(port_offset, now, is_error=False)
 
     def _record_unlocked(self, port_offset: int, now: float, *, is_error: bool) -> None:

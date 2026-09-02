@@ -1,0 +1,13 @@
+# Contributor tooling that cannot be declared in pyproject.toml's [dev] extra.
+#
+# py-ci-shared is consumed as a git checkout (it is not published to PyPI). A PEP 440 direct
+# reference ("name @ git+https://...") in project metadata makes the built distribution
+# unuploadable -- PyPI answers `400 ... Can't have direct dependency`, and `twine check` passes
+# it silently -- so it must stay out of [project.optional-dependencies] entirely.
+#
+# Usage:  pip install -e ".[dev]" -r requirements-dev.txt
+#
+# Provides the `python -m py_ci_shared.*` commands used by .pre-commit-config.yaml's local hooks
+# (format_warn, black_filtered_apply, advisory_warn). py-ci-shared itself requires Python >=3.9;
+# the marker keeps this file usable on a py3.8 interpreter, where those hooks are not needed.
+py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'

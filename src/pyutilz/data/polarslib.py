@@ -70,7 +70,7 @@ def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
     return _cols_matching(df, cs.numeric().is_infinite().any())
 
 
-def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
+def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0, fill_nulls: bool = False) -> pl.Expr:
     """Replace non-finite floats (inf, -inf, NaN) with ``nans_filler``.
 
     Uses ``is_finite()`` rather than ``.replace([inf, -inf, NaN], ...)`` because polars
@@ -78,11 +78,33 @@ def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0) -> pl.Expr:
     Without this fix, downstream ``.cast(int)`` after a groupby-agg that produced NaN/inf
     (zero-weight groups in weighted-mean, single-row variance, etc.) raises
     ``InvalidOperationError: conversion from f64 to i64 failed for [inf, -inf, NaN]``.
+
+    Nulls are PRESERVED by default. ``null.is_finite()`` is null and polars treats a null
+    ``when`` predicate as false, so a naive ``when(is_finite)`` also rewrites missing values into
+    ``nans_filler`` -- conflating "not computable" (a std/corr over a single-row group returns
+    null, not NaN) with a genuinely measured value, which no downstream missingness audit can
+    then recover. Pass ``fill_nulls=True`` to opt into the old behavior of filling them too.
     """
-    return pl.when(expr.is_finite()).then(expr).otherwise(pl.lit(float(nans_filler)))
+    filler = pl.lit(float(nans_filler))
+    if fill_nulls:
+        return pl.when(expr.is_finite()).then(expr).otherwise(filler)
+    return pl.when(expr.is_null()).then(expr).when(expr.is_finite()).then(expr).otherwise(filler)
 
 
 _PlFrameT = TypeVar("_PlFrameT", pl.DataFrame, pl.LazyFrame)
+
+
+def polars_castable_int_dtypes() -> list:
+    """Integer polars dtypes that the float32 downcast helpers operate on.
+
+    Shared by ``cast_f64_to_f32`` and pandaslib's ``ensure_dataframe_float32_convertability`` so the
+    two documented mirrors can't drift: Int128 only exists in newer polars, and hardcoding it in one
+    of them raised AttributeError on exactly the older versions the hasattr guard exists for.
+    """
+    int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
+    if hasattr(pl, "Int128"):
+        int_types.append(pl.Int128)
+    return int_types
 
 
 def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
@@ -95,9 +117,7 @@ def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
     If you need integers preserved exactly, downcast to a smaller *integer* dtype instead.
     """
     # Int128 was added in polars 0.19.0, make it optional for older versions
-    int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
-    if hasattr(pl, "Int128"):
-        int_types.append(pl.Int128)
+    int_types = polars_castable_int_dtypes()
     if isinstance(df, pl.DataFrame):
         int_cols = df.select(pl.col(*int_types)).columns
         if int_cols:
@@ -728,14 +748,22 @@ def create_ts_features_polars(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def _group_freqs(bins: pl.DataFrame, cols) -> Any:
+def _group_freqs(bins: pl.DataFrame, cols, drop_nulls: bool = False) -> Any:
     """Empirical frequency array (sums to 1) for a group-by of ``cols`` (a column name or a list
     of column names) over ``bins``.
 
     2026-08-02 near-duplicate-function-body finding: entropy_for_column and mi_for_column
     independently duplicated this group_by-then-normalize step (single-column for the marginal,
     two-column for the joint); extracted alongside ``_shannon_entropy`` below.
+
+    With ``drop_nulls=False`` (the default, preserving historical behavior) polars ``group_by``
+    emits null as its own group, so missingness contributes real probability mass to the entropy.
+    Pass ``drop_nulls=True`` to restrict the estimate to fully-observed rows instead.
     """
+    if drop_nulls:
+        bins = bins.drop_nulls(subset=cols)
+    if len(bins) == 0:
+        return np.empty(0, dtype=np.float64)
     return bins.group_by(cols).agg(pl.len())["len"].to_numpy() / len(bins)
 
 
@@ -744,15 +772,25 @@ def _shannon_entropy(freqs: Any) -> float:
     return -np.sum(freqs * np.log(freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
-def entropy_for_column(bins: pl.DataFrame, col: str) -> float:
-    """Compute the Shannon entropy (in nats) of the discrete (already-binned) values in ``bins[col]``."""
-    return _shannon_entropy(_group_freqs(bins, col))
+def entropy_for_column(bins: pl.DataFrame, col: str, drop_nulls: bool = False) -> float:
+    """Compute the Shannon entropy (in nats) of the discrete (already-binned) values in ``bins[col]``.
+
+    By default null is counted as its own bin category and so adds probability mass of its own
+    (``bin_numerical_columns`` only guarantees null-free bins when ``fill_nulls=True``); pass
+    ``drop_nulls=True`` to measure the observed values only.
+    """
+    return _shannon_entropy(_group_freqs(bins, col, drop_nulls=drop_nulls))
 
 
-def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str) -> float:
+def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str, drop_nulls: bool = False) -> float:
     """Compute the mutual information between binned columns ``col`` and ``target_col``, using precomputed marginal entropies
-    from ``entropies`` and the joint entropy of the two columns (mi = H(col) + H(target) - H(col, target))."""
-    joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col]))
+    from ``entropies`` and the joint entropy of the two columns (mi = H(col) + H(target) - H(col, target)).
+
+    ``drop_nulls`` mirrors :func:`entropy_for_column`: with the default False, missingness is a
+    category of its own and a feature whose only signal is its null pattern scores as informative.
+    Pass True (and compute ``entropies`` the same way) to score observed rows only.
+    """
+    joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col], drop_nulls=drop_nulls))
     return entropies[target_col] + entropies[col] - joint_entropy  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
@@ -869,7 +907,7 @@ def bin_numerical_columns(
     dead_columns = []
     for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None or max_val is None) or np.allclose(min_val, max_val):
+        if (min_val is None or max_val is None) or min_val == max_val:
             dead_columns.append(col)
     if dead_columns:
         if verbose:
@@ -958,6 +996,15 @@ def bin_numerical_columns(
 
     if verbose > 1:
         logger.info("Binning columns...")
+
+    # collect_schema().len() rather than .width: on a LazyFrame the latter emits a PerformanceWarning
+    # for resolving the schema it resolves anyway.
+    if df.collect_schema().len() == 0:
+        # Every column was constant (a 1-row frame is constant by construction) or the frame came in
+        # empty. Nothing left to bin: the null_count/selector reads below would collect to a 0-row
+        # 0-column frame and .row(0) would raise a raw polars OutOfBoundsError the caller can't
+        # distinguish from a polars bug.
+        return pl.DataFrame(), binned_targets, public_clips, columns_to_drop, stats
 
     dead_columns = []
     bin_expressions = []
@@ -1052,7 +1099,10 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
     dead_columns = []
     for col in cs.expand_selector(df.head(), all_num_cols):
         min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None or max_val is None) or np.allclose(min_val, max_val):
+        # Exact equality, NOT np.allclose: allclose is a RELATIVE test (rtol=1e-5), so it declared
+        # "constant" any column whose spread is under 1e-5 of its own magnitude -- large monotone
+        # ids, epoch-microsecond timestamps and prices around 1e9 were silently dropped.
+        if (min_val is None or max_val is None) or min_val == max_val:
             dead_columns.append(col)
     if dead_columns:
         if verbose:
@@ -1086,6 +1136,12 @@ def polars_df_info(df: pl.DataFrame) -> str:
     dtype_counts = Counter(str(dtype) for dtype in df.dtypes)
     dtype_str = ", ".join(f"{dtype}({count})" for dtype, count in sorted(dtype_counts.items()))
     lines.append(f"dtypes: {dtype_str}")
-    size_kb = df.estimated_size(unit="gb")
-    lines.append(f"memory usage: {size_kb:.1f}+ GB")
+    # Auto-scale like pandas' .info() does: a hardcoded "GB" reported "0.0+ GB" for every frame
+    # under ~50 MB, i.e. for essentially all interactive use.
+    size = float(df.estimated_size(unit="b"))
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if size < 1024.0 or unit == "GB":
+            break
+        size /= 1024.0
+    lines.append(f"memory usage: {size:.1f}+ {unit}")
     return "\n".join(lines)

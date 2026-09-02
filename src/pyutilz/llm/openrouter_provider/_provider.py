@@ -36,6 +36,7 @@ from typing import Any
 import httpx
 
 from pyutilz.llm.exceptions import LLMProviderError
+from pyutilz.llm.base import PerCallAttr
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 from pyutilz.llm.openrouter_provider._catalogue import (
     _per_token_cost_pair,
@@ -73,6 +74,44 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     _provider_name = "OpenRouter"
     _default_max_tokens = 8192
     _default_context_window = 128_000
+
+    # Per-call OpenRouter metadata -- contextvar-backed for the same reason as the parent's
+    # _last_usage/last_tool_calls (see PerCallAttr in base.py): generate_batch() fires N
+    # concurrent generate() calls on ONE shared instance, and as plain instance attributes each
+    # request zeroed the previous one's in-flight cost/generation-id, so a cost-accounting loop
+    # attributed the wrong billed USD and the wrong upstream provider to each request id.
+    last_actual_cost_usd: PerCallAttr = PerCallAttr(lambda: 0.0)
+    last_cache_write_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_cache_hit_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_audio_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_upstream_inference_cost_usd: PerCallAttr = PerCallAttr(lambda: None)
+    last_generation_id: PerCallAttr = PerCallAttr(lambda: None)
+    last_upstream_provider: PerCallAttr = PerCallAttr(lambda: None)
+    last_upstream_model: PerCallAttr = PerCallAttr(lambda: None)
+    last_native_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
+    last_cache_discount_usd: PerCallAttr = PerCallAttr(lambda: None)
+    last_is_byok: PerCallAttr = PerCallAttr(lambda: None)
+    last_response_cache_source_id: PerCallAttr = PerCallAttr(lambda: None)
+    last_web_search_citations: PerCallAttr = PerCallAttr(list)
+
+    # So generate_batch()'s yielded per-request dict carries them too -- the only race-free way
+    # for the caller to read them after a batch.
+    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (
+        *OpenAICompatibleProvider._PERCALL_METADATA_ATTRS,
+        "last_actual_cost_usd",
+        "last_cache_write_tokens",
+        "last_cache_hit_tokens",
+        "last_audio_tokens",
+        "last_upstream_inference_cost_usd",
+        "last_generation_id",
+        "last_upstream_provider",
+        "last_upstream_model",
+        "last_native_finish_reason",
+        "last_cache_discount_usd",
+        "last_is_byok",
+        "last_response_cache_source_id",
+        "last_web_search_citations",
+    )
 
     def __init__(
         self,
@@ -123,22 +162,14 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
         # Per-call usage breakdown — set after every generate(). All
         # cumulative counters mirror their last_* counterpart.
+        # The last_* counterparts are class-level PerCallAttr descriptors (declared above), so
+        # they need no per-instance initialization.
         self.total_actual_cost_usd = 0.0
-        self.last_actual_cost_usd = 0.0
         self.total_cache_write_tokens = 0
-        self.last_cache_write_tokens = 0
-        self.last_cache_hit_tokens = 0
         self.total_audio_tokens = 0
-        self.last_audio_tokens = 0
         # cost_details.upstream_inference_cost — populated only on BYOK calls.
         # Lets you see the bare upstream price separately from any OR markup.
         self.total_upstream_inference_cost_usd = 0.0
-        self.last_upstream_inference_cost_usd: float | None = None
-        # Response-level metadata (set by _track_provider_specific_response).
-        self.last_generation_id: str | None = None
-        self.last_upstream_provider: str | None = None
-        self.last_upstream_model: str | None = None
-        self.last_native_finish_reason: str | None = None
         # Phase-4 OR-extra fields. cache_discount: usage-block field --
         # negative on cache writes (extra cost) or positive on cache reads
         # (savings). is_byok: whether the call was billed via the user's
@@ -146,12 +177,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         # response_cache_source_id: present when the response was served
         # from OR's CDN-level response cache rather than a fresh upstream
         # call -- distinct from the per-prompt input cache.
-        self.last_cache_discount_usd: float | None = None
         self.total_cache_discount_usd = 0.0
-        self.last_is_byok: bool | None = None
-        self.last_response_cache_source_id: str | None = None
-        # Phase-4 web-search citations from OR's web plugin (when enabled).
-        self.last_web_search_citations: list[dict[str, Any]] = []
 
         # Bench-only opt-in: bounded retry on routing 404/405. Disabled by
         # default because the parent's _NON_RETRYABLE_STATUSES rule (instant
@@ -175,6 +201,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         report fields from the wrong call, silently misleading callers.
         Cumulative ``total_*`` counters are NOT reset.
         """
+        super()._reset_per_call_state()
         self.last_actual_cost_usd = 0.0
         self.last_cache_write_tokens = 0
         self.last_cache_hit_tokens = 0
@@ -184,8 +211,6 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self.last_upstream_provider = None
         self.last_upstream_model = None
         self.last_native_finish_reason = None
-        self._last_finish_reason = None
-        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
         self.last_cache_discount_usd = None
         self.last_is_byok = None
         self.last_response_cache_source_id = None
@@ -727,6 +752,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
     def last_call_summary(self) -> dict[str, Any]:
         """Snapshot of every metric captured for the most recent ``generate()``.
+
+        Every field is backed by a ``PerCallAttr``, so this is the calling context's own last
+        call. After ``generate_batch()`` the outer caller's context never ran a call and the whole
+        dict reads as defaults, rather than mixing one request's real cost with another's tokens
+        -- read the per-request values off the yielded batch dict instead.
 
         Convenience for ad-hoc inspection / logging — pulls every ``last_*``
         attribute into one dict so you don't fish for them individually:

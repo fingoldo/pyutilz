@@ -163,7 +163,7 @@
     "image": {
       "TAGS": "value",
       "ensure_bytes_converted": "callable(obj:any:0:)",
-      "get_image_properties": "callable(img:any:0:, skip_empty_exif:any:1:True, filesize:any:1:None)",
+      "get_image_properties": "callable(img:any:0:, skip_empty_exif:any:1:True, filesize:any:1:None, allow_truncated:any:1:False)",
       "logger": "value",
       "remove_json_defaults": "callable(json_obj:any:0:, attr_values:any:1:None, warn_if_not_default:any:1:False, obj_id:any:1:'')"
     },
@@ -243,7 +243,7 @@
     },
     "numpylib": {
       "div0": "callable(a:any:0:, b:any:0:, na_fill:any:1:nan)",
-      "get_topk_indices": "callable(arr:any:0:, k:any:1:1, axis:any:1:-1, highest:any:1:True)",
+      "get_topk_indices": "callable(arr:any:0:, k:any:1:1, axis:any:1:-1, highest:any:1:True, require_finite:any:1:False)",
       "logger": "value",
       "smart_ratios": "callable(a:any:0:, b:any:0:, span_correction:any:1:0.0, na_fill:any:1:nan)"
     },
@@ -280,7 +280,7 @@
       "logger": "value",
       "measure_read_write_performance": "callable(df:any:0:, fname:any:0:, read_method:any:0:, read_params:any:0:, write_method:any:0:, write_params:any:0:, nrepeats:any:0:)",
       "nullify_standard_values": "callable(df:any:0:, field:any:0:, min_records:any:1:300, persons_field:any:1:None, min_persons:any:1:0, placeholder:any:1:nan, verbose:any:1:False)",
-      "optimize_dtypes": "callable(df:any:0:, max_categories:any:1:100, reduce_size:any:1:True, float_to_int:any:1:True, float_to_float:any:1:True, skip_columns:any:1:(), use_uint:any:1:True, verbose:any:1:False, inplace:any:1:True, skip_halffloat:any:1:True, ensure_float64_precision:any:1:True)",
+      "optimize_dtypes": "callable(df:any:0:, max_categories:any:1:100, reduce_size:any:1:True, float_to_int:any:1:True, float_to_float:any:1:True, skip_columns:any:1:(), use_uint:any:1:True, verbose:any:1:False, inplace:any:1:True, skip_halffloat:any:1:True, ensure_float64_precision:any:1:True, exact_float_roundtrip:any:1:False)",
       "pack_benchmark_results": "callable(res:any:0:, config:any:0:, read_times:any:0:, write_times:any:0:, read_sizes:any:0:, write_sizes:any:0:)",
       "prefixize_columns": "callable(df:any:0:, prefix:any:0:, special_prefixes:any:1:None, sep:any:1:'_', exclusions:any:1:None, inplace:any:1:True)",
       "read_parquet_with_pyarrow": "callable(path:any:0:, nrows:any:0:)",
@@ -318,17 +318,18 @@
       "build_aggregate_features_polars": "callable(df:any:0:, boolean_fields:any:1:None, numerical_fields:any:1:None, categorical_fields:any:1:None, ts_diff_fields:any:1:None, exclude_fields:any:1:None, weighting_fields:any:1:None, subgroups:any:1:None, numaggs:any:1:None, quantiles:any:1:None, tds_quantiles:any:1:None, engine:any:1:'cpu', dtype:any:1:<unstable-default>, fields_remap:any:1:None, nans_filler:any:1:0.0, concentration_top_n:any:1:3, concentrations_params:any:1:None, add_peaks_stats:any:1:True, custom_expressions:any:1:None, othersvals_at_extremums:any:1:False, othersvals_basic_fields:any:1:None, othersvals_other_fields:any:1:None, othersvals_excluded_fields:any:1:None, ewm_spans:any:1:None, ewm_timestamp:any:1:None, ewm_time_half_lifes:any:1:None, ewm_basic_funcs:any:1:None, ewm_final_funcs:any:1:None, pds_params:any:1:None, pds_numaggs:any:1:None, corr_methods:any:1:None, corr_fields:any:1:None, pds_fields:any:1:None, linreg_fields:any:1:None, linreg_timestamp_field:any:1:None, use_parametrized_pds_features:any:1:True)",
       "cast_f64_to_f32": "callable(df:any:0:)",
       "check_cpu_flag": "callable(flag:any:1:'avx2')",
-      "clean_numeric": "callable(expr:any:0:, nans_filler:any:1:0.0)",
+      "clean_numeric": "callable(expr:any:0:, nans_filler:any:1:0.0, fill_nulls:any:1:False)",
       "clean_ram": "callable()",
       "compute_concentrations": "callable(groupby_object:any:0:, entity:any:0:, entity_name:any:0:, by:any:0:, groupby_columns:any:0:, top_n:any:1:2, return_ids:any:1:True, return_values:any:1:True, sort_by_concentration:any:1:True, add_mean_concentration:any:1:True, dtype:any:1:<unstable-default>, fields_remap:any:1:None)",
       "create_ts_features_polars": "callable(df:any:0:, index_column:any:0:, period:any:0:, every:any:1:None, offset:any:1:None, closed:any:1:None, label:any:1:'left', group_by:any:1:None, rolling:any:1:False, include_boundaries:any:1:False, clean_memory:any:1:True, dtype:any:1:<unstable-default>, engine:any:1:'cpu', kwargs:**kw:0:)",
       "drop_constant_columns": "callable(df:any:0:, max_log_text_width:any:1:300, verbose:any:1:False)",
-      "entropy_for_column": "callable(bins:any:0:, col:any:0:)",
+      "entropy_for_column": "callable(bins:any:0:, col:any:0:, drop_nulls:any:1:False)",
       "find_infinite_cols": "callable(df:any:0:)",
       "find_nan_cols": "callable(df:any:0:)",
       "is_cuda_available": "callable()",
       "logger": "value",
-      "mi_for_column": "callable(bins:any:0:, entropies:any:0:, col:any:0:, target_col:any:0:)",
+      "mi_for_column": "callable(bins:any:0:, entropies:any:0:, col:any:0:, target_col:any:0:, drop_nulls:any:1:False)",
+      "polars_castable_int_dtypes": "callable()",
       "polars_df_info": "callable(df:any:0:)",
       "remove_constant_columns": "callable(df:any:0:, max_log_text_width:any:1:300, verbose:any:1:False)"
     },

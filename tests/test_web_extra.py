@@ -1004,7 +1004,11 @@ class TestDownloadToFile:
         out = tmp_path / "out.bin"
         mod.download_to_file("http://x.com/f", str(out), max_attempts=3)
         assert out.read_bytes() == b"ok"
-        mock_resp.close.assert_called_once()
+        # Each attempt now re-issues the HTTP request (a requests body is a single-use stream, so
+        # retrying the write loop on the consumed response left a 0-byte file), and each response
+        # it obtains is closed exactly once.
+        assert mock_get.call_count == 2
+        assert mock_resp.close.call_count == mock_get.call_count
 
     @patch("pyutilz.web.web.sleep")
     @patch("pyutilz.web.web.requests.get")

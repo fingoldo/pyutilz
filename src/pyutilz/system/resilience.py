@@ -164,6 +164,10 @@ class CircuitState:
     """State of a circuit breaker."""
 
     is_open: bool = False
+    # Explicit HALF_OPEN flag. Inferring the state from ``failure_count > 0`` made failure_count a
+    # running total rather than a consecutive count, so a steadily 50%-failing service tripped the
+    # breaker while the log claimed the failures had been consecutive.
+    is_half_open: bool = False
     failure_count: int = 0
     last_failure_time: Optional[datetime] = None
     half_open_successes: int = 0
@@ -218,6 +222,7 @@ class CircuitBreaker:
                     if self._should_attempt_reset():
                         logger.info("Circuit %s entering HALF_OPEN state", self.name)
                         self.state.is_open = False
+                        self.state.is_half_open = True
                         self.state.half_open_successes = 0
                     else:
                         raise CircuitOpenError(f"Circuit {self.name} is OPEN (too many failures). Will retry in {self._time_until_reset():.0f}s")
@@ -228,13 +233,16 @@ class CircuitBreaker:
                 result = func(*args, **kwargs)
 
                 with self._lock:
-                    if not self.state.is_open and self.state.failure_count > 0:
+                    if self.state.is_half_open:
                         self.state.half_open_successes += 1
                         if self.state.half_open_successes >= self.half_open_max_calls:
                             logger.info("Circuit %s CLOSED (recovered)", self.name)
+                            self.state.is_half_open = False
                             self.state.failure_count = 0
                             self.state.half_open_successes = 0
                     else:
+                        # CLOSED: any success breaks the failure run, so the counter really does
+                        # mean "consecutive failures".
                         self.state.failure_count = 0
 
                 return result
@@ -245,7 +253,14 @@ class CircuitBreaker:
                     self.state.total_failures += 1
                     self.state.last_failure_time = datetime.now(timezone.utc)
 
-                    if self.state.failure_count >= self.failure_threshold:
+                    if self.state.is_half_open:
+                        # The probe call failed: the service has not recovered, so re-open at once
+                        # rather than letting probes trickle through until the threshold is hit.
+                        self.state.is_half_open = False
+                        self.state.half_open_successes = 0
+                        self.state.is_open = True
+                        logger.error("Circuit %s re-OPEN: probe call failed while HALF_OPEN", self.name)
+                    elif self.state.failure_count >= self.failure_threshold:
                         self.state.is_open = True
                         logger.error("Circuit %s OPEN after %d consecutive failures", self.name, self.state.failure_count)
 
@@ -298,6 +313,10 @@ class DeadLetterQueue:
     useful for manual review/debugging, replay, and monitoring/alerting."""
 
     def __init__(self, max_size: int = 1000):
+        if max_size < 1:
+            # queue[-0:] is the WHOLE list, so max_size=0 made the "bounded" queue unbounded --
+            # an unbounded memory leak in a long-running service.
+            raise ValueError(f"DeadLetterQueue: max_size must be >= 1, got {max_size}")
         self.max_size = max_size
         self.queue: List[Dict[str, Any]] = []
         self._lock = threading.Lock()

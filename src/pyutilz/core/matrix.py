@@ -44,11 +44,20 @@ class CsrIndPtrConstructor:
 
         Args:
             dtype: dtype of the resulting matrix's data array.
-            clear_source: if True, free the internal buffers after building.
+            clear_source: if True, empty the internal buffers after building, leaving the
+                instance reusable for the next matrix.
         """
+        if len(self.indices) != self.indptr[-1]:
+            # Elements were added since the last add_row(): indptr's final boundary excludes them,
+            # so building now would silently drop that whole row. Close it instead.
+            self.add_row()
         matrix = csr_matrix((self.data, self.indices, self.indptr), dtype=dtype)
         if clear_source:
-            del self.data, self.indices, self.indptr
+            # Reset to empty buffers rather than `del`-ing the attributes, which left the builder
+            # permanently broken (AttributeError on the next add_element).
+            self.indptr = [0]
+            self.indices = []
+            self.data = []
         return matrix
 
 class CsrRowColConstructor:
@@ -74,11 +83,14 @@ class CsrRowColConstructor:
 
         Args:
             dtype: dtype of the resulting matrix's data array.
-            clear_source: if True, free the internal buffers after building.
+            clear_source: if True, empty the internal buffers after building, leaving the
+                instance reusable for the next matrix.
         """
         matrix = csr_matrix((self.data, (self.rows, self.cols)), dtype=dtype)
         if clear_source:
-            del self.data, self.rows, self.cols
+            self.rows = []
+            self.cols = []
+            self.data = []
         return matrix
 
 def get_sparse_memory_usage(mat: object) -> int:

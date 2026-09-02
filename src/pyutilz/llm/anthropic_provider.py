@@ -11,7 +11,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
-from pyutilz.llm.exceptions import LLMTruncationError
+from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,10 @@ class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
 
     _provider_name = "Anthropic"
+
+    # Explicit per-request timeout, mirroring OpenAICompatibleProvider._get_timeout's default, so
+    # the effective ceiling is one this package controls rather than the SDK's own default.
+    _request_timeout_seconds: float = 120.0
 
     # Pricing per 1M tokens: (input, output)
     # Source: https://platform.claude.com/docs/en/about-claude/pricing
@@ -80,7 +84,11 @@ class AnthropicProvider(LLMProvider):
             raise ValueError("Anthropic API key not provided. Set ANTHROPIC_API_KEY in .env or pass api_key=")
 
         self.model = model
-        self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        # max_retries=0: _retry.py's tenacity policy is the single retry authority here. The SDK
+        # default (2 internal retries) multiplied every tenacity attempt, so a sustained 529
+        # produced several times the upstream calls PYUTILZ_LLM_MAX_RETRIES documents. An explicit
+        # timeout replaces the SDK default, matching every other provider's pinned timeout.
+        self.client = anthropic.AsyncAnthropic(api_key=self.api_key, max_retries=0, timeout=self._request_timeout_seconds)
         self._max_concurrent = max_concurrent
         # Cumulative session accounting (mirrors OpenAICompatibleProvider).
         # ``get_session_cost`` reports these across ALL calls in the session;
@@ -237,12 +245,24 @@ class AnthropicProvider(LLMProvider):
                     result_text = block.text
                     break
             if result_text is None:
-                # Fall back to the legacy single-block layout.
-                result_text = response.content[0].text
+                # Fall back to the legacy single-block layout, guarded: content can be empty, and
+                # block 0 can be a thinking/tool_use block with no .text -- both reachable exactly
+                # when extended thinking consumed the whole budget, i.e. the max_tokens case
+                # handled below, where an IndexError/AttributeError would mask the typed error.
+                first = response.content[0] if response.content else None
+                result_text = getattr(first, "text", None) if first is not None else None
             if self._last_finish_reason == "max_tokens":
                 # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
                 # never actually raised anywhere -- see openai_compat.py's identical fix.
-                raise LLMTruncationError("Anthropic response truncated by max_tokens (stop_reason='max_tokens')", finish_reason=self._last_finish_reason)
+                # partial_text carries whatever was already generated (and paid for) so a caller
+                # catching this can keep it, as exceptions.py documents the field for.
+                raise LLMTruncationError(
+                    "Anthropic response truncated by max_tokens (stop_reason='max_tokens')",
+                    finish_reason=self._last_finish_reason,
+                    partial_text=result_text or "",
+                )
+            if result_text is None:
+                raise LLMProviderError(f"Anthropic returned no text block (stop_reason={self._last_finish_reason!r})")
             return result_text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     def _capture_response_headers(self, headers: Any) -> None:
@@ -354,6 +374,12 @@ class AnthropicProvider(LLMProvider):
         total_input = getattr(self, "total_input_tokens", 0)
         total_output = getattr(self, "total_output_tokens", 0)
         plain_input = total_input
+        input_cost = (
+            (plain_input / 1_000_000) * in_rate
+            + (self.total_cache_creation_input_tokens / 1_000_000) * in_rate * 1.25
+            + (self.total_cache_read_input_tokens / 1_000_000) * in_rate * 0.10
+        )
+        output_cost = (total_output / 1_000_000) * out_rate
         return {
             "calls": getattr(self, "_call_count", 0),
             "prompt_tokens": total_input,
@@ -361,8 +387,9 @@ class AnthropicProvider(LLMProvider):
             "thinking_tokens": self.total_thinking_tokens,
             "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
             "cache_read_input_tokens": self.total_cache_read_input_tokens,
-            "input_cost_usd": (plain_input / 1_000_000) * in_rate
-            + (self.total_cache_creation_input_tokens / 1_000_000) * in_rate * 1.25
-            + (self.total_cache_read_input_tokens / 1_000_000) * in_rate * 0.10,
-            "output_cost_usd": (total_output / 1_000_000) * out_rate,
+            "input_cost_usd": input_cost,
+            "output_cost_usd": output_cost,
+            # Provider-agnostic spend reporting reads this key; every other provider's
+            # get_session_cost returns it, and omitting it raised KeyError on Anthropic alone.
+            "total_cost_usd": input_cost + output_cost,
         }

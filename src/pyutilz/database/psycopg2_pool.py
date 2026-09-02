@@ -58,19 +58,30 @@ def _conn_key(conn: Any) -> int:
     unavailable (e.g. connection closed before we could read it), with a warning.
     """
     try:
-        return int(conn.info.backend_pid)
-    except AttributeError as e:
+        pid = int(conn.info.backend_pid)
+    except (AttributeError, psycopg2.Error) as e:
         logger.warning("backend_pid unavailable, falling back to id(conn): %s", e)
         return id(conn)
+    if not pid:
+        # psycopg2 2.9.x returns 0 (rather than raising) for a closed connection; keying every
+        # closed connection under 0 would share one last_used timestamp between all of them.
+        return id(conn)
+    return pid
 
 
 def _ensure_pool(dsn: str, pool_max: int = 8) -> psycopg2.pool.ThreadedConnectionPool:
     """Lazily create the connection pool (thread-safe)."""
     global _pool, _pool_dsn
+    # The DSN comparison MUST happen before returning an existing pool, otherwise a second DSN
+    # silently receives connections to the first database.
     if _pool is not None:
+        if _pool_dsn != dsn:
+            raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
         return _pool
     with _pool_lock:
         if _pool is not None:  # double-checked locking
+            if _pool_dsn != dsn:
+                raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
             return _pool
         if _pool_dsn is not None and _pool_dsn != dsn:
             raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
@@ -184,6 +195,8 @@ def get_connection_from_pool(dsn: str, pool_max: int = 8, _recovering: bool = Fa
     pool = _pool
     if pool is None:
         return get_connection(dsn, pool_max)
+    if _pool_dsn != dsn:
+        raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
     conn = pool.getconn()
     key = _conn_key(conn)
     with _conn_last_used_lock:
@@ -238,6 +251,13 @@ def release_connection(conn: Any) -> None:
     pool = _pool
     if pool is not None:
         pool.putconn(conn)
+    else:
+        # The pool was closed (or reset) while this connection was checked out; dropping the
+        # reference here would leak the server-side backend until GC or process exit.
+        try:
+            conn.close()
+        except Exception as e:
+            logger.warning("closing an orphaned connection (pool already gone) failed: %s", e)
 
 
 @contextmanager

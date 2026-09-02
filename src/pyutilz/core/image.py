@@ -49,12 +49,19 @@ def ensure_bytes_converted(obj: dict) -> dict:
     return obj
 
 
-def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[int] = None) -> Tuple[Optional[bytes], Optional[dict]]:
+def get_image_properties(
+    img, skip_empty_exif: bool = True, filesize: Optional[int] = None, allow_truncated: bool = False
+) -> Tuple[Optional[bytes], Optional[dict]]:
     """
-    For an image, uising PIL, read dimensions, info, exif data into a JSON-serializable dict
+    For an image, uising PIL, read dimensions, info, exif data into a JSON-serializable dict.
+
+    ``allow_truncated`` tolerates a truncated image for the duration of THIS call only. Pillow's
+    ``ImageFile.LOAD_TRUNCATED_IMAGES`` is a process-global that changes decoding for every other
+    PIL user in the process, so it is restored on exit rather than left flipped on.
     """
 
-    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    prev_load_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
+    ImageFile.LOAD_TRUNCATED_IMAGES = allow_truncated
 
     orig_img = img
 
@@ -68,6 +75,7 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[i
             opened_here = True
         except Exception as e:
             logger.exception(e)
+            ImageFile.LOAD_TRUNCATED_IMAGES = prev_load_truncated
             return None, None
 
     try:
@@ -112,13 +120,16 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[i
         info = img.info
 
         if info:
+            # Captured BEFORE normalization: ensure_bytes_converted either decodes this value to
+            # str or deletes the key, so the fallback below could never see the original mapping.
+            raw_exif = info.get("exif")
             ensure_bytes_converted(info)
 
             remove_json_defaults(info, {"jfif": 257, "jfif_version": "(1, 1)", "jfif_density": "(1, 1)"}, warn_if_not_default=False)
 
             if "exif" in info:
-                if not decoded_exif:
-                    decoded_exif = info["exif"].copy()
+                if not decoded_exif and hasattr(raw_exif, "copy") and not isinstance(raw_exif, (bytes, str)):
+                    decoded_exif = raw_exif.copy()
                 del info["exif"]
 
         # convert to bytes
@@ -143,5 +154,6 @@ def get_image_properties(img, skip_empty_exif: bool = True, filesize: Optional[i
 
         return image_bytes, res
     finally:
+        ImageFile.LOAD_TRUNCATED_IMAGES = prev_load_truncated
         if opened_here:
             img.close()

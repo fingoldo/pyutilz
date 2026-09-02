@@ -127,7 +127,30 @@ def _fetch_endpoints_for_model(
     data = payload.get("data") or {}
     return data.get("endpoints") or []
 
-def _normalize_uptime(value: Any) -> float | None:
+_UPTIME_FIELDS = ("uptime_last_5m", "uptime_last_30m", "uptime_last_1d")
+
+
+def _uptime_payload_is_percentage(endpoints: list[dict[str, Any]]) -> bool:
+    """Decide whether one /endpoints payload reports uptime as 0-100 percentages.
+
+    The shape is a property of the RESPONSE, not of an individual value: at exactly 1.0 the two
+    shapes are indistinguishable, and resolving that per value (``v / 100 if v > 1 else v``) read
+    a genuine 1% uptime -- a nearly-dead backend -- as 100%, so is_model_healthy(min_uptime=0.99)
+    passed it and traffic kept being routed there. Any value above 1.0 anywhere in the payload
+    settles it for every value in the payload.
+    """
+    for e in endpoints:
+        for field in _UPTIME_FIELDS:
+            try:
+                v = float(e.get(field))  # type: ignore[arg-type]  # non-numeric/None is exactly what the except below handles
+            except (TypeError, ValueError):
+                continue
+            if v > 1.0:
+                return True
+    return False
+
+
+def _normalize_uptime(value: Any, is_percentage: bool = True) -> float | None:
     """Coerce uptime to 0-1 fraction.
 
     OpenRouter's live response sometimes returns uptime as a 0-100
@@ -135,6 +158,10 @@ def _normalize_uptime(value: Any) -> float | None:
     0-1 fraction (e.g. 0.998). Both shapes appear in the wild.
     Normalise to fraction so downstream code can compare against
     a 0-1 ``min_uptime`` argument consistently.
+
+    ``is_percentage`` says which shape THIS payload uses; callers get it from
+    :func:`_uptime_payload_is_percentage` rather than guessing per value, because 1.0 is
+    ambiguous and guessing resolved it in the unsafe direction (1% read as 100%).
 
     Values outside ``[0, 100]`` are treated as malformed (logged and
     coerced to ``None``) — silently dividing 1.5 down to 0.015 hides
@@ -154,7 +181,9 @@ def _normalize_uptime(value: Any) -> float | None:
             value,
         )
         return None
-    return v / 100.0 if v > 1.0 else v
+    if not is_percentage:
+        return v
+    return v / 100.0
 
 def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
     """Normalize the per-endpoint payload + compute best-of aggregates.
@@ -182,6 +211,8 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
             "best_throughput_p50_tps": None,
         }
 
+    # Decided once for the whole payload, not per value -- see _uptime_payload_is_percentage.
+    is_percentage = _uptime_payload_is_percentage(endpoints)
     norm: list[dict[str, Any]] = []
     for e in endpoints:
         latency = e.get("latency_last_30m") or {}
@@ -190,9 +221,9 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
             "provider_name": e.get("provider_name"),
             "name": e.get("name"),
             "status": e.get("status"),
-            "uptime_5m": _normalize_uptime(e.get("uptime_last_5m")),
-            "uptime_30m": _normalize_uptime(e.get("uptime_last_30m")),
-            "uptime_1d": _normalize_uptime(e.get("uptime_last_1d")),
+            "uptime_5m": _normalize_uptime(e.get("uptime_last_5m"), is_percentage),
+            "uptime_30m": _normalize_uptime(e.get("uptime_last_30m"), is_percentage),
+            "uptime_1d": _normalize_uptime(e.get("uptime_last_1d"), is_percentage),
             "latency_p50_ms": latency.get("p50"),
             # `or`, not a None-check: a genuinely-0ms p95 would otherwise fall through to p90.
             "latency_p95_ms": latency.get("p95") if latency.get("p95") is not None else latency.get("p90"),

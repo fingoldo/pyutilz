@@ -3,6 +3,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
+import re
 import threading
 import warnings
 
@@ -40,7 +41,7 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.errors import DuplicateTable
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from psycopg2.extras import execute_values, NamedTupleCursor
+from psycopg2.extras import execute_values, Json, NamedTupleCursor
 from psycopg2 import OperationalError, InternalError, InterfaceError
 
 # psycopg2.InterfaceError: cursor already closed
@@ -137,11 +138,13 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
         excluding = excluding.split(",")
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
-    assert cur is not None, "get_table_fields() requires connect_to_db() to have been called first"
-    cur.execute("select * from " + table + " where 0=1")  # nosec B608 - table validated by validate_sql_identifier above
-    cur.fetchall()
-    if cur.description is not None:
-        return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in cur.description if col.name not in excluding])
+    # Must use the CALLING thread's own cursor: the module-global `cur` can be rebound by another
+    # thread between execute() and fetchall(), silently returning another table's description.
+    local_cur = get_cursor(get_cursor_type(None, None))
+    local_cur.execute("select * from " + table + " where 0=1")  # nosec B608 - table validated by validate_sql_identifier above
+    local_cur.fetchall()
+    if local_cur.description is not None:
+        return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in local_cur.description if col.name not in excluding])
 
 
 def connect_to_db(
@@ -249,6 +252,10 @@ def connect_to_db(
                     conn.close()
                 except Exception as close_exc:
                     logger.exception(close_exc)
+                # Leaving the global bound to a CLOSED connection makes get_cursor()'s
+                # "call connect_to_db() first" assert pass and fail later with an opaque
+                # InterfaceError instead.
+                conn = None
             if max_retries is not None and attempt >= max_retries:
                 logger.error("connect_to_db: giving up after %d attempts", attempt)
                 raise
@@ -300,6 +307,11 @@ def basic_db_execute(
     max_retries: int = 5,
 ):
     global cur
+
+    if not auto_commit:
+        # The connection runs in ISOLATION_LEVEL_AUTOCOMMIT, so every statement commits on its own;
+        # a caller batching statements under auto_commit=False has no transaction and no rollback.
+        logger.warning("basic_db_execute: auto_commit=False is not honoured (connection is in autocommit mode); each statement commits independently")
 
     cursor_type = get_cursor_type(cursor_factory, cursor_name)
     stmt_preview = str(statement)[:500]
@@ -430,8 +442,10 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
         fields = fields.split(",")
     if elements is not None:
         if fields == ["*"]:
-            assert cur is not None, "fetch_db_elements() requires connect_to_db() to have been called first"
-            fields = [col.name for col in cur.description]
+            # Per-thread cursor, for the same cross-thread-rebinding reason as get_table_fields().
+            local_cur = get_cursor(get_cursor_type(None, None))
+            assert local_cur is not None, "fetch_db_elements() requires connect_to_db() to have been called first"
+            fields = [col.name for col in local_cur.description]
         if indices is None:
             indices = range(len(fields))
         for element in elements:
@@ -471,6 +485,16 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     if mode in ("select", "update") and not where_fields:
         logger.error("mode=%r requires a non-empty where_fields (got %r)", mode, where_fields)
         return
+    # "insert" consults only set_fields; without this guard set_fields=None crashes two frames down
+    # inside construct_templates_and_values, and set_fields=[] builds `insert into t () values ()`.
+    if mode == "insert" and not set_fields:
+        logger.error("mode='insert' requires a non-empty set_fields (got %r)", set_fields)
+        return
+    # `returning` is spliced into the SQL as a string; None is the natural way to say "no RETURNING".
+    if returning is None:
+        returning = ""
+    if mode == "select" and not returning:
+        returning = "*"
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Smart params parsing
@@ -572,6 +596,9 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
 
 _LOG_TO_DB_KNOWN_LEVELS = frozenset({"info", "warning", "warn", "error", "critical", "fatal"})
 
+# Accepts only quoted JSON keys and array indices chained with -> / ->> , e.g. 'a'->'b'->>2
+_JSON_PATH_RE = re.compile(r"^(?:'[A-Za-z0-9_ .-]+'|[0-9]+)(?:->>?(?:'[A-Za-z0-9_ .-]+'|[0-9]+))*$")
+
 
 def log_to_db(message, details=None, more_details=None, level="info", append_severity=False, application=None, table_name="logs"):
     import inspect
@@ -579,6 +606,11 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
     cInfo = 1
     cWarning = 2
     cError = 3
+
+    # A falsy level (None, "") used to skip the entire body: no Python log record, no DB row, no
+    # warning -- a wrapper forwarding an absent config key silently dropped every message.
+    if not level:
+        level = "info"
 
     if level:
         if level not in _LOG_TO_DB_KNOWN_LEVELS:
@@ -957,6 +989,8 @@ def explain_table(table_name: str) -> Optional[object]:
     validate_sql_identifier(table_name)
     if db_flavor == "mysql":
         return pd.read_sql(f"SHOW FULL COLUMNS FROM {table_name}", con=conn_alchemy)["Field Type Comment".split()]  # type: ignore[no-any-return]  # untyped upstream source (pandas read_sql); return value verified correct at runtime
+    # Returning a bare None here produced an unattributable TypeError at the call site; name the flavor.
+    logger.warning("explain_table is only implemented for db_flavor='mysql' (current flavor: %r); returning None", db_flavor)
     return None
 
 
@@ -1084,6 +1118,10 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
         if path == "" or path is None:
             full_path = table_field
         else:
+            # `path` is spliced verbatim into the query below; restrict it to a JSON-navigation
+            # fragment so it cannot close the surrounding expression.
+            if not _JSON_PATH_RE.match(path):
+                raise ValueError(f"Invalid JSON navigation path: {path!r}")
             full_path = table_field + "->" + path
 
         # Ask DB
@@ -1200,7 +1238,8 @@ def _regjobs_update(job_name: str, result: dict, table_name: str, *, ts_column: 
         sql.SQL("""
         update {table_name} set {ts_column}=now() at time zone 'utc',{result_column}=%(result)s where name=%(job_name)s
     """).format(table_name=sql.Identifier(table_name), ts_column=sql.Identifier(ts_column), result_column=sql.Identifier(result_column)),
-        {"job_name": job_name, "result": result},
+        # psycopg2 cannot adapt a bare dict; Json() is the documented adapter for jsonb columns.
+        {"job_name": job_name, "result": Json(result) if isinstance(result, (dict, list)) else result},
     )
 
 

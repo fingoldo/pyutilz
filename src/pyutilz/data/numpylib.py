@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 import numpy as np
 
 
-def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool = True) -> np.ndarray:
+def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool = True, require_finite: bool = False) -> np.ndarray:
     """Return indices of top-k highest or lowest elements along a given axis.
 
     Works for arrays of any dimensionality. The result has k entries along `axis`,
@@ -32,6 +32,12 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     enough real values to fill k slots) -- ``np.argpartition``/``np.argsort`` otherwise treat NaN
     as greater than every real number, so an unguarded NaN anywhere in ``arr`` would silently
     outrank the true maximum.
+
+    Because every NaN maps to the same sentinel, a slice with fewer than k non-NaN values still
+    yields k valid-looking positions, and an ALL-NaN slice yields a position picked arbitrarily by
+    ``argpartition`` (a different one for highest=True vs highest=False on the very same data).
+    Pass ``require_finite=True`` to get ``-1`` in those slots instead, so a caller can tell
+    "nothing was rankable here" apart from a real winner.
 
     >>> arr = np.array([2., 0., 3.], dtype=np.float32)
     >>> get_topk_indices(arr, k=2, highest=True)
@@ -69,20 +75,34 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     order = np.argsort(cand_vals, axis=axis)
     if highest:
         order = np.flip(order, axis=axis)
-    return np.take_along_axis(cand, order, axis=axis)
+    result = np.take_along_axis(cand, order, axis=axis)
+
+    if require_finite and is_float:
+        picked_vals = np.take_along_axis(arr, result, axis=axis)
+        result = np.where(np.isnan(picked_vals), np.int64(-1), result)
+
+    return result
 
 
 def div0(a, b, na_fill=np.nan):
     """a / b, divide by 0 -> `fill`
     div0( [-1, 0, 1], 0, fill=np.nan) -> [nan nan nan]
     div0( 1, 0, fill=np.inf ) -> inf
+
+    Only positions with a non-finite or exactly-zero DENOMINATOR are replaced. Masking on the
+    quotient instead (the previous behavior) also rewrote results that were legitimately infinite
+    -- an inf that arrived in ``a`` (a saturation sentinel) or an overflow from a denormal
+    denominator -- turning "unbounded" into "missing", which imputation treats very differently.
     """
+    b_arr = np.asarray(b)
     with np.errstate(divide="ignore", invalid="ignore"):
         c = np.true_divide(a, b)
-    if np.isscalar(c):
-        return c if np.isfinite(c) else na_fill
+        bad_denominator = (b_arr == 0) | ~np.isfinite(b_arr)
+    if np.isscalar(c) or np.ndim(c) == 0:
+        return na_fill if bool(np.all(bad_denominator)) else c
     else:
-        c[~np.isfinite(c)] = na_fill
+        c = np.asarray(c)
+        c[np.broadcast_to(bad_denominator, c.shape)] = na_fill
         return c
 
 

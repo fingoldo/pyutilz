@@ -40,7 +40,21 @@ def _current_project_version() -> str:
     return m.group(1)
 
 
+def _require_usable_bash() -> None:
+    """Skip when the `bash` on PATH cannot see the repo working directory.
+
+    On Windows the resolved `bash` may be WSL's, which both refuses a Windows path as its cwd
+    and silently yields an empty string for every `$(...)` substitution -- the snippet then reads
+    no version at all and the assertions below would report a workflow defect that does not exist.
+    CI runs on Linux, where this probe always succeeds and the checks below really execute.
+    """
+    probe = subprocess.run(["bash", "-c", 'V=$(echo ok); test -f pyproject.toml && test "$V" = ok'], cwd=str(_REPO_ROOT), capture_output=True, timeout=30)
+    if probe.returncode != 0:
+        pytest.skip("the `bash` on PATH cannot read the repo working directory or run command substitution; cannot execute the workflow snippet here")
+
+
 def _run_check_script(script: str, ref_name: str) -> subprocess.CompletedProcess:
+    _require_usable_bash()
     env = dict(os.environ)
     env["GITHUB_REF_NAME"] = ref_name
     return subprocess.run(

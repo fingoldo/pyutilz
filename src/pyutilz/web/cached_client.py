@@ -98,9 +98,16 @@ class CachedHttpClient:
                     return
             time.sleep(wait)
 
-    def _cache_path(self, url: str, tag: str) -> Path:
-        """Content-hash-keyed cache file path for ``url`` under this client's ``tag`` subdirectory."""
-        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
+    def _cache_path(self, url: str, tag: str, kind: str = "json") -> Path:
+        """Content-hash-keyed cache file path for ``url`` under this client's ``tag`` subdirectory.
+
+        ``kind`` participates in the key: get_text() and get_json() store different payload
+        shapes ({"text": ...} vs {"data": ...}), so a single URL-only key let a get_text() entry
+        satisfy a later get_json() lookup and return a permanent ``None`` for a URL that answers.
+        The legacy "json" key stays digest-only so existing on-disk caches remain valid.
+        """
+        keyed = url if kind == "json" else f"{kind}:{url}"
+        digest = hashlib.sha256(keyed.encode("utf-8")).hexdigest()[:20]
         return self.cache_dir / tag / f"{digest}.json"
 
     def _write_cache_entry(self, path: Path, payload: Dict[str, Any]) -> None:
@@ -171,7 +178,9 @@ class CachedHttpClient:
         data: Any = None
         if raw is not None:
             try:
-                data = json.loads(raw.decode("utf-8"))
+                # errors="replace": a mis-encoded body is a permanent failure for this URL, not a
+                # reason to abort the caller's batch with an escaping UnicodeDecodeError.
+                data = json.loads(raw.decode("utf-8", errors="replace"))
             except json.JSONDecodeError as exc:
                 logger.debug("cached_client %s: invalid JSON for %s: %s", tag, url, exc)
         if data is not None or cache_failures:
@@ -193,7 +202,7 @@ class CachedHttpClient:
         where "no result" is a stable fact, a plain-text fetch failure is more often transient and
         caching it would make an outage look like a durable answer.
         """
-        path = self._cache_path(url, tag)
+        path = self._cache_path(url, tag, kind="text")
         if path.exists():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))

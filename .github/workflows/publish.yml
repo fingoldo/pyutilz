@@ -15,6 +15,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Matches ci.yml's own full-suite `test` job budget; without it this job (which runs the
+    # entire test suite with [all,dev] installed) inherits GitHub's 6-hour default, so a hung
+    # test or a stalled pip install on the release path can burn hours of the account's
+    # Actions-minutes budget while the release merely looks "in progress".
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -68,6 +73,22 @@ jobs:
           pip install twine
           twine check dist/*
 
+      # `twine check` validates README rendering and metadata well-formedness only -- it does NOT
+      # reject a PEP 440 direct reference ("name @ git+https://..."), which PyPI answers with
+      # `400 ... Can't have direct dependency` at the very last step of the release. Catch it here,
+      # before the upload job, instead of after a full test+build run. (A `[dev]` extra carrying
+      # `py-ci-shared @ git+...` made every release fail this way until 2026-09-02; it now lives in
+      # requirements-dev.txt.)
+      - name: Reject direct-reference (VCS/URL) dependencies in built metadata
+        run: |
+          python -m zipfile -e dist/*.whl _meta_check/
+          if grep -REn '^Requires-Dist:.*@ *(git\+|https?:|file:)' _meta_check/*.dist-info/METADATA; then
+            echo "::error::Built metadata carries a PEP 440 direct reference; PyPI will reject it."
+            echo "::error::Move that dependency out of [project] -- see requirements-dev.txt."
+            exit 1
+          fi
+          rm -rf _meta_check
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist
@@ -76,6 +97,8 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # Download-artifact + a single upload call; anything slower than this is a stall, not work.
+    timeout-minutes: 10
     environment: pypi
     permissions:
       id-token: write  # required for trusted publishing

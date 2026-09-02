@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import logging
 import os
+import sys
 import threading
 import weakref
 from collections import OrderedDict
@@ -195,7 +196,17 @@ def get_llm_provider(
         _provider_cache[cache_key] = instance
         if len(_provider_cache) > _PROVIDER_CACHE_MAX_SIZE:
             _, evicted = _provider_cache.popitem(last=False)
-            _schedule_provider_close(evicted)
+            # Eviction is keyed on cache size, not liveness: get_llm_provider() hands out shared
+            # instances and keeps no refcount, so closing unconditionally could shut the httpx
+            # client of a provider a coroutine obtained earlier and is still using ("Cannot send
+            # a request, as the client has been closed" mid-batch). getrefcount's baseline here
+            # is 2 -- the local `evicted` plus the temporary argument reference -- so anything
+            # above it means someone else still holds the provider: drop the LRU entry without
+            # closing and let the WeakSet + atexit handler tear it down instead.
+            if sys.getrefcount(evicted) <= 2:
+                _schedule_provider_close(evicted)
+            else:
+                _uncached_providers.add(evicted)
         return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 

@@ -8,8 +8,10 @@ still run in parallel -- this is per-key deduplication, not a global lock.
 
 Single-asyncio-event-loop model only (matches the common asyncio server/pipeline shape): every
 :class:`SingleFlightCache` instance's internal state (the in-flight-fetch tracking dict and its
-lock) is only safe when accessed from one event loop thread. Do not call ``get_or_fetch`` from
-``asyncio.to_thread()`` or multiple OS threads sharing one instance.
+lock) is only safe when accessed from one event loop. The instance binds itself to the running
+loop on first ``get_or_fetch`` and rejects any other loop afterwards; that loop may live on any
+thread. Do not call ``get_or_fetch`` from ``asyncio.to_thread()`` or from a second event loop
+sharing one instance.
 
 Ported from a downstream project's own in-process caching module (originally hardcoded to one
 global inflight dict per cache instance it needed, duplicated by hand for each of 6 module-level
@@ -21,13 +23,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-from typing import Any, Awaitable, Callable, Dict, Generic, Hashable, MutableMapping, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, Hashable, MutableMapping, Optional, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
 _K = TypeVar("_K", bound=Hashable)
 _V = TypeVar("_V")
+
+# Sentinel distinguishing "absent" from a legitimately cached None, in ONE mapping lookup.
+_MISSING: Any = object()
 
 
 class SingleFlightCache(Generic[_K, _V]):
@@ -44,8 +48,27 @@ class SingleFlightCache(Generic[_K, _V]):
         # code with no event loop yet running/set in this thread (e.g. a plain, non-async test
         # or any other sync construction site) -- found 2026-08-03.
         self._inflight_lock: Optional[asyncio.Lock] = None
+        # The loop this instance was first used from. The real constraint is one EVENT LOOP, not
+        # one OS thread -- a single loop running on a dedicated worker thread (the standard way
+        # to embed an async subsystem in a sync application) satisfies the documented contract
+        # and used to be rejected outright.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.hits = 0
         self.misses = 0
+
+    def _bind_loop(self, caller: str) -> None:
+        """Bind this instance to the running event loop on first async use, then enforce identity.
+
+        Replaces the old main-thread check: what the class actually requires is that all of its
+        internal state is touched from ONE event loop, wherever that loop happens to run.
+        """
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
+            raise RuntimeError(
+                f"SingleFlightCache.{caller} called from event loop {loop!r}, but this instance is bound to {self._loop!r} -- this class is single-event-loop only."
+            )
 
     def _get_inflight_lock(self) -> asyncio.Lock:
         """Return the shared in-flight lock, creating it on first (always async) use."""
@@ -70,6 +93,7 @@ class SingleFlightCache(Generic[_K, _V]):
         (see __init__), not here -- unpickling itself is sync and must not eagerly construct one."""
         self.__dict__.update(state)
         self._inflight_lock = None
+        self._loop = None
 
     def get_cache_metrics(self) -> Dict[str, float]:
         """Return current hit/miss counters and hit rate (0-100)."""
@@ -102,13 +126,16 @@ class SingleFlightCache(Generic[_K, _V]):
         poison the cache for whatever TTL/lifetime it has. The next caller for this key retries
         the fetch from scratch. Callers waiting on a fetch that failed also get ``default``.
         """
-        if __debug__ and threading.current_thread() is not threading.main_thread():
-            raise RuntimeError(
-                f"SingleFlightCache.get_or_fetch called from non-main thread " f"{threading.current_thread().name!r} -- this class is single-event-loop only."
-            )
-        if key in cache:
+        # Unconditional (not `assert`/`__debug__`-gated): a safety property that disappears under
+        # `python -O` is present exactly where it is least needed.
+        self._bind_loop("get_or_fetch")
+        # One lookup, not `in` followed by `[]`: on an expiring store (cachetools.TTLCache, the
+        # docstring's own recommendation) a TTL boundary falling between the two raises KeyError
+        # out of a cache-lookup helper.
+        value = cache.get(key, _MISSING)
+        if value is not _MISSING:
             self.hits += 1
-            return cache[key]
+            return cast("_V", value)
 
         self.misses += 1
         is_fetcher = False
@@ -116,8 +143,9 @@ class SingleFlightCache(Generic[_K, _V]):
         async with self._get_inflight_lock():
             # Re-check after acquiring the lock -- another coroutine may have finished the fetch
             # while we were waiting for the lock.
-            if key in cache:
-                return cache[key]
+            value = cache.get(key, _MISSING)
+            if value is not _MISSING:
+                return cast("_V", value)
             if key not in self._inflight:
                 self._inflight[key] = asyncio.Event()
                 is_fetcher = True
@@ -130,11 +158,12 @@ class SingleFlightCache(Generic[_K, _V]):
             # Another coroutine is already fetching -- wait for it instead of re-fetching.
             if evt is not None:
                 await evt.wait()
-            if key in cache:
-                return cache[key]
+            value = cache.get(key, _MISSING)
+            if value is not _MISSING:
+                return cast("_V", value)
             # The fetcher failed -- it deliberately did not cache anything (see the except branch
             # below), so there is nothing to read back here.
-            return default if default is not None else cache.get(key, default)
+            return default
 
         try:
             value = await fetcher()
@@ -158,6 +187,5 @@ class SingleFlightCache(Generic[_K, _V]):
         ``get_or_fetch`` coroutines are in flight (e.g. between batch runs), since it discards
         in-flight-fetch bookkeeping without waking waiters.
         """
-        assert threading.current_thread() is threading.main_thread(), "SingleFlightCache.clear() must run on the main thread"
         self._inflight.clear()
         self.reset_metrics()

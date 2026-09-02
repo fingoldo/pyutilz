@@ -19,10 +19,14 @@ class TestLLMProviderABC:
 
 
 class TestExtractJsonEdgeCases:
-    def test_json_array_in_code_block_parses_as_list(self):
+    def test_json_array_in_code_block_raises_parsing_error(self):
+        """``extract_json`` is annotated ``-> dict[str, Any]`` and callers index its result, so a
+        top-level array (very common under "respond with valid JSON only") must surface as the
+        typed JSONParsingError the retry layer catches -- not as a list that breaks the caller
+        with a TypeError far from the parse site."""
         text = "```json\n[1, 2, 3]\n```"
-        result = LLMProvider.extract_json(text)
-        assert result == [1, 2, 3]
+        with pytest.raises(JSONParsingError):
+            LLMProvider.extract_json(text)
 
     def test_multiple_json_objects_returns_first(self):
         # New JSONDecoder.raw_decode scan returns the first parseable

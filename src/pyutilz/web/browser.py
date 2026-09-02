@@ -202,7 +202,9 @@ def start_selenium() -> object:
         options.add_argument(f"--user-data-dir={data_dir}")
 
     if proxy_server:
-        if len(proxy_server.get("PROXY_PASS", "")) > 0:
+        # Truthiness, not len(): a present-but-None PROXY_PASS (the JSON way of saying
+        # "unauthenticated proxy") made len() raise TypeError.
+        if proxy_server.get("PROXY_PASS"):
             # Validated up front (matches the unauthenticated branch's guard below) -- bare
             # proxy_server["PROXY_HOST"]/["PROXY_PORT"]/["PROXY_USER"] indexing a few lines down
             # would otherwise raise an unguarded KeyError on a missing key instead of this clear
@@ -407,6 +409,9 @@ def LoginAndGetCookies(
             ste = str(e)
             if "not reachable" in ste or "no such window" in ste:
                 logger.warning("Restarting Selenium instance")
+                # On the "no such window" half the driver process is typically still alive;
+                # overwriting the handle directly orphaned a chromedriver on every restart.
+                close_browser()
                 browser = start_selenium()
             else:
                 logger.exception(e)
@@ -522,7 +527,13 @@ def LoginAndGetCookies(
             TheCookies = TheCookies + cookie + "=" + str(val) + "; "
 
         if default_headers:
-            headers = basic_headers
+            # A copy, not the shared global: mutating basic_headers in place left the documented
+            # neutral default header set permanently carrying the last session's cookie and
+            # Bearer token, and leaked them to every other consumer of it.
+            headers = dict(basic_headers)
+            # Drop any authorization inherited from a previous login: without this, a session
+            # that yields no oauth2_global_js_token keeps sending the PREVIOUS account's token.
+            headers.pop("authorization", None)
             if use_real_useragent:
                 headers["user-agent"] = browser.execute_script("return navigator.userAgent;")
 

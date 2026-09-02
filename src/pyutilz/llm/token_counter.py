@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections import OrderedDict
 from typing import Optional
 
@@ -39,6 +40,11 @@ except Exception as e:
 # Encoding is always safe: the next call for that model just re-resolves it via tiktoken.
 _encoding_cache: "OrderedDict[str, tiktoken.Encoding]" = OrderedDict()  # tiktoken may be unimported; forward-ref string annotation only
 _ENCODING_CACHE_MAX_SIZE = int(os.environ.get("PYUTILZ_TOKEN_ENCODING_CACHE_MAX_SIZE", "256"))
+# count_tokens is reached from fit_max_tokens_to_context on every generate() and from _health's
+# ThreadPoolExecutor, so the OrderedDict below is mutated from arbitrary threads: without this
+# lock a concurrent popitem() at the cap can raise KeyError between the len() check and the pop,
+# surfacing as a spurious failure inside a token-budget computation.
+_encoding_cache_lock = threading.Lock()
 
 
 def _encoding_for_model(model: Optional[str]):
@@ -48,16 +54,21 @@ def _encoding_for_model(model: Optional[str]):
     construct), bounded LRU (see ``_ENCODING_CACHE_MAX_SIZE``)."""
     if model is None:
         return _DEFAULT_ENCODING
-    if model in _encoding_cache:
-        _encoding_cache.move_to_end(model)
-        return _encoding_cache[model]
+    with _encoding_cache_lock:
+        if model in _encoding_cache:
+            _encoding_cache.move_to_end(model)
+            return _encoding_cache[model]
+    # Resolved OUTSIDE the lock: encoding_for_model() can hit the network on a first-time
+    # download, which must not serialize every other thread's cache hit. A duplicate resolve in
+    # a race is harmless (the second write simply replaces an equivalent object).
     try:
         enc = tiktoken.encoding_for_model(model)
     except Exception:
         enc = _DEFAULT_ENCODING
-    _encoding_cache[model] = enc
-    if len(_encoding_cache) > _ENCODING_CACHE_MAX_SIZE:
-        _encoding_cache.popitem(last=False)
+    with _encoding_cache_lock:
+        _encoding_cache[model] = enc
+        if len(_encoding_cache) > _ENCODING_CACHE_MAX_SIZE:
+            _encoding_cache.popitem(last=False)
     return enc
 
 

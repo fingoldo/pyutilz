@@ -571,8 +571,11 @@ class TestSharedBaseImplementations:
         from pyutilz.llm.gemini_provider import GeminiProvider
         p = GeminiProvider.__new__(GeminiProvider)
 
-        async def fake_generate(prompt, system=None, temperature=0.3, max_tokens=0):
+        # **kwargs: GeminiProvider.generate_json now forwards json_mode=True so the request
+        # actually uses Gemini's native JSON mode rather than prompt-steering alone.
+        async def fake_generate(prompt, system=None, temperature=0.3, max_tokens=0, **kwargs):
             assert "valid JSON only" in system
+            assert kwargs.get("json_mode") is True
             return '{"k": 1}'
 
         p.generate = fake_generate

@@ -213,6 +213,20 @@ def is_llm_refusal(text: str) -> bool:
     return any(p.search(text) for p in _REFUSAL_PATTERNS)
 
 
+def _require_json_object(obj: Any, provider_name: str) -> dict[str, Any]:
+    """Return ``obj`` when it is a JSON object, else raise :class:`JSONParsingError`.
+
+    ``extract_json`` is annotated ``-> dict[str, Any]`` and its callers index the result. A model
+    asked for "valid JSON only" very often answers with a top-level array (or a bare string or
+    number), which parses fine but breaks that contract: the caller's first ``result["field"]``
+    then raised ``TypeError`` far from the parse site, past the retry layer that catches
+    JSONParsingError.
+    """
+    if isinstance(obj, dict):
+        return obj
+    raise JSONParsingError(f"Expected a JSON object from {provider_name}, got {type(obj).__name__}")
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
@@ -350,7 +364,10 @@ class LLMProvider(ABC):
             Parsed JSON dict.
 
         Raises:
-            JSONParsingError: If JSON parsing fails.
+            JSONParsingError: If JSON parsing fails, or if the parsed value is not an object
+                (a top-level array/string/number is very common under "respond with valid JSON
+                only", and returning it would break the ``-> dict[str, Any]`` contract far from
+                the parse site, past the retry layer that catches JSONParsingError).
         """
 
         try:
@@ -365,7 +382,7 @@ class LLMProvider(ABC):
                 re.DOTALL,
             )
             if fence_match:
-                return json.loads(fence_match.group(1))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                return _require_json_object(json.loads(fence_match.group(1)), provider_name)
 
             # 2. Strip leading fence even without a closing fence (some
             #    streaming LLMs forget to close).
@@ -381,7 +398,7 @@ class LLMProvider(ABC):
             # 3. Try the whole stripped text first (cheap path: most
             #    json_mode= responses are pure JSON).
             try:
-                return json.loads(stripped)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                return _require_json_object(json.loads(stripped), provider_name)
             except json.JSONDecodeError:
                 pass
 
@@ -403,7 +420,7 @@ class LLMProvider(ABC):
 
             # 5. Last resort — re-raise via the original strict parse so
             #    the JSONDecodeError handler below produces a clean error.
-            return json.loads(stripped)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return _require_json_object(json.loads(stripped), provider_name)
         except json.JSONDecodeError as e:
             # Before reporting as malformed JSON, check whether the model
             # simply refused to answer — that's a distinct error class with

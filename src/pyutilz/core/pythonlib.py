@@ -43,7 +43,7 @@ import re
 # Packages
 # ----------------------------------------------------------------------------------------------------------------------------
 
-import importlib, subprocess  # nosec B404 - only used below to shell out to the fixed "pip" executable for installing missing packages; no user/network input reaches argv
+import importlib.util, subprocess  # nosec B404 - only used below to shell out to the fixed "pip" executable for installing missing packages; no user/network input reaches argv
 
 
 def ensure_installed(packages, sep: str = " ") -> None:
@@ -85,7 +85,9 @@ def show_methods(obj, uppercased=False):
 
     If `uppercased` is True, only names starting with an uppercase letter are kept.
     """
-    return [a for a in dir(obj) if "__" not in a and (uppercased is False or a[0].isupper())]
+    # Dunder means leading AND trailing double underscore; a substring test also dropped
+    # name-mangled attributes and ordinary names spelled with an inner "__".
+    return [a for a in dir(obj) if not (a.startswith("__") and a.endswith("__")) and (uppercased is False or a[0].isupper())]
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -159,7 +161,7 @@ def flatten_keys_to_set(
         else:
             if verbose:
                 tmp_str = str(obj)
-                logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[max_chars:])
+                logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[:max_chars])
     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 
@@ -395,23 +397,26 @@ def float_distinct_digits_percent(number: float, precision: int = 5) -> float:
     return len(unique_digits) / ntotal if ntotal > 0 else 1.0
 
 
-def count_trailing_zeros(number: float, precision: int = 5):
-    """
-    >>>count_trailing_zeros(1.30e-6, precision=8)
+def count_trailing_zeros(number: float, precision: int = 5) -> int:
+    """Count the trailing zeros of ``number``'s FRACTIONAL part, formatted to ``precision`` digits.
+
+    >>> count_trailing_zeros(1.30e-6, precision=8)
     1
+    >>> count_trailing_zeros(100.0, precision=5)
+    5
     """
     # Convert the float to a string
     num_str = format(number, f".{precision}f")
-    nseps = 0
     nzeros = 0
     for char in num_str[::-1]:
         if char in ",.e+-":
-            nseps += 1
+            # The decimal separator ends the fractional part: continuing past it would count the
+            # integer part's zeros too, so every round number was mis-classified.
+            break
+        if char == "0":
+            nzeros += 1
         else:
-            if char == "0":
-                nzeros += 1
-            else:
-                break
+            break
 
     return nzeros
 
@@ -672,15 +677,15 @@ def ensure_valid_filename(name: str, max_length: int = 255) -> str:
     Replace invalid characters on Linux/Windows/MacOS with underscores.
     List from https://stackoverflow.com/a/31976060/819417
     Trailing spaces & periods are ignored on Windows.
-    >>> fix_filename("  COM1  ")
+    >>> ensure_valid_filename("  COM1  ")
     '_ COM1 _'
-    >>> fix_filename("COM10")
+    >>> ensure_valid_filename("COM10")
     'COM10'
-    >>> fix_filename("COM1,")
+    >>> ensure_valid_filename("COM1,")
     'COM1,'
-    >>> fix_filename("COM1.txt")
+    >>> ensure_valid_filename("COM1.txt")
     '_.txt'
-    >>> all('_' == fix_filename(chr(i)) for i in list(range(32)))
+    >>> all('_' == ensure_valid_filename(chr(i)) for i in list(range(32)))
     True
     """
     return re.sub(
@@ -712,6 +717,9 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
         elif fpath.lower().endswith(".pckl"):
             if unpickle_to_pd:
                 return pd.read_pickle(fpath)  # nosec B301 - fpath is caller-supplied (same trust level as the joblib.load branch above); this loader's whole purpose is deserializing a named local file
+            from pyutilz.core.safe_pickle import safe_load
+
+            return safe_load(fpath, **kwargs)
         elif fpath.lower().endswith(".bin"):
             # Lazy import: catboost is only needed for this branch, not for .joblib/.pckl
             # callers, who should not be forced to have it installed (found 2026-07-09 deptry
@@ -720,6 +728,10 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
 
             clf = CatBoostClassifier()
             return clf.load_model(fpath)
+        else:
+            # Falling off the end returned None for a file that exists but has an unknown
+            # extension, which the caller only discovered far away as AttributeError on None.
+            raise ValueError(f"load_file: unsupported extension for {fpath}")
 
 
 class ObjectsAndFilesProcessor:
@@ -979,8 +991,16 @@ def check_cpu_flag(flag: str = "avx2") -> bool:
     """
     try:
         import cpuinfo
+
         info = cpuinfo.get_cpu_info()
-        return flag in info["flags"]
-    except (ImportError, Exception) as e:  # nosec B110 - best-effort optional CPU-flag probe; failing here (e.g. py-cpuinfo absent or unexpected info shape) just reports flag unsupported
+    except Exception as e:  # nosec B110 - best-effort optional CPU-flag probe; py-cpuinfo absent or raising just reports flag unsupported
         logger.debug("Failed to probe CPU flag %r: %s", flag, e)
         return False
+    flags = info.get("flags") if isinstance(info, dict) else None
+    if flags is None:
+        # py-cpuinfo returns {} on several platforms and under some virtualization, and its schema
+        # has changed across releases. That is NOT the same as "the CPU lacks this flag", and
+        # silently reporting it as such disables every SIMD fast path on a capable machine.
+        logger.warning("check_cpu_flag(%r): py-cpuinfo reported no 'flags' key (info keys: %s); assuming unsupported", flag, sorted(info) if isinstance(info, dict) else type(info).__name__)
+        return False
+    return flag in flags

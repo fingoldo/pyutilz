@@ -105,7 +105,10 @@ def compute_entropy_stats(text: str, order: int = 0) -> tuple:
     if len(stats) == 0:
         return None, None
     sample_entropy_rate = entropy_rate(conditional_stats, stats)
-    sample_raw_entropy = entropy(stats, len(stats))
+    # Normalize by the TOTAL observation count, not the number of distinct prefixes: len(stats)
+    # makes each "probability" larger than 1, so the log2 term flips sign and the function
+    # returned a large negative value for what is by definition a non-negative quantity.
+    sample_raw_entropy = entropy(stats, sum(stats.values()))
     # print(stats)
     # print(f"Entropy: {sample_raw_entropy}, Entropy rate: {sample_entropy_rate}")
     return sample_raw_entropy, sample_entropy_rate

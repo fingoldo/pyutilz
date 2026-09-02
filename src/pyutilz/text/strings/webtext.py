@@ -43,7 +43,9 @@ def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Option
             else:
                 text = text[:p] + text[p2 + len(token2) :]
             p = 0
-        return text
+    # Unconditional: falling off the `if text:` branch returned None for ""/None, which the
+    # clean_description chain then dereferenced as a string.
+    return text
 
 
 def fix_duplicate_tokens(text: str) -> str:
@@ -60,9 +62,12 @@ def fix_duplicate_tokens(text: str) -> str:
 
 def unescape_html(text: str) -> str:
     """Decode HTML/XML entities (e.g. ``&amp;`` -> ``&``) in ``text``."""
-    from xml.sax import saxutils as su  # nosec B406 - saxutils.unescape() below only decodes HTML/XML entities in a plain string (no XML parsing/DTD resolution occurs), so there is no XXE parsing surface here
+    # html.unescape covers the full HTML5 named + numeric entity set; xml.sax.saxutils.unescape
+    # knew only &amp;/&lt;/&gt;, leaving &#39;, &quot;, &nbsp; and &eacute; -- among the most
+    # frequent entities in scraped web text, which is this module's entire subject -- untouched.
+    import html as _html
 
-    return su.unescape(text)
+    return _html.unescape(text)
 
 
 def fix_html(text: Optional[str], common_linebreak: Optional[str] = "\n") -> Optional[str]:
@@ -364,6 +369,11 @@ def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[boo
 
     global ascii_emojies, unicode_emojies
 
+    # Empty/whitespace-only input is routine for scraped text (fix_html strips some rows to ""),
+    # and text[-1] below raises IndexError on it.
+    if not text or not text.strip():
+        return text
+
     # Also handle tildas!!!
     for tilda in ["~", "-"]:
         if tilda in text:
@@ -411,4 +421,4 @@ def suffixize(noun: str, qty: int) -> str:
 
         inflect_engine = inflect.engine()
 
-    return inflect_engine.plural(noun, qty)
+    return str(inflect_engine.plural(noun, qty))

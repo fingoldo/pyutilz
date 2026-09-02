@@ -183,6 +183,12 @@ class OpenAICompatibleProvider(LLMProvider):
     _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
     last_tool_calls: PerCallAttr = PerCallAttr(list)
     last_citations: PerCallAttr = PerCallAttr(list)
+    # Same treatment: as a plain attribute this flag reported another concurrent call's
+    # strict-schema outcome, so a caller skipping enum validation on True could accept
+    # unvalidated output.
+    _last_json_schema_applied: PerCallAttr = PerCallAttr(lambda: False)
+
+    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (*LLMProvider._PERCALL_METADATA_ATTRS, "_last_json_schema_applied")
 
     def __init__(
         self,
@@ -263,11 +269,16 @@ class OpenAICompatibleProvider(LLMProvider):
     def _reset_per_call_state(self) -> None:
         """Hook called at the START of every ``generate()`` / ``generate_stream()``.
 
-        Default no-op. Providers tracking ``last_*`` per-call attributes
-        should reset them here so a failed call doesn't leave stale state
-        from the previous successful call masquerading as the latest one.
+        Resets every ``PerCallAttr`` this class declares, so a call that raises after a previous
+        success does not leave the previous call's usage/tool-calls/citations readable in the same
+        context masquerading as the latest one. Subclasses adding their own per-call attributes
+        should extend (not replace) this.
         """
-        return None
+        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        self._last_finish_reason = None
+        self.last_tool_calls = []
+        self.last_citations = []
+        self._last_json_schema_applied = False
 
     async def _async_prepare(self) -> None:
         """Async hook called (only when ``max_tokens<=0``, i.e. before ``self.max_output_tokens``
@@ -343,7 +354,12 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def max_output_tokens(self) -> int:
-        """Max output tokens for the current model, from ``_max_tokens_map`` or ``_default_max_tokens``."""
+        """Max output tokens for the current model, from ``_max_tokens_map`` or ``_default_max_tokens``.
+
+        Exact lookup: a subclass whose default is deliberately LARGER than its listed entries
+        (xAI, where the unlisted fast models carry the 2M window) must not have a shorter family
+        prefix silently override it. Subclasses whose table is prefix-safe override this.
+        """
         return self._max_tokens_map.get(self.model_name, self._default_max_tokens)
 
     # Subclasses override for per-model context windows
@@ -352,7 +368,10 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @property
     def context_window(self) -> int:
-        """Context window size for the current model, from ``_context_window_map`` or ``_default_context_window``."""
+        """Context window size for the current model, from ``_context_window_map`` or ``_default_context_window``.
+
+        Exact lookup, for the same reason as :attr:`max_output_tokens`.
+        """
         return self._context_window_map.get(self.model_name, self._default_context_window)
 
     def supports_json_mode(self) -> bool:
@@ -531,8 +550,14 @@ class OpenAICompatibleProvider(LLMProvider):
 
         attempt = 0
         emitted_any = False
+        # Usage is RECORDED ONCE, after the stream closes, from the last usage block seen.
+        # Recording per chunk double-counted spend and call count on upstreams that emit
+        # cumulative usage on more than the final chunk, and again whenever a stream that had
+        # already carried a usage block was retried by the loop below.
+        usage_recorded = False
         while True:
             attempt += 1
+            latest_usage: dict[str, Any] | None = None
             try:
                 async with self.semaphore:
                     async with self._client.stream(
@@ -558,7 +583,7 @@ class OpenAICompatibleProvider(LLMProvider):
                             # whenever it's seen.
                             usage = chunk.get("usage")
                             if usage:
-                                self._track_streaming_usage(usage)
+                                latest_usage = usage
                             choices = chunk.get("choices") or []
                             if not choices:
                                 continue
@@ -572,6 +597,9 @@ class OpenAICompatibleProvider(LLMProvider):
                         # the last.
                         if last_chunk is not None:
                             self._track_provider_specific_response(last_chunk)
+                if latest_usage is not None and not usage_recorded:
+                    usage_recorded = True
+                    self._track_streaming_usage(latest_usage)
                 return
             except Exception as exc:
                 # Only the stream-open / pre-first-token phase is safely

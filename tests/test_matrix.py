@@ -329,9 +329,12 @@ class TestEdgeCases:
         # Build with clearing (default)
         matrix = constructor.build_matrix(dtype=np.int32, clear_source=True)
 
-        # Source data should be deleted - accessing should raise AttributeError
-        with pytest.raises(AttributeError):
-            _ = constructor.data
+        # Buffers are emptied, not deleted: the builder stays usable for the next matrix.
+        assert constructor.data == []
+        assert constructor.rows == []
+        assert constructor.cols == []
+        constructor.add_element(7, row=0, col=0)
+        assert constructor.build_matrix(dtype=np.int32).toarray().tolist() == [[7]]
 
     def test_very_sparse_matrix(self):
         """Test memory efficiency of very sparse matrix"""

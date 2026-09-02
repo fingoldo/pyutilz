@@ -243,6 +243,9 @@ def get_country_by_ip(ip: Optional[str] = None, providers: Optional[Sequence[dic
             logger.debug("country lookup via %s failed: %s", url, e)
             continue
         if not isinstance(data, dict):
+            # get_ipinfo swallows its own exceptions and returns None, so this -- not the
+            # except branch above -- is where a failing provider actually shows up.
+            logger.debug("country lookup via %s returned no usable payload", url)
             continue
         code = data.get(provider["code"])
         name = data.get(provider["name"])
@@ -525,12 +528,17 @@ def get_new_smartproxy(
     n = 0
     now_time = datetime.utcnow()  # noqa: DTZ003 -- must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
     wait_started_at: Optional[datetime] = None
+    # Captured once: rebinding the `proxy_port` PARAMETER inside the loop froze the first random
+    # draw forever, so the "keeps re-rolling a random port" contract above never held.
+    fixed_port = proxy_port
     while True:
         # ----------------------------------------------------------------------------------------------------------------------------
         # Get random port
         # ----------------------------------------------------------------------------------------------------------------------------
-        if proxy_port is None:
+        if fixed_port is None:
             proxy_port = int(proxy_min_port) + int(random() * (int(proxy_max_port) - int(proxy_min_port)))  # nosec B311 - non-cryptographic random port pick within an allowed proxy port range, for load spreading, not security-sensitive
+        else:
+            proxy_port = fixed_port
 
         proxies = make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port, proxy_type)
 
@@ -539,10 +547,12 @@ def get_new_smartproxy(
         # Check if it's allowed for immediate use by the policies
         # ----------------------------------------------------------------------------------------------------------------------------
         b_time_to_check_now = True
-        for dict_to_check in (failed_dict, last_used_dict):
+        for dict_to_check, min_interval in ((failed_dict, min_failed_idle_interval_minutes), (last_used_dict, min_idle_interval_minutes)):
             if dict_to_check is not None:
                 if proxy_key in dict_to_check:
-                    if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_idle_interval_minutes:
+                    # A failed proxy has its own (much longer) cooldown; comparing it against
+                    # min_idle_interval_minutes (default 0) handed a just-blocked exit IP straight back.
+                    if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_interval:
                         if verbose:
                             logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)
                         b_time_to_check_now = False
@@ -710,7 +720,11 @@ def get_url(
 
             method = getattr(obj, verb)
 
-            res = method(url, headers=headers_to_use, params=params, data=data, json=json, proxies=proxies_snapshot, timeout=timeout)
+            # requests treats timeout=None as "wait forever", which would hang the retry loop; the
+            # urlopen call sites in this module apply the same 10s floor for exactly this reason.
+            res = method(
+                url, headers=headers_to_use, params=params, data=data, json=json, proxies=proxies_snapshot, timeout=timeout if timeout is not None else 10
+            )
 
             with _state_lock:
                 num_ip_queries = num_ip_queries + 1
@@ -802,8 +816,17 @@ def get_url(
                         # See the identical fix/comment on the except-branch's proxy rotation above.
                         with _state_lock:
                             proxies = new_proxies
+                        # Rotating the proxy is not a backoff: without this the loop re-hits a
+                        # 429-ing endpoint max_retries times with no pause at all (the exception
+                        # and generic-error branches already jitter the same way).
+                        retry_after = _parse_retry_after(res)
+                        if retry_after is not None:
+                            sleep(retry_after)
+                        elif delay:
+                            sleep(delay * random())  # nosec B311 - random jitter on the rate-limit retry backoff, not security-sensitive
                     else:
-                        sleep(ratelimited_sleep_interval)
+                        retry_after = _parse_retry_after(res)
+                        sleep(retry_after if retry_after is not None else ratelimited_sleep_interval)
                 else:
                     logger.warning("Error %s while getting url %s: %s", res.status_code, url, res.text)
 
@@ -931,6 +954,29 @@ def is_rotating_proxy(proxy_server: dict) -> Optional[bool]:
     return None
 
 
+def _parse_retry_after(res: Any) -> Optional[float]:
+    """Return the ``Retry-After`` delay in seconds, or None when the header is absent/unusable.
+
+    Only the delta-seconds form is honoured; the HTTP-date form is rare in rate-limit responses
+    and a mis-parsed date would produce a wildly wrong sleep. Absurd values are clamped so a
+    hostile or buggy upstream cannot park the caller for hours.
+    """
+    try:
+        raw = res.headers.get("Retry-After")
+    except Exception as e:
+        logger.debug("Response object exposes no readable headers mapping (%s); ignoring Retry-After.", e)
+        return None
+    if not raw:
+        return None
+    try:
+        seconds = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, 300.0)
+
+
 def download_to_file(
     url: str,
     filename: str,
@@ -946,59 +992,39 @@ def download_to_file(
         headers = {}
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
 
-    request: Optional[requests.Response] = None
-    nattempts = 0
-    while nattempts < max_attempts:
+    last_error: Optional[BaseException] = None
+    for attempt in range(max_attempts):
+        request: Optional[requests.Response] = None
         try:
             request = requests.get(url, timeout=timeout, headers=headers, stream=True)
-        except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
-            logger.exception(e)
-            sleep(10 * random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
-            logger.info("Making another attempt")
-            nattempts += 1
-        else:
             if request.status_code in exit_codes:
-                # Regression fix: this check previously lived in the `except` branch, where
-                # `request` can never hold a response object (it's only ever reassigned by a
-                # SUCCESSFUL requests.get() call, which takes the `else` branch here instead) --
-                # unreachable dead code, so a caller-designated fatal status (e.g. 404) was never
-                # actually honored; requests.get() doesn't raise on 4xx/5xx by default, so the
-                # loop simply broke out and proceeded to download the error page's body as if it
-                # were the real file.
+                # A caller-designated fatal status (e.g. 404): requests.get() does not raise on
+                # 4xx/5xx, so without this the error page's body would be written as the file.
                 return None
-            break
-
-    if request is None:
-        return
-
-    try:
-        nattempts = 0
-        while nattempts < max_attempts:
-            try:
-                # Open the output file and make sure we write in binary mode
-                with open(filename, "wb") as fh:
-                    # Walk through the request response in chunks of chunk_size * 1024 bytes
-                    for chunk in request.iter_content(chunk_size * 1024):
-                        # Write the chunk to the file
-                        fh.write(chunk)
-                        # Optionally we can check here if the download is taking too long
-            except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
-                logger.exception(e)
-                sleep(10 * random())  # nosec B311 - random jitter on the file-write-retry backoff sleep, not security-sensitive
+            # The GET must be re-issued on every attempt: a requests body is a single-use stream,
+            # so retrying only the write loop iterates an already-consumed response, yields
+            # nothing, and leaves the (already truncated by open(..., "wb")) file at 0 bytes while
+            # the function returns the same value as a successful download.
+            with open(filename, "wb") as fh:
+                for chunk in request.iter_content(chunk_size * 1024):
+                    fh.write(chunk)
+        except Exception as e:
+            last_error = e
+            logger.exception(e)
+            if attempt < max_attempts - 1:
+                sleep(10 * random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
                 logger.info("Making another attempt")
-                nattempts += 1
-            else:
-                break
         else:
-            # All max_attempts write attempts failed. `open(filename, "wb")` truncates the
-            # target on every attempt, so a partial/corrupt file would otherwise be left on
-            # disk while the function still returns None -- identical to a successful
-            # download. Best-effort remove it so "no file on disk" reliably signals failure
-            # here too, matching the connection-failure path above (tested via
-            # test_request_exception_on_all_attempts_returns_none).
-            try:
-                os.remove(filename)
-            except OSError:
-                pass
-    finally:
-        request.close()
+            return None
+        finally:
+            if request is not None:
+                request.close()
+
+    # Every attempt failed. Remove whatever partial/truncated bytes are on disk so that
+    # "no file" reliably signals failure instead of a plausible-looking empty artifact.
+    try:
+        os.remove(filename)
+    except OSError:
+        pass
+    logger.error("download_to_file: all %d attempts failed for %s: %s", max_attempts, url, last_error)
+    return None

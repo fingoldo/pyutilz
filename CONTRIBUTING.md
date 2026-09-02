@@ -46,12 +46,16 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 - Python 3.8 or higher
 - Git
 
-Note: some `[dev]` tooling requires a newer interpreter than the package's own 3.8 floor —
+Note: some dev tooling requires a newer interpreter than the package's own 3.8 floor —
 `black` needs Python >=3.10 and `py-ci-shared` (this project's Black-filtered-apply / mypy-cache
-tooling) needs >=3.9. On 3.8/3.9, `pip install -e .[all,dev]` below succeeds but silently skips
-those two packages (their `pyproject.toml` entries carry explicit `python_version` markers for
-this reason); `black .` / the pre-commit hooks that depend on them just won't be installed. If
-you'll be doing dev-tooling work (formatting, pre-commit), use Python >=3.10.
+tooling) needs >=3.9. On 3.8/3.9 the install commands below succeed but silently skip those two
+packages (both entries carry an explicit `python_version` marker for this reason); `black .` /
+the pre-commit hooks that depend on them just won't be installed. If you'll be doing dev-tooling
+work (formatting, pre-commit), use Python >=3.10.
+
+`py-ci-shared` is installed from `requirements-dev.txt`, not from the `[dev]` extra: it is
+consumed as a git checkout, and a `git+https` direct reference in package metadata would make
+every PyPI upload of pyutilz fail with `400 ... Can't have direct dependency`.
 
 ### Setup Instructions
 
@@ -60,8 +64,9 @@ you'll be doing dev-tooling work (formatting, pre-commit), use Python >=3.10.
 git clone https://github.com/YOUR_USERNAME/pyutilz.git
 cd pyutilz
 
-# Install in development mode with all extras
+# Install in development mode with all extras, plus the git-sourced dev tooling
 pip install -e .[all,dev]
+pip install -r requirements-dev.txt
 
 # Install the pre-commit hooks (runs the meta-test suite + linters on every commit)
 pre-commit install
@@ -79,6 +84,7 @@ pip install -e .[pandas]      # For pandas development
 pip install -e .[database]    # For database development
 pip install -e .[web]         # For web scraping development
 pip install -e .[dev]         # For development tools only
+pip install -r requirements-dev.txt   # py-ci-shared (needed by the pre-commit hooks)
 ```
 
 ## Code Standards

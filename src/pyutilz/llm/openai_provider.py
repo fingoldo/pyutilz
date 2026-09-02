@@ -6,6 +6,7 @@ import logging
 
 import httpx
 
+from pyutilz.llm.base import longest_prefix_lookup
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
@@ -63,6 +64,9 @@ _CACHE_HIT_COST: dict[str, float] = {
     "o3": 0.50,
     "o3-mini": 0.55,
     "o4-mini": 0.275,
+    "o1-pro": 75.00,
+    "gpt-5-codex": 0.125,
+    "gpt-5.1-codex": 0.125,
 }
 
 _MAX_TOKENS: dict[str, int] = {
@@ -83,6 +87,8 @@ _MAX_TOKENS: dict[str, int] = {
     "o3": 100_000,
     "o3-mini": 100_000,
     "o4-mini": 100_000,
+    "gpt-5-codex": 128_000,
+    "gpt-5.1-codex": 128_000,
 }
 
 _CONTEXT_WINDOW: dict[str, int] = {
@@ -103,6 +109,8 @@ _CONTEXT_WINDOW: dict[str, int] = {
     "o3": 200_000,
     "o3-mini": 200_000,
     "o4-mini": 200_000,
+    "gpt-5-codex": 400_000,
+    "gpt-5.1-codex": 400_000,
 }
 
 
@@ -200,6 +208,22 @@ class OpenAIProvider(OpenAICompatibleProvider):
         if model not in _PRICING:
             self._warn_unknown_model_once(model)
         return _PRICING.get(model, _PRICING["gpt-5-mini"])[1]
+
+    @property
+    def max_output_tokens(self) -> int:
+        """Max output tokens, resolved by longest matching prefix over ``_MAX_TOKENS``.
+
+        A dated snapshot id (``gpt-5-mini-2026-01-01``) used to miss the exact-match lookup and
+        fall back to the 16,384 class default -- an 8x-too-small budget that made
+        fit_max_tokens_to_context truncate requests that would have fit. Safe for this table
+        specifically: every family prefix here shares one budget across its variants.
+        """
+        return int(longest_prefix_lookup(self.model_name, self._max_tokens_map, self._default_max_tokens))
+
+    @property
+    def context_window(self) -> int:
+        """Context window, longest-prefix resolved for the same dated-snapshot reason as :attr:`max_output_tokens`."""
+        return int(longest_prefix_lookup(self.model_name, self._context_window_map, self._default_context_window))
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M cache-hit input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""

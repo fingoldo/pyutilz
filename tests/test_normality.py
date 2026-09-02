@@ -132,10 +132,21 @@ class TestNormalityVerdict:
         assert "non-Gaussian" in result["verdict"]
 
     def test_too_few_samples_short_circuits(self):
-        result = normality_verdict(np.arange(10, dtype=np.float64))
+        # Anderson-Darling is valid from n>=8, so only below that is the sample genuinely untestable.
+        result = normality_verdict(np.arange(7, dtype=np.float64))
         assert result["verdict"] == "too-few-samples"
         assert result["reject_normal"] is False
         assert math.isnan(result["k2_stat"])
+        assert math.isnan(result["ad_stat"])
+
+    def test_between_8_and_20_runs_anderson_darling_only(self):
+        # D'Agostino K2 needs n>=20 and stays NaN here, but reporting "too-few-samples" for the whole
+        # 8..19 range made a strongly non-Normal small group indistinguishable from an untested one.
+        result = normality_verdict(np.arange(10, dtype=np.float64))
+        assert result["verdict"].startswith("AD-only (n<20)")
+        assert math.isnan(result["k2_stat"])
+        assert math.isfinite(result["ad_stat"])
+        assert math.isfinite(result["ad_p"])
 
     def test_degenerate_zero_variance_short_circuits(self):
         result = normality_verdict(np.full(100, 7.0))

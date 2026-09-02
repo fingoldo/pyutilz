@@ -2,8 +2,8 @@ name: MyPy
 
 # Whole-project mypy check (the fast strict-mode beachhead workflow was retired). Extracted to
 # fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
-# install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow], which have no
-# current type-checked consumer). `advisory: false` (real blocking gate) as of 2026-07-13:
+# install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow] -- pyproject.toml's
+# comment on the `all` extra is the single source of truth for why those four are excluded). `advisory: false` (real blocking gate) as of 2026-07-13:
 # `mypy src/pyutilz` verified clean (0 errors, 113 source files) -- backlog is closed, same
 # posture as mlframe's mypy-full.yml. Flip back to advisory only if a future dependency-version
 # bump reopens the backlog wider than a same-PR fix.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from pyutilz.llm.base import longest_prefix_lookup
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
@@ -31,6 +32,8 @@ _MAX_TOKENS: dict[str, int] = {
     "grok-4": 30000,
     "grok-4-0709": 30000,
     "grok-code-fast-1": 30000,
+    "grok-3": 30000,
+    "grok-3-mini": 30000,
 }
 
 _PRICING: dict[str, tuple[float, float]] = {
@@ -155,14 +158,48 @@ class XAIProvider(OpenAICompatibleProvider):
             "xAI does not expose per-key rate limits via API. " "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
         )
 
+    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
+
+    def _warn_unknown_model_once(self, model: str) -> None:
+        """Log a one-time warning that pricing for ``model`` is unknown and the fast-tier fallback is used."""
+        if model in XAIProvider._seen_unknown_models:
+            return
+        XAIProvider._seen_unknown_models.add(model)
+        logger.warning(
+            "xAI pricing for %r is unknown; falling back to the grok-4-fast tariff. Cost estimates may be off.",
+            model,
+        )
+
+    def _resolve_pricing(self, model: str) -> tuple[float, float]:
+        """Return (input, output) USD per 1M for ``model``.
+
+        Longest-prefix resolution, then the fast-tier default WITH a one-time warning: an
+        unrecognized or dated snapshot id used to silently take the cheapest tariff in the table,
+        so session cost under-reported by several times with nothing in the log.
+        """
+        exact = _PRICING.get(model)
+        if exact is not None:
+            return exact
+        resolved = longest_prefix_lookup(model, _PRICING, None)
+        if resolved is None:
+            self._warn_unknown_model_once(model)
+            return (0.20, 0.50)
+        return resolved  # type: ignore[no-any-return]  # longest_prefix_lookup is typed Any; the table's value type is the tuple returned here
+
     def _input_cost_per_1m(self, model: str) -> float:
-        """Return the input token price per 1M tokens for the given model, falling back to the fast-tier default if unlisted."""
-        return _PRICING.get(model, (0.20, 0.50))[0]
+        """Return the input token price per 1M tokens for the given model."""
+        return self._resolve_pricing(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
-        """Return the output token price per 1M tokens for the given model, falling back to the fast-tier default if unlisted."""
-        return _PRICING.get(model, (0.20, 0.50))[1]
+        """Return the output token price per 1M tokens for the given model."""
+        return self._resolve_pricing(model)[1]
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
-        """Return the cached-input token price per 1M tokens for the given model, falling back to a default rate if unlisted."""
-        return _CACHE_HIT_COST.get(model, 0.05)
+        """Return the cached-input token price per 1M tokens for the given model."""
+        resolved = _CACHE_HIT_COST.get(model)
+        if resolved is None:
+            resolved = longest_prefix_lookup(model, _CACHE_HIT_COST, None)
+        if resolved is None:
+            self._warn_unknown_model_once(model)
+            return 0.05
+        return float(resolved)

@@ -232,8 +232,8 @@ def remove_json_defaults(
                     logger.warning("%s field not equals %s in object %s %s" % (attr, default_value, str(json_obj)[:20], obj_id))
 
 
-def _normalize_nonfinite_floats(obj: Any) -> Any:
-    """Recursively replace NaN/Infinity/-Infinity floats with None.
+def _normalize_for_pg_json(obj: Any) -> Any:
+    """Recursively replace NaN/Infinity/-Infinity floats with None and strip NUL from strings.
 
     orjson silently serializes them as JSON ``null``; stdlib ``json.dumps`` instead emits the
     non-standard tokens ``NaN``/``Infinity``/``-Infinity``, which postgres's strict json/jsonb
@@ -243,35 +243,44 @@ def _normalize_nonfinite_floats(obj: Any) -> Any:
     """
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else None
+    if isinstance(obj, str):
+        # Strip real NUL characters HERE, on the object. Doing it on the serialized text instead
+        # could not tell a postgres-hostile NUL escape from a value that legitimately contains the
+        # six literal characters backslash-u-0-0-0-0 -- a code snippet, regex or Windows path --
+        # and mangled such a value into unparseable JSON.
+        return obj.replace("\x00", "") if "\x00" in obj else obj
     if isinstance(obj, dict):
-        return {k: _normalize_nonfinite_floats(v) for k, v in obj.items()}
+        return {(_normalize_for_pg_json(k) if isinstance(k, str) else k): _normalize_for_pg_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
-        return [_normalize_nonfinite_floats(v) for v in obj]
+        return [_normalize_for_pg_json(v) for v in obj]
     return obj
+
+
+# Kept as the historical name of the above (it only handled floats when it was introduced).
+_normalize_nonfinite_floats = _normalize_for_pg_json
 
 
 def json_pg_dumps(obj: object, sort_keys: bool = False) -> str:
     """Serialize ``obj`` to a psycopg2 ``Json`` wrapper suitable for insertion into a jsonb column.
 
-    Uses orjson (falling back to stdlib json if unavailable) and strips literal NUL escapes
-    (``\\u0000``), which postgres rejects inside jsonb text. NaN/Infinity/-Infinity floats are
-    normalized to None BEFORE serialization (see :func:`_normalize_nonfinite_floats`) so the
-    output is identical regardless of which JSON backend is installed.
+    Uses orjson (falling back to stdlib json if unavailable). NUL characters (which postgres
+    rejects inside jsonb text) and NaN/Infinity/-Infinity floats are normalized out of the OBJECT
+    before serialization (see :func:`_normalize_for_pg_json`), so the output is identical
+    regardless of which JSON backend is installed and a value containing the literal text
+    ``\\u0000`` survives intact.
     """
-    # json.loads(json.dumps(obj, default=json_serial).replace(r"\u0000", "").replace("NaN", "null"))
-    # orjson is ~5-10x faster than stdlib json on dumps; emits UTF-8 bytes so we
-    # decode once before the literal-six-char backslash-u-0000 escape strip (postgres
-    # rejects NUL inside jsonb text). Falls back to stdlib only if orjson missing.
+    # orjson is ~5-10x faster than stdlib json on dumps; emits UTF-8 bytes, decoded once here.
+    # Falls back to stdlib only if orjson is missing.
     from psycopg2.extras import Json  # lazy: only needed when this fn is actually called
 
-    obj = _normalize_nonfinite_floats(obj)
+    obj = _normalize_for_pg_json(obj)
     try:
         import orjson  # type: ignore
         opts = orjson.OPT_SORT_KEYS if sort_keys else 0
         raw = orjson.dumps(obj, default=json_serial, option=opts).decode("utf-8")
     except ImportError:
         raw = json.dumps(obj, default=json_serial, sort_keys=sort_keys)
-    return Json(json.loads(raw.replace("\\u0000", "")))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime  # ,object_pairs_hook=OrderedDict
+    return Json(json.loads(raw))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime  # ,object_pairs_hook=OrderedDict
 
 
 def get_jsonlist_property(

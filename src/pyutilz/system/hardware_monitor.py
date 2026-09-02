@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-import time
 import psutil
 import threading
 import numpy as np
@@ -74,6 +73,8 @@ class UtilizationMonitor:
 
         self.gpu_ids = gpu_ids
         self.sleep_interval_seconds = sleep_interval_seconds
+        self.n_samples = 0
+        self.n_sampling_errors = 0
         self.stop_flag = threading.Event()
         # daemon=True (regression fix): if the code between start()/stop() raises -- the entire
         # reason someone wraps a benchmark in a monitor, to profile code that might fail --
@@ -107,98 +108,123 @@ class UtilizationMonitor:
         Also monitors per-GPU: load %, RAM free/used, temp, clocks, power draw.
         """
         while not self.stop_flag.is_set():
-            time.sleep(self.sleep_interval_seconds)
+            try:
+                self._collect_sample()
+            except Exception:
+                # A single bad sample (nvidia-smi reporting "N/A" for power_draw, a malformed XML
+                # payload) used to kill the thread outright, after which stop() still returned
+                # cleanly and the truncated series was presented as a complete run profile.
+                self.n_sampling_errors += 1
+                logger.exception("Hardware utilization sampling failed; continuing with the next sample")
+            # Waiting on the stop flag (rather than sleeping) lets stop() return immediately
+            # instead of blocking for up to a full interval, and sampling BEFORE the wait means a
+            # run shorter than one interval still yields data.
+            self.stop_flag.wait(self.sleep_interval_seconds)
 
-            # CPU
-            self.cpu_utilizaton.append(psutil.cpu_percent(percpu=False))
-            # cpu_freq() can return None on platforms/VMs where the frequency
-            # is unavailable; fall back to 0.0 rather than crashing the thread.
-            cpu_freq = psutil.cpu_freq(percpu=False)
-            self.cpu_clocks.append(cpu_freq.current if cpu_freq is not None else 0.0)
+    def _collect_sample(self) -> None:
+        """Take one CPU/RAM/GPU sample and append it to the accumulators."""
+        # CPU
+        self.cpu_utilizaton.append(psutil.cpu_percent(percpu=False))
+        # cpu_freq() can return None on platforms/VMs where the frequency
+        # is unavailable; fall back to 0.0 rather than crashing the thread.
+        cpu_freq = psutil.cpu_freq(percpu=False)
+        self.cpu_clocks.append(cpu_freq.current if cpu_freq is not None else 0.0)
 
-            # RAM
-            # get_own_memory_usage() documents returning None if psutil raises AND there's no
-            # prior successful reading to fall back on (e.g. psutil fails on the very first
-            # sample) -- appending it unfiltered would make every later np.mean() over this list
-            # raise TypeError, so skip the sample instead of recording a None.
-            own_ram = get_own_memory_usage()
-            if own_ram is not None:
-                self.own_ram_used.append(own_ram)
-            mem = psutil.virtual_memory()
-            self.total_ram_used.append(mem.used)
-            self.total_ram_free.append(mem.free)
+        # RAM
+        # get_own_memory_usage() documents returning None if psutil raises AND there's no
+        # prior successful reading to fall back on (e.g. psutil fails on the very first
+        # sample) -- appending it unfiltered would make every later np.mean() over this list
+        # raise TypeError, so skip the sample instead of recording a None.
+        own_ram = get_own_memory_usage()
+        if own_ram is not None:
+            self.own_ram_used.append(own_ram)
+        mem = psutil.virtual_memory()
+        self.total_ram_used.append(mem.used)
+        self.total_ram_free.append(mem.free)
 
-            # GPU
-            gpu_stats = get_nvidia_smi_info(include_stats=True)
+        # GPU
+        gpu_stats = get_nvidia_smi_info(include_stats=True)
 
-            if gpu_stats is None:
+        self.n_samples += 1
+        if gpu_stats is None:
+            return
+
+        total_gpu_ram_free = 0.0
+        total_gpu_ram_used = 0.0
+
+        total_gpu_clocks = 0.0
+        total_gpu_utilizaton = 0.0
+
+        total_gpu_power_draw = 0.0
+        total_gpu_temp = 0.0
+
+        n = 0
+
+        for gpu_info in gpu_stats.get("gpu", []):
+            # gpu_module_id may be a non-numeric string (e.g. from malformed
+            # nvidia-smi output); coerce safely instead of raising ValueError.
+            raw_gpu_id = gpu_info.get("gpu_module_id", 0)
+            try:
+                gpu_id = int(raw_gpu_id)
+            except (TypeError, ValueError):
+                gpu_id = 0
+            if self.gpu_ids and gpu_id not in self.gpu_ids:
                 continue
 
-            total_gpu_ram_free = 0.0
-            total_gpu_ram_used = 0.0
+            fb_memory_usage = gpu_info.get("fb_memory_usage", {})
+            free_mem = fb_memory_usage.get("free", "0 MiB")
+            used_mem = fb_memory_usage.get("used", "0 MiB")
+            total_gpu_ram_free += to_float(str(free_mem).replace(" MiB", ""))
+            total_gpu_ram_used += to_float(str(used_mem).replace(" MiB", ""))
 
-            total_gpu_clocks = 0.0
-            total_gpu_utilizaton = 0.0
+            utilization = gpu_info.get("utilization", {})
+            gpu_util = utilization.get("gpu_util", "0 %")
+            total_gpu_utilizaton += to_float(str(gpu_util).replace(" %", ""))
 
-            total_gpu_power_draw = 0.0
-            total_gpu_temp = 0.0
+            temperature = gpu_info.get("temperature", {})
+            gpu_temp = temperature.get("gpu_temp", "0 C")
+            total_gpu_temp += to_float(str(gpu_temp).replace(" C", ""))
 
-            n = 0
+            power_readings = gpu_info.get("power_readings", {})
+            power_draw = power_readings.get("power_draw", "0 W")
+            total_gpu_power_draw += to_float(str(power_draw).replace(" W", ""))
 
-            for gpu_info in gpu_stats.get("gpu", []):
-                # gpu_module_id may be a non-numeric string (e.g. from malformed
-                # nvidia-smi output); coerce safely instead of raising ValueError.
-                raw_gpu_id = gpu_info.get("gpu_module_id", 0)
-                try:
-                    gpu_id = int(raw_gpu_id)
-                except (TypeError, ValueError):
-                    gpu_id = 0
-                if self.gpu_ids and gpu_id not in self.gpu_ids:
-                    continue
+            clocks = gpu_info.get("clocks", {})
+            sm_clock = clocks.get("sm_clock", "0 MHz")
+            total_gpu_clocks += to_float(str(sm_clock).replace(" MHz", ""))
 
-                fb_memory_usage = gpu_info.get("fb_memory_usage", {})
-                free_mem = fb_memory_usage.get("free", "0 MiB")
-                used_mem = fb_memory_usage.get("used", "0 MiB")
-                total_gpu_ram_free += to_float(str(free_mem).replace(" MiB", ""))
-                total_gpu_ram_used += to_float(str(used_mem).replace(" MiB", ""))
+            n += 1
 
-                utilization = gpu_info.get("utilization", {})
-                gpu_util = utilization.get("gpu_util", "0 %")
-                total_gpu_utilizaton += to_float(str(gpu_util).replace(" %", ""))
+        if n:
+            self.mean_gpu_ram_free.append(total_gpu_ram_free / n)
+            self.mean_gpu_ram_used.append(total_gpu_ram_used / n)
 
-                temperature = gpu_info.get("temperature", {})
-                gpu_temp = temperature.get("gpu_temp", "0 C")
-                total_gpu_temp += to_float(str(gpu_temp).replace(" C", ""))
+            self.mean_gpu_clocks.append(total_gpu_clocks / n)
+            self.mean_gpu_utilizaton.append(total_gpu_utilizaton / n)
 
-                power_readings = gpu_info.get("power_readings", {})
-                power_draw = power_readings.get("power_draw", "0 W")
-                total_gpu_power_draw += to_float(str(power_draw).replace(" W", ""))
+            self.mean_gpu_power_draw.append(total_gpu_power_draw / n)
+            self.mean_gpu_temp.append(total_gpu_temp / n)
 
-                clocks = gpu_info.get("clocks", {})
-                sm_clock = clocks.get("sm_clock", "0 MHz")
-                total_gpu_clocks += to_float(str(sm_clock).replace(" MHz", ""))
+    def start(self) -> None:
+        """Start the background monitoring thread.
 
-                n += 1
-
-            if n:
-                self.mean_gpu_ram_free.append(total_gpu_ram_free / n)
-                self.mean_gpu_ram_used.append(total_gpu_ram_used / n)
-
-                self.mean_gpu_clocks.append(total_gpu_clocks / n)
-                self.mean_gpu_utilizaton.append(total_gpu_utilizaton / n)
-
-                self.mean_gpu_power_draw.append(total_gpu_power_draw / n)
-                self.mean_gpu_temp.append(total_gpu_temp / n)
-
-    def start(self):
-        """Start the background monitoring thread."""
+        The Thread object is (re)created here rather than in ``__init__``, so the same instance
+        can be started, stopped and started again -- including reuse as a context manager, which
+        otherwise raised "threads can only be started once" on the second ``with``.
+        """
+        if self.thread is not None and self.thread.is_alive():
+            logger.debug("Hardware utilization monitoring already running")
+            return
+        self.stop_flag.clear()
+        self.thread = threading.Thread(target=self.query_utilization, daemon=True)
         self.thread.start()
         logger.info("Hardware utilization monitoring started")
 
-    def stop(self):
+    def stop(self, timeout: Optional[float] = None) -> None:
         """Stop the background monitoring thread and wait for it to finish."""
         self.stop_flag.set()
-        self.thread.join()
+        if self.thread is not None:
+            self.thread.join(timeout)
         logger.info("Hardware utilization monitoring stopped")
 
     def __enter__(self) -> "UtilizationMonitor":
@@ -219,8 +245,15 @@ class UtilizationMonitor:
         Returns:
             dict: Average utilization metrics for CPU, RAM, and GPU
         """
+        if self.n_sampling_errors:
+            logger.warning(
+                "get_average_utilization: %d of %d samples failed; the averages below cover only the successful ones",
+                self.n_sampling_errors, self.n_samples + self.n_sampling_errors,
+            )
         if self.cpu_utilizaton:
             return dict(
+                n_samples=len(self.cpu_utilizaton),
+                n_sampling_errors=self.n_sampling_errors,
                 cpu_utilizaton_percent=round(np.mean(self.cpu_utilizaton), ndigits),
                 cpu_clocks_mhz=round(np.mean(self.cpu_clocks), ndigits),
                 own_ram_used_gb=round(np.mean(self.own_ram_used), ndigits),
@@ -235,6 +268,8 @@ class UtilizationMonitor:
             )
         else:
             return dict(
+                n_samples=0,
+                n_sampling_errors=self.n_sampling_errors,
                 cpu_utilizaton_percent=None,
                 cpu_clocks_mhz=None,
                 own_ram_used_gb=None,

@@ -144,6 +144,8 @@ class AdvancedTokenizer:
             last_word = None
             for w, word in enumerate(words):
                 word_len = len(word)
+                if word_len == 0:
+                    continue
                 if word_len > self.MAX_WORD_LENGTH:
                     # Not genuine language content at this length (a long URL, a base64/JS blob
                     # that survived fix_html, an unbroken run of scraped text) -- skip entirely
@@ -152,25 +154,17 @@ class AdvancedTokenizer:
                     logger.debug("Skipping %d-char word in morpheme extraction (exceeds MAX_WORD_LENGTH=%d)", word_len, self.MAX_WORD_LENGTH)
                     last_word = None
                     continue
+                # Both flags describe the WORD, computed once, which is what their names say and
+                # what the counters below are meant to measure. Recomputing them per (i, j) offset
+                # made a camelCase-ish token like "aBCDE" contribute to both counters, and left
+                # them entirely unassigned (NameError on the first word) whenever
+                # MIN_MORPHEME_LENGTH > 1 skipped the j == 1 branch that used to define them.
+                FIRSTLETTER_CAPITAL = word[0].isupper()
+                ALLLETTERS_CAPITAL = word.isupper()
                 for i in range(word_len):
                     max_j = min(word_len - i, self.MAX_MORPHEME_LENGTH)
                     for j in range(self.MIN_MORPHEME_LENGTH, max_j + 1):
                         morpheme = word[i : i + j]
-                        # if len(morpheme)>0:
-                        if j == 1:
-                            if morpheme.isupper():
-                                FIRSTLETTER_CAPITAL = True
-                                ALLLETTERS_CAPITAL = False
-                            else:
-                                FIRSTLETTER_CAPITAL = False
-                                ALLLETTERS_CAPITAL = False
-                        else:
-                            if FIRSTLETTER_CAPITAL:
-                                if morpheme.isupper():
-                                    ALLLETTERS_CAPITAL = True
-                                else:
-                                    ALLLETTERS_CAPITAL = False
-                        # print(morpheme)
                         base_morpheme = morpheme.lower()
                         # stats
                         if w == 0:

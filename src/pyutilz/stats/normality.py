@@ -271,7 +271,11 @@ def normality_verdict(
     r = np.ascontiguousarray(sample, dtype=np.float64)
     r = r[np.isfinite(r)]
     n_total = r.size
-    if n_total < 20:
+    # 8, not 20: anderson_darling_normal is valid from n>=8, and dagostino_k2's NaN below n=20 is
+    # already handled by the np.isfinite guards on reject_k2/reject_ad. Returning
+    # "too-few-samples" for 8..19 made a strongly non-Normal small group indistinguishable from
+    # an untested one.
+    if n_total < 8:
         return {
             "n": n_total,
             "n_total": n_total,
@@ -320,13 +324,18 @@ def normality_verdict(
     reject_ad = bool(np.isfinite(ad_p) and ad_p < alpha)
     reject_normal = reject_k2 or reject_ad
 
+    # Below n=20 only Anderson-Darling actually ran; say so, so a caller never reads a
+    # single-test result as a two-test agreement.
+    prefix = "AD-only (n<20) " if n_total < 20 else ""
     if reject_normal:
         why = []
         if reject_k2:
             why.append(f"D'Agostino K2 p={k2_p:.4g} (<{alpha})")
         if reject_ad:
             why.append(f"Anderson-Darling A*={ad_stat:.3f} p={ad_p:.4g} (<{alpha})")
-        verdict = "non-Gaussian (" + "; ".join(why) + ")"
+        verdict = prefix + "non-Gaussian (" + "; ".join(why) + ")"
+    elif prefix:
+        verdict = prefix + f"consistent with Normal (AD A*={ad_stat:.3f} p={ad_p:.3g})"
     else:
         verdict = f"consistent with Normal " f"(K2 p={k2_p:.3g}, AD A*={ad_stat:.3f} p={ad_p:.3g})"
 

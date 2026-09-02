@@ -240,14 +240,15 @@ def sentences_similarity(
                 Sim_res[i][j] = 1.0
                 continue
 
-            # Check if starts match (one is prefix of another)
-            if a[:lminLen] == b[:lminLen]:
-                # Чтобы "Almeria B"<>"Al-Budaiya"
-                sim = 0.9 + 0.1 * lminLen / t
-                Sim_res[i][j] = sim
+            if lminLen < cMinLenTHreshold:
                 continue
 
-            if lminLen < cMinLenTHreshold:
+            # Check if starts match (one is prefix of another)
+            # Чтобы "Almeria B"<>"Al-Budaiya": a single shared character must not earn the 0.9
+            # floor -- "A" vs "ANDERSON" scored 0.9125, above a correct suffix match.
+            if lminLen >= 2 and a[:lminLen] == b[:lminLen]:
+                sim = 0.9 + 0.1 * lminLen / t
+                Sim_res[i][j] = sim
                 continue
 
             # Levenshtein distance
@@ -262,7 +263,9 @@ def sentences_similarity(
                     short, long, short_len, long_len = b, a, cur_b_len, cur_a_len
 
                 best_gliding_perf = short_len  # worst case = all chars different
-                for k in range(long_len - short_len):
+                # L-S+1 windows of length S exist; the old `range(L-S)` never tested the SUFFIX window,
+                # so an exact suffix match (MADRID vs REALMADRID) scored as unrelated.
+                for k in range(long_len - short_len + 1):
                     t_sim = levenshtein_distance(short, long[k : k + short_len])
                     if t_sim < best_gliding_perf:
                         best_gliding_perf = t_sim
@@ -380,7 +383,10 @@ def normalize_sentence(
                     # print(sentence ,'->', sentence[:-(term_len + 1)])
                     sentence = sentence[: -(term_len + 1)]
 
-    return list(set(sentence.split(placeholder)))
+    # dict.fromkeys, not set(): set() ordering varies with PYTHONHASHSEED, and the greedy
+    # matcher's >= tie-break is order-sensitive, so the same pair of names could score
+    # differently in two processes. Empty tokens are dropped rather than compared.
+    return [token for token in dict.fromkeys(sentence.split(placeholder)) if token]
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -463,17 +469,18 @@ try:
                         sim_res[i, j] = 1.0
                         continue
 
-                # Prefix match
-                prefix_match = True
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                # Prefix match. Requires a 2-character common prefix: a single shared character
+                # otherwise earned the 0.9 floor, outscoring a correct suffix match.
+                prefix_match = lmin_len >= 2
                 for c in range(lmin_len):
                     if buf[a_start + c] != buf[b_start + c]:
                         prefix_match = False
                         break
                 if prefix_match:
                     sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
-                    continue
-
-                if lmin_len < cMinLenTHreshold:
                     continue
 
                 # Full Levenshtein
@@ -490,7 +497,7 @@ try:
                         l_start, l_len = a_start, cur_a_len
 
                     best_gliding = s_len
-                    for k in range(l_len - s_len):
+                    for k in range(l_len - s_len + 1):
                         d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
                         if d < best_gliding:
                             best_gliding = d
@@ -644,17 +651,18 @@ try:
                         sim_res[i, j] = 1.0
                         continue
 
-                # Prefix match
-                prefix_match = True
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                # Prefix match. Requires a 2-character common prefix: a single shared character
+                # otherwise earned the 0.9 floor, outscoring a correct suffix match.
+                prefix_match = lmin_len >= 2
                 for c in range(lmin_len):
                     if buf[a_start + c] != buf[b_start + c]:
                         prefix_match = False
                         break
                 if prefix_match:
                     sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
-                    continue
-
-                if lmin_len < cMinLenTHreshold:
                     continue
 
                 # Full Levenshtein
@@ -671,7 +679,7 @@ try:
                         l_start, l_len = a_start, cur_a_len
 
                     best_gliding = s_len
-                    for k in range(l_len - s_len):
+                    for k in range(l_len - s_len + 1):
                         d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
                         if d < best_gliding:
                             best_gliding = d
@@ -948,16 +956,18 @@ try:
                         sim_res[i, j] = 1.0
                         continue
 
-                prefix_match = True
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                # Prefix match. Requires a 2-character common prefix: a single shared character
+                # otherwise earned the 0.9 floor, outscoring a correct suffix match.
+                prefix_match = lmin_len >= 2
                 for cc in range(lmin_len):
                     if buf[a_start + cc] != buf[b_start + cc]:
                         prefix_match = False
                         break
                 if prefix_match:
                     sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
-                    continue
-
-                if lmin_len < cMinLenTHreshold:
                     continue
 
                 sim_min = 1.0 - _lev_dist_flat(buf, a_start, cur_a_len, b_start, cur_b_len) / t
@@ -972,7 +982,7 @@ try:
                         l_start, l_len = a_start, cur_a_len
 
                     best_gliding = s_len
-                    for k in range(l_len - s_len):
+                    for k in range(l_len - s_len + 1):
                         d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
                         if d < best_gliding:
                             best_gliding = d
@@ -1040,16 +1050,18 @@ try:
                         sim_res[i, j] = 1.0
                         continue
 
-                prefix_match = True
+                if lmin_len < cMinLenTHreshold:
+                    continue
+
+                # Prefix match. Requires a 2-character common prefix: a single shared character
+                # otherwise earned the 0.9 floor, outscoring a correct suffix match.
+                prefix_match = lmin_len >= 2
                 for cc in range(lmin_len):
                     if buf[a_start + cc] != buf[b_start + cc]:
                         prefix_match = False
                         break
                 if prefix_match:
                     sim_res[i, j] = 0.9 + 0.1 * lmin_len / t
-                    continue
-
-                if lmin_len < cMinLenTHreshold:
                     continue
 
                 sim_min = 1.0 - _lev_dist_flat(buf, a_start, cur_a_len, b_start, cur_b_len) / t
@@ -1064,7 +1076,7 @@ try:
                         l_start, l_len = a_start, cur_a_len
 
                     best_gliding = s_len
-                    for k in range(l_len - s_len):
+                    for k in range(l_len - s_len + 1):
                         d = _lev_dist_flat(buf, s_start, s_len, l_start + k, s_len)
                         if d < best_gliding:
                             best_gliding = d

@@ -247,7 +247,12 @@ class DecodoProvider(ProxyProvider):
         except ValueError:
             raise ValueError(f"{port_var} must be an integer, got '{os.environ[port_var]}'")
 
-        port_range = int(os.environ.get(range_var, default_range))
+        try:
+            # Same treatment as port_var above: a bare int() failure names neither the variable
+            # nor the offending value, which an operator cannot map back to their environment.
+            port_range = int(os.environ.get(range_var, default_range))
+        except ValueError:
+            raise ValueError(f"{range_var} must be an integer, got '{os.environ.get(range_var)}'")
 
         config = ProxyConfig(
             user=os.environ[user_var],
@@ -362,24 +367,36 @@ class DecodoProvider(ProxyProvider):
         elif start is None or end is None:
             raise ValueError("Provide either days>0 or explicit start/end")
 
-        body: dict = {
-            "proxyType": proxy_type,
-            "startDate": start,
-            "endDate": end,
-            "groupBy": group_by,
-            "limit": limit,
-            "page": 1,
-            "sortBy": "grouping_key",
-            "sortOrder": sort_order,
-        }
-        r = requests.post(
-            f"{API_BASE}/api/v2/statistics/traffic",
-            headers=self._api_headers(),
-            json=body,
-            timeout=30,
-        )
-        r.raise_for_status()
-        return _parse_traffic_response(r.json(), group_by)
+        # Paginate: page 1 alone silently truncated the report at `limit` rows and reported the
+        # partial sum as the account total, which a quota/billing decision would be made on.
+        all_rows: List[Any] = []
+        page = 1
+        while page <= _MAX_TRAFFIC_PAGES:
+            body: dict = {
+                "proxyType": proxy_type,
+                "startDate": start,
+                "endDate": end,
+                "groupBy": group_by,
+                "limit": limit,
+                "page": page,
+                "sortBy": "grouping_key",
+                "sortOrder": sort_order,
+            }
+            r = requests.post(
+                f"{API_BASE}/api/v2/statistics/traffic",
+                headers=self._api_headers(),
+                json=body,
+                timeout=30,
+            )
+            r.raise_for_status()
+            page_rows = _extract_traffic_rows(r.json())
+            all_rows.extend(page_rows)
+            if len(page_rows) < limit:
+                break
+            page += 1
+        else:
+            _log.warning("get_traffic: stopped after %d pages of %d rows; the report may still be truncated", _MAX_TRAFFIC_PAGES, limit)
+        return _parse_traffic_response(all_rows, group_by)
 
     def print_usage(
         self,
@@ -409,11 +426,21 @@ class DecodoProvider(ProxyProvider):
                 print(f"  Error fetching traffic: {e}")
 
 
-def _parse_traffic_response(data: Any, group_by: str) -> DecodoTrafficReport:
-    """Parse the traffic API response into a :class:`DecodoTrafficReport`."""
+# Safety stop so a server that never returns a short page cannot loop forever.
+_MAX_TRAFFIC_PAGES = 100
+
+
+def _extract_traffic_rows(data: Any) -> List[Any]:
+    """Return the row list out of one traffic-API response payload."""
     raw_rows = data if isinstance(data, list) else data.get("data", data.get("results", []))
     if not isinstance(raw_rows, list):
-        raw_rows = []
+        return []
+    return raw_rows
+
+
+def _parse_traffic_response(data: Any, group_by: str) -> DecodoTrafficReport:
+    """Parse the traffic API response (or an already-flattened row list) into a :class:`DecodoTrafficReport`."""
+    raw_rows = _extract_traffic_rows(data)
 
     rows: List[DecodoTrafficRow] = []
     total_reqs = 0

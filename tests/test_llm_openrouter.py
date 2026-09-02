@@ -644,7 +644,12 @@ class TestSummarizeEndpoints:
         a 0-100 percentage (e.g. 99.806 for 99.806% uptime) instead
         of the documented 0-1 fraction. ``_summarize_endpoints``
         normalises both shapes to fraction so downstream filters
-        using a 0-1 ``min_uptime`` work consistently."""
+        using a 0-1 ``min_uptime`` work consistently.
+
+        The shape is decided ONCE PER PAYLOAD, not per value: at 1.0 the two shapes are
+        indistinguishable, and guessing per value read a genuine 1% uptime as 100% and kept
+        routing traffic to a nearly-dead backend. So in a payload that carries 99.806, the
+        0.95 below is 0.95%, not 95%."""
         out = _summarize_endpoints([
             {
                 "provider_name": "A",
@@ -663,17 +668,24 @@ class TestSummarizeEndpoints:
         assert a["uptime_5m"] == pytest.approx(0.995)
         assert a["uptime_30m"] == pytest.approx(0.99806)
         assert a["uptime_1d"] == pytest.approx(1.0)
-        # Already-fractional value is preserved.
-        assert b["uptime_30m"] == pytest.approx(0.95)
+        # Same payload, same shape: 0.95 here means 0.95%, not 95%.
+        assert b["uptime_30m"] == pytest.approx(0.0095)
         # Best aggregate is now in fraction-space.
         assert 0.99 < out["best_uptime_30m"] <= 1.0
 
 
 class TestNormalizeUptime:
     def test_fraction_returned_unchanged(self):
-        assert _normalize_uptime(0.998) == pytest.approx(0.998)
-        assert _normalize_uptime(0.5) == pytest.approx(0.5)
-        assert _normalize_uptime(1.0) == pytest.approx(1.0)
+        # is_percentage=False is what _uptime_payload_is_percentage returns for a payload whose
+        # every uptime value is <= 1.0.
+        assert _normalize_uptime(0.998, is_percentage=False) == pytest.approx(0.998)
+        assert _normalize_uptime(0.5, is_percentage=False) == pytest.approx(0.5)
+        assert _normalize_uptime(1.0, is_percentage=False) == pytest.approx(1.0)
+
+    def test_one_point_zero_follows_the_payload_shape(self):
+        """1.0 is the single ambiguous value; the payload's shape, not a per-value guess, decides."""
+        assert _normalize_uptime(1.0, is_percentage=True) == pytest.approx(0.01)
+        assert _normalize_uptime(1.0, is_percentage=False) == pytest.approx(1.0)
 
     def test_percentage_divided_by_100(self):
         assert _normalize_uptime(99.806) == pytest.approx(0.99806)

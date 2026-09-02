@@ -108,6 +108,15 @@ class TomlLiveConfig:
                 # First load with no file -- start with empty config (defaults used).
                 self._mtime = 0.0
             return
+        except OSError as exc:
+            # Any other OS-level failure (on Windows most commonly PermissionError / WinError 32
+            # while an editor still holds the file open mid-save -- exactly when the mtime just
+            # changed and a reload fires) must keep the previous config rather than crash the
+            # running pipeline this class exists to protect.
+            self._log.warning(
+                "Config file %s unreadable (keeping previous values): %s", self._path, exc,
+            )
+            return
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
             self._log.warning(
                 "Config parse error (keeping previous values): %s", exc,
@@ -135,11 +144,11 @@ class TomlLiveConfig:
             self._last_check = now
             try:
                 mt = self._path.stat().st_mtime
-            except FileNotFoundError:
+            except OSError as exc:
                 if self._data:
                     self._log.warning(
-                        "Config file %s disappeared -- keeping previous values",
-                        self._path,
+                        "Config file %s unstattable (%s) -- keeping previous values",
+                        self._path, exc,
                     )
                 return
             if mt != self._mtime:
@@ -180,6 +189,13 @@ class TomlLiveConfig:
             # was requested.
             bool_int_alias = isinstance(val, bool) and type_ is not bool
             if bool_int_alias or (type_ is not type(val) and not isinstance(val, type_)):
+                if type_ is int and isinstance(val, float) and not isinstance(val, bool) and val != int(val):
+                    # A successful-but-lossy cast used to be completely silent: timeout_sec = 0.5
+                    # read with the type_=int default became 0, i.e. no timeout at all.
+                    self._log.warning(
+                        "config [%s].%s: float %r truncated to int %d by type_=int; pass type_=float to keep precision",
+                        section, key, val, int(val),
+                    )
                 try:
                     return type_(val)
                 except (TypeError, ValueError) as exc:
@@ -214,13 +230,24 @@ class TomlLiveConfig:
         the section is missing.
         """
         self._maybe_reload()
-        return self._data.get(section) or self._defaults.get(section) or {}
+        with self._lock:
+            # `in` rather than `or`, so a legitimately-empty [section] in the file is honoured
+            # instead of silently falling through to the defaults, and a COPY, so a caller's
+            # local override cannot rewrite the running config (or, worse, the shared defaults).
+            if section in self._data:
+                return dict(self._data[section])
+            return dict(self._defaults.get(section) or {})
 
     @property
     def data(self) -> dict[str, Any]:
-        """Return the full config dict (triggers lazy reload check)."""
+        """Return a shallow copy of the full config dict (triggers lazy reload check).
+
+        A copy, not the live dict: handing out the internal object let any caller rewrite the
+        running config in place, bypassing the lock the setter takes.
+        """
         self._maybe_reload()
-        return self._data
+        with self._lock:
+            return dict(self._data)
 
     @data.setter
     def data(self, value: dict[str, Any]) -> None:

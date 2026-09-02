@@ -136,8 +136,11 @@ def fix_dashes(text: str) -> str:
     text = text.replace("\u201d", '"')  # right double smart quote
     text = text.replace("\u2018", "'")  # left single smart quote
     text = text.replace("\u2019", "'")  # right single smart quote
-    # Collapse runs of spaces around the replacement dashes.
-    text = re.sub(r" {2,}", " ", text)
+    # Collapse runs of spaces ONLY around the replacement dashes. An unconditional
+    # re.sub(" {2,}", " ") destroyed aligned tables, indented code and any ASCII layout in a
+    # document that contained no dash at all -- far outside what this function is asked to do.
+    text = re.sub(r" {2,}-", " -", text)
+    text = re.sub(r"- {2,}", "- ", text)
     return text
 
 

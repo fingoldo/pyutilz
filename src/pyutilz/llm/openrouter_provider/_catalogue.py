@@ -60,6 +60,24 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     """
     if _catalogue_is_fresh():
         return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        # Called from the event-loop thread on a cache miss/TTL rollover. The fetch below holds
+        # _MODELS_LOCK across a blocking httpx.get(timeout=10), which would stall EVERY in-flight
+        # coroutine -- the exact bug _ensure_catalogue_warm_async exists to close, still reachable
+        # from the sync paths (supports_json_schema, _per_token_cost_pair via estimate_cost /
+        # get_session_cost, and _resolve_model_limits when the TTL expires just after the warm).
+        # A stale-but-cached catalogue (or an empty one) is strictly better than freezing the loop;
+        # the next _ensure_catalogue_warm_async, which runs off-loop, refreshes it.
+        cached = _pkg()._MODELS_CATALOGUE
+        if cached is None:
+            logger.debug("OpenRouter catalogue not yet cached and cannot be fetched from the event loop; returning empty")
+            return {}
+        logger.debug("Serving a stale OpenRouter catalogue rather than blocking the event loop on a refetch")
+        return cached  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
     with _pkg()._MODELS_LOCK:
         if _catalogue_is_fresh():
             return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime

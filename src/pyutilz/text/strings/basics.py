@@ -17,10 +17,14 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
     if not s:
         return None
 
-    if not idx2:
+    # `is None`, not truthiness: an explicit idx2=0 requests an empty window, which used to be
+    # conflated with "unset" and searched the whole string instead.
+    if idx2 is None:
         idx2 = len(s)
     if len(start) == 0:
-        p1 = 0
+        # Honour idx1 here too: returning content from before the caller's requested start was
+        # exactly what the window argument was meant to exclude.
+        p1 = idx1 or 0
     else:
         p1 = s.find(start, idx1, idx2)
     if p1 >= 0:

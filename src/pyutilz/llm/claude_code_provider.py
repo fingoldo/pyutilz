@@ -20,7 +20,7 @@ import random
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
 from pyutilz.llm.base import LLMProvider
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
@@ -76,7 +76,7 @@ try:
                 except ValueError:
                     pass
             return cmd
-        _sc.SubprocessCLITransport._build_command = _patched_build
+        _sc.SubprocessCLITransport._build_command = _patched_build  # type: ignore[method-assign]
 
         # -- PATCH 3: Stdin prompt delivery + stderr capture --
         async def _patched_connect(self):
@@ -114,7 +114,7 @@ try:
             except FileNotFoundError as e:
                 raise _sc.CLINotFoundError(f"Claude Code not found at: {cmd[0]}") from e
 
-        _sc.SubprocessCLITransport.connect = _patched_connect
+        _sc.SubprocessCLITransport.connect = _patched_connect  # type: ignore[method-assign]
 
         # -- PATCH 4: Include real stderr in ProcessError --
         _orig_read_messages = _sc.SubprocessCLITransport._read_messages_impl
@@ -146,7 +146,7 @@ try:
                         stderr=real_stderr[:2000],
                     ) from None
                 raise
-        _sc.SubprocessCLITransport._read_messages_impl = _patched_read_messages
+        _sc.SubprocessCLITransport._read_messages_impl = _patched_read_messages  # type: ignore[method-assign]
 
         _PATCHES_APPLIED = True
 
@@ -207,11 +207,18 @@ def _parse_reset_wait_seconds(error_text: str) -> int | None:
         }
         month = _MONTHS[month_str.lower()]
         day = int(day_str)
-        reset_time = now.replace(
-            month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
-        )
-        if reset_time <= now:
-            reset_time = reset_time.replace(year=now.year + 1)
+        try:
+            reset_time = now.replace(
+                month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
+            )
+            if reset_time <= now:
+                reset_time = reset_time.replace(year=now.year + 1)
+        except ValueError:
+            # An impossible date ("resets Feb 30", or Feb 29 rolled into a non-leap year) must not
+            # turn a recoverable rate-limit pause into a hard failure of generate(); fall through
+            # to the caller's default wait instead.
+            logger.warning("Could not interpret rate-limit reset date %r-%r; using the default wait", month_str, day_str)
+            return None
     else:
         reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if reset_time <= now:
@@ -333,6 +340,19 @@ class ClaudeCodeProvider(LLMProvider):
         provider."""
         return False
 
+    _seen_unsupported_params: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per parameter name, across all instances), not a per-instance mutable-default bug
+
+    def _warn_unsupported_param_once(self, param: str) -> None:
+        """Log a one-time warning that ``param`` cannot be honoured by the Claude Code backend."""
+        if param in ClaudeCodeProvider._seen_unsupported_params:
+            return
+        ClaudeCodeProvider._seen_unsupported_params.add(param)
+        logger.warning(
+            "ClaudeCodeProvider cannot forward %r to the Claude Code SDK; the value you passed is ignored. "
+            "Route to another provider if this parameter matters for correctness.",
+            param,
+        )
+
     async def generate(
         self,
         prompt: str,
@@ -347,6 +367,19 @@ class ClaudeCodeProvider(LLMProvider):
             system = (system or "") + json_hint
 
         self._call_count += 1
+        # Cleared per call: _last_result_message was only ever ASSIGNED (on the SDK path, when a
+        # ResultMessage arrived) and never reset, so a subsequent call that produced none -- an
+        # SDK error path, or the CLI fallback -- re-read the PREVIOUS call's object and added its
+        # cost and cache tokens to the totals a second time.
+        self._last_result_message: Optional[Any] = None
+        if _HAS_SDK:
+            # The SDK path forwards neither budget nor sampling temperature to ClaudeCodeOptions,
+            # and this is the factory's default provider -- say so once instead of silently
+            # dropping a caller's explicit determinism or length requirement.
+            if max_tokens > 0:
+                self._warn_unsupported_param_once("max_tokens")
+            if abs(temperature - 0.7) > 1e-9:
+                self._warn_unsupported_param_once("temperature")
         attempt = 0
         # Regression fix (2026-07-21 audit): read the same PYUTILZ_LLM_MAX_RETRIES-configurable
         # bound every other provider uses (via _retry.py), instead of a hardcoded 20 that
@@ -718,18 +751,12 @@ class ClaudeCodeProvider(LLMProvider):
             max_tokens=max_tokens,
         )
 
-        try:
-            text = text.strip()
-            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
-            if json_match:
-                return json.loads(json_match.group(1))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if json_match:
-                return json.loads(json_match.group(0))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-            return json.loads(text)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse JSON: %s\nResponse: %s", e, text)
-            raise ValueError(f"Invalid JSON response: {e}")
+        # Delegates to the shared parser (as base._generate_json_via does) instead of
+        # re-implementing it: the local greedy pattern spanned from the first { to the LAST },
+        # merging two adjacent objects into invalid JSON, never ran the refusal check, and raised
+        # a bare ValueError -- so a caller with the documented `except JSONParsingError` /
+        # `except LLMRefusalError` handlers caught neither, on the factory's DEFAULT provider.
+        return self.extract_json(text, self._provider_display_name)
 
     async def generate_batch(
         self,

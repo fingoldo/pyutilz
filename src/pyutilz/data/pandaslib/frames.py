@@ -210,8 +210,9 @@ def showcase_df_columns(
     if not target_cols:
         return rare_categories, uninformative_features
 
-    height = df.height if _is_polars else len(df)
-    rare_threshold = max_unique_percent * height
+    # Denominators are taken per column from the value_counts total actually in play, NOT from the
+    # frame height: with dropna=True the counts exclude nulls, so dividing by the full height mixed
+    # two populations and reported the same "uninformative" fraction for both dropna modes.
 
     if _is_polars:
         # Build lazy value_counts queries for all columns, collect in parallel
@@ -257,13 +258,15 @@ def showcase_df_columns(
             if n_unique <= max_cat_uniq_qty and vc.height > 0:
                 rare_mask = vc.get_column("count").to_list()
                 rare_vals = vc.get_column(var).to_list()
+                col_total = sum(rare_mask)
+                rare_threshold = max_unique_percent * col_total
                 col_rare = [v for v, c in zip(rare_vals, rare_mask) if c <= rare_threshold]
                 if col_rare:
                     rare_categories[var] = col_rare
                     non_rare_count = sum(c for c in rare_mask if c > rare_threshold)
                     non_rare_unique = sum(1 for c in rare_mask if c > rare_threshold)
                     if non_rare_unique <= 1:
-                        uninformative_features[var] = 1 - non_rare_count / height if height > 0 else 0.0
+                        uninformative_features[var] = 1 - non_rare_count / col_total if col_total > 0 else 0.0
     else:
         assert isinstance(df, pd.DataFrame)
         for var in target_cols:
@@ -291,13 +294,15 @@ def showcase_df_columns(
             n_unique = len(stats)
             if n_unique <= max_cat_uniq_qty and len(stats) > 0:
                 full_stats = stats
+                col_total = int(full_stats.sum())
+                rare_threshold = max_unique_percent * col_total
                 col_rare = full_stats[full_stats <= rare_threshold].index.tolist()
                 if col_rare:
                     rare_categories[var] = col_rare
                     non_rare = full_stats[full_stats > rare_threshold]
                     if len(non_rare) <= 1:
                         non_rare_count = int(non_rare.sum()) if len(non_rare) == 1 else 0
-                        uninformative_features[var] = 1 - non_rare_count / height if height > 0 else 0.0
+                        uninformative_features[var] = 1 - non_rare_count / col_total if col_total > 0 else 0.0
 
     return rare_categories, uninformative_features
 
@@ -387,6 +392,11 @@ def share_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # create a new df based on the shared arrays, restoring the caller's original column order
     df_shared = pd.DataFrame({c: pieces[c] for c in df.columns}).astype(df_dtypes_dict)
+    # The pieces are built positionally from .values, so the frame would otherwise come back with a
+    # fresh RangeIndex: a worker doing shared_df.loc[key] would raise KeyError, and arithmetic/joins
+    # against a frame still carrying the original labels would align on mismatched labels (all-NaN)
+    # instead of failing. Assigning the index doesn't copy the shared buffers.
+    df_shared.index = df.index
 
     return df_shared
 
@@ -397,8 +407,12 @@ def get_non_stale_columns(df: pd.DataFrame) -> list:
     stale/constant ones). Does NOT mutate ``df`` -- unlike its sibling ``remove_constant_columns``,
     this function only rebinds its local parameter, so the caller's DataFrame is untouched;
     the caller must apply the returned column list itself (``df = df[get_non_stale_columns(df)]``).
+
+    A frame of 0 or 1 rows carries no evidence of staleness, so ALL columns are returned for both.
+    (Previously only the 0-row case was special-cased, and a 1-row frame -- constant by
+    construction -- came back with an empty list, e.g. for a single-row inference frame.)
     """
-    if len(df) == 0:
+    if len(df) <= 1:
         return df.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
     # nunique(dropna=False) treats NaN as its own value, so an all-NaN column (nunique==1)
@@ -435,14 +449,19 @@ def get_suspiciously_constant_columns(df: pd.DataFrame) -> list:
     """
     Return names of columns in ``df`` that have at most one distinct value (constant or all-NaN).
     Falls back to a per-column loop, skipping columns whose values raise TypeError (e.g. unhashable), if the vectorized ``nunique()`` call fails.
+
+    Counts NaN as a value of its own (``dropna=False``), matching the sibling
+    ``get_non_stale_columns`` and this docstring: with pandas' default ``dropna=True`` a column
+    holding one real observation plus nulls (a rare-event indicator) looked constant here while
+    the sibling kept it, so the two screens disagreed on the very same frame.
     """
     try:
-        susp_columns = df.columns[df.nunique() <= 1].tolist()
+        susp_columns = df.columns[df.nunique(dropna=False) <= 1].tolist()
     except Exception:
         susp_columns = []
         for col in df.columns:
             try:
-                if df[col].nunique() <= 1:
+                if df[col].nunique(dropna=False) <= 1:
                     susp_columns.append(col)
             except TypeError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this column, check the rest)
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.
@@ -463,7 +482,7 @@ def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_siz
         susp_columns = get_suspiciously_constant_columns(df.head(prewarm_size))
         cols_to_drop: set = set()
         for col in tqdmu(susp_columns, desc="cnst col", leave=False):
-            if df[col].nunique() > 1:
+            if df[col].nunique(dropna=False) > 1:  # same null semantics as the head-sample screen above
                 cols_to_drop.add(col)
         if cols_to_drop:
             susp_columns = [c for c in susp_columns if c not in cols_to_drop]
