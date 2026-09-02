@@ -106,7 +106,7 @@ def _module_level_names(tree: ast.Module) -> frozenset[str]:
             names.add(node.name)
             continue
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update(a.asname or a.name.split(".")[0] for a in node.names)
+            names.update(a.asname if a.asname is not None else a.name.split(".")[0] for a in node.names)
             continue
         else:
             continue
