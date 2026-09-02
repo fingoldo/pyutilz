@@ -205,6 +205,11 @@ dash = [
 # system/scheduling/prefect.py imports prefect unconditionally at module level.
 prefect = [
     "prefect>=2.0",
+    # `pyutilz.system.scheduling.prefect` imports `pyutilz.web.graphql` at module scope, which
+    # needs requests -- so `pip install pyutilz[prefect]` alone could not import the module it
+    # is named for. Declared here rather than lazy-importing the hub, matching how this file
+    # already resolves this bug class for the pandas extra above.
+    "requests>=2.0",
 ]
 
 # system/parallel.py's set_tf_gpu() imports tensorflow.

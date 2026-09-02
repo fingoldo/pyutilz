@@ -73,6 +73,11 @@ def concat_horizontal_ragged(frames: Any, **kwargs: Any) -> Any:
     only exists on newer polars.
     """
     try:
-        return pl.concat(frames, how="horizontal_extend", **kwargs)
+        # `type: ignore[arg-type]` and not a cast: the literal is deliberately outside the
+        # accepted set of the INSTALLED polars (1.41.2), because this call is a probe for a
+        # newer one. The try/except below is the runtime half of the same forward-compatibility
+        # shim, so the checker is right about today and the code is right about tomorrow. The
+        # ignore is scoped to this one argument; widening it would hide a real signature change.
+        return pl.concat(frames, how="horizontal_extend", **kwargs)  # type: ignore[arg-type]
     except (ValueError, TypeError):
         return pl.concat(frames, how="horizontal", **kwargs)
