@@ -66,6 +66,54 @@ def _is_a_success_record(stmt: ast.stmt) -> tuple[str, set[str]] | None:
     return None
 
 
+def _tests_membership_of(test: ast.expr, record: ast.stmt) -> bool:
+    """Does the guard test membership in the very container the record writes to?
+
+    ``if sid in seen: report_duplicate(...)`` followed by ``seen.add(sid)`` is the
+    seen-set idiom: the set tracks everything encountered, and the `if` REPORTS a
+    repeat rather than gating the record. Moving the record inside -- the remedy
+    this rule would otherwise suggest -- deletes the duplicate detection entirely.
+
+    Keyed on the container identity rather than on what the guard's body does,
+    because a body that only appends to an error list is ALSO the shape of the
+    real defect (record success even though the branch failed). What separates
+    them is that here the guard interrogates the same object the record mutates.
+    """
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], (ast.In, ast.NotIn))):
+        return False
+    container = ast.unparse(test.comparators[0])
+    if isinstance(record, ast.Expr) and isinstance(record.value, ast.Call):
+        func = record.value.func
+        if isinstance(func, ast.Attribute):
+            return ast.unparse(func.value) == container
+    return False
+
+
+def _only_initialises(block: list[ast.stmt]) -> bool:
+    """Does this block do nothing but create an empty container?
+
+    ``if key not in d: d[key] = set()`` is a lazy-initialisation guard, not the
+    work a following ``d[key].add(...)`` records -- the record belongs to a
+    DIFFERENT condition (typically an ``if already_seen: continue`` right after).
+    Pairing the record with this guard reports the canonical seen-set idiom as a
+    defect, and its suggested remedy -- move the record inside -- would break it.
+    """
+    if not block:
+        return False
+    for stmt in block:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            return False
+        value = stmt.value
+        if isinstance(value, ast.Dict) and not value.keys:
+            continue
+        if isinstance(value, (ast.List, ast.Set, ast.Tuple)) and not value.elts:
+            continue
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name)                 and value.func.id in {"set", "list", "dict", "Counter", "defaultdict"} and not value.args:
+            continue
+        return False
+    return True
+
+
 def _only_logs(block: list[ast.stmt]) -> bool:
     """Does this block do nothing but log? Then it is not the work a following record records."""
     calls = [sub for stmt in block for sub in ast.walk(stmt) if isinstance(sub, ast.Call)]
@@ -129,6 +177,11 @@ def scan_effect_flag_outside_its_effect(
                         continue
                     if _only_logs(stmt.body):
                         continue
+                    # A lazy-initialisation guard is not the work being recorded either --
+                    # see _only_initialises. Without this the rule reports the canonical
+                    # seen-set idiom as a defect.
+                    if _only_initialises(stmt.body):
+                        continue
                     guarded_tokens = _shared_tokens(ast.Module(body=stmt.body, type_ignores=[]))
 
                     # The correct form records INSIDE the guarded block; if it does, say nothing.
@@ -157,6 +210,9 @@ def scan_effect_flag_outside_its_effect(
                         what, record_tokens = record
                         shared = sorted(t for t in record_tokens & guarded_tokens if len(t) > 1 and t not in _VACUOUS_TOKENS)
                         if not shared or (rel, follower.lineno) in reported:
+                            continue
+                        # The seen-set idiom -- see _tests_membership_of.
+                        if _tests_membership_of(stmt.test, follower):
                             continue
                         reported.add((rel, follower.lineno))
                         findings.append(

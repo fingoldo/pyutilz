@@ -647,10 +647,11 @@ verbose = 1
 
 # Codespell. Moved from the CI/pre-commit CLI --ignore-words-list flag into structured config
 # (mirrors mlframe) so the ignore list lives in one place instead of being duplicated across
-# .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py),
+# .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py); "notin" = the ast.NotIn
+# node name, which codespell reads as a misspelling of "not in";
 # the sole confirmed false positive as of the 2026-07-05 codespell setup.
 [tool.codespell]
-ignore-words-list = "coo,caf,re-uses,re-using,unparseable"
+ignore-words-list = "coo,caf,re-uses,re-using,unparseable,notin"
 
 # MyPy type checker
 [tool.mypy]

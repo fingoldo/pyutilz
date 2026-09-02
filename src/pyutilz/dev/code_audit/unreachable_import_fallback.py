@@ -24,6 +24,20 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # That asymmetry is the argument, not the count.
 
 
+def _is_type_checking_guard(test: ast.expr) -> bool:
+    """True for ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:``.
+
+    Only those two plain forms. A compound condition (``if TYPE_CHECKING or X:``)
+    may well execute at runtime, and treating it as type-only would hide a
+    genuinely dead handler -- the thing this rule exists to find.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
 def _unconditional_module_imports(tree: ast.Module) -> set[str]:
     """FULL dotted module paths imported OUTSIDE any try block.
 
@@ -34,7 +48,19 @@ def _unconditional_module_imports(tree: ast.Module) -> set[str]:
     """
     guarded: set[int] = set()
     for node in ast.walk(tree):
+        # A try block's imports are conditional by construction.
         if isinstance(node, ast.Try):
+            for stmt in ast.walk(node):
+                guarded.add(id(stmt))
+        # ...and so are a TYPE_CHECKING block's, which never execute at runtime.
+        # Without this the rule fires on the standard shape for an optional
+        # dependency: a TYPE_CHECKING-only import so a function can carry a real
+        # return annotation, PLUS a genuine try/except ImportError fallback. The
+        # fallback there is reachable; the "unconditional" import is not an
+        # import at all at runtime. Two such false positives in one downstream
+        # repo (glossum synset_matcher.py, token_counter.py), both on packages
+        # whose absence the code demonstrably handles.
+        elif isinstance(node, ast.If) and _is_type_checking_guard(node.test):
             for stmt in ast.walk(node):
                 guarded.add(id(stmt))
 

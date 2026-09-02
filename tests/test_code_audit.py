@@ -7333,6 +7333,85 @@ def go():
     assert scan_unreachable_import_fallback(tmp_path) == []
 
 
+def test_unreachable_import_fallback_allows_the_type_checking_idiom(tmp_path: Path):
+    """A TYPE_CHECKING-only import is not an import at runtime, so a try/except
+    ImportError beside it is reachable, not dead.
+
+    This is the standard shape for an optional dependency: import it under
+    TYPE_CHECKING so a function can carry a real return annotation, and guard the
+    real import so the package staying absent is handled. Flagging it told the
+    author to delete a handler their code demonstrably needs.
+    """
+    _write(tmp_path, "mod.py", '''
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import tiktoken
+
+try:
+    import tiktoken
+    _ENCODING = tiktoken.get_encoding("cl100k_base")
+except ImportError:
+    _ENCODING = None
+''')
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_allows_the_qualified_type_checking_form(tmp_path: Path):
+    _write(tmp_path, "mod.py", '''
+import typing
+
+if typing.TYPE_CHECKING:
+    import tiktoken
+
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+''')
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_still_flags_a_real_dead_guard_alongside_type_checking(tmp_path: Path):
+    """Non-vacuousness. The exemption is for imports INSIDE the TYPE_CHECKING
+    block; a genuinely unconditional runtime import elsewhere in the same file
+    still makes the handler dead, and a file that happens to use TYPE_CHECKING
+    must not become exempt wholesale."""
+    _write(tmp_path, "mod.py", '''
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import collections
+
+import tiktoken
+
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+''')
+    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+
+
+def test_unreachable_import_fallback_does_not_exempt_a_compound_condition(tmp_path: Path):
+    """``if TYPE_CHECKING or X:`` can execute at runtime, so treating it as
+    type-only would hide the dead handler this rule exists to find."""
+    _write(tmp_path, "mod.py", '''
+from typing import TYPE_CHECKING
+
+SOMETHING = True
+
+if TYPE_CHECKING or SOMETHING:
+    import tiktoken
+
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+''')
+    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+
+
 def test_unreachable_import_fallback_ignores_an_import_guarded_everywhere(tmp_path: Path):
     """If EVERY import of the module is itself inside a try, none of them is certain."""
     _write(
@@ -7572,6 +7651,57 @@ def go(obj, res, verbose):
 """,
     )
     assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_ignores_a_lazy_init_guard(tmp_path: Path):
+    """``if key not in d: d[key] = set()`` creates an empty container; it is not
+    the work a following ``d[key].add(...)`` records. The record belongs to the
+    NEXT condition, and moving it inside the init guard would record only the
+    first item per key."""
+    _write(tmp_path, "mod.py", '''
+def run(rows, seen_senses):
+    for row in rows:
+        norm_form, sense_id = row
+        if norm_form not in seen_senses:
+            seen_senses[norm_form] = set()
+        if sense_id in seen_senses[norm_form]:
+            continue
+        seen_senses[norm_form].add(sense_id)
+        process(sense_id)
+''')
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_ignores_the_seen_set_idiom(tmp_path: Path):
+    """``if sid in seen: report_duplicate(); seen.add(sid)`` -- the set tracks
+    everything encountered and the `if` REPORTS a repeat rather than gating the
+    record. Moving the record inside deletes the duplicate detection."""
+    _write(tmp_path, "mod.py", '''
+def run(sids):
+    seen = set()
+    dups = []
+    for sid in sids:
+        if sid in seen:
+            dups.append(sid)
+        seen.add(sid)
+    return dups
+''')
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+def test_effect_flag_outside_its_effect_still_flags_a_report_then_record_defect(tmp_path: Path):
+    """Non-vacuousness for the exemption above. A guard whose body only appends
+    to an error list is ALSO the shape of the real defect -- record success even
+    though the branch failed. What separates the two is whether the guard
+    interrogates the same container the record writes to. Here it does not."""
+    _write(tmp_path, "mod.py", '''
+def run(items, errors, processed):
+    for item in items:
+        if item.is_broken:
+            errors.append(item)
+        processed.add(item.id)
+''')
+    assert len(scan_effect_flag_outside_its_effect(tmp_path)) == 1
 
 
 def test_effect_flag_outside_its_effect_ignores_list_building(tmp_path: Path):
