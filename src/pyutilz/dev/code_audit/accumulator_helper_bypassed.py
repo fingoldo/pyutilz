@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _arg_names, _iter_py_files, _line_text, _safe_parse
+from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _arg_names, _iter_py_files, _line_text, _safe_parse, _subscript_index
 
 # --- a shared accumulator that some call sites write around ------------------------------------
 #
@@ -92,7 +92,7 @@ def _keys_by_parameter(func: ast.AST, structure: str) -> bool:
         name = owner.attr if isinstance(owner, ast.Attribute) else getattr(owner, "id", "")
         if name != structure:
             continue
-        index = subscript.slice
+        index = _subscript_index(subscript)
         if isinstance(index, ast.Name) and index.id in params:
             return True
     return False

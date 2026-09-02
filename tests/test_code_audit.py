@@ -7209,9 +7209,10 @@ def test_unit_suffix_mismatch_reads_the_pre_3_9_subscript_shape():
     class Index(_ast.AST):  # the node class python<=3.8 actually produced, named exactly as it was
         _fields = ("value",)
 
-    read = _ast.parse('totals["minutes"]', mode="eval").body
-    assert isinstance(read, _ast.Subscript)
-    legacy = _ast.Subscript(value=read.value, slice=Index(value=read.slice), ctx=read.ctx)
+    # Built node-by-node rather than parsed: python 3.8 ALREADY produces this shape, so wrapping a
+    # parsed subscript there would nest Index inside Index and prove nothing.
+    const = _ast.Constant(value="minutes")
+    legacy = _ast.Subscript(value=_ast.Name(id="totals", ctx=_ast.Load()), slice=Index(value=const), ctx=_ast.Load())
 
     assert isinstance(_subscript_index(legacy), _ast.Constant)
     assert _source_name(legacy) == "minutes"

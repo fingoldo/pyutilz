@@ -370,13 +370,19 @@ def _require_orc_timezone_database():
     dies with `Time zone file /usr/share/zoneinfo/UTC does not exist. Please install IANA time zone
     database and set TZDIR env.` -- missing system data, not a defect here. It cannot be checked by
     looking for that path: on Windows pyarrow reads the database from the `tzdata` package or TZDIR
-    instead, so the only reliable precondition is a throwaway ORC write.
+    instead -- and the message names that Linux path even on the Windows leg that failed -- so the only
+    reliable precondition is a throwaway ORC round trip.
     """
     pa = pytest.importorskip("pyarrow")
     orc = pytest.importorskip("pyarrow.orc")
     missing_tz_database = None
     try:
-        orc.write_table(pa.table({"a": [1]}), io.BytesIO())
+        # A round trip, not just a write: the tz database is resolved on READ too, and that is
+        # where the benchmark actually died (pandas.read_orc -> ORCReader.read).
+        buf = io.BytesIO()
+        orc.write_table(pa.table({"a": [1]}), buf)
+        buf.seek(0)
+        orc.read_table(buf)
     except pa.lib.ArrowException as exc:  # pragma: no cover - only on an image without tzdata
         if "time zone" not in str(exc).lower():
             raise

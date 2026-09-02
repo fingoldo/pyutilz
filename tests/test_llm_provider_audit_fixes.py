@@ -474,11 +474,11 @@ class TestThinkingRequestField:
 
     def test_openrouter_false_excludes(self):
         p = self._openrouter()
-        # 2026-08-07: exclude ALONE is not "disable" (measured against deepseek/deepseek-v4-flash --
-        # exclude only suppresses the reasoning TEXT from the response; the model still reasons and is
-        # still billed for it at the resolved model's default effort). effort="minimal" must ship
-        # alongside exclude to actually minimise spend -- see _thinking_request_field's docstring.
-        assert p._thinking_request_field(False) == {"reasoning": {"effort": "minimal", "exclude": True}}
+        # The contract moved again on 2026-09-02: "as little as possible" is not "none". Re-measured
+        # across eight models, effort="minimal"+exclude still billed 150-350 reasoning tokens a call,
+        # and on glm-4.7-flash it returned an EMPTY answer cut off by `length`; {"enabled": False} billed
+        # zero and answered. See _thinking_request_field's docstring for the per-model numbers.
+        assert p._thinking_request_field(False) == {"reasoning": {"enabled": False}}
 
     def test_openrouter_effort_passthrough_lowercased(self):
         p = self._openrouter()
