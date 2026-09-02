@@ -153,3 +153,41 @@ def _arg_names(func_node: ast.AST) -> list[str]:
     if a.kwarg:
         args.append(a.kwarg.arg)
     return args
+
+# An f-string interpolation renders as this in recovered SQL, never as nothing. Dropping it
+# splices the text on either side together: `f"SELECT COUNT(*) FROM {table} WHERE ..."` collapsed
+# to "... FROM  WHERE ...", and a scanner read the table name as `where`. `?` cannot start an
+# identifier, so a pattern declines the query instead of misreading it.
+_SQL_INTERPOLATION = "?"
+
+
+def _module_sql_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level names bound to a string literal, for scanners that follow SQL held in a constant."""
+    out: dict[str, str] = {}
+    for stmt in tree.body:
+        targets = list(stmt.targets) if isinstance(stmt, ast.Assign) else ([stmt.target] if isinstance(stmt, ast.AnnAssign) else [])
+        value = stmt.value if isinstance(stmt, (ast.Assign, ast.AnnAssign)) else None
+        for target in targets:
+            if isinstance(target, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+                out[target.id] = value.value
+    return out
+
+
+def _sql_text(node: ast.expr, constants: dict[str, str]) -> "Optional[str]":
+    """The SQL an argument carries: a literal, an f-string, a concatenation, or a module constant.
+
+    Shared rather than copied, because two scanners had drifting copies of it and this package's
+    own duplicate_function_body check said so.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else _SQL_INTERPOLATION for value in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _sql_text(node.left, constants)
+        right = _sql_text(node.right, constants)
+        if left is not None and right is not None:
+            return left + right
+    return None

@@ -27,6 +27,13 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
 
+2026-09-03, second batch (guard_decidable_from_constants, sql_selects_unread_column,
+count_then_fetch_same_table): one new entry, `default_via_or` on `alias.asname or alias.name`
+-- the same canonical ast-alias idiom already reviewed below, where `asname` is `str | None` and
+never the empty string. The batch's other self-scan hit was NOT baselined: this package's own
+duplicate_function_body check caught the two SQL scanners carrying copied helpers, so they were
+extracted into `_base` (`_module_sql_constants`, `_sql_text`) and the finding went away.
+
 * `default_via_or` x3 in the new scanners. All three are correct idioms, not traps:
   `calls.get(name, False) or <bool>` is a boolean OR on booleans, and `a.asname or a.name` is
   the canonical ast-alias idiom where `asname` is `str | None` and never the empty string.

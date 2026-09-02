@@ -63,6 +63,9 @@ from .resource_handle_safety import scan_resource_handle_safety
 from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
 from .effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
+from .guard_decidable_from_constants import scan_guard_decidable_from_constants
+from .count_then_fetch_same_table import scan_count_then_fetch_same_table
+from .sql_selects_unread_column import scan_sql_selects_unread_column
 from .asymmetric_except_siblings import scan_asymmetric_except_siblings
 from .unreachable_import_fallback import scan_unreachable_import_fallback
 from .comment_names_missing_symbol import scan_comment_names_missing_symbol, scan_comment_cites_absolute_line
@@ -193,6 +196,9 @@ register_scanner("async_primitive_reinit_per_call", scan_async_primitive_reinit_
 register_scanner("llm_call_missing_max_tokens_cap", scan_llm_call_missing_max_tokens_cap)
 register_scanner("per_call_state_on_shared_instance", scan_per_call_state_on_shared_instance)
 register_scanner("uncached_constant_cost_probe", scan_uncached_constant_cost_probe)
+register_scanner("guard_decidable_from_constants", scan_guard_decidable_from_constants)
+register_scanner("sql_selects_unread_column", scan_sql_selects_unread_column)
+register_scanner("count_then_fetch_same_table", scan_count_then_fetch_same_table)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a

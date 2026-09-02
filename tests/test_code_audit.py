@@ -88,6 +88,9 @@ from pyutilz.dev.code_audit.unit_suffix_mismatch import scan_unit_suffix_mismatc
 from pyutilz.dev.code_audit.unreachable_import_fallback import scan_unreachable_import_fallback
 from pyutilz.dev.code_audit.asymmetric_except_siblings import scan_asymmetric_except_siblings
 from pyutilz.dev.code_audit.effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
+from pyutilz.dev.code_audit.guard_decidable_from_constants import scan_guard_decidable_from_constants
+from pyutilz.dev.code_audit.count_then_fetch_same_table import scan_count_then_fetch_same_table
+from pyutilz.dev.code_audit.sql_selects_unread_column import scan_sql_selects_unread_column
 from pyutilz.dev.code_audit.comment_names_missing_symbol import (
     scan_comment_cites_absolute_line,
     scan_comment_names_missing_symbol,
@@ -7719,3 +7722,301 @@ def go(rows, out):
 """,
     )
     assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
+# ---- guard_decidable_from_constants --------------------------------------
+
+
+def test_guard_decidable_from_constants_flags_a_dead_branch(tmp_path: Path):
+    """The shape it exists for: a private literal deciding a guard, written by nothing.
+
+    Real instance in mlframe: `_KNOCKOFFS_STRICT_LAM_MIN = False` whose comment promises it is
+    "set via globals().setdefault from the call site" -- and no such write exists anywhere in
+    that repository, so the `raise ValueError` it guards has never run.
+    """
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_STRICT = False
+
+def check(value):
+    if _STRICT:
+        raise ValueError(value)
+    return value
+""",
+    )
+    findings = scan_guard_decidable_from_constants(tmp_path)
+    assert len(findings) == 1, findings
+    assert "_STRICT" in findings[0].detail
+
+
+def test_guard_decidable_from_constants_ignores_a_public_knob(tmp_path: Path):
+    """A public module-level name is set by importers -- `browser.undetectable = True` before
+    calling `start_selenium()` is how this package's own selenium module is driven. That one
+    pattern supplied eight of this rule's first eight hits."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+undetectable = False
+
+def start():
+    if undetectable:
+        return "stealth"
+    return "plain"
+""",
+    )
+    assert scan_guard_decidable_from_constants(tmp_path) == []
+
+
+def test_guard_decidable_from_constants_sees_a_write_from_a_sibling_module(tmp_path: Path):
+    """Package-wide, not per-module: another file rebinding the name by attribute is invisible
+    to a walk of the defining module, and four of this rule's first hits were exactly that."""
+    _write(
+        tmp_path,
+        "kernels.py",
+        """
+_THREADS_OVERRIDE = None
+
+def threads():
+    if _THREADS_OVERRIDE is not None:
+        return _THREADS_OVERRIDE
+    return 128
+""",
+    )
+    _write(
+        tmp_path,
+        "sweep.py",
+        """
+import kernels
+
+def tune(n):
+    kernels._THREADS_OVERRIDE = n
+""",
+    )
+    assert scan_guard_decidable_from_constants(tmp_path) == []
+
+
+def test_guard_decidable_from_constants_ignores_an_optional_import_probe(tmp_path: Path):
+    """`spacy = None` reassigned inside a `try:` is the canonical optional-dependency probe, and
+    the assignment that matters is nested rather than in the module statement list."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+_spacy = None
+try:
+    import spacy as _real
+    _spacy = _real
+except Exception:
+    pass
+
+def tokenize(text):
+    if _spacy is None:
+        return text.split()
+    return _spacy(text)
+""",
+    )
+    assert scan_guard_decidable_from_constants(tmp_path) == []
+
+
+def test_guard_decidable_from_constants_ignores_a_non_literal(tmp_path: Path):
+    """A name computed at import time is not a literal, so nothing about it is decided."""
+    _write(
+        tmp_path,
+        "out.py",
+        """
+import os
+
+_STRICT = os.environ.get("STRICT") == "1"
+
+def check(value):
+    if _STRICT:
+        raise ValueError(value)
+    return value
+""",
+    )
+    assert scan_guard_decidable_from_constants(tmp_path) == []
+
+
+# ---- sql_selects_unread_column -------------------------------------------
+
+
+def test_sql_selects_unread_column_flags_the_canonical_case(tmp_path: Path):
+    """Four columns fetched, four bound, one never read -- the quiet shape that ships."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+SQL = "SELECT id, uid, payload, updated_at FROM jobs WHERE ts > 1"
+
+def load(cur):
+    cur.execute(SQL)
+    for job_id, uid, payload, updated_at in cur:
+        handle(job_id, uid, payload)
+''',
+    )
+    findings = scan_sql_selects_unread_column(tmp_path)
+    assert len(findings) == 1, findings
+    assert "updated_at" in findings[0].detail
+
+
+def test_sql_selects_unread_column_accepts_an_underscored_binding(tmp_path: Path):
+    """`_` is how a deliberately-ignored column is spelled, and it is not a defect."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+SQL = "SELECT id, uid, payload, updated_at FROM jobs"
+
+def load(cur):
+    cur.execute(SQL)
+    for job_id, uid, payload, _updated_at in cur:
+        handle(job_id, uid, payload)
+''',
+    )
+    assert scan_sql_selects_unread_column(tmp_path) == []
+
+
+def test_sql_selects_unread_column_declines_a_star_select(tmp_path: Path):
+    """`SELECT *` names no columns, so there is nothing to compare the unpacking against."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+SQL = "SELECT * FROM jobs"
+
+def load(cur):
+    cur.execute(SQL)
+    for job_id, uid, payload, updated_at in cur:
+        handle(job_id, uid, payload)
+''',
+    )
+    assert scan_sql_selects_unread_column(tmp_path) == []
+
+
+def test_sql_selects_unread_column_declines_two_queries_in_one_function(tmp_path: Path):
+    """With two SELECTs it cannot say which unpacking belongs to which, and a coin flip here
+    would be worse than silence."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+SQL_A = "SELECT id, uid, payload, updated_at FROM jobs"
+SQL_B = "SELECT id, uid FROM clients"
+
+def load(cur):
+    cur.execute(SQL_A)
+    for job_id, uid, payload, updated_at in cur:
+        handle(job_id, uid, payload)
+    cur.execute(SQL_B)
+''',
+    )
+    assert scan_sql_selects_unread_column(tmp_path) == []
+
+
+def test_sql_selects_unread_column_accepts_every_column_read(tmp_path: Path):
+    """The correct form, which must stay silent."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+SQL = "SELECT id, uid, payload FROM jobs"
+
+def load(cur):
+    cur.execute(SQL)
+    for job_id, uid, payload in cur:
+        handle(job_id, uid, payload)
+''',
+    )
+    assert scan_sql_selects_unread_column(tmp_path) == []
+
+
+# ---- count_then_fetch_same_table -----------------------------------------
+
+
+def test_count_then_fetch_same_table_flags_the_canonical_case(tmp_path: Path):
+    """Two round trips for one answer: `len(rows)` already is the count."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+def scan(cur):
+    cur.execute("SELECT COUNT(*) FROM jobs WHERE stale")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT id, uid FROM jobs WHERE stale")
+    return total, cur.fetchall()
+''',
+    )
+    findings = scan_count_then_fetch_same_table(tmp_path)
+    assert len(findings) == 1, findings
+    assert "jobs" in findings[0].detail
+
+
+def test_count_then_fetch_same_table_accepts_a_paginated_fetch(tmp_path: Path):
+    """A LIMIT is the one legitimate reason to ask twice: the page does not carry the total."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+def scan(cur):
+    cur.execute("SELECT COUNT(*) FROM jobs WHERE stale")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT id, uid FROM jobs WHERE stale LIMIT 100")
+    return total, cur.fetchall()
+''',
+    )
+    assert scan_count_then_fetch_same_table(tmp_path) == []
+
+
+def test_count_then_fetch_same_table_accepts_a_grouped_count(tmp_path: Path):
+    """A GROUP BY answers a breakdown the fetched rows do not contain."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+def scan(cur):
+    cur.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status")
+    by_status = cur.fetchall()
+    cur.execute("SELECT id, uid FROM jobs")
+    return by_status, cur.fetchall()
+''',
+    )
+    assert scan_count_then_fetch_same_table(tmp_path) == []
+
+
+def test_count_then_fetch_same_table_accepts_a_different_table(tmp_path: Path):
+    """Counting one table and fetching another is two answers, not one asked twice."""
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+def scan(cur):
+    cur.execute("SELECT COUNT(*) FROM clients")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT id, uid FROM jobs")
+    return total, cur.fetchall()
+''',
+    )
+    assert scan_count_then_fetch_same_table(tmp_path) == []
+
+
+def test_count_then_fetch_same_table_declines_an_interpolated_table(tmp_path: Path):
+    """An interpolated table name renders as `?`, not as nothing.
+
+    Dropping it spliced the surrounding text together, the table was read as `where`, and that
+    supplied both of this rule's first two hits against real code.
+    """
+    _write(
+        tmp_path,
+        "out.py",
+        '''
+def scan(cur, table):
+    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE stale")
+    total = cur.fetchone()[0]
+    cur.execute(f"SELECT id FROM {table} WHERE stale")
+    return total, cur.fetchall()
+''',
+    )
+    assert scan_count_then_fetch_same_table(tmp_path) == []
