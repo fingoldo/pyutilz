@@ -18,7 +18,7 @@ from tenacity import retry, retry_if_exception
 
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError, LLMUnparseableResponseError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
-from pyutilz.llm.base import LLMProvider, PerCallAttr
+from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -447,25 +447,10 @@ class OpenAICompatibleProvider(LLMProvider):
         return None
 
     @staticmethod
-    def _normalize_thinking(
-        thinking: bool | str,
-    ) -> tuple[bool, str | None]:
-        """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
-
-        - ``False`` / empty string -> ``(False, None)`` (explicitly off)
-        - ``True`` -> ``(True, None)`` (on, provider picks default effort)
-        - non-empty str -> ``(True, str.lower())`` (on with explicit effort)
-
-        Helper used by upstream-specific overrides so each provider only
-        picks the half of the contract its API requires.
-        """
-        if thinking is False or thinking == "":
-            return (False, None)
-        if thinking is True:
-            return (True, None)
-        if isinstance(thinking, str):
-            return (True, thinking.lower())
-        return (bool(thinking), None)
+    def _normalize_thinking(thinking: bool | str) -> tuple[bool, str | None]:
+        """Delegates to :func:`pyutilz.llm.base.normalize_thinking` -- kept as a
+        method so existing subclass overrides and call sites keep working."""
+        return normalize_thinking(thinking)
 
     async def generate_stream(
         self,

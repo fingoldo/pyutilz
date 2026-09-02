@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 import anthropic
 from tenacity import retry, retry_if_exception, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
+from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.exceptions import LLMTruncationError
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,50 @@ class AnthropicProvider(LLMProvider):
         "claude-opus-3-20240229": 32000,
     }
 
+    # Extended-thinking budgets per effort level. Anthropic takes a token
+    # budget rather than an effort string, so the shared effort vocabulary
+    # (minimal/low/medium/high, see pyutilz.llm.base.normalize_thinking) is
+    # mapped here. ``True`` means "on, provider default" -> medium.
+    _THINKING_BUDGETS: ClassVar[dict[str, int]] = {
+        "minimal": 1024,
+        "low": 2048,
+        "medium": 4096,
+        "high": 8192,
+    }
+    # Anthropic's minimum accepted budget.
+    _MIN_THINKING_BUDGET = 1024
+
+    def _thinking_request_field(self, thinking: bool | str, max_tokens: int) -> dict[str, Any] | None:
+        """The ``thinking`` request fragment, or None when reasoning is off.
+
+        Returns None for an effort the budget table does not know, rather than
+        guessing: silently substituting a different budget than the caller asked
+        for is worse than leaving reasoning off, because the cost shows up on the
+        bill either way while the caller believes their setting took effect.
+        """
+        enabled, effort = normalize_thinking(thinking)
+        if not enabled:
+            return None
+        budget = self._THINKING_BUDGETS.get(effort or "medium")
+        if budget is None:
+            logger.warning(
+                "Unknown thinking effort %r for %s; leaving extended thinking off. Known: %s",
+                effort, self.model, sorted(self._THINKING_BUDGETS),
+            )
+            return None
+        # Anthropic requires max_tokens > budget_tokens: the budget is carved OUT
+        # of the output allowance, so a budget at or above it leaves no room for
+        # the answer and the API rejects the request.
+        headroom = max_tokens - self._MIN_THINKING_BUDGET
+        if headroom < self._MIN_THINKING_BUDGET:
+            logger.warning(
+                "max_tokens=%d leaves no room for an extended-thinking budget " "(minimum %d plus an equal allowance for the answer); leaving it off",
+                max_tokens,
+                self._MIN_THINKING_BUDGET,
+            )
+            return None
+        return {"type": "enabled", "budget_tokens": min(budget, headroom)}
+
     @property
     def max_output_tokens(self) -> int:
         """Maximum output tokens for ``self.model``, looked up from the known per-family limits (Opus/Sonnet/Haiku)."""
@@ -163,8 +207,20 @@ class AnthropicProvider(LLMProvider):
         system: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 0,
+        thinking: bool | str = False,
     ) -> str:
-        """Generate text using Claude."""
+        """Generate text using Claude.
+
+        Args:
+            thinking: Extended-thinking toggle. ``False`` (default) keeps the
+                previous behaviour exactly. ``True`` uses the medium budget; an
+                effort string ("minimal"/"low"/"medium"/"high") selects one
+                explicitly. Until this parameter existed the caller-side
+                ``thinking=`` flag was DROPPED for Anthropic: llm_client only
+                forwards it to providers whose signature declares it, so every
+                Anthropic call ran without reasoning regardless of the setting,
+                including the ones whose docstrings claimed to be disabling it.
+        """
         if max_tokens <= 0:
             max_tokens = min(self.max_output_tokens, 21000)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
@@ -177,6 +233,20 @@ class AnthropicProvider(LLMProvider):
                 "temperature": temperature,
                 "messages": messages,
             }
+            thinking_field = self._thinking_request_field(thinking, max_tokens)
+            if thinking_field is not None:
+                kwargs["thinking"] = thinking_field
+                # Anthropic rejects any temperature other than 1 while extended
+                # thinking is on. Callers pass a low temperature for determinism
+                # (validation runners use 0.1), so honouring both is impossible:
+                # override and say so, rather than letting the API 400 on a
+                # combination the caller had no way to know was illegal.
+                if temperature != 1:
+                    logger.debug(
+                        "Extended thinking requires temperature=1; overriding the requested %.2f",
+                        temperature,
+                    )
+                    kwargs["temperature"] = 1
             if system:
                 kwargs["system"] = [
                     {
@@ -201,21 +271,23 @@ class AnthropicProvider(LLMProvider):
             # so this is an APPROXIMATION (chars // 4), not an API-reported count. It is flagged via
             # `last_thinking_tokens_estimated` and logged so callers know the reasoning-token figure
             # is a heuristic, not billed usage.
-            thinking = 0
+            # Named thinking_TOKENS: ``thinking`` is now the request-side toggle
+            # parameter, and shadowing it here would silently rebind it.
+            thinking_tokens = 0
             for block in response.content:
                 if getattr(block, "type", None) == "thinking":
                     text = getattr(block, "thinking", "") or ""
-                    thinking += max(1, len(text) // 4)  # rough estimate (chars // 4)
+                    thinking_tokens += max(1, len(text) // 4)  # rough estimate (chars // 4)
 
             self.last_cache_creation_input_tokens = cache_creation
             self.last_cache_read_input_tokens = cache_read
             self.total_cache_creation_input_tokens += cache_creation
             self.total_cache_read_input_tokens += cache_read
-            self.last_thinking_tokens = thinking
-            self.last_thinking_tokens_estimated = thinking > 0
-            self.total_thinking_tokens += thinking
-            if thinking > 0:
-                logger.debug("Anthropic thinking tokens are estimated (chars//4=%d), not API-reported.", thinking)
+            self.last_thinking_tokens = thinking_tokens
+            self.last_thinking_tokens_estimated = thinking_tokens > 0
+            self.total_thinking_tokens += thinking_tokens
+            if thinking_tokens > 0:
+                logger.debug("Anthropic thinking tokens are estimated (chars//4=%d), not API-reported.", thinking_tokens)
 
             # Cumulative session totals (for get_session_cost).
             self._call_count += 1
