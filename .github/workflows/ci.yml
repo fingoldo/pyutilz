@@ -16,12 +16,34 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # bash on every OS (it ships on the Windows runners too): the run: blocks below are
+    # written in POSIX shell, and Windows would otherwise default to pwsh and parse them differently.
+    defaults:
+      run:
+        shell: bash
+    # Windows and macOS legs run appreciably slower than ubuntu on the same suite.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        # Three OSes since 2026-09-02: this library carries genuinely platform-specific code
+        # (wmi/pywin32 probes, a cp1251 console path, POSIX permission bits, path handling),
+        # and a linux-only matrix could never exercise either non-linux half of those branches.
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        exclude:
+          # macos-latest is arm64, and setup-python publishes no 3.8/3.9 build for it.
+          - os: macos-latest
+            python-version: "3.8"
+          - os: macos-latest
+            python-version: "3.9"
+        include:
+          # Those two run on an Intel macOS image instead, so the supported floor keeps
+          # its macOS coverage rather than being silently dropped by the exclusion above.
+          - os: macos-15-intel
+            python-version: "3.8"
+          - os: macos-15-intel
+            python-version: "3.9"
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
