@@ -134,6 +134,47 @@ class TestGenerate:
         assert p._last_usage["reasoning_tokens"] == 1
 
     @pytest.mark.asyncio
+    async def test_a_length_capped_empty_answer_is_a_truncation_not_an_empty_completion(self):
+        """Live 2026-09-02: z-ai/glm-4.7-flash spent all 15,775 output tokens on reasoning and returned no
+        text. Reported as an empty completion it reads as a broken model; it is a spent budget, and the
+        caller's documented move is to double max_tokens - so the truncation error must win the race."""
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": None}, "finish_reason": "length"}], "usage": {}}))
+
+        with pytest.raises(LLMTruncationError) as caught:
+            await p.generate("q", json_mode=True)
+        assert caught.value.partial_text == ""
+        assert p._client.post.call_count == 1, "dropping response_format cannot buy back an exhausted budget"
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_parameter_is_repaired_once_and_only_once(self):
+        p = _make_provider()
+        rejected = _mock_response(status_code=400, body={"error": {"message": "Reasoning is mandatory for this endpoint and cannot be disabled"}})
+        answered = _mock_response()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(side_effect=[rejected, answered])
+        p._body_after_rejected_request = lambda body, status, detail: {**body, "repaired": True}
+
+        assert await p.generate("q") == "hello"
+        first, second = (c.kwargs["json"] for c in p._client.post.call_args_list)
+        assert "repaired" not in first and second["repaired"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_repair_that_is_itself_refused_raises_rather_than_looping(self):
+        p = _make_provider()
+        rejected = _mock_response(status_code=400, body={"error": {"message": "Reasoning is mandatory for this endpoint and cannot be disabled"}})
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=rejected)
+        p._body_after_rejected_request = lambda body, status, detail: {**body, "repaired": True}
+
+        with pytest.raises(LLMProviderError, match="API error 400"):
+            await p.generate("q")
+        assert p._client.post.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_empty_json_mode_completion_is_reissued_without_response_format(self):
         """Live shape (OpenRouter z-ai/glm-4.7-flash, 2026-09-02): finish_reason=stop, content=None, no tool
         calls, under response_format - and a real answer once response_format is dropped."""

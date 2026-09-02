@@ -8,7 +8,10 @@ from ._logproxy import logger
 
 from typing import List, Optional
 import string
-import pandas as pd
+# pandas is imported INSIDE the one function that needs it. `pyutilz/system/__init__.py` eagerly imports
+# its lightweight psutil helpers, and that chain reaches this module through `system/probing.py`, so a
+# module-level pandas here made EVERY `pyutilz.system.*` import depend on pandas - and therefore on
+# dateutil, which no optional-dep group declares.
 
 inflect_engine = None
 nlp = None  # Spacy language model, loaded lazily
@@ -86,8 +89,12 @@ def parse_html(text: str, sep=". ") -> str:
     """Strip HTML markup from ``text``, joining the extracted text nodes with ``sep``. Returns "" for null input."""
     from bs4 import BeautifulSoup
 
+    import pandas as pd
+
     if not pd.isnull(text):
-        return sep.join(BeautifulSoup(text, "html.parser").find_all(string=True))  # type: ignore[no-any-return]  # bs4's find_all returns Any
+        # `find_all` rather than the `findAll` alias: the installed stubs declare `string=` on the former only,
+        # so the alias reads as an unexpected keyword. Both are the same bs4 method.
+        return sep.join(BeautifulSoup(text, "html.parser").find_all(string=True))  # type: ignore[no-any-return]  # bs4's find_all returns Any under the installed stubs
     return ""
 
 

@@ -39,7 +39,8 @@ import inspect
 import re
 import types
 import typing
-from pathlib import Path
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Optional
 
 
@@ -620,6 +621,57 @@ _DISPOSITION_RE = re.compile(r"\bRESOLVED\b", re.IGNORECASE)
 _CITATION_RE = re.compile(r"`([^`]+)`")
 
 
+@lru_cache(maxsize=8)
+def _repo_filenames(repo_root: Path) -> frozenset[str]:
+    """Every filename in the repository, so a citation may name a file without naming its whole path."""
+    skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
+    return frozenset(p.name for p in repo_root.rglob("*") if p.is_file() and not skip & set(p.parts))
+
+
+@lru_cache(maxsize=8)
+def _repo_symbols(repo_root: Path) -> frozenset[str]:
+    """Names the source itself defines: functions, classes, module constants, and the keys of the data rows.
+
+    An audit row citing `resolve_symptom` or `prior_basis` names something as real as a path - a function
+    and a stored field. Reading only paths made 362 such rows read as citing nothing.
+    """
+    import ast
+
+    skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
+    names: set[str] = set()
+    for py in repo_root.rglob("*.py"):
+        if skip & set(py.parts):
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
+                # Field names of the rows this repository writes, which audit rows cite as often as functions.
+                names.add(node.value)
+    return frozenset(names)
+
+
+def _is_a_commit_this_repo_has(cite: str, repo_root: Path) -> bool:
+    """A short SHA is a citation of the change itself, and the strongest one an audit row can carry."""
+    import subprocess  # nosec B404 - reads git metadata of the repository under test, no external input
+
+    if not (7 <= len(cite) <= 40) or not all(c in "0123456789abcdef" for c in cite.lower()):
+        return False
+    try:
+        done = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, `cite` validated as hex above
+            ["git", "cat-file", "-e", f"{cite}^{{commit}}"], cwd=repo_root, capture_output=True, timeout=15, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
 def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_prefix: str = "test_") -> list[str]:
     """Find audit rows marked RESOLVED that cite nothing which exists.
 
@@ -629,14 +681,23 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
     record into a claim. The instance behind this rule: a round-1 table marked a finding resolved and
     round 2 measured the two code paths still disagreeing.
 
-    A row passes when at least one backtick-quoted citation resolves to a path under ``repo_root``,
-    or is the name of a function starting with ``test_name_prefix`` that exists somewhere in the
-    repository. Returns one string per unbacked row.
+    A row passes when at least one backtick-quoted citation names an artefact that EXISTS: a path under
+    ``repo_root``, a FILENAME that exists somewhere under it, a function starting with ``test_name_prefix``
+    defined anywhere in the repository, or a COMMIT this repository actually has.
+
+    The last three were the docstring's own bar and not the implementation's, which resolved
+    ``repo_root / cite`` and nothing else. Measured on autopsia 2026-09-02: 799 rows read as unbacked, and
+    the citations they were failing on were ordinary ones - ``corpus.py:128`` (a basename, not a path from
+    the root), ``review_batch_1_report.md`` (a real file two directories down), ``f01b54e6`` (a real commit).
+    A rule that reports 799 false alarms is not read at all, which costs more than the rule buys.
+
+    Returns one string per unbacked row.
     """
     unbacked: list[str] = []
     test_corpus = ""
     for py in sorted(_rglob_test_files(repo_root)):
         test_corpus += py.read_text(encoding="utf-8", errors="replace")
+    by_name = _repo_filenames(repo_root)
 
     for doc in sorted(audit_dir.rglob("*.md")):
         for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
@@ -649,6 +710,12 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
                 if cite.startswith(test_name_prefix) and f"def {cite}" in test_corpus:
                     backed = True
                 elif cite and (repo_root / cite).exists():
+                    backed = True
+                elif cite and PurePosixPath(cite).name in by_name:
+                    backed = True
+                elif _is_a_commit_this_repo_has(cite, repo_root):
+                    backed = True
+                elif cite in _repo_symbols(repo_root):
                     backed = True
             if not backed:
                 cited = ", ".join(citations) if citations else "nothing"

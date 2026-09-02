@@ -24,7 +24,14 @@ logger = logging.getLogger(__name__)
 
 from typing import Any as _Any, Optional
 
-import pandas as pd
+# pandas is imported INSIDE the one function that returns a DataFrame. `pyutilz/system/__init__.py`
+# eagerly imports this package for its lightweight psutil helpers, so a module-level pandas here made
+# EVERY `pyutilz.system.*` import depend on pandas - and therefore on dateutil, which no optional-dep
+# group declares. Measured by `test_leaf_submodule_imports_with_only_its_own_group_installed`.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 import psutil
 import platform, sys
 import os
@@ -186,7 +193,7 @@ def clean_ram() -> None:
             logger.error("malloc_trim attempt failed")
 
 
-def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int = 1) -> pd.DataFrame:
+def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int = 1) -> "pd.DataFrame":
     """
 
     Then reports own process RAM usage & the mnost RAM consuming objects.
@@ -210,6 +217,8 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
         else:
             if size >= min_size_bytes:
                 res.append(dict(type=type(obj), size_gb=size / 1024**3))
+    import pandas as pd
+
     return pd.DataFrame(res).sort_values("size_gb", ascending=False).head(N) if res else pd.DataFrame()
 
 

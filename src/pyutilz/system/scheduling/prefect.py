@@ -5,7 +5,12 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
-logger=logging.getLogger(__name__)
+
+# `pyutilz.web.graphql` and `pyutilz.text.strings` are imported INSIDE the functions that use them: the
+# `strings` package init pulls `basics`/`webtext`, which import pandas at module scope, and pandas needs
+# dateutil - so a module-level import made `pip install pyutilz[prefect]` insufficient to import this file
+# through a dependency nothing here uses.
+logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Packages
@@ -16,8 +21,6 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-from pyutilz.web import graphql
-from pyutilz.text import strings
 from time import sleep
 import prefect
 from typing import Optional, Union
@@ -34,7 +37,9 @@ def connect(prefect_key: Optional[str] = None) -> None:
         # settings.ini fallback below previously never actually took effect. Use a real dict and
         # read the resolved value back out of it instead.
         cfg: dict = {}
-        strings.read_config_file(
+        from pyutilz.text.strings import configfiles
+
+        configfiles.read_config_file(
             file="settings.ini",
             section="PREFECT",
             variables="prefect_key",
@@ -43,6 +48,8 @@ def connect(prefect_key: Optional[str] = None) -> None:
         prefect_key = cfg.get("prefect_key")
     if prefect_key:
         client = prefect.Client(api_key=prefect_key)
+        from pyutilz.web import graphql
+
         graphql.connect(client)
     else:
         client = None
@@ -50,6 +57,8 @@ def connect(prefect_key: Optional[str] = None) -> None:
 
 def get_schema() -> dict:
     """Return the Prefect GraphQL schema via the connected client, or ``{}`` if no client is connected."""
+    from pyutilz.web import graphql
+
     if client: return graphql.query_schema()
     return {}
 
@@ -72,6 +81,8 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
 
                 """
         query = query.replace("FLOW_FIELDS", flow_fields).replace("RUN_FIELDS", run_fields)
+        from pyutilz.web import graphql
+
         flows = graphql.execute(query=query, variables=variables).get("data", {}).get("flow", [])
         if status:
             flows = [flow for flow in flows if len(flow.get("flow_runs", [])) > 0]
