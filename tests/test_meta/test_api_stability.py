@@ -31,7 +31,6 @@ import pytest
 import pyutilz
 from pyutilz.dev.meta_test_utils import (
     capture_module_surface,
-    capture_signature,
 )
 
 _SNAPSHOT_PATH = Path(__file__).resolve().parent / "_api_snapshot.json"

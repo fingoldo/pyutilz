@@ -312,7 +312,7 @@ class TestEdgeCases:
         constructor.add_element(2, row=0, col=1)
 
         # Build without clearing
-        matrix = constructor.build_matrix(dtype=np.int32, clear_source=False)
+        constructor.build_matrix(dtype=np.int32, clear_source=False)
 
         # Source data should still exist
         assert len(constructor.data) == 2
@@ -327,7 +327,7 @@ class TestEdgeCases:
         constructor.add_element(2, row=0, col=1)
 
         # Build with clearing (default)
-        matrix = constructor.build_matrix(dtype=np.int32, clear_source=True)
+        constructor.build_matrix(dtype=np.int32, clear_source=True)
 
         # Buffers are emptied, not deleted: the builder stays usable for the next matrix.
         assert constructor.data == []

@@ -43,11 +43,11 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "tests/test_llm_retry.py:55": "reloads pyutilz.llm._retry only, to re-read env-var-driven "
     "PYUTILZ_LLM_MAX_RETRIES after monkeypatch.setenv; _retry.py defines no sentinel objects "
     "(verified via grep for '= object()').",
-    "tests/test_meta/test_lazy_import_safety.py:136": "reloads the top-level pyutilz package "
+    "tests/test_meta/test_lazy_import_safety.py:135": "reloads the top-level pyutilz package "
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
-    "tests/test_pythonlib_extra2.py:531": "deliberately reloads pyutilz.core.pythonlib to prove "
+    "tests/test_pythonlib_extra2.py:530": "deliberately reloads pyutilz.core.pythonlib to prove "
     "get_attr() survives it -- pythonlib.py's only historical sentinel hazard was "
     "_GET_ATTR_UNSET, and get_attr() now captures a second `_unset` parameter from the SAME "
     "name at the SAME def-time as its own default (comparing against that, not a bare global "

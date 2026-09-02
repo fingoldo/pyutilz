@@ -87,7 +87,7 @@ def parse_html(text: str, sep=". ") -> str:
     from bs4 import BeautifulSoup
 
     if not pd.isnull(text):
-        return sep.join(BeautifulSoup(text, "html.parser").findAll(string=True))  # type: ignore[call-arg, no-any-return]  # bs4's installed type stubs don't declare either text= or string=, but string= is the modern non-deprecated runtime kwarg
+        return sep.join(BeautifulSoup(text, "html.parser").findAll(string=True))  # type: ignore[no-any-return]  # bs4's findAll returns Any under the installed stubs; the removed [call-arg] half was dead (the stubs do declare string=)
     return ""
 
 

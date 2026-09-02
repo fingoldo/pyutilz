@@ -3,7 +3,7 @@
 import pytest
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 # ---------------------------------------------------------------------------
 # show_methods

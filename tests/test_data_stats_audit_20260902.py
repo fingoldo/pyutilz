@@ -26,7 +26,6 @@ from pyutilz.data.polarslib import (
     clean_numeric,
     drop_constant_columns,
     entropy_for_column,
-    polars_castable_int_dtypes,
     polars_df_info,
 )
 from pyutilz.stats.normality import normality_verdict

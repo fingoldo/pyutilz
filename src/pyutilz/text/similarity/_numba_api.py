@@ -120,7 +120,7 @@ if HAS_NUMBA:
         # which would otherwise leak a np.float64 scalar and break reprs/doctests downstream).
         return float(result)
 
-    def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
+    def sentences_similarity_numba_packed(packed_a: Optional[tuple], packed_b: Optional[tuple], cMinLenTHreshold: int = 1) -> Optional[float]:
         """
         Numba-accelerated sentences_similarity with pre-packed inputs.
 
@@ -337,7 +337,7 @@ else:
             stop_words=stop_words,
         )
 
-    def sentences_similarity_numba_packed(packed_a: tuple, packed_b: tuple, cMinLenTHreshold: int = 1) -> Optional[float]:
+    def sentences_similarity_numba_packed(packed_a: Optional[tuple], packed_b: Optional[tuple], cMinLenTHreshold: int = 1) -> Optional[float]:
         """Fallback to pure-Python version when numba is not installed."""
         return sentences_similarity(list(packed_a), list(packed_b), cMinLenTHreshold) if packed_a and packed_b else None
 

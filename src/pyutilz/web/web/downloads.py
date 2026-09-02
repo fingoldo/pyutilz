@@ -20,7 +20,7 @@ import pyutilz.web.web as _facade
 
 
 def download_in_parallel(
-    urls_to_process: Sequence,
+    urls_to_process: Optional[Sequence],
     func: Callable,
     headers: Optional[dict] = None,
     nparallel_downloads: int = 3,

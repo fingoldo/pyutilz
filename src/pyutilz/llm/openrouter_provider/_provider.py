@@ -652,7 +652,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         resp = await self._client.get("/generation", params={"id": gid})
         resp.raise_for_status()
         payload = resp.json()
-        return payload.get("data", payload) if isinstance(payload, dict) else {}
+        # Narrow the EXTRACTED value, not just the container: OpenRouter's `data` field is not
+        # contractually an object, so a list there would otherwise be returned under a
+        # `dict[str, Any]` annotation and blow up at the caller's first subscript.
+        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+        return data if isinstance(data, dict) else {}
 
     async def check_account_limits(self) -> dict[str, Any]:
         """Query ``/api/v1/key`` for live quota / usage state on the active key.

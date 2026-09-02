@@ -110,7 +110,7 @@ def test_nu_treats_empty_string_as_null():
 # db.make_set_excluded_clause / db.MakeSetExcludedClause (deprecated alias) / db.update_if_now
 # ---------------------------------------------------------------------------
 
-from pyutilz.database.db import MakeSetExcludedClause, make_set_excluded_clause, update_if_now
+from pyutilz.database.db import make_set_excluded_clause, update_if_now
 
 
 def test_make_set_excluded_clause_basic():

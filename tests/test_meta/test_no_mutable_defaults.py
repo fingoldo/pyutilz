@@ -77,7 +77,6 @@ def _audit_function(fn: ast.FunctionDef | ast.AsyncFunctionDef, rel: str) -> lis
     out: list[str] = []
     args = fn.args
     # Walk every parameter slot that can have a default.
-    all_params = list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
     # ``args.defaults`` covers posonly + args (right-aligned with the
     # positional list); ``args.kw_defaults`` matches kwonlyargs slot
     # for slot (None => no default).

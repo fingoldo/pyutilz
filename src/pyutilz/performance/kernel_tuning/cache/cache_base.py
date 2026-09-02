@@ -378,7 +378,7 @@ def _build_provenance_cached() -> dict:
     }
     # CUDA runtime + driver (if cupy is importable).
     try:
-        import cupy as cp  # type: ignore
+        import cupy as cp  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
         try:
             prov["cuda_runtime_version"] = int(cp.cuda.runtime.runtimeGetVersion())
         except Exception as e:  # nosec B110 - best-effort provenance field; a missing/failing CUDA runtime query must not break cache save, provenance dict just omits the field

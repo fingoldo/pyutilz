@@ -50,7 +50,7 @@ def pytest_configure(config):
 # via ``e.load()`` before any fixture runs, so by then the wrapper must already
 # be the bound ``thinc.util.fix_random_seed``. Drop once thinc clamps upstream.
 try:
-    import thinc.util as _thinc_util  # noqa: E402
+    import thinc.util as _thinc_util  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
     _thinc_original_fix = _thinc_util.fix_random_seed
 
     def _thinc_clamped_fix_random_seed(seed: int = 0) -> None:
@@ -71,7 +71,7 @@ try:
 
     _thinc_util.fix_random_seed = _thinc_clamped_fix_random_seed
     try:  # if pytest-randomly already cached the entry points, swap ours in
-        import pytest_randomly as _pr  # noqa: E402
+        import pytest_randomly as _pr  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
         if getattr(_pr, "entrypoint_reseeds", None):
             _pr.entrypoint_reseeds = [_thinc_clamped_fix_random_seed if r is _thinc_original_fix else r for r in _pr.entrypoint_reseeds]
     except Exception:  # pragma: no cover -- best-effort pytest-randomly plugin patch; a failure here just skips the shim
@@ -80,6 +80,7 @@ except (ImportError, OSError, RuntimeError) as exc:  # pragma: no cover
     warnings.warn(
         f"Skipping thinc pytest-randomly seed shim (thinc import failed: {exc})",
         RuntimeWarning,
+        stacklevel=2,
     )
 
 # ─── Live LLM-provider test infrastructure ──────────────────────────
@@ -128,6 +129,7 @@ def pytest_addoption(parser):
         "--refresh-resource-handle-baseline",
         "--refresh-lock-discipline-baseline",
         "--refresh-param-naming-baseline",
+        "--refresh-complexity-baseline",
     ):
         parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
     try:

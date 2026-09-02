@@ -209,13 +209,14 @@ def parse_dmidecode_info(
                             features = []
                         features_name = None
                     if key not in skip_keys and value not in skip_values and not (key.endswith("Handle")):
-                        if isinstance(value, str):
-                            value = value.strip()
-                            if "Version" not in key and "Revision" not in key and is_float(value):
-                                value = to_float(value)
-                        if isinstance(value, float) and value.is_integer():
-                            value = int(value)
-                        section_dict[key] = value
+                        # Parsed into its own variable rather than reassigning the str-typed `value`:
+                        # the parsed form is a float or an int, which reassignment would hide.
+                        parsed: _Any = value.strip()
+                        if "Version" not in key and "Revision" not in key and is_float(parsed):
+                            parsed = to_float(parsed)
+                        if isinstance(parsed, float) and parsed.is_integer():
+                            parsed = int(parsed)
+                        section_dict[key] = parsed
                 else:
                     if features_name and line.startswith("\t\t"):
                         features.append(line.strip())
@@ -712,7 +713,7 @@ def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEV
         return None
 
 
-def get_cuda_gpu_details(cuda_gpu_info: dict) -> dict:
+def get_cuda_gpu_details(cuda_gpu_info: Optional[dict]) -> dict:
     """Combine nvidia-smi info with CUDA capabilities for all GPUs.
 
     Args:

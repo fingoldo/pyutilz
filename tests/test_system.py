@@ -7,7 +7,6 @@ Tests cover:
 """
 
 import pytest
-import platform
 import tracemalloc
 
 

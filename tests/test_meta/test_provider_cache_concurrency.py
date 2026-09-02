@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from unittest.mock import patch
 
 import pytest
 

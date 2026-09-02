@@ -3,11 +3,8 @@
 import pytest
 import pandas as pd
 import numpy as np
-import tempfile
 import os
-import shutil
 from unittest.mock import patch, MagicMock
-from itertools import chain
 
 from pyutilz.pandaslib import (
     optimize_dtypes,
@@ -15,10 +12,7 @@ from pyutilz.pandaslib import (
     showcase_df_columns,
     ensure_dataframe_float32_convertability,
     read_stats_from_multiple_files,
-    measure_read_write_performance,
-    pack_benchmark_results,
     remove_constant_columns,
-    get_suspiciously_constant_columns,
 )
 
 # ---------------------------------------------------------------------------

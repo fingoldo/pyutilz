@@ -8,7 +8,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
-from typing import Optional
+from typing import Any as _Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +29,17 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def remove_nas(obj: dict):
+def remove_nas(obj: _Any) -> _Any:
     """Recursively removes 'N/A' values from a dict and converts numeric strings to floats.
 
     Args:
-        obj: Dictionary to clean
+        obj: Value to clean. Typically a dict at the top level, but the recursion below feeds
+            itself arbitrary dict values / list items, so lists, strings and scalars are all
+            valid inputs and each has its own branch.
 
     Returns:
-        Cleaned dictionary with N/A values removed and numeric strings converted
+        The cleaned value: a dict for a dict, a list for a list, a float for a numeric string,
+        and the input unchanged otherwise.
     """
     if isinstance(obj, dict):
         return {k: remove_nas(v) for k, v in obj.items() if v != "N/A"}

@@ -500,7 +500,7 @@ def test_f49_none_proxy_pass_is_treated_as_unauthenticated(monkeypatch):
     value -- the JSON way of saying "unauthenticated proxy" -- raised TypeError at startup."""
     webdriver = pytest.importorskip("selenium.webdriver")
 
-    class _Launched(Exception):
+    class _LaunchedError(Exception):
         """Sentinel raised in place of actually starting a browser process."""
 
     added = []
@@ -509,9 +509,9 @@ def test_f49_none_proxy_pass_is_treated_as_unauthenticated(monkeypatch):
     monkeypatch.setattr(browsermod, "data_dir", None, raising=False)
     monkeypatch.setattr(browsermod, "proxy_server", {"PROXY_HOST": "h", "PROXY_PORT": 1234, "PROXY_PASS": None})
     monkeypatch.setattr(webdriver, "ChromeOptions", lambda: Mock(add_argument=added.append, add_extension=added.append))
-    monkeypatch.setattr(webdriver, "Chrome", Mock(side_effect=_Launched))
+    monkeypatch.setattr(webdriver, "Chrome", Mock(side_effect=_LaunchedError))
 
-    with pytest.raises(_Launched):
+    with pytest.raises(_LaunchedError):
         browsermod.start_selenium()
     assert any("--proxy-server=h:1234" in str(a) for a in added)
 
@@ -980,7 +980,7 @@ def test_f58_encoding_cache_survives_concurrent_mutation():
         try:
             for i in range(200):
                 tc._encoding_for_model(f"model-{n}-{i}")
-        except Exception as exc:  # noqa: BLE001 -- the point of the test is that nothing escapes
+        except Exception as exc:  # the point of the test is that nothing escapes
             errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]

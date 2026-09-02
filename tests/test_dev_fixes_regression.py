@@ -206,7 +206,7 @@ class TestTimeoutExecutorAtexit:
             else:
                 sys.modules.pop("pyutilz.system.monitoring", None)
             if saved_attr is not None:
-                setattr(_pyutilz_system, "monitoring", saved_attr)
+                _pyutilz_system.monitoring = saved_attr
 
 
 # ---------------------------------------------------------------------------

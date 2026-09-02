@@ -42,7 +42,7 @@ def _scan_markers() -> list[tuple[Path, int, str, str]]:
 
 def test_every_todo_marker_has_attribution():
     bare: list[str] = []
-    for path, lineno, kw, line in _scan_markers():
+    for path, lineno, _kw, line in _scan_markers():
         rel = path.relative_to(PYUTILZ_DIR).as_posix()
         ident = f"{rel}:{lineno}"
         if ident in _GRANDFATHERED:

@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # requirements).
 _json_backend: Any
 try:
-    import orjson as _json_backend  # type: ignore
+    import orjson as _json_backend  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
 
     _json_loads = _json_backend.loads
     _JSONDecodeError = _json_backend.JSONDecodeError
@@ -465,7 +465,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @staticmethod
     def _normalize_thinking(
-        thinking: bool | str,
+        thinking: bool | str | int,
     ) -> tuple[bool, str | None]:
         """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
 
@@ -482,6 +482,9 @@ class OpenAICompatibleProvider(LLMProvider):
             return (True, None)
         if isinstance(thinking, str):
             return (True, thinking.lower())
+        # Reachable, and covered: the parameter annotation says `bool | str | int` precisely
+        # because callers do pass a plain int (0 -> (False, None)); a narrower `bool | str`
+        # made this line look like dead code when it is not.
         return (bool(thinking), None)
 
     async def generate_stream(

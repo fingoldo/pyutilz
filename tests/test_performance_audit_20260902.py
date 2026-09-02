@@ -62,7 +62,7 @@ def test_f01_synchronize_gpu_can_be_switched_off():
 def test_f01_concurrent_path_does_not_use_the_global_stream_sync():
     """Under concurrency a null-stream sync would absorb every OTHER thread's work; the resolver
     must hand back a different (per-thread event) primitive when cupy is available."""
-    cupy = pytest.importorskip("cupy")
+    pytest.importorskip("cupy")
     solo = bm._resolve_gpu_sync(1)
     many = bm._resolve_gpu_sync(4)
     assert solo is not many

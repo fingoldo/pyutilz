@@ -36,7 +36,7 @@ def test_safe_dump_concurrent_same_path_never_corrupts(tmp_path, run):
     def _writer(obj: dict) -> None:
         try:
             safe_dump(obj, path)
-        except BaseException as exc:  # noqa: BLE001 - capture from thread for main-thread assertion
+        except BaseException as exc:  # capture from thread for main-thread assertion
             errors.append(exc)
 
     t1 = threading.Thread(target=_writer, args=(payload_a,))

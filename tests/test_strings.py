@@ -6,8 +6,6 @@ Tests cover:
 """
 
 import pytest
-import tempfile
-import os
 
 
 class TestTokenizeSource:

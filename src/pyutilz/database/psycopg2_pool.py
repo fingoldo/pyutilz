@@ -80,7 +80,7 @@ def _ensure_pool(dsn: str, pool_max: int = 8) -> psycopg2.pool.ThreadedConnectio
         return _pool
     with _pool_lock:
         if _pool is not None:  # double-checked locking
-            if _pool_dsn != dsn:
+            if _pool_dsn != dsn:  # type: ignore[unreachable]  # mypy narrows the module global to None after the outer check and has no model for another thread setting it in between
                 raise ValueError("Connection pool already created with a different DSN. Close the existing pool first.")
             return _pool
         if _pool_dsn is not None and _pool_dsn != dsn:

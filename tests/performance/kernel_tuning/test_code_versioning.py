@@ -25,7 +25,7 @@ def _f2(x):
 # numba kernels (module level; .py_func source must be retrievable). Defined in
 # a guard so the non-numba tests still run when numba is unavailable.
 try:
-    import numba  # noqa: F401
+    import numba
 
     @numba.njit(cache=False)
     def _g(x):

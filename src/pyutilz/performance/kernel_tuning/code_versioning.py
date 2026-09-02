@@ -40,10 +40,10 @@ def _unwrap(fn: Callable) -> Callable:
     seen: set[int] = set()
     while hasattr(fn, "__wrapped__") and id(fn) not in seen:
         seen.add(id(fn))
-        fn = fn.__wrapped__  # type: ignore[attr-defined]
+        fn = fn.__wrapped__
     # numba @njit / @cuda.jit Dispatcher keeps the original Python function here.
     if hasattr(fn, "py_func"):
-        fn = fn.py_func  # type: ignore[attr-defined]
+        fn = fn.py_func
     return fn
 
 

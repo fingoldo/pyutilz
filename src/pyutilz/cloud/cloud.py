@@ -18,14 +18,14 @@ logger=logging.getLogger(__name__)
 import os
 from os.path import exists
 from time import sleep
-from typing import Any as _Any
+from typing import Any as _Any, Optional as _Optional
 
 # --------------------------------------------------------------------------------------------------------------
 # Inits
 # --------------------------------------------------------------------------------------------------------------
 
 s3: _Any = None
-S3_BUCKET_NAME = None  # To be configured by user
+S3_BUCKET_NAME: _Optional[str] = None  # To be configured by user
 
 # --------------------------------------------------------------------------------------------------------------
 # Google cloud storage

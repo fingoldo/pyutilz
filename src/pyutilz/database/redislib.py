@@ -14,7 +14,7 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, Optional
 
 import redis
 from time import sleep
@@ -24,7 +24,10 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 
 from pyutilz.database.exceptions import DatabaseConnectionError
 
-rc = None
+# Annotated: an unannotated `rc = None` makes mypy infer the type as exactly `None`, which types
+# away the `if old_rc is not None: old_rc.close()` connection-leak guard below and removes all
+# checking of redis method names on this module's central object.
+rc: Optional[redis.Redis] = None
 
 def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:str, decode_responses:bool=True):
     """

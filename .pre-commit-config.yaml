@@ -82,7 +82,9 @@ repos:
         # top-level `exclude` list in pyproject.toml (explicit paths override `exclude`; only
         # `force-exclude = true`, which this repo does not set, would apply it to explicit args
         # too). Mirror that exclude list here at the pre-commit level, same fix as mlframe's.
-        exclude: (^|/)(tests|scripts|_benchmarks)/
+        # tests/ and scripts/ dropped from this exclusion 2026-09-02, in step with pyproject.toml:
+        # both are now linted, with their idiomatic codes exempted via per-file-ignores instead.
+        exclude: (^|/)_benchmarks/
         stages: [pre-commit]
 
   - repo: local
@@ -157,7 +159,7 @@ repos:
   # same policy as mlframe. numpy pinned <2.5: 2.5+'s bundled .pyi stubs use PEP 695
   # `type` statements that mypy rejects under python_version="3.10".
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
+    rev: v2.3.1
     hooks:
       - id: mypy
         files: '^src/pyutilz/(dev/code_audit|stats)/'
@@ -268,7 +270,7 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors, 113 source files), so mypy-full.yml's reusable workflow now sets
+  # verified clean (0 errors; 216 source files as of 2026-09-02), so mypy-full.yml's reusable workflow now sets
   # `advisory: false` in CI (a real blocking gate there, matching mlframe's posture) -- this hook
   # mirrors that exactly, same pattern as black-filtered-blocking above. Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a

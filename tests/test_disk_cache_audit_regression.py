@@ -8,7 +8,6 @@ import sys
 import threading
 from pathlib import Path
 
-import pytest
 
 from pyutilz.core.disk_cache import DiskCache, hash_object
 

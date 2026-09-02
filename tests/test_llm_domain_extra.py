@@ -38,7 +38,7 @@ class TestAnthropicRetryPredicate:
 
         from pyutilz.llm.anthropic_provider import AnthropicProvider
 
-        p = AnthropicProvider.__new__(AnthropicProvider)
+        AnthropicProvider.__new__(AnthropicProvider)
         retry_condition = AnthropicProvider.generate.retry.retry  # type: ignore[attr-defined]
         fake_response = type("Resp", (), {"status_code": 529, "headers": {}, "request": None})()
         exc = anthropic.APIStatusError("overloaded", response=fake_response, body=None)
@@ -156,7 +156,6 @@ class TestTokenCounterModelAwareEncoding:
 
 class TestLLMTruncationErrorWiring:
     def test_openai_compat_raises_on_length_finish_reason(self):
-        import httpx
         from pyutilz.llm.exceptions import LLMTruncationError
         from pyutilz.llm.openai_provider import OpenAIProvider
 

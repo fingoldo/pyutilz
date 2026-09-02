@@ -21,7 +21,6 @@ No live DB is required by any test here.
 """
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

@@ -4,9 +4,6 @@ Tests cover logging utility functions and decorators.
 """
 
 import pytest
-import tempfile
-import os
-from pathlib import Path
 
 
 class TestFunctionLog:

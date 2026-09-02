@@ -2,8 +2,7 @@
 
 import platform
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
-import types
+from unittest.mock import patch, MagicMock
 import logging
 
 # ── parse_dmidecode_info (lines 757-832) ──

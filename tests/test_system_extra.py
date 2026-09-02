@@ -1,4 +1,4 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from collections import namedtuple
 
 from pyutilz.system.system import (

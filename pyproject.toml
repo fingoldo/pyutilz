@@ -348,7 +348,10 @@ dev = [
     "ruff==0.15.22",                # pinned exact, matching CI's uvx ruff==0.15.22 (ruff-blocking.yml) --
                                     # an open range here is exactly how mlframe's prior v0.8.6 pre-commit-
                                     # vs-CI drift went unnoticed for a long time (2026-07-18 architecture review).
-    "mypy>=1.0",
+    "mypy==2.3.1",                  # pinned exact, matching CI's mypy-full.yml `mypy-version` and .pre-commit-config.yaml's
+                                    # mirrors-mypy `rev: v2.3.1`. Was an open `mypy>=1.0`, which spanned a MAJOR version
+                                    # boundary (1.x vs the 2.x this config is written against, see [tool.mypy] below) on the
+                                    # one whole-project blocking gate -- the same drift class the ruff pin above documents.
     "bandit>=1.7",
     # py-ci-shared (needed by .pre-commit-config.yaml's local hooks) is deliberately NOT declared
     # here: PyPI rejects any distribution whose metadata carries a PEP 440 direct reference
@@ -460,7 +463,21 @@ target-version = "py38"
 # results to stdout by design (that IS the benchmark's interface, same exemption class as
 # py-ci-shared's own CLI scripts) -- T201/PERF401 findings there are noise, not bugs. Mirrors
 # mlframe's benchmarks/_benchmarks/profiling exclusion (found via the identical gap there).
-exclude = ["tests", "scripts", "_benchmarks", ".git", "__pycache__", "build", "dist"]
+# `tests` and `scripts` removed from this list 2026-09-02: both were entirely unlinted, hiding 307
+# and 30 findings respectively (F401 redefinitions, a blind `pytest.raises(Exception)`, a `==`
+# type comparison, and 19 `# noqa` directives naming rules that were never enabled, i.e. dead
+# suppressions their authors believed were load-bearing). They are now in scope, with the
+# genuinely test-/script-idiomatic codes exempted per-file below rather than by hiding the dirs.
+exclude = ["_benchmarks", ".git", "__pycache__", "build", "dist"]
+
+# B006 (mutable default argument) is in the shared base's `ignore` list ("audited case-by-case per
+# call site"). Measured 2026-09-02: `ruff check src tests scripts --select B006 --isolated` reports
+# `All checks passed!`, i.e. the exposure is zero everywhere, so honoring the rule costs nothing
+# today and the case-by-case audit can be re-litigated per finding if one ever appears. The repo
+# already treats this as a real bug class (pyutilz.dev.code_audit ships a mutable_defaults scanner
+# for it), but that scanner is wired into no blocking hook -- this puts the class under a gate.
+[tool.ruff.lint]
+extend-select = ["B006"]
 
 # Measured 2026-07-09 when C90 was newly added via the shared base (pyutilz had never selected
 # it before): default threshold=10 flags 68 functions, median complexity among those 15, mean
@@ -477,6 +494,27 @@ max-complexity = 20
 "src/pyutilz/llm/claude_code_provider.py" = ["N814"]  # local import aliases (_TRS, _TSS) follow the project's underscore-prefixed-short-alias convention, not a "constant" naming
 "src/pyutilz/dev/notebook_init.py" = ["T201"]  # entire module's job is printing interactive Jupyter-notebook-init status messages to stdout for the user to see; already excluded from coverage as a notebook-only utility
 "src/pyutilz/web/proxy/decodo.py" = ["T201"]  # all findings are in DecodoProvider.print_usage(), explicitly documented as "Print human-readable subscription + traffic summary to stdout"
+
+# tests/ entered ruff's scope 2026-09-02 (see the `exclude` note above). Every code below is
+# exempted for a stated reason; anything NOT listed here is enforced on tests exactly as on src.
+"tests/**" = [
+    "T201",     # tests print diagnostics for a failing run to be readable in CI logs; stdout is not a test's product but it is a legitimate debugging channel
+    "RUF012",   # test helper/fixture classes hold mutable class attributes on purpose; ClassVar[...] on throwaway stubs is annotation noise, not safety
+    "RUF059",   # an unused unpacked variable documents the shape of the tuple under test (`_, count = f()` style); renaming every one to `_` loses that
+    "PERF401",  # an explicit append loop in a test is deliberately readable step-by-step; a comprehension rewrite optimises the thing least worth optimising
+    "PERF203",  # try/except inside a loop IS the mechanism under test in the retry/backoff suites
+    "DTZ001", "DTZ003", "DTZ011",  # naive datetimes / utcnow() / date.today() are the FIXTURE VALUES these tests feed in; forcing tz-aware ones changes what is being asserted
+    "NPY002",   # legacy global-seed RNG (np.random.seed/rand/choice) is deliberate: these tests assert against values generated from the legacy global stream, and pytest-randomly reseeds it per test, so the state is not actually order-dependent here
+    "B008",     # function calls in argument defaults are the exact signature shape the introspection tests exist to inspect
+    "B018",     # a bare attribute access inside `with pytest.raises(...)` IS the assertion
+    "RUF005",   # list concatenation in fixture construction; the iterable-unpacking rewrite is not clearer
+    "UP028",    # `yield` in a for loop, kept explicit in generator-protocol tests
+    "RUF017",   # quadratic list summation over fixture-sized (single-digit) lists
+]
+
+# scripts/ entered ruff's scope 2026-09-02 alongside tests/.
+"scripts/vulture_whitelist.py" = ["F821", "B018"]  # the file's ENTIRE content is bare name references, so vulture counts those names as used -- undefined names and useless expressions are the file working exactly as designed
+"scripts/auto_refactor.py" = ["T201"]  # a CLI script whose output to stdout is its user interface
 
 # Deptry: unused / missing / transitive dependency scan. Made blocking 2026-07-09 after a real
 # triage pass (run with the [all,dev] extras actually installed -- deptry's DEP001/DEP002 are
@@ -603,21 +641,54 @@ warn_unused_configs = true
 disallow_untyped_defs = false  # Too strict for now, enable gradually
 ignore_missing_imports = true
 check_untyped_defs = true
+# Enabled 2026-09-02 after clearing all 25 hits it reported: 11 were unannotated module globals
+# (`browser = None` etc.) that mypy typed as exactly `None`, which silently disabled ALL checking
+# of the busiest objects in web/browser.py, database/redislib.py and cloud/cloud.py; the rest were
+# annotation-vs-body contradictions (a `dict` param whose body handles list/str/None) and one
+# genuinely dead fallback in llm/openai_compat.py. `mypy src/pyutilz` is clean WITH this flag on,
+# verified over two consecutive --no-incremental runs.
+warn_unreachable = true
+# `warn_unused_ignores` is deliberately NOT set. Measured 2026-09-02: it reports 33 unused ignores
+# on this Windows box with the [all,dev] extras installed, but essentially all of them are
+# platform- or optional-dependency-conditional and are REQUIRED elsewhere -- system/system/memory.py
+# and probing.py's `ctypes.windll` / `winsound` ignores are needed on CI's Linux runner, and the
+# orjson / pgvector / filelock / IPython / numba / cupy import ignores are needed in any install
+# that lacks those extras. Turning the flag on would make the blocking gate fail differently per
+# platform and per extras set, i.e. exactly the nondeterminism the gate exists to prevent. The
+# environment-INDEPENDENT stale ignores were removed by hand instead (2026-09-02).
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true
+# `tests.*` had an `ignore_errors = true` override here until 2026-09-02. It was dead config --
+# every mypy entry point (CI's mypy-full.yml, both mypy-full-* hooks, the beachhead hook) targets
+# `src/pyutilz` only, so the section never matched a module mypy loads and `warn_unused_configs`
+# reported it as an unused section on every run. Removed rather than kept, because "tests are
+# checked with errors suppressed" and "tests are not checked at all" are materially different
+# postures and the config claimed the wrong one.
 
-# Strict-mode beachhead (mirrors mlframe's approach): two small, cohesive, stable-surface
-# subpackages verified clean under strict mode as of 2026-07-06.
+# Strict-mode beachhead (mirrors mlframe's approach): small, cohesive, stable-surface subpackages
+# verified clean under strict mode.
+# Established 2026-07-06:
 # - dev.code_audit (11 files): a self-contained lint/audit CLI tool, already clean with no
 #   changes needed.
 # - stats (2 files): numba-jitted normality tests; fixed 2 real errors in the njit-fallback
 #   stub (missing annotations on the *args/**kwargs decorator pattern).
+# Added 2026-09-02, each independently verified clean under the strict flags before being listed:
+# - text.secrets_scrub and system.single_flight_cache: already fully annotated, zero changes needed.
+#   (performance.kernel_tuning.cache was measured as a candidate at the same time and NOT added:
+#   it still reports 33 [no-untyped-def] errors across 6 files, so it needs its own typing pass
+#   first -- listing it here would have broken the whole-project blocking gate.)
+# - system.monitoring: required 13 added annotations (decorator factories and their wrappers).
+#   Prioritized because its unannotated `func` param was making `job_completed`'s wrong `data`
+#   type and a genuine `str | None` arg-type invisible to the whole-project run.
 # Expansion to other subpackages should follow only after each is independently verified
 # clean, same policy as mlframe.
 [[tool.mypy.overrides]]
-module = ["pyutilz.dev.code_audit.*", "pyutilz.stats.*"]
+module = [
+    "pyutilz.dev.code_audit.*",
+    "pyutilz.stats.*",
+    "pyutilz.text.secrets_scrub",
+    "pyutilz.system.single_flight_cache",
+    "pyutilz.system.monitoring",
+]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 warn_return_any = true

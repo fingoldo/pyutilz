@@ -354,7 +354,7 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                     try:
                         # orjson is faster than stdlib json; falls back if missing (kept optional -- core has no
                         # hard requirements).
-                        import orjson  # type: ignore
+                        import orjson  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
 
                         try:
                             val = orjson.loads(raw_val)

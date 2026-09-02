@@ -4,7 +4,7 @@ Tests cover web utility functions for HTTP operations.
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 
 class TestWebUtilities:

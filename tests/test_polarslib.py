@@ -4,7 +4,6 @@ Tests cover Polars utility functions for DataFrame operations.
 """
 
 import polars as pl
-import numpy as np
 
 from pyutilz.data.polarslib import (
     find_nan_cols,

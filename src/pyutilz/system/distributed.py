@@ -117,9 +117,14 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
                 fields = "host_name,os_machine_guid,os_serial"
 
                 db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
-                if _container.node_id is None:
+                # Re-read into a local after each call: db_command populates _container.node_id as a
+                # side effect, which a type checker cannot see, so reading the attribute directly
+                # keeps it narrowed to None from the enclosing `if` and types the raise below away.
+                node_id = getattr(_container, "node_id", None)
+                if node_id is None:
                     db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
-                if _container.node_id is None:
+                    node_id = getattr(_container, "node_id", None)
+                if node_id is None:
                     # Same contract as the get_system_info branch above: returning None here left
                     # the caller with a scraper that never registered, never heartbeats and is
                     # invisible to the monitoring system, without one log line saying why.

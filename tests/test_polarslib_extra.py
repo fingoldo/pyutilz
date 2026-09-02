@@ -533,7 +533,6 @@ class TestBuildAggregateFeatures:
         df = pl.DataFrame({"a": [1.0, 2.0]})
         custom = [pl.col("a").sum().alias("a_total")]
         exprs, _, _ = build_aggregate_features_polars(df, custom_expressions=custom, engine="cpu")
-        aliases = []
         # custom expression should be first in list
         assert len(exprs) > 1
 

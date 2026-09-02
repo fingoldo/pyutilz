@@ -25,7 +25,17 @@ import os
 # Typing
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
+
+if TYPE_CHECKING:
+    # Type-checking-only: selenium is an optional [web] extra and every runtime import of it in
+    # this module is deliberately lazy (see the comment block below), so importing it for real
+    # here would break that contract.
+    # Chrome's driver, not the generic remote one: start_selenium() always builds either
+    # webdriver.Chrome or undetected_chromedriver.Chrome (a subclass), and Chrome-only methods
+    # such as execute_cdp_cmd() are used below.
+    from selenium.webdriver.chrome.webdriver import WebDriver
+    from selenium.webdriver.remote.webelement import WebElement
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Selenium connectivity
@@ -55,13 +65,23 @@ from random import random
 # INITS
 # ***************************************************************************************************************************
 
-last_session_updated_at = None
+last_session_updated_at: Optional[datetime] = None
 
 version_main = None
-login, pwd = None, None
-browser, headers, proxy_server, target, home_page, user_agent = None, None, None, None, None, None
-TheCookies = None
-data_dir = None  # "chrome-data"
+login: Optional[str] = None
+pwd: Optional[str] = None
+# Annotated individually rather than as one six-way tuple unpack: without annotations mypy infers
+# the type of each as exactly `None`, which makes every `if browser is not None:` guard in this
+# module provably dead to the checker AND removes all checking of selenium/dict attribute access
+# on them (a typo in a WebDriver method name would be invisible).
+browser: Optional["WebDriver"] = None
+headers: Optional[dict] = None
+proxy_server: Optional[dict] = None
+target: Optional[str] = None
+home_page: Optional[str] = None
+user_agent: Optional[str] = None
+TheCookies: Optional[str] = None
+data_dir: Optional[str] = None  # "chrome-data"
 logout_signs = "Sign-In"
 successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
@@ -75,7 +95,7 @@ fixed_cookies: Dict[str, Any] = {}
 basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en;q=0.9", "accept": "*/*"}
 headers = basic_headers
 
-def find_element_by_xpath(browser:Any,query:str)->object:
+def find_element_by_xpath(browser: Any, query: str) -> "WebElement":
     """Locates an element by XPath."""
     from selenium.webdriver.common.by import By
 
@@ -86,19 +106,19 @@ def find_element_by_xpath(browser:Any,query:str)->object:
     # "element genuinely not present" case (find_element() raising NoSuchElementException) was
     # masked by a confusing, unrelated AttributeError from calling a nonexistent method, instead
     # of the real, actionable exception propagating to the caller.
-    return browser.find_element(By.XPATH, query)
+    return cast("WebElement", browser.find_element(By.XPATH, query))
 
-def find_element_by_name(browser:Any,query:str)->object:
+def find_element_by_name(browser: Any, query: str) -> "WebElement":
     """Locates an element by its `name` attribute."""
     from selenium.webdriver.common.by import By
 
-    return browser.find_element(By.NAME, query)
+    return cast("WebElement", browser.find_element(By.NAME, query))
 
-def find_element_by_tag_name(browser:Any,query:str)->object:
+def find_element_by_tag_name(browser: Any, query: str) -> "WebElement":
     """Locates an element by its tag name."""
     from selenium.webdriver.common.by import By
 
-    return browser.find_element(By.TAG_NAME, query)
+    return cast("WebElement", browser.find_element(By.TAG_NAME, query))
 
 def init(**params) -> None:
     """Sets module-level configuration variables (e.g. target, home_page, login, pwd) from keyword arguments."""
@@ -156,7 +176,7 @@ def find_chrome_executable():
             return os.path.normpath(candidate)
     return None
 
-def start_selenium() -> object:
+def start_selenium() -> "WebDriver":
     """Launches a Chrome Selenium webdriver (undetected or standard), applying module-level config (proxy, user agent, data dir), and stores it in the module-level `browser`."""
     import zipfile
     import tempfile
@@ -279,7 +299,12 @@ def start_selenium() -> object:
             plugin_fd, pluginfile = tempfile.mkstemp(suffix=".zip", prefix="pyutilz_proxy_auth_")
             os.close(plugin_fd)
             os.chmod(pluginfile, 0o600)
-            atexit.register(lambda p=pluginfile: os.path.exists(p) and os.remove(p))
+            def _remove_plugin_file(p: str = pluginfile) -> None:
+                """Delete the temp proxy-auth extension zip at interpreter exit, if it still exists."""
+                if os.path.exists(p):
+                    os.remove(p)
+
+            atexit.register(_remove_plugin_file)
 
             with zipfile.ZipFile(pluginfile, "w") as zp:
                 zp.writestr("manifest.json", manifest_json)
@@ -443,7 +468,10 @@ def LoginAndGetCookies(
             logger.debug("find_element_by_name login attempt failed, will try xpath fallback: %s", e)
         if elem_login is None:
             try:
-                elem_login = find_element_by_xpath(browser, "//div[text()='" + login.lower() + "']")
+                # `login` is a module-level global the caller sets via init(); str() keeps the xpath
+                # well-formed (and the lookup merely failing) instead of raising AttributeError out of
+                # the fallback when it was never configured.
+                elem_login = find_element_by_xpath(browser, "//div[text()='" + str(login).lower() + "']")
             except Exception as e:  # nosec B110 - best-effort xpath fallback for locating the login element; if elem_login is still None afterward it is explicitly checked and logged as an error two lines below
                 logger.debug("find_element_by_xpath login fallback failed: %s", e)
         if elem_login is None:

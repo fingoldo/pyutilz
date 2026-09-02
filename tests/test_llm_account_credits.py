@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import re
+
 import pytest
 
 httpx = pytest.importorskip("httpx")
@@ -191,7 +193,7 @@ class TestProviderStubMessages:
     async def test_anthropic_credits_points_to_console(self):
         from pyutilz.llm.anthropic_provider import AnthropicProvider
         p = self._make(AnthropicProvider)
-        with pytest.raises(NotImplementedError, match="console.anthropic.com"):
+        with pytest.raises(NotImplementedError, match=re.escape("console.anthropic.com")):
             await p.get_account_credits()
 
     @pytest.mark.asyncio
@@ -226,7 +228,7 @@ class TestProviderStubMessages:
     async def test_openai_credits_points_to_platform(self):
         from pyutilz.llm.openai_provider import OpenAIProvider
         p = self._make(OpenAIProvider)
-        with pytest.raises(NotImplementedError, match="platform.openai.com"):
+        with pytest.raises(NotImplementedError, match=re.escape("platform.openai.com")):
             await p.get_account_credits()
 
     @pytest.mark.asyncio
@@ -240,7 +242,7 @@ class TestProviderStubMessages:
     async def test_xai_credits_points_to_console(self):
         from pyutilz.llm.xai_provider import XAIProvider
         p = self._make(XAIProvider)
-        with pytest.raises(NotImplementedError, match="console.x.ai"):
+        with pytest.raises(NotImplementedError, match=re.escape("console.x.ai")):
             await p.get_account_credits()
 
     @pytest.mark.asyncio

@@ -263,21 +263,21 @@ def time_backend(
 
     try:
         if concurrency == 1:
-            samples: list = []
+            samples: list[float] = []
             _run(_prebuild(n_iters), samples)
-            return statistics.median(samples) * 1000.0 if samples else float("inf")
+            return float(statistics.median(samples) * 1000.0) if samples else float("inf")
 
         # Pre-build every thread's inputs (host-side) before starting, so the timed region is purely
         # ``fn`` -- including, for a GPU backend, its own H2D upload of the fresh buffer.
         per_thread_inputs = [_prebuild(n_iters) for _ in range(concurrency)]
-        results: list[list] = [[] for _ in range(concurrency)]
+        results: list[list[float]] = [[] for _ in range(concurrency)]
         threads = [threading.Thread(target=_run, args=(per_thread_inputs[i], results[i])) for i in range(concurrency)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
         flat = [s for r in results for s in r]
-        return statistics.median(flat) * 1000.0 if flat else float("inf")
+        return float(statistics.median(flat) * 1000.0) if flat else float("inf")
     except Exception:
         logger.warning("time_backend: %r raised during timed run -- treating as inf (excluded from this sweep).", fn, exc_info=True)
         return float("inf")

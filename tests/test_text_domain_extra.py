@@ -1,7 +1,5 @@
 """Regression tests for pyutilz.text.* (2026-07-21 audit fixes)."""
 
-import logging
-
 import pytest
 
 from pyutilz.text.strings.textentropy import naive_entropy_rate
@@ -13,7 +11,6 @@ from pyutilz.text.similarity import sentences_similarity, sentences_similarity_n
 class TestJsonPgDumpsNonFiniteNormalization:
     def test_nan_and_infinity_normalized_regardless_of_backend(self):
         from pyutilz.text.strings.jsonutils import _normalize_nonfinite_floats
-        import math
 
         obj = {"score": float("nan"), "inf": float("inf"), "ninf": float("-inf"), "ok": 1.5}
         result = _normalize_nonfinite_floats(obj)

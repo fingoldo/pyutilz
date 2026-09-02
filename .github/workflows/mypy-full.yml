@@ -4,7 +4,8 @@ name: MyPy
 # fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
 # install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow] -- pyproject.toml's
 # comment on the `all` extra is the single source of truth for why those four are excluded). `advisory: false` (real blocking gate) as of 2026-07-13:
-# `mypy src/pyutilz` verified clean (0 errors, 113 source files) -- backlog is closed, same
+# `mypy src/pyutilz` verified clean (0 errors, 216 source files as of 2026-09-02, with
+# warn_unreachable now on) -- backlog is closed, same
 # posture as mlframe's mypy-full.yml. Flip back to advisory only if a future dependency-version
 # bump reopens the backlog wider than a same-PR fix.
 
@@ -27,7 +28,7 @@ jobs:
     uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@v1
     with:
       package-name: pyutilz
-      mypy-version: "2.1.0"
+      mypy-version: "2.3.1"
       advisory: false
       install-command: |
         uv pip install --system -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"

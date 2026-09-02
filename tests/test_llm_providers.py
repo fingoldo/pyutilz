@@ -1,6 +1,5 @@
 """Tests for LLM provider base class and factory."""
 
-import json
 from types import ModuleType
 
 import pytest
@@ -389,7 +388,6 @@ class TestGeminiProvider:
 
     def test_safety_block_finish_reason_raises(self):
         """Gemini response with finish_reason=SAFETY raises LLMSafetyBlockError."""
-        from unittest.mock import MagicMock
         from pyutilz.llm.gemini_provider import GeminiProvider, GENAI_AVAILABLE
         from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMRefusalError
         if not GENAI_AVAILABLE:

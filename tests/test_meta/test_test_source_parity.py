@@ -209,6 +209,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_database_extra2": "cross-cutting — 2026-07-21 audit regression tests spanning database/db/sql_helpers, database/db/upsert, database/db/sqlite, database/redislib",
     "test_llm_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning llm/gemini_provider, llm/anthropic_provider, llm/openai_provider, llm/base, llm/token_counter",
     "test_system_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning system/parallel, system/system/fsutils, system/system/misc, system/config, performance/kernel_tuning/benchmark",
+    "test_complexity_ratchet": "cross-cutting - ratchets ruff C901 complexity findings over src/, tests/ and scripts/",
     # system.py was split into the system/system/ subpackage; test_system*.py cover it jointly.
     "test_system": "covers pyutilz.system.system/* sub-package",
     "test_system_extra": "covers pyutilz.system.system/* sub-package",

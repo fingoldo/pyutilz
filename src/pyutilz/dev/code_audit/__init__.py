@@ -428,9 +428,9 @@ from __future__ import annotations
 # Preserve the original flat-module import surface. These names were
 # importable as ``from pyutilz.dev.code_audit import ast`` etc. before the
 # split into a subpackage; keep them re-exported so no caller breaks.
-import ast  # noqa: re-exported facade name (`pyutilz.dev.code_audit.ast`), part of the historic flat-module public surface
+import ast  # re-exported facade name (`pyutilz.dev.code_audit.ast`), part of the historic flat-module public surface
 import json
-import sys  # noqa: re-exported facade name (`pyutilz.dev.code_audit.sys`), part of the historic flat-module public surface
+import sys  # re-exported facade name (`pyutilz.dev.code_audit.sys`), part of the historic flat-module public surface
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional

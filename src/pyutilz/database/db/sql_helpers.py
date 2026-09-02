@@ -82,7 +82,7 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
                 # stdlib json on dumps; falls back to stdlib only if orjson missing (kept optional -- core has no
                 # hard requirements).
                 try:
-                    import orjson  # type: ignore
+                    import orjson  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
 
                     value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
                 except ImportError:

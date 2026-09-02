@@ -6,9 +6,8 @@
 
 import pytest
 import polars as pl
-import numpy as np
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 try:
     import polars_ds  # noqa: F401
@@ -21,10 +20,6 @@ from pyutilz.data.polarslib import (
     build_aggregate_features_polars,
     create_ts_features_polars,
     bin_numerical_columns,
-    add_weighted_aggregates,
-    clean_numeric,
-    cast_f64_to_f32,
-    POLARS_DEFAULT_NUMAGGS,
 )
 
 # ============================================================

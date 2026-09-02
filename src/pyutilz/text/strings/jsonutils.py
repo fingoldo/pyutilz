@@ -12,10 +12,16 @@ import math
 
 # Resolved ONCE at import instead of per call: ``json_pg_dumps`` is the jsonb bulk-insert path, and
 # an import statement in its body re-pays a sys.modules lookup plus frame work on every row.
+# Annotated `Optional[Any]` rather than left to inference: inferring the module type makes the
+# `if _orjson is not None` guards below always-true to the type checker, which types the stdlib
+# fallback paths away as unreachable on any box that happens to have orjson installed.
+_orjson: Optional[Any]
 try:
-    import orjson as _orjson  # type: ignore
+    import orjson as _orjson_mod
 except ImportError:  # orjson is optional -- the stdlib branch below is the fallback
-    _orjson = None  # type: ignore[assignment]
+    _orjson = None
+else:
+    _orjson = _orjson_mod
 
 # The six characters orjson emits for a real NUL inside a string. Postgres rejects a NUL in
 # json/jsonb text, so its presence (or, conservatively, that of a legitimately-escaped backslash
@@ -130,7 +136,7 @@ def jsonize_atrtributes(
     return res  # type: ignore[no-any-return]  # res is genuinely a dict on this path; typed Any to accommodate the str/dict/list branches elsewhere in this function
 
 
-def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
+def remove_json_attributes(json_obj: Optional[dict], attributes: Sequence) -> None:
     """Delete the given ``attributes`` (if present) from ``json_obj`` in place."""
     if json_obj is None:
         return
@@ -138,7 +144,7 @@ def remove_json_attributes(json_obj: dict, attributes: Sequence) -> None:
         json_obj.pop(attr, None)
 
 
-def leave_json_attributes(json_obj: dict, attributes: Sequence) -> None:
+def leave_json_attributes(json_obj: Optional[dict], attributes: Sequence) -> None:
     """Delete every key of ``json_obj`` NOT in ``attributes``, in place (inverse of remove_json_attributes)."""
     if json_obj is None:
         return

@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
 # init_logging — lines 54-90

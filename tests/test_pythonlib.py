@@ -7,9 +7,6 @@ Tests cover:
 """
 
 import pytest
-import tempfile
-import os
-from pathlib import Path
 import pickle
 
 
@@ -172,7 +169,7 @@ def test_ensure_list_set_tuple_parametrized(input_obj, expected_type):
 
     result = ensure_list_set_tuple(input_obj)
 
-    if expected_type == list and not isinstance(input_obj, (list, set, tuple, frozenset)):
+    if expected_type is list and not isinstance(input_obj, (list, set, tuple, frozenset)):
         # Should be wrapped in list
         assert isinstance(result, list)
         assert result == [input_obj]

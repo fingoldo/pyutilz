@@ -727,10 +727,6 @@ class TestSortedGreedyMatchDifferential:
     @pytest.mark.parametrize("decimals", [None, 2, 1], ids=["no_ties", "light_ties", "heavy_ties"])
     def test_matches_oldscan_exactly(self, n, decimals):
         from pyutilz.text.similarity import _greedy_match_sorted
-        import random as _random
-
-        rng = _random.Random(f"seed-{n}-{decimals}")
-
         import numpy as np
 
         npy_rng = np.random.default_rng(abs(hash((n, decimals))) % (2**32))

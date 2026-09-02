@@ -9,7 +9,6 @@ Fixes:
 Run with: python scripts/auto_refactor.py
 """
 
-import os
 import re
 from pathlib import Path
 from typing import List, Tuple

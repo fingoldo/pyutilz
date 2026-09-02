@@ -4,14 +4,14 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
-from ._common import Tuple, njit
+from ._common import Any, Tuple, njit
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Numerics
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def is_float(string):
+def is_float(string: Any) -> bool:
     """Checks if `string` (with thousands-separator commas stripped) can be parsed as a float."""
     try:
         float(str(string).replace(",", ""))
@@ -20,7 +20,7 @@ def is_float(string):
         return False
 
 
-def to_float(string):
+def to_float(string: Any) -> float:
     """Parses `string` as a float, stripping thousands-separator commas first."""
     return float(str(string).replace(",", ""))
 

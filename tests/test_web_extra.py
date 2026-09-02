@@ -2,8 +2,8 @@
 
 import http
 import ssl
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch, call
+from datetime import datetime
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -267,7 +267,7 @@ class TestSetProxyLastUseTime:
         d = {}
         mod.set_proxy_last_use_time(d, {"http": "a"})
         assert len(d) == 1
-        assert isinstance(list(d.values())[0], datetime)
+        assert isinstance(next(iter(d.values())), datetime)
 
     def test_none_dict_noop(self):
         from pyutilz.web import web as mod
@@ -655,7 +655,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 0
-        r = mod.get_url("http://x.com", blocking_statuses=(403,), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False, max_retries=3)
+        mod.get_url("http://x.com", blocking_statuses=(403,), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False, max_retries=3)
         assert mod.was_blocked is True
 
     @patch("pyutilz.web.web.sleep")
@@ -729,7 +729,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.delay = 0
         with patch("pyutilz.web.web.handle_blocking"):
-            r = mod.get_url("http://x.com", blocking_errors=("captcha",), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False)
+            mod.get_url("http://x.com", blocking_errors=("captcha",), quit_on_blocking=True, b_use_proxy=False, b_random_ua=False)
         assert mod.was_blocked is True
 
     @patch("pyutilz.web.web.sleep")
@@ -743,7 +743,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 0
-        r = mod.get_url("http://x.com", blocking_errors=("captcha",), b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", blocking_errors=("captcha",), b_use_proxy=False, b_random_ua=False)
         assert mod.was_blocked is False
 
     @patch("pyutilz.web.web.sleep")
@@ -827,7 +827,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 0
-        r = mod.get_url("http://x.com", custom_headers={"X-Custom": "v"}, b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", custom_headers={"X-Custom": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "x-custom" in call_kwargs["headers"]
 
@@ -843,7 +843,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.headers = {"existing": "h"}
         mod.delay = 0
-        r = mod.get_url("http://x.com", inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "added" in call_kwargs["headers"]
         assert "existing" in call_kwargs["headers"]
@@ -860,7 +860,7 @@ class TestGetUrl:
         mod.sess = mock_sess
         mod.headers = None
         mod.delay = 0
-        r = mod.get_url("http://x.com", custom_headers=None, inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", custom_headers=None, inject_headers={"added": "v"}, b_use_proxy=False, b_random_ua=False)
         call_kwargs = mock_sess.get.call_args[1]
         assert "added" in call_kwargs["headers"]
 
@@ -883,7 +883,7 @@ class TestGetUrl:
             s.get.return_value = mock_resp
             mod.sess = s
         mock_gns.side_effect = side_effect
-        r = mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False)
         mock_gns.assert_called()
 
     @patch("pyutilz.web.web.sleep")
@@ -912,7 +912,7 @@ class TestGetUrl:
         mock_sess.get.return_value = mock_resp
         mod.sess = mock_sess
         mod.delay = 5
-        r = mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False)
+        mod.get_url("http://x.com", b_use_proxy=False, b_random_ua=False)
         mock_sleep.assert_called()
 
     @patch("pyutilz.web.web.sleep")
@@ -997,7 +997,7 @@ class TestDownloadToFile:
         def iter_content(size):
             call_count[0] += 1
             if call_count[0] == 1:
-                raise IOError("disk full")
+                raise OSError("disk full")
             return [b"ok"]
         mock_resp.iter_content = iter_content
         mock_get.return_value = mock_resp

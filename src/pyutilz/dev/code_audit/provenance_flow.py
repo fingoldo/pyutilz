@@ -43,7 +43,7 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
 
     def note(store: dict[str, int], key: object, line: int) -> None:
         """Record one read-without-writer site, keyed so the same field is not reported twice."""
-        if _is_field_like(key) and key not in store:  # type: ignore[arg-type]
+        if _is_field_like(key) and key not in store:
             store[str(key)] = line
 
     for node in ast.walk(tree):

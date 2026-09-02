@@ -6,7 +6,6 @@ import logging
 
 import pytest
 
-from pyutilz.dev import benchmarking
 from pyutilz.dev.benchmarking import benchmark_algos_by_runtime, sweep_backend_crossover
 from pyutilz.dev.logginglib import _log_filename, _message, log_loaded_rows, logged
 

@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import patch, MagicMock, mock_open
-import platform
 
 # ── get_wmi_obj_as_dict (lines 270-282) ──
 

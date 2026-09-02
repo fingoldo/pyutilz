@@ -416,7 +416,7 @@ def count_user_deferred_entries(
                 value = node.value
             else:
                 continue
-            if value is None:  # type: ignore[unreachable]
+            if value is None:
                 continue
             for target in targets:
                 if not isinstance(target, ast.Name):

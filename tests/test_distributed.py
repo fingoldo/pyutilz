@@ -7,8 +7,6 @@ Tests cover:
 """
 
 import pytest
-import os
-import tempfile
 
 
 class TestHeartbeatSql:

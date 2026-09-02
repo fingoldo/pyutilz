@@ -537,7 +537,9 @@ class ClaudeCodeProvider(LLMProvider):
                     _tools_val,
                 )
                 if opts.extra_args is None:
-                    opts.extra_args = {}
+                    # The SDK types extra_args as non-Optional, but it is a third-party object we
+                    # do not control, so the defensive guard stays.
+                    opts.extra_args = {}  # type: ignore[unreachable]
                 opts.extra_args["tools"] = ""
 
             logger.info("SDK call: model=%s prompt=%d system=%d", self.model, len(prompt), len(system or ""))
@@ -548,7 +550,9 @@ class ClaudeCodeProvider(LLMProvider):
             async for msg in cc_query(prompt=prompt, options=opts):
                 msg_count += 1
                 if msg is None:
-                    msg_types.append("None")
+                    # The SDK's async iterator is typed as never yielding None; the guard is
+                    # defensive because a None here would crash the isinstance chain below.
+                    msg_types.append("None")  # type: ignore[unreachable]
                     continue
                 msg_types.append(type(msg).__name__)
                 msg_type = type(msg).__name__

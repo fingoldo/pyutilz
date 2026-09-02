@@ -1,7 +1,6 @@
 """Extra tests for strings.py — covers functions not in test_strings.py."""
 
 import math
-import json
 import pytest
 from datetime import datetime, date
 from collections import Counter

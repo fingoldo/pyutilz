@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("requests")
 pytest.importorskip("grequests")
 
-from pyutilz.web import web as web_module  # noqa: E402
+from pyutilz.web import web as web_module  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
 
 
 class _FakeResponse:

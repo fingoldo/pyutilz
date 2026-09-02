@@ -8,7 +8,6 @@ Tests cover:
 import pytest
 import tempfile
 import os
-import shutil
 import numpy as np
 
 
@@ -30,7 +29,7 @@ class TestMemMapArray:
         temp_file.close()
 
         try:
-            result = mem_map_array(test_array, temp_file.name, mmap_mode="r+")
+            mem_map_array(test_array, temp_file.name, mmap_mode="r+")
 
             # Should have added temp directory to tracking list
             assert len(_TEMP_DIRS) >= initial_count, "Temp directory should be tracked for cleanup (resource leak fix)"

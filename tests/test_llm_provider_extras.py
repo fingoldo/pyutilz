@@ -8,14 +8,13 @@
 - Gemini: safety_ratings / grounding / citation / function_calls capture
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 httpx = pytest.importorskip("httpx")
 pytest.importorskip("pydantic")
 
-from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 
 
@@ -148,7 +147,7 @@ class TestAnthropicProviderExtras:
     """Cache field tracking + real count_tokens API + with_raw_response headers."""
 
     def _make(self):
-        anthropic = pytest.importorskip("anthropic")
+        pytest.importorskip("anthropic")
         from pyutilz.llm.anthropic_provider import AnthropicProvider
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = "claude-sonnet-4-6-20250610"

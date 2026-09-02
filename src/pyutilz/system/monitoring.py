@@ -23,7 +23,7 @@ import concurrent.futures
 from functools import wraps
 from datetime import datetime
 from timeit import default_timer as timer
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Union
 
 # requests lives under pyutilz's optional [web] extra -- a plain module-level `import requests`
 # forced ANY use of pyutilz.system.monitoring (even functions that never touch job-completion
@@ -57,8 +57,13 @@ atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 
 
 def job_completed(
-    job_id: str, status: int = 0, data: Optional[str] = None, provider: str = "healthchecks.io", api_key: Optional[str] = None, blocking: bool = True
-):
+    job_id: str,
+    status: int = 0,
+    data: Optional[Union[dict, str]] = None,
+    provider: str = "healthchecks.io",
+    api_key: Optional[str] = None,
+    blocking: bool = True,
+) -> None:
     """Ping a dead-man's-switch monitoring provider (healthchecks.io / cronitor.io) that a job completed.
 
     ``blocking=True`` (default) sends the heartbeat inline and returns only after the request
@@ -71,6 +76,10 @@ def job_completed(
     wire and the heartbeat is lost -- use ``blocking=True`` (the default) for a last-call-before-exit
     heartbeat, and ``blocking=False`` only when the caller keeps running long enough to let the
     executor's worker thread finish.
+
+    ``data`` is a dict (the shape the ``monitored`` decorator builds and passes, and the form
+    ``requests`` encodes as a form body) or a plain string; both are stringified for cronitor.io's
+    ``msg`` param and passed through as the POST body for healthchecks.io.
     """
 
     endpoint = ""
@@ -97,7 +106,7 @@ def job_completed(
 
     if endpoint:
 
-        def _send():
+        def _send() -> None:
             """Post the heartbeat to the endpoint, logging (not raising) on a non-OK status or request error."""
             try:
                 if requests is None:
@@ -129,16 +138,16 @@ def monitored(
     duration_rounding: int = 4,
     provider: str = "healthchecks.io",
     api_key: Optional[str] = None,
-):
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator factory that runs the wrapped function, times it, logs and reports its dict result as a job_completed heartbeat.
 
     The wrapped function must return either ``None`` or a ``dict``. When ``duration_field`` is set,
     the elapsed wall-clock time is added to that key of the result dict before logging/reporting.
     """
-    def decorator_logged(func):
+    def decorator_logged(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wraps func so each call is timed, logged, and reported via job_completed."""
         @functools.wraps(func)
-        def wrapper_logged(*args, **kwargs):
+        def wrapper_logged(*args: Any, **kwargs: Any) -> Any:
             """Calls func, augments its dict result with duration, logs it, and pings the monitoring provider."""
 
             if duration_field:
@@ -158,9 +167,7 @@ def monitored(
             if log_data:
                 logger.info(data)
 
-            local_job_id = job_id
-            if not local_job_id:
-                local_job_id = func.__name__
+            local_job_id: str = job_id or func.__name__
             job_completed(job_id=local_job_id, status=status, data=data, provider=provider, api_key=api_key)
 
             return data
@@ -173,7 +180,7 @@ def monitored(
 # TIMEOUTS & DURATIONS LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
-def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bool = False):
+def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bool = False) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to enforce a timeout on function execution.
 
     Runs ``func`` on a dedicated per-call daemon thread, NOT the shared ``_TIMEOUT_EXECUTOR`` pool
@@ -188,15 +195,15 @@ def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bo
     call still leaks its own thread on a genuine timeout (unavoidable without process isolation),
     but that leak can never starve capacity for any OTHER call.
     """
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wraps func so each call runs on its own timed daemon thread and is aborted (logged) past the timeout."""
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             """Runs func on a dedicated daemon thread, returning its result, or None (logged) on timeout/exception."""
             start_ts = time.time()
             outcome: dict[str, Any] = {}
 
-            def _run():
+            def _run() -> None:
                 """Executes func in the dedicated thread, stashing its result or exception for the caller to collect."""
                 try:
                     outcome["result"] = func(*args, **kwargs)
@@ -229,7 +236,7 @@ def timeout_wrapper(timeout: float = API_TIMEOUT_SEC, report_actual_duration: bo
         return wrapper
     return decorator
 
-def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
+def log_duration(threshold: float = 1.0, logger_name: Optional[str] = None, max_arg_size: int = 1000) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Decorator to measure function execution time and log if it exceeds the threshold.
     Also logs the arguments passed to the function, truncating large ones for readability.
@@ -239,10 +246,10 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
         logger_name (str): Optional logger name; if None, uses the caller's module logger.
         max_arg_size (int): Max characters in repr() before truncating (default: 1000).
     """
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wraps func so its execution time (and args/kwargs, if it exceeds threshold) is logged."""
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             """Calls func, timing it, and logs a message with args/kwargs if the call exceeds threshold seconds."""
             start = timer()
             result = func(*args, **kwargs)
@@ -250,7 +257,7 @@ def log_duration(threshold=1.0, logger_name=None, max_arg_size=1000):
             if dur > threshold:
                 logger_msg = logger if logger_name is None else logging.getLogger(logger_name)
 
-                def safe_repr(obj, max_size=max_arg_size):
+                def safe_repr(obj: Any, max_size: int = max_arg_size) -> str:
                     """Safely repr large objects, truncating if needed."""
                     repr_str = repr(obj)
                     if len(repr_str) > max_size:

@@ -9,8 +9,6 @@ import pytest
 from pyutilz.web.proxy import (
     DecodoProvider,
     DecodoSubscription,
-    DecodoTrafficReport,
-    DecodoTrafficRow,
     IP_CHECK_URLS,
     PortHealthTracker,
     ProxyConfig,

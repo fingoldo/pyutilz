@@ -238,7 +238,7 @@ def test_kernel_tuning_discovery_has_no_downstream_project_default():
 
 def test_strings_star_import_no_longer_injects_third_party_or_stdlib_modules():
     ns: dict = {}
-    exec("from pyutilz.text.strings import *", ns)  # noqa: S102 - that is precisely what is under test
+    exec("from pyutilz.text.strings import *", ns)  # nosec B102 - a star-import through exec IS precisely what is under test
     shadowed = ("pd", "np", "re", "json", "math", "string", "deque", "Counter", "OrderedDict", "unicodedata", "defaultdict")
     leaked = sorted(n for n in shadowed if n in ns)
     assert not leaked, f"star-import still shadows caller names: {leaked}"
@@ -249,12 +249,12 @@ def test_strings_star_import_no_longer_injects_third_party_or_stdlib_modules():
 def test_strings_legacy_reexports_stay_reachable_by_attribute():
     import collections
 
-    import pyutilz.text.strings as S
+    import pyutilz.text.strings as strings_mod
 
-    assert S.pd.__name__ == "pandas"
-    assert S.np.__name__ == "numpy"
-    assert S.Counter is collections.Counter
-    assert S.re.__name__ == "re"
+    assert strings_mod.pd.__name__ == "pandas"
+    assert strings_mod.np.__name__ == "numpy"
+    assert strings_mod.Counter is collections.Counter
+    assert strings_mod.re.__name__ == "re"
 
 
 def test_strings_import_does_not_pull_pandas_eagerly():

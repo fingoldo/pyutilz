@@ -103,7 +103,7 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
                 # findings on exactly that tuple (see py_ci_shared.code_audit_meta._key), so the
                 # second finding silently overwrote/masked the first in the results dict instead
                 # of being a second, independently-reviewable finding. Confirmed in the wild
-                # (2026-08-04): removing one dead name from such a block (via `# noqa`) caused a
+                # (2026-08-04): removing one dead name from such a block (via a noqa directive) caused a
                 # SECOND, previously-hidden dead import in the same block to suddenly "appear" --
                 # it was there all along, just masked by the key collision.
                 out.append((bound, alias_lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))

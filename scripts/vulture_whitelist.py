@@ -27,3 +27,9 @@ code_key
 exc_type
 exc_val
 exc_tb
+
+# web/browser.py -- TYPE_CHECKING-only imports naming the annotation types of the module-level
+# `browser` global and the find_element_by_* return values. Vulture does not model
+# `if TYPE_CHECKING:` blocks or string annotations, so both read as unused imports.
+WebDriver
+WebElement

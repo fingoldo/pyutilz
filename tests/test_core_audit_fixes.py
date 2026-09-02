@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import io
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -117,7 +114,7 @@ def test_ensure_valid_filename_docstring_examples_execute():
 
     import pyutilz.core.pythonlib as pythonlib
 
-    results = doctest.run_docstring_examples(pythonlib.ensure_valid_filename, {"ensure_valid_filename": pythonlib.ensure_valid_filename}, verbose=False)
+    doctest.run_docstring_examples(pythonlib.ensure_valid_filename, {"ensure_valid_filename": pythonlib.ensure_valid_filename}, verbose=False)
     finder = doctest.DocTestFinder()
     runner = doctest.DocTestRunner(verbose=False)
     for test in finder.find(pythonlib.ensure_valid_filename, globs={"ensure_valid_filename": pythonlib.ensure_valid_filename}):
@@ -126,7 +123,7 @@ def test_ensure_valid_filename_docstring_examples_execute():
 
 
 class _WithInnerDunder:
-    def fit__transform(self):  # noqa: D102
+    def fit__transform(self):
         return None
 
 

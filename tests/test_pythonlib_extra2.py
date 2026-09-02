@@ -3,9 +3,8 @@
 import pytest
 import os
 import sys
-import time
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
@@ -412,7 +411,7 @@ def test_objects_processor_with_namespace():
         container = {"myobj": [1]}
         dumped = MagicMock(return_value=None)
         d = ObjectsDumper(process_fcn=dumped, process_kwargs={})
-        n = d.process_objects(objects_names="myobj", container=container, path=tmpdir, namespace="ns")
+        d.process_objects(objects_names="myobj", container=container, path=tmpdir, namespace="ns")
         assert dumped.called
 
 

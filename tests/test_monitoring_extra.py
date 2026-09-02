@@ -1,5 +1,4 @@
 import time
-import logging
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -234,7 +233,7 @@ class TestTimeoutWrapperExceptions:
         def quick():
             return 42
 
-        with patch("pyutilz.system.monitoring.logger") as mock_logger:
+        with patch("pyutilz.system.monitoring.logger"):
             result = quick()
             assert result == 42
 

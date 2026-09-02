@@ -1,25 +1,19 @@
 import pytest
 import pandas as pd
 import numpy as np
-import tempfile
 import os
 from unittest.mock import patch
-from pathlib import Path
 
 from pyutilz.pandaslib import (
     load_df,
     optimize_dtypes,
-    remove_stale_columns,
     concat_and_flush_df_list,
     remove_constant_columns,
-    get_categorical_columns_indices,
     convert_float64_to_float32,
     get_df_memory_consumption,
     nullify_standard_values,
     prefixize_columns,
     FeatureNamer,
-    set_df_columns_types,
-    get_columns_of_type,
     classify_column_types,
     ensure_dataframe_float32_convertability,
     showcase_df_columns,

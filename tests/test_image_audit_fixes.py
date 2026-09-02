@@ -7,9 +7,9 @@ import io
 import pytest
 
 PIL = pytest.importorskip("PIL")
-from PIL import Image, ImageFile  # noqa: E402
+from PIL import Image, ImageFile  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
 
-from pyutilz.core.image import get_image_properties  # noqa: E402
+from pyutilz.core.image import get_image_properties  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
 
 
 def _jpeg_bytes(exif: bytes | None = None) -> bytes:

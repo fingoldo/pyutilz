@@ -6,8 +6,6 @@ Tests cover bug fixes, performance optimizations, and general functionality.
 import pytest
 import pandas as pd
 import numpy as np
-import tempfile
-from pathlib import Path
 
 from pyutilz.pandaslib import (
     optimize_dtypes,

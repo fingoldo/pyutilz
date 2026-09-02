@@ -4,9 +4,7 @@ Tests cover serialize/unserialize with various formats and str_to_class utility.
 """
 
 import pytest
-import tempfile
 import pickle
-from pathlib import Path
 
 from pyutilz.serialization import serialize, unserialize, str_to_class
 from pyutilz.core.safe_pickle import PickleVerificationError
@@ -134,7 +132,10 @@ class TestStrToClass:
     def test_str_to_class_invalid(self):
         """Test with invalid class name"""
         # Should raise error for non-existent class
-        with pytest.raises(Exception):  # Could be AttributeError, ImportError, or KeyError
+        # Enumerated, not a blind `Exception`: a bare catch-all passes on ANY future failure
+        # (e.g. a TypeError from a signature change), so it could not detect the regression it
+        # exists to catch.
+        with pytest.raises((AttributeError, ImportError, KeyError, ModuleNotFoundError, ValueError)):
             str_to_class("nonexistent.FakeClass")
 
     def test_str_to_class_with_init_data(self):
@@ -173,7 +174,7 @@ class TestEdgeCases:
 
     def test_serialize_large_data(self):
         """Test serializing larger dataset"""
-        data = {"key_{}".format(i): list(range(100)) for i in range(100)}
+        data = {f"key_{i}": list(range(100)) for i in range(100)}
 
         serialized = serialize(data)
         result = unserialize(serialized)

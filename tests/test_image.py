@@ -62,7 +62,7 @@ def _stub_pil():
     if saved_image_mod is not None:
         sys.modules["pyutilz.core.image"] = saved_image_mod
     if _HAD_ATTR:
-        setattr(_pyutilz_core, "image", saved_image_attr)
+        _pyutilz_core.image = saved_image_attr
     else:
         # Nothing was bound before; drop whatever the stubbed re-import left behind.
         if hasattr(_pyutilz_core, "image"):

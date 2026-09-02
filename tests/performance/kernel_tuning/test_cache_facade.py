@@ -8,7 +8,6 @@ either re-export completeness or the facade late-resolution wiring.
 """
 from __future__ import annotations
 
-import os
 
 from pyutilz.performance.kernel_tuning import cache as ktc
 from pyutilz.performance.kernel_tuning.cache import cache_base as base

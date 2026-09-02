@@ -1,11 +1,9 @@
 """Extra tests for strings.py — covers uncovered lines."""
 
-import json
 import pytest
 import os
 import tempfile
 from unittest.mock import patch, MagicMock
-from collections import Counter
 
 # ---------------------------------------------------------------------------
 # jsonize_atrtributes — lines 83, 115-137

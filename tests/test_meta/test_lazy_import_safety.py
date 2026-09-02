@@ -132,7 +132,6 @@ def test_module_aliases_dict_is_immutable_at_callsites():
     """Sanity — ``_MODULE_ALIASES`` should be the same object across
     multiple ``import pyutilz`` calls (no rebuild on re-import that
     would invalidate downstream pickling / caching that key off ``id()``)."""
-    first_id = id(pyutilz._MODULE_ALIASES)
     importlib.reload(pyutilz)
     # A reload typically rebuilds module-level dicts, BUT we only care
     # that the *contents* match — id() of the dict is allowed to change.

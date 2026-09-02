@@ -16,7 +16,7 @@ similarity = pytest.importorskip("pyutilz.text.similarity")
 if not getattr(similarity, "HAS_NUMBA", False):
     pytest.skip("numba not installed", allow_module_level=True)
 
-from pyutilz.text.similarity import _numba_api, _numba_kernels  # noqa: E402
+from pyutilz.text.similarity import _numba_api, _numba_kernels  # import placed after module-level setup on purpose (E402 is not in this repo's rule set, so the directive that used to sit here suppressed nothing)
 
 
 def _random_batch(seed: int, n_candidates: int):
