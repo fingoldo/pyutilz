@@ -258,10 +258,14 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     if mode in ("select", "update") and not where_fields:
         logger.error("mode=%r requires a non-empty where_fields (got %r)", mode, where_fields)
         return
-    # "insert" consults only set_fields; without this guard set_fields=None crashes two frames down
-    # inside construct_templates_and_values, and set_fields=[] builds `insert into t () values ()`.
-    if mode == "insert" and not set_fields:
-        logger.error("mode='insert' requires a non-empty set_fields (got %r)", set_fields)
+    # "insert" and "update" both consult set_fields (for the VALUES list / the SET clause); without
+    # this guard set_fields=None crashes two frames down inside construct_templates_and_values with
+    # an opaque `TypeError: 'NoneType' object is not iterable`, and set_fields=[] builds
+    # `insert into t () values ()` / `update t set  where ...`, invalid SQL rejected only at
+    # execution time. "update" was originally left out of this guard even though it takes the same
+    # path, so it still crashed opaquely after the "insert" half was fixed.
+    if mode in ("insert", "update") and not set_fields:
+        logger.error("mode=%r requires a non-empty set_fields (got %r)", mode, set_fields)
         return
     # `returning` is spliced into the SQL as a string; None is the natural way to say "no RETURNING".
     if returning is None:

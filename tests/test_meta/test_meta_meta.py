@@ -51,6 +51,12 @@ _PERMITTED_PRIVATE_IMPORTS: set[str] = {
     "test_lazy_import_safety::pyutilz._MODULE_ALIASES",
     "test_module_alias_integrity::pyutilz._MODULE_ALIASES",
     "test_provider_registration::pyutilz.llm.factory._PROVIDER_MODULES",
+    # The facade-integrity check asks whether the FACADE agrees with the registry, so the private
+    # registry is the fact under test -- reading its public mirror instead would compare the facade to itself.
+    "test_facade_and_exception_root_integrity::pyutilz.llm.factory._PROVIDER_MODULES",
+    # The README/docs claim "across N providers"; the registry is what N counts, so the
+    # check must read the registry itself rather than a public mirror that could drift with it.
+    "test_prose_numeric_claims::pyutilz.llm.factory._PROVIDER_MODULES",
     "test_provider_registration::pyutilz.llm.factory._ALIASES",
     "test_provider_cache_concurrency::pyutilz.llm.factory._provider_cache",
     "test_provider_cache_concurrency::pyutilz.llm.factory._provider_lock",

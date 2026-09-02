@@ -7,8 +7,8 @@
 # commit. This is exactly the set of tests designed to catch package-
 # level drift: lazy-import-proxy breaks, alias-vs-target mismatches,
 # top-level side-effect regressions, optional-dep contamination, and
-# API-snapshot drift. Total runtime: ≈ 30 s (heavy lifting is sub-process
-# isolation in PT-8 / PT-9).
+# API-snapshot drift. Total runtime: about 3 min (measured 2026-09-02; the
+# heavy lifting is sub-process isolation in PT-8 / PT-9).
 #
 # To skip in a hurry:
 #   git commit --no-verify
@@ -270,17 +270,25 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 216 source files as of 2026-09-02), so mypy-full.yml's reusable workflow now sets
+  # verified clean (0 errors; 218 source files as of 2026-09-02), so mypy-full.yml's reusable workflow now sets
   # `advisory: false` in CI (a real blocking gate there, matching mlframe's posture) -- this hook
   # mirrors that exactly, same pattern as black-filtered-blocking above. Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
   # local warn-only hook would be LOOSER than CI, letting a broken commit land locally and only
   # fail later in CI.
+  #
+  # Invoked through py_ci_shared.mypy_gate rather than `python -m mypy` directly: mypy's exit
+  # code alone cannot distinguish "checked everything, found nothing" from "aborted partway
+  # through with an INTERNAL ERROR inside a third-party stub", and the latter makes the gate's
+  # findings a function of file-traversal order while still looking like a gate. The wrapper
+  # requires mypy's own `Success: no issues found in N source files` terminator, and
+  # `--min-files` additionally fails a run whose scope has silently narrowed (a mistyped path,
+  # an over-eager exclude) to far fewer files than the tree actually holds.
   - repo: local
     hooks:
       - id: mypy-full-blocking
-        name: "mypy (whole project, blocking)"
-        entry: python -m mypy src/pyutilz
+        name: "mypy (whole project, blocking, completion-asserted)"
+        entry: python -m py_ci_shared.mypy_gate --min-files 200 src/pyutilz
         language: system
         types: [python]
         pass_filenames: false

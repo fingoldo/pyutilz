@@ -62,6 +62,8 @@ from .mojibake import scan_mojibake
 from .resource_handle_safety import scan_resource_handle_safety
 from .todo_hygiene import scan_todo_hygiene
 from .import_cycles import scan_import_cycles
+from .per_call_state_on_shared_instance import scan_per_call_state_on_shared_instance
+from .uncached_constant_cost_probe import scan_uncached_constant_cost_probe
 
 # --- registry -----------------------------------------------------------
 
@@ -164,6 +166,8 @@ register_scanner("import_cycle", scan_import_cycles)
 register_scanner("hardcoded_absolute_path_in_test", scan_hardcoded_absolute_path_in_test)
 register_scanner("async_primitive_reinit_per_call", scan_async_primitive_reinit_per_call)
 register_scanner("llm_call_missing_max_tokens_cap", scan_llm_call_missing_max_tokens_cap)
+register_scanner("per_call_state_on_shared_instance", scan_per_call_state_on_shared_instance)
+register_scanner("uncached_constant_cost_probe", scan_uncached_constant_cost_probe)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
@@ -184,6 +188,12 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     "regex_integer_parse_truncation",
     "threshold_below_documented_result",
     "domain_vocabulary_leak",
+    # Warn-only by design, each for its own reason rather than as a blanket posture:
+    # per_call_state_on_shared_instance detects a lock lexically, so a lock taken by the CALLER
+    # reads as absent; uncached_constant_cost_probe cannot tell a probe that must be re-taken
+    # (a liveness check) from one that must not. Both feed a triage list, not a commit gate.
+    "per_call_state_on_shared_instance",
+    "uncached_constant_cost_probe",
 })
 
 

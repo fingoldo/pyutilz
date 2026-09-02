@@ -185,6 +185,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_gate_integrity": "meta-test over .pre-commit-config.yaml / .github/workflows / pyproject.toml -- no production module to pair with",
     "test_llm_factory": "covers pyutilz.llm.factory",
     "test_llm_base": "covers pyutilz.llm.base",
     "test_llm_providers": "cross-cutting — covers ALL provider modules together",
@@ -242,6 +243,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_meta_meta": "meta-test (F1+F2+F3) — meta-tests on meta-tests",
     "test_logger_lazy_formatting": "meta-test (H1) — eager-format logger.debug/info",
     "test_resource_handle_safety": "meta-test (H2) — open/Popen outside with-block",
+    "test_unused_parameter_baseline": "meta-test - ruff ARG001/ARG002 snapshot; the rule is ruff's, not one source module's",
     "test_smoke_untested_modules": "smoke suite — covers 8 untested modules under one parametrize",
     "test_no_bare_except": "meta-test (H3) — bare except / except BaseException without re-raise",
     "test_no_mutable_defaults": "meta-test (H4) — mutable default arguments (Python footgun)",

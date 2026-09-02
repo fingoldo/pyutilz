@@ -150,9 +150,13 @@ class DecodoTrafficReport:
         return self.total_bytes / (1024**3)
 
     def summary(self, group_by: str = "day") -> str:
-        """Render a human-readable table of the traffic rows plus a totals line."""
+        """Render a human-readable table of the traffic rows plus a totals line.
+
+        ``group_by`` names what one row IS (the grouping the report was fetched with) and titles the first
+        column accordingly - the rows arrive already grouped upstream, so it labels rather than regroups.
+        """
         lines = [
-            f"  {'Group':<25} {'Requests':>12} {'Traffic':>12}",
+            f"  {group_by.capitalize():<25} {'Requests':>12} {'Traffic':>12}",
             f"  {'-' * 25} {'-' * 12} {'-' * 12}",
         ]
         for row in self.rows:

@@ -24,12 +24,34 @@ from ._common import _ensure_http_scheme, logger
 import pyutilz.web.web as _facade
 
 
+def _proxy_opener(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: Optional[str], proxy_port: Optional[int]) -> Optional[Any]:
+    """Build a urllib opener routing through ``proxy_server:proxy_port``, or None when no server was given.
+
+    Credentials go into the proxy URL itself rather than through a password manager because a forward
+    proxy answers 407 on the CONNECT, before any realm exists for urllib to match a stored password to.
+    """
+    if not proxy_server:
+        return None
+    # `is not None`, not `or`: a caller that deliberately configured an empty proxy_type must not be
+    # silently rewritten to http -- the same reasoning as the timeout guard below.
+    proxy_type = _facade.proxy_type if _facade.proxy_type is not None else "http"
+    proxies = _facade.make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port if proxy_port is not None else 80, proxy_type=proxy_type)
+    return _facade.urllib.request.build_opener(_facade.urllib.request.ProxyHandler(proxies))
+
+
 def get_external_ip(
     proxy_user: Optional[str] = None, proxy_pass: Optional[str] = None, proxy_server: Optional[str] = None, proxy_port: Optional[int] = None
 ) -> Optional[str]:
-    """Return this machine's external IP by querying ``IP_PROVIDERS`` (shuffled) until one responds with a plausible address, or None if all fail."""
+    """Return this machine's external IP by querying ``IP_PROVIDERS`` (shuffled) until one responds with a plausible address, or None if all fail.
+
+    When ``proxy_server`` is given the query goes THROUGH that proxy, so the answer is the proxy's exit
+    address - the only reason a caller hands proxy credentials to an external-IP lookup at all. With no
+    proxy_server the request goes out directly, as before.
+    """
     providers = _facade.IP_PROVIDERS
     shuffle(providers)
+    opener = _proxy_opener(proxy_user, proxy_pass, proxy_server, proxy_port)
+    urlopen = opener.open if opener is not None else _facade.urllib.request.urlopen
 
     for source in providers:
         try:
@@ -38,7 +60,7 @@ def get_external_ip(
             # socket.setdefaulttimeout() (nothing in this package does) -- a single stalled
             # provider would otherwise hang this whole function indefinitely instead of moving
             # on to the next shuffled IP_PROVIDERS entry.
-            resp = _facade.urllib.request.urlopen(  # nosec B310 - scheme validated above -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
+            resp = urlopen(  # nosec B310 - scheme validated above -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
                 _ensure_http_scheme(source), timeout=_facade.timeout if _facade.timeout is not None else 10
             )
         except ssl.SSLCertVerificationError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this provider, try the next)

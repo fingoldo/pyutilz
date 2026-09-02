@@ -234,6 +234,10 @@ class AdvancedTokenizer:
         sentencizes each review's text, and feeds it to tokenize() to accumulate corpus statistics.
         Progress is shown against exp_length via a tqdm bar; if save_as is given, save_tokens_to_file()
         is called at the end. newlines, if given, is replaced with an actual newline before processing.
+
+        tokens is accepted and ignored: corpus statistics accumulate onto this instance's own counters
+        (that is what tokenize() writes to), never into a caller-supplied dict. Kept in the signature so
+        existing positional callers keep working.
         """
         # psycopg2 + pyutilz.database.db are the actual DB backend - imported lazily here so the
         # module itself can be loaded without the [database] extra installed (only this

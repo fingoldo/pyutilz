@@ -209,7 +209,7 @@ start htmlcov/index.html  # Windows
 - **Location**: `tests/test_<module_name>.py`
 - **Naming**: `test_<function_name>` or `test_<feature>`
 - **Coverage**: Aim for >80% coverage for new code. Note the measured percentage is against a
-  shrunk denominator: `pyproject.toml`'s `[tool.coverage.run] omit` list excludes `scheduling/`,
+  shrunk denominator: `pyproject.toml`'s `[tool.coverage.run] omit` list excludes `system/scheduling/`,
   `cloud/`, `web/browser.py`, `dev/dashlib.py`, `dev/notebook_init.py`, and `text/tokenizers.py`
   entirely (heavy-IO/external-service code not exercised by the unit suite) — those files aren't
   measured at all, not measured-and-low. Don't add new modules to that omit list without a reason;

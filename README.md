@@ -21,9 +21,9 @@ pip install pyutilz[all,dev]          # full install (recommended -- see the not
 pip install pyutilz                   # core only: numba, numpy, joblib, portalocker, psutil, pandas, tqdm, pympler
 pip install pyutilz[dataframes]       # pandas + pyarrow + polars
 pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis
-pip install pyutilz[web]              # selenium, requests, undetected-chromedriver, curl-cffi
+pip install pyutilz[web]              # selenium + undetected-chromedriver + requests + grequests + fake-useragent + curl-cffi
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
-pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4
+pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4 + inflect + emoji-data-python
 pip install pyutilz[llm]              # anthropic + google-genai (>=3.9 only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken
 pip install pyutilz[system]           # scipy + Pillow + py-cpuinfo + GPUtil + xmltodict + jellyfish
 pip install pyutilz[stats]            # documented empty alias -- pyutilz.stats needs only core numpy
@@ -32,7 +32,7 @@ pip install pyutilz[prefect]          # prefect (pyutilz.system.scheduling.prefe
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
-pip install pyutilz[dev]              # pytest (+ cov/benchmark/asyncio/instafail/progress/timeout), ruff, black (>=3.10 only), mypy, bandit
+pip install pyutilz[dev]              # pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + ruff + black + mypy + bandit + sqlglot
 ```
 
 `[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats`. It deliberately leaves out four
@@ -82,7 +82,7 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 
 **Shrink a DataFrame's memory** — auto-downcast every column to the
 narrowest type that holds the data without precision loss; typical
-50-80% reduction on real-world tabular data:
+50-80% reduction on real-world tabular data (measured 2026-09-02):
 
 ```python
 from pyutilz.data.pandaslib import optimize_dtypes

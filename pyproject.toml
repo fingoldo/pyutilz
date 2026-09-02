@@ -353,6 +353,12 @@ dev = [
                                     # boundary (1.x vs the 2.x this config is written against, see [tool.mypy] below) on the
                                     # one whole-project blocking gate -- the same drift class the ruff pin above documents.
     "bandit>=1.7",
+    # sqlglot parses the SQL the query builders emit (tests/test_meta/test_generated_sql_property.py),
+    # so the "no UPDATE without a WHERE" invariant is asserted against a real parse tree rather than a
+    # substring search -- the builders emit multi-CTE, multi-statement Postgres where a regex over the
+    # text cannot tell which WHERE belongs to which statement. requires-python >=3.9, matching the
+    # markers above; the test importorskips it, so the py3.8 CI cell skips rather than errors.
+    "sqlglot>=25 ; python_version >= '3.9'",
     # py-ci-shared (needed by .pre-commit-config.yaml's local hooks) is deliberately NOT declared
     # here: PyPI rejects any distribution whose metadata carries a PEP 440 direct reference
     # (`400 ... Can't have direct dependency`), and `twine check` does not catch it -- so a
@@ -515,6 +521,7 @@ max-complexity = 20
 # scripts/ entered ruff's scope 2026-09-02 alongside tests/.
 "scripts/vulture_whitelist.py" = ["F821", "B018"]  # the file's ENTIRE content is bare name references, so vulture counts those names as used -- undefined names and useless expressions are the file working exactly as designed
 "scripts/auto_refactor.py" = ["T201"]  # a CLI script whose output to stdout is its user interface
+"scripts/prove_meta_checks.py" = ["T201"]  # a CLI script whose CAUGHT/MISSED report to stdout is its user interface
 
 # Deptry: unused / missing / transitive dependency scan. Made blocking 2026-07-09 after a real
 # triage pass (run with the [all,dev] extras actually installed -- deptry's DEP001/DEP002 are
@@ -549,6 +556,7 @@ GPUtil = "GPUtil"
 # runtime-install helper (web/web.py) and a commented-out future `from fake_useragent
 # import UserAgent`, not a static `import` deptry's scanner can detect.
 DEP002 = [
+    "sqlglot",  # parses the query builders' output in tests/test_meta/test_generated_sql_property.py; deptry scans src/ only, so a test-only dep can never look used
     "selenium",
     "undetected-chromedriver",
     "boto3",

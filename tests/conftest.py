@@ -130,6 +130,7 @@ def pytest_addoption(parser):
         "--refresh-lock-discipline-baseline",
         "--refresh-param-naming-baseline",
         "--refresh-complexity-baseline",
+        "--refresh-unused-param-baseline",
     ):
         parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
     try:
@@ -140,6 +141,10 @@ def pytest_addoption(parser):
         from py_ci_shared.code_audit_meta import register_refresh_option
 
         register_refresh_option(parser)  # --refresh-code-audit-baseline, shared with every other consumer
+
+        from py_ci_shared.loc_budget import register_refresh_option as register_loc_budget_refresh_option
+
+        register_loc_budget_refresh_option(parser)  # --refresh-loc-budget-baseline
     except ImportError:
         pass
 

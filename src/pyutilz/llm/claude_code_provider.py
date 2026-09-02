@@ -382,14 +382,15 @@ class ClaudeCodeProvider(LLMProvider):
         # SDK error path, or the CLI fallback -- re-read the PREVIOUS call's object and added its
         # cost and cache tokens to the totals a second time.
         self._last_result_message: Optional[Any] = None
-        if _HAS_SDK:
-            # The SDK path forwards neither budget nor sampling temperature to ClaudeCodeOptions,
-            # and this is the factory's default provider -- say so once instead of silently
-            # dropping a caller's explicit determinism or length requirement.
-            if max_tokens > 0:
-                self._warn_unsupported_param_once("max_tokens")
-            if abs(temperature - 0.7) > 1e-9:
-                self._warn_unsupported_param_once("temperature")
+        # NEITHER transport forwards budget or sampling temperature: the SDK path passes no such
+        # field to ClaudeCodeOptions, and the CLI has no --temperature/--max-tokens flag to pass one
+        # to. This is the factory's default provider, so say so once on both paths instead of
+        # silently dropping a caller's explicit determinism or length requirement -- the warning
+        # used to sit inside an ``if _HAS_SDK:`` block, leaving the CLI fallback silent.
+        if max_tokens > 0:
+            self._warn_unsupported_param_once("max_tokens")
+        if abs(temperature - 0.7) > 1e-9:
+            self._warn_unsupported_param_once("temperature")
         attempt = 0
         # Regression fix (2026-07-21 audit): read the same PYUTILZ_LLM_MAX_RETRIES-configurable
         # bound every other provider uses (via _retry.py), instead of a hardcoded 20 that
@@ -405,7 +406,7 @@ class ClaudeCodeProvider(LLMProvider):
                 if _HAS_SDK:
                     result = await self._generate_sdk(prompt, system)
                 else:
-                    result = await self._generate_cli(prompt, system, temperature, max_tokens)
+                    result = await self._generate_cli(prompt, system)
                 if json_mode and result:
                     stripped = result.strip()
                     fence_match = re.search(
@@ -601,10 +602,12 @@ class ClaudeCodeProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
-        max_tokens: int = 1024,
     ) -> str:
-        """Generate text using Claude Code CLI (fallback)."""
+        """Generate text using Claude Code CLI (fallback).
+
+        Takes no temperature/max_tokens: the CLI exposes no flag for either, so accepting them here
+        only made the drop look deliberate. ``generate()`` warns about them once instead.
+        """
         async with self.semaphore:
             if not hasattr(self, "_claude_path"):
                 self._claude_path = _find_claude_executable()

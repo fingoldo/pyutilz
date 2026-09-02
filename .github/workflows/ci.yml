@@ -169,6 +169,7 @@ jobs:
     name: CI required checks
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [test, ruff-blocking, lint-blocking, build]
     steps:
       - name: Check all required jobs succeeded

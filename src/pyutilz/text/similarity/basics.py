@@ -68,6 +68,10 @@ def normalize_sentence(
     sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: Optional[list] = None
 ) -> list:
     """
+    bSports is accepted and ignored: sports-specific club-suffix handling moved into the
+    caller-supplied `abbreviations` list, which supersedes it. Kept in the signature so existing
+    positional callers keep working.
+
     Нормализуем предложение:
     переводим символы в верхний регистр.
     удаляем служебные символы (,;!.) и пробелы по краям

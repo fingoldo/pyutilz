@@ -59,6 +59,10 @@ commit time. Selected entries:
 | `test_no_import_cycles.py`              | Tarjan's SCC over the AST-built import graph; flags multi-node cycles.                                                                               |
 | `test_logger_lazy_formatting.py`        | Logger calls use `%`-style formatting (lazy) instead of f-strings (eager) so messages aren't formatted when level is disabled.                       |
 | `test_deferred_drift.py`                | Counts every `_USER_DEFERRED_*` whitelist across the meta-test suite. Fails when a whitelist grows; refresh via `--refresh-debt-baseline`.           |
+| `test_shared_checks_wired.py`           | Runs the cross-project checks py-ci-shared already ships: 1000-LOC module budget, per-job CI `timeout-minutes`, reviewed `continue-on-error`, entry-point resolvability, markdown-link targets, git-dependency pinning, CI reachability of every `tests/` subdir. |
+| `test_gate_integrity.py`                | Every blocking gate's scope narrowing carries a written reason; mypy runs through a wrapper that requires its completion line, not just exit 0; the CI coverage floor equals `[tool.coverage.report] fail_under`. |
+| `test_prose_numeric_claims.py`          | Counted facts in prose (alias count, provider count, mypy source-file count) are computed, not typed. Rewording a claim's anchor is itself a failure. |
+| `test_docs_inventory_parity.py`         | Extras-group descriptions match `[project.optional-dependencies]`; documented paths and pytest markers exist; every shipped module appears in some orientation doc (warn). |
 
 Each meta-test exposes one or both whitelists at file scope:
 

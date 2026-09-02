@@ -2,7 +2,7 @@
 
 ## Summary
 
-This report reads the ten 2026-09-02 audit reports (223 findings, each carrying a disposition line: 206 COMPLETED/REJECTED, 17 still OPEN in `06-typing-lint-hygiene.md`) together with the two 2026-07-21 waves (`_full-audit`, 13 reports; `_audit-round2`, 10 reports), and asks one question: **which of these would a machine have caught, and with what rule?**
+This report reads the ten 2026-09-02 audit reports (223 findings, every one carrying a COMPLETED or REJECTED disposition; those ten reports now live under `audits/implemented/2026-09-02/`) together with the two 2026-07-21 waves (`_full-audit`, 13 reports; `_audit-round2`, 10 reports), and asks one question: **which of these would a machine have caught, and with what rule?**
 
 Three facts drive everything below.
 
@@ -85,7 +85,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-1. `shared-checks-wired` - consume the py-ci-shared modules that already exist
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - tests/test_meta/test_shared_checks_wired.py wires 7 py-ci-shared modules (loc_budget, ci_workflow_gate, ci_workflow_timeout_gate, entry_points_resolvable, phantom_markdown_links, git_dependency_pins, ci_test_dir_reachability) with a `_loc_over_1k_baseline.json` at {}; found and fixed a missing `timeout-minutes` on ci.yml's ci-required job, plus a real bug in the shared ci_test_dir_reachability (it only recognised a literal `pytest tests/`, so a pathless CI command reported every subdir unreachable). 0.69 s, blocking.
 - **What it detects**: nothing new. It closes the gap between "a check for this class exists and is maintained cross-project" and "this repo runs it".
 - **Detection rule**: add pre-commit hooks and/or `tests/test_meta/` shims invoking, at minimum: `py_ci_shared.loc_budget` (threshold 1000, per CLAUDE.md's module-size rule), `py_ci_shared.ci_workflow_timeout_gate`, `py_ci_shared.ci_workflow_gate`, `py_ci_shared.phantom_markdown_links`, `py_ci_shared.entry_points_resolvable`, `py_ci_shared.git_dependency_pins`, `py_ci_shared.ci_test_dir_reachability`.
 - **Findings it would have caught**:
@@ -102,7 +102,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-2. `gate-actually-gates` - assert completion and scope parity for every declared-blocking gate
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - py_ci_shared/gate_integrity.py + mypy_gate.py assert a gate COMPLETED, not merely exited 0: the mypy hook now demands `Success: no issues found in N source files` with N above a declared floor, and 18 declared gates are checked for scope/threshold parity (venue::gate::flag keys, never path:line). 0.07 s, blocking. Two rules deviate with evidence: command/version parity is unreachable while CI's tool pins live in py-ci-shared's reusable workflows, and rule 4 became CI-vs-pyproject coverage-floor parity because measuring coverage cannot run per commit.
 - **What it detects**: a gate that is declared blocking but (a) cannot fail, (b) can pass without having run to completion, (c) runs a narrower scope in one venue than in the other, or (d) has a threshold set below the value it is supposed to defend.
 - **Detection rule**: a meta-test that parses `.pre-commit-config.yaml` and `.github/workflows/*.yml` and asserts, per gate:
   1. **Command parity** - the local hook `entry` and the CI `run:` for the same tool resolve to the same argv modulo path, including the pinned tool version.
@@ -127,7 +127,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-3. `unused-parameter-baseline` - enable ruff `ARG` behind a frozen snapshot
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - tests/test_meta/test_unused_parameter_baseline.py freezes ruff ARG001/ARG002 keyed path::function::param, each entry requiring a written justification. Triage of the 40: 8 real bugs fixed (get_external_ip ignored all four proxy arguments and returned the machine's own IP; download_to_file ignored rewrite_existing; the Claude Code CLI transport silently dropped temperature/max_tokens; decodo summary ignored group_by), 32 baselined. 1.28 s, blocking. ARG was deliberately not added to the shared ruff select: mlframe reports 1245 findings today, so it would break both repos' blocking gate at once.
 - **What it detects**: a parameter accepted in a signature (and usually documented) that is never referenced anywhere in the body.
 - **Detection rule**: add `ARG` to `configs/ruff-base.toml`'s `select`, and in pyutilz freeze today's 40 findings into `tests/test_meta/_unused_param_baseline.json` keyed `path::function::param` - never `path:line`, per the `_code_audit_baseline.json` lesson above. Growth fails; shrinkage refreshes.
 - **Findings it would have caught**:
@@ -144,7 +144,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-4. `generated-sql-property-test` - parse every SQL string the builders emit
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - tests/test_meta/test_generated_sql_property.py parses everything the builders emit with sqlglot (postgres dialect) across 1536 upsert x 512 db_command option combinations plus hostile identifiers, asserting no unbounded UPDATE/DELETE, no empty column list, ON CONFLICT targets present, placeholder/parameter parity and named refusals. Verified against the pre-fix sources: it catches 09/F01, 09/F16 and the 2026-07-21 db_command defect. Found one NEW live bug - the 09/F17 guard covered mode=insert only, so mode=update with empty set_fields still built invalid SQL - fixed and pinned. 4.96 s, blocking.
 - **What it detects**: a query builder that emits syntactically invalid SQL, or valid-but-catastrophic SQL (an `UPDATE`/`DELETE` with no `WHERE`), for some reachable combination of its own parameters.
 - **Detection rule**: a runtime property test over `pyutilz.database.db.upsert.build_upsert_query` and `pyutilz.database.db.sql_helpers.db_command`, driven by a bounded cartesian product of their boolean/optional parameters (present, absent, empty list, `None`) over a fixed toy schema. For each generated string assert: (1) it parses with `sqlglot.parse_one` (or `sqlparse` as a lighter fallback); (2) any `UPDATE` or `DELETE` produced has a `WHERE` clause, or is explicitly whitelisted; (3) the `%s` placeholder count matches the bound parameter tuple.
 - **Findings it would have caught**:
@@ -162,7 +162,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-5. `prose-numeric-claim-parity` - every counted fact in prose is computed, not typed
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - py_ci_shared/prose_numeric_claims.py + tests/test_meta/test_prose_numeric_claims.py compute four prose counts from their anchors instead of trusting the typed number, and fail when a claim loses its anchor (the failure mode a naive registry hides). Caught real drift within the hour: the mypy source-file count went stale as modules were added. 0.30 s, blocking. The date-qualifier half warns only - measured 8 findings at a 75% false-positive rate, and a rule people learn to ignore is worse than none.
 - **What it detects**: a hardcoded number in README/TESTING/CONTRIBUTING/CHANGELOG/docs that names a countable repo fact (test count, alias count, meta-test file count, coverage percentage, module count, suite runtime) and no longer matches the fact.
 - **Detection rule**: a registry mapping a regex anchor in a named file to a callable that computes the truth - for example `("README.md", r"(\d[\d,]*)\+? tests", collected_test_count)`, `("TESTING.md", r"(\d+) backward-compat aliases", lambda: len(pyutilz._MODULE_ALIASES))`, `("CHANGELOG.md", r"(\d+) meta-test", lambda: len(glob("tests/test_meta/test_*.py")))`. A mismatch fails, naming both numbers. A claim that cannot be computed must carry a date qualifier (`as of YYYY-MM-DD`), or the check fails on the undated claim itself.
 - **Findings it would have caught**:
@@ -180,7 +180,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-6. `docs-inventory-parity` - documented inventories are computed from the thing they document
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - py_ci_shared/docs_inventory_parity.py + tests/test_meta/test_docs_inventory_parity.py compute documented extras, module inventories and doc-referenced paths/markers from the thing they document. Found four genuine live drifts nobody knew about (README's [web], [nlp] and [dev] bullets each omitted members, CONTRIBUTING named an unresolvable path, CHANGELOG linked a moved audit file) and caught a dependency another agent added minutes earlier. 0.09 s; inventory rules block, the undocumented-module rule warns.
 - **What it detects**: three specific inventory drifts - (a) a README/docs bullet listing an extras group's members that disagrees with `[project.optional-dependencies]`; (b) a shipped module absent from every module-orientation doc; (c) a command, path, glob or pytest marker named in docs that does not exist.
 - **Detection rule**: parse `pyproject.toml`'s `optional-dependencies` and `[tool.pytest.ini_options] markers`; parse the extras bullets out of README's install section by their `` `[name]` `` anchor; diff the sets. For (b) walk `src/pyutilz/**/*.py` and require each module path to appear in `README.md` or `docs/modules.md`. For (c) extract backtick-quoted paths and globs from the four prose files and `os.path.exists`/glob them, and extract `@pytest.mark.<name>` mentions and check them against the declared markers list.
 - **Findings it would have caught**:
@@ -199,7 +199,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-7. `facade-and-exception-root-integrity`
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - tests/test_meta/test_facade_and_exception_root_integrity.py asserts every subpackage is reachable and declares __all__, every provider in the factory registry resolves through the llm facade, each exceptions module has exactly one root every class reaches, and exported exceptions are actually raised. Proven against the reconstructed 01/F01, 01/F02, 01/F03, 01/F04 and 01/F09 shapes. 5.7 s, blocking.
 - **What it detects**: (a) a subpackage under `src/pyutilz/` unreachable from the package facade; (b) a class registered in an in-repo registry but absent from its package's `__all__`; (c) an exception class in a package's `exceptions.py` that does not subclass that package's declared root; (d) an exception class defined and exported but never raised anywhere.
 - **Detection rule**: pure AST plus one import of `pyutilz`. (a) the set of directories under `src/pyutilz/` minus the set of attributes reachable on the imported `pyutilz` module must be empty. (b) for `pyutilz.llm.factory._PROVIDER_MODULES`, every named class must appear in `pyutilz.llm.__all__`. (c) parse `**/exceptions.py`, take the class with no in-module base as the root, assert every other class transitively reaches it. (d) grep `raise <Name>` across `src/`.
 - **Findings it would have caught**:
@@ -217,7 +217,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-8. `gpu-timing-requires-synchronize`
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - py_ci_shared/gpu_timing_sync.py detects GPU work timed without a device synchronize, purely by AST, offline. It departs from the sketched rule where it matters: the Critical timed an opaque injected callable, so a callee-name rule would have missed it - enclosing-function parameters are carried into nested closures instead. Verified to fire on the pre-fix benchmark.py and to be silent on the fixed tree. 3.24 s, blocking; lives in py-ci-shared because mlframe has the same exposure.
 - **What it detects**: a wall-clock measurement taken around a CUDA/cupy/numba.cuda call with no device synchronize between the launch and the second timestamp, so the "measurement" times the launch, not the work.
 - **Detection rule**: AST. Inside any function, find a `time.perf_counter()`/`time.time()` assignment, a subsequent call whose callee resolves to a `cuda.`/`cupy.`/`cp.`/kernel-dispatch name, and a second timestamp read - with no `cuda.synchronize()`, `.synchronize()`, `cp.cuda.Stream.null.synchronize()` or `cp.cuda.runtime.deviceSynchronize()` call between them. Report P0.
 - **Findings it would have caught**:
@@ -232,7 +232,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-9. `per-call-state-on-shared-instance`
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - src/pyutilz/dev/code_audit/per_call_state_on_shared_instance.py flags per-call state written to a shared instance, deriving sharedness from module-level registries and lru_cache'd factories and propagating it to in-tree base classes (without which 09/F09's attribute on OpenAICompatibleProvider stays invisible). Reports 13 live findings, all in ClaudeCodeProvider.generate - the same defect class on the factory's default provider, left on the warn list per the proposal. 1.4 s, warn.
 - **What it detects**: an instance attribute written during an in-flight `async def` (or from a method reachable from one) with no lock, on a class whose instances are cached and shared - per-call metadata masquerading as instance state.
 - **Detection rule**: AST. For each class, collect attributes assigned inside `async def` bodies. Flag an attribute if (1) it is assigned in at least one `async def`, (2) it is read in a different method (a `last_*` or summary accessor), and (3) no `async with self._lock` or `threading.Lock` guards the assignment. Restrict to classes whose instances are returned from a cache (`functools.lru_cache`, or a module-level dict keyed by name) to keep the scope honest.
 - **Findings it would have caught**:
@@ -251,7 +251,7 @@ Ranking metric: (findings prevented x recurrence across waves) / (implementation
 
 ### MT-10. `uncached-constant-cost-probe`
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - src/pyutilz/dev/code_audit/uncached_constant_cost_probe.py flags parameterless functions that spawn a process, load a DLL, probe the filesystem or import by name with nothing memoizing the result. Proven against the reconstructed 10/F02, 10/F04, 10/F09 and 10/F11. Reports 14 live candidates (nvidia-smi, lscpu and power-plan probes among them) as a performance-triage list. 0.7 s, warn only.
 - **What it detects**: a function performing an expensive, effectively-constant probe (subprocess shell-out, `ctypes.WinDLL`/`CDLL` construction, `os.makedirs`, a capability check) on every call, with no caching decorator and no module-level memo.
 - **Detection rule**: AST. Flag a function that (1) takes no parameters or only defaulted config parameters, (2) contains a call to `subprocess.*`, `ctypes.WinDLL`/`CDLL`, `os.makedirs` or `importlib.import_module`, and (3) carries no `@lru_cache`/`@cache`/`@cached_property` and writes no module-level memo. Report P2.
 - **Findings it would have caught**:

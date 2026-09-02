@@ -324,6 +324,27 @@ list[Finding]):
   the package's public surface, and same-named helpers from two
   star-imported submodules can silently shadow one another.
 
+- ``scan_per_call_state_on_shared_instance`` (OPT_IN_ONLY, warn): an
+  attribute written on ``self`` during an in-flight ``async def`` of a
+  class whose instances are shared between callers, with no lock held and
+  a different method reading it back (or a ``last_*``/``current_*`` name).
+  Two concurrent calls interleave and the value is attributed to the WRONG
+  request -- silently, since nothing raises. Sharedness is read off the
+  tree (instance stored in a module-level container, built by an
+  lru_cache'd factory, or the class name resolved from a registry) and
+  propagated to in-tree base classes, because the attributes usually live
+  on the base while only the concrete subclass is registered.
+
+- ``scan_uncached_constant_cost_probe`` (OPT_IN_ONLY, warn): a function
+  taking no parameters (or only defaulted ones) that shells out via
+  ``subprocess``, builds a ``ctypes.WinDLL``/``CDLL``, calls
+  ``os.makedirs``, ``shutil.which`` or ``importlib.import_module`` on
+  EVERY call, with no caching decorator and no module-level memo. Its
+  answer cannot change within a process, so a hot dispatch path pays a
+  constant cost per decision. Warn-only on purpose: a probe that must be
+  re-taken (a liveness check, a config reload) is indistinguishable from
+  one that must not, so this is a triage list rather than a verdict.
+
 The next block came out of a two-round adversarial audit of a research
 codebase, where a handful of shapes accounted for most of the findings.
 All of them are in ``OPT_IN_ONLY``: several need project configuration to
@@ -494,6 +515,8 @@ from .import_cycles import scan_import_cycles
 from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
 from .async_primitive_reinit import scan_async_primitive_reinit_per_call
 from .llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
+from .per_call_state_on_shared_instance import scan_per_call_state_on_shared_instance
+from .uncached_constant_cost_probe import scan_uncached_constant_cost_probe
 from .field_text_agreement import (
     AGREE,
     CONTRADICT,
@@ -587,6 +610,8 @@ __all__ = [
     "scan_hardcoded_absolute_path_in_test",
     "scan_async_primitive_reinit_per_call",
     "scan_llm_call_missing_max_tokens_cap",
+    "scan_per_call_state_on_shared_instance",
+    "scan_uncached_constant_cost_probe",
     # field/text cross-check: a runtime record checker, not a source scanner - see the note above.
     "AGREE",
     "CONTRADICT",
@@ -626,6 +651,7 @@ for _submod in (
     "bare_except", "console_unicode", "mojibake", "resource_handle_safety",
     "todo_hygiene", "import_cycles",
     "hardcoded_test_path", "async_primitive_reinit", "llm_max_tokens_cap",
+    "per_call_state_on_shared_instance", "uncached_constant_cost_probe",
 ):
     globals().pop(_submod, None)
 del _submod

@@ -93,7 +93,15 @@ def download_to_file(
     headers: Optional[dict] = None,
     exit_codes: tuple = (),
 ):
-    """Dropin replacement for urllib.request.urlretrieve(url, filename) that can hand for indefinitely long."""
+    """Dropin replacement for urllib.request.urlretrieve(url, filename) that can hand for indefinitely long.
+
+    ``rewrite_existing=False`` skips the download entirely when ``filename`` already exists, returning None
+    without touching the file - the point of the flag is to make a re-run of a large batch cheap, so the
+    request must not be issued at all rather than issued and its body discarded.
+    """
+    if not rewrite_existing and os.path.exists(filename):
+        logger.debug("Skipping download of %s: %s already exists and rewrite_existing=False", url, filename)
+        return None
     if headers is None:
         headers = {}
     # Make the actual request, set the timeout for no data to 10 seconds and enable streaming responses so we don't have to keep the large files in memory
