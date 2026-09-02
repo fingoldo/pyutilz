@@ -1164,10 +1164,24 @@ def test_f39_quot_is_decoded():
 # ---------------------------------------------------------------------------
 
 
+def _require_spacy_model(name: str = "en_core_web_sm") -> None:
+    """Skips unless the spaCy model AdvancedTokenizer loads in __init__ is present.
+
+    spaCy installs the package but never the models -- those are a separate download, so the
+    precondition is an explicit skip naming what is missing rather than a silently passing test.
+    """
+    spacy = pytest.importorskip("spacy")
+    # is_package is a pure existence check -- loading the model inside a try/except whose handler
+    # skips would let a genuine breakage in the model-loading path masquerade as "not installed".
+    if not spacy.util.is_package(name):
+        pytest.skip(f"spaCy model {name!r} is not downloaded on this host")
+
+
 def test_f40_min_morpheme_length_above_one_does_not_crash(monkeypatch):
     """FIRSTLETTER_CAPITAL/ALLLETTERS_CAPITAL were assigned only inside the `j == 1` branch, so
     starting the loop at j=2 raised NameError on the first word."""
     nltk = pytest.importorskip("nltk")
+    _require_spacy_model()
     from pyutilz.text.tokenizers import AdvancedTokenizer
 
     tok = AdvancedTokenizer()
@@ -1182,6 +1196,7 @@ def test_f63_capitalization_flags_describe_the_word_not_the_offset(monkeypatch):
     """Both flags were recomputed at every start offset, so "aBCDE" -- neither capitalized nor
     all-caps -- contributed to both counters."""
     nltk = pytest.importorskip("nltk")
+    _require_spacy_model()
     from pyutilz.text.tokenizers import AdvancedTokenizer
 
     tok = AdvancedTokenizer()

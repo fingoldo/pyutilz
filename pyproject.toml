@@ -320,11 +320,20 @@ gpu = [
 # niche notebook-dashboard helper, dev/dashlib.py), `prefect` (a full workflow-orchestration
 # runtime with a large transitive tree, for system/scheduling/prefect.py) and `tensorflow` (a
 # multi-hundred-MB ML framework used by exactly one function, system/parallel.py's set_tf_gpu()).
+# Drop-in accelerators: nothing imports these unconditionally, every use site falls back to the
+# stdlib when they are absent, so this group only ever makes an existing code path faster.
+# orjson replaces the stdlib json encoder across database/db, llm/openai_compat,
+# performance/kernel_tuning/remote, text/strings/jsonutils and web/* -- measured 25-32x on
+# json_pg_dumps's nested-payload path (2026-09-02 performance audit, F03).
+speedups = [
+    "orjson>=3",
+]
+
 # Consequence to keep in mind: `pip install pyutilz[all]` canNOT import pyutilz.dev.dashlib or
 # pyutilz.system.scheduling.prefect -- add the matching extra explicitly, e.g.
 # `pip install "pyutilz[all,dash]"`.
 all = [
-    "pyutilz[pandas,polars,database,web,cloud,nlp,llm,system,stats]",
+    "pyutilz[pandas,polars,database,web,cloud,nlp,llm,system,stats,speedups]",
 ]
 
 # Development dependencies

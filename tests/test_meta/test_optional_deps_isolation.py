@@ -75,6 +75,9 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # now pins the dict against pyproject.toml so a newly ADDED extra cannot be forgotten either.
     # pydantic is listed here as well as under "llm": dash >= 4 depends on it directly, so a real
     # `pip install pyutilz[dash]` always brings it in and masking it would test a state that cannot occur.
+    # orjson is soft-imported everywhere it is used (try/except with a stdlib fallback), so masking
+    # it must leave every module importable -- that is exactly what this scenario pins.
+    "speedups": ["orjson"],
     "dash": ["flask", "dash", "dash_bootstrap_components", "pydantic"],
     "prefect": ["prefect"],
     "tensorflow": ["tensorflow"],

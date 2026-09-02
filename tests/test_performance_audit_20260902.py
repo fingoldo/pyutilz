@@ -511,6 +511,8 @@ _BS = chr(92)
 
 
 def test_f03_no_object_walk_on_the_clean_orjson_path():
+    # The walk-free path IS the orjson path: without orjson the stdlib fallback legitimately walks.
+    pytest.importorskip("orjson")
     payload = {"rows": [{"i": i, "v": [1.0, 2.0]} for i in range(20)]}
     with mock.patch("pyutilz.text.strings.jsonutils._normalize_for_pg_json", side_effect=AssertionError("must not walk")):
         out = json_pg_dumps(payload)

@@ -15,6 +15,7 @@ from ._common import (
     np,
     pl,
     textwrap,
+    concat_horizontal_ragged,
 )
 from .columns import clean_numeric
 
@@ -342,7 +343,7 @@ def bin_numerical_columns(
     _facade.clean_ram()
 
     if binned_targets is not None:
-        bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
+        bins = concat_horizontal_ragged([bins, binned_targets], rechunk=True)
     elif existing_target_columns:
         binned_targets = bins.select(cs.by_name(existing_target_columns)).clone()
 

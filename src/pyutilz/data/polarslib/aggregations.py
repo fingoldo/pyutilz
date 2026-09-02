@@ -14,6 +14,7 @@ from ._common import (
     cs,
     logger,
     pl,
+    explode_keeping_empty_as_null,
 )
 from typing import Literal
 from .columns import apply_agg_func_safe, cast_f64_to_f32, clean_numeric
@@ -88,8 +89,7 @@ def compute_concentrations(
         unnest_rules.append(f"{label}_r{fields_remap.get(by,by)}")
 
     df = (
-        groupby_object.agg(entity, by)
-        .explode(entity_name, by)
+        explode_keeping_empty_as_null(groupby_object.agg(entity, by), entity_name, by)
         .group_by(*groupby_columns, entity_name)
         .agg(total_by=pl.sum(by))
         .with_columns(rel_total_by=pl.col("total_by") / pl.sum("total_by").over(groupby_columns))

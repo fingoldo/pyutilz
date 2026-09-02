@@ -66,7 +66,7 @@ jobs:
       # that silently drifts whenever those groups change (2026-09-02 packaging audit).
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
+        pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
@@ -75,6 +75,12 @@ jobs:
       # Runs on every leg now that [nlp] itself installs everywhere (only spacy is
       # marker-gated to >=3.10); nltk has no such floor.
       run: python -c "import nltk; nltk.download('punkt_tab')"
+
+    - name: Download the spaCy model AdvancedTokenizer loads
+      # spaCy ships no models with the package -- pyutilz.text.tokenizers.AdvancedTokenizer loads
+      # en_core_web_sm in __init__, and its tests skip without it. `|| true` because [nlp] gates
+      # spacy behind python_version >= '3.10', so the 3.8/3.9 legs have no spacy to download into.
+      run: python -m spacy download en_core_web_sm || true
 
     - name: Run tests with coverage
       run: |

@@ -39,3 +39,40 @@ POLARS_DEFAULT_NUMAGGS: list = (
     "first last min max mean std arg_max arg_min skew kurtosis entropy n_unique".split()
 )  # replace by approx_n_unique? # median excluded
 POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Polars forward-compat shims
+# ----------------------------------------------------------------------------------------------------------------------------
+
+# Polars is heading for two behaviour flips in 2.0, and warns on the way there. The declared floor
+# is polars>=0.19, so neither the keyword nor the new `how=` value can be passed unconditionally --
+# these probe once at import and keep TODAY's semantics on every supported version.
+
+import inspect as _inspect
+
+_EXPLODE_TAKES_EMPTY_AS_NULL = "empty_as_null" in _inspect.signature(pl.LazyFrame.explode).parameters
+
+
+def explode_keeping_empty_as_null(frame: Any, *columns: Any) -> Any:
+    """Explodes `columns`, pinning the pre-2.0 default where the installed polars lets us say so.
+
+    Polars 2.0 flips `empty_as_null` to False; stating it explicitly is what silences the
+    deprecation warning without changing what the call does today.
+    """
+    if _EXPLODE_TAKES_EMPTY_AS_NULL:
+        return frame.explode(*columns, empty_as_null=True)
+    return frame.explode(*columns)
+
+
+def concat_horizontal_ragged(frames: Any, **kwargs: Any) -> Any:
+    """Concatenates horizontally, allowing the frames to differ in height.
+
+    `how="horizontal"` currently pads the shorter frames and warns that a future release will
+    demand equal heights; `how="horizontal_extend"` is the name for the padding behaviour, and
+    only exists on newer polars.
+    """
+    try:
+        return pl.concat(frames, how="horizontal_extend", **kwargs)
+    except (ValueError, TypeError):
+        return pl.concat(frames, how="horizontal", **kwargs)

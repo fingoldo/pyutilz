@@ -87,7 +87,7 @@ def parse_html(text: str, sep=". ") -> str:
     from bs4 import BeautifulSoup
 
     if not pd.isnull(text):
-        return sep.join(BeautifulSoup(text, "html.parser").findAll(string=True))  # type: ignore[no-any-return,call-arg]  # bs4's findAll returns Any; whether string= is declared depends on the bs4 stub version, so keep call-arg even where it looks unused locally
+        return sep.join(BeautifulSoup(text, "html.parser").find_all(string=True))  # type: ignore[no-any-return]  # bs4's find_all returns Any
     return ""
 
 
