@@ -753,7 +753,7 @@ def test_f11_evicting_a_still_referenced_provider_does_not_close_it(monkeypatch)
     fake_mod = types.ModuleType("pyutilz_test_fake_provider_module")
     fake_mod.FakeProvider = _FakeProvider
     monkeypatch.setitem(sys.modules, fake_mod.__name__, fake_mod)
-    monkeypatch.setitem(factorymod._PROVIDER_MODULES, "fake", (fake_mod.__name__, "FakeProvider"))
+    monkeypatch.setitem(factorymod._PROVIDER_MODULES, "fake", (fake_mod.__name__, "FakeProvider", None))
     monkeypatch.setattr(factorymod, "_PROVIDER_CACHE_MAX_SIZE", 1)
     monkeypatch.setattr(factorymod, "_schedule_provider_close", lambda p: closed.append(p))
     factorymod._provider_cache.clear()
@@ -780,7 +780,7 @@ def test_f11_evicting_an_unreferenced_provider_still_closes_it(monkeypatch):
     fake_mod = types.ModuleType("pyutilz_test_fake_provider_module2")
     fake_mod.FakeProvider = _FakeProvider
     monkeypatch.setitem(sys.modules, fake_mod.__name__, fake_mod)
-    monkeypatch.setitem(factorymod._PROVIDER_MODULES, "fake2", (fake_mod.__name__, "FakeProvider"))
+    monkeypatch.setitem(factorymod._PROVIDER_MODULES, "fake2", (fake_mod.__name__, "FakeProvider", None))
     monkeypatch.setattr(factorymod, "_PROVIDER_CACHE_MAX_SIZE", 1)
     monkeypatch.setattr(factorymod, "_schedule_provider_close", lambda p: closed.append(p))
     factorymod._provider_cache.clear()

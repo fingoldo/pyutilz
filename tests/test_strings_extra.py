@@ -556,9 +556,18 @@ from pyutilz.strings import json_pg_dumps
 
 
 def test_json_pg_dumps_basic():
+    import json as _json
+
     result = json_pg_dumps({"a": 1})
     assert result.adapted == {"a": 1}
-    assert result.getquoted() == b"'{\"a\": 1}'"
+    # Compare the quoted literal SEMANTICALLY, not byte-for-byte: the adapter now hands psycopg2 the
+    # serializer's own output instead of re-serializing a reparsed dict with stdlib json, so the
+    # separator whitespace ({"a":1} vs {"a": 1}) differs. That whitespace was never part of the
+    # contract -- postgres jsonb normalizes it away on INSERT -- and pinning it would forbid any
+    # faster serializer.
+    quoted = result.getquoted()
+    assert quoted.startswith(b"'") and quoted.endswith(b"'")
+    assert _json.loads(quoted[1:-1].decode("utf-8")) == {"a": 1}
 
 
 def test_json_pg_dumps_strips_embedded_nul():

@@ -35,7 +35,11 @@ class TestProviderModules:
 
     def test_all_entries_are_module_class_tuples(self):
         for name, entry in _PROVIDER_MODULES.items():
-            assert isinstance(entry, tuple) and len(entry) == 2, f"Entry for '{name}' should be (module_path, class_name)"
+            assert isinstance(entry, tuple) and len(entry) == 3, f"Entry for '{name}' should be (module_path, class_name, settings_api_key_attr)"
+            mod_path, cls_name, key_attr = entry
+            assert isinstance(mod_path, str) and isinstance(cls_name, str)
+            # None means "this provider needs no API key" (claude-code), which is data, not a gap.
+            assert key_attr is None or isinstance(key_attr, str)
 
 
 class TestGetLlmProvider:
@@ -92,7 +96,7 @@ class TestGetLlmProvider:
 
         # Register a controllable fake provider resolvable via importlib.
         globals()["_FakeLeakProvider"] = _FakeLeakProvider
-        with patch.dict(factory._PROVIDER_MODULES, {"faketest": ("tests.test_llm_factory", "_FakeLeakProvider")}):
+        with patch.dict(factory._PROVIDER_MODULES, {"faketest": ("tests.test_llm_factory", "_FakeLeakProvider", None)}):
             returned = get_llm_provider("faketest", extra_headers=["unhashable", "list"])
 
         assert returned is created[0]
@@ -138,7 +142,7 @@ class TestProviderCacheLRUEviction:
                 created.append(self)
 
         globals()["_FakeCacheLRUProvider"] = _FakeProvider
-        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_FakeCacheLRUProvider"))
+        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_FakeCacheLRUProvider", None))
         return created
 
     def test_cache_bounded_by_max_size(self):
@@ -186,7 +190,7 @@ class TestProviderCacheLRUEviction:
                 pass
 
         globals()["_ClosableFakeProvider"] = _ClosableFakeProvider
-        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_ClosableFakeProvider"))
+        factory._PROVIDER_MODULES = dict(factory._PROVIDER_MODULES, faketest=("tests.test_llm_factory", "_ClosableFakeProvider", None))
 
         first = get_llm_provider("faketest", model="m0")
         get_llm_provider("faketest", model="m1")  # evicts "m0" (no running loop in this sync test)

@@ -1,14 +1,19 @@
 # Testing
 
-1900+ tests, 79.6% line coverage on `src/pyutilz/`. Live LLM-provider
+Test counts and coverage percentages are deliberately not pinned in this file — they drift with
+every commit and go stale silently. Run `pytest --collect-only -q` for the current count; the
+codecov badges in [README.md](README.md) carry the current line coverage. Live LLM-provider
 tests are gated behind `--run-live` and skip by default so CI never
 spends real money.
+
+Runtimes below were measured on one Windows developer box (2026-09-02) and are indicative only —
+they scale with core count and disk speed.
 
 ## Running tests
 
 ```bash
-pytest                                          # full suite, ~3 min
-pytest tests/test_meta/                          # static meta-tests only, ~30 s
+pytest                                          # full suite
+pytest tests/test_meta/                          # static meta-tests only, ~2 min
 pytest tests/test_pandaslib.py -v                # one module
 pytest --run-live -m live                        # live LLM smoke tests (real API calls)
 pytest --cov=src/pyutilz --cov-report=term-missing
@@ -91,16 +96,22 @@ identity assertions comparing an old vs. new implementation) vs. `tests/test_ker
 ## Pre-commit hook
 
 ```bash
-pip install pre-commit && pre-commit install
+pip install pre-commit vulture && pre-commit install
 ```
 
-The hook runs the meta-test suite on every commit (~30-60 s). For
-tight inner-loop work, a `manual`-stage variant skips the sub-process
-tests and runs in ~5 s:
+The hook runs the meta-test suite on every commit — measured at ~2 min on the reference box
+(2026-09-02), not the seconds-scale cost the name suggests. For tight inner-loop work, a
+`manual`-stage variant skips the two sub-process-spawning tests
+(`test_optional_deps_isolation.py`, `test_no_top_level_side_effects.py`) and roughly halves that,
+to ~1 min:
 
 ```bash
 pre-commit run --hook-stage=manual pyutilz-meta-tests-static-only
 ```
+
+If a full meta-test run is too slow for your loop, run that manual variant while iterating and
+let the blocking pre-commit hook do the full pass at commit time — `--no-verify` skips every
+other gate too (Black, ruff, bandit, vulture, deptry) and is not the cheaper option it looks like.
 
 ## Local pip-audit on Windows
 

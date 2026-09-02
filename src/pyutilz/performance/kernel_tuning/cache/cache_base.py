@@ -16,7 +16,15 @@ from pyutilz.system.gpu_dispatch import gpu_capability_summary
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3  # v3: immutable per-(host,kernel,code_version) files + O_EXCL sweep markers (was v2: monolithic JSON)
+# v4: SAME file layout as v3 -- bumped purely to INVALIDATE every previously-recorded tuning. Until
+# 2026-09-02 ``benchmark.time_backend`` timed backends with NO device synchronize, so every GPU
+# ``wall_ms`` it persisted was launch overhead rather than compute (measured 0.0366 ms vs 69.42 ms
+# synchronized on a cupy 4000x4000 matmul -- a 1894x under-count). Those regions picked a GPU
+# variant unconditionally and, being immutable + cached per host, would never be re-measured. A
+# schema bump is the cache's existing invalidation seam, so v3 files are now skipped on read and
+# re-tuned with honest (synchronized) timings.
+# v3: immutable per-(host,kernel,code_version) files + O_EXCL sweep markers (was v2: monolithic JSON).
+SCHEMA_VERSION = 4
 
 # How long an INPROGRESS sweep marker is trusted before a would-be sweeper may
 # STEAL it (owner crashed / hung). The expensive GPU/CPU sweeps run hundreds of
@@ -213,6 +221,24 @@ def hw_fingerprint() -> str:
     return fp
 
 
+@lru_cache(maxsize=8)
+def _ensure_cache_dir(path: str) -> str:
+    """``os.makedirs(path, exist_ok=True)`` -- but at most ONCE per distinct path per process.
+
+    After the first call the directory provably exists for the process lifetime, yet the syscall was
+    being re-issued on every ``cache_dir()`` / ``host_cache_dir()`` call: measured on this box
+    ``makedirs(exist_ok=True)`` on an existing path costs 238 us against 47 us for a bare
+    ``isdir`` -- and ``host_cache_dir()`` issues two of them. Memoizing the CREATION rather than
+    switching to exists-then-skip keeps ``exist_ok``'s race tolerance (which is why it was chosen)
+    on the one call that actually creates the directory. Tests that repoint
+    ``PYUTILZ_KERNEL_CACHE_DIR`` and expect the new directory to be created must call
+    ``_ensure_cache_dir.cache_clear()`` -- a different path is a different key, so this only matters
+    when a path is deleted out from under the process.
+    """
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def cache_dir() -> str:
     """Resolve the on-disk cache directory.
 
@@ -227,8 +253,7 @@ def cache_dir() -> str:
         path = override
     else:
         path = os.path.join(os.path.expanduser("~"), ".pyutilz", "kernel_tuning")
-    os.makedirs(path, exist_ok=True)
-    return path
+    return _ensure_cache_dir(path)
 
 
 def cache_path() -> str:
@@ -248,9 +273,7 @@ def host_cache_dir() -> str:
     Layout: ``<cache_dir>/<hw_fingerprint>/<kernel_slug>/<...>.json``. Created on
     first call.
     """
-    path = os.path.join(cache_dir(), hw_fingerprint())
-    os.makedirs(path, exist_ok=True)
-    return path
+    return _ensure_cache_dir(os.path.join(cache_dir(), hw_fingerprint()))
 
 
 def _kernel_dir(host_dir: str, kernel_name: str) -> str:
@@ -269,6 +292,30 @@ def _sweep_budget_seconds() -> float:
     return _DEFAULT_SWEEP_BUDGET_SECONDS
 
 
+# Windows kernel32 handle for the liveness probe, built lazily ONCE (a ``ctypes.WinDLL``
+# construction costs 16 us of the 52 us probe, and the handle is a process-lifetime constant).
+# Module-level ``None`` rather than an import-time build so importing this module on a non-Windows
+# host never touches ``WinDLL``, which does not exist there.
+_KERNEL32 = None
+
+
+def _kernel32():
+    """The shared ``kernel32`` handle, created on first use.
+
+    Must be built with ``use_last_error=True``: the stock ``ctypes.windll.kernel32`` does NOT
+    capture the Win32 thread-local last error, so ``ctypes.get_last_error()`` would read 0
+    (uninitialized) after a failed ``OpenProcess`` -- a dead pid then reported ALIVE and a stale
+    sweep marker owned by a crashed process was never stolen (the sweep wedged). The last-error
+    value itself is thread-local and read per call, so SHARING the library handle is safe.
+    """
+    global _KERNEL32
+    if _KERNEL32 is None:
+        import ctypes
+
+        _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    return _KERNEL32
+
+
 def _pid_alive(pid: int) -> bool:
     """Best-effort: is ``pid`` a live process on this host? Conservative -- on any
     probe uncertainty returns True (don't steal a marker we can't prove is dead)."""
@@ -276,15 +323,11 @@ def _pid_alive(pid: int) -> bool:
         return False
     try:
         if os.name == "nt":
-            # No os.kill(pid, 0) signal semantics on Windows; query the OS task list.
-            # Must build the kernel32 handle with use_last_error=True: the shared
-            # ``ctypes.windll.kernel32`` does NOT capture the Win32 thread-local last
-            # error, so ``ctypes.get_last_error()`` would read 0 (uninitialized) after
-            # a failed OpenProcess -> a dead pid was reported ALIVE, so a stale sweep
-            # marker owned by a crashed process was never stolen (the sweep wedged).
+            # No os.kill(pid, 0) signal semantics on Windows; query the OS task list, through the
+            # shared use_last_error=True handle (see ``_kernel32``).
             import ctypes
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+            kernel32 = _kernel32()
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
             if not handle:
                 # ERROR_INVALID_PARAMETER (87) => no such pid (dead). Any other failure
@@ -323,11 +366,10 @@ def _safe_version(import_name: str, attr: str = "__version__") -> Optional[str]:
         return None
 
 
-def _build_provenance() -> dict:
-    """Snapshot of the env that produced this tuning. Recorded on save.
-    Readers can compare this dict to the live env and invalidate if
-    something material changed (CUDA driver bump, cupy upgrade, etc.).
-    """
+@lru_cache(maxsize=1)
+def _build_provenance_cached() -> dict:
+    """Inner memoized worker for :func:`_build_provenance` -- see its docstring. Returns the SHARED
+    snapshot; never hand this object to a caller."""
     prov: dict[str, object] = {
         "python_version": "%d.%d" % __import__("sys").version_info[:2],
         "numpy_version": _safe_version("numpy"),
@@ -363,6 +405,26 @@ def _build_provenance() -> dict:
     except Exception as e:  # nosec B110 - best-effort provenance enrichment (GPU cc/vram/name summary); failure must not block cache save, provenance dict just omits gpu_summary
         logger.debug("Could not build gpu_summary for provenance: %s", e)
         pass
+    return prov
+
+
+def _build_provenance() -> dict:
+    """Snapshot of the env that produced this tuning. Recorded on save.
+    Readers can compare this dict to the live env and invalidate if
+    something material changed (CUDA driver bump, cupy upgrade, etc.).
+
+    Memoized for the process lifetime (9.9/9.4/7.6 us per build): it depends only on installed
+    package versions and the CUDA driver, both invariant while the process runs, and the GPU half of
+    it is already memoized via ``_gpu_summary_cached``. It was being rebuilt once per KERNEL
+    DIRECTORY inside the cache load loop, so a 100-kernel host cache paid ~1 ms of redundant version
+    probing at every process start. A shallow copy is returned (with the nested ``gpu_summary``
+    copied too) so a caller mutating the snapshot cannot poison every later reader. Tests that
+    change the environment must call ``_build_provenance_cached.cache_clear()``.
+    """
+    prov = dict(_build_provenance_cached())
+    gpu = prov.get("gpu_summary")
+    if isinstance(gpu, dict):
+        prov["gpu_summary"] = dict(gpu)
     return prov
 
 

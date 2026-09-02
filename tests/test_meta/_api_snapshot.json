@@ -249,6 +249,7 @@
     },
     "openai": {
       "annotations": "value",
+      "count_tokens": "callable(text:any:0:, model:any:1:None)",
       "num_tokens_from_messages": "callable(messages:any:0:, model:any:1:'gpt-3.5-turbo-0613')",
       "num_tokens_from_string": "callable(string:any:0:, encoding_name:any:0:)"
     },
@@ -334,10 +335,10 @@
       "remove_constant_columns": "callable(df:any:0:, max_log_text_width:any:1:300, verbose:any:1:False)"
     },
     "pythonlib": {
-      "HashableDict": "class:pyutilz.core.pythonlib.HashableDict",
-      "ObjectsAndFilesProcessor": "class:pyutilz.core.pythonlib.ObjectsAndFilesProcessor",
-      "ObjectsDumper": "class:pyutilz.core.pythonlib.ObjectsDumper",
-      "ObjectsLoader": "class:pyutilz.core.pythonlib.ObjectsLoader",
+      "HashableDict": "class:pyutilz.core.pythonlib.filesystem.HashableDict",
+      "ObjectsAndFilesProcessor": "class:pyutilz.core.pythonlib.filesystem.ObjectsAndFilesProcessor",
+      "ObjectsDumper": "class:pyutilz.core.pythonlib.filesystem.ObjectsDumper",
+      "ObjectsLoader": "class:pyutilz.core.pythonlib.filesystem.ObjectsLoader",
       "age": "callable(dob:any:0:)",
       "anyof_elements_in_string": "callable(elems:any:0:, target:any:0:)",
       "batch": "callable(iterable:any:0:, n:any:1:1)",
@@ -407,7 +408,7 @@
     "similarity": {
       "HAS_NUMBA": "value",
       "SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD": "value",
-      "SentenceSimilarityIndex": "class:pyutilz.text.similarity.SentenceSimilarityIndex",
+      "SentenceSimilarityIndex": "class:pyutilz.text.similarity._numba_api.SentenceSimilarityIndex",
       "annotations": "value",
       "contigous_strings_similarity": "callable(a:any:0:, b:any:0:)",
       "levenshtein_strings_similarity": "callable(a:any:0:, b:any:0:)",
@@ -577,7 +578,7 @@
     "notebook_init": "pyutilz.dev.notebook_init",
     "numbalib": "pyutilz.data.numbalib",
     "numpylib": "pyutilz.data.numpylib",
-    "openai": "pyutilz.core.openai",
+    "openai": "pyutilz.llm.openai_tokens",
     "pandaslib": "pyutilz.data.pandaslib",
     "parallel": "pyutilz.system.parallel",
     "polarslib": "pyutilz.data.polarslib",
@@ -597,6 +598,8 @@
     "database",
     "dev",
     "llm",
+    "performance",
+    "stats",
     "system",
     "text",
     "web"

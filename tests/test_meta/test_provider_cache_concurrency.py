@@ -65,7 +65,7 @@ def _patch_provider_resolution(monkeypatch):
     (which would require an API key)."""
     # Replace the canonical module mapping with one that resolves to
     # the fake provider for ``anthropic``.
-    fake_modules = {"anthropic": ("pyutilz.llm.factory", "_CountingFakeProvider")}
+    fake_modules = {"anthropic": ("pyutilz.llm.factory", "_CountingFakeProvider", "anthropic_api_key")}
     monkeypatch.setattr(factory_module, "_PROVIDER_MODULES", fake_modules)
     monkeypatch.setattr(factory_module, "_ALIASES", {})
     # Stash the fake class on the factory module so importlib finds it

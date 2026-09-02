@@ -241,10 +241,17 @@ class TestGpuCapabilitySummaryHappyPath:
             "WARP_SIZE": 32,
         }
         fake_gpus = [{"id": 0, "name": "GTX 1660", "memoryFree": 5.0, "memoryTotal": 6.0}]
+        # ``free_vram_gb`` is now read LIVE from cupy's memGetInfo (GPUtil shells out to nvidia-smi,
+        # 64 ms, on what must be a cheap call). Suppressing the cupy source keeps this test on the
+        # GPUtil merge path it was written to exercise; the live path has its own test in
+        # tests/test_performance_audit_20260902.py. ``reset_cache`` brackets the per-device static
+        # capability memoization so a real probe from another test cannot leak in.
+        gd.reset_cache()
         with mock.patch.object(gd, "is_cuda_available", return_value=True), mock.patch.object(
             gd, "get_gpu_cuda_capabilities", return_value=fake_caps
-        ), mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus):
+        ), mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus), mock.patch.object(gd, "_free_bytes_via_cupy", return_value=None):
             s = gd.gpu_capability_summary(device_id=0)
+        gd.reset_cache()
         assert s is not None
         assert s["cc_major"] == 7 and s["cc_minor"] == 5
         assert s["sm_count"] == 14

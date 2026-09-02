@@ -147,8 +147,15 @@ def select_best_gpu(strategy: str = "auto") -> Optional[int]:
 
 
 def reset_cache() -> None:
-    """Clear the :func:`select_best_gpu` memoization cache."""
+    """Clear every memoized hardware probe in this module.
+
+    Covers :func:`select_best_gpu`, the static per-device capability cache behind
+    :func:`gpu_capability_summary` / :func:`occupancy_aware_block_size`, and
+    ``pyutilz.core.pythonlib.is_cuda_available``. This is the single reset seam tests use when they
+    mock CUDA availability or the GPUtil / driver probes."""
     _select_best_gpu_cached.cache_clear()
+    _static_gpu_caps.cache_clear()
+    is_cuda_available.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -472,8 +479,12 @@ def occupancy_aware_block_size(
         host or when the device reports no usable limits, so a caller never has to special-case that.
     """
     if caps is None:
-        summary = gpu_capability_summary(device_id=device_id)
-        caps = summary if summary is not None else {}
+        # Static caps ONLY: a block size is a function of the hardware's limits, never of how much
+        # VRAM happens to be free right now. Going through ``gpu_capability_summary`` here used to
+        # spawn an ``nvidia-smi`` subprocess (measured 63.5 ms) per sizing call, on a helper whose
+        # whole job is to be cheap enough to call per kernel launch.
+        summary = _static_gpu_caps(device_id=device_id)
+        caps = dict(summary) if summary is not None else {}
 
     def _limit(key: str, fallback: int) -> int:
         """A stated limit, treating only MISSING/None as absent - a stated 0 means the device reports none.
@@ -535,17 +546,18 @@ def _blocks_per_sm(cc_major: int, cc_minor: int, device_id: int) -> int:
     return CC_MAX_BLOCKS_PER_SM.get((int(cc_major), int(cc_minor)), 16)
 
 
-def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
-    """Flat summary of a GPU device's CUDA capabilities and live VRAM.
+@lru_cache(maxsize=16)
+def _static_gpu_caps(device_id: int = 0) -> Optional[dict]:
+    """HARDWARE-INVARIANT half of :func:`gpu_capability_summary`, memoized per device id.
 
-    Args:
-        device_id: CUDA device id (default 0).
+    Everything here (compute capability, SM count, the per-block / per-SM limits, warp size, the
+    device name and its TOTAL VRAM) is a property of the installed part and cannot change while the
+    process runs -- yet assembling it costs an ``nvidia-smi`` subprocess through GPUtil (measured
+    64-66 ms) plus a driver query (4.6 ms). Keyed on ``device_id`` so a multi-GPU box gets a
+    distinct entry per device; cleared by :func:`reset_cache`.
 
-    Returns:
-        Dict with keys: ``cc_major``, ``cc_minor``, ``sm_count``,
-        ``total_cuda_cores``, ``max_threads_per_block``,
-        ``max_shared_mem_per_block``, ``warp_size``, ``free_vram_gb``,
-        ``total_vram_gb``, ``name``. Returns ``None`` on CPU-only hosts.
+    Returns ``None`` on a CPU-only host. The returned dict is the CACHED object -- callers must copy
+    before mutating (:func:`gpu_capability_summary` does).
     """
     if not is_cuda_available():
         return None
@@ -588,6 +600,8 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
     for g in gpus or ():
         try:
             if int(g["id"]) == int(device_id):
+                # Recorded here only as the STARTING value; ``gpu_capability_summary`` overwrites it
+                # with a live reading, since free VRAM is the one field that genuinely moves.
                 summary["free_vram_gb"] = float(g.get("memoryFree", 0.0))
                 summary["total_vram_gb"] = float(g.get("memoryTotal", 0.0))
                 summary["name"] = g.get("name")
@@ -595,6 +609,52 @@ def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
         except (KeyError, TypeError, ValueError):
             continue
 
+    return summary
+
+
+def free_vram_gb(device_id: int = 0) -> Optional[float]:
+    """Free VRAM on ``device_id`` in GB, right now, or ``None`` when it cannot be read.
+
+    Sourced from cupy's ``memGetInfo`` (an in-process driver call) rather than GPUtil, which shells
+    out to ``nvidia-smi`` -- 64 ms and, under GPU contention, unbounded. This is the only genuinely
+    LIVE field of :func:`gpu_capability_summary`, which is why it is a separate helper.
+    """
+    free = _free_bytes_via_cupy(device_id)
+    if free is not None:
+        return float(free) / (1024.0**3)
+    for g in get_gpuutil_gpu_info(attrs="id,memoryFree") or ():
+        try:
+            if int(g["id"]) == int(device_id):
+                return float(g.get("memoryFree", 0.0))
+        except (KeyError, TypeError, ValueError):  # noqa: PERF203 -- a malformed GPUtil row must be skipped, not abort the scan
+            continue
+    return None
+
+
+def gpu_capability_summary(device_id: int = 0) -> Optional[dict]:
+    """Flat summary of a GPU device's CUDA capabilities and live VRAM.
+
+    Args:
+        device_id: CUDA device id (default 0).
+
+    Returns:
+        Dict with keys: ``cc_major``, ``cc_minor``, ``sm_count``,
+        ``total_cuda_cores``, ``max_threads_per_block``,
+        ``max_shared_mem_per_block``, ``warp_size``, ``free_vram_gb``,
+        ``total_vram_gb``, ``name``. Returns ``None`` on CPU-only hosts.
+
+    The hardware-invariant fields come from the per-device :func:`_static_gpu_caps` cache (one
+    ``nvidia-smi`` subprocess per device per process instead of one per call); ``free_vram_gb`` is
+    re-read live on every call via :func:`free_vram_gb`. Call :func:`reset_cache` to force a
+    re-probe of the static half.
+    """
+    static = _static_gpu_caps(device_id=device_id)
+    if static is None:
+        return None
+    summary = dict(static)  # never hand out the cached object -- a caller mutating it would poison every later call
+    live = free_vram_gb(device_id)
+    if live is not None:
+        summary["free_vram_gb"] = live
     return summary
 
 
@@ -634,6 +694,7 @@ __all__ = [
     "cuda_memory_guard",
     "dispatch_cpu_vs_gpu",
     "get_shared_mem_budget_per_block",
+    "free_vram_gb",
     "gpu_capability_summary",
     "optimal_threads_per_block",
     "reset_cache",

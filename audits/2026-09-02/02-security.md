@@ -13,7 +13,7 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 ## Findings
 
 ### F01. [High] SQL injection: `suggest_json_optimization`'s `path` argument is spliced into raw SQL with no validation — src/pyutilz/database/db/__init__.py:1088
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - already fixed by the audit-fix wave that landed before this pass: `path` is now validated against `_JSON_PATH_RE` (src/pyutilz/database/db/__init__.py:600) before splicing, raising ValueError otherwise (src/pyutilz/database/db/__init__.py:1123). This pass only corrected the stale inline comment above the query, which still claimed only table/table_field/field were validated (src/pyutilz/database/db/__init__.py:1128).
 - **Category**: sql-injection
 - **Problem**: `suggest_json_optimization(table, table_field, path="", fields=None, ...)` validates `table` (line 1069), `table_field` (line 1070) and each `field` (line 1081) with `validate_sql_identifier`, but **never validates `path`**. Line 1088 builds `full_path = table_field + "->" + path`, and lines 1091-1092 splice `full_path` three times into an f-string executed via `safe_execute`:
   ```
@@ -28,7 +28,7 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 - **Suggested fix**: Validate `path` before line 1088. A JSON path is not a bare identifier, so either restrict it to a quoted-key/arrow grammar (e.g. `re.fullmatch(r"(?:'[A-Za-z0-9_]+'(?:->)?)+", path)`) and raise `ValueError` otherwise, or build the path with `psycopg2.sql.Literal`/parameter placeholders as is already done in `create_enum_from_table` (line 1050). If a raw fragment is genuinely intended, add the module's standard "WARNING: never build this from external input" docstring line, as `update_if_now` does.
 
 ### F02. [High] Claude Code subprocess/SDK run with permissions fully bypassed and no `--strict-mcp-config`, leaving the user's configured MCP tools reachable from untrusted prompt text — src/pyutilz/llm/claude_code_provider.py:559
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `--strict-mcp-config` added to the CLI argv (src/pyutilz/llm/claude_code_provider.py:571) and as `extra_args["strict-mcp-config"]=None` for the SDK (src/pyutilz/llm/claude_code_provider.py:521, the SDK emits a valueless flag for None), so no ambient MCP server from the invoking user's config is loaded; no --mcp-config is passed, so the set is empty. An escaped tool-use block is now a hard failure via the new `ClaudeCodeToolUseError` (RuntimeError, deliberately not OSError so the transient-retry arm cannot swallow it) instead of a "(blocked)" log line (src/pyutilz/llm/claude_code_provider.py:31, :540). Permission bypass itself was kept: with tools disabled and no MCP servers there is nothing left to auto-approve, and removing it risks a permission prompt hanging a headless --print run.
 - **Category**: prompt-injection / privilege-bypass
 - **Problem**: Both backends disable all permission checks:
   - CLI (`_generate_cli`, lines 552-562): argv contains `'--dangerously-skip-permissions'` (line 559) alongside `'--tools', ''` (line 561).
@@ -41,7 +41,7 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 - **Suggested fix**: Add `--strict-mcp-config` to the CLI argv (lines 552-562) and the equivalent to the SDK `extra_args` (line 480), so no ambient MCP configuration is loaded. Prefer dropping `--dangerously-skip-permissions`/`bypassPermissions` entirely for a text-generation-only provider (with `--tools ""` there are no permission prompts left to skip), or replace it with a deny-all `--disallowedTools`. Also turn line 522's "(blocked)" into an actual hard failure (raise) so the claim matches the behaviour.
 
 ### F03. [Medium] Server-controlled `Retry-After` header drives an unbounded `time.sleep` — src/pyutilz/web/cached_client.py:123
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `Retry-After` is now clamped by the module-level `MAX_RETRY_AFTER_SECONDS = 120.0`; anything larger falls back to local exponential backoff and is logged at WARNING (src/pyutilz/web/cached_client.py:36, :147-160).
 - **Category**: dos / untrusted-input
 - **Problem**: In `_fetch_bytes`'s retry loop:
   ```
@@ -54,7 +54,7 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 - **Suggested fix**: Clamp the parsed value, e.g. `delay = min(float(retry_after), MAX_RETRY_AFTER_S)` with a module-level cap (30-120s is typical), falling back to `2**attempt` when the header exceeds it; log when the header is clamped so the behaviour is visible.
 
 ### F04. [Medium] Path traversal: `tag` is used as an unvalidated directory component of the cache path — src/pyutilz/web/cached_client.py:104
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_cache_path` now rejects any `tag` not matching `_SAFE_TAG_RE = [A-Za-z0-9_.-]+` (and `.`/`..`) with ValueError, before any mkdir/write (src/pyutilz/web/cached_client.py:43, :122-124).
 - **Category**: path-traversal
 - **Problem**: `_cache_path` hashes the URL (so the *filename* is safe) but joins the caller's `tag` verbatim as a directory segment:
   ```
@@ -67,7 +67,7 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 - **Suggested fix**: Mirror `disk_cache._key_path`: resolve the candidate and refuse it when `self.cache_dir.resolve()` is not among `candidate.parents`; or reject any `tag` that is not `re.fullmatch(r"[A-Za-z0-9_.-]+", tag)`, and reject `.`/`..` explicitly.
 
 ### F05. [Low] Full FileMaker session-token response body logged at WARNING on the malformed-token path — src/pyutilz/core/filemaker.py:74
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the auth response body is no longer logged; only its top-level key list (or type name) is (src/pyutilz/core/filemaker.py:73-80).
 - **Category**: credential-leak
 - **Problem**: `get_session_token` parses the auth response and, when the extracted token is falsy or not a `str`, logs the **entire decoded JSON response object**:
   ```
@@ -80,14 +80,14 @@ New findings: **2 High, 2 Medium, 3 Low** (7 total). All are OPEN and newly rais
 - **Suggested fix**: Log only the response's shape, not its content — e.g. `logger.warning("Empty/invalid filemaker session token; response keys=%s", sorted(res) if isinstance(res, dict) else type(res).__name__)`, consistent with `web/web.py`'s `_redact_proxy_url` discipline.
 
 ### F06. [Low] `urlopen_checked` validates only the initial scheme; `urllib` still follows redirects to `ftp://` — src/pyutilz/web/url_guard.py:64
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `urlopen_checked` now opens through a dedicated opener carrying `_CheckedRedirectHandler`, which re-applies `require_http_url` to every redirect target, so an `ftp://` (or any non-allowed-scheme) hop raises UnsafeURLError (src/pyutilz/web/url_guard.py:48-64, :86-89). Host/IP-range filtering is documented as explicitly out of scope in the handler docstring.
 - **Category**: ssrf
 - **Problem**: `require_http_url` (lines 35-51) checks the scheme of the URL the caller supplies, then line 64 calls `urllib.request.urlopen(target, timeout=timeout)` with the default opener. `urllib.request.HTTPRedirectHandler.redirect_request` permits redirect targets whose scheme is `http`, `https` **or `ftp`** — the guard's `ALLOWED_SCHEMES = frozenset({"http", "https"})` (line 22) is never re-applied to the redirect chain. The module docstring frames itself as "a single checked entry point for outbound HTTP requests built from untrusted data", so a caller reasonably assumes the allow-list holds for the whole fetch, not just the first hop. Its one in-repo consumer, `web/cached_client.py:118`, passes `self.allowed_schemes` through and inherits the same gap.
 - **Failure scenario**: An untrusted `https://` URL is fetched through `urlopen_checked`. The server answers `302 Location: ftp://internal-host/...`, and urllib transparently follows it, opening an FTP connection to an internal host that the caller's allow-list was written to forbid. (Redirects to internal `http://` addresses — localhost, 169.254.169.254, RFC1918 — are likewise unblocked, but that is arguably outside this module's stated scheme-only scope; the `ftp` case is a direct violation of the allow-list the module does claim to enforce.)
 - **Suggested fix**: Install a custom opener whose `HTTPRedirectHandler.redirect_request` calls `require_http_url(newurl, allowed_schemes)` before allowing the hop, and use it in place of the module-level default opener. Document explicitly whether host/IP-range filtering is in scope.
 
 ### F07. [Low] Pickle payloads and cache entries are written with default (world-readable) permissions — src/pyutilz/core/serialization.py:211
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - all three write paths now create their temp file 0o600 so `os.replace` carries the restrictive mode onto the target: `os.open(..., O_EXCL, 0o600)` (src/pyutilz/core/serialization.py:229), `os.fdopen(os.open(tmp, ..., 0o600), "wb")` (src/pyutilz/core/safe_pickle.py:268) and the same in `DiskCache.put` (src/pyutilz/core/disk_cache.py:373). `web/cached_client.py` inherits this through `atomic_write_bytes`.
 - **Category**: file-permissions
 - **Problem**: Every write path in the serialization/cache stack creates its temp file with default permissions and then `os.replace`s it onto the target, so the final file inherits them:
   - `core/serialization.py:211` — `fd = os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL)` with **no `mode` argument**, so the mode defaults to `0o777 & ~umask`. Verified on this box: the resulting file is `0o666` (POSIX with the usual `umask 022` gives `0o644`).

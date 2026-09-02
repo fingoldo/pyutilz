@@ -8,7 +8,7 @@ from dataclasses import asdict
 from typing import Optional
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
-from .registry import SCANNERS, run_all
+from .registry import get_scanners, run_all
 
 # --- CLI ----------------------------------------------------------------
 
@@ -63,8 +63,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--check",
         action="append",
-        choices=sorted(SCANNERS),
-        help=("scanner(s) to run; repeat for multiple. Default: run all. " "Available: " + ", ".join(sorted(SCANNERS))),
+        choices=sorted(get_scanners()),
+        help=("scanner(s) to run; repeat for multiple. Default: run all. " "Available: " + ", ".join(sorted(get_scanners()))),
     )
     parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown",

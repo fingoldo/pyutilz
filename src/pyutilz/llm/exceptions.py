@@ -12,10 +12,14 @@ class LLMProviderError(Exception):
         self.details = details or {}
 
 
-class JSONParsingError(ValueError):
-    """Raised when JSON parsing fails."""
+class JSONParsingError(LLMProviderError, ValueError):
+    """Raised when JSON parsing fails.
 
-    pass
+    Inherits BOTH bases on purpose: ``ValueError`` keeps every pre-existing ``except ValueError``
+    call site working, while ``LLMProviderError`` makes the domain root actually catch-all -- a
+    caller wrapping an LLM call in ``except LLMProviderError`` used to have malformed model JSON
+    escape past the handler as a bare ``ValueError``.
+    """
 
 
 class LLMRefusalError(LLMProviderError):
@@ -42,10 +46,13 @@ class LLMSafetyBlockError(LLMRefusalError):
     pass
 
 
-class LLMTruncationError(ValueError):
+class LLMTruncationError(LLMProviderError, ValueError):
     """LLM stopped because ``max_tokens`` was hit mid-generation.
 
     Retryable — caller should double ``max_tokens`` (capped) and re-issue.
+
+    Inherits both bases for the same reason as :class:`JSONParsingError`: ``except ValueError``
+    call sites keep working AND ``except LLMProviderError`` now covers it.
     """
 
     def __init__(self, message: str, finish_reason: str | None = None, partial_text: str = ""):

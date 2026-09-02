@@ -27,6 +27,16 @@ from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
 logger = logging.getLogger(__name__)
 
+
+class ClaudeCodeToolUseError(RuntimeError):
+    """Raised when a Claude Code session emits a tool-use block despite tools being disabled.
+
+    A ``RuntimeError`` (deliberately NOT an ``OSError``/``ConnectionError``) so the provider's
+    transient-failure retry arm does not swallow it: an escaped tool call is a security event to
+    surface to the caller, never something to retry.
+    """
+
+
 # ---------------------------------------------------------------------------
 # SDK monkey-patches (claude-code-sdk 0.0.25)
 # ---------------------------------------------------------------------------
@@ -510,7 +520,14 @@ class ClaudeCodeProvider(LLMProvider):
                 permission_mode="bypassPermissions",
                 max_turns=1,
                 env=override_env,
-                extra_args={"tools": ""},
+                # "strict-mcp-config" (a valueless CLI flag: the SDK emits `--strict-mcp-config` for a
+                # None value) makes the session use ONLY MCP servers passed via --mcp-config -- none are
+                # passed here, so no MCP server at all is loaded. Without it, every MCP server configured
+                # in the INVOKING USER's global/project config is loaded into this session, and since
+                # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
+                # them: it scopes only the built-in tool set. This provider is text-generation-only, so
+                # no ambient MCP configuration is ever wanted.
+                extra_args={"tools": "", "strict-mcp-config": None},
             )
 
             _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
@@ -552,7 +569,13 @@ class ClaudeCodeProvider(LLMProvider):
                                 parts.append(block.text)
                             elif bt == "ToolUseBlock":
                                 tool_name = getattr(block, "name", "?")
-                                logger.warning("Model attempted tool use: %s (blocked)", tool_name)
+                                # A tool-use block must be impossible here: built-in tools are off
+                                # (`--tools ""`) and no MCP server is loaded (`--strict-mcp-config`).
+                                # If one appears anyway, the sandbox this provider relies on is not
+                                # holding -- most plausibly prompt injection in caller-supplied text
+                                # reaching a tool that permission bypass then auto-approves. Fail hard
+                                # instead of logging "(blocked)" while the turn continues.
+                                raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({tool_name!r}); this provider is text-generation-only")
                             elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
                                 if bt != "ThinkingBlock":
                                     parts.append(block.text)
@@ -592,6 +615,11 @@ class ClaudeCodeProvider(LLMProvider):
                 '--dangerously-skip-permissions',
                 '--no-session-persistence',
                 '--tools', '',
+                # Use ONLY MCP servers given via --mcp-config (none are), so the invoking user's
+                # global/project MCP servers are not loaded. `--tools ""` scopes the BUILT-IN tool
+                # set only, and with --dangerously-skip-permissions any loaded MCP tool would be
+                # auto-approved -- reachable from untrusted text passed in as the prompt.
+                "--strict-mcp-config",
             ]
 
             if "--tools" not in cmd:

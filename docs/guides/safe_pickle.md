@@ -27,7 +27,7 @@ In plain terms: this stops "the cached artifact got half-written and now loads g
 
 ## Fail-closed by default
 
-`verify_sidecar()` returns `False` (refuses the load) when the sidecar is missing, unless the environment variable `PYUTILZ_ALLOW_UNVERIFIED_PICKLE` is set truthy — which permits the legacy unverified path with a loud `WARN` log, intended only for migrating pre-existing un-sidecar'd artifacts. A digest **mismatch** always raises `PickleVerificationError`, regardless of the env var: a corrupted or swapped-without-resigning file never silently loads.
+`verify_sidecar()` returns `False` (refuses the load) when the sidecar is missing, unless the environment variable `PYUTILZ_ALLOW_UNVERIFIED_PICKLE` is set truthy — which permits the legacy unverified path with a loud `WARN` log, intended only for migrating pre-existing un-sidecar'd artifacts. A digest **mismatch** makes `verify_sidecar()` return `False` regardless of the env var — the opt-in covers a MISSING sidecar only, never a wrong one — and `safe_load()` turns that `False` into a `PickleVerificationError`. `verify_sidecar()` itself is annotated `-> bool` and never raises: a caller using it directly must check the returned value, since a corrupted or swapped-without-resigning file signals its failure only through that `False`.
 
 Projects with their own historical env var name for this opt-in (mlframe used `MLFRAME_ALLOW_UNVERIFIED_PICKLE` before adopting this shared module) can pass `env_var=` to `verify_sidecar` / `safe_load` to check their own name instead of the pyutilz default.
 

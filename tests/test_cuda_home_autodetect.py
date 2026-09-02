@@ -75,8 +75,15 @@ def test_is_cuda_available_returns_false_and_logs_on_probe_failure(monkeypatch, 
         raise AttributeError("simulated driver failure")
 
     monkeypatch.setattr(numba_cuda, "is_available", _raise)
-    with caplog.at_level(logging.DEBUG, logger="pyutilz.core.pythonlib"):
-        result = is_cuda_available()
+    # ``is_cuda_available`` is memoized for the process (the answer cannot change inside one), so a
+    # test that mocks the underlying probe must drop the cached verdict first -- and again after, so
+    # it does not hand the mocked answer to whatever runs next.
+    is_cuda_available.cache_clear()
+    try:
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.core.pythonlib"):
+            result = is_cuda_available()
+    finally:
+        is_cuda_available.cache_clear()
     assert result is False
     assert any("CUDA" in record.message for record in caplog.records)
 

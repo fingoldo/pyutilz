@@ -26,6 +26,17 @@ from ._common import (
     logger,
 )
 
+# PROJECT IDIOM for a re-export package's submodules (see also pyutilz/text/strings/_logproxy.py,
+# which applies the same rule through a dedicated proxy object):
+#   `import <parent> as _facade`   -- ALLOWED, and load-bearing.
+#   `from <parent> import <name>`  -- FORBIDDEN at module top level.
+# A re-export package's __init__ imports its submodules, so a submodule importing the parent back is
+# a genuine cycle. Plain `import x` binds the PARTIALLY-INITIALISED sys.modules entry and defers every
+# attribute lookup to call time, so it survives; `from x import name` needs the name to exist at import
+# time and raises "cannot import name ... (most likely due to a circular import)". Deferring the lookup
+# is also what makes the name patchable: a test setting `pyutilz.data.pandaslib.HAS_IPYTHON` is seen here,
+# where a from-import would have snapshotted the original value. tests/test_meta/test_reexport_package_idiom.py
+# enforces this mechanically.
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection for internal cross-calls
 
 from .dtypes import get_df_memory_consumption

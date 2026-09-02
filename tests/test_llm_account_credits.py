@@ -313,7 +313,7 @@ class TestUniformInterface:
         from pyutilz.llm.factory import _PROVIDER_MODULES
         import importlib
         missing: list[str] = []
-        for name, (mod_path, cls_name) in _PROVIDER_MODULES.items():
+        for name, (mod_path, cls_name, _key_attr) in _PROVIDER_MODULES.items():
             try:
                 mod = importlib.import_module(mod_path)
             except ImportError:

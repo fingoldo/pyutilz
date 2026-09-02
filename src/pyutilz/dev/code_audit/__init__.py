@@ -391,7 +391,7 @@ decision a project takes rather than inherits on upgrade. Name them in
   whose docstring states "7 of 8" while its assertion accepts ``>= 6``.
 
 One member of this package is deliberately NOT a scanner and NOT in
-``SCANNERS``: ``field_text_agreement``. It checks a defect shape the other
+``get_scanners()``: ``field_text_agreement``. It checks a defect shape the other
 rules cannot see from source alone - a structured field that duplicates
 information also present in free text, where the two are never compared -
 and it does that over RECORDS at runtime, not over ``.py`` files. Every
@@ -508,12 +508,13 @@ from .field_text_agreement import (
     check_records,
     cues_in_text,
 )
-from .registry import SCANNERS, OPT_IN_ONLY, run_all, register_scanner, get_scanners
+# SCANNERS is deliberately NOT re-exported: the registry is private, read via get_scanners()
+# and written via register_scanner() (whose duplicate-name guard direct assignment bypassed).
+from .registry import OPT_IN_ONLY, run_all, register_scanner, get_scanners
 from .cli import main
 
 __all__ = [
     "Finding",
-    "SCANNERS",
     "OPT_IN_ONLY",
     "run_all",
     "register_scanner",

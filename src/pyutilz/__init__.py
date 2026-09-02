@@ -6,7 +6,13 @@ import sys
 import types
 from importlib import import_module
 
-__all__ = ["__version__", "core", "data", "database", "web", "cloud", "text", "system", "dev", "llm"]
+# Every directory under src/pyutilz/ that is a real subpackage. Kept as its own tuple (rather than
+# only inside __all__) because __getattr__ below resolves against it: the two used to be
+# hand-duplicated 9-name literals and both silently omitted the shipped `stats` and `performance`
+# subpackages, so `pyutilz.stats` raised AttributeError while `from pyutilz import stats` worked.
+_SUBPACKAGES = ("core", "data", "database", "web", "cloud", "text", "system", "dev", "llm", "stats", "performance")
+
+__all__ = ["__version__", *_SUBPACKAGES]
 
 # Module aliases for backward compatibility
 # NOTE: Don't create aliases for names that conflict with subpackages (system, web, cloud)
@@ -14,7 +20,7 @@ _MODULE_ALIASES = {
     "pythonlib": "pyutilz.core.pythonlib",
     "serialization": "pyutilz.core.serialization",
     "image": "pyutilz.core.image",
-    "openai": "pyutilz.core.openai",
+    "openai": "pyutilz.llm.openai_tokens",
     "filemaker": "pyutilz.core.filemaker",
     "matrix": "pyutilz.core.matrix",
     "pandaslib": "pyutilz.data.pandaslib",
@@ -73,7 +79,7 @@ for alias, real_name in _MODULE_ALIASES.items():
 
 def __getattr__(name):
     """Lazy import for package-level attributes."""
-    if name in ("core", "data", "database", "web", "cloud", "text", "system", "dev", "llm"):
+    if name in _SUBPACKAGES:
         return import_module(f".{name}", __name__)
     if name in _MODULE_ALIASES:
         return import_module(_MODULE_ALIASES[name])

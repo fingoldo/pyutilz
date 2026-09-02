@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -28,6 +29,18 @@ from pyutilz.web.url_guard import ALLOWED_SCHEMES, urlopen_checked
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
+
+# `Retry-After` is attacker/remote-controlled: a hostile or misconfigured host answering 429 with
+# `Retry-After: 999999999` would otherwise park the calling thread in a synchronous, uncancellable
+# time.sleep() for decades, hanging a whole batch job on one bad URL. Anything above this cap falls
+# back to the local exponential backoff instead.
+MAX_RETRY_AFTER_SECONDS = 120.0
+
+# A cache `tag` becomes a DIRECTORY component of the cache path, so it must not be able to escape
+# cache_dir (`..`, absolute paths, separators). Same containment concern as
+# ``core.disk_cache._key_path``; here it is enforced by grammar since a tag is meant to be a short
+# human-readable label, not a path.
+_SAFE_TAG_RE = re.compile(r"\A[A-Za-z0-9_.-]+\Z")
 
 
 class CachedHttpClient:
@@ -106,6 +119,8 @@ class CachedHttpClient:
         satisfy a later get_json() lookup and return a permanent ``None`` for a URL that answers.
         The legacy "json" key stays digest-only so existing on-disk caches remain valid.
         """
+        if not _SAFE_TAG_RE.match(tag) or tag in {".", ".."}:
+            raise ValueError(f"CachedHttpClient: unsafe cache tag {tag!r}; expected [A-Za-z0-9_.-]+ (it is used as a directory name under cache_dir)")
         keyed = url if kind == "json" else f"{kind}:{url}"
         digest = hashlib.sha256(keyed.encode("utf-8")).hexdigest()[:20]
         return self.cache_dir / tag / f"{digest}.json"
@@ -127,7 +142,18 @@ class CachedHttpClient:
             except urllib.error.HTTPError as exc:
                 if exc.code in _RETRYABLE_HTTP_CODES and attempt < retries - 1:
                     retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                    time.sleep(float(retry_after) if retry_after and retry_after.isdigit() else 2**attempt)
+                    backoff = float(2**attempt)
+                    delay = backoff
+                    if retry_after and retry_after.isdigit():
+                        requested = float(retry_after)
+                        if requested > MAX_RETRY_AFTER_SECONDS:
+                            logger.warning(
+                                "cached_client: server asked for Retry-After=%ss (> cap %ss) on %s; using local backoff %.0fs instead",
+                                retry_after, MAX_RETRY_AFTER_SECONDS, url, backoff,
+                            )
+                        else:
+                            delay = requested
+                    time.sleep(delay)
                     continue
                 logger.debug("cached_client: HTTP %s for %s", exc.code, url)
                 return None

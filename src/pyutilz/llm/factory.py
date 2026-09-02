@@ -74,15 +74,20 @@ def _schedule_provider_close(provider: LLMProvider) -> None:
     task.add_done_callback(_pending_close_tasks.discard)
 
 
-# Canonical provider names → (module_path, class_name) for lazy import
-_PROVIDER_MODULES = {
-    "anthropic": ("pyutilz.llm.anthropic_provider", "AnthropicProvider"),
-    "gemini": ("pyutilz.llm.gemini_provider", "GeminiProvider"),
-    "claude-code": ("pyutilz.llm.claude_code_provider", "ClaudeCodeProvider"),
-    "deepseek": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider"),
-    "xai": ("pyutilz.llm.xai_provider", "XAIProvider"),
-    "openai": ("pyutilz.llm.openai_provider", "OpenAIProvider"),
-    "openrouter": ("pyutilz.llm.openrouter_provider", "OpenRouterProvider"),
+# Canonical provider names → (module_path, class_name, settings_api_key_attr) for lazy import.
+# The third element is the LLMSettings attribute holding this provider's API key, or None for a
+# provider that needs no key. It is DATA here rather than a hand-written branch per provider so
+# that adding a provider cannot leave the key-injection cascade out of sync with this table --
+# the failure that already materialised once (OpenAIProvider reached the table but not the
+# package facade). pyutilz.llm.__init__ derives its lazy-import map from this table too.
+_PROVIDER_MODULES: dict[str, tuple[str, str, str | None]] = {
+    "anthropic": ("pyutilz.llm.anthropic_provider", "AnthropicProvider", "anthropic_api_key"),
+    "gemini": ("pyutilz.llm.gemini_provider", "GeminiProvider", "gemini_api_key"),
+    "claude-code": ("pyutilz.llm.claude_code_provider", "ClaudeCodeProvider", None),
+    "deepseek": ("pyutilz.llm.deepseek_provider", "DeepSeekProvider", "deepseek_api_key"),
+    "xai": ("pyutilz.llm.xai_provider", "XAIProvider", "xai_api_key"),
+    "openai": ("pyutilz.llm.openai_provider", "OpenAIProvider", "openai_api_key"),
+    "openrouter": ("pyutilz.llm.openrouter_provider", "OpenRouterProvider", "openrouter_api_key"),
 }
 
 # Aliases mapping to canonical names
@@ -134,41 +139,16 @@ def get_llm_provider(
         raise ValueError(f"Unknown provider: {provider_name}. Available: {available}")
 
     import importlib
-    mod_path, cls_name = _PROVIDER_MODULES[canonical]
+    mod_path, cls_name, settings_key_attr = _PROVIDER_MODULES[canonical]
     mod = importlib.import_module(mod_path)
     constructor = getattr(mod, cls_name)
 
-    # Pass API key for providers that need it
-    if canonical == "anthropic":
-        kwargs.setdefault(
-            "api_key",
-            settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None,
-        )
-    elif canonical == "gemini":
-        kwargs.setdefault(
-            "api_key",
-            settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else None,
-        )
-    elif canonical == "deepseek":
-        kwargs.setdefault(
-            "api_key",
-            settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None,
-        )
-    elif canonical == "xai":
-        kwargs.setdefault(
-            "api_key",
-            settings.xai_api_key.get_secret_value() if settings.xai_api_key else None,
-        )
-    elif canonical == "openai":
-        kwargs.setdefault(
-            "api_key",
-            settings.openai_api_key.get_secret_value() if settings.openai_api_key else None,
-        )
-    elif canonical == "openrouter":
-        kwargs.setdefault(
-            "api_key",
-            settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None,
-        )
+    # Pass API key for providers that need it. Key STILL defaults to None (not omitted) when the
+    # settings value is unset: providers accept api_key=None and raise their own configuration
+    # error, and omitting the kwarg would change the cache key shape for a keyless environment.
+    if settings_key_attr is not None:
+        secret = getattr(settings, settings_key_attr, None)
+        kwargs.setdefault("api_key", secret.get_secret_value() if secret else None)
 
     # Cache key: provider name + all kwargs (model, api_key, etc.).
     # If a kwarg value is unhashable (list/dict), bypass the cache and

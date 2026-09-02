@@ -2278,7 +2278,7 @@ def test_facade_reexports_are_same_objects():
     from pyutilz.dev.code_audit.duplicate_conditions import scan_duplicate_conditions as _sdc
     from pyutilz.dev.code_audit.missed_await import scan_missed_await as _sma
     from pyutilz.dev.code_audit.redundant_test_fit import scan_redundant_test_fit_calls as _srtfc
-    from pyutilz.dev.code_audit.registry import run_all as _ra, SCANNERS as _SCANNERS_CONST
+    from pyutilz.dev.code_audit.registry import run_all as _ra, get_scanners as _get_scanners
     from pyutilz.dev.code_audit.cli import main as _main
 
     assert facade.Finding is _Finding
@@ -2298,10 +2298,12 @@ def test_facade_reexports_are_same_objects():
     assert facade.scan_missed_await is _sma
     assert facade.scan_redundant_test_fit_calls is _srtfc
     assert facade.run_all is _ra
-    assert facade.SCANNERS is _SCANNERS_CONST
+    assert facade.get_scanners is _get_scanners
+    # The mutable registry itself is NOT part of the facade -- only the read-only accessor is.
+    assert not hasattr(facade, "SCANNERS")
     assert facade.main is _main
     # Every scanner in the registry is the facade-level attribute of the same name.
-    for fn in facade.SCANNERS.values():
+    for fn in facade.get_scanners().values():
         assert callable(fn)
 
 
@@ -2419,18 +2421,18 @@ def test_finding_as_md_row_escapes_pipe_in_detail():
 
 
 def test_registry_register_scanner_rejects_collision():
-    from pyutilz.dev.code_audit.registry import register_scanner, SCANNERS
+    from pyutilz.dev.code_audit.registry import register_scanner, get_scanners
 
     def _dummy(root, exclude_dirs=frozenset()):
         return []
 
     with pytest.raises(ValueError):
         register_scanner("mutable_default", _dummy)
-    assert SCANNERS["mutable_default"] is not _dummy
+    assert get_scanners()["mutable_default"] is not _dummy
 
     register_scanner("mutable_default", _dummy, allow_override=True)
     try:
-        assert SCANNERS["mutable_default"] is _dummy
+        assert get_scanners()["mutable_default"] is _dummy
     finally:
         register_scanner("mutable_default", scan_mutable_defaults, allow_override=True)
 

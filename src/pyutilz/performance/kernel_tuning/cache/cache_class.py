@@ -1,60 +1,52 @@
 """``KernelTuningCache`` -- per-host read/write/lookup + get_or_tune orchestration."""
 from __future__ import annotations
 
-import contextlib
+# The names below that this module no longer USES itself (the persistence / sweep-claim / tuning
+# blocks moved to the sibling mixins) are kept imported ON PURPOSE: ``cache_class`` is a direct
+# import target for callers and tests, so every attribute it exposed before the split must keep
+# resolving as ``cache_class.<name>``. Hence the per-name ``noqa: F401``.
+import contextlib  # noqa: F401
 import datetime as _dt
-import glob as _glob
+import glob as _glob  # noqa: F401
 import json
-import logging
-import os
-import random
-import sys
+import logging  # noqa: F401
+import os  # noqa: F401
+import random  # noqa: F401
+import sys  # noqa: F401
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast  # noqa: F401
 
 from .cache_base import (
     SCHEMA_VERSION,
-    _NO_CODE_VERSION,
+    _NO_CODE_VERSION,  # noqa: F401
     _INVALIDATION_LOGGED_THIS_PROCESS,
     _TUNED_THIS_PROCESS,
-    _async_sweep_idle_max_wait,
-    _async_sweep_start_delay,
-    _build_provenance,
-    _kernel_dir,
-    _pid_alive,
-    _slug,
-    _sweep_budget_seconds,
-    _tuned_guard_lock,
-    cache_path,
+    _async_sweep_idle_max_wait,  # noqa: F401
+    _async_sweep_start_delay,  # noqa: F401
+    _build_provenance,  # noqa: F401
+    _kernel_dir,  # noqa: F401
+    _pid_alive,  # noqa: F401
+    _slug,  # noqa: F401
+    _sweep_budget_seconds,  # noqa: F401
+    _tuned_guard_lock,  # noqa: F401
+    cache_path,  # noqa: F401
     host_cache_dir,
     hw_fingerprint,
-    provenance_changed,
+    provenance_changed,  # noqa: F401
 )
 from .cache_hooks import LoggerHooks, TuningHooks, _DEFAULT_HOOKS  # noqa: F401 (TuningHooks used in annotations)
-from .region_matching import _AXIS_SUFFIXES, _region_match_reason, _region_matches
-
-logger = logging.getLogger(__name__)
-
+from .region_matching import _AXIS_SUFFIXES, _OP_EQ, _OP_MAX, _OP_MIN, _SUFFIX_OPS, _region_match_reason, _region_matches  # noqa: F401 - _OP_EQ/_region_matches are re-exported for the historical cache_class.<name> surface
+from ._common import _CacheState, _FACADE_NAME, _facade, logger  # noqa: F401 (re-exported: historical ``cache_class`` attribute surface)
+from .cache_persistence import _CachePersistenceMixin
+from .cache_sweeping import _CacheSweepClaimMixin
+from .cache_tuning import _CacheTuningMixin
 
 # Process-wide singleton for load_or_create() -- hot-path dispatch callers
 # (GPU/numba kernels) consult the cache on every invocation; one shared
-# instance avoids re-reading the per-host JSON each call.
-#
-# The three module singletons (``_DEFAULT_INSTANCE``, ``_DEFAULT_INSTANCE_LOCK``,
-# ``_DEFAULT_CACHE``) LIVE ON THE FACADE package (``...kernel_tuning.cache``), not
-# in this submodule: tests reset them via ``cache._DEFAULT_INSTANCE = None`` /
-# ``register_default_cache`` and the reads here must observe those rebinds. We route
-# every access through ``_facade()`` so a reassignment on the package (whether by a
-# test or by ``register_default_cache``) is seen by ``load_or_create`` / ``_fb``,
-# exactly as it was when this all lived in one module. The lock is created lazily on
-# first access so import order (facade imports this module) can't deadlock.
-_FACADE_NAME = "pyutilz.performance.kernel_tuning.cache"
-
-
-def _facade():
-    """Return the facade package module, so reads observe any test/registration rebinds of its singletons."""
-    return sys.modules[_FACADE_NAME]
+# instance avoids re-reading the per-host JSON each call. The singletons
+# themselves live on the FACADE package and are reached through ``_facade()``
+# (imported above from ``._common``, where the rationale is documented).
 
 
 def register_default_cache(path: str) -> bool:
@@ -68,6 +60,7 @@ def register_default_cache(path: str) -> bool:
         c = KernelTuningCache(in_memory=True)
         with c._lock:
             c._loaded = {"schema_version": payload.get("schema_version", SCHEMA_VERSION), "kernels": payload.get("kernels", {})}
+            c._invalidate_plan()
         fac._DEFAULT_CACHE = c
         logger.debug("kernel_tuning_cache: registered %d default kernels from %s", len(payload.get("kernels", {})), path)
         return True
@@ -81,7 +74,7 @@ def register_default_cache(path: str) -> bool:
         return False
 
 
-class KernelTuningCache:
+class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTuningMixin):
     """Per-host kernel-tuning cache. Single instance per process is enough;
     the class is thread-safe under a single ``threading.Lock``.
 
@@ -120,6 +113,9 @@ class KernelTuningCache:
         self._loaded: Optional[dict] = None  # None until first load() call
         # Optional shared remote store (PYUTILZ_KERNEL_REMOTE=s3://...). None
         # for in-memory caches or when no remote is configured -> local-only.
+        # Annotated explicitly: the two assignments below otherwise join to bare ``object``, which
+        # hides every attribute of the duck-typed remote backend from the type checker.
+        self._remote: Any
         if in_memory:
             self._remote = None
         else:
@@ -131,43 +127,30 @@ class KernelTuningCache:
         # blocked network silently disabled cross-machine sharing forever with zero signal. See
         # ``_log_remote_failure``/``_note_remote_success``.
         self._remote_consecutive_failures = 0
+        # Per-kernel PRECOMPILED lookup plans (see ``_lookup_plan``). Purely derived from
+        # ``self._loaded``; rebuilt on demand, so it is dropped by ``__getstate__`` rather than
+        # pickled (a runtime cache in pickled state is how stale plans outlive their entry).
+        self._plan_cache: dict = {}
 
     def __getstate__(self) -> dict:
         """Drop the unpicklable ``threading.RLock`` (a fresh one is created in ``__setstate__``) --
         flagged by ``pyutilz.dev.code_audit.unpicklable_resource_state``; this cache isn't on any
-        current pickling path, but the guard is cheap and matches the repo-wide convention."""
+        current pickling path, but the guard is cheap and matches the repo-wide convention.
+
+        Also drops the derived ``_plan_cache``: it holds compiled lookup plans keyed by entry
+        IDENTITY, which does not survive a pickle round-trip, so carrying it across would be both
+        dead weight and a correctness hazard."""
         state = self.__dict__.copy()
         state["_lock"] = None
+        state["_plan_cache"] = {}
         return state
 
     def __setstate__(self, state: dict) -> None:
-        """Restore state and re-create the ``threading.RLock`` dropped by ``__getstate__``."""
+        """Restore state and re-create the ``threading.RLock`` dropped by ``__getstate__``, plus an
+        empty ``_plan_cache`` (also for instances pickled before that field existed)."""
         self.__dict__.update(state)
         self._lock = threading.RLock()
-
-    # Re-announce at WARNING every this-many consecutive failures (not just the first) so a
-    # long-lived process doesn't go silent again after the initial warning.
-    _REMOTE_FAILURE_WARN_INTERVAL = 20
-
-    def _log_remote_failure(self, op: str, exc: Exception) -> None:
-        """Log a remote-backend failure, escalating to WARNING on the first failure after a run
-        of successes and periodically thereafter (every ``_REMOTE_FAILURE_WARN_INTERVAL``
-        consecutive failures); every other occurrence stays at DEBUG so a backend failing on
-        EVERY call doesn't flood the log."""
-        self._remote_consecutive_failures += 1
-        n = self._remote_consecutive_failures
-        if n == 1 or n % self._REMOTE_FAILURE_WARN_INTERVAL == 0:
-            logger.warning("kernel_tuning_cache: remote %s failed (%d consecutive failure(s)): %s", op, n, exc)
-        else:
-            logger.debug("kernel_tuning_cache: remote %s failed: %s", op, exc)
-
-    def _note_remote_success(self) -> None:
-        """Reset the consecutive-failure counter; if recovering from a run of failures, log the
-        recovery at WARNING too -- otherwise an operator who saw the earlier warning has no
-        signal that the remote backend is working again."""
-        if self._remote_consecutive_failures > 0:
-            logger.warning("kernel_tuning_cache: remote operations recovered after %d consecutive failure(s)", self._remote_consecutive_failures)
-        self._remote_consecutive_failures = 0
+        self._plan_cache = {}
 
     @classmethod
     def load_or_create(cls) -> "KernelTuningCache":
@@ -190,349 +173,6 @@ class KernelTuningCache:
                 if fac._DEFAULT_INSTANCE is None:
                     fac._DEFAULT_INSTANCE = cls()
         return fac._DEFAULT_INSTANCE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-
-    # ----- I/O (v3 immutable per-kernel files) -----
-
-    @staticmethod
-    def _atomic_write_json(final_path: str, payload: dict, *, retries: int = 3, backoff: float = 0.05) -> bool:
-        """Write ``payload`` to ``final_path`` via tempfile + ``os.replace``,
-        with a bounded retry around the rename (D3: Windows AV / share-delete
-        without FILE_SHARE_DELETE can make ``os.replace`` transiently raise
-        ``OSError`` errno 5/13). Returns True on success, False on persistent
-        failure (degrades silently -- a failed cache write must never break
-        dispatch). Each attempt writes a FRESH uniquely-named temp file so a
-        concurrent writer never collides on the temp name."""
-        os.makedirs(os.path.dirname(final_path), exist_ok=True)
-        last_err: Optional[Exception] = None
-        for attempt in range(max(1, retries)):
-            tmp = f"{final_path}.{os.getpid()}.{random.randrange(1 << 30):x}.tmp"  # nosec B311 - unique-ish temp filename suffix to avoid concurrent-writer collisions, not security/cryptographic use
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, sort_keys=True)
-                os.replace(tmp, final_path)
-                return True
-            except OSError as e:
-                last_err = e
-                with contextlib.suppress(OSError):
-                    if os.path.exists(tmp):
-                        os.remove(tmp)
-                if attempt < retries - 1:
-                    time.sleep(backoff * (attempt + 1))
-        logger.debug("kernel_tuning_cache: atomic write of %s failed after %d tries: %s", final_path, retries, last_err)
-        return False
-
-    def _migrate_legacy(self) -> None:
-        """One-time split of a legacy monolithic ``<fp>.json`` into per-kernel
-        immutable files, under a claim marker so only one process migrates.
-        After a successful split the monolith is renamed aside (``.migrated``) so
-        it is found-once but never re-read. Backward compatible: existing caches
-        keep working transparently. Idempotent + crash-safe (a partial migration
-        just re-runs; immutable writes can't corrupt).
-
-        The claim marker uses the SAME pid+start_ts+steal pattern as the sweep
-        INPROGRESS markers (``_try_create_marker``/pid-liveness + budget staleness
-        check below) rather than a bare O_EXCL empty file -- a bare claim has no
-        way to tell "a live peer is migrating" from "a process crashed after
-        claiming and before removing it," so an orphaned claim from a killed
-        process (OOM-killer, kill -9, container eviction) would otherwise disable
-        migration on this host FOREVER (every subsequent process's O_EXCL fails
-        and just returns, with no retry and no steal logic)."""
-        if self._in_memory or self._path is None or self._migrated:
-            return
-        self._migrated = True  # at most one attempt per process
-        legacy = cache_path()
-        if not os.path.isfile(legacy):
-            return
-        claim = os.path.join(self._path, ".migrate.INPROGRESS")
-        os.makedirs(self._path, exist_ok=True)
-        owns = self._try_create_marker(claim)
-        if not owns:
-            owns = self._maybe_steal_migration_claim(claim)
-        if not owns:
-            return  # a live peer is migrating; its result will be read on next _load
-        try:
-            with open(legacy, encoding="utf-8") as f:
-                data = json.load(f)
-            # Only import kernels from a SCHEMA- and FINGERPRINT-compatible
-            # monolith (v2 or v3 shape, matching host). A schema-999 / foreign /
-            # corrupt monolith is treated exactly as the old _load did -- as a
-            # miss -- so it is renamed aside WITHOUT importing anything (no
-            # accidental resurrection of an invalid cache).
-            compatible = data.get("schema_version") in (SCHEMA_VERSION, 2) and data.get("hw_fingerprint") == hw_fingerprint()
-            kernels = (data.get("kernels", {}) or {}) if compatible else {}
-            prov = data.get("provenance")
-            for name, entry in kernels.items():
-                if not isinstance(entry, dict):
-                    continue
-                # Carry provenance into each split file so the staleness check
-                # behaves exactly as it did against the monolith.
-                self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
-            os.replace(legacy, legacy + ".migrated")
-            logger.info("kernel_tuning_cache: migrated %d kernels from legacy %s (compatible=%s)", len(kernels), legacy, compatible)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.debug("kernel_tuning_cache: legacy migration failed: %s", e)
-        finally:
-            with contextlib.suppress(OSError):
-                os.remove(claim)
-
-    def _read_kernel_newest(self, kernel_name: str) -> Optional[dict]:
-        """Resolve one kernel by globbing its directory and picking the NEWEST
-        immutable file (by embedded ``tuned_utc``, mtime as tiebreaker). Pure
-        read, NO lock. Returns the kernel ENTRY dict (axes/regions/code_version/
-        salt/tuned_utc) with a per-file provenance staleness check applied, or
-        None on miss / stale."""
-        if self._path is None:
-            return None
-        kdir = _kernel_dir(self._path, kernel_name)
-        files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
-        if not files:
-            return None
-        live_prov = _build_provenance()
-        candidates: list[tuple] = []  # (tuned_ts, mtime, entry)
-        for p in files:
-            try:
-                with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                continue  # os.replace is atomic; a parse failure is a foreign/partial file -> skip
-            if rec.get("schema_version") != SCHEMA_VERSION:
-                continue
-            if rec.get("hw_fingerprint") != hw_fingerprint():
-                continue
-            saved_prov = rec.get("provenance")
-            if saved_prov and provenance_changed(saved_prov, live_prov):
-                continue  # driver/cupy/numba bump since this tuning -> ignore (structural staleness)
-            entry = rec.get("entry")
-            if not isinstance(entry, dict):
-                continue
-            ts = entry.get("tuned_utc") or ""
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, entry))
-        if not candidates:
-            return None
-        # Newest by tuned_utc (ISO-8601 strings sort chronologically), then mtime.
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        return candidates[-1][2]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-
-    def _load(self) -> Optional[dict]:
-        """Build the in-memory ``{schema_version, hw_fingerprint, kernels}`` view
-        by resolving every kernel directory to its newest immutable file. Pure
-        read, NO lock. On an empty local store, reads through to the shared remote
-        (if any) and caches the pulled kernels locally as immutable files before
-        resolving. Returns None when nothing is found (so ``_ensure_loaded``
-        installs an empty stub)."""
-        if self._in_memory or self._path is None:
-            return None
-        self._migrate_legacy()
-        host_dir = self._path
-        kernels: dict = {}
-        if os.path.isdir(host_dir):
-            try:
-                kernel_dirs = [d for d in os.scandir(host_dir) if d.is_dir()]
-            except OSError:
-                kernel_dirs = []
-            for d in kernel_dirs:
-                # Recover the kernel name from any file in the dir (the slug is
-                # lossy); the entry itself carries the canonical kernel_name.
-                entry = self._read_kernel_dir_by_path(d.path)
-                if entry is not None:
-                    kernels[entry[0]] = entry[1]
-        if self._remote is not None:
-            # Read-through: pull this host's payload from the shared store + cache each kernel
-            # as an immutable local file, then they resolve normally. Gated PER-KERNEL (any
-            # remote kernel not already in the local view), not on the local store being
-            # entirely empty -- a host that already has ANY locally-tuned kernel would otherwise
-            # never learn about kernels tuned only by a peer sharing the same hw_fingerprint,
-            # and its next write-through (which serializes only its own local view) would then
-            # permanently overwrite/delete those peer-only kernels from the shared object.
-            try:
-                remote_data = self._remote.read(hw_fingerprint())
-                self._note_remote_success()
-            except Exception as e:
-                self._log_remote_failure("read", e)
-                remote_data = None
-            if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
-                prov = remote_data.get("provenance")
-                live_prov = _build_provenance()
-                if not (prov and provenance_changed(prov, live_prov)):
-                    for name, entry in (remote_data.get("kernels", {}) or {}).items():
-                        if name in kernels:
-                            continue  # local copy already resolved (possibly newer); don't shadow it
-                        if isinstance(entry, dict):
-                            self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
-                            kernels[name] = entry
-        if not kernels:
-            return None
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "hw_fingerprint": hw_fingerprint(),
-            "kernels": kernels,
-        }
-
-    def _read_kernel_dir_by_path(self, kdir: str) -> Optional[tuple]:
-        """Like ``_read_kernel_newest`` but takes a directory path + returns
-        ``(kernel_name, entry)`` (the name is read from the winning record).
-        Used by ``_load`` which scans directories without knowing kernel names."""
-        files = _glob.glob(os.path.join(kdir, "*.json"))
-        if not files:
-            return None
-        live_prov = _build_provenance()
-        candidates: list[tuple] = []
-        for p in files:
-            try:
-                with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                continue
-            if rec.get("schema_version") != SCHEMA_VERSION:
-                continue
-            if rec.get("hw_fingerprint") != hw_fingerprint():
-                continue
-            saved_prov = rec.get("provenance")
-            if saved_prov and provenance_changed(saved_prov, live_prov):
-                continue
-            entry = rec.get("entry")
-            name = rec.get("kernel_name")
-            if not isinstance(entry, dict) or not name:
-                continue
-            ts = entry.get("tuned_utc") or ""
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, name, entry))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        winner = candidates[-1]
-        return (winner[2], winner[3])
-
-    def _persist_kernel(self, kernel_name: str, entry: dict, *, provenance: Optional[dict] = None, remote: bool = True) -> None:
-        """Write ONE immutable per-kernel tuning file (no read-modify-write, no
-        lock). Filename: ``<code_version>.<salt>.<pid>.<ts>.<rand>.json`` so every
-        write is unique and prior tunings are never overwritten (a reader picks
-        the newest). Best-effort remote write-through happens AFTER the local
-        write and OUTSIDE any lock (D9), so a hung S3 never stalls the local save.
-        """
-        if self._in_memory or self._path is None:
-            return
-        cv = entry.get("code_version") or _NO_CODE_VERSION
-        salt = entry.get("salt", 0)
-        ts = time.time()
-        fname = f"{_slug(str(cv), maxlen=70)}.{int(salt)}.{os.getpid()}.{int(ts * 1000)}.{random.randrange(1 << 24):x}.json"  # nosec B311 - unique cache-record filename suffix to avoid collisions between concurrent writers, not security/cryptographic use
-        kdir = _kernel_dir(self._path, kernel_name)
-        final_path = os.path.join(kdir, fname)
-        record = {
-            "schema_version": SCHEMA_VERSION,
-            "hw_fingerprint": hw_fingerprint(),
-            "kernel_name": kernel_name,
-            "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-            "provenance": provenance if provenance is not None else _build_provenance(),
-            "entry": entry,
-        }
-        if self._atomic_write_json(final_path, record):
-            logger.info("kernel_tuning_cache: saved %s", final_path)
-            self._gc_kernel_dir(kdir)
-        # Remote write-through OUTSIDE any lock (D9): one immutable object per
-        # (fp, kernel) -- last writer wins remotely, race-free, fire-and-forget.
-        if remote and self._remote is not None:
-            try:
-                self._remote.write(hw_fingerprint(), self._remote_payload())
-                self._note_remote_success()
-            except Exception as e:
-                self._log_remote_failure("write", e)
-
-    def _remote_payload(self) -> dict:
-        """Assemble the legacy-shaped monolithic payload (all kernels) for the
-        remote store, so the remote object stays one-per-fingerprint and a peer's
-        read-through repopulates every kernel.
-
-        Merges in any kernel present on the CURRENT remote object but absent from this
-        process's local view before writing -- a plain "serialize only what I have locally"
-        write would otherwise overwrite/delete kernels tuned only by a peer host sharing the
-        same hw_fingerprint that this process never loaded (e.g. tuned by that peer AFTER this
-        process's own _load() ran). Local entries always win over remote ones for the same name.
-        """
-        kernels = dict((self._loaded or {}).get("kernels", {}) if self._loaded else {})
-        try:
-            remote_data = self._remote.read(hw_fingerprint()) if self._remote is not None else None
-            if self._remote is not None:
-                self._note_remote_success()
-        except Exception as e:
-            self._log_remote_failure("read (pre-write merge)", e)
-            remote_data = None
-        if remote_data and remote_data.get("schema_version") in (SCHEMA_VERSION, 2):
-            for name, entry in (remote_data.get("kernels", {}) or {}).items():
-                if name not in kernels and isinstance(entry, dict):
-                    kernels[name] = entry
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "hw_fingerprint": hw_fingerprint(),
-            "timestamp_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-            "provenance": _build_provenance(),
-            "kernels": kernels,
-        }
-
-    def _gc_kernel_dir(self, kdir: str, keep: int = 4) -> None:
-        """Lazily garbage-collect a kernel directory, keeping the newest ``keep`` immutable
-        files. "Newest" uses the SAME ``(tuned_utc, mtime)`` key the readers
-        (``_read_kernel_newest`` / ``_read_kernel_dir_by_path``) use to pick the current tuning
-        -- NOT raw mtime alone.
-
-        Regression fix (2026-07-21 audit round 2, MEDIUM): GC previously sorted purely by mtime
-        (write order). ``update()`` accepts an explicit ``tuned_utc`` override; whenever that's
-        set non-monotonically w.r.t. wall-clock write order (importing/replaying
-        historically-timestamped tunings, or merging tunings recorded on a different host/
-        clock), the entry the reader would pick as logically newest could have an OLDER mtime
-        than several others and get silently, permanently deleted here before ever being read.
-        Unreadable/corrupt files sort as oldest (empty ``tuned_utc``) and are evicted first --
-        consistent with the readers, which skip them entirely anyway.
-
-        Negligible space + never blocks; best-effort (a failed unlink is harmless -- the reader
-        always picks the newest of whatever remains).
-        """
-        try:
-            files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
-        except OSError:
-            return
-        if len(files) <= keep:
-            return
-        candidates: list[tuple] = []  # (tuned_ts, mtime, path)
-        for p in files:
-            ts = ""
-            try:
-                with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-                entry = rec.get("entry")
-                if isinstance(entry, dict):
-                    ts = entry.get("tuned_utc") or ""
-            except (OSError, json.JSONDecodeError):
-                pass  # unreadable -- sorts as oldest (ts=""), evicted first
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, p))
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        for _ts, _mtime, p in candidates[:-keep]:
-            with contextlib.suppress(OSError):
-                os.remove(p)
-
-    def _ensure_loaded(self) -> dict:
-        """Return the live cache payload (loaded once per process). On
-        miss returns an empty stub so subsequent updates can populate it."""
-        with self._lock:
-            if self._loaded is not None:
-                return self._loaded
-            self._loaded = self._load() or {
-                "schema_version": SCHEMA_VERSION,
-                "hw_fingerprint": "in_memory" if self._in_memory else hw_fingerprint(),
-                "kernels": {},
-            }
-            return self._loaded
 
     # ----- public API -----
 
@@ -567,6 +207,7 @@ class KernelTuningCache:
             # kernel writes a different directory, and a concurrent writer of the
             # SAME kernel writes a distinct file (newest wins), never clobbering.
             loaded["kernels"][kernel_name] = entry
+            self._invalidate_plan(kernel_name)
             if hooks is not None:
                 hooks.persist(kernel_name, self._path, len(regions))
             self._persist_kernel(kernel_name, entry)
@@ -597,24 +238,84 @@ class KernelTuningCache:
             # -> {"variant": "shared", "block_size": 512, "wall_ms": 0.78}
         """
         entry = self._ensure_loaded().get("kernels", {}).get(kernel_name)
+        return self._lookup_in_entry(kernel_name, entry, dims)
+
+    def _lookup_in_entry(self, kernel_name: str, entry: Optional[dict], dims: dict) -> Optional[dict]:
+        """``lookup`` against an ALREADY-RESOLVED entry, so a caller holding one (``get_or_tune``)
+        does not re-enter ``_ensure_loaded`` -- a second lock acquire plus dict walk -- to fetch it
+        again."""
         if not entry:
             return None
-        regions = entry.get("regions") or []
-        # Strip ONLY the declared axes' constraint keys (<axis>_max/_min/_eq), not
-        # arbitrary payload fields that happen to end in such a suffix (e.g. a
-        # ``block_size_max`` decision field) -- B4: suffix-based strip is a
-        # namespace collision; drive it from the entry's declared ``axes``.
-        constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
-        for region in regions:
-            if _region_matches(region, dims):
-                return {k: v for k, v in region.items() if k not in constraint_keys}
+        for constraints, payload in self._lookup_plan(kernel_name, entry):
+            for axis_name, op, bound in constraints:
+                if axis_name not in dims:
+                    continue  # a region constraint on an axis the caller didn't ask about is unconstrained
+                axis_value = dims[axis_name]
+                if op == _OP_MAX:
+                    if axis_value > bound:
+                        break
+                elif op == _OP_MIN:
+                    if axis_value < bound:
+                        break
+                elif axis_value != bound:  # _OP_EQ
+                    break
+            else:
+                return cast(Optional[dict], payload)
         return None
+
+    def _lookup_plan(self, kernel_name: str, entry: dict) -> list:
+        """Compiled ``[(constraints, payload)]`` plan for one kernel entry, memoized per instance.
+
+        ``lookup`` is the per-launch dispatch decision the whole kernel-tuning subsystem exists to
+        make cheap, and its old shape rebuilt the SAME derived data on every single call: a set
+        comprehension over ``axes x _AXIS_SUFFIXES``, then three f-string keys per axis PER REGION
+        inside the matcher, then a dict comprehension to strip the winner. None of it depends on
+        ``dims``. Compiling it once per entry turns a hit into a tuple walk plus a dict return
+        (measured 4.7-6.3 us -> 0.9-2.0 us, 3-5x).
+
+        ``constraints`` is a tuple of ``(axis_name, op, bound)`` with ``op`` one of the ``_OP_*``
+        codes, built from EVERY region key ending in an axis suffix (matching ``_region_matches``,
+        which keys off the requested dims rather than the declared axes). ``payload`` is the region
+        already stripped of the DECLARED axes' constraint keys only -- the B4 distinction that keeps
+        a decision field like ``block_size_max`` in the returned payload.
+
+        Keyed by kernel name and validated by entry IDENTITY, so replacing an entry (``update``,
+        ``evict``, ``reset``, a reload) invalidates the plan automatically.
+        """
+        cached = self._plan_cache.get(kernel_name)
+        if cached is not None and cached[0] is entry:
+            return cached[1]  # type: ignore[no-any-return]
+        constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
+        plan = []
+        for region in entry.get("regions") or []:
+            constraints = []
+            for key, bound in region.items():
+                if bound is None:
+                    continue  # an absent/None constraint is unconstrained
+                for suffix, op in _SUFFIX_OPS:
+                    if key.endswith(suffix):
+                        constraints.append((key[: -len(suffix)], op, bound))
+                        break
+            payload = {k: v for k, v in region.items() if k not in constraint_keys}
+            plan.append((tuple(constraints), payload))
+        self._plan_cache[kernel_name] = (entry, plan)
+        return plan
+
+    def _invalidate_plan(self, kernel_name: Optional[str] = None) -> None:
+        """Drop the compiled lookup plan for one kernel (or all of them when ``kernel_name`` is
+        None). Cheap insurance on top of the identity check in ``_lookup_plan``: a mutation made
+        IN PLACE on an existing entry keeps its identity, so the writers call this explicitly."""
+        if kernel_name is None:
+            self._plan_cache.clear()
+        else:
+            self._plan_cache.pop(kernel_name, None)
 
     def reset(self) -> None:
         """Drop the in-memory cache; next read reloads from disk. For tests
         + on driver-update invalidation hooks."""
         with self._lock:
             self._loaded = None
+            self._invalidate_plan()
 
     # ----- metadata / eviction (NO auto-evict on read) -----
 
@@ -655,6 +356,7 @@ class KernelTuningCache:
             # so a future staleness detection for this kernel should log again.
             _INVALIDATION_LOGGED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
             present = kernel_name in loaded.get("kernels", {})
+            self._invalidate_plan(kernel_name)
             if present:
                 del loaded["kernels"][kernel_name]
             self._delete_kernel_files(kernel_name)
@@ -668,17 +370,6 @@ class KernelTuningCache:
                         self._log_remote_failure("write", e)
                 return True
             return False
-
-    def _delete_kernel_files(self, kernel_name: str) -> None:
-        """Remove all immutable files for a kernel on disk (used by evict). No-op
-        for in-memory caches. Best-effort; a failed unlink degrades to a stale
-        file the newest-wins reader still resolves correctly after a re-tune."""
-        if self._in_memory or self._path is None:
-            return
-        kdir = _kernel_dir(self._path, kernel_name)
-        for p in _glob.glob(os.path.join(kdir, "*.json")):
-            with contextlib.suppress(OSError):
-                os.remove(p)
 
     # ----- introspection -----
 
@@ -700,386 +391,3 @@ class KernelTuningCache:
             if first_reason is None:
                 first_reason = f"region 0 rejected: {why}"
         return {"matched": False, "region_index": None, "region": None, "reason": first_reason or f"no region matched dims {dims}"}
-
-    # ----- equiv-tol gate (used by update) -----
-
-    def _apply_equiv_gate(self, kernel_name, regions, equiv_tol, hooks=None):
-        """Drop (with a loud warning) any region whose recorded ``max_abs_diff``
-        exceeds ``equiv_tol`` -- SURFACE divergence, never silently substitute a
-        reference. Regions without ``max_abs_diff`` are unvalidated + kept."""
-        kept = []
-        for r in regions:
-            d = r.get("max_abs_diff")
-            if d is not None and d > equiv_tol:
-                caps = {k: v for k, v in r.items() if k.endswith(_AXIS_SUFFIXES)}
-                logger.warning(
-                    "kernel_tuning_cache: %s region %s REJECTED -- max_abs_diff=%.3e > "
-                    "equiv_tol=%.3e. A faster-but-divergent variant is a bug, not a winner; "
-                    "not persisting it.", kernel_name, caps, d, equiv_tol)
-                if hooks is not None:
-                    hooks.winner_chosen(kernel_name, r, f"rejected: diverges {d:.3e}>{equiv_tol:.3e}")
-                continue
-            kept.append(r)
-        return kept
-
-    # ----- orchestration: env -> code_version-checked lookup -> locked sweep -> fallback -----
-
-    def get_or_tune(self, kernel_name: str, *, dims: dict, tuner: Callable,
-                    axes: list[str], fallback, env_key: Optional[str] = None,
-                    code_version: Optional[str] = None, salt: int = 0,
-                    equiv_tol: Optional[float] = None,
-                    hooks: "Optional[TuningHooks]" = None,
-                    once_per_process: bool = True, lock_timeout: float = 900.0,
-                    async_sweep: bool = False):
-        """Unified dispatch collapsing the env -> lookup -> on-miss sweep ->
-        persist -> re-lookup -> fallback flow.
-
-        ``tuner``: zero-arg callable returning a region list (the project sweep).
-        ``fallback``: a value or zero-arg callable (called lazily).
-        ``env_key``: if set and the env var is a non-empty string, short-circuit
-        to that raw string. ``code_version``: when both stored + passed are
-        non-None and differ, the stale entry is bypassed. The once-per-process
-        guard is keyed on (kernel, cache-path) so tests switching
-        PYUTILZ_KERNEL_CACHE_DIR re-tune. Sweeps serialize cross-process."""
-        hk = hooks if hooks is not None else _DEFAULT_HOOKS
-
-        def _fb():
-            """Consult the project-shipped DEFAULT-cache layer before falling back to ``fallback``."""
-            # DEFAULT-cache layer: a project-shipped anonymized (hw-agnostic) tuning, consulted on a local per-host
-            # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
-            # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
-            # took precedence (checked above), so this never overrides a real local result.
-            #
-            # Diagnostic branch-tagging (not just a swallowed exception): a CI-only occurrence of
-            # test_register_default_cache_loads_and_local_miss_returns_default returned the hand
-            # fallback instead of the DEFAULT cache's value, with no local repro despite exhaustive
-            # static review of every function this branch touches (code_version determinism,
-            # _ensure_loaded, lookup, _region_matches -- none raise or mismatch under same-process
-            # execution as far as static reading can show). Logging exactly which branch was taken
-            # (rather than only the previous DEBUG-level swallow) turns the next occurrence into a
-            # one-line diagnosis instead of another blind investigation.
-            dc = _facade()._DEFAULT_CACHE
-            if dc is None:
-                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
-            elif dc is self:
-                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
-            else:
-                try:
-                    if dc._code_version_stale(kernel_name, code_version):
-                        logger.warning(
-                            "DEFAULT-cache consult for kernel %s: code_version stale (requested=%r, stored=%r), falling back",
-                            kernel_name, code_version, dc._ensure_loaded().get("kernels", {}).get(kernel_name, {}).get("code_version"),
-                        )
-                    else:
-                        d = dc.lookup(kernel_name, **dims)
-                        if d is not None:
-                            return d
-                        logger.warning("DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
-                except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
-                    logger.warning("DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
-            return fallback() if callable(fallback) else fallback
-
-        if env_key:
-            forced = os.environ.get(env_key, "").strip()
-            if forced:
-                hk.env_override(kernel_name, forced)
-                return forced
-        # guard_key computed up-front: reused both for the once-per-process sweep guard below AND the
-        # once-per-process invalidation-log guard, so a kernel stuck stale (e.g. a no-op tuner that never
-        # persists a fresh entry) logs the INFO invalidation banner at most once per process, not on every call.
-        guard_key = (kernel_name, self._path or id(self))
-        if self._code_version_stale(kernel_name, code_version):
-            if guard_key not in _INVALIDATION_LOGGED_THIS_PROCESS:
-                _INVALIDATION_LOGGED_THIS_PROCESS.add(guard_key)
-                hk.invalidation(kernel_name, "code_version changed")
-        else:
-            hit = self.lookup(kernel_name, **dims)
-            if hit is not None:
-                hk.cache_hit(kernel_name, dims, hit)
-                return hit
-        hk.cache_miss(kernel_name, dims)
-        with _tuned_guard_lock:
-            if once_per_process and guard_key in _TUNED_THIS_PROCESS:
-                return _fb()
-            if once_per_process:
-                # Claim the guard immediately, atomically with the check above, so a second
-                # thread racing for the same kernel can never observe "not yet tuned" and
-                # spawn a duplicate async sweep / duplicate synchronous sweep-claim attempt.
-                _TUNED_THIS_PROCESS.add(guard_key)
-
-        _sweep_disabled = os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False")
-
-        # ASYNC sweep (opt-in via async_sweep=True; the FIT-TIME path -- TunerSpec.choose + hot-path dispatchers pass
-        # it). The CPU-vs-GPU sweep is EXPENSIVE (hundreds of seconds) and must NEVER run synchronously inside a
-        # caller's fit -- doing so blocks the fit, contaminates its timing, and (if the
-        # process is killed mid-sweep) can wedge every fresh fit on the cross-process tuning lock. Instead: mark the
-        # kernel tuned-this-process, kick the sweep into a background daemon thread, and return the measurement-backed
-        # FALLBACK immediately. The sweep measures on THIS host and writes the cache, so SUBSEQUENT get_or_tune calls
-        # (this process once the thread finishes, and all future processes) return the per-host-OPTIMAL backend -- the
-        # measurement is preserved, just moved off the hot path. The background thread acquires the lock with a SHORT
-        # timeout and GIVES UP if another process is already sweeping (no wedge, no duplicate). One-shot scripts get the
-        # fallback (which they don't benefit from tuning anyway). ``mlframe-tune-kernels`` / ``retune_all`` pass
-        # ``async_sweep=False`` for synchronous, wait-for-result offline tuning.
-        if async_sweep and not _sweep_disabled:
-            _TUNED_THIS_PROCESS.add(guard_key)
-            self._spawn_async_sweep(kernel_name, dims=dims, tuner=tuner, axes=axes, code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
-            hk.winner_chosen(kernel_name, None, "fallback (async sweep dispatched)")
-            return _fb()
-
-        # SYNCHRONOUS path: explicit offline tuning (async_sweep=False) or the disable-sweep escape hatch.
-        # Claim the sweep via an O_EXCL INPROGRESS marker (no filelock, no blocking, no 900s wedge). Win = own the
-        # sweep; lose = another process is already sweeping this (kernel, code_version) -> we DON'T duplicate it, we
-        # re-check for a freshly-landed result and otherwise return the fallback (lock_timeout retained for signature
-        # stability only -- there is no blocking wait to time out anymore).
-        with self._claim_sweep(kernel_name, code_version, hk) as owns:
-            # another process may have tuned it while we were resolving the claim
-            if not self._code_version_stale(kernel_name, code_version):
-                self.reset()
-                hit = self.lookup(kernel_name, **dims)
-                if hit is not None:
-                    return hit
-            if not owns:
-                hk.winner_chosen(kernel_name, None, "fallback (another process is sweeping)")
-                return _fb()
-            _TUNED_THIS_PROCESS.add(guard_key)
-            regions = None if _sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
-            if regions:
-                self.update(kernel_name, axes=axes, regions=regions, code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
-                hk.sweep_end(kernel_name, len(regions))
-                hit = self.lookup(kernel_name, **dims)
-                if hit is not None:
-                    hk.winner_chosen(kernel_name, hit, "from sweep")
-                    return hit
-        hk.winner_chosen(kernel_name, None, "fallback")
-        return _fb()
-
-    def _run_tuner(self, kernel_name: str, tuner: Callable, axes: list, hooks):
-        """Run a project sweep, firing the start hook and swallowing any failure (a sweep error must never
-        break dispatch). Returns the region list or None."""
-        hooks.sweep_start(kernel_name, axes)
-        try:
-            return tuner()
-        except Exception as e:
-            logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
-            return None
-
-    def _spawn_async_sweep(self, kernel_name: str, *, dims, tuner, axes, code_version, salt, equiv_tol, hooks):
-        """Run the sweep in a background daemon thread: measure on this host + write the cache for SUBSEQUENT
-        calls, without ever blocking the caller's fit. Claims the sweep via an O_EXCL INPROGRESS marker and gives up
-        if another process is already sweeping this kernel -> a crashed/killed sweep can never wedge a fresh fit
-        (the stale marker is steal-able), and there is at most one sweep per (kernel, code_version) across processes."""
-        def _run():
-            """Background-thread body: debounce, wait for idle hardware, run the sweep, and persist its result."""
-            try:
-                # Debounce: wait before starting so the triggering fit gets past its bursty start, then the
-                # busy-check sees the real device load (and we never grab the device the instant it's needed).
-                delay = _async_sweep_start_delay()
-                if delay:
-                    time.sleep(delay)
-                # WAIT for the hardware to go idle before benchmarking -- an async sweep that contends with
-                # the caller's fit both taxes it (~18% wall) AND records contended timings as the optimum.
-                # But do NOT abandon: the sweep is TRIGGERED by a fit, and a fit keeps the device busy, so a
-                # defer-and-return would mean the cache NEVER populates on any host that actually fits (the
-                # once-per-process guard is already set, so this process won't retry). Instead wait for an
-                # idle gap up to a bounded budget; if the host stays busy that long (back-to-back fits),
-                # proceed ANYWAY -- one mildly-contended sweep that populates the per-host cache beats never
-                # tuning. The offline CLI remains the clean path; this is the best-effort fit-time fallback.
-                try:
-                    from ..benchmark import wait_for_idle_hardware
-                    idle = wait_for_idle_hardware(max_wait=_async_sweep_idle_max_wait(), poll=2.0)
-                except Exception:
-                    idle = True
-                if not idle:
-                    logger.debug("kernel_tuning_cache: hardware still busy after wait; sweeping %s anyway "
-                                 "(populate cache rather than starve tuning)", kernel_name)
-                with self._claim_sweep(kernel_name, code_version, hooks) as owns:
-                    if not owns:
-                        return  # another process is already tuning this kernel; let it
-                    self.reset()  # pick up any result a peer landed since we were spawned
-                    if not self._code_version_stale(kernel_name, code_version) and self.lookup(kernel_name, **dims) is not None:
-                        return  # tuned while we claimed
-                    regions = self._run_tuner(kernel_name, tuner, axes, hooks)
-                    if regions:
-                        self.update(kernel_name, axes=axes, regions=list(regions), code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hooks)
-                        hooks.sweep_end(kernel_name, len(regions))
-            except Exception as e:  # a background sweep must never surface
-                logger.debug("kernel_tuning_cache: async sweep for %s crashed: %s", kernel_name, e)
-        threading.Thread(target=_run, name="ktc-sweep-" + _slug(kernel_name), daemon=True).start()
-
-    def code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
-        """Public: True iff a stored code_version exists and differs from the live one.
-
-        Stable entry point for callers (e.g. the tuner registry) that must decide
-        whether a cached tuning is still valid without reaching into private state."""
-        return self._code_version_stale(kernel_name, code_version)
-
-    def _code_version_stale(self, kernel_name: str, code_version: Optional[str]) -> bool:
-        """True iff a stored code_version exists and differs from the live one."""
-        if code_version is None:
-            return False
-        data = self._ensure_loaded()
-        stored = data.get("kernels", {}).get(kernel_name, {}).get("code_version")
-        return stored is not None and stored != code_version
-
-    def _marker_path(self, kernel_name: str, code_version: Optional[str]) -> str:
-        """Path to the per-(kernel, code_version) INPROGRESS sweep marker. Callers must have
-        already guarded on ``self._path is not None`` (in-memory caches have no marker path)."""
-        assert self._path is not None, "_marker_path() requires a non-in-memory cache"
-        cv = _slug(str(code_version or _NO_CODE_VERSION), maxlen=70)
-        return os.path.join(_kernel_dir(self._path, kernel_name), f"{cv}.INPROGRESS")
-
-    @contextlib.contextmanager
-    def _claim_sweep(self, kernel_name: str, code_version: Optional[str], hooks):
-        """Singleton-without-blocking: yield True iff THIS process owns the sweep
-        for ``(kernel, code_version)``, False if another live process already does.
-
-        Atomically create the INPROGRESS marker via ``os.open(O_CREAT|O_EXCL)``.
-        Win -> own it (marker removed on exit). ``EEXIST`` -> read the marker's
-        ``pid`` + ``start_ts``: if the owner pid is dead OR the start_ts is older
-        than the max-sweep budget, STEAL it (unlink + recreate) and own; else give
-        up (yield False) immediately -- no filelock, no timeout, no 900s wedge. A
-        crashed sweeper self-heals after at most one budget window. No-op (yields
-        True) for in-memory caches."""
-        if self._in_memory or self._path is None:
-            yield True
-            return
-        marker = self._marker_path(kernel_name, code_version)
-        os.makedirs(os.path.dirname(marker), exist_ok=True)
-        owns = self._try_create_marker(marker)
-        if not owns:
-            owns = self._maybe_steal_marker(marker, kernel_name, hooks)
-        try:
-            yield owns
-        finally:
-            if owns:
-                with contextlib.suppress(OSError):
-                    os.remove(marker)
-
-    def _try_create_marker(self, marker: str) -> bool:
-        """Atomically PUBLISH the marker WITH its content, stamping pid + start_ts.
-        Returns True on success, False if it already exists.
-
-        The marker must never be observable in an EMPTY state: the old code did
-        ``os.open(O_CREAT|O_EXCL)`` then a SEPARATE ``os.write`` of the payload, so
-        between those two syscalls a concurrent loser could read a zero-byte marker,
-        parse ``{}`` -> ``pid=0`` (``_pid_alive(0)`` is False) + ``start_ts=0``
-        (``age=inf > budget``), judge it STALE, and STEAL it -> two sweepers run. The
-        window is sub-microsecond on an idle host but the OS scheduler widens it on a
-        contended runner (observed only on the 2-core CI box: "expected one sweep,
-        got 2"). Fix: write the payload to a per-attempt temp file, then ``os.link``
-        it into place -- an atomic, exclusive publish (fails if the marker exists), so
-        the marker is only ever visible fully-formed."""
-        payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(), "host": hw_fingerprint()}).encode("utf-8")
-        # Staging path must be UNIQUE per concurrent claimer: same-process THREADS share os.getpid(), and
-        # time.time_ns() can collide on a coarse-resolution clock (Windows), so (pid, tid, ns) -- tid disambiguates
-        # concurrent threads, ns disambiguates a thread's sequential retries -- guarantees no two live claimers
-        # pick the same tmp (a collision would make the loser's O_EXCL fail and the degrade-path wrongly own).
-        tmp = f"{marker}.tmp.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}"
-        try:
-            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except OSError as e:
-            logger.debug("kernel_tuning_cache: marker tmp create failed (%s); sweeping without claim", e)
-            return True  # can't stage -> behave as owner (degrade to no-singleton, never wedge)
-        try:
-            os.write(fd, payload)
-        except OSError:
-            pass
-        finally:
-            os.close(fd)
-        try:
-            # Atomic exclusive publish: link() fails with FileExistsError if the marker already exists,
-            # giving the same single-winner guarantee as O_EXCL but with the content already in place.
-            os.link(tmp, marker)
-            return True
-        except FileExistsError:
-            return False
-        except OSError as e:
-            # Hardlinks unsupported on this fs (rare): fall back to the legacy O_EXCL-then-write path,
-            # which still serialises winners; the empty-marker steal window reappears only there.
-            logger.debug("kernel_tuning_cache: marker link unsupported (%s); O_EXCL fallback", e)
-            try:
-                fd2 = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                return False
-            except OSError:
-                return True
-            try:
-                os.write(fd2, payload)
-            except OSError:
-                pass
-            finally:
-                os.close(fd2)
-            return True
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-
-    def _decide_steal(self, path: str) -> tuple[bool, int, float, bool, float]:
-        """Read a claim/marker JSON file at ``path`` and decide whether it's stealable.
-
-        2026-08-02 near-duplicate-function-body finding: _maybe_steal_migration_claim and
-        _maybe_steal_marker independently duplicated this whole read-and-decide step; extracted
-        so the two callers differ only in what they do with a "yes, steal it" verdict (marker
-        removal, ``hooks`` notification, log message wording).
-
-        Returns ``(should_steal, pid, age, owner_dead, budget)``. Steal (True) iff the owning
-        pid is dead OR the claim/marker is older than the max-sweep budget; else give up
-        (False). INCOMPLETE-MARKER GUARD: a marker/claim missing pid/start_ts is either a peer
-        caught mid-creation (the legacy O_EXCL-then-write fallback's empty-file window) or a
-        process that crashed between create and write. Do NOT steal it on the empty-payload
-        heuristic alone (pid=0 -> _pid_alive False; start_ts=0 -> age=inf > budget) -- that is
-        exactly the double-sweep race. Fall back to the file mtime as the age: a FRESH
-        incomplete marker (within budget) means a live peer is publishing -> give up; only an
-        mtime-stale one is a genuine crash to steal.
-        """
-        try:
-            with open(path, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            info = {}
-        pid = int(info.get("pid", 0) or 0)
-        start_ts = float(info.get("start_ts", 0.0) or 0.0)
-        budget = _sweep_budget_seconds()
-        if pid <= 0 or start_ts <= 0.0:
-            try:
-                age = time.time() - os.path.getmtime(path)
-            except OSError:
-                age = float("inf")
-            if age <= budget:
-                return False, pid, age, False, budget  # a peer is mid-creation -> let it finish
-        else:
-            age = time.time() - start_ts
-        same_host = info.get("host") in (None, hw_fingerprint())
-        # Only trust the pid-liveness probe for a marker/claim written on THIS host.
-        owner_dead = same_host and not _pid_alive(pid)
-        if not (owner_dead or age > budget):
-            return False, pid, age, owner_dead, budget  # a live, in-budget owner -> give up
-        return True, pid, age, owner_dead, budget
-
-    def _maybe_steal_migration_claim(self, claim: str) -> bool:
-        """Like ``_maybe_steal_marker`` but for the legacy-migration claim (no ``hooks``
-        callback, no kernel_name -- the migration claim is process-global, not per-kernel)."""
-        should_steal, pid, age, owner_dead, budget = self._decide_steal(claim)
-        if not should_steal:
-            return False
-        logger.info("kernel_tuning_cache: stealing stale migration claim (pid=%s alive=%s age=%.0fs budget=%.0fs)", pid, not owner_dead, age, budget)
-        with contextlib.suppress(OSError):
-            os.remove(claim)
-        return self._try_create_marker(claim)
-
-    def _maybe_steal_marker(self, marker: str, kernel_name: str, hooks) -> bool:
-        """An existing marker was found. Steal it (return True) iff the owning pid
-        is dead OR start_ts is older than the max-sweep budget; else give up
-        (False). Stealing is itself racy-safe: we remove the stale marker and
-        re-create via O_EXCL; if a third process beats us to the recreate, we lose
-        the claim (return False) -- correct, exactly one sweeper wins."""
-        should_steal, pid, age, owner_dead, budget = self._decide_steal(marker)
-        if not should_steal:
-            return False
-        logger.info(
-            "kernel_tuning_cache: stealing stale sweep marker for %s " "(pid=%s alive=%s age=%.0fs budget=%.0fs)", kernel_name, pid, not owner_dead, age, budget
-        )
-        hooks.concurrent_sweep_detected(kernel_name)
-        with contextlib.suppress(OSError):
-            os.remove(marker)
-        return self._try_create_marker(marker)

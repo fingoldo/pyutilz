@@ -68,6 +68,11 @@ cd pyutilz
 pip install -e .[all,dev]
 pip install -r requirements-dev.txt
 
+# pre-commit itself and vulture are NOT declared in any extras group or requirements file --
+# install them explicitly, or `pre-commit install` fails on the next line and the blocking
+# `vulture-blocking` hook fails on your first commit with "No module named vulture".
+pip install pre-commit vulture
+
 # Install the pre-commit hooks (runs the meta-test suite + linters on every commit)
 pre-commit install
 
@@ -84,8 +89,26 @@ pip install -e .[pandas]      # For pandas development
 pip install -e .[database]    # For database development
 pip install -e .[web]         # For web scraping development
 pip install -e .[dev]         # For development tools only
+pip install -e .[docs]        # mkdocs-material, to build/preview the documentation site
 pip install -r requirements-dev.txt   # py-ci-shared (needed by the pre-commit hooks)
+pip install pre-commit vulture        # not covered by any extra or requirements file
 ```
+
+`[all]` does NOT include `[dash]`, `[prefect]`, `[tensorflow]` or `[gpu]` — see the `all` group's
+comment in `pyproject.toml` for why, and add the extra explicitly if you are working on
+`dev/dashlib.py` or `system/scheduling/prefect.py`.
+
+### Building the documentation
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve                  # live-reloading preview on http://127.0.0.1:8000
+mkdocs build                  # mkdocs.yml sets `strict: true`, so a broken internal link
+                              # or a missing nav target fails the build, locally and in CI
+```
+
+The `docs` workflow builds the site on every PR and deploys it to GitHub Pages on pushes to
+`master`.
 
 ## Code Standards
 
@@ -174,7 +197,7 @@ pytest tests/test_pandaslib.py
 pytest tests/test_dtypes_regression.py::test_optimize_dtypes_does_not_truncate_fractional_object_column
 
 # Run with coverage
-pytest --cov=. --cov-report=html --cov-report=term-missing
+pytest --cov=src/pyutilz --cov-report=html --cov-report=term-missing
 
 # View coverage report
 open htmlcov/index.html  # macOS/Linux
@@ -197,7 +220,7 @@ Example test:
 
 ```python
 import pytest
-from pyutilz.pandaslib import optimize_dtypes
+from pyutilz.data.pandaslib import optimize_dtypes
 
 def test_optimize_dtypes():
     """Test that optimize_dtypes reduces memory usage."""
@@ -217,19 +240,25 @@ def test_optimize_dtypes():
 
 ### Test Categories
 
-Mark tests with appropriate markers:
+Exactly three markers are registered, in `pyproject.toml`'s `[tool.pytest.ini_options] markers`:
+`slow`, `gpu` and `live`. There is no `integration` marker — `pytest -m integration` selects nothing.
+Register a new marker in `pyproject.toml` before using it: `addopts` carries `--strict-markers`, and
+wherever that flag takes effect an unregistered marker is not a warning but a collection ERROR that
+aborts the whole session, not just the marked test. (Measured on pytest 9.0.1: the flag is enforced
+when passed on the command line, while the same flag coming from `addopts` currently only produces a
+`PytestUnknownMarkWarning` — don't rely on that, it is a pytest-version detail, not a contract.)
 
 ```python
 @pytest.mark.slow
 def test_expensive_operation():
     pass
 
-@pytest.mark.integration
-def test_database_integration():
-    pass
-
 @pytest.mark.gpu
 def test_gpu_operation():
+    pass
+
+@pytest.mark.live          # real provider API calls; skipped unless --run-live is passed
+def test_openrouter_round_trip():
     pass
 ```
 
@@ -237,7 +266,8 @@ Run specific categories:
 
 ```bash
 pytest -m "not slow"        # Skip slow tests
-pytest -m integration       # Only integration tests
+pytest -m gpu               # Only GPU tests (deselected in CI -- no GPU runner)
+pytest --run-live -m live   # Only live-API tests (costs real money; opt-in)
 ```
 
 ## Security
@@ -360,7 +390,11 @@ def your_function():
 
 ## Performance Considerations
 
-- **Benchmark**: Use `tests/benchmark_*.py` scripts to measure performance
+- **Benchmark**: Use the standalone `_benchmarks/bench_*.py` scripts (`python -m _benchmarks.bench_pandaslib`)
+  to measure performance. They are never collected by pytest/CI. Don't confuse them with the
+  similarly named pytest suites `tests/test_kernel_tuning_benchmark.py` and
+  `tests/test_dev_benchmarking.py`, which are real CI-collected coverage for two unrelated modules —
+  see TESTING.md's "Test layout" section, which enumerates the benchmark surfaces.
 - **Profile**: Use `cProfile` or `line_profiler` for bottlenecks
 - **Document**: Note performance improvements in CHANGELOG.md
 - **Verify**: Include benchmark results in PR description

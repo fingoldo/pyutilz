@@ -6,6 +6,16 @@ from __future__ import annotations
 # decision payload. ``lookup`` strips exactly these suffixes from its return.
 _AXIS_SUFFIXES = ("_max", "_min", "_eq")
 
+# Integer op codes for a COMPILED constraint (see ``KernelTuningCache._lookup_plan``). The hot
+# lookup compares small ints instead of re-deriving three f-string keys per axis per region.
+_OP_MAX = 0
+_OP_MIN = 1
+_OP_EQ = 2
+
+# Suffix -> op code, in the order a region key must be tested. "_max"/"_min"/"_eq" are mutually
+# exclusive endings, so the first match wins.
+_SUFFIX_OPS = (("_max", _OP_MAX), ("_min", _OP_MIN), ("_eq", _OP_EQ))
+
 
 def _region_matches(region: dict, dims: dict) -> bool:
     """A region matches a dims dict iff, for every requested dim, the region's

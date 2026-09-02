@@ -1949,7 +1949,7 @@ class TestSubpackageSplitSensor:
         from pyutilz.llm import factory as factory_module
 
         assert "openrouter" in factory_module._PROVIDER_MODULES
-        mod_path, cls_name = factory_module._PROVIDER_MODULES["openrouter"]
+        mod_path, cls_name, _key_attr = factory_module._PROVIDER_MODULES["openrouter"]
         assert mod_path == "pyutilz.llm.openrouter_provider"
         mod = importlib.import_module(mod_path)
         assert getattr(mod, cls_name).__name__ == "OpenRouterProvider"

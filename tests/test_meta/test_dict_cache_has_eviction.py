@@ -21,7 +21,7 @@ constant declared next to the dict, not literally inside the same function, stil
 Flag if neither exists.
 
 FP risk (confirmed by running this against the current codebase before finalizing): pure
-registration registries (``code_audit.registry.SCANNERS``, ``kernel_tuning.registry._REGISTRY``)
+registration registries (``code_audit.registry._SCANNERS``, ``kernel_tuning.registry._REGISTRY``)
 match the "insert site with no removal" shape structurally, but their key space is bounded by a
 small, fixed, developer-controlled set (the number of scanner/tuner modules registered at
 import/discovery time), not unbounded runtime/user input -- the actual bug class this test guards
@@ -49,7 +49,7 @@ _FRESHNESS_RE = re.compile(r"ttl|freshness|expir|max_age|_max_size|maxsize", re.
 # "path/to/file.py:name" -> reason this dict's insert-only shape is safe (bounded key space by
 # construction, not unbounded runtime/user input).
 _PERMITTED_UNBOUNDED_DICTS: dict[str, str] = {
-    "src/pyutilz/dev/code_audit/registry.py:SCANNERS": "plugin registry populated by register() "
+    "src/pyutilz/dev/code_audit/registry.py:_SCANNERS": "plugin registry populated by register() "
     "calls from a small, fixed set of scanner modules at import time -- key space is 'number of "
     "scanner files in this codebase', not runtime/user-driven input.",
     "src/pyutilz/performance/kernel_tuning/registry.py:_REGISTRY": "tuner-spec registry "

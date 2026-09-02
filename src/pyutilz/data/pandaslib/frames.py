@@ -22,6 +22,17 @@ from ._common import (
     logger,
 )
 
+# PROJECT IDIOM for a re-export package's submodules (see also pyutilz/text/strings/_logproxy.py,
+# which applies the same rule through a dedicated proxy object):
+#   `import <parent> as _facade`   -- ALLOWED, and load-bearing.
+#   `from <parent> import <name>`  -- FORBIDDEN at module top level.
+# A re-export package's __init__ imports its submodules, so a submodule importing the parent back is
+# a genuine cycle. Plain `import x` binds the PARTIALLY-INITIALISED sys.modules entry and defers every
+# attribute lookup to call time, so it survives; `from x import name` needs the name to exist at import
+# time and raises "cannot import name ... (most likely due to a circular import)". Deferring the lookup
+# is also what makes the name patchable: a test setting `pyutilz.data.pandaslib.HAS_IPYTHON` is seen here,
+# where a from-import would have snapshotted the original value. tests/test_meta/test_reexport_package_idiom.py
+# enforces this mechanically.
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection for HAS_IPYTHON/display/Markdown
 
 
@@ -234,6 +245,20 @@ def showcase_df_columns(
             if use_print or not _facade.HAS_IPYTHON:
                 print(f"{var.upper()} {dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
+            # Rare/uninformative analysis reads exactly the same two columns the display block
+            # does, so convert each Arrow column to python ONCE and share it. Both blocks used to
+            # call ``.to_list()`` independently -- two full Arrow-to-python conversions of the same
+            # unchanged frame per column. `vc` is grouped under the same dropna treatment as
+            # n_unique would be (drop_nulls() before group_by when dropna=True, null counted as
+            # its own group otherwise), so vc.height already IS n_unique -- no second full-column
+            # scan needed.
+            n_unique = vc.height
+            wants_display = n_unique > 0 and not (max_vars is not None and max_vars == 0)
+            wants_rare = 0 < n_unique <= max_cat_uniq_qty
+            if wants_display or wants_rare:
+                vals = vc.get_column(var).to_list()
+                counts = vc.get_column("count").to_list()
+
             if max_vars is not None and max_vars == 0:
                 print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             elif vc.height == 0:
@@ -241,8 +266,6 @@ def showcase_df_columns(
                 stats.index.name = var
                 print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
             else:
-                vals = vc.get_column(var).to_list()
-                counts = vc.get_column("count").to_list()
                 stats = pd.Series(counts, index=vals, name="count")
                 stats.index.name = var
                 if max_vars is not None and max_vars > 0:
@@ -250,14 +273,15 @@ def showcase_df_columns(
                 else:
                     print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
 
-            # Rare/uninformative analysis. `vc` is grouped under the same dropna treatment as
-            # n_unique would be (drop_nulls() before group_by when dropna=True, null counted as
-            # its own group otherwise), so vc.height already IS n_unique -- no second full-column
-            # scan needed.
-            n_unique = vc.height
-            if n_unique <= max_cat_uniq_qty and vc.height > 0:
-                rare_mask = vc.get_column("count").to_list()
-                rare_vals = vc.get_column(var).to_list()
+            # bench-attempt-rejected (2026-09-02): doing the rare filter in polars
+            # (vc.filter(pl.col("count") <= threshold)) instead of over the python lists. Rejected on
+            # reading, not timing: the display block above needs the FULL lists whenever max_vars != 0,
+            # so a polars filter would ADD a pass over the frame rather than remove one. The measured
+            # win here came from sharing the single conversion (16.9/17.7/13.4 ms of a 250/315/265 ms
+            # call, 40 cols x 5000 uniques), which the shared vals/counts above already banks.
+            if wants_rare:
+                rare_mask = counts
+                rare_vals = vals
                 col_total = sum(rare_mask)
                 rare_threshold = max_unique_percent * col_total
                 col_rare = [v for v, c in zip(rare_vals, rare_mask) if c <= rare_threshold]

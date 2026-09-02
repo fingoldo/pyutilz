@@ -119,6 +119,46 @@ def wait_for_idle_hardware(threshold: Optional[float] = None, *, poll: float = 0
     return True
 
 
+def _noop_sync() -> None:
+    """Do nothing -- the sync hook used when GPU synchronization is switched off."""
+    return None
+
+
+def _resolve_gpu_sync(concurrency: int) -> Callable[[], None]:
+    """Return the zero-arg device-synchronization hook to call before each timer stop.
+
+    ``concurrency == 1`` reuses the shared ``pyutilz.dev.benchmarking.synchronize_gpu_if_available``
+    primitive (a null-stream sync) rather than growing a second copy of it here. Under
+    ``concurrency > 1`` a null-stream sync is the WRONG instrument: it blocks on every OTHER
+    thread's pending work too, so each thread's sample absorbs its peers' kernels and the very
+    contention the concurrent path exists to measure is smeared across all of them. There the honest
+    primitive is a cupy ``Event`` recorded and waited on by the timing thread itself, which
+    completes when the work submitted UP TO THAT POINT has finished. Falls back to the null-stream
+    sync when cupy is absent (then it is a cheap no-op anyway)."""
+    try:
+        from pyutilz.dev.benchmarking import synchronize_gpu_if_available
+    except Exception as e:  # pragma: no cover - defensive: the sibling module is always importable
+        logger.debug("time_backend: could not import synchronize_gpu_if_available (%s), GPU timings will NOT be synchronized", e)
+        return _noop_sync
+    if concurrency <= 1:
+        return synchronize_gpu_if_available
+    try:
+        import cupy as _cp
+    except Exception:
+        return synchronize_gpu_if_available
+
+    def _event_sync() -> None:
+        """Block the CALLING thread until the device work it has submitted so far completes."""
+        try:
+            ev = _cp.cuda.Event()
+            ev.record()
+            ev.synchronize()
+        except Exception as e:  # nosec B110 - a sync helper must never fail the benchmark it guards
+            logger.debug("time_backend: per-thread cuda Event sync failed (%s), sample may be launch-only", e)
+
+    return _event_sync
+
+
 def time_backend(
     fn: Callable,
     make_inputs: Callable[[], Sequence],
@@ -131,6 +171,7 @@ def time_backend(
     hw_idle_threshold: Optional[float] = None,
     hw_idle_poll: float = 0.5,
     hw_idle_max_wait: float = 30.0,
+    synchronize_gpu: bool = True,
     timer: Callable[[], float] = time.perf_counter,
 ) -> float:
     """Median per-call wall time (ms) of ``fn(*make_inputs())`` under realistic conditions.
@@ -159,6 +200,16 @@ def time_backend(
         When ``True`` (default) every timed call gets new inputs from ``make_inputs``; when ``False``
         a single input set is built once and reused (the legacy warm-buffer behaviour -- kept only
         for explicit A/B of the reuse bias).
+    synchronize_gpu
+        When ``True`` (the DEFAULT) the device is synchronized inside the timed region, immediately
+        before the timer stops, so an asynchronous cupy / numba.cuda kernel is timed at COMPLETION
+        rather than at LAUNCH. Without it a GPU backend's ``wall_ms`` is pure Python launch overhead
+        and the GPU wins every sweep unconditionally -- measured on this repo's box with a cupy
+        4000x4000 float32 matmul: 0.0366 ms unsynchronized vs 69.42 ms synchronized, a 1894x
+        under-count, which is then PERSISTED into the on-disk tuning cache and reused forever. The
+        warmup loop is synchronized too (an unsynchronized warmup can return before the first launch
+        has executed, so it absorbs no JIT / cupy-compile cost at all). Turn off only when timing
+        code that provably never touches a GPU and the (microsecond, empty-stream) sync shows up.
     timer
         Monotonic timer; overridable for tests.
 
@@ -170,6 +221,7 @@ def time_backend(
     if n_iters < 1:
         raise ValueError("n_iters must be >= 1")
     concurrency = max(1, int(concurrency))
+    _gpu_sync = _resolve_gpu_sync(concurrency) if synchronize_gpu else _noop_sync
 
     def _prebuild(count: int) -> list:
         """Build `count` argument tuples via `make_inputs`: fresh per entry, or one shared tuple repeated, per `fresh_inputs_per_call`."""
@@ -181,6 +233,10 @@ def time_backend(
     try:
         for _ in range(max(0, int(warmup))):
             fn(*make_inputs())
+        # Synchronize AFTER the warmup loop: an unsynchronized warmup can return before the first
+        # launch has even executed, so it absorbs none of the JIT / cupy-compile cost it exists for
+        # and that cost lands in the first TIMED sample instead.
+        _gpu_sync()
     except Exception:
         # A raising backend (GPU OOM, unsupported compute capability, an under-provisioned
         # block size) must not poison the whole sweep -- callers rely on the OTHER backends'
@@ -199,6 +255,9 @@ def time_backend(
                 wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll, max_wait=hw_idle_max_wait, timer=timer)
             t0 = timer()
             fn(*args)
+            # INSIDE the timed region, before the close: a CUDA launch returns immediately, so a
+            # timer stopped here without a device sync measures the launch, not the compute.
+            _gpu_sync()
             local.append(timer() - t0)
         out.extend(local)
 

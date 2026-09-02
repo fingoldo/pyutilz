@@ -13,22 +13,39 @@ logger = logging.getLogger(__name__)
 from pyutilz.core.pythonlib import ensure_installed
 
 # ----------------------------------------------------------------------------------------------------------------------------
-# Normal Imports (kept for public-surface backward compatibility)
+# Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from typing import Any, Iterable, List, Optional, Sequence, Union
 
-import pandas as pd, numpy as np
-import string
-import json
-
-from collections import OrderedDict
-import unicodedata
-import re
-import math
-from collections import defaultdict, deque, Counter
-
 from pyutilz.core.pythonlib import is_float
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# Names this facade historically re-exported but does not itself use: pandas/numpy and a handful
+# of stdlib modules. They stay REACHABLE (``pyutilz.text.strings.pd``) for backward compatibility
+# but are resolved lazily and are NOT in ``__all__``, because:
+#  * star-importing them injected ``re``/``json``/``math``/``string``/``Counter``... into the
+#    caller's namespace, silently shadowing same-named local bindings (a caller's orjson shim
+#    bound to ``json``, say) with no error;
+#  * the eager ``import pandas as pd, numpy as np`` cost ~1.6 s at import time for a pure
+#    string-manipulation package that references neither.
+# ----------------------------------------------------------------------------------------------------------------------------
+
+# Annotated as a string literal: this module has no from __future__ import annotations, and the
+# PEP 604 union would be evaluated at runtime on the oldest supported interpreter.
+_LAZY_REEXPORTS: "dict[str, tuple[str, Optional[str]]]" = {
+    "pd": ("pandas", None),
+    "np": ("numpy", None),
+    "string": ("string", None),
+    "json": ("json", None),
+    "unicodedata": ("unicodedata", None),
+    "re": ("re", None),
+    "math": ("math", None),
+    "OrderedDict": ("collections", "OrderedDict"),
+    "defaultdict": ("collections", "defaultdict"),
+    "deque": ("collections", "deque"),
+    "Counter": ("collections", "Counter"),
+}
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Re-export public API from cohesive submodules (subpackage split of the former 1070-LOC strings.py).
@@ -123,8 +140,6 @@ __all__ = [
     "logger",
     "ensure_installed",
     "Any", "Iterable", "List", "Optional", "Sequence", "Union",
-    "pd", "np", "string", "json",
-    "OrderedDict", "unicodedata", "re", "math", "defaultdict", "deque", "Counter",
     "is_float",
     "json_serial", "sub_elem", "jsonize_atrtributes", "remove_json_attributes",
     "leave_json_attributes", "extract_json_attribute", "remove_json_empty_attributes",
@@ -150,11 +165,19 @@ def __getattr__(name):
         from . import webtext as _webtext
 
         return getattr(_webtext, name)
+    if name in _LAZY_REEXPORTS:
+        import importlib
+
+        mod_name, attr = _LAZY_REEXPORTS[name]
+        mod = importlib.import_module(mod_name)
+        value = mod if attr is None else getattr(mod, attr)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__():
-    return sorted(set(globals()) | _LAZY_WEBTEXT_GLOBALS)
+    return sorted(set(globals()) | _LAZY_WEBTEXT_GLOBALS | set(_LAZY_REEXPORTS))
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # MAIN

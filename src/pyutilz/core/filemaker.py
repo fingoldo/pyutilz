@@ -71,7 +71,14 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
             response_field = get_attr(res, "response", {})
             def_token = get_attr(response_field if isinstance(response_field, dict) else {}, "token")
             if not def_token or not isinstance(def_token, str):
-                logger.warning("Empty filemaker session token: %s", res)
+                # Log the response's SHAPE only, never its content: this branch fires exactly when the
+                # token is not a str at response.token -- which includes a deployment returning a live
+                # token under a different key/nesting, so `res` may still carry the bearer token itself.
+                # Logs are durable and aggregated; credentials must not reach them.
+                logger.warning(
+                    "Empty/invalid filemaker session token; response keys=%s",
+                    sorted(res) if isinstance(res, dict) else type(res).__name__,
+                )
             else:
                 web.connect(m_template_headers={"Authorization": "Bearer " + def_token, "Content-Type": "application/json"})
                 return def_token

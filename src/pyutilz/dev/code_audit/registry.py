@@ -66,19 +66,19 @@ from .import_cycles import scan_import_cycles
 # --- registry -----------------------------------------------------------
 
 
-SCANNERS: dict[str, Callable[..., list[Finding]]] = {}
+_SCANNERS: dict[str, Callable[..., list[Finding]]] = {}
 
 
 def register_scanner(name: str, fn: Callable[..., list[Finding]], *, allow_override: bool = False) -> None:
-    """Register a scanner under ``name`` in the shared ``SCANNERS`` registry.
+    """Register a scanner under ``name`` in the shared scanner registry.
 
     Raises ``ValueError`` if ``name`` already has a registered scanner, unless
     ``allow_override=True`` -- prevents a downstream project's own scanner (or a stray
     re-import) from silently replacing a built-in check under its name.
     """
-    if not allow_override and name in SCANNERS:
+    if not allow_override and name in _SCANNERS:
         raise ValueError(f"scanner {name!r} is already registered; pass allow_override=True to replace it")
-    SCANNERS[name] = fn
+    _SCANNERS[name] = fn
 
 
 register_scanner("mutable_default", scan_mutable_defaults)
@@ -189,10 +189,11 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
 
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     """Return a COPY of the scanner registry (mirrors kernel_tuning/registry.py's
-    ``get_registry()`` pattern) -- prefer this over importing ``SCANNERS`` directly when you only
-    need to read the registry, so an accidental mutation (``get_scanners().pop(...)``) can't
-    corrupt the shared dict for every subsequent ``run_all()`` call in the same process."""
-    return dict(SCANNERS)
+    ``get_registry()`` pattern) -- the ONLY supported way to read the registry, so an accidental
+    mutation (``get_scanners().pop(...)``) can't corrupt the shared dict for every subsequent
+    ``run_all()`` call in the same process. Writes go through ``register_scanner()``, whose
+    duplicate-name guard a direct ``_SCANNERS[name] = fn`` assignment would bypass."""
+    return dict(_SCANNERS)
 
 
 def _run_one(args: tuple[str, Path, frozenset[str]]) -> list[Finding]:
@@ -200,7 +201,7 @@ def _run_one(args: tuple[str, Path, frozenset[str]]) -> list[Finding]:
     scanner and returns its findings. A bound/local closure can't be pickled for the
     cross-process call, so this indirection is required, not just style."""
     name, root, exclude_dirs = args
-    return SCANNERS[name](root, exclude_dirs=exclude_dirs)
+    return _SCANNERS[name](root, exclude_dirs=exclude_dirs)
 
 
 # Below this many scanners, process-pool startup (import pyutilz + its scanner modules in
@@ -263,10 +264,10 @@ def run_all(
     (workers don't share memory), a real but much smaller cost than the AST-walk time saved
     by running scanners concurrently across cores.
     """
-    selected = [n for n in SCANNERS if n not in OPT_IN_ONLY] if checks is None else list(checks)
+    selected = [n for n in _SCANNERS if n not in OPT_IN_ONLY] if checks is None else list(checks)
     for name in selected:
-        if name not in SCANNERS:
-            raise ValueError(f"unknown check {name!r}; available: {sorted(SCANNERS)}")
+        if name not in _SCANNERS:
+            raise ValueError(f"unknown check {name!r}; available: {sorted(_SCANNERS)}")
 
     out: list[Finding] = []
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
@@ -281,8 +282,28 @@ def run_all(
                 out.extend(findings)
     else:
         for name in selected:
-            out.extend(SCANNERS[name](root, exclude_dirs=exclude_dirs))
+            out.extend(_SCANNERS[name](root, exclude_dirs=exclude_dirs))
 
     sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
     out.sort(key=lambda f: (sev_order.get(f.severity, 99), f.check, f.file, f.line))
     return out
+
+
+def __getattr__(name: str) -> dict[str, Callable[..., list[Finding]]]:
+    """Deprecated read-only shim for the former public ``SCANNERS`` name (PEP 562).
+
+    Returns a COPY: the registry is now private precisely because a direct handle let a caller
+    ``pop()`` a built-in check for the rest of the process, or assign a replacement that
+    ``register_scanner``'s duplicate-name guard would have rejected. Use ``get_scanners()`` /
+    ``register_scanner()``.
+    """
+    if name == "SCANNERS":
+        import warnings
+
+        warnings.warn(
+            "code_audit.registry.SCANNERS is deprecated and returns a copy; " "use get_scanners() to read and register_scanner() to write.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return dict(_SCANNERS)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

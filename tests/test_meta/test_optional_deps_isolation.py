@@ -73,7 +73,9 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # unguarded module-level import in dev/dashlib.py or system/scheduling/prefect.py could ship
     # undeclared exactly the way the 2026-07-21 bugs did. _EXTRAS_WITHOUT_MASKING_SCENARIO below
     # now pins the dict against pyproject.toml so a newly ADDED extra cannot be forgotten either.
-    "dash": ["flask", "dash", "dash_bootstrap_components"],
+    # pydantic is listed here as well as under "llm": dash >= 4 depends on it directly, so a real
+    # `pip install pyutilz[dash]` always brings it in and masking it would test a state that cannot occur.
+    "dash": ["flask", "dash", "dash_bootstrap_components", "pydantic"],
     "prefect": ["prefect"],
     "tensorflow": ["tensorflow"],
 }

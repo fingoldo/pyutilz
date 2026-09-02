@@ -22,14 +22,9 @@ from typing import Any, FrozenSet, Union
 ALLOWED_SCHEMES: FrozenSet[str] = frozenset({"http", "https"})
 
 
-class UnsafeURLError(ValueError):
-    """Raised when a URL's scheme is not one the caller is permitted to open.
-
-    A ``ValueError`` subclass because that is what callers building a URL from untrusted data
-    already guard against, and because it must NOT be an ``OSError``: retry-on-transient-network-
-    fault logic typically retries ``OSError``, and retrying a rejected scheme would only delay the
-    same refusal.
-    """
+# Re-exported (not defined here): the class now lives with its siblings in pyutilz.web.exceptions,
+# while ``from pyutilz.web.url_guard import UnsafeURLError`` -- the historic path -- keeps working.
+from .exceptions import UnsafeURLError
 
 
 def require_http_url(url: str, allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES) -> str:
@@ -50,15 +45,40 @@ def require_http_url(url: str, allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES
     return url
 
 
+class _CheckedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-applies the scheme allow-list to every redirect hop, not just the first URL.
+
+    ``urllib``'s stock handler permits a redirect to ``http``, ``https`` OR ``ftp``, so a checked
+    ``https://`` fetch could still be bounced to ``ftp://internal-host/...`` -- the allow-list this
+    module exists to enforce would hold for hop 0 only. Host/IP-range filtering (localhost, RFC1918,
+    169.254.169.254) is explicitly OUT of scope here: this module gates schemes, and a redirect to
+    an internal ``http://`` address is still allowed.
+    """
+
+    def __init__(self, allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES) -> None:
+        self.allowed_schemes = allowed_schemes
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        """Validates ``newurl`` against this handler's scheme allow-list before delegating to urllib's
+        stock redirect handling, so a hop to a disallowed scheme raises :class:`UnsafeURLError` instead
+        of being followed."""
+        require_http_url(newurl, self.allowed_schemes)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def urlopen_checked(target: Union[str, urllib.request.Request], timeout: float = 30, allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES) -> Any:
-    """``urllib.request.urlopen`` with the scheme validated first. Accepts a URL string or a
-    prepared ``Request``.
+    """``urllib.request.urlopen`` with the scheme validated first -- on the supplied URL AND on every
+    redirect hop. Accepts a URL string or a prepared ``Request``.
 
     Returns the raw ``urlopen`` context manager, so an existing ``with urlopen(...) as resp:``
     call site keeps working unchanged once swapped to call this instead.
     """
     url = target if isinstance(target, str) else target.full_url
     require_http_url(url, allowed_schemes)
-    # nosec B310 - the line above raises UnsafeURLError unless the scheme is allowed; this is the
-    # one audited urlopen call bandit cannot see the guard through.
-    return urllib.request.urlopen(target, timeout=timeout)  # nosec B310
+    # A dedicated opener (not the module-level default) so the redirect check applies here without
+    # mutating global urllib state that other libraries in the process share.
+    opener = urllib.request.build_opener(_CheckedRedirectHandler(allowed_schemes))
+    # nosec B310 - the call above raises UnsafeURLError unless the scheme is allowed, and the opener
+    # re-checks each redirect target; this is the one audited urlopen call bandit cannot see the
+    # guard through.
+    return opener.open(target, timeout=timeout)  # nosec B310

@@ -263,7 +263,9 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
     tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
     with _get_path_lock(path):
         try:
-            with open(tmp, "wb") as f:
+            # 0o600 at creation (not open()'s default 0o666 & ~umask): os.replace carries the mode
+            # onto the payload file, and a pickle payload is not something other local users should read.
+            with os.fdopen(os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "wb") as f:
                 pickle.dump(obj, f, protocol=protocol)
                 f.flush()
                 os.fsync(f.fileno())

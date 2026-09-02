@@ -2,9 +2,12 @@
 
 A tuner spec defines a hot kernel's variants, how to measure them, what hardware
 it targets, and how to gate the decision. A consumer registers its spec with a
-single ``kernel_tuner(...)`` call at module top. Discovery walks the mlframe
-package (only when explicitly invoked, never at `import mlframe`) and collects
-all specs for batch tuning via retune_all() or the CLI.
+single ``kernel_tuner(...)`` call at module top. Discovery walks a CONSUMER-NAMED
+package (only when explicitly invoked, never at import time) and collects all
+specs for batch tuning via retune_all() or the CLI. The package to walk is a
+required argument: this is a general-purpose library, so it has no business
+defaulting to any one downstream project's name -- a wrong default failed by
+logging an error about an unknown package and returning an empty registry.
 """
 from __future__ import annotations
 
@@ -206,7 +209,7 @@ def get_registry() -> dict:
     return dict(_REGISTRY)
 
 
-def discover_tuners(package: str = "mlframe", warn_on_import_fail: bool = True) -> dict:
+def discover_tuners(package: str, warn_on_import_fail: bool = True) -> dict:
     """Import every module under ``package`` so each module-level
     ``kernel_tuner(...)`` call fires, then return the accumulated registry.
 
@@ -246,7 +249,7 @@ def discover_tuners(package: str = "mlframe", warn_on_import_fail: bool = True) 
 
 
 def retune_all(
-    package: str = "mlframe",
+    package: str,
     force: bool = False,
     idle_wait_tries: int = 5,
     idle_wait_sec: float = 0.5,
@@ -269,7 +272,8 @@ def retune_all(
     4. CPU-only specs (gpu_capable=False) run once (no multi-GPU grouping).
 
     Args:
-        package: Package to discover specs from (default: "mlframe").
+        package: Top-level package to discover specs from, e.g. the caller's own
+            project name. Required -- no default, see the module docstring.
         force: If True, re-tune even if cache hits. If False, respect cache.
         idle_wait_tries: Retry count if GPU load > 80%.
         idle_wait_sec: Sleep duration (seconds) between retries.

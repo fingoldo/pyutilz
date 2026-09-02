@@ -11,23 +11,42 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg)](https://fingoldo.github.io/pyutilz/)
 
-A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core has few hard dependencies (`numba`, `joblib`, `portalocker` -- used throughout `pyutilz.core.pythonlib`, the module nearly every other subpackage imports); every domain-specific extra beyond that ships as an optional extras group so `pip install pyutilz` stays light and you opt into what you need.
+A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core installs nine hard dependencies -- `numba`, `numpy`, `joblib`, `portalocker`, `psutil`, `pandas`, `tqdm`, `pympler` (plus `tomli` below Python 3.11) -- because `pyutilz.core.pythonlib` and `pyutilz.system.system`, the modules nearly every other subpackage imports, use them unconditionally at import time; `pyproject.toml` records the rationale per dependency. Everything heavier than that (scipy, Pillow, selenium, the cloud SDKs, the LLM SDKs, spaCy, ...) is opt-in through an extras group, so you install only the domains you actually use.
 
 ## Installation
 
 ```bash
-pip install pyutilz[all,dev]          # full install (recommended)
+pip install pyutilz[all,dev]          # full install (recommended -- see the note below)
 
-pip install pyutilz                   # core only (numba, joblib, portalocker)
-pip install pyutilz[dataframes]       # pandas + numpy + pyarrow + polars
-pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql
-pip install pyutilz[web]              # selenium, requests, undetected-chromedriver
+pip install pyutilz                   # core only: numba, numpy, joblib, portalocker, psutil, pandas, tqdm, pympler
+pip install pyutilz[dataframes]       # pandas + pyarrow + polars
+pip install pyutilz[database]         # SQLAlchemy + psycopg2 + pymysql + redis
+pip install pyutilz[web]              # selenium, requests, undetected-chromedriver, curl-cffi
 pip install pyutilz[cloud]            # boto3 + google-cloud-storage
-pip install pyutilz[nlp]              # spacy + nltk + tiktoken + jellyfish
-pip install pyutilz[llm]              # anthropic + google-genai + httpx + tenacity + pydantic
-pip install pyutilz[system]           # psutil + numba + GPUtil + tqdm + py-cpuinfo
-pip install pyutilz[dev]              # pytest, ruff, black, mypy, bandit
+pip install pyutilz[nlp]              # spacy (>=3.10 only) + nltk + tiktoken + jellyfish + beautifulsoup4
+pip install pyutilz[llm]              # anthropic + google-genai (>=3.9 only) + httpx + tenacity + pydantic + pydantic-settings + tiktoken
+pip install pyutilz[system]           # scipy + Pillow + py-cpuinfo + GPUtil + xmltodict + jellyfish
+pip install pyutilz[stats]            # documented empty alias -- pyutilz.stats needs only core numpy
+pip install pyutilz[dash]             # flask + dash + dash-bootstrap-components (pyutilz.dev.dashlib)
+pip install pyutilz[prefect]          # prefect (pyutilz.system.scheduling.prefect)
+pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
+pip install pyutilz[gpu]              # cupy -- see the caveat below
+pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
+pip install pyutilz[dev]              # pytest (+ cov/benchmark/asyncio/instafail/progress/timeout), ruff, black (>=3.10 only), mypy, bandit
 ```
+
+`[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats`. It deliberately leaves out four
+groups, so `pip install pyutilz[all]` canNOT import `pyutilz.dev.dashlib` or
+`pyutilz.system.scheduling.prefect` -- add the extra explicitly (`pip install "pyutilz[all,dash]"`):
+
+- `[dash]` -- a whole flask/dash web-server stack for one notebook-dashboard helper.
+- `[prefect]` -- a full workflow-orchestration runtime with a large transitive tree.
+- `[tensorflow]` -- a multi-hundred-MB ML framework used by exactly one function.
+- `[gpu]` -- PyPI's `cupy` is sdist-only, so this extra triggers a full local NVCC build. Install
+  the matching binary wheel yourself instead (`pip install cupy-cuda12x`) and skip the extra;
+  nothing breaks without it, since every cupy import site is `try/except`-guarded.
+
+`pyproject.toml`'s `all`/`gpu` comments are the source of truth for these exclusions.
 
 For development:
 
@@ -35,6 +54,8 @@ For development:
 git clone https://github.com/fingoldo/pyutilz.git
 cd pyutilz
 pip install -e ".[all,dev]"
+pip install -r requirements-dev.txt   # py-ci-shared -- a git checkout, so it cannot live in [dev]
+pip install pre-commit vulture        # not declared in any extras group; the hooks need both
 pre-commit install
 pytest
 ```
@@ -45,15 +66,15 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 
 | Sub-package          | Purpose                                              |
 | -------------------- | ---------------------------------------------------- |
-| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata, matrix utilities, FileMaker integration, sidecar-verified `safe_pickle` |
-| `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib` |
+| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata, matrix utilities, FileMaker integration, sidecar-verified `safe_pickle`, content-addressable `disk_cache` |
+| `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib`, `git_checkpoint_cache` (git-tracked backup + auto-restore for a machine-local cache) |
 | `pyutilz.database`   | PostgreSQL/MySQL helpers, parameterised queries, identifier validation, Redis, Delta Lake |
-| `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, statistical proxy health-tracking |
+| `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, statistical proxy health-tracking, `url_guard` SSRF-style URL validation, `cached_client`, Decodo proxy provider |
 | `pyutilz.cloud`      | S3 and Google Cloud Storage helpers                  |
-| `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination |
+| `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination, `gpu_dispatch` backend selection, `resilience` retry/circuit-breaker/dead-letter queue, async `single_flight_cache`, `cli_logging`, hot-reloadable TOML `config` |
 | `pyutilz.performance`| Per-host `KernelTuningCache` for dispatching CUDA/numba/cupy kernel variants |
-| `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers |
-| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities, AST-based `code_audit` bug-class scanner + CLI |
+| `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers, `secrets_scrub` redaction of credentials in logs/tracebacks |
+| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities, AST-based `code_audit` bug-class scanner + CLI, `ci_log_analyzer`, `freevar_analysis` refactor planner |
 | `pyutilz.llm`        | Unified async interface across Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code |
 | `pyutilz.stats`      | Numba-jitted normality testing (D'Agostino K², Anderson-Darling) |
 
@@ -183,7 +204,7 @@ n = get_max_affordable_workers_count(reservedCores=1)
 # iterable is a list of per-call arg tuples (passed to func via starmap);
 # return_dataframe=False for scalar/list results (True concatenates
 # per-call pandas Series/DataFrame results instead).
-results = applyfunc_parallel(iterable=inputs, func=expensive_fn, n_cores=n,
+results = applyfunc_parallel(iterable=inputs, func=expensive_fn, n_jobs=n,
                               return_dataframe=False)
 ```
 
@@ -271,12 +292,14 @@ rows = safe_execute("SELECT * FROM {} WHERE id = %s".format(table), (user_id,)) 
 
 ## Testing
 
-1900+ tests, 79.6% line coverage on `src/pyutilz/`. See
-[TESTING.md](TESTING.md) for the static meta-test suite, live LLM
-tests, and how to run with coverage.
+Exact test counts and coverage percentages are intentionally not pinned here -- they drift with
+every commit and go stale silently. The codecov badges at the top of this file carry the current line
+coverage (plain, numba-disabled, and the merged `codecov-full` flag); for the current test count
+run `pytest --collect-only -q`. See [TESTING.md](TESTING.md) for the static meta-test suite,
+live LLM tests, and how to run with coverage.
 
 ```bash
-pytest                                # full suite, ~3 min
+pytest                                 # full suite
 pytest --run-live -m live              # live LLM smoke tests (real API calls, opt-in)
 ```
 

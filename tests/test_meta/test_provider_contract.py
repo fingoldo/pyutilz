@@ -49,7 +49,7 @@ def _provider_classes() -> list[tuple[str, type]]:
     factory's ``_PROVIDER_MODULES`` map. Skips entries that fail to
     import (those are policed by PT-1)."""
     out: list[tuple[str, type]] = []
-    for name, (mod_path, cls_name) in factory_module._PROVIDER_MODULES.items():
+    for name, (mod_path, cls_name, _key_attr) in factory_module._PROVIDER_MODULES.items():
         try:
             mod = importlib.import_module(mod_path)
         except ImportError:

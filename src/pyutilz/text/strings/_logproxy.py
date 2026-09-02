@@ -4,6 +4,12 @@ The former flat strings.py exposed a single module-level `logger`. After the sub
 `logger`, but callers (and tests) still patch `pyutilz.text.strings.logger`. This proxy forwards every attribute access
 to the parent package's current `logger` attribute at call time, so patching the facade's `logger` transparently
 affects all submodules — preserving the historic behavior exactly.
+
+This is the same project idiom documented in `pyutilz/data/pandaslib/frames.py`, applied through an
+object instead of a module attribute: a re-export package's submodule may reach its parent only via a
+DEFERRED lookup (`import <parent>` then attribute access, as `_resolve()` does below), never via a
+top-level `from <parent> import <name>`, which would both break on the import cycle and snapshot a
+value that the facade is expected to be able to replace.
 """
 
 # ----------------------------------------------------------------------------------------------------------------------------

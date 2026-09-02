@@ -1,139 +1,34 @@
-"""Common functions for working with Polars"""
+"""Polars aggregate/time-series feature engineering: concentrations, weighted and EWM aggregates,
+polars-ds statistics, and the ``group_by_dynamic``/``rolling`` feature builder.
 
-# ----------------------------------------------------------------------------------------------------------------------------
-# LOGGING
-# ----------------------------------------------------------------------------------------------------------------------------
+Split out of the historical flat ``pyutilz.data.polarslib`` module; re-exported
+from the package ``__init__`` to preserve the public import surface.
+"""
 
-import logging
+from ._common import (
+    Any,
+    Iterable,
+    Optional,
+    POLARS_DEFAULT_NUMAGGS,
+    POLARS_DEFAULT_QUANTILES,
+    cs,
+    logger,
+    pl,
+)
+from typing import Literal
+from .columns import apply_agg_func_safe, cast_f64_to_f32, clean_numeric
 
-logger = logging.getLogger(__name__)
-
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# Normal Imports
-# ----------------------------------------------------------------------------------------------------------------------------
-
-# Set jemalloc config early
-import os
-
-os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
-import polars as pl, polars.selectors as cs
-
-from typing import Any, Dict, Iterable, Literal, Optional, Tuple, TypeVar
-import numpy as np
-
-
-import textwrap
-from collections import Counter
-from pyutilz.system.system import clean_ram
-from pyutilz.core.pythonlib import is_cuda_available, check_cpu_flag
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------------------------------------------------------
-
-POLARS_DEFAULT_NUMAGGS: list = (
-    "first last min max mean std arg_max arg_min skew kurtosis entropy n_unique".split()
-)  # replace by approx_n_unique? # median excluded
-POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# Core
-# ----------------------------------------------------------------------------------------------------------------------------
-
-
-def _cols_matching(df: pl.DataFrame, predicate: pl.Expr) -> pl.DataFrame:
-    """Return a DataFrame keeping only the columns for which ``predicate`` (a single-row-per-column
-    boolean aggregate expression, e.g. ``cs.numeric().is_infinite().any()``) evaluates True.
-
-    2026-08-02 near-duplicate-function-body finding: find_nan_cols and find_infinite_cols
-    independently duplicated this evaluate-then-filter-columns logic; extracted so a future
-    caller (a third "find X cols" helper) doesn't paste a third copy.
-    """
-    meta = df.select(predicate)
-    true_cols = meta.row(0)
-    return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
-
-
-def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Return a DataFrame keeping only the numeric columns that contain at least one NaN or null value.
-
-    Polars distinguishes float NaN from missing/null (unlike pandas, where isna()/isnull() catch
-    both), so both ``is_nan()`` and ``is_null()`` are checked -- an all-null column would otherwise
-    be invisible to a caller expecting pandas-style semantics.
-    """
-    return _cols_matching(df, cs.numeric().is_nan().fill_null(False).any() | cs.numeric().is_null().any())
-
-
-def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Return a DataFrame keeping only the numeric columns that contain at least one infinite value."""
-    return _cols_matching(df, cs.numeric().is_infinite().any())
-
-
-def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0, fill_nulls: bool = False) -> pl.Expr:
-    """Replace non-finite floats (inf, -inf, NaN) with ``nans_filler``.
-
-    Uses ``is_finite()`` rather than ``.replace([inf, -inf, NaN], ...)`` because polars
-    ``replace`` matches via float equality, and ``NaN != NaN`` so the NaN branch never fires.
-    Without this fix, downstream ``.cast(int)`` after a groupby-agg that produced NaN/inf
-    (zero-weight groups in weighted-mean, single-row variance, etc.) raises
-    ``InvalidOperationError: conversion from f64 to i64 failed for [inf, -inf, NaN]``.
-
-    Nulls are PRESERVED by default. ``null.is_finite()`` is null and polars treats a null
-    ``when`` predicate as false, so a naive ``when(is_finite)`` also rewrites missing values into
-    ``nans_filler`` -- conflating "not computable" (a std/corr over a single-row group returns
-    null, not NaN) with a genuinely measured value, which no downstream missingness audit can
-    then recover. Pass ``fill_nulls=True`` to opt into the old behavior of filling them too.
-    """
-    filler = pl.lit(float(nans_filler))
-    if fill_nulls:
-        return pl.when(expr.is_finite()).then(expr).otherwise(filler)
-    return pl.when(expr.is_null()).then(expr).when(expr.is_finite()).then(expr).otherwise(filler)
-
-
-_PlFrameT = TypeVar("_PlFrameT", pl.DataFrame, pl.LazyFrame)
-
-
-def polars_castable_int_dtypes() -> list:
-    """Integer polars dtypes that the float32 downcast helpers operate on.
-
-    Shared by ``cast_f64_to_f32`` and pandaslib's ``ensure_dataframe_float32_convertability`` so the
-    two documented mirrors can't drift: Int128 only exists in newer polars, and hardcoding it in one
-    of them raised AttributeError on exactly the older versions the hasattr guard exists for.
-    """
-    int_types = [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64]
-    if hasattr(pl, "Int128"):
-        int_types.append(pl.Int128)
-    return int_types
-
-
-def cast_f64_to_f32(df: _PlFrameT) -> _PlFrameT:
-    """Downcast Float64 AND the common integer dtypes to Float32 (not Int32) to shrink memory usage.
-
-    Float32 has a 24-bit mantissa, so integers are only representable exactly up to 2**24
-    (16,777,216); any Int64/UInt64/UInt32/Int128 column with values beyond that magnitude loses
-    precision silently. This mirrors the sibling ``ensure_dataframe_float32_convertability``
-    (pandaslib/dtypes.py), which does the same int->float32 cast for LightGBM compatibility.
-    If you need integers preserved exactly, downcast to a smaller *integer* dtype instead.
-    """
-    # Int128 was added in polars 0.19.0, make it optional for older versions
-    int_types = polars_castable_int_dtypes()
-    if isinstance(df, pl.DataFrame):
-        int_cols = df.select(pl.col(*int_types)).columns
-        if int_cols:
-            overflow = df.select([pl.col(c).abs().max().gt(2**24).alias(c) for c in int_cols]).row(0)
-            lossy = [c for c, is_lossy in zip(int_cols, overflow) if is_lossy]
-            if lossy:
-                logger.warning("cast_f64_to_f32: integer column(s) %s have values beyond 2**24 -- Float32 cast will lose exact-integer precision.", lossy)
-    return df.with_columns(pl.col(*int_types, pl.Float64).cast(pl.Float32))
-
-
-def apply_agg_func_safe(expr: pl.Expr, func_name: str, nans_filler: float = 0.0) -> pl.Expr:
-    """Apply :func:`clean_numeric` to ``expr`` when ``func_name`` is a stat prone to NaN (skew/kurtosis on near-constant data), otherwise return ``expr`` unchanged."""
-    if func_name in ["skew", "kurtosis"]:
-        return clean_numeric(expr, nans_filler=nans_filler)
-    else:
-        return expr
+# PROJECT IDIOM for a re-export package's submodules (see also pyutilz/data/pandaslib/frames.py and
+# pyutilz/text/strings/_logproxy.py, which apply the same rule):
+#   `import <parent> as _facade`   -- ALLOWED, and load-bearing.
+#   `from <parent> import <name>`  -- FORBIDDEN at module top level.
+# A re-export package's __init__ imports its submodules, so a submodule importing the parent back is
+# a genuine cycle. Plain `import x` binds the PARTIALLY-INITIALISED sys.modules entry and defers every
+# attribute lookup to call time, so it survives; `from x import name` needs the name to exist at import
+# time and raises "cannot import name ... (most likely due to a circular import)". Deferring the lookup
+# is also what makes the name patchable: a test patching `pyutilz.data.polarslib.clean_ram` is seen here,
+# where a from-import would have snapshotted the original function.
+import pyutilz.data.polarslib as _facade  # patchable-name indirection for clean_ram/is_cuda_available/check_cpu_flag
 
 
 def compute_concentrations(
@@ -303,7 +198,7 @@ def build_aggregate_features_polars(
 
     assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
 
-    if engine == "gpu" and not is_cuda_available():
+    if engine == "gpu" and not _facade.is_cuda_available():
         # logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailable on this system!")
         pass
 
@@ -311,7 +206,7 @@ def build_aggregate_features_polars(
     # Inits
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if check_cpu_flag("avx2"):
+    if _facade.check_cpu_flag("avx2"):
         import polars_ds as pds
 
     # Params
@@ -400,11 +295,15 @@ def build_aggregate_features_polars(
         assert ewm_spans is not None and ewm_basic_funcs is not None and ewm_final_funcs is not None
         assert pds_fields is not None and pds_numaggs is not None and linreg_fields is not None
 
-        assert isinstance(filter_values, list)  # nosec B101 - internal invariant on the shape of the caller-supplied subgroups dict values, not a security boundary
+        assert isinstance(
+            filter_values, list
+        )  # nosec B101 - internal invariant on the shape of the caller-supplied subgroups dict values, not a security boundary
 
         if not filter_field:
             num_no_filter += 1
-            assert num_no_filter <= 1  # nosec B101 - internal invariant: at most one "no filter" (falsy filter_field) entry is expected in subgroups, not a security boundary
+            assert (
+                num_no_filter <= 1
+            )  # nosec B101 - internal invariant: at most one "no filter" (falsy filter_field) entry is expected in subgroups, not a security boundary
         else:
             categorical_fields = orig_categorical_fields.copy()
             if filter_field in categorical_fields:
@@ -430,7 +329,7 @@ def build_aggregate_features_polars(
                     ]
                 )
                 # +lziv
-                if check_cpu_flag("avx2"):
+                if _facade.check_cpu_flag("avx2"):
                     feature_expressions.extend(
                         [
                             pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lziv")
@@ -448,7 +347,7 @@ def build_aggregate_features_polars(
                     ]
                 )
                 # +lziv
-                if check_cpu_flag("avx2"):
+                if _facade.check_cpu_flag("avx2"):
                     feature_expressions.extend(
                         [
                             pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
@@ -470,7 +369,10 @@ def build_aggregate_features_polars(
             # Weighting
             if weighting_fields:
                 wcols = add_weighted_aggregates(
-                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields or [])), weighting_columns=weighting_fields, fpref=fpref, fields_remap=fields_remap
+                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields or [])),
+                    weighting_columns=weighting_fields,
+                    fpref=fpref,
+                    fields_remap=fields_remap,
                 )
                 feature_expressions.extend(wcols)
 
@@ -576,7 +478,7 @@ def build_aggregate_features_polars(
                         ]
                     )
 
-                if check_cpu_flag("avx2"):
+                if _facade.check_cpu_flag("avx2"):
 
                     # simple stats with no params
                     for field in pds_fields:
@@ -681,7 +583,7 @@ def create_ts_features_polars(
         closed = "left" if not rolling else "right"
 
     if clean_memory:
-        clean_ram()
+        _facade.clean_ram()
 
     if group_by:
         additional_exclude = [group_by] if isinstance(group_by, str) else group_by
@@ -696,16 +598,20 @@ def create_ts_features_polars(
     if rolling:
         res = df.lazy().rolling(index_column=index_column, period=period, offset=offset, closed=closed, group_by=group_by).agg(expressions)
     else:
-        res = df.lazy().group_by_dynamic(
-            index_column=index_column,
-            every=every if every is not None else period,
-            period=period,
-            offset=offset,
-            closed=closed,
-            label=label,
-            group_by=group_by,
-            include_boundaries=include_boundaries,
-        ).agg(expressions)
+        res = (
+            df.lazy()
+            .group_by_dynamic(
+                index_column=index_column,
+                every=every if every is not None else period,
+                period=period,
+                offset=offset,
+                closed=closed,
+                label=label,
+                group_by=group_by,
+                include_boundaries=include_boundaries,
+            )
+            .agg(expressions)
+        )
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Unnest remaining arrays in one go
@@ -734,414 +640,10 @@ def create_ts_features_polars(
         res = cast_f64_to_f32(res)
 
     if clean_memory:
-        clean_ram()
+        _facade.clean_ram()
 
     logger.info("create_ts_features_polars using %s engine, %s threads...", engine, pl.thread_pool_size())
     res = res.collect(engine=engine)  # type: ignore[call-overload]  # "cpu" (this function's own documented default) works at runtime but isn't in polars' EngineType Literal
     logger.info("Done.")
 
     return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-
-
-# ----------------------------------------------------------------------------------------------------------------------------
-# FS in polars
-# ----------------------------------------------------------------------------------------------------------------------------
-
-
-def _group_freqs(bins: pl.DataFrame, cols, drop_nulls: bool = False) -> Any:
-    """Empirical frequency array (sums to 1) for a group-by of ``cols`` (a column name or a list
-    of column names) over ``bins``.
-
-    2026-08-02 near-duplicate-function-body finding: entropy_for_column and mi_for_column
-    independently duplicated this group_by-then-normalize step (single-column for the marginal,
-    two-column for the joint); extracted alongside ``_shannon_entropy`` below.
-
-    With ``drop_nulls=False`` (the default, preserving historical behavior) polars ``group_by``
-    emits null as its own group, so missingness contributes real probability mass to the entropy.
-    Pass ``drop_nulls=True`` to restrict the estimate to fully-observed rows instead.
-    """
-    if drop_nulls:
-        bins = bins.drop_nulls(subset=cols)
-    if len(bins) == 0:
-        return np.empty(0, dtype=np.float64)
-    return bins.group_by(cols).agg(pl.len())["len"].to_numpy() / len(bins)
-
-
-def _shannon_entropy(freqs: Any) -> float:
-    """Shannon entropy (in nats) of a discrete frequency distribution that sums to 1."""
-    return -np.sum(freqs * np.log(freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-
-
-def entropy_for_column(bins: pl.DataFrame, col: str, drop_nulls: bool = False) -> float:
-    """Compute the Shannon entropy (in nats) of the discrete (already-binned) values in ``bins[col]``.
-
-    By default null is counted as its own bin category and so adds probability mass of its own
-    (``bin_numerical_columns`` only guarantees null-free bins when ``fill_nulls=True``); pass
-    ``drop_nulls=True`` to measure the observed values only.
-    """
-    return _shannon_entropy(_group_freqs(bins, col, drop_nulls=drop_nulls))
-
-
-def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str, drop_nulls: bool = False) -> float:
-    """Compute the mutual information between binned columns ``col`` and ``target_col``, using precomputed marginal entropies
-    from ``entropies`` and the joint entropy of the two columns (mi = H(col) + H(target) - H(col, target)).
-
-    ``drop_nulls`` mirrors :func:`entropy_for_column`: with the default False, missingness is a
-    category of its own and a feature whose only signal is its null pattern scores as informative.
-    Pass True (and compute ``entropies`` the same way) to score observed rows only.
-    """
-    joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col], drop_nulls=drop_nulls))
-    return entropies[target_col] + entropies[col] - joint_entropy  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-
-
-_BIN_DTYPE_MAX: Dict[Any, int] = {
-    pl.Int8: 127,
-    pl.Int16: 32767,
-    pl.Int32: 2147483647,
-    pl.Int64: 9223372036854775807,
-    pl.UInt8: 255,
-    pl.UInt16: 65535,
-    pl.UInt32: 4294967295,
-    pl.UInt64: 18446744073709551615,
-}
-
-
-def bin_numerical_columns(
-    df: pl.DataFrame,
-    target_columns: list,
-    binned_targets: Optional[pl.DataFrame] = None,
-    clean_features: bool = True,
-    clean_targets: bool = True,
-    num_bins: int = 10,
-    bin_dtype: Any = pl.Int8,
-    exclude_columns: Optional[list] = None,
-    min_nuniques_to_clip: int = 10,
-    tukey_fences_multiplier: float = 3.0,
-    fill_nulls: bool = True,
-    fill_nans: bool = True,
-    max_log_text_width: int = 300,
-    verbose: bool = False,
-) -> Tuple[pl.DataFrame, Optional[pl.DataFrame], dict, list, dict]:
-    """Computes min, max, and quantiles of all numerical columns in one go.
-    Decides which are outliers and adds clipping.
-    Converts values into integer uniform bin ids.
-    Suggest for dropping columns that do not change.
-    """
-    if exclude_columns is None:
-        exclude_columns = []
-
-    needed_max = num_bins - 1
-    if bin_dtype in _BIN_DTYPE_MAX and needed_max > _BIN_DTYPE_MAX[bin_dtype]:
-        for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64):
-            if needed_max <= _BIN_DTYPE_MAX[candidate]:
-                if verbose:
-                    logger.warning("bin_dtype=%s can't hold num_bins-1=%s; auto-widening to %s", bin_dtype, needed_max, candidate)
-                bin_dtype = candidate
-                break
-        else:
-            raise ValueError(f"num_bins={num_bins} exceeds the range even of Int64 bin_dtype")
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Inits
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    columns_to_drop = []
-
-    # Get existing columns from dataframe schema (works for both DataFrame and LazyFrame)
-    df_columns = set(df.collect_schema().names()) if hasattr(df, "collect_schema") else set(df.columns)
-
-    # Filter target_columns to only include columns that exist in the dataframe
-    existing_target_columns = [col for col in target_columns if col in df_columns]
-    if len(existing_target_columns) < len(target_columns):
-        missing = set(target_columns) - set(existing_target_columns)
-        if verbose:
-            logger.warning("Ignoring %s target columns not found in dataframe: %s", len(missing), missing)
-
-    all_num_cols = cs.numeric()
-    if exclude_columns:
-        existing_exclude = [col for col in exclude_columns if col in df_columns]
-        if existing_exclude:
-            all_num_cols = all_num_cols - cs.by_name(existing_exclude)
-    if binned_targets is not None and existing_target_columns:
-        all_num_cols = all_num_cols - cs.by_name(existing_target_columns)
-
-    clean_ram()
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Compute stats for every column
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    if verbose > 1:
-        logger.info("Computing Min/Max/Quantiles...")
-
-    stats_expr = [
-        all_num_cols.min().name.suffix("_min"),
-        all_num_cols.max().name.suffix("_max"),
-    ]
-    if clean_features or (clean_targets and binned_targets is None and existing_target_columns):
-        if clean_features:
-            quantile_cols = all_num_cols
-        else:
-            quantile_cols = cs.by_name(existing_target_columns)
-        stats_expr.extend(
-            [
-                quantile_cols.quantile(0.25).name.suffix("_q1"),
-                quantile_cols.quantile(0.75).name.suffix("_q3"),
-            ]
-        )
-    stats_df = df.lazy().select(stats_expr).collect()
-
-    stats: dict
-    if len(stats_df) > 0:
-        stats = stats_df.row(0, named=True)
-    else:
-        stats = {}
-    orig_stats = stats.copy()
-
-    clean_ram()
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Features with no change (min==max) are reported & dropped.
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    dead_columns = []
-    for col in cs.expand_selector(df.head(), all_num_cols):
-        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None or max_val is None) or min_val == max_val:
-            dead_columns.append(col)
-    if dead_columns:
-        if verbose:
-            logger.warning(
-                "Dropping %s columns with no change: %s",
-                format(len(dead_columns), "_"),
-                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
-            )
-        df = df.drop(dead_columns)
-        columns_to_drop.extend(dead_columns)
-
-        clean_ram()
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Outliers are clipped & reported.
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    public_clips = {}
-    clips = {}
-    if clean_features or clean_targets:
-        for col in cs.expand_selector(df.head(), all_num_cols):
-            if not clean_targets:
-                if col in existing_target_columns:
-                    continue
-            if not clean_features:
-                if clean_targets and col not in existing_target_columns:
-                    continue
-
-            q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
-            min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-            assert (
-                q1 is not None and q3 is not None and min_val is not None and max_val is not None
-            ), f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
-
-            iqr = q3 - q1
-
-            lower_fence = q1 - tukey_fences_multiplier * iqr
-            upper_fence = q3 + tukey_fences_multiplier * iqr
-
-            if upper_fence > lower_fence or (np.isneginf(min_val) or np.isinf(max_val)):
-                is_outlier = False
-                lower_bound = min_val
-                upper_bound = max_val
-                if max_val > upper_fence:
-                    stats[f"{col}_max"] = upper_fence
-                    upper_bound = upper_fence
-                    is_outlier = True
-                if min_val < lower_fence:
-                    stats[f"{col}_min"] = lower_fence
-                    lower_bound = lower_fence
-                    is_outlier = True
-                if is_outlier:
-                    public_clips[col] = dict(lower_bound=lower_bound, upper_bound=upper_bound)
-                    clips[col] = pl.col(col).clip(lower_bound=lower_bound, upper_bound=upper_bound)
-
-    if clips:
-        skipped_clips = []
-        if min_nuniques_to_clip:
-            # do not apply clipping if # of unique values is too low (under 10)
-            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
-            for col, nuniques in n_uniques_dict.items():
-                if nuniques < min_nuniques_to_clip:
-                    for field in "min max".split():
-                        stats[f"{col}_{field}"] = orig_stats[f"{col}_{field}"]
-                    skipped_clips.append(col)
-                    del public_clips[col]
-                    del clips[col]
-        if verbose:
-            if clips:
-                logger.warning(
-                    "Clipping %s columns with outliers: %s",
-                    format(len(clips), "_"),
-                    textwrap.shorten(", ".join(clips.keys()), width=max_log_text_width),
-                )
-            if skipped_clips:
-                logger.warning(
-                    "Clipping of %s columns skipped due to nuniques<%s: %s",
-                    format(len(skipped_clips), "_"),
-                    format(min_nuniques_to_clip, "_"),
-                    textwrap.shorten(", ".join(skipped_clips), width=max_log_text_width),
-                )
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Binning performed.
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    if verbose > 1:
-        logger.info("Binning columns...")
-
-    # collect_schema().len() rather than .width: on a LazyFrame the latter emits a PerformanceWarning
-    # for resolving the schema it resolves anyway.
-    if df.collect_schema().len() == 0:
-        # Every column was constant (a 1-row frame is constant by construction) or the frame came in
-        # empty. Nothing left to bin: the null_count/selector reads below would collect to a 0-row
-        # 0-column frame and .row(0) would raise a raw polars OutOfBoundsError the caller can't
-        # distinguish from a polars bug.
-        return pl.DataFrame(), binned_targets, public_clips, columns_to_drop, stats
-
-    dead_columns = []
-    bin_expressions = []
-
-    if fill_nulls:
-        cols_with_nulls = [key for key, value in df.lazy().select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
-    if fill_nans:
-        cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
-
-    for col in cs.expand_selector(df.head(), all_num_cols):
-        if binned_targets is not None:
-            if col in existing_target_columns:
-                continue
-
-        # Calculate bin edges based on min and max values
-        min_val = stats.get(f"{col}_min")
-        max_val = stats.get(f"{col}_max")
-        assert min_val is not None and max_val is not None, f"stats missing min/max entries for column {col!r}"
-
-        if min_val == max_val:
-            dead_columns.append(col)
-        else:
-
-            # Define the binning expression
-            bin_width = (max_val - min_val) / num_bins
-            col_expr = clips.get(col, pl.col(col))
-            if fill_nulls and (col in cols_with_nulls):
-                col_expr = col_expr.fill_null(min_val)
-            if fill_nans and (col in cols_with_floats):
-                col_expr = clean_numeric(col_expr, nans_filler=min_val)
-
-            binned_col = ((col_expr - min_val) / bin_width).floor().fill_nan(0).clip(0, num_bins - 1).cast(bin_dtype)
-
-            bin_expressions.append(binned_col)
-
-    if dead_columns:
-        if verbose:
-            logger.warning(
-                "Dropping %s columns with no change: %s",
-                format(len(dead_columns), "_"),
-                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
-            )
-        df = df.drop(dead_columns)
-        columns_to_drop.extend(dead_columns)
-
-    # Apply all binning expressions in parallel
-    bins = df.lazy().select(bin_expressions).collect()
-    clean_ram()
-
-    if binned_targets is not None:
-        bins = pl.concat([bins, binned_targets], how="horizontal", rechunk=True)
-    elif existing_target_columns:
-        binned_targets = bins.select(cs.by_name(existing_target_columns)).clone()
-
-    return bins, binned_targets, public_clips, columns_to_drop, stats
-
-
-def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbose: bool = False) -> pl.DataFrame:
-    """Drop numeric columns whose min and max are equal (or missing/NaN), i.e. columns with no informative variation.
-
-    Unlike ``pandaslib.frames.remove_constant_columns`` (the conceptually equivalent pandas
-    function, which mutates its input DataFrame in place and returns None), polars frames are
-    immutable -- this function returns a NEW DataFrame and does NOT touch the caller's ``df``.
-    You must capture the return value (``df = drop_constant_columns(df)``); porting a
-    `remove_constant_columns(df)`-style call-and-discard from the pandas idiom silently leaves
-    the constant columns in place with no error or warning.
-
-    Also importable as :func:`remove_constant_columns` (a plain alias, same function) for
-    grep/discoverability against its pandas sibling's name.
-    """
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Inits
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    all_num_cols = cs.numeric()
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Stats
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    stats_expr = [
-        all_num_cols.min().name.suffix("_min"),
-        all_num_cols.max().name.suffix("_max"),
-    ]
-
-    stats = df.lazy().select(stats_expr).collect().row(0, named=True)
-
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Deciding
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    dead_columns = []
-    for col in cs.expand_selector(df.head(), all_num_cols):
-        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        # Exact equality, NOT np.allclose: allclose is a RELATIVE test (rtol=1e-5), so it declared
-        # "constant" any column whose spread is under 1e-5 of its own magnitude -- large monotone
-        # ids, epoch-microsecond timestamps and prices around 1e9 were silently dropped.
-        if (min_val is None or max_val is None) or min_val == max_val:
-            dead_columns.append(col)
-    if dead_columns:
-        if verbose:
-            logger.warning(
-                "Dropping %s columns with no change: %s",
-                format(len(dead_columns), "_"),
-                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
-            )
-        df = df.drop(dead_columns)
-
-    return df
-
-
-remove_constant_columns = drop_constant_columns  # discoverability alias, see drop_constant_columns's own docstring
-
-
-def polars_df_info(df: pl.DataFrame) -> str:
-    """Build a pandas-``.info()``-style multi-line summary string for a polars DataFrame (shape, columns, dtype counts, estimated memory usage)."""
-    lines = []
-    lines.append(f"{type(df)}")
-    # "Rows:", not pandas' "RangeIndex: N entries, 0 to N-1": polars has no index at all, so borrowing
-    # that line described a structure the frame does not have and invited readers to reason about
-    # index alignment / reindexing semantics that simply do not exist here.
-    lines.append(f"Rows: {df.height}")
-    if df.width > 0:
-        first_col = df.columns[0]
-        last_col = df.columns[-1]
-        lines.append(f"Columns: {df.width} entries, {first_col} to {last_col}")
-    else:
-        lines.append("Columns: 0 entries")
-    dtype_counts = Counter(str(dtype) for dtype in df.dtypes)
-    dtype_str = ", ".join(f"{dtype}({count})" for dtype, count in sorted(dtype_counts.items()))
-    lines.append(f"dtypes: {dtype_str}")
-    # Auto-scale like pandas' .info() does: a hardcoded "GB" reported "0.0+ GB" for every frame
-    # under ~50 MB, i.e. for essentially all interactive use.
-    size = float(df.estimated_size(unit="b"))
-    for unit in ("bytes", "KB", "MB", "GB"):
-        if size < 1024.0 or unit == "GB":
-            break
-        size /= 1024.0
-    lines.append(f"memory usage: {size:.1f}+ {unit}")
-    return "\n".join(lines)

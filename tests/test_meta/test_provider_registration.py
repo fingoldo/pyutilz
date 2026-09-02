@@ -25,11 +25,11 @@ from pyutilz.llm import factory as factory_module
 
 
 def test_every_canonical_provider_module_imports():
-    """Every value in ``_PROVIDER_MODULES`` is a real (module_path, class_name)
+    """Every value in ``_PROVIDER_MODULES`` is a real (module_path, class_name, settings_api_key_attr)
     pair: the module imports cleanly AND exposes the named class.
     """
     failures: list[str] = []
-    for name, (mod_path, cls_name) in factory_module._PROVIDER_MODULES.items():
+    for name, (mod_path, cls_name, _key_attr) in factory_module._PROVIDER_MODULES.items():
         try:
             mod = importlib.import_module(mod_path)
         except ImportError as e:
