@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -143,9 +144,14 @@ def test_individual_subpackages_import_no_network():
     one sub-process per module so a single offending import doesn't
     obscure others.
     """
+    # THREADS, not processes: every unit of work here is already its own OS process, and
+    # `subprocess.run` holds no GIL while it waits -- so a plain thread pool overlaps 13 interpreter
+    # starts that were otherwise paid strictly one after another, with the same per-target timeout
+    # and the same failure text in the same order.
     failures: list[str] = []
-    for target in _SUBPACKAGES_TO_PROBE:
-        result = _run_with_targets([target])
+    with ThreadPoolExecutor(max_workers=min(8, len(_SUBPACKAGES_TO_PROBE))) as pool:
+        results = list(pool.map(lambda target: (target, _run_with_targets([target])), _SUBPACKAGES_TO_PROBE))
+    for target, result in results:
         if result.returncode != 0:
             failures.append(f"{target}:\n{result.stderr.rstrip()}")
 

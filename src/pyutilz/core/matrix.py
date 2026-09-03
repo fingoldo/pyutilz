@@ -105,9 +105,9 @@ def get_sparse_memory_usage(mat: object) -> int:
     try:
         if isinstance(mat, (csr_matrix, csc_matrix)):
             # csr and csc share the same (data, indptr, indices) layout, just transposed semantics.
-            return mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return int(mat.data.nbytes + mat.indptr.nbytes + mat.indices.nbytes)  # int(): numpy's .nbytes arithmetic yields np.intp, not the declared int
         elif isinstance(mat, coo_matrix):
-            return mat.data.nbytes + mat.row.nbytes + mat.col.nbytes  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return int(mat.data.nbytes + mat.row.nbytes + mat.col.nbytes)
         else:
             raise TypeError(f"Unsupported sparse matrix type: {type(mat)}")
     except AttributeError as e:

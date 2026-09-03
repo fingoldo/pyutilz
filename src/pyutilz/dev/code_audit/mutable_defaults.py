@@ -154,7 +154,7 @@ def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> boo
         # where Subscript.slice holds the inner expression directly) -- unwrap it so
         # `Optional[str]` is recognized identically on every supported Python version.
         if isinstance(_slice, ast.Index):  # type: ignore[attr-defined]  # ast.Index only exists pre-3.9; guarded by isinstance
-            _slice = _slice.value  # type: ignore[attr-defined]
+            _slice = _slice.value  # type: ignore[attr-defined]  # ast.Index only exists pre-3.9, so the checker sees no .value on 3.9+
         return _is_known_immutable_scalar_annotation(_slice)
     return False
 

@@ -1,0 +1,53 @@
+name: pip-audit
+
+# The dependency-security SIGNAL that Dependabot's `pip` ecosystem stopped providing when it was
+# set to open-pull-requests-limit: 0 for Actions-minutes reasons (see .github/dependabot.yml).
+# Every runtime dependency in pyproject.toml is declared with an open lower bound and there is no
+# lockfile, so without this nothing in the repository records exposure to a published advisory --
+# a CVE in requests/selenium/boto3 would be noticed only by a maintainer reading advisories by hand.
+#
+# Deliberately ONE ubuntu-latest job, once a week, on the installed dependency set rather than a
+# PR per bump: that is the cheap half of what Dependabot did (advisory detection) without the
+# expensive half (a branch + push + full CI matrix per dependency). It opens no PRs and its
+# failure is the notification.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC, before the weekly github-actions/pre-commit Dependabot runs land.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    # A hung `pip install` on a wedged index would otherwise burn the runner's default 6h against
+    # the very Actions-minutes budget this job is designed to stay inside.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The project itself, so the audited set is what a consumer actually resolves from the
+      # open lower bounds -- auditing pyproject.toml's declarations alone would report on version
+      # ranges rather than on the versions anyone runs.
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Audit installed dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --strict --progress-spinner off

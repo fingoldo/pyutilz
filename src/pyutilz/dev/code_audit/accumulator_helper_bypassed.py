@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a shared accumulator that some call sites write around ------------------------------------
 #
@@ -65,8 +65,12 @@ def _is_setup(name: str) -> bool:
     return bool(_SETUP_NAMES & set(name.lower().split("_")))
 
 
-def _module_level_names(tree: ast.Module) -> frozenset[str]:
-    """Names assigned at module level -- the only bare names shared between functions."""
+def _module_assigned_names(tree: ast.Module) -> frozenset[str]:
+    """Names ASSIGNED at module level -- the only bare names shared between functions.
+
+    Narrower on purpose than ``_base.module_level_names``, which also counts imports and def/class
+    names: a function name is not a structure this rule can be written around.
+    """
     return frozenset(target.id for stmt in tree.body if isinstance(stmt, ast.Assign) for target in stmt.targets if isinstance(target, ast.Name))
 
 
@@ -125,12 +129,6 @@ def _accumulates(node: ast.AST, structure: str) -> bool:
     return False
 
 
-def _is_test_file(rel: str) -> bool:
-    """Whether this path is a test module, whose direct writes are fixture setup."""
-    parts = rel.split("/")
-    return any(part in {"tests", "test"} for part in parts[:-1]) or parts[-1].startswith("test_") or parts[-1].endswith("_test.py")
-
-
 def _lines_under_a_lock(func: ast.AST) -> set[int]:
     """Line numbers inside a `with <something>lock:` block in this function.
 
@@ -171,7 +169,7 @@ def _owners_of_accumulators(parsed: list[tuple[str, ast.Module, list[str]]], cal
     """
     owners: dict[str, list[tuple[str, str]]] = {}
     for rel, tree, _lines in parsed:
-        module_level = _module_level_names(tree)
+        module_level = _module_assigned_names(tree)
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -196,7 +194,7 @@ def _bypasses_in(
 ) -> list[Finding]:
     """Every site in this module that accumulates into an owned structure without its helper."""
     findings: list[Finding] = []
-    module_level = _module_level_names(tree)
+    module_level = _module_assigned_names(tree)
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) or _is_setup(func.name):
             continue
@@ -281,7 +279,8 @@ def scan_accumulator_helper_bypassed(
         # A test arranging `c.stats["count_queries"] = 0` before asserting on it is building a
         # fixture, not bypassing an accumulator -- five of this rule's nine surviving hits were
         # exactly that, and reporting them would teach readers to skim the rest.
-        if _is_test_file(rel):
+        # A test module's direct writes are fixture setup, not a bypassed accumulator.
+        if is_test_file(rel):
             continue
         findings.extend(_bypasses_in(rel, tree, src_lines, owners))
     return findings

@@ -6,7 +6,13 @@ stop living in D:/Temp and can run against any project (mlframe,
 pyutilz itself, downstream applications) with a single import or
 ``python -m pyutilz.dev.code_audit ./src``.
 
-Implemented checks (each a top-level scanner function returning a
+The catalogue of record is GENERATED from the registry, not this docstring:
+``python -m pyutilz.dev.code_audit --list-checks`` (or ``describe_scanners()``)
+lists every registered check with its one-line summary and marks the ones
+``run_all`` skips unless asked for explicitly. Prefer it -- the prose below is
+background on the older checks and is not, and cannot be, complete.
+
+Checks described below (each a top-level scanner function returning a
 list[Finding]):
 
 - ``scan_mutable_defaults``: ``def f(x=[])`` / ``=={}`` / ``=set()`` /
@@ -590,7 +596,7 @@ from .vacuous_loop_assertion import scan_vacuous_loop_assertion
 from .unreachable_import_fallback import scan_unreachable_import_fallback
 # SCANNERS is deliberately NOT re-exported: the registry is private, read via get_scanners()
 # and written via register_scanner() (whose duplicate-name guard direct assignment bypassed).
-from .registry import OPT_IN_ONLY, run_all, register_scanner, get_scanners
+from .registry import OPT_IN_ONLY, describe_scanners, render_check_catalogue, run_all, register_scanner, get_scanners
 from .cli import main
 
 __all__ = [
@@ -599,6 +605,8 @@ __all__ = [
     "run_all",
     "register_scanner",
     "get_scanners",
+    "describe_scanners",
+    "render_check_catalogue",
     "main",
     "scan_mutable_defaults",
     "scan_late_binding_closures",
@@ -714,52 +722,18 @@ __all__ = [
     "scan_vacuous_loop_assertion",
 ]
 
-# Keep the public attribute surface identical to the pre-split flat module:
-# drop the submodule names that ``from .X import ...`` bound into this
-# namespace. They stay importable on demand as ``code_audit.<submodule>``
-# (Python re-registers them in sys.modules); this only trims ``dir()``.
-for _submod in (
-    "_base", "mutable_defaults", "closures", "default_via_or",
-    "broad_except", "nan_equality", "mutation_during_iteration",
-    "sql_lint", "dead_cli_flags", "silent_escalation", "sql_migrations",
-    "duplicate_conditions", "duplicate_function_body", "near_duplicate_function_body", "missed_await", "redundant_test_fit",
-    "undeclared_imports", "vacuous_assertions", "locals_globals_output",
-    "additive_epsilon_denominator", "non_neutral_except_fallback", "nondiscriminating_test",
-    "network_timeout", "retry_loops", "module_docstring",
-    "unraised_exceptions", "credential_logging",
-    "docstring_args", "return_annotation", "locals_get",
-    "shielded_resource_release", "duplicate_credential_regex",
-    "asymmetric_resource_guard",
-    "spy_arity", "log_throttle", "dead_import", "unpicklable_resource_state",
-    "reexport_patch_target", "assert_in_loop",
-    "skip_masking_except", "uncurated_star_export",
-    "field_text_agreement",
-    "registry", "cli",
-    "domain_boundary", "readonly_to_numpy_mutation",
-    "bare_except", "console_unicode", "mojibake", "resource_handle_safety",
-    "todo_hygiene", "import_cycles",
-    "hardcoded_test_path", "async_primitive_reinit", "llm_max_tokens_cap",
-    "per_call_state_on_shared_instance", "uncached_constant_cost_probe",
-    "accumulator_helper_bypassed",
-    "asymmetric_except_siblings",
-    "column_no_write_path",
-    "comment_names_missing_symbol",
-    "constructor_param_overwritten",
-    "count_then_fetch_same_table",
-    "docstring_numbers_moved_to_config",
-    "effect_flag_outside_its_effect",
-    "guard_decidable_from_constants",
-    "lazy_log_assertion",
-    "patch_target_is_a_reexport",
-    "raising_stub_swallowed",
-    "sentinel_cached_as_answer",
-    "sentinel_guard_mismatch",
-    "source_text_assertions",
-    "sql_selects_unread_column",
-    "stats_key_coverage",
-    "test_asserts_against_production_constant",
-    "unit_suffix_mismatch",
-    "unreachable_import_fallback",
-):
-    globals().pop(_submod, None)
-del _submod
+import types as _types
+
+# Keep the public attribute surface identical to the pre-split flat module: drop the submodule
+# names that ``from .X import ...`` bound into this namespace as a side effect. They stay importable
+# on demand as ``code_audit.<submodule>`` (Python re-registers them in sys.modules); this only trims
+# ``dir()``.
+#
+# COMPUTED, not a hand-maintained tuple: the tuple this replaces had fallen thirty submodules behind
+# the package, so the invariant it asserts was simply false and the surface was arbitrary -- one
+# newer scanner module visible, its neighbour not. Deliberate stdlib re-exports (``ast``, ``json``,
+# ``sys``) are unaffected: they are not submodules of this package.
+for _submod_name, _submod_value in list(globals().items()):
+    if isinstance(_submod_value, _types.ModuleType) and _submod_value.__name__.startswith(__name__ + "."):
+        globals().pop(_submod_name, None)
+del _submod_name, _submod_value, _types

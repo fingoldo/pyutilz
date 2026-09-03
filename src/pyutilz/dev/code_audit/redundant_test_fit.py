@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_cached, is_test_file, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _read_src_lines, _safe_parse
 
 # --- redundant test computation (expensive fit re-run across test functions) -----
 #
@@ -25,16 +25,6 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _re
 # repeated identical calls are normal and cheap (``pd.DataFrame(...)``,
 # ``np.zeros(...)``). A helper already decorated with ``@cache``/
 # ``@lru_cache`` is skipped -- it has already been fixed.
-
-
-def _is_cached(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if ``func_node`` carries a ``@cache`` / ``@lru_cache`` decorator (already fixed)."""
-    for dec in func_node.decorator_list:
-        target = dec.func if isinstance(dec, ast.Call) else dec
-        name = target.attr if isinstance(target, ast.Attribute) else target.id if isinstance(target, ast.Name) else None
-        if name in ("cache", "lru_cache"):
-            return True
-    return False
 
 
 # Calls a data factory may make while still being a data factory: constructing or mutating a literal
@@ -146,7 +136,7 @@ def scan_redundant_test_fit_calls(
             continue
         if _is_excluded(py, root, exclude_dirs):
             continue
-        if not (py.name.startswith("test_") or py.name.endswith("_test.py")):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:
@@ -157,7 +147,7 @@ def scan_redundant_test_fit_calls(
         cached_names = {
             node.name
             for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (_is_cached(node) or _is_literal_data_factory(node))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (is_cached(node) or _is_literal_data_factory(node))
         }
 
         # signature -> [(test_qualname, lineno), ...]

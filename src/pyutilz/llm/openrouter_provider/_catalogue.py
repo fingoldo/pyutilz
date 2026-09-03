@@ -22,7 +22,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _pkg():
+def _pkg() -> Any:  # Any, not ModuleType: the facade's mutable caches (_MODELS_CATALOGUE, _MODELS_LOCK) are module globals no module type declares
     """Return the package facade (owns the mutable caches + patch targets).
 
     Resolved via ``sys.modules`` rather than a top-level import so the
@@ -59,7 +59,7 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
     ``_MODELS_CATALOGUE_TTL_SECONDS`` (see :func:`_catalogue_is_fresh`).
     """
     if _catalogue_is_fresh():
-        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # _pkg() is a runtime module lookup, so its module-global catalogue attribute is untyped
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -77,10 +77,10 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             logger.debug("OpenRouter catalogue not yet cached and cannot be fetched from the event loop; returning empty")
             return {}
         logger.debug("Serving a stale OpenRouter catalogue rather than blocking the event loop on a refetch")
-        return cached  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return cached  # type: ignore[no-any-return]  # same: read from the _pkg() module global a few lines up
     with _pkg()._MODELS_LOCK:
         if _catalogue_is_fresh():
-            return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # same _pkg() module-global read, under the lock
         try:
             resp = _pkg().httpx.get(_pkg()._MODELS_URL, timeout=timeout)
             resp.raise_for_status()
@@ -95,7 +95,7 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             return {}  # do NOT cache failure — retry on next call
         _pkg()._MODELS_CATALOGUE = catalogue
         _pkg()._MODELS_CATALOGUE_FETCHED_AT = time.monotonic()
-        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return _pkg()._MODELS_CATALOGUE  # type: ignore[no-any-return]  # same _pkg() module-global read, after a successful refetch
 
 
 async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
@@ -148,6 +148,28 @@ def _per_token_cost_pair_or_none(model: str) -> "tuple[float, float] | None":
     except (TypeError, ValueError):
         return None
     return (in_per_1m, out_per_1m)
+
+
+def _cache_read_cost_per_1m_or_none(model: str) -> "float | None":
+    """Return the cached-input (prompt-cache read) USD-per-1M rate for ``model``, or None.
+
+    OpenRouter publishes it as a USD-per-token string under ``pricing.input_cache_read``; not every
+    model in the catalogue carries the field. None means "the catalogue cannot say", and the caller
+    falls back to the uncached input rate -- which over-estimates, so a missing field must never be
+    collapsed into 0.0.
+    """
+    catalogue = _fetch_models_catalogue()
+    entry = catalogue.get(model)
+    if not entry:
+        return None
+    pricing = entry.get("pricing") or {}
+    raw = pricing.get("input_cache_read")
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw) * 1_000_000
+    except (TypeError, ValueError):
+        return None
 
 
 def _per_token_cost_pair(model: str) -> tuple[float, float]:

@@ -5,6 +5,18 @@ import pytest
 from unittest.mock import patch, MagicMock
 import logging
 
+# The OS-probe binaries are resolved to an absolute path via `_resolve_binary()` (shutil.which per
+# PATH entry) before being spawned, so a planted executable in the process's current directory can
+# never win -- see its docstring. That resolution is a different concern from the output parsing
+# these tests exercise, and most of the probed binaries (lscpu, ioreg, getprop, pylspci) do not
+# exist on every OS this suite runs on, so it is stubbed to an identity here in all three modules
+# that call it.
+@pytest.fixture(autouse=True)
+def _stub_binary_resolution(monkeypatch):
+    for module in ("probing", "sysinfo", "fsutils"):
+        monkeypatch.setattr(f"pyutilz.system.system.{module}._resolve_binary", lambda name: name, raising=False)
+
+
 # ── parse_dmidecode_info (lines 757-832) ──
 
 
@@ -67,8 +79,9 @@ class TestParseDmidecodeInfo:
         result = parse_dmidecode_info(skip_keys={"Vendor", "Version", "Release Date", "Serial Number", "Socket Designation", "Manufacturer", "Product Name"})
         items = {dict(r["item"]).get("ItemType"): dict(r["item"]) for r in result}
         bios = items.get("BIOS Information")
-        if bios:
-            assert "Vendor" not in bios
+        # Unconditional: the section must still be parsed out -- skip_keys drops KEYS, never whole items.
+        assert bios, f"BIOS Information section vanished under skip_keys; parsed items: {sorted(items)}"
+        assert "Vendor" not in bios
 
     @patch("pyutilz.system.system.probing.subprocess")
     def test_skip_values(self, mock_sub):

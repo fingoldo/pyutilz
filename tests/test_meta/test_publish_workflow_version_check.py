@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,20 @@ def _current_project_version() -> str:
     return m.group(1)
 
 
+@lru_cache(maxsize=1)
+def _bash_can_read_repo() -> bool:
+    """Whether the `bash` on PATH can use the repo as its cwd and run command substitution.
+
+    Split out and cached so the probe subprocess runs ONCE per session rather than once per test:
+    the answer cannot change within a session, and on a host where WSL is cold or the probe hangs
+    the serial cost is the full timeout multiplied by the number of tests. The boolean split is
+    load-bearing -- caching a function that itself raises `Skipped` would memoise nothing, since the
+    exception escapes before a result is ever stored.
+    """
+    probe = subprocess.run(["bash", "-c", 'V=$(echo ok); test -f pyproject.toml && test "$V" = ok'], cwd=str(_REPO_ROOT), capture_output=True, timeout=30)
+    return probe.returncode == 0
+
+
 def _require_usable_bash() -> None:
     """Skip when the `bash` on PATH cannot see the repo working directory.
 
@@ -48,8 +63,7 @@ def _require_usable_bash() -> None:
     no version at all and the assertions below would report a workflow defect that does not exist.
     CI runs on Linux, where this probe always succeeds and the checks below really execute.
     """
-    probe = subprocess.run(["bash", "-c", 'V=$(echo ok); test -f pyproject.toml && test "$V" = ok'], cwd=str(_REPO_ROOT), capture_output=True, timeout=30)
-    if probe.returncode != 0:
+    if not _bash_can_read_repo():
         pytest.skip("the `bash` on PATH cannot read the repo working directory or run command substitution; cannot execute the workflow snippet here")
 
 

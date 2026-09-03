@@ -426,6 +426,39 @@ def _is_picklable(fn: Callable[..., list[Finding]]) -> bool:
     return picklable
 
 
+def describe_scanners() -> "dict[str, dict[str, object]]":
+    """The catalogue of checks, ASSEMBLED FROM THE REGISTRY -- ``{name: {summary, opt_in, function}}``.
+
+    The package docstring used to be the catalogue of record, and being hand-maintained it drifted:
+    thirty registered checks appeared nowhere in it, and fifteen of the sixteen opt-in-only checks
+    read exactly like default-on ones. A user reading it either got nothing from a check that was
+    described (it is opt-in, ``run_all`` skips it) or got hits from a check with no description at
+    all. Deriving the catalogue from the registry makes both impossible.
+
+    ``summary`` is the first paragraph-line of the scanner's own docstring, so the description lives
+    next to the implementation. ``opt_in`` is True for names ``run_all`` skips unless asked for
+    explicitly -- which is exactly ``OPT_IN_ONLY`` membership, never a marker someone remembered to
+    type.
+    """
+    catalogue: dict[str, dict[str, object]] = {}
+    for name, fn in sorted(_SCANNERS.items()):
+        target = fn.func if isinstance(fn, partial) else fn
+        doc = (getattr(target, "__doc__", None) or "").strip()
+        summary = doc.split("\n", 1)[0].strip() if doc else ""
+        catalogue[name] = {"summary": summary, "opt_in": name in OPT_IN_ONLY, "function": target.__name__}
+    return catalogue
+
+
+def render_check_catalogue() -> str:
+    """``describe_scanners()`` as plain text, one line per check, opt-in checks marked ``(OPT-IN)``."""
+    lines = []
+    for name, entry in describe_scanners().items():
+        marker = " (OPT-IN)" if entry["opt_in"] else ""
+        summary = entry["summary"]
+        lines.append(f"{name}{marker}: {summary}" if summary else f"{name}{marker}")
+    return "\n".join(lines) + "\n"
+
+
 def run_all(
     root: Path,
     checks: Optional[Iterable[str]] = None,

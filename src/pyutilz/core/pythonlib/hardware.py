@@ -66,7 +66,7 @@ def is_cuda_available() -> bool:
     try:
         _ensure_cuda_home_from_pip()
         from numba import cuda
-        return cuda.is_available()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return bool(cuda.is_available())  # bool(): numba ships no stubs, so cuda.is_available() is Any
     except ImportError as e:
         # numba (or its cuda submodule) simply not installed -- an expected, uninteresting outcome.
         logger.debug("CUDA probe: numba not importable: %s", e)

@@ -61,7 +61,7 @@ def flatten_keys_to_set(
     stringify: bool = False,
     verbose: bool = False,
     max_chars: int = 10,
-) -> set:
+) -> Set[Any]:
     """Recursively walks content of an object, bringing all the key-value keys to the top level set."""
     res: Set[Any] = set()
     if isinstance(obj, dict):
@@ -114,7 +114,7 @@ def flatten_keys_to_set(
             if verbose:
                 tmp_str = str(obj)
                 logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[:max_chars])
-    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return res
 
 
 def ensure_dict_elem(obj: dict, name: str, value) -> None:
@@ -128,11 +128,17 @@ def ensure_dict_elem(obj: dict, name: str, value) -> None:
 _GET_ATTR_UNSET = object()  # sentinel distinguishing "no default_value passed" from "caller passed default_value=None"
 
 
-def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None, *, _unset: object = _GET_ATTR_UNSET) -> object:
+def get_attr(obj: Optional[dict], attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None, *, _unset: object = _GET_ATTR_UNSET) -> Any:
     """
     If no default_value is supplied, missing/unwanted values fall back to [] (to prevent
     TypeError: 'NoneType' object is not iterable downstream). Passing default_value=None
     explicitly is honored and returned as None.
+
+    ``obj`` is Optional because the ``unwanted_value`` guard below exists to catch exactly the
+    ``obj is None`` case; a bare ``dict`` annotation said that guard could never fire. The return
+    is ``Any``, not ``object``: the value comes straight out of the caller's own dict, and
+    ``object`` supports no indexing, iteration or ``len()``, so it forced a cast at every
+    annotated call site for a helper whose documented fallback is a list.
     """
     # Compare against `_unset` (a second default bound to the SAME sentinel object at this
     # function's own def-time), not a bare `_GET_ATTR_UNSET` global lookup: `importlib.reload`
@@ -147,6 +153,10 @@ def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET,
     # "truth value of an array ... is ambiguous", so any results dict holding a feature vector
     # used to crash on plain lookup.
     if (obj is unwanted_value) if unwanted_value is None else (obj == unwanted_value):
+        return default_value
+    if obj is None:
+        # Only reachable when a non-None unwanted_value was passed, so the guard above did not
+        # catch it; .get() on None would raise AttributeError from inside a fallback helper.
         return default_value
     res = obj.get(attr_name, default_value)
     if (res is unwanted_value) if unwanted_value is None else (res == unwanted_value):

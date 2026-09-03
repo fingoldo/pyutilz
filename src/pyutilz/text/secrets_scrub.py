@@ -89,10 +89,31 @@ TELEGRAM_TOKEN_RE = re.compile(
 # Separator padding is ``[ \t]*``, NOT ``\s*``: ``\s`` matches a newline, so a line ending in a bare
 # ``password:`` label swallowed the line break AND the first token of the following line (the first
 # frame of a traceback).
+# QUOTED keys and QUOTED values: the key may be wrapped in matching ``"``/``'`` (group 1, back-
+# referenced after the key so ``"password'`` is not treated as a quoted key), because a JSON body,
+# a Python ``repr()`` of a config dict and a quoted TOML/YAML key all put the quote BETWEEN the
+# keyword and the separator -- ``{"password": "s3cret"}`` passed through completely unredacted
+# while the identical unquoted ``password=s3cret`` was caught. The value alternation tries a
+# quoted run first so the closing quote is consumed as part of the secret rather than left
+# dangling (``"s3cret"`` -> ``***``, not ``***"``); ``\S+`` remains the fallback for bare values.
 SECRET_KEY_VALUE_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,64}(?:password|passwd|api[_-]?key|token|secret|authorization|auth)[A-Za-z0-9_.-]{0,64})"
-    r"[ \t]*[:=][ \t]*(?!(?:Bearer|Basic)\b)\S+"
+    r"(?i)(?<![A-Za-z0-9_.-])([\"']?)([A-Za-z0-9_.-]{0,64}(?:password|passwd|api[_-]?key|token|secret|authorization|auth)[A-Za-z0-9_.-]{0,64})\1"
+    r"[ \t]*[:=][ \t]*(?!(?:Bearer|Basic)\b)(?:\"[^\"]*\"|'[^']*'|\S+)"
 )
+
+# ---------------------------------------------------------------------------
+# Credential-shaped NAMES (a variable/parameter/column name, not a text run).
+# ---------------------------------------------------------------------------
+# The patterns above match a secret by its SHAPE inside free text; this one matches by the NAME a
+# value arrives under, for callers holding a mapping (a decorator's kwargs, a config dict, a row)
+# where the value itself may be an unremarkable-looking string. It lives here rather than being
+# re-declared per consumer because a second copy of this vocabulary is exactly the drift this
+# module was extracted to end -- ``dev/code_audit/credential_logging.py`` carries the scanner-side
+# twin and flags any third.
+CREDENTIAL_NAME_RE = re.compile(
+    r"(?i)(?:^|[^A-Za-z0-9])(proxy|proxies|password|passwd|pass|auth|token|credential|secret|api_key|apikey|cookie)(?:[^A-Za-z0-9]|$)"
+)
+
 
 # ---------------------------------------------------------------------------
 # Standalone high-entropy credential shapes (no ``key=`` label needed).
@@ -174,6 +195,10 @@ def redact_secrets(text: object, limit: Optional[int] = None) -> str:
     'Send Bearer *** to authenticate.'
     >>> redact_secrets("call failed: api_key=sk-super-secret-123 token: deadbeefcafe")  # pragma: allowlist secret
     'call failed: api_key=*** token=***'
+    >>> redact_secrets('{"api_key": "sk-live-abc"}')  # pragma: allowlist secret
+    '{"api_key"=***}'
+    >>> redact_secrets("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI")  # pragma: allowlist secret
+    'AWS_SECRET_ACCESS_KEY=***'
     >>> redact_secrets("")
     ''
     >>> redact_secrets(None)
@@ -186,7 +211,9 @@ def redact_secrets(text: object, limit: Optional[int] = None) -> str:
     s = DSN_PASSWORD_RE.sub(r"\1***\2", s)
     s = DSN_PASSWORD_QUERY_RE.sub(r"\1***", s)
     s = TELEGRAM_TOKEN_RE.sub(_telegram_sub, s)
-    s = SECRET_KEY_VALUE_RE.sub(lambda m: f"{m.group(1)}=***", s)
+    # The key's own quotes (group 1) are preserved around the key so a redacted JSON/dict line stays
+    # recognisable as the field it came from: ``{"password"=***, ...}``.
+    s = SECRET_KEY_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(1)}=***", s)
     s = PEM_PRIVATE_KEY_RE.sub("<private-key-redacted>", s)
     s = HIGH_ENTROPY_TOKEN_RE.sub("***", s)
     if limit is not None:

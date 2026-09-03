@@ -1,4 +1,12 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+DELIBERATE PAIR, not an accident -- `patch_target_is_a_reexport.py` targets the same defect class
+and is the one `run_all()` selects by default. Both are kept, and they differ in exactly one place:
+their false-positive suppression rule. THIS one is the narrower, older half: it reports the
+ambiguity when it cannot see the call site's binding style, so it is the stricter reading and can
+speak about a case its sibling stays silent on. Registered but listed in `registry.OPT_IN_ONLY`,
+so upgrading pyutilz does not suddenly report every site twice; name it in `checks=` to run it.
+"""
 
 from __future__ import annotations
 

@@ -25,16 +25,12 @@ from typing import Any, AsyncIterator
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
+# Defined in the domain's exceptions module (so `except LLMProviderError` catches it) and re-exported
+# here, where it is raised, so existing `from ...claude_code_provider import ClaudeCodeToolUseError`
+# imports keep resolving.
+from pyutilz.llm.exceptions import ClaudeCodeToolUseError  # also re-exported for back-compat; no noqa needed, the name is raised below
+
 logger = logging.getLogger(__name__)
-
-
-class ClaudeCodeToolUseError(RuntimeError):
-    """Raised when a Claude Code session emits a tool-use block despite tools being disabled.
-
-    A ``RuntimeError`` (deliberately NOT an ``OSError``/``ConnectionError``) so the provider's
-    transient-failure retry arm does not swallow it: an escaped tool call is a security event to
-    surface to the caller, never something to retry.
-    """
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +263,69 @@ def _find_claude_executable() -> str:
                 return path
 
     raise FileNotFoundError("Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
+
+
+def _raise_on_cli_tool_use(event: dict) -> None:
+    """Raise :class:`ClaudeCodeToolUseError` if a CLI ``assistant`` event carries a tool-use block.
+
+    The CLI counterpart of the SDK path's ToolUseBlock tripwire: both backends run with permissions
+    bypassed, so a tool-use block means the sandbox they rely on (``--tools ""`` +
+    ``--strict-mcp-config``) is not holding -- most plausibly prompt injection in caller-supplied
+    text. It raised loudly on the SDK path and passed completely unnoticed here, the caller
+    receiving a normal-looking result with nothing recording that a tool ran."""
+    message = event.get("message") or {}
+    content = message.get("content") or []
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({block.get('name', '?')!r}); this provider is text-generation-only")
+
+
+def _consume_cli_stream(line_q: "queue.Queue[str | None]", timeout: float) -> "tuple[str | None, str | None, bool]":
+    """Read stream-json events off ``line_q`` until a ``result`` event, the reader's EOF sentinel, or ``timeout``.
+
+    Returns ``(result_text, error_text, timed_out)``: exactly one of the first two is set unless the
+    deadline expired first, in which case ``timed_out`` is True and both are None. Split out of
+    ``ClaudeCodeProvider._generate_cli`` -- this event dispatch is the whole of that function's
+    branching, and inlining it kept the enclosing coroutine at the top of the C901 budget where any
+    further edit (this one included) pushed it over.
+    """
+    result_text: "str | None" = None
+    error_text: "str | None" = None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            raw = line_q.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        if raw is None:
+            break
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        etype = event.get("type")
+        if etype == "result":
+            subtype = event.get("subtype", "")
+            if subtype == "success":
+                result_text = event.get("result", "")
+            else:
+                error_text = event.get("result") or event.get("error") or subtype
+            break
+        elif etype == "assistant":
+            _raise_on_cli_tool_use(event)
+        elif etype == "rate_limit_event":
+            logger.debug("Claude CLI rate_limit_event (continuing)")
+        elif etype == "system" and event.get("subtype") == "init":
+            logger.debug("Claude CLI initialized")
+    else:
+        return None, None, True
+    return result_text, error_text, False
 
 
 class ClaudeCodeProvider(LLMProvider):
@@ -688,8 +747,6 @@ class ClaudeCodeProvider(LLMProvider):
                 except BrokenPipeError:
                     pass
 
-                result_text = None
-                error_text = None
                 line_q: queue.Queue[str | None] = queue.Queue()
 
                 def _reader():
@@ -709,38 +766,8 @@ class ClaudeCodeProvider(LLMProvider):
                 # the same pipe (ValueError: I/O operation on closed file, or
                 # partial reads). For reaping we kill + wait; stderr is read
                 # directly (the reader never touches it).
-                deadline = time.monotonic() + self.timeout
-                timed_out = False
                 try:
-                    while time.monotonic() < deadline:
-                        try:
-                            raw = line_q.get(timeout=1.0)
-                        except queue.Empty:
-                            continue
-                        if raw is None:
-                            break
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            event = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-
-                        etype = event.get("type")
-                        if etype == "result":
-                            subtype = event.get("subtype", "")
-                            if subtype == "success":
-                                result_text = event.get("result", "")
-                            else:
-                                error_text = event.get("result") or event.get("error") or subtype
-                            break
-                        elif etype == "rate_limit_event":
-                            logger.debug("Claude CLI rate_limit_event (continuing)")
-                        elif etype == "system" and event.get("subtype") == "init":
-                            logger.debug("Claude CLI initialized")
-                    else:
-                        timed_out = True
+                    result_text, error_text, timed_out = _consume_cli_stream(line_q, self.timeout)
                 finally:
                     try:
                         proc.kill()
@@ -787,7 +814,7 @@ class ClaudeCodeProvider(LLMProvider):
                 error_msg = stderr or stdout or "Unknown error"
                 raise RuntimeError(f"Claude CLI failed (code {returncode}): {error_msg}")
 
-            return stdout.strip()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return stdout.strip()  # type: ignore[no-any-return]  # stdout comes from an asyncio subprocess pipe read decoded through an untyped helper
 
     async def generate_json(
         self,

@@ -58,12 +58,7 @@ _DECLARED_NARROWINGS = {
         "shape. Surfaced by the full-select advisory pass instead."
     ),
     "ci.yml::with::ignore=C901": "The CI half of the same decision; the two venues must stay in step, which is why both keys are listed.",
-    "pre-commit::ruff-real-bugs::exclude=(^|/)_benchmarks/": (
-        "_benchmarks scripts print timing results to stdout by design, so T201/PERF401 there "
-        "are the interface, not bugs. Mirrors [tool.ruff] exclude, which pre-commit bypasses "
-        "when it passes explicit file paths."
-    ),
-    "pyproject::[tool.ruff]::exclude": "Same _benchmarks exemption plus VCS/build artifact dirs. tests/ and scripts/ were REMOVED from this list; they are linted.",
+    "pyproject::[tool.ruff]::exclude": "VCS/build artifact dirs only. tests/ and scripts/ were REMOVED from this list 2026-09-02 and _benchmarks/ on 2026-09-03 (audit 06/F09), along with the pre-commit hook's mirror of it; all three are linted, with their idiomatic codes exempted per-file instead.",
     "pyproject::[tool.ruff.lint]::per-file-ignores": "Each entry carries its own inline reason at the call site in pyproject.toml; the exemptions are per-file and per-code, never whole-directory.",
     # -- mypy -------------------------------------------------------------------------
     "pre-commit::mypy::files=^src/pyutilz/(dev/code_audit|stats)/": (

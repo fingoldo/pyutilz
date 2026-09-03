@@ -20,6 +20,7 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import os
+import json
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Typing
@@ -87,6 +88,9 @@ successful_login_signs = ()  # Define as empty tuple, to be overridden by user
 login_input_name = "email"
 password_input_name = "password"  # nosec B105 - this is the HTML form field NAME/selector used to locate the password input element, not a literal credential value (the actual secret is the module-level `pwd` variable, supplied by the caller)
 use_real_useragent = True
+# None = decide automatically (see _should_disable_sandbox): only a uid-0 process, where Chrome
+# refuses to start otherwise, gets --no-sandbox. Set True/False via init() to force either way.
+no_sandbox: Optional[bool] = None
 undetectable = False
 find_executable = False
 use_subprocess = False
@@ -180,6 +184,87 @@ def find_chrome_executable():
             return os.path.normpath(candidate)
     return None
 
+def _build_proxy_extension_js(proxy_server: dict) -> str:
+    """Render the proxy-auth extension's background.js for ``proxy_server``.
+
+    A module-level function, not an inline literal inside ``start_selenium()``: the escaping
+    below is the security-relevant part of this file and needs a seam a test can reach without
+    starting a browser."""
+    return """
+    var config = {
+            mode: "fixed_servers",
+            rules: {
+            singleProxy: {
+                scheme: "http",
+                host: %s,
+                port: %d
+            },
+            bypassList: ["localhost"]
+            }
+        };
+
+    chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
+
+    function callbackFn(details) {
+        return {
+            authCredentials: {
+                username: %s,
+                password: %s
+            }
+        };
+    }
+
+    chrome.webRequest.onAuthRequired.addListener(
+                callbackFn,
+                {urls: ["<all_urls>"]},
+                ['blocking']
+    );
+    """ % (
+        # json.dumps, not raw %s inside a JS string literal: these four values arrive from a
+        # rotating-proxy vendor's API response, a config file or a DB row, and were spliced
+        # unescaped into the source of an extension holding `webRequest`+`webRequestBlocking`
+        # over `<all_urls>` -- the most privileged JS context in the browser. A password
+        # containing a plain `"` or `\` (legal, and common in generated credentials) silently
+        # broke the script so `onAuthRequired` never registered and every request went out
+        # unauthenticated (unexplained 407s); a hostile one (`x"};alert(1);var y={"a":"`)
+        # executed arbitrary JS able to read and rewrite every request of the authenticated
+        # session. json.dumps emits a correctly escaped JS/JSON string literal for any input,
+        # so it supplies its own quotes -- the `"%s"` wrappers are gone from the template
+        # above. The port goes through int() + %d so a non-numeric port fails loudly here
+        # instead of being spliced into parseInt().
+        json.dumps(str(proxy_server["PROXY_HOST"])),
+        int(proxy_server["PROXY_PORT"]),
+        json.dumps(str(proxy_server["PROXY_USER"])),
+        json.dumps(str(proxy_server["PROXY_PASS"])),
+    )
+
+
+def _should_disable_sandbox() -> bool:
+    """Whether to pass Chrome ``--no-sandbox``.
+
+    This library exists to point a browser at arbitrary third-party sites, so the renderer sandbox is
+    the one thing standing between a renderer exploit (a hostile ad, a compromised CDN script) and
+    code execution as the scraper's OS user -- the same user holding the S3 credentials, the DB DSN
+    and the proxy passwords this module handles a few lines up. It used to be passed unconditionally,
+    on every platform, with no way to turn it back on (the guard was a commented-out
+    ``# if not undetectable:``), while the very next lines hardened the CDP surface -- inconsistent
+    within one function.
+
+    It is now passed only where Chrome genuinely refuses to start without it: running as uid 0, which
+    is the containerised-as-root deployment the flag was really there for. Anyone else (every Windows
+    and macOS caller, and any Linux caller running as a normal user) gets the sandbox back. An
+    operator who needs it anyway sets the module-level ``no_sandbox`` via ``init(no_sandbox=True)`` --
+    the correct container fix remains a non-root user plus a seccomp profile, not a disabled sandbox.
+    """
+    if no_sandbox is not None:
+        return bool(no_sandbox)
+    # os.geteuid is POSIX-only (absent on Windows), so presence-test the attribute rather than
+    # branching on platform.system() -- Windows has no uid-0 process to detect in the first place.
+    if hasattr(os, "geteuid"):
+        return bool(os.geteuid() == 0)  # type: ignore[attr-defined]  # POSIX-only, guarded by the hasattr above
+    return False
+
+
 def start_selenium() -> "WebDriver":
     """Launches a Chrome Selenium webdriver (undetected or standard), applying module-level config (proxy, user agent, data dir), and stores it in the module-level `browser`."""
     import zipfile
@@ -257,36 +342,7 @@ def start_selenium() -> "WebDriver":
             }
             """
 
-            background_js = """
-            var config = {
-                    mode: "fixed_servers",
-                    rules: {
-                    singleProxy: {
-                        scheme: "http",
-                        host: "%s",
-                        port: parseInt(%s)
-                    },
-                    bypassList: ["localhost"]
-                    }
-                };
-
-            chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
-
-            function callbackFn(details) {
-                return {
-                    authCredentials: {
-                        username: "%s",
-                        password: "%s"
-                    }
-                };
-            }
-
-            chrome.webRequest.onAuthRequired.addListener(
-                        callbackFn,
-                        {urls: ["<all_urls>"]},
-                        ['blocking']
-            );
-            """ % (proxy_server["PROXY_HOST"], proxy_server["PROXY_PORT"], proxy_server["PROXY_USER"], proxy_server["PROXY_PASS"])
+            background_js = _build_proxy_extension_js(proxy_server)
             # Regression fix: previously written to a hardcoded "proxy_auth_plugin.zip" in the
             # process's current working directory, with no cleanup anywhere in this file -- the
             # plaintext proxy password (embedded in background.js above) sat on disk
@@ -322,8 +378,8 @@ def start_selenium() -> "WebDriver":
     else:
         pluginfile = None
 
-    # if not undetectable:
-    options.add_argument("--no-sandbox")
+    if _should_disable_sandbox():
+        options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     # Regression fix: a fixed, well-known CDP debug port (9222) with no address restriction let
     # ANY other local process/user on a shared host connect to http://localhost:9222/json and

@@ -26,7 +26,7 @@ def _is_data_sweep(node: ast.expr) -> bool:
     return name not in {"range", "enumerate", "zip", "reversed", "sorted", "pairwise", "product", "permutations", "combinations"}
 
 
-def _accumulates(body: list[ast.stmt]) -> bool:
+def _body_accumulates(body: list[ast.stmt]) -> bool:
     """Whether the loop body collects anything - an append/add/update/setdefault or a `+=`.
 
     A loop that already accumulates is reporting the whole set somewhere; the assert inside it is
@@ -88,7 +88,7 @@ def scan_assert_in_loop_reports_only_the_first(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
-            if not isinstance(node, ast.For) or not _is_data_sweep(node.iter) or _accumulates(node.body):
+            if not isinstance(node, ast.For) or not _is_data_sweep(node.iter) or _body_accumulates(node.body):
                 continue
             for stmt in ast.walk(ast.Module(body=node.body, type_ignores=[])):
                 if not isinstance(stmt, ast.Assert):

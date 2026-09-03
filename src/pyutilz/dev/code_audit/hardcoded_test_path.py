@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # A Windows drive-letter path ("D:\Machine Learning\...", "C:/Users/...") or a
 # POSIX developer-home path ("/home/alice/...", "/Users/bob/...", "/root/...").
@@ -13,22 +13,6 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _
 # docstrings, regex character classes) -- only the specific shapes a real
 # hardcoded personal-machine path takes.
 _ABS_PATH_RE = re.compile(r"(^[A-Za-z]:[\\/]|^/home/[\w.-]+/|^/Users/[\w.-]+/|^/root/)")
-
-
-def _is_test_file(path: Path, root: Path) -> bool:
-    """True if ``path`` looks like a test file by name or by living under a ``tests`` directory.
-
-    The ``tests`` test is applied to the path RELATIVE to the scan root: absolute parts include
-    every ancestor above the root, so a scan rooted anywhere beneath a directory named `tests`
-    treated the whole tree, production modules included, as test code.
-    """
-    if path.name.startswith("test_") or path.name.endswith("_test.py"):
-        return True
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return False
-    return "tests" in relative.parts
 
 
 def scan_hardcoded_absolute_path_in_test(
@@ -60,7 +44,7 @@ def scan_hardcoded_absolute_path_in_test(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not _is_test_file(py, root):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

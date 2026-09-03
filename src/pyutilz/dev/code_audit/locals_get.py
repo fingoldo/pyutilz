@@ -4,12 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
-
-
-def _is_locals_or_globals_call(node: ast.AST) -> bool:
-    """True for a bare, no-argument ``locals()``/``globals()`` call node."""
-    return isinstance(node, ast.Call) and not node.args and not node.keywords and isinstance(node.func, ast.Name) and node.func.id in ("locals", "globals")
+from ._base import Finding, is_locals_or_globals_call, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def scan_locals_get_fragile_lookup(
@@ -45,9 +40,9 @@ def scan_locals_get_fragile_lookup(
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"):
                 continue
-            if not _is_locals_or_globals_call(node.func.value):
+            if not is_locals_or_globals_call(node.func.value):
                 continue
-            scope_name = node.func.value.func.id  # type: ignore[attr-defined]  # narrowed by _is_locals_or_globals_call above
+            scope_name = node.func.value.func.id  # type: ignore[attr-defined]  # narrowed by is_locals_or_globals_call above
             findings.append(Finding(
                 check="locals_get_fragile_lookup",
                 severity="P1",

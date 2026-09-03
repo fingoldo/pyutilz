@@ -250,15 +250,17 @@ class TestF09DerivedReset:
 
     def test_reset_covers_every_declared_percall_attribute(self):
         provider = _make_stub()
+        dirtied = []
         for name in provider._PERCALL_METADATA_ATTRS:
             descriptor = getattr(type(provider), name, None)
             if isinstance(descriptor, PerCallAttr):
+                dirtied.append(name)
                 setattr(provider, name, "DIRTY")
+        # An empty tuple (or a rename of PerCallAttr) would make the check below pass vacuously.
+        assert dirtied, f"no PerCallAttr found among {provider._PERCALL_METADATA_ATTRS}"
         provider._reset_per_call_state()
-        for name in provider._PERCALL_METADATA_ATTRS:
-            descriptor = getattr(type(provider), name, None)
-            if isinstance(descriptor, PerCallAttr):
-                assert getattr(provider, name) != "DIRTY", name
+        for name in dirtied:
+            assert getattr(provider, name) != "DIRTY", name
 
     def test_reset_is_derived_and_not_hand_maintained(self):
         """A newly declared PerCallAttr registered in the tuple is reset with no extra wiring."""
@@ -596,7 +598,10 @@ class TestF19VendorPrefixDegeneracy:
         xai_provider.XAIProvider._seen_unknown_models.discard("grok-5")
         with caplog.at_level("WARNING", logger="pyutilz.llm.xai_provider"):
             rates = provider._resolve_pricing("grok-5")
-        assert rates == (0.20, 0.50)
+        # `_resolve_pricing` returns the shared `Pricing` record, so the fallback is read by field
+        # name rather than by tuple position -- the two-vs-three-position divergence between sibling
+        # providers is what the record replaced.
+        assert (rates.input, rates.output) == (0.20, 0.50)
         assert any("grok-5" in record.getMessage() for record in caplog.records)
 
 
@@ -609,7 +614,8 @@ class TestF20OpenAIDatedSnapshotPricing:
         if family is None:
             pytest.skip("no gpt-5-pro row in the pricing table")
         expected = pricing[family]
-        assert provider._resolve_pricing(family + "-2026-01-15") == expected
+        resolved = provider._resolve_pricing(family + "-2026-01-15")
+        assert (resolved.input, resolved.output) == expected
         assert expected != pricing["gpt-5-mini"], "test model must differ from the fallback"
 
     def test_pricing_and_limits_agree_about_the_same_dated_id(self):

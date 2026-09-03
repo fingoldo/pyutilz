@@ -371,6 +371,9 @@ class TestCrossImplConsistency:
     def test_matches_python(self, sim_fn, a, b):
         py_result = _sim_python(a, b)
         other_result = sim_fn(a, b)
+        # Unconditional: refusing (None) or scoring must agree with Python BEFORE the score is compared,
+        # so an implementation that starts returning None for everything fails here instead of skipping.
+        assert (other_result is None) == (py_result is None), f"refusal disagreement: python={py_result!r}, other={other_result!r}"
         if py_result is None:
             assert other_result is None
         else:
@@ -417,6 +420,7 @@ class TestHypothesisSentenceSimilarity:
         """Symmetry: sim(a,b) ≈ sim(b,a)."""
         r1 = _sim_python(a, b)
         r2 = _sim_python(b, a)
+        assert (r1 is None) == (r2 is None), f"refusal is not symmetric: sim(a,b)={r1!r}, sim(b,a)={r2!r}"
         if r1 is None:
             assert r2 is None
         else:
@@ -428,6 +432,7 @@ class TestHypothesisSentenceSimilarity:
         """Numba must always match Python."""
         py = _sim_python(a, b)
         nb = _sim_numba(a, b)
+        assert (nb is None) == (py is None), f"refusal disagreement: python={py!r}, numba={nb!r}"
         if py is None:
             assert nb is None
         else:
@@ -438,6 +443,7 @@ class TestHypothesisSentenceSimilarity:
     def test_batch_matches_python_hypothesis(self, a, b):
         py = _sim_python(a, b)
         ba = _sim_batch(a, b)
+        assert (ba is None) == (py is None), f"refusal disagreement: python={py!r}, batch={ba!r}"
         if py is None:
             assert ba is None
         else:
@@ -448,6 +454,7 @@ class TestHypothesisSentenceSimilarity:
     def test_parallel_matches_python_hypothesis(self, a, b):
         py = _sim_python(a, b)
         pa = _sim_batch_parallel(a, b)
+        assert (pa is None) == (py is None), f"refusal disagreement: python={py!r}, batch_parallel={pa!r}"
         if py is None:
             assert pa is None
         else:
@@ -465,6 +472,9 @@ class TestSentencesSimilarityBatch:
         candidates = [["HELLO", "WORLD"], ["FOO", "BAR"], ["HELLO", "EARTH"], ["WORLD"]]
         for parallel in (False, True):
             results = sentences_similarity_numba_batch(query, candidates, parallel=parallel)
+            # Unconditional: one score per candidate, so a batch that silently drops candidates
+            # fails here rather than making the per-candidate loop below vacuous.
+            assert len(results) == len(candidates), f"parallel={parallel}: got {len(results)} results for {len(candidates)} candidates"
             for i, cand in enumerate(candidates):
                 expected = sentences_similarity(query, cand)
                 if expected is None:
@@ -502,6 +512,7 @@ class TestSentencesSimilarityPacked:
         pa = pack_sentence(a)
         pb = pack_sentence(b)
         packed = sentences_similarity_numba_packed(pa, pb)
+        assert (packed is None) == (py is None), f"refusal disagreement: python={py!r}, packed={packed!r}"
         if py is None:
             assert packed is None
         else:
@@ -520,6 +531,9 @@ class TestSentenceSimilarityIndex:
             idx = SentenceSimilarityIndex(candidates, parallel=parallel)
             query = ["HELLO", "WORLD"]
             results = idx.query(query)
+            # Unconditional: one score per indexed candidate, so an index that returns a short
+            # (or empty) result list fails here instead of making the loop below vacuous.
+            assert len(results) == len(candidates), f"parallel={parallel}: got {len(results)} results for {len(candidates)} candidates"
             for i, cand in enumerate(candidates):
                 expected = sentences_similarity(query, cand)
                 if expected is None:
@@ -893,6 +907,8 @@ class TestCoverageGate:
             for req_cov in (0.5, 1.0):
                 py = sentences_similarity(a, b, required_coverage=req_cov, coverage_side="max")
                 nb = sentences_similarity_numba(a, b, required_coverage=req_cov, coverage_side="max")
+                # Unconditional: the accept/refuse verdict itself must agree, checked before the score.
+                assert (nb is None) == (py is None), f"verdict disagreement at required_coverage={req_cov}: python={py!r}, numba={nb!r}"
                 if py is None:
                     assert nb is None
                 else:
@@ -912,6 +928,8 @@ class TestCoverageGate:
         idx = SentenceSimilarityIndex(candidates, required_coverage=0.66, coverage_side="max")
         indexed = idx.query(query)
         direct = [sentences_similarity_numba(query, c, required_coverage=0.66, coverage_side="max") for c in candidates]
+        # Unconditional: `zip` below would silently compare nothing if the index returned a short list.
+        assert len(indexed) == len(candidates), f"index returned {len(indexed)} results for {len(candidates)} candidates"
         for i, (got, expected) in enumerate(zip(indexed, direct)):
             if expected is None:
                 assert got is None, f"candidate {i}"

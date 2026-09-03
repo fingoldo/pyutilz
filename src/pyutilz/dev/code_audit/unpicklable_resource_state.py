@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, dotted_name, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- unpicklable live-resource state without __getstate__ ----------------
 
@@ -37,21 +37,6 @@ _UNPICKLABLE_DOTTED_CTORS = frozenset({
 _OPEN_BUILTIN = "open"
 
 
-def _dotted_call_name(call: ast.Call) -> str:
-    """Return the dotted name of ``call.func`` (e.g. ``"torch.cuda.Stream"``), or "" if it isn't a
-    plain Name/Attribute chain (e.g. a subscript or another call)."""
-    parts: list[str] = []
-    node: ast.AST = call.func
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-    else:
-        return ""
-    return ".".join(reversed(parts))
-
-
 def _last_component(dotted: str) -> str:
     """Return the final ``.``-separated component of a dotted name."""
     return dotted.rsplit(".", 1)[-1]
@@ -70,7 +55,7 @@ def _resource_imported_names(tree: ast.Module) -> set[str]:
 def _is_unpicklable_ctor_call(call: ast.Call, resource_names: "set[str] | None" = None) -> bool:
     """True if ``call`` constructs a live, process-bound resource (lock, thread, open file, CUDA
     stream/event) that can't survive a plain pickle round-trip."""
-    dotted = _dotted_call_name(call)
+    dotted = dotted_name(call.func)
     if not dotted:
         return False
     if dotted in _UNPICKLABLE_DOTTED_CTORS:

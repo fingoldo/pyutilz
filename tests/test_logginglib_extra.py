@@ -343,6 +343,11 @@ def test_redis_handler_emit_exception():
     record = logging.LogRecord("test", logging.INFO, "", 0, "test msg", (), None)
     handler.emit(record)  # should not raise
 
+    # It really attempted the push (so the swallow is on the redis failure itself, not on some
+    # earlier bail-out), and no trim followed on a list that was never written.
+    rc.lpush.assert_called_once()
+    rc.ltrim.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # debugged decorator — lines 327-329

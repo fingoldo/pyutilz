@@ -16,7 +16,7 @@ from ._common import (
     pl,
     explode_keeping_empty_as_null,
 )
-from typing import Callable, Literal
+from typing import Callable, List, Literal
 from .columns import apply_agg_func_safe, cast_f64_to_f32, clean_numeric
 
 # PROJECT IDIOM for a re-export package's submodules (see also pyutilz/data/pandaslib/frames.py and
@@ -104,7 +104,7 @@ def compute_concentrations(
     if columns_to_unnest:
         df = df.with_columns(columns_to_unnest).unnest(unnest_rules)
 
-    return df  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return df  # type: ignore[no-any-return]  # polars: the group_by/agg/unnest chain above loses the concrete frame type through cs.* selectors
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -113,13 +113,13 @@ def compute_concentrations(
 
 
 def add_weighted_aggregates(
-    columns_selector: object,
+    columns_selector: cs.Selector,
     weighting_columns: Iterable,
     fpref: str = "",
     fields_remap: Optional[dict] = None,
     nans_filler: float = 0.0,
     expr_filter: Optional[Callable[[Any], Any]] = None,
-) -> list:
+) -> List[pl.Expr]:
     """Computes weighted aggregates.
 
     A zero-sum-weight group (e.g. hedged buy/sell volumes, net-zero flow) makes the weighted-mean
@@ -135,10 +135,10 @@ def add_weighted_aggregates(
     if not fields_remap:
         fields_remap = {}
     afilter: Callable[[Any], Any] = expr_filter if expr_filter is not None else (lambda expr: expr)
-    wcols = []
+    wcols: List[pl.Expr] = []
     if weighting_columns:
         for wcol in weighting_columns:
-            all_other_num_cols: Any = columns_selector - cs.by_name(wcol)
+            all_other_num_cols = columns_selector - cs.by_name(wcol)
             raw_weighted_mean = afilter(all_other_num_cols * pl.col(wcol)).sum() / afilter(pl.col(wcol)).sum()
             weighted_mean = clean_numeric(raw_weighted_mean, nans_filler=nans_filler).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
@@ -320,9 +320,9 @@ def build_aggregate_features_polars(
 
         for filter_value in filter_values:
 
-            def af(expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.Expr:
+            def af(expr: pl.Expr, _filter_field=filter_field, _filter_value=filter_value) -> pl.Expr:
                 """Wrap ``expr`` with a ``.filter(col == value)`` for the current subgroup, or leave it unfiltered if there is no active filter field."""
-                return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
 
@@ -659,4 +659,4 @@ def create_ts_features_polars(
     res = res.collect(engine=engine)  # type: ignore[call-overload]  # "cpu" (this function's own documented default) works at runtime but isn't in polars' EngineType Literal
     logger.info("Done.")
 
-    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return res  # type: ignore[no-any-return]  # polars: LazyFrame.collect() through the call-overload ignore above yields Any

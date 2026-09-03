@@ -23,10 +23,20 @@ class TestSetNumbaRandomSeed:
 
     def test_accepts_integer_seed(self):
         """Test that @njit function accepts integer seed (no None check)"""
+        from numba import njit
+
         from pyutilz.numbalib import set_numba_random_seed
 
+        @njit
+        def _draw():
+            return np.random.rand(5)
+
         # Should work with integer seed; pytest surfaces the real traceback if it raises.
-        set_numba_random_seed(42)
+        assert set_numba_random_seed(42) is None
+        # The integer really reached numba's own RNG: the stream it seeds is usable and in range.
+        drawn = _draw()
+        assert len(drawn) == 5
+        assert np.all((drawn >= 0) & (drawn < 1))
 
     def test_sets_random_state_without_error(self):
         """Test that setting seed works without error (nopython mode fix)"""
@@ -71,17 +81,38 @@ class TestSetRandomSeed:
 
     def test_handles_none_default(self):
         """Test that wrapper handles None default value"""
+        from numba import njit
+
         from pyutilz.numbalib import set_random_seed
+
+        @njit
+        def _draw():
+            return np.random.rand(5)
 
         # Should not crash with None; pytest surfaces the real traceback if it raises.
         set_random_seed(None)
+        after_none = _draw()
+        # None is substituted with the documented fallback seed 42, so this is not merely "no
+        # crash": the wrapper seeds the stream exactly as an explicit 42 would.
+        set_random_seed(42)
+        assert np.array_equal(after_none, _draw())
 
     def test_accepts_integer_seed(self):
         """Test that wrapper accepts integer seed"""
+        from numba import njit
+
         from pyutilz.numbalib import set_random_seed
+
+        @njit
+        def _draw():
+            return np.random.rand(5)
 
         # pytest surfaces the real traceback if it raises.
         set_random_seed(456)
+        first = _draw()
+        # The explicit seed is passed through, not ignored in favour of the None fallback.
+        set_random_seed(42)
+        assert not np.array_equal(first, _draw())
 
     def test_same_seed_reproduces_same_draws(self):
         """Same determinism property as TestSetNumbaRandomSeed, for the None-handling wrapper.

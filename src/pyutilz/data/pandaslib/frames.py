@@ -6,6 +6,7 @@ from the package ``__init__`` to preserve the public import surface.
 """
 
 import warnings
+from typing import cast
 
 from ._common import (
     Any,
@@ -519,7 +520,7 @@ def get_non_stale_columns(df: pd.DataFrame) -> list:
     construction -- came back with an empty list, e.g. for a single-row inference frame.)
     """
     if len(df) <= 1:
-        return df.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return cast(list, df.columns.tolist())  # cast, not list(...): .tolist() already built a list, so a second copy would be pure waste
 
     # nunique(dropna=False) treats NaN as its own value, so an all-NaN column (nunique==1)
     # is correctly flagged stale -- unlike ``df != df.iloc[0]``, which is always True for NaN
@@ -530,9 +531,9 @@ def get_non_stale_columns(df: pd.DataFrame) -> list:
     if num_stale > 0:
         logger.warning(f"Found {num_stale} stale columns: {','.join(stale_columns[stale_columns].index.values.tolist())}")
         df = df.loc[:, stale_columns[~stale_columns].index.values]
-        all_features_names = df.columns.tolist()
-        return all_features_names  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-    return df.columns.tolist()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        all_features_names = cast(list, df.columns.tolist())
+        return all_features_names
+    return cast(list, df.columns.tolist())
 
 
 def remove_stale_columns(df: pd.DataFrame) -> list:
@@ -562,7 +563,7 @@ def get_suspiciously_constant_columns(df: pd.DataFrame) -> list:
     the sibling kept it, so the two screens disagreed on the very same frame.
     """
     try:
-        susp_columns = df.columns[df.nunique(dropna=False) <= 1].tolist()
+        susp_columns: list = df.columns[df.nunique(dropna=False) <= 1].tolist()
     except Exception:
         susp_columns = []
         for col in df.columns:
@@ -572,7 +573,7 @@ def get_suspiciously_constant_columns(df: pd.DataFrame) -> list:
             except TypeError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this column, check the rest)
                 # Skip the column if a TypeError (e.g. unhashable type) occurs.
                 continue
-    return susp_columns  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return susp_columns
 
 
 def remove_constant_columns(df: pd.DataFrame, verbose: bool = False, prewarm_size: int = 10_000) -> None:

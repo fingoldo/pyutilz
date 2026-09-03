@@ -172,7 +172,7 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
             with fac._DEFAULT_INSTANCE_LOCK:
                 if fac._DEFAULT_INSTANCE is None:
                     fac._DEFAULT_INSTANCE = cls()
-        return fac._DEFAULT_INSTANCE  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return fac._DEFAULT_INSTANCE  # type: ignore[no-any-return]  # _facade() is a runtime module lookup, so its _DEFAULT_INSTANCE global is untyped
 
     # ----- public API -----
 

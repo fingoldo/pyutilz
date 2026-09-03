@@ -152,10 +152,9 @@ def test_tokenize_source_line_counts(tmp_path, file_content, expected_token_coun
 
     result = list(tokenize_source(str(test_file), simple_tokenizer, is_file=True))
 
-    if file_content:
-        assert len(result) == expected_token_count
-    else:
-        assert len(result) == 0
+    # Unconditional: the empty-file case is already parametrised with expected_token_count == 0,
+    # so one assertion covers every row and an empty parametrisation cannot pass vacuously.
+    assert len(result) == expected_token_count
 
 
 class TestStringUtilities:

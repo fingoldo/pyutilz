@@ -3,6 +3,9 @@ Test suite for logginglib.py
 Tests cover logging utility functions and decorators.
 """
 
+import logging
+from pathlib import Path
+
 import pytest
 
 
@@ -113,11 +116,19 @@ class TestLoggingActivities:
         assert log["results"]["loaded"]["file"]["data.csv"] == {"rows": 7}
         assert log["results"]["loaded"]["db_table"]["my_table"] == {"rows": 3}
 
-    def test_log_loaded_rows_defaults_results_log(self):
+    def test_log_loaded_rows_defaults_results_log(self, caplog):
         """results_log=None must not raise: the function substitutes its own {"results": {}}."""
+        import logging
+
         from pyutilz.logginglib import log_loaded_rows
 
-        log_loaded_rows([1, 2], source="t", source_type="db_table", results_log=None, lang="ru", verbose=False)
+        with caplog.at_level(logging.INFO, logger="pyutilz.dev.logginglib"):
+            log_loaded_rows([1, 2], source="t", source_type="db_table", results_log=None, lang="ru", verbose=True)
+
+        # The pre-fix KeyError fired during the recording step, i.e. BEFORE this message: emitting
+        # it is the observable proof that the substituted dict carried "results" throughout.
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("2" in m and "t" in m for m in messages), messages
 
     def test_log_loaded_rows_rejects_unknown_source_type(self):
         from pyutilz.logginglib import log_loaded_rows
@@ -177,23 +188,68 @@ class TestLoggingDecorators:
 
 
 class TestInitLogging:
-    """Test logging initialization"""
+    """Test logging initialization.
+
+    ``init_logging`` calls ``logging.basicConfig(force=True)``, which REPLACES the root logger's
+    handlers process-wide, so every test here restores the root logger afterwards -- otherwise the
+    rest of the suite runs against whichever configuration the last test in this class installed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_root_logger(self):
+        root = logging.getLogger()
+        saved_handlers, saved_level = list(root.handlers), root.level
+        try:
+            yield
+        finally:
+            for handler in list(root.handlers):
+                root.removeHandler(handler)
+                if handler not in saved_handlers:
+                    handler.close()
+            for handler in saved_handlers:
+                root.addHandler(handler)
+            root.setLevel(saved_level)
 
     def test_init_logging_console(self):
-        """Test console-only logging initialization (no file handler)"""
+        """log_to_file=False must attach a stream handler and NO file handler.
+
+        Paired with the file case below: asserting only "does not crash" leaves the two modes
+        indistinguishable, so a file handler leaking into console mode (or vice versa) passes.
+        """
         from pyutilz.logginglib import init_logging
 
-        # Should not crash; pytest surfaces the real traceback if it does.
-        init_logging(log_to_file=False, level="INFO")
+        returned = init_logging(log_to_file=False, level=logging.INFO)
+
+        root = logging.getLogger()
+        assert not [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert [h for h in root.handlers if type(h) is logging.StreamHandler]
+        assert returned.level == logging.INFO
 
     def test_init_logging_file(self, tmp_path):
-        """Test file logging initialization"""
+        """log_to_file=True must attach a file handler at the path derived from forced_filename,
+        and records emitted afterwards must actually land in that file.
+
+        Note the contract is ``_log_filename(forced_filename)``, not ``forced_filename`` itself:
+        the trailing ``.py`` is swapped for ``.log`` and a name without it simply gains ``.log``.
+        """
+        from pyutilz.dev.logginglib import _log_filename
         from pyutilz.logginglib import init_logging
 
-        log_file = tmp_path / "test.log"
+        forced = str(tmp_path / "test.py")
+        expected = Path(_log_filename(forced))
 
-        # pytest surfaces the real traceback if it raises.
-        init_logging(log_to_file=True, forced_filename=str(log_file), level="DEBUG")
+        returned = init_logging(log_to_file=True, forced_filename=forced, level=logging.DEBUG)
+
+        root = logging.getLogger()
+        file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) == 1
+        assert Path(file_handlers[0].baseFilename) == expected.resolve()
+        assert returned.level == logging.DEBUG
+
+        logging.getLogger("pyutilz.tests.init_logging_file").warning("marker-9f3a")
+        for handler in file_handlers:
+            handler.flush()
+        assert "marker-9f3a" in expected.read_text(encoding="utf-8")
 
 
 class TestEdgeCases:

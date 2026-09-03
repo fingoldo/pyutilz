@@ -7,7 +7,7 @@ import logging
 import httpx
 
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +152,12 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             "raw": data,
         }
 
-    def _resolve_pricing(self, model: str) -> tuple[float, float, float]:
-        """Look up (input, cache_hit, output) per-1M USD rates for ``model``.
+    def _resolve_pricing(self, model: str) -> Pricing:
+        """Look up the :class:`Pricing` record for ``model``.
+
+        The module's ``_PRICING`` table is stored in DeepSeek's own upstream order
+        ``(input, cache_hit, output)``; it is reordered into ``Pricing``'s named fields here so no
+        caller ever has to remember which position means what.
 
         Falls back to ``deepseek-v4-flash`` pricing on miss, with a single
         warning per unknown model name (logged once via the cache itself
@@ -161,10 +165,12 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         typo like ``"deepseekv4"`` would otherwise estimate cost using
         flash rates without any signal.
         """
-        if model not in _PRICING:
+        row = _PRICING.get(model)
+        if row is None:
             self._warn_unknown_model_once(model)
-            return _PRICING["deepseek-v4-flash"]
-        return _PRICING[model]
+            row = _PRICING["deepseek-v4-flash"]
+        in_cost, cache_hit, out_cost = row
+        return Pricing(float(in_cost), float(out_cost), float(cache_hit))
 
     _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
 
@@ -180,12 +186,8 @@ class DeepSeekProvider(OpenAICompatibleProvider):
 
     def _input_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M input tokens (cache miss) for ``model``."""
-        return self._resolve_pricing(model)[0]
+        return self._resolve_pricing(model).input
 
     def _output_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M output tokens for ``model``."""
-        return self._resolve_pricing(model)[2]
-
-    def _cache_hit_cost_per_1m(self, model: str) -> float:
-        """Return the USD cost per 1M input tokens on a cache hit for ``model``."""
-        return self._resolve_pricing(model)[1]
+        return self._resolve_pricing(model).output

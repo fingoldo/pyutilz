@@ -256,9 +256,16 @@ def format_report(report: FreeVarReport, path: Union[str, Path], start_line: int
 def _end_line(node: ast.AST) -> int:
     """A parsed node's last line. ``end_lineno`` is Optional on the node types only because the AST classes
     declare it so; every node produced by ``ast.parse`` carries one. Falling back explicitly rather than with
-    ``or`` keeps a line number of 0 from being silently rewritten into the start line."""
+    ``or`` keeps a line number of 0 from being silently rewritten into the start line.
+
+    Both reads go through ``getattr`` with a default: ``ast.AST`` itself genuinely carries NEITHER
+    attribute -- expression-context nodes (``ast.Load``/``ast.Store``), operator nodes (``ast.Add``)
+    and ``ast.Module`` have no ``lineno`` at all -- so an unguarded ``node.lineno`` fallback would
+    raise AttributeError mid-rewrite for the sake of silencing the checker that said so."""
     end = getattr(node, "end_lineno", None)
-    return int(end) if end is not None else int(node.lineno)  # type: ignore[attr-defined]
+    if end is not None:
+        return int(end)
+    return int(getattr(node, "lineno", 0) or 0)
 
 
 def _top_level_span(tree: ast.Module, name: str) -> "tuple[int, int]":

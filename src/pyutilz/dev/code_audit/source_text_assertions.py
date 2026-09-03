@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterator
+from typing import Iterator
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- tests that assert on SOURCE TEXT rather than on behaviour -----------
 #
@@ -173,24 +173,6 @@ def _scopes(tree: ast.Module) -> Iterator[ast.AST]:
     yield tree
 
 
-def _looks_like_a_test_file(path: Path, root: Path) -> bool:
-    """Whether this file is test code.
-
-    Only test files are scanned: a build script or a code generator manipulates source text as
-    its actual job, and flagging it would be noise.
-
-    The ``tests`` directory test is made against the path RELATIVE to the scan root: ``path.parts``
-    is absolute, so a checkout under any directory named ``tests`` classified every production
-    file in the repository as a test.
-    """
-    name = path.name
-    try:
-        rel_parts = path.relative_to(root).parts
-    except ValueError:
-        rel_parts = path.parts
-    return name.startswith("test_") or name.endswith("_test.py") or "tests" in rel_parts
-
-
 def _fails_in_body(node: ast.If) -> bool:
     """Does this ``if``'s body do nothing but call ``pytest.fail`` / ``self.fail``? Then it is an assertion."""
     for stmt in node.body:
@@ -225,7 +207,9 @@ def scan_source_text_assertions(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not _looks_like_a_test_file(py, root):
+        # Only test files are scanned: a build script or a code generator manipulates source text
+        # as its actual job, and flagging it would be noise.
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

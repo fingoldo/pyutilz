@@ -327,6 +327,10 @@ class TestLogDuration:
             mock_get.return_value = mock_lgr
             func()
 
+        # logger_name routes the message to THAT logger, not to the module-level one.
+        mock_get.assert_called_once_with("custom.logger")
+        mock_lgr.info.assert_called_once()
+
     def test_kwargs_formatting(self):
         from pyutilz.system.monitoring import log_duration
 

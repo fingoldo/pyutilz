@@ -176,7 +176,7 @@ def get_llm_provider(
         )
         instance = constructor(**kwargs)
         _uncached_providers.add(instance)
-        return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return instance  # type: ignore[no-any-return]  # constructor is a caller-registered callable with no declared return type
 
     with _provider_lock:
         if cache_key in _provider_cache:
@@ -197,7 +197,7 @@ def get_llm_provider(
                 _schedule_provider_close(evicted)
             else:
                 _uncached_providers.add(evicted)
-        return instance  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return instance  # type: ignore[no-any-return]  # same untyped constructor, returning the freshly cached instance
 
 
 def _close_cached_providers() -> None:

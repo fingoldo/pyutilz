@@ -59,11 +59,33 @@ class TestWebConstants:
     """Test web module initialization"""
 
     def test_init_vars(self):
-        """Test module variable initialization"""
+        """init_vars() resets EVERY module-level session global it documents back to its default."""
         from pyutilz.web import init_vars
+        from pyutilz.web import web as mod
 
-        # Should not crash
+        class _StubSession:
+            closed = False
+
+            def close(self):
+                type(self).closed = True
+
+        # Dirty the state first, so a no-op implementation cannot pass by accident.
+        mod.sess = _StubSession()
+        mod.num_ip_queries = 7
+        mod.template_headers = {"x": "1"}
+        mod.headers = {"x": "1"}
+        mod.proxies = {"http": "http://p:1"}
+        mod.timeout = 99
+
         init_vars()
+
+        assert mod.sess is None
+        assert _StubSession.closed, "the replaced session must be closed, not just dropped (connection-pool leak)"
+        assert mod.num_ip_queries == 0
+        assert mod.template_headers is None
+        assert mod.headers == {}
+        assert mod.proxies is None
+        assert mod.timeout == 10
 
 
 class TestWebReporting:

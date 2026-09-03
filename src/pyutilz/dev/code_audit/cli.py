@@ -8,7 +8,7 @@ from dataclasses import asdict
 from typing import Optional
 
 from ._base import SEVERITIES, Finding, UNKNOWN_SEVERITY_RANK, _DEFAULT_EXCLUDE_DIRS, severity_rank
-from .registry import get_check_aliases, get_scanners, run_all
+from .registry import get_check_aliases, get_scanners, render_check_catalogue, run_all
 
 # --- CLI ----------------------------------------------------------------
 
@@ -59,7 +59,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             "just pyutilz."
         ),
     )
-    parser.add_argument("root", type=Path, help="source-tree root to scan (e.g. ./src)")
+    parser.add_argument("root", type=Path, nargs="?", help="source-tree root to scan (e.g. ./src)")
+    # The catalogue is generated from the registry, so it can never fall behind the checks that
+    # actually run -- which the package docstring, hand-maintained, repeatedly did.
+    parser.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="print every registered check with its one-line summary (opt-in ones marked) and exit.",
+    )
     # The emitted ``Finding.check`` ids are accepted too, so a check id read off a report row is
     # always runnable -- several scanners emit an id that differs from their registry key.
     selectable = sorted(set(get_scanners()) | set(get_check_aliases()))
@@ -84,6 +91,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="filter out findings below this severity (default Low: show all).",
     )
     args = parser.parse_args(argv)
+
+    if args.list_checks:
+        sys.stdout.write(render_check_catalogue())
+        return 0
+    if args.root is None:
+        parser.error("root is required (or pass --list-checks)")
 
     root: Path = args.root.expanduser().resolve()
     if not root.is_dir():

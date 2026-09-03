@@ -112,6 +112,10 @@ class TestCPUDetection:
         """get_nix_cpu_sockets_number() must parse a well-formed `lscpu` `Socket(s):` line."""
         from pyutilz.system.system.probing import get_nix_cpu_sockets_number
 
+        # lscpu is now resolved to an absolute path via resolve_binary() before being spawned
+        # (binary-planting fix), which is a separate concern from the output parsing under test
+        # here -- and lscpu does not exist on the Windows box this suite also runs on.
+        monkeypatch.setattr("pyutilz.system.system.probing._resolve_binary", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "pyutilz.system.system.probing.subprocess.check_output",
             lambda *a, **kw: b"Architecture:  x86_64\nSocket(s):     2\n",
@@ -127,6 +131,10 @@ class TestCPUDetection:
         """
         from pyutilz.system.system.probing import get_nix_cpu_sockets_number
 
+        # lscpu is now resolved to an absolute path via resolve_binary() before being spawned
+        # (binary-planting fix), which is a separate concern from the output parsing under test
+        # here -- and lscpu does not exist on the Windows box this suite also runs on.
+        monkeypatch.setattr("pyutilz.system.system.probing._resolve_binary", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(
             "pyutilz.system.system.probing.subprocess.check_output",
             lambda *a, **kw: b"Architecture:  x86_64\nSocket(s):     N/A\n",

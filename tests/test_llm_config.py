@@ -79,6 +79,11 @@ class TestClearLlmSettingsCache:
     def test_clearing_an_already_empty_cache_does_not_raise(self):
         config_module.clear_llm_settings_cache()
         config_module.clear_llm_settings_cache()  # must not raise
+        # The second clear is a no-op, not a partial reset: every cache slot stays at its empty
+        # sentinel, so the next get_llm_settings() still re-reads the environment.
+        assert config_module._cached_settings is None
+        assert config_module._cached_settings_at == float("-inf")
+        assert config_module._cached_env_file == config_module._UNSET_ENV_FILE
 
 
 class TestConcurrentAccess:

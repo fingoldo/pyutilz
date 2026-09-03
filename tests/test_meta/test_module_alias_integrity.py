@@ -20,6 +20,7 @@ on the user's machine. This test catches the drift in CI:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sys
 
@@ -164,10 +165,11 @@ def test_lazy_proxy_does_not_shadow_real_toplevel_packages():
         real_mod = importlib.import_module(real_path)
         public = next((c for c in dir(real_mod) if not c.startswith("_")), None)
         if public is not None:
-            try:
+            # opportunistic: only used to trigger __getattr__'s side effect; the real assertion is below.
+            # `suppress` rather than `except Exception: pass` so this can never grow into a handler that
+            # also swallows an assertion (this repo's own `nondiscriminating_test` scanner flags that shape).
+            with contextlib.suppress(Exception):
                 getattr(proxy, public)
-            except Exception:
-                pass  # opportunistic: only used to trigger __getattr__'s side effect; the real assertion is below
         # The bare top-level key must NOT now point at a pyutilz module.
         shadow = sys.modules.get(alias)
         assert shadow is None or not _is_pyutilz_file(shadow), (

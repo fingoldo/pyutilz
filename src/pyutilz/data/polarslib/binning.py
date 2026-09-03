@@ -57,7 +57,7 @@ def _group_freqs(bins: pl.DataFrame, cols, drop_nulls: bool = False) -> Any:
 
 def _shannon_entropy(freqs: Any) -> float:
     """Shannon entropy (in nats) of a discrete frequency distribution that sums to 1."""
-    return -np.sum(freqs * np.log(freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return float(-np.sum(freqs * np.log(freqs)))  # float(): np.sum over an Any operand returns np.floating, not the declared float
 
 
 def entropy_for_column(bins: pl.DataFrame, col: str, drop_nulls: bool = False) -> float:

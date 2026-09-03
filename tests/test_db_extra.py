@@ -154,7 +154,10 @@ def test_make_set_excluded_clause_snake_case_is_the_real_implementation():
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        make_set_excluded_clause("a,b")  # must not raise
+        clause = make_set_excluded_clause("a,b")  # must not raise
+
+    # It is the real implementation, not a stub: it builds the excluded-mapping itself.
+    assert clause == "a=excluded.a,b=excluded.b"
 
 
 def test_update_if_now_do_update_branch():
@@ -246,8 +249,10 @@ def test_safe_delta_write_lock_key_is_case_insensitive_on_windows(monkeypatch, t
     deltalakes.safe_delta_write(base, lambda: "ok")
     deltalakes.safe_delta_write(variant, lambda: "ok")
 
-    if os.name == "nt":
-        assert captured_paths[0] == captured_paths[1], "same table under different case must map to the SAME lock file on Windows"
+    assert len(captured_paths) == 2, "both writes must have gone through FileLock"
+    # On POSIX both spellings are literally the same string, so equality is required there too --
+    # it is only the Windows case-folding that makes this a non-trivial claim.
+    assert captured_paths[0] == captured_paths[1], "same table under different case must map to the SAME lock file on Windows"
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +729,14 @@ def test_connect_to_db_close_failure_does_not_prevent_retry(monkeypatch):
         m_db_flavor="postgres",
     )
 
+    # "Does not raise" alone is satisfied by a regression that swallows the close() failure and
+    # then returns without retrying at all -- the caller would be left with no connection. Assert
+    # the retry really happened and that the working connection is the one now installed, matching
+    # the sibling test above.
+    assert attempts["n"] == 2
+    assert db.conn is not None
+    assert type(db.conn).__name__ == "WorkingConn"
+
 
 # ---------------------------------------------------------------------------
 # upsert.build_upsert_query  hash_fields contract (was type-hinted str with
@@ -861,11 +874,15 @@ def test_ensure_pg_table_exists_snake_case_is_the_real_implementation(monkeypatc
 
     import pyutilz.database.db as db
 
-    monkeypatch.setattr(db, "check_if_pg_table_exists", lambda table_name, schema_name="public": True)
+    probed = []
+    monkeypatch.setattr(db, "check_if_pg_table_exists", lambda table_name, schema_name="public": probed.append(table_name) or True)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
         db.ensure_pg_table_exists(table="t")  # must not raise
+
+    # It is the real implementation, not a delegating alias: it runs the existence probe itself.
+    assert probed == ["t"]
 
 
 def test_read_table_into_dict_pascalcase_alias_warns_and_delegates(monkeypatch):

@@ -24,8 +24,14 @@ from .sql_helpers import make_set_excluded_clause, validate_sql_identifier
 import pyutilz.database.db as _facade
 
 
-def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "public"):
-    """True when ``table_name`` exists in ``schema_name`` according to ``information_schema.tables``."""
+def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "public") -> Optional[bool]:
+    """True when ``table_name`` exists in ``schema_name`` according to ``information_schema.tables``.
+
+    Three-state on purpose: ``None`` means the probe itself did not come back (``safe_execute``
+    swallowed an error, or the connection was lost), which is NOT the same as "the table is
+    absent". A caller that must not act on an unknown has to test ``is False`` / ``is None``
+    rather than truthiness.
+    """
     # table_name/schema_name are compared against information_schema metadata columns as VALUES,
     # not identifiers -- parameterized via %s placeholders (correctness/consistency fix: this
     # previously used u()'s manual quote-doubling escape instead of driver-level parameter
@@ -40,7 +46,8 @@ def check_if_pg_table_exists(table_name: str, schema_name: Optional[str] = "publ
         (schema_name, table_name),
     )
     if res:
-        return res[0][0]
+        return bool(res[0][0])
+    return None
 
 
 def ensure_pg_table_exists(
@@ -59,7 +66,13 @@ def ensure_pg_table_exists(
     # m_db_schema sets the search_path AND is stored on the facade, so a table living in "myschema"
     # was reported absent by a hard-coded "public" probe -- and the CREATE TABLE that followed then
     # failed with DuplicateTable, which basic_db_execute swallows as a warning.
-    if not _facade.check_if_pg_table_exists(table, schema_name=getattr(_facade, "db_schema", None) or "public"):
+    exists = _facade.check_if_pg_table_exists(table, schema_name=getattr(_facade, "db_schema", None) or "public")
+    if exists is None:
+        # The probe did not come back at all. Creating the table now would run a CREATE against a
+        # database we could not even query -- and DuplicateTable is swallowed as a warning further
+        # down, so a table that DOES exist would look like a successful autocreate.
+        raise RuntimeError(f"Could not determine whether table {table!r} exists: the information_schema probe returned no rows.")
+    if not exists:
         if autocreate_id_type_name:
             if autocreate_id_type_name.lower() not in ("smallserial serial bigserial uuid".split()):
                 # autocreate_id_type_name is spliced verbatim into the CREATE TABLE statement below with no other
@@ -195,7 +208,7 @@ def get_id_by_key_field_and_insert_if_needed(
         return "null"
 
     if key_field_value in dict_enums:
-        return dict_enums[key_field_value]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return dict_enums[key_field_value]  # type: ignore[no-any-return]  # dict_enums is a caller-supplied plain dict, so its values are untyped
     else:
         key_field_name = key_field_name if key_field_name is not None else "name"
         alternate_fields_names = alternate_fields_names if alternate_fields_names is not None else ""
@@ -242,7 +255,7 @@ def get_id_by_key_field_and_insert_if_needed(
         the_id = rs[0][0]
         dict_enums[key_field_value] = the_id
 
-        return the_id  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return the_id  # type: ignore[no-any-return]  # the row comes from psycopg2 (no stubs) via safe_execute
 
 
 def _iter_partition_dates(from_date: date, to_date: date, partition_size: str):

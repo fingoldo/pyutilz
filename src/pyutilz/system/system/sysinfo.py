@@ -47,6 +47,7 @@ from .probing import (
     summarize_system_info,
     parse_dmidecode_info,
 )
+from .probing import _resolve_binary  # absolute-path resolution for spawned probe binaries (see _resolve_binary's docstring)
 from .fsutils import get_max_singledisk_free_space_gb, list_linux_devices
 from pyutilz.system.psutil_compat import get_cpu_freq as _get_cpu_freq  # private alias: keeps the facade's public surface unchanged
 
@@ -154,7 +155,7 @@ def get_system_info(
                     os_serial = None
                     try:
                         # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
-                        os_serial = _decode_child_output(subprocess.check_output("wmic csproduct get uuid")).split("\n")[1].strip()  # nosec B603 B607 - fixed trusted Windows binary "wmic", hardcoded literal command, no shell, no external input
+                        os_serial = _decode_child_output(subprocess.check_output([_resolve_binary("wmic"), "csproduct", "get", "uuid"])).split("\n")[1].strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
                         info["os_machine_guid"] = os_serial
                         info["os_serial"] = os_serial  # Also store as separate field for distributed.py
                     except Exception:
@@ -164,12 +165,12 @@ def get_system_info(
 
                 elif current_system == "Linux":
                     try:
-                        machine_id = _decode_child_output(subprocess.check_output(["cat", "/var/lib/dbus/machine-id"])).strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
+                        machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/var/lib/dbus/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
                         info["os_machine_guid"] = machine_id
                         info["os_serial"] = machine_id
                     except Exception:
                         try:
-                            machine_id = _decode_child_output(subprocess.check_output(["cat", "/etc/machine-id"])).strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
+                            machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/etc/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
                             info["os_machine_guid"] = machine_id
                             info["os_serial"] = machine_id
                         except Exception:
@@ -177,7 +178,7 @@ def get_system_info(
                             info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Android":
                     try:
-                        serial = _decode_child_output(subprocess.check_output(["getprop", "ril.serialnumber"])[:-1]).strip()  # nosec B603 B607 - fixed trusted Android binary "getprop" with a hardcoded property name, no shell, no external input
+                        serial = _decode_child_output(subprocess.check_output([_resolve_binary("getprop"), "ril.serialnumber"])[:-1]).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
                         info["os_machine_guid"] = serial
                         info["os_serial"] = serial
                     except Exception:
@@ -190,11 +191,11 @@ def get_system_info(
                         # cleanly on exit / exception (was a bare
                         # subprocess.Popen pair before, leaking processes
                         # if grep_proc.communicate() raised).
-                        with subprocess.Popen(  # nosec B603 B607 - fixed trusted macOS binary "ioreg" with hardcoded argv, no shell, no external input
-                            ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                        with subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+                            [_resolve_binary("ioreg"), "-rd1", "-c", "IOPlatformExpertDevice"],
                             stdout=subprocess.PIPE,
-                        ) as ioreg_proc, subprocess.Popen(  # nosec B603 B607 - fixed trusted binary "grep" with hardcoded argv, piped from ioreg's stdout, no shell, no external input
-                            ["grep", "-E", "(UUID)"],
+                        ) as ioreg_proc, subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, piped from ioreg's stdout, no shell, no external input
+                            [_resolve_binary("grep"), "-E", "(UUID)"],
                             stdin=ioreg_proc.stdout,
                             stdout=subprocess.PIPE,
                         ) as grep_proc:
@@ -293,7 +294,7 @@ def get_system_info(
                     # form always raised FileNotFoundError on Linux/macOS regardless of whether nvcc was
                     # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
                     # "\n" on Linux/macOS, not "\r\n".
-                    cuda_version = re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output(["nvcc", "--version"])))  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal argv, no shell, no external input
+                    cuda_version = re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output([_resolve_binary("nvcc"), "--version"])))  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
                 except Exception:
                     cuda_version = [""]
 

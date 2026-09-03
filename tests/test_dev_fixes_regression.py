@@ -290,8 +290,9 @@ class TestHardwareMonitorGuards:
             # Pre-fix: int("N/A") -> ValueError crashed the thread function.
             mon.query_utilization()
 
-        # gpu_id coerced to 0, which isn't in gpu_ids=[0]? 0 IS in [0], so it is processed.
-        # Either way no exception is what we assert.
+        # A non-numeric gpu_module_id is a malformed READING, not a sampling failure, and it must
+        # not be charged to the error counter (pre-fix it raised ValueError out of the thread).
+        assert mon.n_sampling_errors == 0
 
 
 # ---------------------------------------------------------------------------

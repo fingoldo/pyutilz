@@ -47,7 +47,7 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "
     "pyutilz.core.pythonlib, and __init__.py defines no sentinel objects of its own.",
-    "tests/test_pythonlib_extra2.py:530": "deliberately reloads pyutilz.core.pythonlib to prove "
+    "tests/test_pythonlib_extra2.py:537": "deliberately reloads pyutilz.core.pythonlib to prove "
     "get_attr() survives it -- pythonlib.py's only historical sentinel hazard was "
     "_GET_ATTR_UNSET, and get_attr() now captures a second `_unset` parameter from the SAME "
     "name at the SAME def-time as its own default (comparing against that, not a bare global "
@@ -82,6 +82,97 @@ _PERMITTED_SYS_MODULES_POP_SITES: dict[str, str] = {
 # Only pops of a pyutilz-owned module can split OUR identity; popping a third-party stub key
 # (e.g. "PIL.Image") is ordinary test scaffolding and is not flagged.
 _POP_PREFIXES = ("pyutilz",)
+
+
+# "path/to/file.py:lineno" -> reason this bare ``sys.modules[...] = ...`` write is safe.
+#
+# Added 2026-09-03 (audit F11): assignment INTO sys.modules is the third route into the same
+# hazard, and neither ban above covers it. A stub installed with a plain subscript write and never
+# removed stays visible for the rest of the process, so a package that is not installed looks
+# installed -- attribute-less -- to every later ``find_spec``/``import`` capability probe, and the
+# real module built against that stub outlives it too. Unlike the pop check this one flags ANY
+# module name, not just pyutilz-owned ones, because the stub-shadows-a-missing-package failure is
+# precisely about third-party names. It scans tests/ only: ``src/pyutilz/__init__.py``'s lazy-alias
+# writes are the production mechanism itself, not scaffolding.
+#
+# The safe shapes need no entry here because they are not subscript writes at all:
+# ``monkeypatch.setitem(sys.modules, ...)`` (undone automatically) is the preferred form. Any entry
+# below must say what removes the key again, and when.
+_PERMITTED_SYS_MODULES_WRITE_SITES: dict[str, str] = {
+    "tests/test_dev_fixes_regression.py:205": "the RESTORE half of a try/finally -- puts the saved "
+    "pyutilz.system.monitoring module back after the throwaway re-import; paired with the pop "
+    "entry for the same finally block above.",
+    "tests/test_image.py:60": "the restore half of the _stub_pil fixture teardown -- reinstates the " "real PIL modules saved on setup.",
+    "tests/test_image.py:63": "the restore half of the same teardown for pyutilz.core.image.",
+    "tests/test_meta/test_lazy_import_safety.py:116": "installs a lazy PROXY (not a stub for a "
+    "missing package) under pyutilz.<alias>, which is exactly what the production __init__ "
+    "installs there anyway -- the key is occupied by an equivalent proxy before and after, so "
+    "nothing later can observe a difference.",
+    "tests/test_system_audit_fixes.py:343": "the prefect_helpers fixture's stub install; its "
+    "finally block pops both the stub key and (when the fixture built it) "
+    "pyutilz.system.scheduling.prefect plus the parent-package attribute.",
+    "tests/test_web_extra.py:465": "a grequests stub inside a try/finally whose finally does " '`del sys.modules["grequests"]` before the assertions run.',
+}
+
+
+def _written_sys_modules_key(node: ast.Assign) -> bool:
+    """True if ``node`` is a ``sys.modules[...] = ...`` subscript assignment."""
+    for target in node.targets:
+        if not isinstance(target, ast.Subscript):
+            continue
+        value = target.value
+        if isinstance(value, ast.Attribute) and value.attr == "modules" and isinstance(value.value, ast.Name) and value.value.id == "sys":
+            return True
+    return False
+
+
+def _find_sys_modules_writes(root: Path) -> list[str]:
+    out: list[str] = []
+    for py in root.rglob("*.py"):
+        if "__pycache__" in py.parts:
+            continue
+        try:
+            src = py.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        rel = py.relative_to(_REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _written_sys_modules_key(node):
+                out.append(f"{rel}:{node.lineno}")
+    return out
+
+
+def test_no_unreviewed_sys_modules_assignment():
+    """``sys.modules["x"] = <stub>`` with no removal leaks a fake package into the whole session.
+
+    The 2026-09-03 audit (F11) found a `prefect` stub installed this way for the rest of the
+    process: any later in-process probe for prefect would see an installed-but-empty package, and
+    which answer it got depended on file order, since test order is randomised here.
+    """
+    found = sorted(set(_find_sys_modules_writes(_TESTS_DIR)))
+    unreviewed = [site for site in found if site not in _PERMITTED_SYS_MODULES_WRITE_SITES]
+    if unreviewed:
+        pytest.fail(
+            f"{len(unreviewed)} bare sys.modules[...] = ... write(s) under tests/ with no reviewed "
+            f"justification in _PERMITTED_SYS_MODULES_WRITE_SITES. A stub written this way and not "
+            f"removed makes an uninstalled package look installed (and attribute-less) to every "
+            f"later capability probe in the same process. Prefer "
+            f"monkeypatch.setitem(sys.modules, ...), which is undone automatically, or a fixture "
+            f"whose teardown removes the key AND anything imported against it; otherwise add a "
+            f"reviewed entry saying what removes the key again:\n  " + "\n  ".join(unreviewed)
+        )
+
+
+def test_permitted_sys_modules_write_sites_still_exist():
+    """Keep the write whitelist accurate: a stale entry means the write moved or went away."""
+    found = set(_find_sys_modules_writes(_TESTS_DIR))
+    stale = sorted(set(_PERMITTED_SYS_MODULES_WRITE_SITES) - found)
+    if stale:
+        pytest.fail("_PERMITTED_SYS_MODULES_WRITE_SITES has entries for site(s) that no longer write to sys.modules -- clean up after the underlying edit:\n  " + "\n  ".join(stale))
 
 
 def _popped_pyutilz_module(node: ast.Call) -> "str | None":

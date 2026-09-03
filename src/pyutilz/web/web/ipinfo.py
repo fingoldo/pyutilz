@@ -92,7 +92,7 @@ def get_external_ip(
             if resp.status == http.HTTPStatus.OK:
                 res = resp.read().decode("utf8").strip()
                 if "." in res or ":" in res:
-                    return res  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                    return res  # type: ignore[no-any-return]  # resp comes from an untyped pooled-HTTP helper, so .read() is Any
                 else:
                     logger.warning("Weird IP address received from provider %s: %s", source, res)
     return None

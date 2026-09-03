@@ -88,11 +88,19 @@ class TestBenchmarkAlgosByRuntime:
 class TestSynchronizeGpu:
     """The GPU-sync guard so async cupy/cuda kernels are timed at completion."""
 
-    def test_synchronize_is_noop_without_cupy(self):
-        # Must never raise whether or not cupy is installed.
+    def test_synchronize_is_noop_without_cupy(self, monkeypatch, caplog):
+        # The no-cupy path is FORCED (sys.modules[...] = None makes `import cupy` raise
+        # ImportError) so this asserts the real branch even on a box that HAS cupy installed.
+        import logging as _logging
+        import sys
+
         from pyutilz.dev.benchmarking import synchronize_gpu_if_available
 
-        synchronize_gpu_if_available()  # no exception == pass
+        monkeypatch.setitem(sys.modules, "cupy", None)
+        with caplog.at_level(_logging.DEBUG, logger="pyutilz.dev.benchmarking"):
+            assert synchronize_gpu_if_available() is None  # swallowed, not raised
+
+        assert any("no-op" in r.getMessage() for r in caplog.records), [r.getMessage() for r in caplog.records]
 
     def test_benchmark_with_synchronize_gpu_true(self):
         # CPU algos + synchronize_gpu=True: sync is a no-op, results still valid.

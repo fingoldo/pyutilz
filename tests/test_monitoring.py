@@ -224,11 +224,9 @@ def test_timeout_wrapper_parametrized(timeout_value, sleep_time, should_timeout)
 
     result = sleepy_function()
 
-    if should_timeout:
-        # Should return None on timeout (decorator catches TimeoutError)
-        assert result is None, "Should return None when timeout occurs"
-    else:
-        assert result == "success", "Should return success when completes before timeout"
+    # One unconditional assertion over both parametrised cases: the decorator swallows the
+    # TimeoutError and returns None, and otherwise passes the real return value straight through.
+    assert result == (None if should_timeout else "success"), f"unexpected result for timeout={timeout_value}, sleep={sleep_time}"
 
 
 def test_monitoring_module_imports_successfully():

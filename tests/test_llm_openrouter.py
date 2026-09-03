@@ -1,5 +1,6 @@
 """Tests for OpenRouter provider — meta-provider semantics + OR-specific bits."""
 
+import logging
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -1335,22 +1336,33 @@ class TestThinkingRequestField:
 
 
 class TestSpecialStatus:
-    def test_402_warns(self):
+    _LOGGER = "pyutilz.llm.openrouter_provider._provider"
+
+    def test_402_warns(self, caplog):
+        """402 is credit exhaustion: warn-only (the retry loop handles it), but the warning
+        is the operator's only signal that a paid key has run dry, so it must actually fire."""
         p = _provider()
         resp = httpx.Response(
             status_code=402,
             request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions"),
         )
-        # Must not raise — warn-only behaviour, retry loop handles it
-        p._handle_special_status(resp)
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            p._handle_special_status(resp)  # must not raise
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert "402" in warnings[0].getMessage()
+        assert "credits" in warnings[0].getMessage().lower()
 
-    def test_200_no_op(self):
+    def test_200_no_op(self, caplog):
+        """The no-op half must be distinguishable from the 402 half: silence, not a warning."""
         p = _provider()
         resp = httpx.Response(
             status_code=200,
             request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions"),
         )
-        p._handle_special_status(resp)
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            p._handle_special_status(resp)
+        assert caplog.records == []
 
 
 class TestIntegrationViaGenerate:

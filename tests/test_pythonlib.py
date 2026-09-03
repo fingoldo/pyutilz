@@ -52,8 +52,10 @@ class TestObjectsLoader:
         # Should NOT overwrite existing non-empty object
         result = loader._process_object(container, "test_key", str(test_file), verbose=False)
 
-        # Should return None and keep existing value
-        assert result is None
+        # Should report "did nothing" and keep the existing value. False, not None: _process_object
+        # declares `-> bool` and process_objects COUNTS these results, so the skip path returns an
+        # explicit False rather than falling off the end (2026-09-03 audit 06/F08).
+        assert result is False
         assert container["test_key"] == {"existing": "value"}
 
     def test_overwrites_when_rewrite_existing_true(self, tmp_path):
@@ -168,6 +170,9 @@ def test_ensure_list_set_tuple_parametrized(input_obj, expected_type):
     from pyutilz.pythonlib import ensure_list_set_tuple
 
     result = ensure_list_set_tuple(input_obj)
+
+    # Unconditional: the declared container type is the contract for EVERY case in the table.
+    assert isinstance(result, expected_type), f"{input_obj!r} -> {type(result).__name__}, expected {expected_type.__name__}"
 
     if expected_type is list and not isinstance(input_obj, (list, set, tuple, frozenset)):
         # Should be wrapped in list
