@@ -116,9 +116,10 @@ def test_a_print_counts_as_saying_so(tmp_path):
 def parts_done(state):
     value = state.get("parts_done_count", 0)
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        print(f"parts_done_count corrupted ({value!r}); resetting to 0")
+        record = fetch_manifest(state)
+        return record.parts_done
+    except Exception:
+        print(f"parts_done_count unreadable ({value!r}); resetting to 0")
         return 0
 """,
         encoding="utf-8",
@@ -133,8 +134,9 @@ def test_a_silent_substitution_is_still_reported(tmp_path):
 def parts_done(state):
     value = state.get("parts_done_count", 0)
     try:
-        return int(value)
-    except (TypeError, ValueError):
+        record = fetch_manifest(state)
+        return record.parts_done
+    except Exception:
         return 0
 """,
         encoding="utf-8",

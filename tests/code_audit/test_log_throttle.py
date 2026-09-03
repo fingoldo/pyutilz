@@ -186,3 +186,145 @@ def scan(items, log, checks):
 """)
     findings = scan_unthrottled_hot_loop_log(tmp_path)
     assert len(findings) == 1
+
+
+# ---- 2026-09-03 downstream-scan narrowing: measured false-positive shapes -------------
+#
+# Each negative below is a shape sampled from real code (pyutilz's 37 findings read in full,
+# 30 of mlframe/src's 240 sampled), paired with a positive that must keep firing.
+
+
+def test_unthrottled_hot_loop_log_loop_else_is_not_per_iteration(tmp_path: Path):
+    """NEGATIVE. A loop's `else` clause runs at most ONCE per loop entry, after the iterable is
+    exhausted -- it is not a per-iteration site at all, so flagging it was simply wrong. Measured
+    on `web/proxy/decodo.py`'s `get_traffic` pagination cap."""
+    _write(tmp_path, "ok.py", """
+def fetch(pages, log):
+    for page in pages:
+        if done(page):
+            break
+    else:
+        log.warning("stopped after %d pages; the report may be truncated", len(pages))
+""")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+
+
+def test_unthrottled_hot_loop_log_still_fires_in_the_body_of_a_loop_with_an_else(tmp_path: Path):
+    """POSITIVE beside the negative above: the `else` is exempt, the BODY is not."""
+    _write(tmp_path, "bad.py", """
+def fetch(pages, log):
+    for page in pages:
+        log.warning("page %s", page)
+    else:
+        log.warning("exhausted")
+""")
+    findings = scan_unthrottled_hot_loop_log(tmp_path)
+    assert len(findings) == 1 and "page %s" in findings[0].snippet
+
+
+def test_unthrottled_hot_loop_log_exempts_a_statically_sized_literal_iterable(tmp_path: Path):
+    """NEGATIVE. A loop over a source-visible collection cannot compound under load: its iteration
+    count is spelled out and does not grow with the data. Measured on
+    `for func in (a, b, c)` and `for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64)`."""
+    _write(tmp_path, "ok2.py", """
+def run(res, log):
+    for func in (bench_pickle, bench_csv, bench_parquet):
+        try:
+            func(res)
+        except Exception as e:
+            log.error(e)
+    for i in range(3):
+        log.warning("pass %d", i)
+""")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+
+
+def test_unthrottled_hot_loop_log_fires_on_a_runtime_sized_iterable(tmp_path: Path):
+    """POSITIVE beside the negative above: the same body over a runtime-sized collection is
+    exactly the per-item spam the check exists for."""
+    _write(tmp_path, "bad2.py", """
+def run(items, log):
+    for item in items:
+        try:
+            handle(item)
+        except Exception as e:
+            log.error(e)
+""")
+    assert len(scan_unthrottled_hot_loop_log(tmp_path)) == 1
+
+
+def test_unthrottled_hot_loop_log_exempts_a_log_a_sibling_exit_leaves_the_loop_past(tmp_path: Path):
+    """NEGATIVE. A log statement followed among its own siblings by an unconditional `break`
+    (single enclosing loop) or `return`/`raise` (any depth) fires at most once per entry to that
+    loop -- the opposite of compounding. Largest measured shape: `logger.warning(...)` then
+    `break`/`return` in a scanning loop (`text/strings/basics.py`, `webtext.py`,
+    `system/system/misc.py`, `web/browser.py`)."""
+    _write(tmp_path, "ok3.py", """
+def parse(notation, log):
+    while True:
+        p2 = notation.find("]")
+        if p2 < 0:
+            log.warning("no end token in %s", notation)
+            break
+
+
+def check(gpus, log, want):
+    for outer in gpus:
+        for gpu in outer:
+            if want > gpu.total:
+                log.warning("requested %s exceeds %s", want, gpu.total)
+                return False
+    return True
+""")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+
+
+def test_unthrottled_hot_loop_log_fires_when_the_sibling_exit_only_continues(tmp_path: Path):
+    """POSITIVE beside the negative above. `continue` keeps iterating, so the log DOES repeat per
+    item; and a `break` under two enclosing loops still repeats once per outer item."""
+    _write(tmp_path, "bad3.py", """
+def parse(items, log):
+    for item in items:
+        if item.bad:
+            log.warning("bad %s", item)
+            continue
+        handle(item)
+
+
+def scan(batches, log):
+    for batch in batches:
+        for item in batch:
+            log.warning("first bad item %s", item)
+            break
+""")
+    assert len(scan_unthrottled_hot_loop_log(tmp_path)) == 2
+
+
+def test_unthrottled_hot_loop_log_exempts_an_event_wait_paced_loop(tmp_path: Path):
+    """NEGATIVE. `stop_flag.wait(interval)` paces a monitor thread exactly as `sleep(interval)`
+    does; the Event form is used only so `stop()` returns immediately. Measured on
+    `system/hardware_monitor.py`'s sampling thread."""
+    _write(tmp_path, "ok4.py", """
+def query(self, log):
+    while not self.stop_flag.is_set():
+        try:
+            self._collect_sample()
+        except Exception:
+            log.exception("sampling failed; continuing")
+        self.stop_flag.wait(self.sleep_interval_seconds)
+""")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+
+
+def test_unthrottled_hot_loop_log_fires_on_an_unpaced_poll_loop(tmp_path: Path):
+    """POSITIVE beside the negative above: `wait()` with no timeout paces nothing."""
+    _write(tmp_path, "bad4.py", """
+def query(self, log):
+    while not self.stop_flag.is_set():
+        try:
+            self._collect_sample()
+        except Exception:
+            log.exception("sampling failed; continuing")
+        self.stop_flag.wait()
+""")
+    assert len(scan_unthrottled_hot_loop_log(tmp_path)) == 1

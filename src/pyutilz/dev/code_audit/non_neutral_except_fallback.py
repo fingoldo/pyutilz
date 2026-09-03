@@ -41,12 +41,109 @@ DEFAULT_AUDIBLE_LOG_METHODS: frozenset[str] = frozenset({"warning", "error", "ex
 DEFAULT_AUDIBLE_FUNCTIONS: frozenset[str] = frozenset({"log_throttle", "print"})
 
 
+# Exceptions that state a DETERMINATE FACT about the input rather than reporting that an operation which
+# could have gone either way went wrong: this string is not a number, this key/index/attribute is not there,
+# this file does not exist, these bytes are not valid UTF-8. When such an exception is the ONLY thing a
+# handler catches and the guarded body is a single expression, the handler is the negative branch of a total
+# function ("parse this, or say it is unparseable"), and its substituted value IS the answer -- there is no
+# masked failure for a downstream consumer to be misled about. `OSError`, `subprocess.CalledProcessError`
+# and bare `Exception` are deliberately absent: those are the environment-failure spellings this check
+# exists for (py-ci-shared's `_loc` returning 0 LOC on OSError silently exempts the file from a size gate).
+_DETERMINATE_NEGATIVE_EXCEPTIONS: frozenset[str] = frozenset(
+    {
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "LookupError",
+        "AttributeError",
+        "NameError",
+        "ZeroDivisionError",
+        "ArithmeticError",
+        "OverflowError",
+        "FloatingPointError",
+        "RecursionError",
+        "StopIteration",
+        "StopAsyncIteration",
+        "UnicodeError",
+        "UnicodeDecodeError",
+        "UnicodeEncodeError",
+        "UnicodeTranslateError",
+        "FileNotFoundError",
+        "JSONDecodeError",
+        "SyntaxError",
+    }
+)
+
+
+def _handler_exception_names(handler: ast.ExceptHandler) -> set[str]:
+    """The bare names of the exception classes a handler catches (``orjson.JSONDecodeError`` -> ``JSONDecodeError``)."""
+    if handler.type is None:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(handler.type):
+        if isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+    # `except orjson.JSONDecodeError` walks to both the Attribute and the `orjson` Name; the module
+    # component is not an exception class, so drop any name that is only a prefix of a dotted one.
+    for node in ast.walk(handler.type):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            names.discard(node.value.id)
+    return names
+
+
 def _is_import_error_only(handler: ast.ExceptHandler) -> bool:
     """True when the handler catches ImportError / ModuleNotFoundError and nothing broader."""
-    if handler.type is None:
-        return False
-    names = {n.id for n in ast.walk(handler.type) if isinstance(n, ast.Name)}
+    names = _handler_exception_names(handler)
     return bool(names) and names <= {"ImportError", "ModuleNotFoundError"}
+
+
+def _is_determinate_negative_only(handler: ast.ExceptHandler) -> bool:
+    """True when every exception the handler catches states a determinate fact about the input."""
+    names = _handler_exception_names(handler)
+    return bool(names) and names <= _DETERMINATE_NEGATIVE_EXCEPTIONS
+
+
+#: How many straight-line statements a total-function guard may hold. The measured shapes are one
+#: (``try: return float(s)``) or two (``try: float(s)`` then ``return True`` -- the ``is_float``
+#: predicate spelling). Three leaves a little room without admitting a multi-step operation.
+_MAX_TOTAL_FUNCTION_GUARD_STMTS = 3
+
+
+def _is_single_expression_guard(try_body: list) -> bool:
+    """True when the guarded body is a short run of statements that only evaluate/bind expressions.
+
+    Paired with ``_is_determinate_negative_only``: together they identify a total-function guard
+    (``try: return float(s)`` / ``except ValueError: return 0.0``, or its predicate spelling
+    ``try: float(s); return True`` / ``except ValueError: return False``) rather than a multi-step
+    operation whose partial failure the handler is papering over. Any control flow in the body --
+    a loop, an ``if``, a nested ``try`` -- disqualifies it: then the handler can fire from several
+    different places and the substituted value no longer means one determinate thing.
+    """
+    if not try_body or len(try_body) > _MAX_TOTAL_FUNCTION_GUARD_STMTS:
+        return False
+    return all(isinstance(stmt, (ast.Return, ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr)) for stmt in try_body)
+
+
+def _guards_an_import(try_body: list) -> bool:
+    """True when the guarded body imports something.
+
+    An optional dependency that is absent, or present but unusable on this host (numba refusing to
+    load against the installed llvmlite, cupy raising on a driverless box, a lazy import broken by a
+    circular-import bootstrap), is a PERMANENT, EXPECTED condition, and ``_HAS_NUMBA = False`` /
+    ``return False`` is the intended answer to "is it available", not a masked measurement. The
+    existing ``_is_import_error_only`` exemption covers only the narrow spelling; in practice these
+    probes catch broadly ON PURPOSE, precisely because a broken-but-installed dependency raises
+    something other than ImportError -- which is why the broad spelling dominated the measured
+    false positives (12 of 30 sampled mlframe sites, 9 of 41 pyutilz sites).
+    """
+    for stmt in try_body:
+        for node in ast.walk(stmt):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                return True
+    return False
 
 
 def _is_audible(handler: ast.ExceptHandler, log_methods: frozenset[str], functions: frozenset[str]) -> bool:
@@ -163,28 +260,36 @@ def scan_non_neutral_except_fallback(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for handler in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
-            if _is_import_error_only(handler) or _is_audible(handler, audible_log_methods, audible_functions):
-                continue
-            desc = _substituted_literal(handler)
-            if desc is None:
-                continue
-            findings.append(
-                Finding(
-                    check="non_neutral_except_fallback",
-                    severity="P1",
-                    file=rel,
-                    line=handler.lineno,
-                    snippet=_line_text(src_lines, handler.lineno),
-                    detail=(
-                        f"handler {desc} without logging above debug level, so the substituted value is "
-                        f"indistinguishable downstream from a real result. Ask whether anything would notice if "
-                        f"it were wrong -- and note that such a value is often non-neutral in the direction that "
-                        f"DISABLES the check it feeds (0.0 for a max error, True for a permission guard, -inf "
-                        f"for a score being minimised), which is how a safety mechanism switches itself off in "
-                        f"exactly the conditions that trip it. Use a warning (throttled on a hot path), a "
-                        f"NaN/None that reads as 'unknown' rather than as a measurement, or re-raise."
-                    ),
+        # Walk Try nodes (not bare handlers) so each handler is judged together with the body it guards.
+        # ``ast.TryStar`` (3.11+) is fetched by name so this stays importable on Python 3.8.
+        _try_types: tuple = (ast.Try,) if getattr(ast, "TryStar", None) is None else (ast.Try, ast.TryStar)  # type: ignore[attr-defined]
+        for try_node in [n for n in ast.walk(tree) if isinstance(n, _try_types)]:
+            for handler in try_node.handlers:
+                if _is_import_error_only(handler) or _is_audible(handler, audible_log_methods, audible_functions):
+                    continue
+                if _guards_an_import(try_node.body):
+                    continue
+                if _is_determinate_negative_only(handler) and _is_single_expression_guard(try_node.body):
+                    continue
+                desc = _substituted_literal(handler)
+                if desc is None:
+                    continue
+                findings.append(
+                    Finding(
+                        check="non_neutral_except_fallback",
+                        severity="P1",
+                        file=rel,
+                        line=handler.lineno,
+                        snippet=_line_text(src_lines, handler.lineno),
+                        detail=(
+                            f"handler {desc} without logging above debug level, so the substituted value is "
+                            f"indistinguishable downstream from a real result. Ask whether anything would notice if "
+                            f"it were wrong -- and note that such a value is often non-neutral in the direction that "
+                            f"DISABLES the check it feeds (0.0 for a max error, True for a permission guard, -inf "
+                            f"for a score being minimised), which is how a safety mechanism switches itself off in "
+                            f"exactly the conditions that trip it. Use a warning (throttled on a hot path), a "
+                            f"NaN/None that reads as 'unknown' rather than as a measurement, or re-raise."
+                        ),
+                    )
                 )
-            )
     return findings

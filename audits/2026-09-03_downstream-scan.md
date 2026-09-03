@@ -246,3 +246,57 @@ that survived triage in both repos are the ones asserting a cross-file fact - "t
 cannot reach that guard", "this class is defined here and lacks that field", "these bytes
 round-trip". The ones that failed match a local syntactic shape and then guess at intent. That is
 the line to hold when adding check number 96.
+
+## Follow-up (same day): precision wave on the two largest checks
+
+`non_neutral_except_fallback` and `unthrottled_hot_loop_log` owned 78 of the 164 baseline entries
+(41 and 37). Both were measured before being touched: pyutilz/src's 41 + 37 findings read in full,
+py-ci-shared/src's 2 read in full, and 30 of mlframe/src's 446 plus 30 of its 240 sampled at random
+and read site by site.
+
+### Measured false-positive rates
+
+| Check | Tree | Sample | Reviewed false | Rate |
+|---|---|---|---|---|
+| `non_neutral_except_fallback` | pyutilz/src | 41 of 41 | 32 | 78% |
+| `non_neutral_except_fallback` | mlframe/src | 30 of 446 | 22 | 73% |
+| `non_neutral_except_fallback` | py-ci-shared/src | 2 of 2 | 0 | 0% |
+| `unthrottled_hot_loop_log` | pyutilz/src | 37 of 37 | 8 | 22% |
+| `unthrottled_hot_loop_log` | mlframe/src | 30 of 240 | 3 statically provable | 10% |
+
+The audit's two hypotheses above both survived contact with the sample, but neither was the whole
+story. The optional-dependency-probe exemption is real and is the single largest shape, and the
+loop-iteration bound is real but only settles a small slice; the bigger loop shape turned out to be
+control flow, not size, plus one outright scanner bug.
+
+### What the false positives had in common
+
+`non_neutral_except_fallback`: (a) the guarded body contains an `import` -- an absent or unusable
+optional dependency is a permanent, expected condition and the substituted flag IS the answer.
+These handlers catch broadly ON PURPOSE (a broken-but-installed numba, a driverless cupy, a
+circular-import bootstrap raise something other than ImportError), which is precisely why the
+pre-existing ImportError-only exemption never reached them. (b) a total-function guard: a short
+straight-line body whose handler catches only exceptions naming a determinate fact about the INPUT.
+The distinction that keeps the check useful is the exception set: `OSError`,
+`subprocess.CalledProcessError` and bare `Exception` are environment failures that could have gone
+either way, and both of py-ci-shared's real fail-open gates live there.
+
+`unthrottled_hot_loop_log`: every FP was a site that CANNOT compound under load. A loop `else`
+clause (visited at loop_depth + 1, which was simply a bug -- it runs once per loop entry); a log a
+sibling `return`/`raise` exits past, or a sibling `break` exits past when that is the only enclosing
+loop; a loop over a source-visible collection; and `stop_flag.wait(interval)`, which paces a monitor
+thread exactly as `sleep(interval)` does.
+
+### After
+
+| Check | pyutilz/src | py-ci-shared/src | mlframe/src |
+|---|---|---|---|
+| `non_neutral_except_fallback` | 41 -> 18 | 2 -> 2 | 446 -> 182 |
+| `unthrottled_hot_loop_log` | 37 -> 29 | 0 -> 0 | 240 -> 219 |
+
+Every real defect found in the sample still fires, including all four mlframe ones
+(`_fe_additive_fusion.py:76`, `_pairs_setup.py:143`, `_helpers_importance.py:309`,
+`_pipeline_cache.py:378`) and both py-ci-shared ones. pyutilz's baseline went 164 -> 133; no other
+check's count moved. No real defect was found in pyutilz itself by either check -- the residual
+18 + 29 are dispositioned individually in `tests/test_meta/test_code_audit_baseline.py`'s review
+docstring. Both checks stay wired in by default; neither needed `OPT_IN_ONLY`.

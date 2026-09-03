@@ -229,6 +229,74 @@ extracted into `_base` (`_module_sql_constants`, `_sql_text`) and the finding we
 * `unthrottled_hot_loop_log` x2 in `web/browser.py` -- the same two entries already baselined,
   moved by the ten comment lines this commit adds above them. Line shift, not a new finding.
 
+2026-09-03, precision wave for `non_neutral_except_fallback` and `unthrottled_hot_loop_log`
+(the two checks that between them owned 78 of the 164 baseline entries). Both were MEASURED on
+real code first -- pyutilz/src's 41 + 37 findings read in full, py-ci-shared/src's 2 read in full,
+30 of mlframe/src's 446 and 30 of its 240 sampled at random -- and then narrowed on the shapes the
+sample actually showed. Baseline: 164 -> 133 (nnef 41 -> 18, uhll 37 -> 29); mlframe/src 446 -> 182
+and 240 -> 219; py-ci-shared/src 2 -> 2, i.e. both of its real fail-open gates still fire. Every
+narrowing has a negative unit test beside a positive that must still fire, in
+tests/code_audit/test_non_neutral_except_fallback.py and tests/code_audit/test_log_throttle.py.
+
+What the false positives had in common, and what the rules now key on:
+
+* `non_neutral_except_fallback` -- 32 of the 41 pyutilz findings and 22 of the 30 sampled mlframe
+  ones were one of two shapes. (a) An optional-dependency / lazy-import probe: the guarded body
+  contains an `import`, and `_HAS_NUMBA = False` / `return False` IS the answer to "is it
+  available", not a masked measurement. These catch BROADLY on purpose (a broken-but-installed
+  numba or a driverless cupy raises something other than ImportError), which is exactly why the
+  pre-existing ImportError-only exemption never reached them. (b) A total-function guard: a short
+  straight-line body whose handler catches ONLY exceptions naming a determinate fact about the
+  INPUT (ValueError/TypeError/KeyError/AttributeError/FileNotFoundError/UnicodeDecodeError ...),
+  as in `_safe_float`, `is_float`, `run_from_ipython`, `_async_sweep_start_delay`. `OSError`,
+  `subprocess.CalledProcessError` and bare `Exception` are deliberately NOT in that set: they are
+  the environment-failure spellings the check exists for, and keeping them out is what preserves
+  py-ci-shared's two real defects (`_loc` returning 0 LOC on OSError, so an unopenable file is
+  silently exempted from the size gate; `_git` returning "" for both "no tags" and "git is
+  missing"). Control flow anywhere in the guarded body also disqualifies the exemption -- then the
+  handler can fire from several places and one substituted value no longer means one thing.
+
+* `unthrottled_hot_loop_log` -- the FP shapes are all loops that CANNOT compound under load, plus
+  one outright scanner bug. (a) A loop's `else` clause runs at most once per loop ENTRY, after the
+  iterable is exhausted; it was being visited at loop_depth + 1, which was simply wrong
+  (`web/proxy/decodo.py`'s pagination cap). (b) A log statement a sibling `return`/`raise` exits
+  past cannot repeat at all, and one a sibling `break` exits past cannot repeat when that is the
+  only enclosing loop -- the largest single shape (`text/strings/basics.py`, `webtext.py`,
+  `system/system/misc.py`, `web/browser.py`). (c) A loop over a source-visible collection
+  (`for func in (a, b, c)`, `for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64)`,
+  `range(<small literal>)`) has its iteration count spelled out in the source. (d)
+  `stop_flag.wait(interval)` paces a monitor thread exactly as `sleep(interval)` does -- the Event
+  form is used only so `stop()` returns immediately (`system/hardware_monitor.py`).
+
+The 18 + 29 that survive were each re-read; none is a real defect:
+
+* `non_neutral_except_fallback` x18 -- the kernel-tuning cache cluster (`cache_sweeping.py` x5,
+  `cache_persistence.py` x3, `cache_class.py`, `cache_tuning.py`, `code_versioning.py`) are
+  deliberate never-wedge degrade paths whose direction and reasoning are stated in-code at the
+  site: an unstageable marker behaves as owner rather than deadlocking, an unreadable cache file
+  sorts as oldest and is evicted first, a sourceless function gets an identity fingerprint.
+  `openrouter_provider/_provider.py` fails open by documented design (trying the kwarg beats
+  skipping it on a transient catalogue outage). `registry.py`'s `_is_picklable` and
+  `meta_test_utils.py` x3 are predicates whose "no" IS the answer (already reviewed above).
+  `packages.py`, `system/parallel.py` and `claude_code_provider.py` substitute a cosmetic value
+  (a display name, an empty stderr tail) that nothing decides on.
+
+* `unthrottled_hot_loop_log` x29 -- every one is a per-item diagnostic in a loop whose size is
+  runtime-determined, so the check is firing exactly as designed; what makes them non-actionable
+  is that the volume is already the CALLER's choice. Most sit behind an explicit opt-in flag
+  (`if verbose:` in `filesystem.py`, `dtypes.py`, `binning.py`, `jsonutils.py` x3;
+  `if warn_on_import_fail:` in `kernel_tuning/registry.py`), and the rest iterate a
+  configuration-shaped collection whose size is set by the operator, not by the data -- DB
+  settings (`database/db/execution.py` x5), benchmark configs and sizes (`pandaslib/benchmarks.py`,
+  `dev/benchmarking.py` x2), tuned regions (`cache_tuning.py`), detected GPUs
+  (`system/system/probing.py`), registered temp dirs (`system/parallel.py`), API endpoints
+  (`web/proxy/decodo.py` x2) and the IP-provider list (`web/web/ipinfo.py` x2). `memory.py` and
+  `core/image.py` x2 are genuinely per-object, but their loops run once per interactive
+  memory-report / EXIF read, not on a serving path. No throttle helper is added to a library
+  function whose caller already asked for the line; the check stays wired in at P2 because its
+  true-positive core -- an unguarded per-row warning on a serving path -- is real, and the
+  narrowing above removes the shapes that CANNOT be that.
+
 This is the same baseline-driven wiring rolled out to every downstream
 consumer of dev.code_audit (glossum_backend_scripts, llm_bench,
 realtime_applications, production_scrapers, mlframe, algopacksimple) --

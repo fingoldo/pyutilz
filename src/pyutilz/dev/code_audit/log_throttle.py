@@ -106,12 +106,98 @@ def _loop_body_has_meaningful_sleep(stmts: list[ast.stmt]) -> bool:
     least one argument -- a polling loop that sleeps between iterations (``while not
     condition(): ...; sleep(10)``) is naturally rate-limited to at most one log line per sleep
     interval, the same "already throttled" signal as an explicit rate-limit guard, just
-    expressed as pacing rather than a counter/modulo check."""
+    expressed as pacing rather than a counter/modulo check.
+
+    ``<event>.wait(<timeout>)`` counts too: a monitor thread spelled ``while not
+    stop_flag.is_set(): ...; stop_flag.wait(interval)`` paces itself exactly as ``sleep(interval)``
+    would, and only uses the Event form so ``stop()`` returns immediately instead of blocking for a
+    full interval. Measured false positive: ``system/hardware_monitor.py``'s sampling thread."""
     for stmt in stmts:
         for node in ast.walk(stmt):
-            if isinstance(node, ast.Call) and _call_name(node.func) == "sleep" and node.args:
+            if isinstance(node, ast.Call) and _call_name(node.func) in {"sleep", "wait"} and node.args:
                 return True
     return False
+
+
+#: A loop iterating a literal collection this small cannot "compound into spam under load" -- its
+#: iteration count is written in the source and does not grow with the data. 16 comfortably covers the
+#: measured shapes (``for func in (a, b, c)``, ``for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64)``,
+#: ``for col in ("minr", "maxr")``) while staying well under any plausible per-item batch.
+_STATIC_ITERATION_BOUND = 16
+
+
+def _iterable_is_small_literal(iter_node: ast.expr) -> bool:
+    """True when the loop's iterable is a source-visible collection of at most
+    ``_STATIC_ITERATION_BOUND`` elements: a tuple/list/set display, a dict display (or its
+    ``.items()``/``.keys()``/``.values()``), or ``range(<small int literal>)``.
+
+    This is the iteration bound the 2026-09-03 downstream scan asked for. It is a STATIC fact, not
+    a heuristic: the count is spelled out in the source, so no amount of load can raise it."""
+    node = iter_node
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"items", "keys", "values"} and not node.args:
+        node = node.func.value
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return not any(isinstance(e, ast.Starred) for e in node.elts) and len(node.elts) <= _STATIC_ITERATION_BOUND
+    if isinstance(node, ast.Dict):
+        return None not in node.keys and len(node.keys) <= _STATIC_ITERATION_BOUND
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "range" and len(node.args) == 1:
+        arg = node.args[0]
+        return isinstance(arg, ast.Constant) and isinstance(arg.value, int) and not isinstance(arg.value, bool) and arg.value <= _STATIC_ITERATION_BOUND
+    return False
+
+
+def _collect_log_calls(stmt: ast.stmt) -> "list[ast.Call]":
+    """Every log Call inside ``stmt`` that is NOT under a nested loop or a nested function scope.
+
+    A call under a nested loop runs per-inner-iteration, so a sibling ``break``/``return`` after the
+    OUTER statement says nothing about how often it fires."""
+    out: list[ast.Call] = []
+    todo: list[ast.AST] = [stmt]
+    while todo:
+        node = todo.pop()
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if _is_log_call(node):
+            assert isinstance(node, ast.Call)
+            out.append(node)
+        todo.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _single_shot_log_calls(tree: ast.AST) -> "dict[int, str]":
+    """Map ``id(log_call) -> 'hard' | 'break'`` for log calls that CANNOT repeat within their loop.
+
+    A log statement followed, among its own siblings, by an unconditional ``return``/``raise``
+    ("hard": leaves the function outright) or ``break`` ("break": leaves the innermost loop) fires at
+    most once per entry to that loop -- the very thing "compounds into spam under load" denies. This
+    was the single largest measured false-positive shape: ``logger.warning(...)`` immediately
+    followed by ``break``/``return`` inside a scanning loop.
+    """
+    marks: dict[int, str] = {}
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            _mark_block(getattr(node, field, None), marks)
+        for handler in getattr(node, "handlers", []) or []:
+            _mark_block(handler.body, marks)
+    return marks
+
+
+def _mark_block(stmts: "list[ast.stmt] | None", marks: "dict[int, str]") -> None:
+    """Mark the log calls of each statement in ``stmts`` that a LATER sibling unconditionally exits past."""
+    # `Lambda.body` and `IfExp.body` are single EXPRESSIONS, not statement lists -- getattr cannot tell.
+    if not stmts or not isinstance(stmts, list):
+        return
+    kind: str | None = None
+    for stmt in reversed(stmts):
+        if kind is not None:
+            for call in _collect_log_calls(stmt):
+                # A "hard" exit already recorded for this call wins over a mere `break`.
+                if marks.get(id(call)) != "hard":
+                    marks[id(call)] = kind
+        if isinstance(stmt, (ast.Return, ast.Raise)):
+            kind = "hard"
+        elif isinstance(stmt, ast.Break):
+            kind = "break" if kind != "hard" else "hard"
 
 
 def _is_log_call(node: ast.AST) -> str | None:
@@ -142,14 +228,22 @@ def _visit_if_aware(
     findings: list[Finding],
     rel: str,
     src_lines: list[str],
+    single_shot: "dict[int, str] | None" = None,
 ) -> None:
     """Manual recursive descent (not ast.walk) so If nodes can pass the "throttle-guarded" flag
-    to their `body` only (not `orelse`), and loop nodes bump depth for their body/orelse. A `for`
+    to their `body` only (not `orelse`), and loop nodes bump depth for their BODY (a loop's own
+    `orelse` runs once per loop entry, not per iteration, and keeps the enclosing depth). A `for`
     loop's own target/iter expressions evaluate ONCE and keep the enclosing depth; a `while` loop's
     test is re-evaluated every iteration and is treated as part of the loop. Takes findings/rel/src_lines as explicit params
     (not closure captures) so this can be a plain module-level function reused across files."""
+    single_shot = {} if single_shot is None else single_shot
     method = _is_log_call(node)
-    if method is not None and loop_depth > 0 and not guarded:
+    # A log call a sibling `return`/`raise` exits past cannot repeat at all; one a sibling `break`
+    # exits past cannot repeat within its innermost loop, which settles the question only when that
+    # loop is the ONLY one enclosing it (at depth 2+ the outer loop still re-enters it per item).
+    shot = single_shot.get(id(node))
+    single_shot_here = shot == "hard" or (shot == "break" and loop_depth == 1)
+    if method is not None and loop_depth > 0 and not guarded and not single_shot_here:
         assert isinstance(node, ast.Call)  # guaranteed by _is_log_call returning non-None
         findings.append(Finding(
             check="unthrottled_hot_loop_log",
@@ -165,14 +259,19 @@ def _visit_if_aware(
             ),
         ))
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body)
+        already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body) or _iterable_is_small_literal(node.iter)
         # `target`/`iter` evaluate ONCE, outside the iteration, so they keep the enclosing depth --
         # as the docstring above says. Only body/orelse run per iteration.
         for once_evaluated in (node.target, node.iter):
             if once_evaluated is not None:
-                _visit_if_aware(once_evaluated, loop_depth, guarded or already_throttled, findings, rel, src_lines)
-        for stmt in (*node.body, *node.orelse):
-            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
+                _visit_if_aware(once_evaluated, loop_depth, guarded or already_throttled, findings, rel, src_lines, single_shot)
+        for stmt in node.body:
+            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+        # A loop's `orelse` runs at most ONCE per loop entry (after the iterable is exhausted), not
+        # per iteration, so it keeps the ENCLOSING depth -- flagging it as a hot-loop log was simply
+        # wrong. Measured shape: `for ...: ... else: log.warning("stopped after N pages")`.
+        for stmt in node.orelse:
+            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
     elif isinstance(node, ast.While):
         already_throttled = (
             _loop_looks_bounded_retry(node.test)
@@ -181,19 +280,21 @@ def _visit_if_aware(
         )
         # A `while` test, unlike a `for` target/iter, IS re-evaluated every iteration, so a log
         # call in it is per-iteration spam and keeps the bumped depth.
-        _visit_if_aware(node.test, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
-        for stmt in (*node.body, *node.orelse):
-            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
+        _visit_if_aware(node.test, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+        for stmt in node.body:
+            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+        for stmt in node.orelse:  # once per loop entry, not per iteration -- see the For branch above
+            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
     elif isinstance(node, ast.If):
         child_guarded = guarded or _guard_looks_throttled(node.test)
         for stmt in node.body:
-            _visit_if_aware(stmt, loop_depth, child_guarded, findings, rel, src_lines)
+            _visit_if_aware(stmt, loop_depth, child_guarded, findings, rel, src_lines, single_shot)
         for stmt in node.orelse:
-            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines)
-        _visit_if_aware(node.test, loop_depth, guarded, findings, rel, src_lines)
+            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+        _visit_if_aware(node.test, loop_depth, guarded, findings, rel, src_lines, single_shot)
     else:
         for child in ast.iter_child_nodes(node):
-            _visit_if_aware(child, loop_depth, guarded, findings, rel, src_lines)
+            _visit_if_aware(child, loop_depth, guarded, findings, rel, src_lines, single_shot)
 
 
 def scan_unthrottled_hot_loop_log(
@@ -223,6 +324,15 @@ def scan_unthrottled_hot_loop_log(
     argument -- a polling loop that sleeps between iterations is naturally rate-limited to at
     most one log line per sleep interval, the same signal as an explicit throttle guard.
 
+    Three further exemptions came out of measuring this check against pyutilz, py-ci-shared and
+    mlframe on 2026-09-03 -- each one a site that CANNOT compound under load, so exempting it costs
+    no true positive. A loop's ``else`` clause runs at most once per loop ENTRY, after the iterable
+    is exhausted, and keeps the enclosing depth. A log statement that a LATER SIBLING statement
+    unconditionally exits past -- ``return``/``raise`` at any depth, ``break`` when that is the only
+    enclosing loop -- fires at most once per entry to that loop. And a loop over a source-visible
+    collection (``for func in (a, b, c)``, ``range(<small int literal>)``) has its iteration count
+    spelled out in the source, so no amount of data can raise it.
+
     Severity: P2 (usually a hygiene/observability issue, not a correctness bug -- but can degrade
     into real operational pain: log-volume-driven disk fill, alerting fatigue, or a downstream
     log-aggregation cost spike during exactly the outage an operator most needs signal, not noise).
@@ -234,5 +344,5 @@ def scan_unthrottled_hot_loop_log(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        _visit_if_aware(tree, 0, False, findings, rel, src_lines)
+        _visit_if_aware(tree, 0, False, findings, rel, src_lines, _single_shot_log_calls(tree))
     return findings
