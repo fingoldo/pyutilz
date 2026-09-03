@@ -1,5 +1,11 @@
-"""Unit tests for the field-harvesting round-trip harness in\n``pyutilz.dev.meta_test_utils`` (``sentinel_for_type`` /\n``optional_scalar_fields`` / ``assert_fields_roundtrip``).\n\nThese three helpers exist to let a project write "does every optional
-field on this verdict/DTO dataclass actually survive a parse round-trip"\ntests without hand-rolling per-type sentinel logic each time.\n"""
+"""Unit tests for the field-harvesting round-trip harness in
+``pyutilz.dev.meta_test_utils`` (``sentinel_for_type`` /
+``optional_scalar_fields`` / ``assert_fields_roundtrip``).
+
+These three helpers exist to let a project write "does every optional
+field on this verdict/DTO dataclass actually survive a parse round-trip"
+tests without hand-rolling per-type sentinel logic each time.
+"""
 
 from __future__ import annotations
 
@@ -55,7 +61,9 @@ def test_sentinel_for_non_scalar_types_returns_none(tp):
 
 
 def test_bool_precedence_over_int():
-    """bool is a subclass of int at runtime, but the annotation-object\n    identity check here must not let ``int`` accidentally win for a\n    ``bool``-annotated field."""
+    """bool is a subclass of int at runtime, but the annotation-object
+    identity check here must not let ``int`` accidentally win for a
+    ``bool``-annotated field."""
     assert sentinel_for_type(bool) is True
     assert sentinel_for_type(int) == 7
     assert sentinel_for_type(bool) is not sentinel_for_type(int)
@@ -119,7 +127,9 @@ def test_assert_fields_roundtrip_detects_mismatch():
 
 
 def test_assert_fields_roundtrip_detects_dropped_field():
-    """The classic bug: the parser never harvested the field, so the\n    parsed object's attribute is still its default (None), not the\n    sentinel the payload carried."""
+    """The classic bug: the parser never harvested the field, so the
+    parsed object's attribute is still its default (None), not the
+    sentinel the payload carried."""
     sentinels = {"mwe_type_correct": True}
     parsed = _FakeVerdict(lemma="x", status="confirmed", reasoning="")
     mismatches = assert_fields_roundtrip(sentinels, lambda name: getattr(parsed, name))
@@ -372,3 +382,40 @@ class TestUnbackedAuditDispositions:
         reported = unbacked_audit_dispositions(audit, repo)
         assert len(reported) == 1
         assert reported[0].endswith("RESOLVED cites nothing")
+
+    def test_a_disposition_count_tally_is_not_itself_a_disposition(self, tmp_path):
+        """A `| Disposition | Count |` legend row counts dispositions, it does not make one - demanding an
+        artefact of it asks a summary to cite the rows it summarises. Found on autopsia 2026-09-03 as the
+        single row standing between a real backlog of 17 and zero."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "x = 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", "| Disposition | Count |\n|---|---|\n| **RESOLVED** | 46 |\n")
+
+        assert unbacked_audit_dispositions(audit, repo) == []
+
+    def test_a_real_two_cell_resolved_row_is_still_checked(self, tmp_path):
+        """The other half of the bar: only a bare COUNT beside the verdict is a tally. A two-cell row whose
+        second cell is a claim rather than a number is an ordinary disposition and still owes a citation."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "x = 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", "| RESOLVED | fixed it, trust me |\n")
+
+        assert len(unbacked_audit_dispositions(audit, repo)) == 1
+
+    def test_a_verdict_beside_a_number_that_is_a_rank_is_not_skipped_when_a_third_cell_exists(self, tmp_path):
+        """The tally shape is exactly two cells. A row carrying an id, a verdict and a measured number is a
+        real disposition - the narrowness is what keeps the rule from silently unchecking measured rows."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "x = 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", "| F09 | RESOLVED | 42 |\n")
+
+        assert len(unbacked_audit_dispositions(audit, repo)) == 1

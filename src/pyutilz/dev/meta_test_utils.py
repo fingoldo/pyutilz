@@ -626,6 +626,14 @@ def findings_ratchet(findings: Iterable[str], baseline_path: Path) -> tuple[list
 # disposition, so nothing real stops being checked.
 _DISPOSITION_RE = re.compile(r"\bRESOLVED\b")
 _CITATION_RE = re.compile(r"`([^`]+)`")
+# A `| Disposition | Count |` legend row - the word beside a bare number, nothing else. Such a row counts
+# dispositions, it does not make one, so demanding an artefact of it asks the summary to cite the rows it is
+# summarising. Deliberately the narrowest shape that describes only a tally: measured over autopsia's whole
+# audit corpus (~1,900 disposition rows, 2026-09-03), exactly ONE row matches, the one this exists for. The
+# looser rule tried first - skip any row whose FIRST cell is the verdict - would have stopped checking 52
+# rows, "PARTIALLY RESOLVED" and "(a) RESOLVED" verdicts among them.
+_TALLY_VERDICT_RE = re.compile(r"^[*_ ]*[A-Z][A-Z-]+[*_ ]*$")
+_TALLY_COUNT_RE = re.compile(r"^[*_ ]*\d+[*_ ]*$")
 # A citation naming a symbol the way prose names one: `is_all_population()`, `_http.get_text`. Anchored
 # and narrow - a dotted identifier with an optional call suffix and nothing else - so a real name written
 # naturally is recognised without degenerating into "any row mentioning any identifier passes", which
@@ -732,6 +740,9 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
     for doc in sorted(audit_dir.rglob("*.md")):
         for lineno, line in enumerate(doc.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if not line.lstrip().startswith("|") or not _DISPOSITION_RE.search(line):
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) == 2 and _TALLY_VERDICT_RE.match(cells[0]) and _TALLY_COUNT_RE.match(cells[1]):
                 continue
             citations = _CITATION_RE.findall(line)
             backed = False
