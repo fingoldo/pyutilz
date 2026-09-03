@@ -73,6 +73,115 @@ def _is_alias_key_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     return a in b or b in a
 
 
+def _classify(lhs: ast.AST, rhs: ast.AST, symbol: str = "") -> tuple[str, str]:
+    """The severity and the site-naming detail for one `or` default site.
+
+    Extracted from `scan_default_via_or_trap` purely to keep that function under the complexity gate once
+    the details started naming their site; the decision chain itself is unchanged.
+    """
+    sev = "Low"
+    # The detail NAMES THE SITE, because a baseline key is `check::file::detail` with the line
+    # number deliberately excluded (it would churn on every edit above it). A detail that is the
+    # same sentence for every hit in a file therefore suppresses the whole FILE for this check
+    # rather than the one violation - which downstream repos reject outright
+    # (`test_no_new_blanket_suppression_enters_a_baseline`), leaving a widened scanner's findings
+    # unbaselineable and its consumers unable to commit.
+    detail = f"default-via-or trap candidate: `{_site(lhs, rhs, symbol)}`"
+    lhs_inner = _unwrap_lhs(lhs)
+    if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
+        if _is_env_get_call(lhs_inner):
+            sev = "Low"
+            detail = (
+                f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                f"var, not a legitimate numeric 0."
+            )
+        else:
+            sev = "P1"
+            detail = (
+                f"`or {rhs.value}`: caller passing the legitimate sentinel "
+                f"0 is silently rewritten to {rhs.value}. Use "
+                f"`x if x is not None else {rhs.value}` for None-only "
+                f"defaulting."
+            )
+    elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, float) and rhs.value != 0.0:
+        if _is_env_get_call(lhs_inner):
+            sev = "Low"
+            detail = (
+                f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                f"var, not a legitimate numeric 0.0."
+            )
+        else:
+            sev = "P1"
+            detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
+    elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
+        sev = "Low"
+        detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."
+    elif isinstance(rhs, ast.Call) and _is_constructor_call(rhs):
+        sev = "Low"
+        detail = (
+            "`or ClassName(...)`: constructor default -- LHS is "
+            "almost certainly an `X | None` parameter and instances "
+            "are always truthy, so only None triggers the fallback. "
+            "Verify the class has no custom __bool__/__len__."
+        )
+    elif isinstance(rhs, ast.Call):
+        sev = "P2"
+        detail = (
+            f"`or <call>(...)` at `{_site(lhs, rhs, symbol)}`: callable RHS runs the default-compute "
+            "branch when caller passed a legitimate falsy value "
+            "(empty list/df/array). Confirm semantics."
+        )
+    return sev, detail
+
+
+def _enclosing_symbols(tree: ast.AST) -> dict[int, str]:
+    """`id(node) -> "Class.func"` for every node inside a def/class, so a detail can name its own symbol.
+
+    A baseline key is `check::file::detail`, and the downstream specificity guard treats a detail that
+    recurs across three or more FILES as carrying no per-site information. A bare expression is not enough
+    for that: `cache_dir or CACHE_DIR` is a genuinely common idiom that appears in many modules, so naming
+    the enclosing symbol as well is what makes the key identify one site rather than one idiom.
+    """
+    out: dict[int, str] = {}
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        """Descend, carrying the dotted name of the nearest enclosing def/class."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = f"{prefix}.{child.name}" if prefix else child.name
+                for inner in ast.walk(child):
+                    out.setdefault(id(inner), name)
+                walk(child, name)
+            else:
+                walk(child, prefix)
+
+    walk(tree, "")
+    return out
+
+
+def _site(lhs: ast.AST, rhs: ast.AST, symbol: str = "") -> str:
+    """A short, line-number-free identifier for ONE `or` site: `<lhs> or <rhs>`, truncated.
+
+    Baseline keys are `check::file::detail` and deliberately carry no line number, so two hits in one file
+    collapse onto one key unless the detail distinguishes them - and a file-level key suppresses the whole
+    file rather than the violation it records. Unparsing both operands keeps the key stable across edits
+    elsewhere in the file while still naming which expression was flagged.
+    """
+    def _short(node: ast.AST, limit: int = 40) -> str:
+        """One operand as compact source text, truncated so a long expression cannot dominate the key."""
+        # Deliberately NOT wrapped in a try/except returning a placeholder. A swallowed failure here would
+        # hand back the same stand-in for every site it could not render, which is precisely the collapsed
+        # key this function exists to prevent - the check would go quiet in exactly the case it is for.
+        # `ast.unparse` is stdlib from 3.9 and handles every expression node a BoolOp operand can be.
+        text = " ".join(ast.unparse(node).split())
+        return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    expression = f"{_short(lhs)} or {_short(rhs)}"
+    return f"{symbol}: {expression}" if symbol else expression
+
+
 def _lhs_default_matches_rhs(lhs: ast.AST, rhs: ast.AST) -> bool:
     """True for ``d.get("key", D) or D`` / ``getattr(obj, "name", D) or D`` -- the SAME literal/
     expression ``D`` supplied as both the getter's own missing-key default AND the outer ``or``
@@ -404,6 +513,7 @@ def scan_default_via_or_trap(root: Path,
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_field_map(tree)
+        symbols = _enclosing_symbols(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
                 continue
@@ -446,54 +556,7 @@ def scan_default_via_or_trap(root: Path,
                 # `max(1, os.cpu_count() or 1)`). The BoolOp here is the `or`
                 # node, so check whether its left operand is wrapped in such a
                 # call-chain back up the tree.
-                sev = "Low"
-                detail = "default-via-or trap candidate"
-                lhs_inner = _unwrap_lhs(lhs)
-                if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
-                    if _is_env_get_call(lhs_inner):
-                        sev = "Low"
-                        detail = (
-                            f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
-                            f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
-                            f"var, not a legitimate numeric 0."
-                        )
-                    else:
-                        sev = "P1"
-                        detail = (
-                            f"`or {rhs.value}`: caller passing the legitimate sentinel "
-                            f"0 is silently rewritten to {rhs.value}. Use "
-                            f"`x if x is not None else {rhs.value}` for None-only "
-                            f"defaulting."
-                        )
-                elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, float) and rhs.value != 0.0:
-                    if _is_env_get_call(lhs_inner):
-                        sev = "Low"
-                        detail = (
-                            f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
-                            f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
-                            f"var, not a legitimate numeric 0.0."
-                        )
-                    else:
-                        sev = "P1"
-                        detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
-                elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
-                    sev = "Low"
-                    detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."
-                elif isinstance(rhs, ast.Call) and _is_constructor_call(rhs):
-                    sev = "Low"
-                    detail = (
-                        "`or ClassName(...)`: constructor default -- LHS is "
-                        "almost certainly an `X | None` parameter and instances "
-                        "are always truthy, so only None triggers the fallback. "
-                        "Verify the class has no custom __bool__/__len__."
-                    )
-                elif isinstance(rhs, ast.Call):
-                    sev = "P2"
-                    detail = (
-                        "`or <call>(...)`: callable RHS runs the default-compute "
-                        "branch when caller passed a legitimate falsy value "
-                        "(empty list/df/array). Confirm semantics."
-                    )
+                sev, detail = _classify(lhs, rhs, symbols.get(id(node), ""))
                 findings.append(Finding(
                     check="default_via_or",
                     severity=sev,
