@@ -387,3 +387,51 @@ def neighbours(lower, qwerty, ycuken):
     return qwerty.get(lower) or ycuken.get(lower)
 """)
     assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_details_name_their_own_site(tmp_path: Path):
+    """Two sites of the same shape in one file must not collapse onto one baseline key.
+
+    A downstream baseline keys a finding as `check::file::detail` and deliberately carries no line number
+    (it would churn on every edit above it). So a detail that reads the same for every hit in a file grants
+    that file blanket immunity from the check instead of recording one violation - which autopsia's own
+    `test_no_new_blanket_suppression_enters_a_baseline` rejects outright, leaving a widened scanner's
+    findings unbaselineable. Measured there 2026-09-03: 170 frozen blanket keys, 86 files holding more than
+    one violation behind a single key.
+
+    Both generic shapes now name the enclosing symbol and the flagged expression.
+    """
+    _write(
+        tmp_path,
+        "two_sites.py",
+        """
+def alpha(cache_dir=None):
+    d = cache_dir or compute_default()
+    return d
+
+
+def beta(out_dir=None):
+    d = out_dir or compute_default()
+    return d
+""",
+    )
+    details = {f.detail for f in scan_default_via_or_trap(tmp_path)}
+    assert len(details) == 2, f"two distinct sites collapsed onto {len(details)} detail(s): {details}"
+    assert any("alpha" in d and "cache_dir" in d for d in details), details
+    assert any("beta" in d and "out_dir" in d for d in details), details
+
+
+def test_default_via_or_detail_survives_an_edit_above_it(tmp_path: Path):
+    """The other half of the bar: naming the site must not reintroduce line-number churn, or every
+    unrelated edit above a finding would re-key it and turn the ratchet into a change detector."""
+    body = """
+def alpha(cache_dir=None):
+    return cache_dir or compute_default()
+"""
+    _write(tmp_path, "a.py", body)
+    before = {f.detail for f in scan_default_via_or_trap(tmp_path)}
+
+    _write(tmp_path, "a.py", "\n# an unrelated comment added above\n" + body)
+    after = {f.detail for f in scan_default_via_or_trap(tmp_path)}
+
+    assert before == after, f"the detail moved with the line number: {before} -> {after}"

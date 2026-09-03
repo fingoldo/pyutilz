@@ -372,3 +372,74 @@ class TestHumanize:
                 changed = True
                 break
         assert changed, "Russian text should get typos too"
+
+
+# ── filler adverbs: positional, not unconditional ──────────────────────────
+
+
+class TestFillerAdverbsAreOnlyStrippedAsOpeners:
+    r"""2026-09-03. `specifically` and `essentially` were deleted wherever they appeared.
+
+    They were in `_AI_PATTERNS` as `(r"\bspecifically,?\s*", "")`, which is right for an opener and
+    destructive anywhere else. Measured on the Upwork proposal generator that consumes this module:
+    7 of its 19 stored cover letters had the word removed mid-sentence, where it is the thing
+    carrying the meaning. Its own system prompt requires it -- "State a gap as a matter of degree,
+    not as a categorical absence, and scope it to the specific tool" -- so a letter reading
+
+        "I haven't worked much with PostHog specifically, but ..."
+
+    reached a paying client as "I haven't worked much with PostHog", a flat denial, in a document
+    written to win the work.
+    """
+
+    def test_a_mid_sentence_specifically_survives(self):
+        text = "I haven't worked much with PostHog specifically, but I've built similar systems."
+        assert strip_ai_patterns(text) == text
+
+    def test_the_real_letter_that_was_damaged(self):
+        """Verbatim from the live run that exposed this, job 2094985405745334085."""
+        text = "I haven't built real estate waterfalls specifically, but I have the mechanics."
+        assert "specifically" in strip_ai_patterns(text)
+
+    def test_a_mid_sentence_essentially_survives(self):
+        text = "The core issue is essentially unchanged."
+        assert strip_ai_patterns(text) == text
+
+    def test_an_opening_specifically_is_still_stripped(self):
+        """The case the rule was written for stays fixed -- this is filler."""
+        assert strip_ai_patterns("Specifically, we need someone who can audit the model.") == ("We need someone who can audit the model.")
+
+    def test_an_opening_essentially_is_still_stripped(self):
+        assert strip_ai_patterns("Essentially, the pipeline is three stages.") == "The pipeline is three stages."
+
+    def test_stripping_an_opener_restores_the_capital(self):
+        """The removal promotes the next clause to first position, so its count has to be folded
+        into `opener_removals`. Without that, "Specifically, we need X" shipped as "we need X"."""
+        assert strip_ai_patterns("Specifically, this matters.").startswith("This")
+
+    def test_a_deliberately_lowercase_input_stays_lowercase(self):
+        """The counterweight: recapitalising unconditionally would rewrite text the author wrote
+        lowercase on purpose."""
+        assert strip_ai_patterns("specifically, a lowercase input stays lowercase.").startswith("a ")
+
+    def test_an_opener_after_a_sentence_end_is_stripped_too(self):
+        assert "Specifically" not in strip_ai_patterns("We looked at it. Specifically, the totals.")
+
+
+class TestRemovalsDoNotStrandASpaceBeforePunctuation:
+    """2026-09-03. The double-space collapse only caught `  +`, so a rule that deleted the last
+    word of a clause left a SINGLE orphaned space -- and `"SaaS implementations specifically."`
+    reached a client as `"SaaS implementations ."`.
+    """
+
+    def test_a_space_before_a_full_stop_is_closed(self):
+        assert strip_ai_patterns("We reviewed the implementations . Done.") == ("We reviewed the implementations. Done.")
+
+    def test_a_space_before_a_comma_is_closed(self):
+        assert strip_ai_patterns("First , second.") == "First, second."
+
+    def test_a_space_before_a_colon_is_left_alone(self):
+        """Scoped to `.` and `,` on purpose: French typography puts a space before `;` `:` `!` `?`,
+        and this module runs on non-English text elsewhere."""
+        text = "The question is this : who pays?"
+        assert strip_ai_patterns(text) == text

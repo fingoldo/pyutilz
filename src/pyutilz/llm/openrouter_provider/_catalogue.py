@@ -164,7 +164,7 @@ def _cache_read_cost_per_1m_or_none(model: str) -> "float | None":
         return None
     pricing = entry.get("pricing") or {}
     raw = pricing.get("input_cache_read")
-    if raw in (None, ""):
+    if raw is None or raw == "":
         return None
     try:
         return float(raw) * 1_000_000
