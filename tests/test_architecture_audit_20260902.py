@@ -95,9 +95,13 @@ def test_llm_provider_error_catches_every_llm_exception():
     from pyutilz.llm import exceptions
 
     root = exceptions.LLMProviderError
+    checked = []
     for name, obj in vars(exceptions).items():
         if isinstance(obj, type) and issubclass(obj, BaseException) and obj is not root:
+            checked.append(name)
             assert issubclass(obj, root), f"{name} escapes `except LLMProviderError`"
+    # Without this the loop would pass vacuously if the module stopped exporting its exceptions.
+    assert len(checked) >= 2, f"pyutilz.llm.exceptions exports almost nothing to check: {checked}"
 
 
 @pytest.mark.parametrize("exc_name", ["JSONParsingError", "LLMTruncationError"])
@@ -211,6 +215,9 @@ def test_core_openai_shim_does_not_import_llm_at_module_level():
 
     src = Path(pyutilz.__file__).resolve().parent / "core" / "openai.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
+    # The absence of a top-level llm import is only meaningful while the lazy resolver that
+    # replaces it still exists -- an empty or renamed shim would satisfy the loop below vacuously.
+    assert any(isinstance(n, ast.FunctionDef) and n.name == "__getattr__" for n in tree.body), "the lazy PEP 562 resolver is gone"
     for node in tree.body:  # module level only
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith("pyutilz.llm"), ast.dump(node)

@@ -43,7 +43,7 @@ def _build_parent_map(tree: ast.AST) -> dict:
     return parent_map
 
 
-def _ancestor_chain(node: ast.AST, parent_map: dict) -> list:
+def _ancestor_chain_via_parent_map(node: ast.AST, parent_map: dict) -> list:
     """Return ``node``'s ancestor chain (root last excluded implicitly by the map running out)."""
     chain: list = []
     cur: Optional[ast.AST] = node
@@ -95,7 +95,7 @@ def scan_resource_handle_safety(
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_resource_call(node):
                 continue
-            chain = _ancestor_chain(node, parent_map)
+            chain = _ancestor_chain_via_parent_map(node, parent_map)
             if _is_under_with_statement(node, chain):
                 continue
             findings.append(Finding(

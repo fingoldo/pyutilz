@@ -1,11 +1,19 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+DELIBERATE PAIR, not an accident -- `reexport_patch_target.py` targets the same defect class. THIS
+one is what `run_all()` selects by default; the two differ in exactly one place, their
+false-positive suppression rule, and this one is the more permissive reading: it goes SILENT when
+the facade also calls the name, because the patch then does reach a real call and which one the
+test means is not decidable from here (see the third bullet of the reported-when list below). Its
+sibling reports that case, and is `registry.OPT_IN_ONLY` for exactly that reason.
+"""
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _module_aliases, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _module_aliases, _line_text, _read_src_lines, _safe_parse, dotted_name
 
 # --- a patch aimed at a re-export, where the real call site never looks -------------------------
 #
@@ -40,18 +48,6 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py
 # * the facade module itself does not call it -- if the facade calls it too, the patch does reach
 #   that call, and whether the test means the other one is not decidable from here.
 
-def _dotted(node: ast.AST) -> str:
-    """`a.b.c` as an expression -> the string "a.b.c"; "" for anything else."""
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name):
-        return ""
-    parts.append(node.id)
-    return ".".join(reversed(parts))
-
-
 def _patch_targets(tree: ast.Module) -> list[tuple[str, int]]:
     """(dotted target, line) for every `patch("a.b.c")` and `patch.object(mod, "c")` here.
 
@@ -63,14 +59,14 @@ def _patch_targets(tree: ast.Module) -> list[tuple[str, int]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
-        chain = _dotted(node.func)
+        chain = dotted_name(node.func)
         tail = chain.rsplit(".", 2)[-2:] if "." in chain else [chain]
         if tail[-1] == "patch":
             first = node.args[0]
             if isinstance(first, ast.Constant) and isinstance(first.value, str) and "." in first.value:
                 targets.append((first.value, node.lineno))
         elif len(tail) == 2 and tail == ["patch", "object"] and len(node.args) >= 2:
-            owner = _dotted(node.args[0])
+            owner = dotted_name(node.args[0])
             attr = node.args[1]
             if not owner or not (isinstance(attr, ast.Constant) and isinstance(attr.value, str)):
                 continue
@@ -170,8 +166,7 @@ def scan_patch_target_is_a_reexport(
                 packages.add(dotted)
 
     for py in _iter_py_files(root, exclude_dirs):
-        name = py.name
-        if not (name.startswith("test_") or name.endswith("_test.py")):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

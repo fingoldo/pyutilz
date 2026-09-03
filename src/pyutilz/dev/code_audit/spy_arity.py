@@ -4,14 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _line_text, _module_aliases, _read_src_lines, _safe_parse
-
-
-def _is_test_path(rel: str) -> bool:
-    """True if ``rel`` (a posix-style relative path) lives under a ``tests``/``test`` directory
-    or matches the ``test_*``/``*_test.py`` filename convention."""
-    parts = rel.replace("\\", "/").split("/")
-    return any(p == "tests" or p == "test" or p.startswith("test_") or p.endswith("_test.py") for p in parts)
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _line_text, _module_aliases, _read_src_lines, _safe_parse
 
 
 def _positional_arity(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> float:
@@ -48,7 +41,7 @@ def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str
     prod_call_max: dict[str, int] = {}
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
-        if _is_test_path(rel):
+        if is_test_file(rel):
             continue
         tree = _safe_parse(py)
         if tree is None:
@@ -179,7 +172,7 @@ def scan_stale_test_spy_arity(
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
-        if not _is_test_path(rel):
+        if not is_test_file(rel):
             continue
         tree = _safe_parse(py)
         if tree is None:

@@ -281,12 +281,14 @@ def test_f42_window_already_closed_quits_the_driver(monkeypatch):
     monkeypatch.setattr(browsermod, "start_selenium", lambda *a, **kw: fresh, raising=False)
     # Stop the function right after the restart branch under test -- everything past it needs a
     # real page.
-    monkeypatch.setattr(browsermod, "browser_get", MagicMock(side_effect=Exception("stop here")), raising=False)
+    restart_probe = MagicMock(side_effect=Exception("stop here"))
+    monkeypatch.setattr(browsermod, "browser_get", restart_probe, raising=False)
 
-    try:
-        browsermod.LoginAndGetCookies("user", "pwd")
-    except Exception:
-        pass
+    # LoginAndGetCookies logs and swallows its own failures, so "no exception escaped" says
+    # nothing; the sentinel being CALLED is what proves execution reached the restart branch
+    # under test rather than bailing out somewhere before it.
+    browsermod.LoginAndGetCookies("user", "pwd")
+    restart_probe.assert_called_once()
     dead.quit.assert_called_once()
 
 

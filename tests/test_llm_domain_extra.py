@@ -209,10 +209,15 @@ class TestLLMTruncationErrorWiring:
             # event loop in thread 'MainThread'" when built from this test's sync body instead
             # (found 2026-08-03).
             p.semaphore = asyncio.Semaphore(1)
-            with pytest.raises(LLMTruncationError):
+            with pytest.raises(LLMTruncationError) as excinfo:
                 await p.generate("hi", max_tokens=5)
+            return excinfo.value
 
-        asyncio.run(run())
+        error = asyncio.run(run())
+        # The raise is wired to the envelope's finish_reason and carries the partial text along,
+        # so a caller can salvage/continue instead of only learning that something went wrong.
+        assert error.finish_reason == "length"
+        assert error.partial_text == "truncated..."
 
 
 class TestMissingApiKeyMessages:

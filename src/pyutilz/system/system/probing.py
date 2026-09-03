@@ -35,6 +35,43 @@ from typing import Any as _Any, List as _List, Optional, Union
 from ._common import remove_nas, summarize_devices, dict_to_tuple
 from pyutilz.system.psutil_compat import has_psutil_function as _has_psutil_function  # private alias: keeps the facade's public surface unchanged
 
+class _BinaryNotFoundError(OSError):
+    """Raised by :func:`_resolve_binary` when a probe's executable is not on PATH."""
+
+
+def _resolve_binary(name: str) -> str:
+    """Return the ABSOLUTE path of ``name`` as found on PATH, or raise :class:`_BinaryNotFoundError`.
+
+    Every probe in this package spawns an OS utility by bare name. With ``shell=False`` and no
+    ``lpApplicationName``, Windows' ``CreateProcess`` searches the process's CURRENT DIRECTORY before
+    the PATH directories -- so ``nvidia-smi`` resolves to an ``nvidia-smi.exe`` planted in whatever
+    directory the user happened to launch the script from (a shared or downloads folder another local
+    account can write), and it runs with the user's privileges. Resolving once through
+    ``shutil.which`` and passing the absolute path removes the current directory from the decision.
+    The same class was already fixed here for ``pip`` (``ensure_installed`` uses ``sys.executable -m
+    pip``); this generalises it to the OS-probe call sites.
+
+    ``shutil.which`` honours PATHEXT on Windows, so a caller still passes the bare, extension-less
+    name. It is called once PER PATH DIRECTORY rather than once for the whole PATH, because on
+    Windows ``shutil.which`` REPRODUCES the flaw being fixed: it unconditionally prepends
+    ``os.curdir`` to the directories it searches, so a plain ``shutil.which("nvidia-smi")`` would
+    happily return the planted copy in the current directory. Searching each PATH entry on its own
+    never offers it that candidate.
+
+    Raising rather than returning None keeps the existing call sites' ``except (OSError,
+    Exception)`` handling working unchanged -- a missing binary already had to be tolerated there.
+    """
+    import shutil
+
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        resolved = shutil.which(name, path=directory)
+        if resolved is not None:
+            return os.path.abspath(resolved)
+    raise _BinaryNotFoundError(f"{name!r} not found on PATH")
+
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # CPU
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -79,7 +116,7 @@ def get_wmi_cpuinfo() -> Optional[dict]:
 
     try:
         c = wmi.WMI()
-        return summarize_devices(  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return summarize_devices(  # type: ignore[no-any-return]  # wmi is Windows-only and ships no stubs, so summarize_devices over its objects is Any
             c.Win32_Processor(),
             exclude_pros=set(
                 "CreationClassName SystemCreationClassName DeviceID SystemName ProcessorId SerialNumber Status StatusInfo LoadPercentage AssetTag Description".split()
@@ -106,7 +143,7 @@ def get_lscpu_info():
 
     lscpu_dict = {}
     try:
-        output = subprocess.check_output(["lscpu"], text=True)  # nosec B603 B607 - fixed trusted binary "lscpu" with no arguments, no shell, no external input
+        output = subprocess.check_output([_resolve_binary("lscpu")], text=True)  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
 
         for line in output.split("\n"):
             if ":" in line:
@@ -182,8 +219,8 @@ def parse_dmidecode_info(
         # password-needing sudo waited FOREVER, and register_scraper calls this while holding
         # _identity_lock, deadlocking every other thread's heartbeat. The sibling nvidia-smi call
         # already carries a timeout.
-        result = subprocess.run(  # nosec B603 B607 - fixed trusted binaries "sudo"/"dmidecode" with hardcoded argv, no shell, no external/user-controlled input
-            ["sudo", "-n", "dmidecode"],
+        result = subprocess.run(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+            [_resolve_binary("sudo"), "-n", _resolve_binary("dmidecode")],
             capture_output=True,
             text=True,
             timeout=10,
@@ -232,7 +269,12 @@ def parse_dmidecode_info(
                     if features_name and line.startswith("\t\t"):
                         features.append(line.strip())
         elif line.strip():
-            if section_dict:
+            # `keep_section`, not `section_dict`: a kept section whose every key was dropped by
+            # skip_keys/skip_values left section_dict empty, so the whole item -- ItemType included --
+            # silently vanished from the summary. skip_keys is documented as dropping KEYS; a caller
+            # skipping the identifying fields of, say, BIOS Information still needs to see that the
+            # section exists.
+            if keep_section and current_section is not None:
                 if features_name and features:
                     section_dict[features_name] = tuple(sorted(features))
                     features = []
@@ -252,7 +294,7 @@ def parse_dmidecode_info(
                 if current_section in sections_to_avoid:
                     keep_section = False
 
-    if section_dict:
+    if keep_section and current_section is not None:
         if features_name and features:
             section_dict[features_name] = tuple(sorted(features))
             features = []
@@ -332,7 +374,7 @@ def get_nix_cpu_sockets_number() -> int:
     """Returns the number of physical CPU sockets on Linux by parsing `lscpu` output; falls back to 1 on any failure."""
     num_sockets: int = 1
     try:
-        res = subprocess.check_output("lscpu").decode()  # nosec B603 B607 - fixed trusted binary "lscpu", hardcoded string with no interpolation, no shell
+        res = subprocess.check_output([_resolve_binary("lscpu")]).decode()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
         matches = re.findall("Socket\\(s\\):(.+)\n", res)
         if len(matches) > 0:
             # Parse into a local first: if the matched text isn't int-parseable (odd
@@ -375,7 +417,7 @@ def check_large_pages_windows():
 
     try:
         # Get the minimum size for large pages
-        GetLargePageMinimum = ctypes.windll.kernel32.GetLargePageMinimum  # type: ignore[attr-defined]
+        GetLargePageMinimum = ctypes.windll.kernel32.GetLargePageMinimum  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
         GetLargePageMinimum.restype = ctypes.c_size_t
         large_page_size = GetLargePageMinimum()
         return large_page_size > 0
@@ -391,7 +433,7 @@ def check_huge_pages_macos():
         bool: True if THP is managed by OS
     """
     try:
-        output = subprocess.check_output(["vm_stat"]).decode()  # nosec B603 B607 - fixed trusted macOS binary "vm_stat" with no arguments, no shell, no external input
+        output = subprocess.check_output([_resolve_binary("vm_stat")]).decode()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
         for line in output.split("\n"):
             if "Pages free" in line or "Pages active" in line:
                 # If vm_stat is working and outputting memory pages, THP is managed by the OS
@@ -451,7 +493,7 @@ def get_macos_power_plan():
         dict: Power plan settings from pmset
     """
     try:
-        res = subprocess.run(["pmset", "-g", "custom"], capture_output=True, text=True).stdout  # nosec B603 B607 - fixed trusted macOS binary "pmset" with hardcoded argv, no shell, no external input
+        res = subprocess.run([_resolve_binary("pmset"), "-g", "custom"], capture_output=True, text=True).stdout  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
         if not res:
             return None
         return dict(plan_full_name=res)
@@ -471,7 +513,7 @@ def get_windows_power_plan_cmd():
         Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (HP Recommended)
     """
     try:
-        res = subprocess.run(["powercfg", "/getactivescheme"], capture_output=True, text=True).stdout  # nosec B603 B607 - fixed trusted Windows binary "powercfg" with hardcoded argv, no shell, no external input
+        res = subprocess.run([_resolve_binary("powercfg"), "/getactivescheme"], capture_output=True, text=True).stdout  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
         if not res:
             return None
 
@@ -523,7 +565,7 @@ def get_power_plan() -> Optional[dict]:
         power_plan = get_macos_power_plan()
     else:
         power_plan = get_linux_power_plan()
-    return power_plan  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return power_plan  # type: ignore[no-any-return]  # the three platform-specific power-plan probes are unannotated
 
 
 def get_battery_info() -> Optional[dict]:
@@ -542,7 +584,7 @@ def get_battery_info() -> Optional[dict]:
         battery_info = psutil.sensors_battery()
         if battery_info:
             battery_info = battery_info._asdict()
-        return battery_info  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return battery_info  # type: ignore[no-any-return]  # psutil ships no stubs; sensors_battery()._asdict() is Any
     except Exception as e:
         logger.exception(e)
         return None
@@ -599,8 +641,8 @@ def get_nvidia_smi_info(
     # drivers (real incident class on Windows after a GPU reset); without the
     # timeout an import of this module on a misbehaving host blocks forever.
     try:
-        result = subprocess.run(  # nosec B603 B607 - fixed trusted binary "nvidia-smi" with hardcoded argv, no shell, no external/user-controlled input
-            ["nvidia-smi", "-q", "-x"],
+        result = subprocess.run(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+            [_resolve_binary("nvidia-smi"), "-q", "-x"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -778,13 +820,13 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
         import GPUtil
     except Exception:
         logger.warning("Can't import GPUtil.")
-        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return devices
 
     try:
         gpus = GPUtil.getGPUs()
     except Exception as e:
         logger.exception(e)
-        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return devices
 
     for gpu in gpus:
         try:
@@ -806,7 +848,7 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
     if len(devices) < len(gpus):
         logger.warning("get_gpuutil_gpu_info: only %d of %d detected GPU(s) were successfully enumerated", len(devices), len(gpus))
 
-    return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return devices
 
 
 # Backward-compatible alias

@@ -6,7 +6,7 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 ``explain_table``).
 """
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional, Union
 
 from ._common import (
     logger,
@@ -30,15 +30,18 @@ from .sql_helpers import construct_templates_and_values, validate_sql_identifier
 import pyutilz.database.db as _facade
 
 
-def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
+def get_table_fields(table: str, alias: str, prefix: str = "", suffix: str = "", excluding: Union[str, Iterable[str]] = "") -> str:
     """Returns a comma-separated ``<alias>.<column> <prefix><column><suffix>`` select list for a table.
 
     Column names are read from the driver's cursor description of an empty (``where 0=1``) probe query,
     so the list always follows the live schema. ``excluding`` accepts a comma-separated string or an
     iterable of column names to leave out.
+
+    Always returns a string, never ``None``: the result exists to be concatenated into a larger
+    SELECT, so a driver that reports no ``cursor.description`` for the probe raises here rather
+    than letting ``None`` (or the literal text ``None``) reach the SQL.
     """
-    if isinstance(excluding, str):
-        excluding = excluding.split(",")
+    excluded: Iterable[str] = excluding.split(",") if isinstance(excluding, str) else excluding
     # Validate table name to prevent SQL injection
     validate_sql_identifier(table)
     # Must use the CALLING thread's own cursor: the module-global `cur` can be rebound by another
@@ -46,8 +49,9 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
     local_cur = _facade.get_cursor(_facade.get_cursor_type(None, None))
     local_cur.execute("select * from " + table + " where 0=1")  # nosec B608 - table validated by validate_sql_identifier above
     local_cur.fetchall()
-    if local_cur.description is not None:
-        return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in local_cur.description if col.name not in excluding])
+    if local_cur.description is None:
+        raise RuntimeError(f"Could not read the column list for table {table!r}: the driver reported no cursor description for the probe query.")
+    return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in local_cur.description if col.name not in excluded])
 
 
 def _close_local_named_cursor(cursor_name: Optional[str], local_cur: Any) -> None:
@@ -161,7 +165,9 @@ def basic_db_execute(
         except DuplicateTable as e:
             logger.warning("DuplicateTable (statement=%s): %s", stmt_preview, e)
             # conn.commit()
-            return
+            # Empty list, not a bare `return`: a CREATE that collided produced no result set, which
+            # is the case the docstring already documents as an empty list.
+            return []
         except InternalError as e:
             logger.exception("InternalError (statement=%s): %s", stmt_preview, e)
             # logger.warning("rolling back operation...")
@@ -225,6 +231,11 @@ def basic_db_execute(
                     if cursor_name is not None:
                         local_cur.close()
                     return []
+
+    # The retry budget is exhausted: every attempt raised OperationalError/InterfaceError and
+    # reconnected. Falling off the end here returned None, which a caller cannot tell apart from
+    # the documented "no result set yields an empty list".
+    raise RuntimeError(f"basic_db_execute gave up after {max_retries} connection retries (statement={stmt_preview!r})")
 
 
 def safe_execute(statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: Optional[int] = None):

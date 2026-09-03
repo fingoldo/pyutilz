@@ -12,10 +12,15 @@ from pyutilz.dev.logginglib import _log_filename, _message, log_loaded_rows, log
 # -------------------- F03: log_loaded_rows default --------------------
 
 
-def test_log_loaded_rows_works_with_its_documented_default():
+def test_log_loaded_rows_works_with_its_documented_default(caplog):
     """results_log=None is the documented default and must not raise KeyError."""
     # lang="ru" avoids the optional `inflect` dependency the English template pulls in.
-    log_loaded_rows([1, 2, 3], source="t", lang="ru")
+    with caplog.at_level(logging.INFO, logger="pyutilz.dev.logginglib"):
+        log_loaded_rows([1, 2, 3], source="t", lang="ru", verbose=True)
+    # The KeyError used to abort BEFORE the message, so the message is the observable proof that
+    # the substituted default dict carried "results" all the way through the recording step.
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("3" in m and "t" in m for m in messages), messages
 
 
 def test_log_loaded_rows_records_into_provided_log():
@@ -33,8 +38,11 @@ def test_log_loaded_rows_seeds_results_key_when_absent():
 # -------------------- F21: _message on a whitespace-only name --------------------
 
 
-def test_message_tolerates_whitespace_only_activity_name():
-    _message("   ")  # must not raise IndexError
+def test_message_tolerates_whitespace_only_activity_name(caplog):
+    with caplog.at_level(logging.INFO, logger="pyutilz.dev.logginglib"):
+        _message("   ")  # must not raise IndexError
+    # A whitespace-only name has nothing to announce, so it is dropped rather than logged blank.
+    assert [r.getMessage() for r in caplog.records] == []
 
 
 def test_message_still_logs_a_real_name(caplog):

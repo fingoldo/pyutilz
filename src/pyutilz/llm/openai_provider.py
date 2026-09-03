@@ -8,7 +8,7 @@ import httpx
 
 from pyutilz.llm.base import longest_prefix_lookup
 from pyutilz.llm.config import get_llm_settings
-from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +197,8 @@ class OpenAIProvider(OpenAICompatibleProvider):
             model,
         )
 
-    def _resolve_pricing(self, model: str) -> tuple[float, float]:
-        """Return ``(input, output)`` USD per 1M for ``model``, longest-prefix resolved.
+    def _resolve_pricing(self, model: str) -> Pricing:
+        """Return the :class:`Pricing` record (input, output) USD per 1M for ``model``, longest-prefix resolved.
 
         Prefix-matched for the same reason ``max_output_tokens``/``context_window`` are: a dated
         snapshot id such as ``gpt-5-pro-2026-01-15`` used to miss the exact ``dict.get`` here and
@@ -206,22 +206,21 @@ class OpenAIProvider(OpenAICompatibleProvider):
         lookups disagreed about the same id, understating that model's spend ~60x behind a single
         WARNING line (2026-09-03 audit F20). The warning still fires for a genuine miss.
         """
-        exact = _PRICING.get(model)
-        if exact is not None:
-            return exact
-        resolved = longest_prefix_lookup(model, _PRICING, None)
-        self._warn_unknown_model_once(model)
-        if resolved is None:
-            return _PRICING["gpt-5-mini"]
-        return resolved  # type: ignore[no-any-return]  # longest_prefix_lookup is typed Any; the table's value type is the tuple returned here
+        pair = _PRICING.get(model)
+        if pair is None:
+            pair = longest_prefix_lookup(model, _PRICING, None)
+            self._warn_unknown_model_once(model)
+            if pair is None:
+                pair = _PRICING["gpt-5-mini"]
+        return Pricing(float(pair[0]), float(pair[1]))
 
     def _input_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
-        return self._resolve_pricing(model)[0]
+        return self._resolve_pricing(model).input
 
     def _output_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M output tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
-        return self._resolve_pricing(model)[1]
+        return self._resolve_pricing(model).output
 
     @property
     def max_output_tokens(self) -> int:

@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- numbers that claim more than the code behind them supports ------------------------------------
 #
@@ -98,7 +98,7 @@ def scan_thresholds_below_documented_result(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not py.name.startswith("test_"):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

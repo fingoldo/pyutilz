@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import ast
-from fnmatch import fnmatch
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- vacuous / tautological test assertions -------------------------------
 #
@@ -159,7 +158,7 @@ def scan_vacuous_assertions(
         # `test_glob` is a GLOB, matched with fnmatch. It used to be compared for equality against
         # its own default, so any other value (`"check_*.py"`) scanned every .py file in the tree,
         # production modules included -- the exact inverse of what the parameter name promises.
-        if not fnmatch(py.name, test_glob):
+        if not is_test_file(py, root, (test_glob,)):
             continue
         tree = _safe_parse(py)
         if tree is None:

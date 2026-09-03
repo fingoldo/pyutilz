@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test stub that raises, into production code that swallows -----------------------------
 #
@@ -126,7 +126,7 @@ def _swallowing_calls(tree: ast.AST) -> set[str]:
     return swallowed
 
 
-def _patched_targets(func: ast.AST, raising_stubs: set[str]) -> list[tuple[str, int]]:
+def _patched_targets_of_raising_stubs(func: ast.AST, raising_stubs: set[str]) -> list[tuple[str, int]]:
     """(patched attribute name, line) for every patch installing one of *raising_stubs*."""
     out: list[tuple[str, int]] = []
     for node in ast.walk(func):
@@ -180,9 +180,7 @@ def scan_raising_stub_swallowed(
         if tree is None:
             continue
         rel = py.relative_to(root).as_posix()
-        # Relative to the scan root: `py.parts` is ABSOLUTE, so a checkout under any directory
-        # named `tests` classified every production file as a test and silenced the whole scan.
-        if py.name.startswith("test_") or py.name.endswith("_test.py") or "tests" in py.relative_to(root).parts:
+        if is_test_file(py, root):
             test_files.append(py)
         else:
             swallowed = _swallowing_calls(tree)
@@ -209,7 +207,7 @@ def scan_raising_stub_swallowed(
                 continue
             if _asserts_on_a_raise(func) or not _spy_style_assertions(func):
                 continue
-            for attr, line in _patched_targets(func, raising_stubs):
+            for attr, line in _patched_targets_of_raising_stubs(func, raising_stubs):
                 swallowers = sorted(f for f, names in production_swallows.items() if attr in names)
                 if not swallowers:
                     continue

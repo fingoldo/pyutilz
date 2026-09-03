@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Optional, cast
+from typing import Any, Dict, FrozenSet, List, Optional, cast
 
 from pyutilz.core.serialization import atomic_write_bytes
 from pyutilz.web.url_guard import ALLOWED_SCHEMES, urlopen_checked
@@ -35,6 +35,12 @@ _RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
 # time.sleep() for decades, hanging a whole batch job on one bad URL. Anything above this cap falls
 # back to the local exponential backoff instead.
 MAX_RETRY_AFTER_SECONDS = 120.0
+
+# Response bodies are read from the same untrusted party `Retry-After` comes from, so they get the
+# same treatment: a bound, not a promise. 64 MiB is far above any JSON/text API payload this client
+# targets, and far below what would OOM a worker or fill a cache volume.
+DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+_READ_CHUNK_BYTES = 256 * 1024
 
 # A cache `tag` becomes a DIRECTORY component of the cache path, so it must not be able to escape
 # cache_dir (`..`, absolute paths, separators). Same containment concern as
@@ -60,6 +66,7 @@ class CachedHttpClient:
         min_interval: float = 0.12,
         offline_env_var: Optional[str] = None,
         allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES,
+        max_bytes: Optional[int] = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         """
         Args:
@@ -72,12 +79,17 @@ class CachedHttpClient:
                 out. Pass ``None`` to disable offline mode entirely (always live).
             allowed_schemes: forwarded to :func:`pyutilz.web.url_guard.urlopen_checked` -- rejects
                 any URL whose scheme isn't in this set before a socket is opened.
+            max_bytes: reject (and do not cache) any response body larger than this many bytes;
+                ``None`` disables the cap and restores the historical unbounded read. Defaults to
+                ``DEFAULT_MAX_RESPONSE_BYTES``, comfortably above any JSON/text API payload this
+                client is meant for.
         """
         self.cache_dir = cache_dir
         self.user_agent = user_agent
         self.min_interval = min_interval
         self.offline_env_var = offline_env_var
         self.allowed_schemes = allowed_schemes
+        self.max_bytes = max_bytes
         self._last_call: Dict[str, float] = {}
         self._throttle_lock = threading.Lock()
 
@@ -131,6 +143,38 @@ class CachedHttpClient:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         atomic_write_bytes(str(path), lambda f: f.write(body))
 
+    def _read_capped(self, resp: Any, url: str) -> Optional[bytes]:
+        """Read at most ``self.max_bytes`` from ``resp``, returning None (with a warning) if the body
+        is larger.
+
+        A bare ``resp.read()`` sizes the allocation from the remote side: a hostile or merely broken
+        endpoint answering with a multi-gigabyte chunked body (or an effectively endless stream)
+        allocates until the process is OOM-killed or the cache volume fills, and neither the per-host
+        throttle nor the retry cap helps because it all happens inside ONE successful response. This
+        is the same remote-controlled-quantity cap as ``MAX_RETRY_AFTER_SECONDS`` above. The
+        ``Content-Length`` pre-check is an optimisation only -- it is remote-supplied and may be
+        absent or lie, so the streaming loop is what actually enforces the bound.
+        """
+        if self.max_bytes is None:
+            return cast(bytes, resp.read())
+        declared = resp.headers.get("Content-Length") if getattr(resp, "headers", None) else None
+        if declared and declared.isdigit() and int(declared) > self.max_bytes:
+            logger.warning("cached_client: %s declares Content-Length=%s > max_bytes=%s; refusing", url, declared, self.max_bytes)
+            return None
+        chunks: List[bytes] = []
+        total = 0
+        # One byte past the cap is read deliberately: it is what distinguishes "exactly at the limit"
+        # (valid) from "truncated at the limit" (must be rejected, since a silently short body would
+        # be cached as if complete).
+        while total <= self.max_bytes:
+            chunk = resp.read(min(_READ_CHUNK_BYTES, self.max_bytes - total + 1))
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+            total += len(chunk)
+        logger.warning("cached_client: response from %s exceeds max_bytes=%s; discarding", url, self.max_bytes)
+        return None
+
     def _fetch_bytes(self, url: str, headers: Optional[Dict[str, str]], timeout: float, retries: int) -> Optional[bytes]:
         """Throttled GET with exponential backoff; returns None on a permanent failure."""
         req = urllib.request.Request(url, headers={"User-Agent": self.user_agent, **(headers or {})})
@@ -138,7 +182,7 @@ class CachedHttpClient:
             self._throttle(url)
             try:
                 with urlopen_checked(req, timeout=timeout, allowed_schemes=self.allowed_schemes) as resp:
-                    return cast(bytes, resp.read())
+                    return self._read_capped(resp, url)
             except urllib.error.HTTPError as exc:
                 if exc.code in _RETRYABLE_HTTP_CODES and attempt < retries - 1:
                     retry_after = exc.headers.get("Retry-After") if exc.headers else None

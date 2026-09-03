@@ -183,9 +183,9 @@ def get_cursor_type(cursor_factory: Any, cursor_name: Optional[str] = None) -> s
     with ``_named`` when a server-side cursor name is requested (named cursors are never cached)."""
     if cursor_factory is None:
         cursor_factory = psycopg2.extensions.cursor
-    cursor_type = cursor_factory.__name__ + ("" if cursor_name is None else "_named")
+    cursor_type = str(cursor_factory.__name__) + ("" if cursor_name is None else "_named")  # str(): cursor_factory is Any, so its __name__ is too
 
-    return cursor_type  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return cursor_type
 
 
 def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Optional[str] = None, itersize: Optional[int] = None) -> Any:

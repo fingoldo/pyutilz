@@ -11,6 +11,9 @@ without a test file. The audit is intentionally NAME-based — matching
   - ``tests/test_<module>_extra2.py``         (further splits)
   - ``tests/<sub>/test_<module>.py``          (sub-package tests, future-proof)
   - ``tests/test_<sub>_<module>.py``          (collapsed-prefix variant)
+  - ``tests/test_<sub>.py``                   (ONLY for the sub-package's
+                                               namesake module, e.g.
+                                               ``system/system.py``)
   - ``tests/test_<alias>.py``                 (where alias is in
                                                ``_MODULE_ALIASES``)
 
@@ -37,6 +40,9 @@ REPO_ROOT = PYUTILZ_DIR.parent.parent  # src/pyutilz/ → repo root
 TESTS_DIR = REPO_ROOT / "tests"
 
 # Modules that don't need a dedicated test file. Cite reason.
+# A key is either a bare module stem (exempts every module with that name) or a
+# path relative to ``src/pyutilz/`` (exempts exactly that one module) -- use the
+# path form whenever the stem is generic enough to collide, e.g. ``base``.
 _TEST_EXEMPT_MODULES: dict[str, str] = {
     "version": "single-line constant; no behaviour to test",
     "benchmark": "performance/kernel_tuning/benchmark.py — covered by tests/test_kernel_tuning_benchmark.py, renamed 2026-07-21 to stop being confusable with test_dev_benchmarking.py (pyutilz.dev.benchmarking)",
@@ -70,54 +76,58 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "notebook_init": "covered by test_smoke_untested_modules.py",
     "tokenizers": "covered by test_smoke_untested_modules.py",
     # dev/code_audit was split from a single >1000-LOC module into a
-    # subpackage; every scanner submodule is exercised jointly by
-    # tests/test_code_audit.py (positive+negative case per scanner).
-    "getattr_unknown_attribute": "code_audit scanner; covered by test_code_audit.py",
-    "getattr_literal_on_known_dataclass": "code_audit scanner; covered by test_code_audit.py",
-    "mutable_defaults": "code_audit scanner; covered by test_code_audit.py",
-    "closures": "code_audit scanner; covered by test_code_audit.py",
-    "default_via_or": "code_audit scanner; covered by test_code_audit.py",
-    "broad_except": "code_audit scanner; covered by test_code_audit.py",
-    "nan_equality": "code_audit scanner; covered by test_code_audit.py",
-    "mutation_during_iteration": "code_audit scanner; covered by test_code_audit.py",
-    "sql_lint": "code_audit scanner; covered by test_code_audit.py",
-    "dead_cli_flags": "code_audit scanner; covered by test_code_audit.py",
-    "silent_escalation": "code_audit scanner; covered by test_code_audit.py",
-    "sql_migrations": "code_audit scanner; covered by test_code_audit.py",
-    "duplicate_conditions": "code_audit scanner; covered by test_code_audit.py",
-    "duplicate_function_body": "code_audit scanner; covered by test_code_audit.py",
-    "missed_await": "code_audit scanner; covered by test_code_audit.py",
-    "redundant_test_fit": "code_audit scanner; covered by test_code_audit.py",
-    "cli": "code_audit CLI/rendering; covered by test_code_audit.py CLI-surface tests",
-    "undeclared_imports": "code_audit scanner; covered by test_code_audit.py",
-    "vacuous_assertions": "code_audit scanner; covered by test_code_audit.py",
-    "dead_wiring": "code_audit scanner; covered by test_code_audit.py",
-    "vacuous_matching": "code_audit scanner; covered by test_code_audit.py",
-    "tautological_guard": "code_audit scanner; covered by test_code_audit.py",
-    "table_drift": "code_audit scanner; covered by test_code_audit.py",
-    "provenance_flow": "code_audit scanner; covered by test_code_audit.py",
-    "claimed_invariants": "code_audit scanner; covered by test_code_audit.py",
-    "partial_fix": "code_audit scanner; covered by test_code_audit.py",
-    "measurement_hygiene": "code_audit scanner; covered by test_code_audit.py",
-    "domain_boundary": "code_audit scanner; covered by test_code_audit.py",
-    "locals_globals_output": "code_audit scanner; covered by test_code_audit.py",
-    "network_timeout": "code_audit scanner; covered by test_code_audit.py",
-    "retry_loops": "code_audit scanner; covered by test_code_audit.py",
-    "module_docstring": "code_audit scanner; covered by test_code_audit.py",
-    "unraised_exceptions": "code_audit scanner; covered by test_code_audit.py",
-    "credential_logging": "code_audit scanner; covered by test_code_audit.py",
-    "docstring_args": "code_audit scanner; covered by test_code_audit.py",
-    "return_annotation": "code_audit scanner; covered by test_code_audit.py",
-    "locals_get": "code_audit scanner; covered by test_code_audit.py",
-    "shielded_resource_release": "code_audit scanner; covered by test_code_audit.py",
-    "duplicate_credential_regex": "code_audit scanner; covered by test_code_audit.py",
-    "asymmetric_resource_guard": "code_audit scanner; covered by test_code_audit.py",
-    "spy_arity": "code_audit scanner; covered by test_code_audit.py",
-    "log_throttle": "code_audit scanner; covered by test_code_audit.py",
-    "dead_import": "code_audit scanner; covered by test_code_audit.py",
-    "async_primitive_reinit": "code_audit scanner; covered by test_code_audit.py",
-    "hardcoded_test_path": "code_audit scanner; covered by test_code_audit.py",
-    "llm_max_tokens_cap": "code_audit scanner; covered by test_code_audit.py",
+    # subpackage; the tests were split the same way, into the
+    # tests/code_audit/ package of one test_<family>.py per scanner
+    # family. The positive+negative-case-per-scanner discipline these
+    # exemptions rest on is no longer prose: it is enforced for every
+    # registered scanner by
+    # tests/test_meta/test_scanner_positive_and_negative_cases.py.
+    "getattr_unknown_attribute": "code_audit scanner; covered by tests/code_audit/test_domain_boundary.py + test_audit_20260903_scanner_fixes_a_l.py",
+    "getattr_literal_on_known_dataclass": "code_audit scanner; covered by tests/code_audit/test_domain_boundary.py + test_audit_20260903_scanner_fixes_a_l.py",
+    "mutable_defaults": "code_audit scanner; covered by tests/code_audit/test_mutable_defaults.py",
+    "closures": "code_audit scanner; covered by tests/code_audit/test_closures.py",
+    "default_via_or": "code_audit scanner; covered by tests/code_audit/test_default_via_or.py",
+    "broad_except": "code_audit scanner; covered by tests/code_audit/test_broad_except.py",
+    "nan_equality": "code_audit scanner; covered by tests/code_audit/test_nan_equality.py",
+    "mutation_during_iteration": "code_audit scanner; covered by tests/code_audit/test_mutation_during_iteration.py",
+    "sql_lint": "code_audit scanner; covered by tests/code_audit/test_sql_lint.py",
+    "dead_cli_flags": "code_audit scanner; covered by tests/code_audit/test_dead_cli_flags.py",
+    "silent_escalation": "code_audit scanner; covered by tests/code_audit/test_silent_escalation.py",
+    "sql_migrations": "code_audit scanner; covered by tests/code_audit/test_sql_migrations.py",
+    "duplicate_conditions": "code_audit scanner; covered by tests/code_audit/test_duplicate_conditions.py",
+    "duplicate_function_body": "code_audit scanner; covered by tests/code_audit/test_duplicate_function_body.py",
+    "missed_await": "code_audit scanner; covered by tests/code_audit/test_missed_await.py",
+    "redundant_test_fit": "code_audit scanner; covered by tests/code_audit/test_redundant_test_fit.py",
+    "cli": "code_audit CLI/rendering; covered by tests/code_audit/test_registry_and_cli.py CLI-surface tests",
+    "undeclared_imports": "code_audit scanner; covered by tests/code_audit/test_undeclared_imports.py",
+    "vacuous_assertions": "code_audit scanner; covered by tests/code_audit/test_vacuous_assertions.py",
+    "dead_wiring": "code_audit scanner; covered by tests/code_audit/test_dead_wiring.py",
+    "vacuous_matching": "code_audit scanner; covered by tests/code_audit/test_vacuous_matching.py",
+    "tautological_guard": "code_audit scanner; covered by tests/code_audit/test_tautological_guard.py",
+    "table_drift": "code_audit scanner; covered by tests/code_audit/test_table_drift.py",
+    "provenance_flow": "code_audit scanner; covered by tests/code_audit/test_provenance_flow.py",
+    "claimed_invariants": "code_audit scanner; covered by tests/code_audit/test_claimed_invariants.py",
+    "partial_fix": "code_audit scanner; covered by tests/code_audit/test_partial_fix.py",
+    "measurement_hygiene": "code_audit scanner; covered by tests/code_audit/test_measurement_hygiene.py",
+    "domain_boundary": "code_audit scanner; covered by tests/code_audit/test_domain_boundary.py",
+    "locals_globals_output": "code_audit scanner; covered by tests/code_audit/test_locals_globals_output.py",
+    "network_timeout": "code_audit scanner; covered by tests/code_audit/test_network_timeout.py",
+    "retry_loops": "code_audit scanner; covered by tests/code_audit/test_retry_loops.py",
+    "module_docstring": "code_audit scanner; covered by tests/code_audit/test_module_docstring.py",
+    "unraised_exceptions": "code_audit scanner; covered by tests/code_audit/test_unraised_exceptions.py",
+    "credential_logging": "code_audit scanner; covered by tests/code_audit/test_credential_logging.py",
+    "docstring_args": "code_audit scanner; covered by tests/code_audit/test_docstring_args.py",
+    "return_annotation": "code_audit scanner; covered by tests/code_audit/test_return_annotation.py",
+    "locals_get": "code_audit scanner; covered by tests/code_audit/test_locals_get.py",
+    "shielded_resource_release": "code_audit scanner; covered by tests/code_audit/test_shielded_resource_release.py",
+    "duplicate_credential_regex": "code_audit scanner; covered by tests/code_audit/test_duplicate_credential_regex.py",
+    "asymmetric_resource_guard": "code_audit scanner; covered by tests/code_audit/test_asymmetric_resource_guard.py",
+    "spy_arity": "code_audit scanner; covered by tests/code_audit/test_spy_arity.py",
+    "log_throttle": "code_audit scanner; covered by tests/code_audit/test_log_throttle.py",
+    "dead_import": "code_audit scanner; covered by tests/code_audit/test_dead_import.py",
+    "async_primitive_reinit": "code_audit scanner; covered by tests/code_audit/test_async_primitive_reinit.py",
+    "hardcoded_test_path": "code_audit scanner; covered by tests/code_audit/test_hardcoded_test_path.py",
+    "llm_max_tokens_cap": "code_audit scanner; covered by tests/code_audit/test_llm_max_tokens_cap.py",
     "packages": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "objects": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
     "numerics": "core/pythonlib subpackage split; covered jointly by test_pythonlib*.py",
@@ -136,41 +146,41 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "sentences": "text/similarity subpackage split; covered jointly by test_similarity.py",
     "openai_tokens": "moved out of core/openai.py; covered by test_llm_core_openai.py",
     "array_summary": "covered by test_smoke_untested_modules.py (smoke parametrize)",
-    "unpicklable_resource_state": "code_audit scanner; covered by test_code_audit.py",
-    "bare_except": "code_audit scanner; covered by test_code_audit.py",
-    "console_unicode": "code_audit scanner; covered by test_code_audit.py",
-    "mojibake": "code_audit scanner; covered by test_code_audit.py",
-    "resource_handle_safety": "code_audit scanner; covered by test_code_audit.py",
-    "todo_hygiene": "code_audit scanner; covered by test_code_audit.py",
-    "import_cycles": "code_audit scanner; covered by test_code_audit.py",
-    "effect_flag_outside_its_effect": "code_audit scanner; covered by test_code_audit.py",
-    "guard_decidable_from_constants": "code_audit scanner; covered by test_code_audit.py",
-    "sql_selects_unread_column": "code_audit scanner; covered by test_code_audit.py",
-    "count_then_fetch_same_table": "code_audit scanner; covered by test_code_audit.py",
-    "sentinel_cached_as_answer": "code_audit scanner; covered by test_code_audit.py",
-    "accumulator_helper_bypassed": "code_audit scanner; covered by test_code_audit.py",
-    "test_asserts_against_production_constant": "code_audit scanner; covered by test_code_audit.py",
-    "patch_target_is_a_reexport": "code_audit scanner; covered by test_code_audit.py",
-    "column_no_write_path": "code_audit scanner; covered by test_code_audit.py",
-    "sibling_guard_missing": "code_audit scanner; covered by test_code_audit.py",
-    "sql_sibling_missing_time_bound": "code_audit scanner; covered by test_code_audit.py",
-    "vacuous_loop_assertion": "code_audit scanner; covered by test_code_audit.py",
-    "docstring_names_a_caller_that_does_not_call": "code_audit scanner; covered by test_code_audit.py",
-    "asymmetric_except_siblings": "code_audit scanner; covered by test_code_audit.py",
-    "unreachable_import_fallback": "code_audit scanner; covered by test_code_audit.py",
-    "comment_names_missing_symbol": "code_audit scanner; covered by test_code_audit.py",
-    "unit_suffix_mismatch": "code_audit scanner; covered by test_code_audit.py",
-    "sentinel_guard_mismatch": "code_audit scanner; covered by test_code_audit.py",
-    "stats_key_coverage": "code_audit scanner; covered by test_code_audit.py",
-    "constructor_param_overwritten": "code_audit scanner; covered by test_code_audit.py",
-    "lazy_log_assertion": "code_audit scanner; covered by test_code_audit.py",
-    "raising_stub_swallowed": "code_audit scanner; covered by test_code_audit.py",
-    "source_text_assertions": "code_audit scanner; covered by test_code_audit.py",
-    "docstring_numbers_moved_to_config": "code_audit scanner; covered by test_code_audit.py",
-    "readonly_to_numpy_mutation": "code_audit scanner; covered by test_code_audit.py",
-    "skip_masking_except": "code_audit scanner; covered by test_code_audit.py",
-    "uncurated_star_export": "code_audit scanner; covered by test_code_audit.py",
-    "field_text_agreement": "code_audit field/text cross-check mechanism; covered by test_code_audit.py",
+    "unpicklable_resource_state": "code_audit scanner; covered by tests/code_audit/test_unpicklable_resource_state.py",
+    "bare_except": "code_audit scanner; covered by tests/code_audit/test_bare_except.py",
+    "console_unicode": "code_audit scanner; covered by tests/code_audit/test_console_unicode.py",
+    "mojibake": "code_audit scanner; covered by tests/code_audit/test_mojibake.py",
+    "resource_handle_safety": "code_audit scanner; covered by tests/code_audit/test_resource_handle_safety.py",
+    "todo_hygiene": "code_audit scanner; covered by tests/code_audit/test_todo_hygiene.py",
+    "import_cycles": "code_audit scanner; covered by tests/code_audit/test_import_cycles.py",
+    "effect_flag_outside_its_effect": "code_audit scanner; covered by tests/code_audit/test_effect_flag_outside_its_effect.py",
+    "guard_decidable_from_constants": "code_audit scanner; covered by tests/code_audit/test_guard_decidable_from_constants.py",
+    "sql_selects_unread_column": "code_audit scanner; covered by tests/code_audit/test_sql_selects_unread_column.py",
+    "count_then_fetch_same_table": "code_audit scanner; covered by tests/code_audit/test_count_then_fetch_same_table.py",
+    "sentinel_cached_as_answer": "code_audit scanner; covered by tests/code_audit/test_sentinel_cached_as_answer.py",
+    "accumulator_helper_bypassed": "code_audit scanner; covered by tests/code_audit/test_accumulator_helper_bypassed.py",
+    "test_asserts_against_production_constant": "code_audit scanner; covered by tests/code_audit/test_test_asserts_against_production_constant.py",
+    "patch_target_is_a_reexport": "code_audit scanner; covered by tests/code_audit/test_patch_target_is_a_reexport.py",
+    "column_no_write_path": "code_audit scanner; covered by tests/code_audit/test_column_no_write_path.py",
+    "sibling_guard_missing": "code_audit scanner; covered by tests/code_audit/test_sibling_guard_missing.py",
+    "sql_sibling_missing_time_bound": "code_audit scanner; covered by tests/code_audit/test_sql_sibling_missing_time_bound.py",
+    "vacuous_loop_assertion": "code_audit scanner; covered by tests/code_audit/test_vacuous_loop_assertion.py",
+    "docstring_names_a_caller_that_does_not_call": "code_audit scanner; covered by tests/code_audit/test_docstring_names_a_caller_that_does_not_call.py",
+    "asymmetric_except_siblings": "code_audit scanner; covered by tests/code_audit/test_asymmetric_except_siblings.py",
+    "unreachable_import_fallback": "code_audit scanner; covered by tests/code_audit/test_unreachable_import_fallback.py",
+    "comment_names_missing_symbol": "code_audit scanner; covered by tests/code_audit/test_comment_names_missing_symbol.py",
+    "unit_suffix_mismatch": "code_audit scanner; covered by tests/code_audit/test_unit_suffix_mismatch.py",
+    "sentinel_guard_mismatch": "code_audit scanner; covered by tests/code_audit/test_sentinel_guard_mismatch.py",
+    "stats_key_coverage": "code_audit scanner; covered by tests/code_audit/test_stats_key_coverage.py",
+    "constructor_param_overwritten": "code_audit scanner; covered by tests/code_audit/test_constructor_param_overwritten.py",
+    "lazy_log_assertion": "code_audit scanner; covered by tests/code_audit/test_lazy_log_assertion.py",
+    "raising_stub_swallowed": "code_audit scanner; covered by tests/code_audit/test_raising_stub_swallowed.py",
+    "source_text_assertions": "code_audit scanner; covered by tests/code_audit/test_source_text_assertions.py",
+    "docstring_numbers_moved_to_config": "code_audit scanner; covered by tests/code_audit/test_docstring_numbers_moved_to_config.py",
+    "readonly_to_numpy_mutation": "code_audit scanner; covered by tests/code_audit/test_readonly_to_numpy_mutation.py",
+    "skip_masking_except": "code_audit scanner; covered by tests/code_audit/test_skip_masking_except.py",
+    "uncurated_star_export": "code_audit scanner; covered by tests/code_audit/test_uncurated_star_export.py",
+    "field_text_agreement": "code_audit field/text cross-check mechanism; covered by tests/code_audit/test_field_text_agreement.py",
     # database/db was split from a single >1000-LOC module into a subpackage;
     # the pure/stateless helper submodules are exercised jointly by
     # tests/test_db_extra.py (facade re-export sensor + helper behaviour) and
@@ -204,6 +214,26 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "jsonutils": "text/strings subpackage; covered by test_strings.py",
     "textentropy": "text/strings subpackage; covered by test_strings.py",
     "webtext": "text/strings subpackage; covered by test_strings.py",
+    # Path-keyed exemptions: modules that used to satisfy the gate only through
+    # the (now removed) bare ``test_<sub>`` fallback -- ``tests/test_system.py`` /
+    # ``tests/test_web.py`` waved through EVERY module under system/ and web/.
+    # Each is really covered by the cited file(s), verified by word-boundary
+    # references to the module's own public names.
+    "system/hardware_monitor.py": "covered by tests/system/test_hardware_detection.py (get_hardware_info) + test_system_audit_fixes.py",
+    "system/scheduling/prefect.py": "covered by test_system_audit_fixes.py (get_running_flows / wait_for_absense_of_tasks / get_schema)",
+    "system/system/fsutils.py": "system/system subpackage split; covered by test_system.py + test_system_extra2.py + test_system_domain_extra.py",
+    "system/system/memory.py": "system/system subpackage split; covered by test_system.py + test_system_extra2.py + test_system_extra3.py",
+    "system/system/misc.py": "system/system subpackage split; covered by test_system.py + test_system_extra.py + test_system_extra2.py",
+    "system/system/probing.py": "system/system subpackage split; covered by test_system_extra2.py + test_system_extra3.py + tests/system/test_hardware_detection.py",
+    "system/system/sysinfo.py": "system/system subpackage split; get_system_info covered by test_system.py + test_dev_fixes_regression.py + test_distributed.py",
+    "web/proxy/base.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
+    "web/proxy/decodo.py": "web/proxy subpackage; covered by test_proxy.py (TestDecodoProvider / TestDecodoSubscription / TestDecodoTrafficReport)",
+    "web/proxy/ip_check.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
+    "web/proxy/session.py": "web/proxy subpackage; covered by test_proxy.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
+    "web/web/downloads.py": "web/web subpackage split; covered by test_web_extra.py + test_domain_db_web_cloud_llm_text_audit_20260903_web.py",
+    "web/web/fetching.py": "web/web subpackage split; covered by test_web_extra.py + test_web_concurrency.py",
+    "web/web/ipinfo.py": "web/web subpackage split; covered by test_web.py + test_web_extra.py",
+    "web/web/proxy_pool.py": "web/web subpackage split; covered by test_web_extra.py + test_web.py",
 }
 
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
@@ -230,6 +260,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_core_audit_fixes": "cross-cutting - 2026-09-02 audit regression tests spanning core/pythonlib, core/serialization, core/matrix",
     "test_dev_audit_fixes": "cross-cutting - 2026-09-02 audit regression tests spanning dev/logginglib and dev/benchmarking",
     "test_system_audit_fixes": "cross-cutting - 2026-09-02 audit regression tests spanning system/config, system/parallel, system/resilience, system/distributed, system/single_flight_cache, system/hardware_monitor, system/scheduling/prefect",
+    "test_audit_20260721_regressions": "cross-cutting - tests/code_audit/ regression suite for the 2026-07-21 audit; spans several code_audit scanners rather than one source module",
     "test_data_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning data/polarslib, data/pandaslib, data/numpylib, data/numbalib, stats/normality",
     "test_database_extra2": "cross-cutting — 2026-07-21 audit regression tests spanning database/db/sql_helpers, database/db/upsert, database/db/sqlite, database/redislib",
     "test_llm_domain_extra": "cross-cutting — 2026-07-21 audit regression tests spanning llm/gemini_provider, llm/anthropic_provider, llm/openai_provider, llm/base, llm/token_counter",
@@ -241,10 +272,12 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_system_extra2": "covers pyutilz.system.system/* sub-package",
     "test_system_extra3": "covers pyutilz.system.system/* sub-package",
     "test_architecture_audit_20260902": "cross-cutting - architecture-audit regression tests spanning the package facade, llm/database/web exception hierarchies, core/openai relocation, text/strings star-export and dev/code_audit registry encapsulation",
+    "test_architecture_audit_20260903": "cross-cutting - 2026-09-03 architecture-audit regression tests spanning subpackage attribute resolution, domain exception roots, provider pricing tuples and the code_audit test-file predicate",
     "test_similarity_kernel_twin_parity": "cross-cutting - pins the sequential/prange numba twins in text/similarity/_numba_kernels against each other",
     "test_similarity_coverage_gate_batch_kernel": "covers the batched with-matches kernel path in pyutilz.text.similarity",
     "test_performance_audit_20260902": "cross-cutting - performance-audit regression tests",
     "test_security_audit_20260902": "cross-cutting - security-audit regression tests",
+    "test_security_audit_20260903": "cross-cutting - 2026-09-03 security-audit regression tests spanning web/browser, web/web/fetching and dev/logginglib",
     # Meta-tests test infrastructure, not a single source module.
     "test_provider_registration": "meta-test (PT-1)",
     "test_module_alias_integrity": "meta-test (PT-2)",
@@ -336,7 +369,13 @@ def _candidate_test_names(source: Path) -> list[str]:
     ]
     if sub:
         cands.append(f"test_{sub}_{name}")
-        cands.append(f"test_{sub}")
+        # ``tests/test_<sub>.py`` only counts for the module that IS the
+        # sub-package's namesake (e.g. system/system.py <- test_system.py).
+        # Accepting it for every module under the sub-package waved through
+        # any module whose own name appeared nowhere in tests/ -- that is how
+        # system/psutil_compat.py stayed wholly untested behind test_system.py.
+        if name == sub:
+            cands.append(f"test_{sub}")
 
     # Aliases — if this module is exposed via _MODULE_ALIASES, the test
     # may be named after the alias instead of the canonical path.
@@ -355,7 +394,7 @@ def test_every_production_module_has_a_test_file():
     audited = 0
     for source in _production_modules():
         rel = source.relative_to(PYUTILZ_DIR).as_posix()
-        if source.stem in _TEST_EXEMPT_MODULES:
+        if source.stem in _TEST_EXEMPT_MODULES or rel in _TEST_EXEMPT_MODULES:
             continue
         if rel in _USER_DEFERRED_MODULES:
             continue

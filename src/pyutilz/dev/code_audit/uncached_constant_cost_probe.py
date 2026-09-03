@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_cached, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
 
 # --- uncached constant-cost probe ----------------------------------------
 
@@ -13,7 +13,6 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _
 # name -- a substring search over `ast.dump` let any decorator whose ARGUMENTS merely contain the
 # text (`@app.route("/cache")`) exempt the function. Under structural matching `lru_cache` is no
 # longer subsumed by `cache`, so both entries carry their weight.
-_CACHING_DECORATORS = frozenset({"lru_cache", "cache", "cached_property", "cached", "memoize", "once"})
 
 # (dotted-call fragment, what it costs) -- the probe families whose cost is effectively constant
 # per process, so paying it on every call is pure waste.
@@ -36,8 +35,12 @@ _PROBES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _dotted_name(node: ast.AST) -> str:
-    """Render ``a.b.c`` / ``c`` from a Call's func node, or ``""``."""
+def _dotted_name_or_partial(node: ast.AST) -> str:
+    """Render ``a.b.c`` / ``c`` from a Call's func node, or a LEADING-DOT partial (``".mkdir"``).
+
+    Deliberately NOT ``_base.dotted_name``, which answers ``""`` for a non-Name-rooted chain: the
+    ``Path.mkdir`` probe below depends on seeing the attribute even when the receiver is a call or
+    a subscript, and the empty-receiver rendering is what the mkdir arm keys on."""
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
@@ -47,22 +50,6 @@ def _dotted_name(node: ast.AST) -> str:
     elif parts:
         parts.append("")
     return ".".join(reversed(parts))
-
-
-def _decorator_name(node: ast.expr) -> str:
-    """The bare name of a decorator expression: ``@lru_cache``, ``@functools.lru_cache(maxsize=1)`` -> ``lru_cache``."""
-    if isinstance(node, ast.Call):
-        node = node.func
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    if isinstance(node, ast.Name):
-        return node.id
-    return ""
-
-
-def _is_cached(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if ``func`` carries any decorator that memoizes its result, so repeated calls cost nothing."""
-    return any(_decorator_name(d) in _CACHING_DECORATORS for d in func.decorator_list)
 
 
 def _has_module_level_memo(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -172,13 +159,13 @@ def scan_uncached_constant_cost_probe(
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if _is_cached(func) or _has_module_level_memo(func) or not _takes_only_config_parameters(func):
+            if is_cached(func) or _has_module_level_memo(func) or not _takes_only_config_parameters(func):
                 continue
 
             for node in _own_nodes(func):
                 if not isinstance(node, ast.Call):
                     continue
-                dotted = _dotted_name(node.func)
+                dotted = _dotted_name_or_partial(node.func)
                 if not dotted:
                     continue
                 match = _matching_probe(dotted)
@@ -186,7 +173,7 @@ def scan_uncached_constant_cost_probe(
                     match = _matching_probe(probe_imports[node.func.id])
                 if match is None and isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir":
                     # `p.mkdir(...)` / `Path(x).mkdir(...)` -- the spelling that is actually written.
-                    # `_dotted_name` renders the receiver as "" for anything but a Name chain, so the
+                    # `_dotted_name_or_partial` renders the receiver as "" for anything but a Name chain, so the
                     # registered `Path.mkdir` entry could only ever match `Path.mkdir(p)`, which nobody writes.
                     receiver = node.func.value
                     receiver_name = receiver.func.id if isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Name) else (receiver.id if isinstance(receiver, ast.Name) else None)

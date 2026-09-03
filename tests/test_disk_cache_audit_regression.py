@@ -49,6 +49,8 @@ def test_eviction_removes_payload_and_sidecar_together(tmp_path):
     c._evict_if_needed()
 
     names = _names(tmp_path)
+    # Everything evicted would also satisfy the loop below vacuously; the cap admits one 30k blob.
+    assert names, "eviction removed every entry, so the pairing check below verifies nothing"
     for name in names:
         if name.endswith(".sha256"):
             assert name[: -len(".sha256")] in names, "orphan sidecar " + name

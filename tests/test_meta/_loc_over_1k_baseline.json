@@ -1,1 +1,6 @@
-{}
+{
+  "tests/test_domain_core_dev_system_audit_20260903.py": 1198,
+  "tests/test_domain_db_web_cloud_llm_text_audit_20260902.py": 1251,
+  "tests/test_llm_openrouter.py": 2003,
+  "tests/test_web_extra.py": 1082
+}

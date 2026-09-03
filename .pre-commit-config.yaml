@@ -71,6 +71,23 @@ repos:
   # narrowing pyproject.toml's configured select, silently dropping the ``ignore`` list too
   # (RUF001/002/003/022, ISC001, etc. would all reappear) and breaking RUF100's "is this noqa
   # still needed" determination. ``--ignore`` only ADDS to the configured ignore list, so it is safe.
+  # The ruff hook below is `language: system`, so pre-commit builds no isolated environment and
+  # `python -m ruff` resolves to whatever ruff the interpreter happens to have -- NOT the
+  # `ruff==<x>` pinned in pyproject.toml and run by ruff-blocking.yml. Measured 2026-09-03 (audit
+  # 06/F06): this box had 0.15.9 against a pinned 0.15.22, thirteen patch releases of rule changes
+  # in already-selected families, with nothing anywhere reporting the mismatch. This gate is ruff's
+  # equivalent of the mypy_gate assertion, and runs first so a stale ruff is named rather than
+  # producing a misleading "All checks passed!".
+  - repo: local
+    hooks:
+      - id: pinned-tool-versions
+        name: "pinned tool versions (ruff) match pyproject.toml"
+        entry: python scripts/check_pinned_tool_versions.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
   - repo: local
     hooks:
       - id: ruff-real-bugs
@@ -84,7 +101,8 @@ repos:
         # too). Mirror that exclude list here at the pre-commit level, same fix as mlframe's.
         # tests/ and scripts/ dropped from this exclusion 2026-09-02, in step with pyproject.toml:
         # both are now linted, with their idiomatic codes exempted via per-file-ignores instead.
-        exclude: (^|/)_benchmarks/
+        # _benchmarks/ dropped 2026-09-03 (audit 06/F09), same way: the exclude list here is now
+        # empty, so the key is gone rather than left matching nothing.
         stages: [pre-commit]
 
   - repo: local
@@ -274,7 +292,7 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 247 source files as of 2026-09-03), and CI's mypy-full.yml is a
+  # verified clean (0 errors; 248 source files as of 2026-09-03), and CI's mypy-full.yml is a
   # real blocking gate too (matching mlframe's posture) -- this hook mirrors it exactly, same
   # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
   # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate

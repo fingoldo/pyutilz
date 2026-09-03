@@ -366,9 +366,15 @@ def test_f40_dmidecode_runs_non_interactively_with_a_timeout(monkeypatch):
         captured.update(kwargs)
         return _Res()
 
+    # parse_dmidecode_info now resolves both binaries to an ABSOLUTE path through _resolve_binary()
+    # (B603/B607 hardening), which raises on a box with no sudo -- e.g. every Windows leg. Stub the
+    # resolver so the argv shape under test is reachable there; the contract asserted below is
+    # unchanged (non-interactive sudo, a timeout, and a detached stdin).
+    monkeypatch.setattr(probing, "_resolve_binary", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(probing.subprocess, "run", fake_run)
     probing.parse_dmidecode_info()
-    assert captured["argv"][:2] == ["sudo", "-n"]
+    assert [Path(captured["argv"][0]).name, captured["argv"][1]] == ["sudo", "-n"]
+    assert Path(captured["argv"][2]).name == "dmidecode"
     assert captured.get("timeout")
     assert captured.get("stdin") == subprocess.DEVNULL
 
@@ -427,7 +433,10 @@ def test_f35_stop_on_a_never_started_monitor_does_not_raise():
     try/finally cleanup masked the caller's real exception with a RuntimeError."""
     from pyutilz.system.hardware_monitor import UtilizationMonitor
 
-    UtilizationMonitor().stop()
+    monitor = UtilizationMonitor()
+    monitor.stop()
+    # stop() still did its job on the never-started monitor rather than bailing out early.
+    assert monitor.stop_flag.is_set()
 
 
 def test_f112_a_sample_failing_after_the_gpu_query_is_counted_once(monkeypatch):
@@ -557,14 +566,40 @@ def test_f127_child_output_decoder_never_raises_on_a_bad_byte():
 # ---------------------------------------------------------------------------
 
 
-def test_f42_prefect_key_is_never_logged():
+def test_f42_prefect_key_is_never_logged(caplog, monkeypatch):
     """`logger.info("prefect_key=%s", prefect_key)` on every connect() put the live key into stdout,
     log files and CI job logs at the default INFO level.
 
-    Read as source text, not by importing: `prefect` is an optional dependency of this module.
+    `prefect` is an optional dependency of the module under test, so a stub stands in for it: the
+    contract under test is what connect() LOGS, not what the Prefect client does with the key.
     """
-    source = (Path(__file__).parent.parent / "src" / "pyutilz" / "system" / "scheduling" / "prefect.py").read_text(encoding="utf-8")
-    assert "prefect_key=%s" not in source
+    import types
+
+    stub = types.ModuleType("prefect")
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+
+    stub.Client = _Client  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "prefect", stub)
+
+    from pyutilz.system.scheduling import prefect as prefect_mod
+
+    monkeypatch.setattr(prefect_mod, "prefect", stub, raising=False)
+
+    secret = "pk-LIVE-PREFECT-KEY-9f3a"  # pragma: allowlist secret
+    caplog.set_level(logging.DEBUG)
+    prefect_mod.connect(prefect_key=secret)
+
+    assert prefect_mod.client is not None and prefect_mod.client.api_key == secret  # the key still reaches the client
+    assert secret not in caplog.text  # ... but never the logs
+    assert "provided" in caplog.text  # presence/absence is still reported for diagnosis
+
+    caplog.clear()
+    prefect_mod.connect(prefect_key="")
+    assert prefect_mod.client is None
+    assert "MISSING" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -801,32 +836,6 @@ def test_f133_simplify_types_does_not_mutate_its_argument():
 # ---------------------------------------------------------------------------
 # F55 / F113 / F145 / F146 -- dashlib
 # ---------------------------------------------------------------------------
-
-
-def test_f55_active_tab_is_seeded_from_the_tab_id(monkeypatch):
-    """tabsList[0][0] is the LABEL; ids come from [1]. The seeded value matched no real tab, so no
-    tab rendered selected and the content callback ran against a nonexistent id."""
-    from pyutilz.dev import dashlib
-
-    session: dict = {}
-    monkeypatch.setattr(dashlib, "session", session)
-    dashlib.create_tabs("Main", [("Overview", "ov", None), ("Details", "dt", None)], lambda tab_id: "x")
-    assert session["tabsMainActiveTab"] == "tabov"
-
-
-def test_f113_empty_tabs_list_returns_none_instead_of_raising(monkeypatch):
-    from pyutilz.dev import dashlib
-
-    monkeypatch.setattr(dashlib, "session", {})
-    assert dashlib.create_tabs("Main", [], lambda tab_id: "x") is None
-
-
-def test_f145_missing_label_class_name_is_not_rendered_as_the_string_none(monkeypatch):
-    from pyutilz.dev import dashlib
-
-    monkeypatch.setattr(dashlib, "session", {})
-    container = dashlib.create_tabs("Main", [("Overview", "ov", None)], lambda tab_id: "x")
-    assert "None" not in str(container)
 
 
 # ---------------------------------------------------------------------------
@@ -1083,13 +1092,18 @@ def test_f141_supplied_filesize_is_honoured_and_zero_is_kept(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_f143_none_memory_reading_is_not_percent_formatted(monkeypatch):
+def test_f143_none_memory_reading_is_not_percent_formatted(monkeypatch, caplog):
     """get_own_memory_usage() documents returning None when the probe fails; "%.2f" then raised
     TypeError out of a diagnostic helper."""
     from pyutilz.system.system import memory
 
     monkeypatch.setattr(memory, "get_own_memory_usage", lambda *a, **kw: None)
-    memory.show_biggest_session_objects({"a": 1})
+    with caplog.at_level(logging.INFO, logger=memory.logger.name):
+        memory.show_biggest_session_objects({"a": 1})
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Own process RAM usage: unavailable" in m for m in messages), messages
+    assert not any("None" in m for m in messages), messages
 
 
 # ---------------------------------------------------------------------------

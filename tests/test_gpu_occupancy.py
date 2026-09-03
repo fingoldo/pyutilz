@@ -112,10 +112,14 @@ def test_no_larger_power_of_two_holds_more_threads_resident(bytes_per_thread):
     threads, _shared = occupancy_aware_block_size(bytes_per_thread, caps=ADA)
     best = _resident_threads(ADA, threads, bytes_per_thread)
     candidate = ADA["warp_size"]
+    compared = 0
     while candidate <= ADA["max_threads_per_block"]:
         if bytes_per_thread * candidate <= ADA["max_shared_mem_per_block"]:
+            compared += 1
             assert _resident_threads(ADA, candidate, bytes_per_thread) <= best
         candidate *= 2
+    # The chosen width is itself one of the candidates, so at least one comparison must have run.
+    assert compared >= 1, f"no power-of-two candidate fit the shared-memory budget for {bytes_per_thread} B/thread"
 
 
 def test_relaxing_the_power_of_two_constraint_can_only_help_occupancy():

@@ -37,8 +37,9 @@ import httpx
 
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.base import PerCallAttr
-from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 from pyutilz.llm.openrouter_provider._catalogue import (
+    _cache_read_cost_per_1m_or_none,
     _per_token_cost_pair,
     _per_token_cost_pair_or_none,
     _resolve_model_limits,
@@ -219,11 +220,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         spinning on permanently-gone models).
         """
         if not self._retry_routing_404:
-            return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # the base generate() is declared in an optional-dependency mixin with no stubs
         last_exc: LLMProviderError | None = None
         for attempt in range(1, self._routing_404_max_attempts + 1):
             try:
-                return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+                return await super().generate(*args, **kwargs)  # type: ignore[no-any-return]  # same base call, inside the 404 retry loop
             except LLMProviderError as exc:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
                 msg = str(exc).lower()
                 is_routing = ("api error 404" in msg or "api error 405" in msg) and (
@@ -566,6 +567,19 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         """Return the USD cost per 1M output tokens for ``model``."""
         return _per_token_cost_pair(model)[1]
 
+    def _resolve_pricing(self, model: str) -> Pricing:
+        """Return the catalogue-derived :class:`Pricing` for ``model``, cached-input rate included.
+
+        This provider tracks cache-hit tokens (``last_cache_hit_tokens``) but used to inherit the
+        base ``_cache_hit_cost_per_1m``, which prices every cached prompt token at the full input
+        rate -- a long-context conversation with a high cache-hit ratio reported several times its
+        true cost. ``pricing.input_cache_read`` is the catalogue's own cached-input rate; when the
+        catalogue does not publish one, ``cache_hit`` stays None and the base fallback (the
+        uncached input rate, a known over-estimate) applies as before.
+        """
+        in_cost, out_cost = _per_token_cost_pair(model)
+        return Pricing(in_cost, out_cost, _cache_read_cost_per_1m_or_none(model))
+
     async def fetch_model_parameters(
         self,
         model: str | None = None,
@@ -722,7 +736,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         payload = resp.json()
         data = payload.get("data", payload) if isinstance(payload, dict) else {}
 
-        def _to_float(v) -> float | None:
+        def _to_float(v: Any) -> float | None:
             """Coerce ``v`` to float, returning None for None or unconvertible values."""
             if v is None:
                 return None

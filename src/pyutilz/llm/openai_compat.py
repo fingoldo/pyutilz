@@ -11,7 +11,7 @@ import asyncio
 import logging
 import random
 from abc import abstractmethod
-from typing import Any
+from typing import Any, NamedTuple, Optional
 
 import httpx
 from tenacity import retry, retry_if_exception
@@ -31,6 +31,25 @@ from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: thi
 )
 
 logger = logging.getLogger(__name__)
+
+
+class Pricing(NamedTuple):
+    """One provider-independent pricing record, USD per 1M tokens.
+
+    The ONE tuple contract every provider's ``_resolve_pricing`` returns. It exists because the
+    same private method name used to carry two different shapes in sibling providers -- xAI's
+    ``(input, output)`` and DeepSeek's ``(input, cache_hit, output)`` -- so the accessors indexed
+    ``[1]`` and ``[2]`` for the same quantity. Nothing raises when those shapes get copied across:
+    both positions hold a float, and the only symptom is a silently wrong USD figure. Named fields
+    make the mix-up unrepresentable.
+
+    ``cache_hit`` is None when the provider publishes no cached-input rate; the base
+    ``_cache_hit_cost_per_1m`` then falls back to the uncached input rate.
+    """
+
+    input: float
+    output: float
+    cache_hit: Optional[float] = None
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -251,9 +270,22 @@ class OpenAICompatibleProvider(LLMProvider):
         """Return USD cost per 1M output tokens for ``model``. Implemented by subclasses per their pricing table."""
         ...
 
+    def _resolve_pricing(self, model: str) -> Pricing:
+        """Return the :class:`Pricing` record for ``model``.
+
+        Providers with a pricing table override this and implement the three accessors in terms of
+        it. The default derives the record from the accessors, so a provider that only implements
+        those keeps working unchanged.
+        """
+        return Pricing(self._input_cost_per_1m(model), self._output_cost_per_1m(model))
+
     def _cache_hit_cost_per_1m(self, model: str) -> float:
-        """Override for providers with cache-hit pricing."""
-        return self._input_cost_per_1m(model)
+        """Return the cached-input price per 1M tokens, falling back to the uncached input rate
+        when the provider publishes no cached-input rate (``Pricing.cache_hit`` is None)."""
+        cache_hit = self._resolve_pricing(model).cache_hit
+        if cache_hit is None:
+            return self._input_cost_per_1m(model)
+        return float(cache_hit)
 
     # ── LLMProvider interface ────────────────────────────────────────
 
@@ -887,7 +919,7 @@ class OpenAICompatibleProvider(LLMProvider):
             )
         if not content:
             return None
-        return content  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return content  # type: ignore[no-any-return]  # openai-compatible JSON payload: the message content is read out of an untyped dict
 
     async def generate_json(
         self,

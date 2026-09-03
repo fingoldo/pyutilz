@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, module_level_names, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # asyncio coordination primitives whose whole purpose is being SHARED across
 # concurrent callers -- one created fresh per call is a private, useless copy.
@@ -133,32 +133,6 @@ def _attribute_assigned_primitive_calls(func: ast.AST, module_names: frozenset[s
     return direct | aliased
 
 
-def _module_level_names(tree: ast.Module) -> frozenset[str]:
-    """Names bound at module scope: assignments, imports, and def/class names.
-
-    Used to tell ``_inflight[key] = asyncio.Event()`` (publishing into a shared
-    module-level registry) apart from ``local_map[key] = asyncio.Event()``.
-    """
-    names: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets = [node.target]
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-            continue
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update(a.asname if a.asname is not None else a.name.split(".")[0] for a in node.names)
-            continue
-        else:
-            continue
-        for t in targets:
-            if isinstance(t, ast.Name):
-                names.add(t.id)
-    return frozenset(names)
-
-
 def _fanout_limiter_calls(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     nested_defs: set[ast.FunctionDef | ast.AsyncFunctionDef],
@@ -259,7 +233,7 @@ def scan_async_primitive_reinit_per_call(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        module_names = _module_level_names(tree)
+        module_names = module_level_names(tree)
         module_aliases, direct_names = _asyncio_bindings(tree, primitive_names)
 
         for func in ast.walk(tree):
@@ -274,8 +248,13 @@ def scan_async_primitive_reinit_per_call(
             # A default argument is evaluated ONCE, at `def` time, so such a primitive IS shared by
             # every call -- the opposite of this scanner's defect, and its advice would break it.
             default_nodes = {id(sub) for default in [*func.args.defaults, *func.args.kw_defaults] if default is not None for sub in ast.walk(default)}
+            # Precomputed ONCE per function: `node in ast.walk(nested)` inside the node loop re-walked
+            # every nested def from scratch for every node of the enclosing function, which is
+            # quadratic in function size -- worst on exactly the large async orchestration functions
+            # this scanner exists to audit. 3.80 s -> 2.30 s over src/pyutilz, identical findings.
+            nested_node_ids = {id(n) for nested in nested_defs for n in ast.walk(nested)}
             for node in ast.walk(func):
-                if any(node in ast.walk(nested) for nested in nested_defs):
+                if id(node) in nested_node_ids:
                     continue
                 if id(node) in default_nodes:
                     continue

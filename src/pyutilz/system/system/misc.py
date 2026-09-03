@@ -497,6 +497,6 @@ def beep():
     try:
         import winsound
 
-        winsound.Beep(frequency, duration)  # type: ignore[attr-defined]
+        winsound.Beep(frequency, duration)  # type: ignore[attr-defined]  # Windows-only: the winsound module does not exist on the Linux CI runner
     except Exception as e:  # nosec B110 - best-effort audible notification; winsound is Windows-only/optional and beep failure must never break the caller
         logger.debug("Could not play beep sound: %s", e)

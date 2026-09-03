@@ -180,8 +180,8 @@ class ObjectsAndFilesProcessor:
                     logger.warning("Skipped object %s.", obj_name)
         return nprocessed
 
-    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
-        """Processes a single object/file pair. Must be overridden in subclasses."""
+    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
+        """Processes a single object/file pair, returning True when it did something. Must be overridden in subclasses."""
         # This method should be overridden in the subclasses
         raise NotImplementedError
 
@@ -201,14 +201,18 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
 
-    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
-        """Dumps `container[obj_name]` to `file_name` via `process_fcn`, if the object is truthy and (rewrite_existing or the file doesn't already exist)."""
+    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
+        """Dumps `container[obj_name]` to `file_name` via `process_fcn`, if the object is truthy and (rewrite_existing or the file doesn't already exist).
+
+        True when the dump happened, False otherwise -- ``process_objects`` counts the True results.
+        """
         # Do not rewrite existing non-empty objects/keys, warn instead.
         obj = container.get(obj_name)
         if obj:
             if self.rewrite_existing or not exists(file_name):
                 self.process_fcn(obj, file_name, **self.process_kwargs)
                 return True
+        return False
 
 
 class ObjectsLoader(ObjectsAndFilesProcessor):
@@ -226,8 +230,11 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
 
-    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True):
-        """Loads `file_name` via `process_fcn` into `container[obj_name]` if the file exists and the target is either absent, empty, or rewrite_existing is set."""
+    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
+        """Loads `file_name` via `process_fcn` into `container[obj_name]` if the file exists and the target is either absent, empty, or rewrite_existing is set.
+
+        True when the load happened, False otherwise -- ``process_objects`` counts the True results.
+        """
         if exists(file_name):
             if not self.rewrite_existing:
                 # Do not rewrite existing non-empty objects/keys, warn instead.
@@ -239,6 +246,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
             if proceed:
                 container[obj_name] = self.process_fcn(file_name, **self.process_kwargs)
                 return True
+        return False
 
 
 def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:

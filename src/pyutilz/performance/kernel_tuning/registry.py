@@ -139,7 +139,7 @@ class TunerSpec:
         key = tuple(sorted(dims.items()))
         if key in self._choice_cache:
             self._choice_cache.move_to_end(key)
-            return self._choice_cache[key]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return self._choice_cache[key]
         fb = self._fallback_choice(dims)
         bc = fb
         tuned = False
@@ -355,7 +355,7 @@ def _group_gpus_by_model() -> dict[str, list[int]]:
         # Model name: abbreviated GPU name + compute capability.
         model = f"{gpu.name.split()[0]}_{gpu.compute_capability[0]}{gpu.compute_capability[1]}"
         groups.setdefault(model, []).append(gpu.id)
-    return groups  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return groups
 
 
 def _pick_least_loaded_device(device_ids: list[int], idle_wait_tries: int, idle_wait_sec: float) -> Optional[int]:

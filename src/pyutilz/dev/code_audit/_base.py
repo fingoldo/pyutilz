@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
+from fnmatch import fnmatch
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,9 +29,16 @@ _PARSE_CACHE: "OrderedDict[tuple[str, int, int], Optional[ast.Module]]" = Ordere
 _PARSE_CACHE_MAX_ENTRIES = 20000
 
 
+# Same key, same bound, same rationale as _PARSE_CACHE, for the source TEXT the scanners quote in
+# their snippets: _safe_parse cached the tree and threw the text away, so every scanner that wanted
+# a snippet re-read and re-split the whole corpus itself.
+_SRC_LINES_CACHE: "OrderedDict[tuple[str, int, int], list[str]]" = OrderedDict()
+
+
 def clear_parse_cache() -> None:
-    """Drop every cached parse tree. Call it when a long-lived process is done with a scan."""
+    """Drop every cached parse tree and cached source text. Call it when a long-lived process is done with a scan."""
     _PARSE_CACHE.clear()
+    _SRC_LINES_CACHE.clear()
 
 # --- public types --------------------------------------------------------
 
@@ -118,6 +127,118 @@ def _is_excluded(path: Path, root: Path, exclude_dirs: frozenset[str], root_reso
     return any(part in exclude_dirs for part in relative.parts)
 
 
+# The ONE set of decorator names that count as "this function memoizes its result". Two scanners
+# each carried their own, one of them two names long, so widening it after a false positive fixed
+# one scanner and left the other reporting the same function.
+CACHING_DECORATOR_NAMES = frozenset({"lru_cache", "cache", "cached_property", "cached", "memoize", "once"})
+
+
+def decorator_name(node: ast.expr) -> str:
+    """The bare name of a decorator expression: ``@lru_cache`` / ``@functools.lru_cache(maxsize=1)`` -> ``lru_cache``."""
+    if isinstance(node, ast.Call):
+        node = node.func
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def is_cached(func: "ast.FunctionDef | ast.AsyncFunctionDef", decorator_names: Iterable[str] = CACHING_DECORATOR_NAMES) -> bool:
+    """True if ``func`` carries a decorator that memoizes its result, so repeated calls cost nothing."""
+    names = set(decorator_names)
+    return any(decorator_name(d) in names for d in getattr(func, "decorator_list", ()))
+
+
+def is_locals_or_globals_call(node: ast.expr) -> bool:
+    """True for a bare, no-argument ``locals()``/``globals()`` call node."""
+    return isinstance(node, ast.Call) and not node.args and not node.keywords and isinstance(node.func, ast.Name) and node.func.id in ("locals", "globals")
+
+
+def dotted_name(node: ast.expr) -> str:
+    """Render a Name/Attribute chain as ``"a.b.c"``, or ``""`` when the chain is not Name-rooted.
+
+    ``""`` for a subscript or call receiver (``registry[k].run()``, ``f().g``) rather than a partial
+    rendering, so a caller can treat the empty string as "cannot say" without also having to detect
+    a leading dot.
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return ""
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def module_level_names(tree: ast.Module) -> "frozenset[str]":
+    """Every name bound at module scope: assignments, imports, and def/class names.
+
+    Tells a write into a shared module-level structure (``_inflight[key] = ...``) apart from one
+    into a function-local (``local_map[key] = ...``).
+    """
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets: list = list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+            continue
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(a.asname if a.asname is not None else a.name.split(".")[0] for a in node.names)
+            continue
+        else:
+            continue
+        for t in targets:
+            if isinstance(t, ast.Name):
+                names.add(t.id)
+    return frozenset(names)
+
+
+_TEST_DIR_NAMES = frozenset({"tests", "test"})
+
+
+def is_test_file(path: "Path | str", root: Optional[Path] = None, extra_test_globs: Iterable[str] = ()) -> bool:
+    """Whether ``path`` is test code. ONE definition, called from every scanner that needs it.
+
+    True when the file name matches either pytest naming convention (``test_*.py`` / ``*_test.py``)
+    OR the file lives under a directory component named ``tests``/``test`` OR its name matches one
+    of ``extra_test_globs`` (the escape hatch for a project whose tests are named something else,
+    e.g. ``("check_*.py",)``).
+
+    Thirteen scanners each grew their own version of this predicate, with six mutually incompatible
+    semantics -- name-prefix only, prefix-or-suffix, prefix-or-``tests``-in-parts, and so on. The
+    cost is invisible: a project whose tests live in ``tests/check_pricing.py`` was scanned by some
+    of the test-focused catalogue and skipped entirely by the rest, with no error either way, so
+    coverage and cleanliness looked identical. Same reason ``_is_excluded`` is one function.
+
+    ``root``, when given, makes the directory test RELATIVE to the scan root: ``Path.parts`` is
+    absolute, so a checkout living anywhere beneath a directory named ``tests`` would otherwise
+    classify the whole tree, production modules included, as test code. ``str`` paths are taken to
+    be root-relative posix paths already.
+    """
+    if isinstance(path, Path):
+        parts = path.parts
+        if root is not None:
+            try:
+                parts = path.relative_to(root).parts
+            except ValueError:
+                pass
+    else:
+        parts = tuple(str(path).replace("\\", "/").split("/"))
+    if not parts:
+        return False
+    name = parts[-1]
+    if name.startswith("test_") or name.endswith("_test.py"):
+        return True
+    if any(part in _TEST_DIR_NAMES for part in parts[:-1]):
+        return True
+    return any(fnmatch(name, pattern) for pattern in extra_test_globs)
+
+
 def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
     """Yield every ``.py`` file under ``root`` in a stable, sorted-by-path order, skipping
     files whose path BELOW ``root`` has a component matching ``exclude_dirs``. Where the root
@@ -130,16 +251,19 @@ def _iter_py_files(root: Path, exclude_dirs: frozenset[str]) -> Iterable[Path]:
     order, which file gets flagged is nondeterministic across machines/CI runners, breaking
     reproducible findings and any test asserting on which file a finding names.
     """
-    candidates = []
-    # ``root`` is constant for the whole walk, so resolving it per candidate was one redundant
-    # syscall-bound resolve() per file per scanner (~111k on a 1500-file tree with 74 scanners).
-    root_resolved = root.resolve()
-    for p in root.rglob("*"):
-        if p.suffix not in _PY_EXTS or not p.is_file():
-            continue
-        if _is_excluded(p, root, exclude_dirs, root_resolved=root_resolved):
-            continue
-        candidates.append(p)
+    # A PRUNED ``os.walk``, not ``root.rglob("*")`` + ``p.is_file()`` + a per-file ``_is_excluded``.
+    # The old shape descended INTO every excluded directory and rejected its files one at a time,
+    # each rejection paying a ``path.resolve()`` -- so a repo carrying nested ``.claude`` worktrees
+    # (each a complete checkout) resolved every file of every checkout only to throw it away. This
+    # walk never enters them, and everything ``os.walk`` yields is already below ``root``, so no
+    # ``resolve()`` is needed to decide exclusion at all. Repeated once per scanner, ~74 times per
+    # ``run_all()``: 0.173 s -> 0.006 s over src/pyutilz's 242 files, same 242 paths in the same
+    # order. Deliberately NOT memoised across calls: a scanner's own test writes a file into a tmp
+    # tree and rescans within one process, and a stale file list would silently miss it.
+    candidates: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        candidates.extend(Path(dirpath) / name for name in filenames if name.endswith(_PY_EXTS))
     candidates.sort(key=lambda p: p.as_posix())
     yield from candidates
 
@@ -167,7 +291,14 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
     else:
         try:
             tree = ast.parse(src, filename=str(path))
-        except SyntaxError:
+        except (SyntaxError, RecursionError, MemoryError):
+            # RecursionError/MemoryError alongside SyntaxError: a syntactically VALID file with a
+            # deeply nested expression (a machine-generated constants/parser-table module, a long
+            # `a + a + ...` concatenation) makes ast.parse blow the recursion limit, which is not a
+            # SyntaxError -- so it propagated out of this function, out of run_all(), and killed the
+            # entire scan with a traceback instead of skipping one file (and under the
+            # ProcessPoolExecutor path, as an opaque worker death naming no file at all). Both are
+            # parser-resource failures on one input, handled exactly like an unparseable file.
             tree = None
 
     _PARSE_CACHE[cache_key] = tree
@@ -184,12 +315,31 @@ def _read_src_lines(path: Path) -> list[str]:
     advance ``lineno``. Using it shifts every snippet after such a character by one line per
     occurrence while ``Finding.line`` stays right, so the report cites the wrong source text.
     Returns ``[]`` if the file cannot be read.
+
+    Memoised per (path, mtime_ns, size) alongside ``_PARSE_CACHE``, and for the same reason: 77 of
+    the scanner modules call this, so one ``run_all()`` re-read and re-split every file of the
+    corpus once per scanner -- I/O and decoding the process had already done dozens of times over.
+    The returned list is shared between callers; scanners only ever index into it (via
+    ``_line_text``), never mutate it.
     """
+    try:
+        stat = path.stat()
+    except OSError:
+        return []
+    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    cached = _SRC_LINES_CACHE.get(cache_key)
+    if cached is not None:
+        _SRC_LINES_CACHE.move_to_end(cache_key)
+        return cached
     try:
         src = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    return split_src_lines(src)
+    lines = split_src_lines(src)
+    _SRC_LINES_CACHE[cache_key] = lines
+    while len(_SRC_LINES_CACHE) > _PARSE_CACHE_MAX_ENTRIES:
+        _SRC_LINES_CACHE.popitem(last=False)
+    return lines
 
 
 def split_src_lines(src: str) -> list[str]:

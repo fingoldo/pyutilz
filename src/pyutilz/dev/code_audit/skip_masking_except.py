@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- except-block that masks a real test failure as a skip ---------------
 
@@ -55,8 +55,7 @@ def scan_except_skip_masks_call_under_test(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        # Both pytest naming conventions: `test_x.py` and `x_test.py`.
-        if not (py.name.startswith("test_") or py.name.endswith("_test.py")):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

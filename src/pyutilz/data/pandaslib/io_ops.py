@@ -108,7 +108,7 @@ def read_stats_from_multiple_files(
     save_on_successful_optimization: bool = False,
     min_size_improvement_percent: float = 0.05,
     min_size_improvement: float = 5.0,
-):
+) -> Optional[pd.DataFrame]:
     """
     Read and merge dataframes from files matching ``template`` in ``folder`` (up to ``max_files``), then flush the merge to disk.
 
@@ -180,6 +180,9 @@ def read_stats_from_multiple_files(
             return res
         except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller
             logger.debug("Failed to concat and flush df list: %s", e)
+    # Nothing collected, or the concat-and-flush above failed: an explicit None, so the
+    # documented "None if nothing was merged" is a statement in the code and not a fall-off.
+    return None
 
 
 def read_parquet_with_pyarrow(path: str, nrows: int) -> pd.DataFrame:

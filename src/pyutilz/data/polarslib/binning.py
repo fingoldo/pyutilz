@@ -57,7 +57,7 @@ def _group_freqs(bins: pl.DataFrame, cols, drop_nulls: bool = False) -> Any:
 
 def _shannon_entropy(freqs: Any) -> float:
     """Shannon entropy (in nats) of a discrete frequency distribution that sums to 1."""
-    return -np.sum(freqs * np.log(freqs))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return float(-np.sum(freqs * np.log(freqs)))  # float(): np.sum over an Any operand returns np.floating, not the declared float
 
 
 def entropy_for_column(bins: pl.DataFrame, col: str, drop_nulls: bool = False) -> float:
@@ -267,7 +267,9 @@ def bin_numerical_columns(
         skipped_clips = []
         if min_nuniques_to_clip:
             # do not apply clipping if # of unique values is too low (under 10)
-            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
+            # Cast before counting: older polars refuses n_unique on Decimal, and the count is
+            # identical either way because the cast is value-preserving for the widths used here.
+            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).cast(pl.Float64).n_unique()).collect().row(0, named=True)
             for col, nuniques in n_uniques_dict.items():
                 if nuniques < min_nuniques_to_clip:
                     for field in "min max".split():

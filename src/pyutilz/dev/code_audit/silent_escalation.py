@@ -32,7 +32,7 @@ def _target_name(node: ast.AST) -> str | None:
         return node.attr
     if isinstance(node, ast.Subscript):
         # python 3.8 wraps a simple subscript key in ast.Index; 3.9+ exposes the value directly.
-        _slice = node.slice.value if isinstance(node.slice, ast.Index) else node.slice  # type: ignore[attr-defined]
+        _slice = node.slice.value if isinstance(node.slice, ast.Index) else node.slice  # type: ignore[attr-defined]  # ast.Index only exists pre-3.9; guarded by the isinstance, but the checker runs on 3.9+ where neither the class nor its .value is declared
         if isinstance(_slice, ast.Constant) and isinstance(_slice.value, str):
             return _slice.value
     return None

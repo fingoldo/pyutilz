@@ -95,7 +95,7 @@ def entropy_rate(conditional_stats, stats) -> float:
     """
     Computes the conditional (Markov) entropy rate: the prefix-count-weighted average of entropy(conditional_stats[prefix]) over all prefixes in stats.
     """
-    return sum(stats[prefix] * entropy(conditional_stats[prefix], stats[prefix]) for prefix in stats) / sum(stats.values())  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return float(sum(stats[prefix] * entropy(conditional_stats[prefix], stats[prefix]) for prefix in stats) / sum(stats.values()))  # float(): stats is unannotated, so the division is Any
 
 
 def compute_entropy_stats(text: str, order: int = 0) -> tuple:
@@ -134,7 +134,7 @@ def naive_entropy_rate(a: str) -> float:
 
     # abs() for the same -0.0 reason as `entropy` above -- this function's own docstring says
     # avoiding -0.0 is the point of its empty-string branch.
-    return abs(float(np.sum(p * np.log2(p))))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return abs(float(np.sum(p * np.log2(p))))
 
 def stringify_dict(the_dict:dict,sep:str=",")->str:
     """

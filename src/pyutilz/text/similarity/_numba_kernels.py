@@ -649,7 +649,7 @@ if HAS_NUMBA:
         pins the two against each other.
         """
         results = np.empty(n_candidates, dtype=np.float64)
-        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]
+        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]  # numba ships no stubs for prange; the name resolves only when numba is installed, so this code is environment-dependent
             cn = word_counts[c + 1]
             if cn < 1:
                 results[c] = -1.0
@@ -719,7 +719,7 @@ if HAS_NUMBA:
         for c in range(n_candidates):
             total_cand_words += word_counts[c + 1]
         matched_sim_b_flat = np.zeros(total_cand_words, dtype=np.float64)
-        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]
+        for c in nb.prange(n_candidates):  # type: ignore[attr-defined]  # numba ships no stubs for prange; the name resolves only when numba is installed, so this code is environment-dependent
             cn = word_counts[c + 1]
             if cn < 1:
                 results[c] = -1.0

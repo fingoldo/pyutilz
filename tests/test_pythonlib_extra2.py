@@ -306,7 +306,10 @@ def test_store_params_in_object():
 
 
 def test_store_params_in_object_none():
-    store_params_in_object(None, {"x": 1})  # no-op
+    """A None target is a documented no-op: nothing is returned and the params dict is left untouched."""
+    params = {"x": 1}
+    assert store_params_in_object(None, params) is None
+    assert params == {"x": 1}, "the params mapping must not be consumed/mutated on the None-object path"
 
 
 def test_load_object_params_into_func():
@@ -321,7 +324,11 @@ def test_load_object_params_into_func():
 
 
 def test_load_object_params_into_func_none():
-    load_object_params_into_func(None, {})  # no-op
+    """A None source yields the documented empty mapping AND leaves the destination dict empty."""
+    dest: dict = {}
+    collected = load_object_params_into_func(None, dest)
+    assert collected == {}, "documented to return an empty dict when obj is None"
+    assert dest == {}, "nothing may be written into the destination on the None-object path"
 
 
 def test_store_and_load_round_trip_with_defaults():

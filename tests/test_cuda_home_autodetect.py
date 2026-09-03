@@ -39,12 +39,14 @@ def test_does_not_override_existing_cuda_home():
 
 
 def test_sets_cuda_home_from_pip_when_unset():
+    # `except ImportError`, not a broad `except Exception`: only a MISSING package may skip this
+    # test; anything else (a broken nvidia package, a namespace pkg with no __file__) must fail.
     try:
         import nvidia
-        cand = pathlib.Path(nvidia.__file__).parent / "cuda_nvcc"
-    except Exception:
-        cand = None
-    if cand is None or not (cand / "nvvm").exists():
+    except ImportError:
+        pytest.skip("pip nvidia-cuda-nvcc not installed")
+    cand = pathlib.Path(nvidia.__file__).parent / "cuda_nvcc"
+    if not (cand / "nvvm").exists():
         pytest.skip("pip nvidia-cuda-nvcc not installed")
     saved = _save()
     try:
@@ -63,6 +65,13 @@ def test_graceful_no_raise_when_unset():
         os.environ.pop("CUDA_HOME", None)
         os.environ.pop("CUDA_PATH", None)
         _ensure_cuda_home_from_pip()  # must never raise, whatever the environment
+        # Either it found nothing (both stay unset), or it set BOTH to one really-existing dir:
+        # a half-set or bogus CUDA_HOME is worse than none, since numba then fails deeper in.
+        home, path = os.environ.get("CUDA_HOME"), os.environ.get("CUDA_PATH")
+        assert (home is None) == (path is None), f"CUDA_HOME={home!r} / CUDA_PATH={path!r} were set inconsistently"
+        if home is not None:
+            assert home == path
+            assert pathlib.Path(home).is_dir(), f"CUDA_HOME points at a non-existent directory: {home!r}"
     finally:
         _restore(saved)
 

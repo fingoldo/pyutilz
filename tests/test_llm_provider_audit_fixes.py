@@ -284,8 +284,10 @@ class TestGeminiClose:
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self):
         p = _make_gemini()
-        await p._close()
-        await p._close()
+        assert await p._close() is None
+        assert await p._close() is None  # a second close must not raise either
+        # No resource was created on the way out that a third caller could then trip over.
+        assert not hasattr(p, "_executor")
 
 
 # ---------------------------------------------------------------------------

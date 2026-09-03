@@ -161,8 +161,16 @@ def test_write_config_missing_var():
     with tempfile.NamedTemporaryFile(suffix=".ini", delete=False, mode="w") as f:
         fname = f.name
     try:
-        with patch("pyutilz.text.strings.logger"):
-            write_config_file(fname, {"a": 1}, variables="a,b", encryption=None)
+        with patch("pyutilz.text.strings.logger") as mock_logger:
+            result = write_config_file(fname, {"a": 1}, variables="a,b", encryption=None)
+        # The missing variable is reported, not silently dropped...
+        warned = " ".join(str(c.args) for c in mock_logger.warning.call_args_list)
+        assert "b" in warned, f"no warning names the missing variable 'b'; warnings were: {warned!r}"
+        # ...and the write still succeeds, carrying the variable that WAS present.
+        assert result is True
+        obj_in: dict = {}
+        assert read_config_file(fname, obj_in, section="MAIN", encryption=None) is True
+        assert obj_in == {"a": 1}, f"expected only the present variable to be written, got {obj_in!r}"
     finally:
         os.unlink(fname)
 

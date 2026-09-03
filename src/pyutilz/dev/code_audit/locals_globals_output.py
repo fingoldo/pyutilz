@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import cast
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_locals_or_globals_call, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- locals()/globals() passed as a mutable output parameter --------------
 #
@@ -36,11 +37,6 @@ _OUTPUT_LIKE_KWARG_NAMES = frozenset({"object", "out", "output", "target", "dest
 _READ_ONLY_BUILTIN_CONSUMERS = frozenset({"set", "list", "dict", "tuple", "frozenset", "sorted", "len", "str", "repr", "print", "iter", "any", "all", "min", "max", "sum"})
 
 
-def _is_locals_or_globals_call(node: ast.AST) -> bool:
-    """True if ``node`` is a call to the bare builtin ``locals()``/``globals()`` (no args)."""
-    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("locals", "globals") and not node.args and not node.keywords
-
-
 def scan_locals_globals_as_output(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -69,9 +65,9 @@ def scan_locals_globals_as_output(
             if isinstance(node.func, ast.Name) and node.func.id in _READ_ONLY_BUILTIN_CONSUMERS:
                 continue  # read-only consumer -- never the write-back bug shape this scanner targets
             for kw in node.keywords:
-                if kw.arg is not None and _is_locals_or_globals_call(kw.value):
+                if kw.arg is not None and is_locals_or_globals_call(kw.value):
                     severity = "P1" if kw.arg in _OUTPUT_LIKE_KWARG_NAMES else "Low"
-                    which = "locals" if isinstance(kw.value, ast.Call) and kw.value.func.id == "locals" else "globals"  # type: ignore[attr-defined]
+                    which = "locals" if isinstance(kw.value, ast.Call) and cast(ast.Name, kw.value.func).id == "locals" else "globals"  # cast: is_locals_or_globals_call() above already proved func is an ast.Name
                     findings.append(Finding(
                         check="locals_globals_as_output",
                         severity=severity,
@@ -88,8 +84,8 @@ def scan_locals_globals_as_output(
                         ),
                     ))
             for arg in node.args:
-                if _is_locals_or_globals_call(arg):
-                    which = arg.func.id  # type: ignore[attr-defined]
+                if is_locals_or_globals_call(arg):
+                    which = cast(ast.Name, cast(ast.Call, arg).func).id  # cast: is_locals_or_globals_call() above already proved arg is a Call whose func is an ast.Name
                     findings.append(Finding(
                         check="locals_globals_as_output",
                         severity="Low",

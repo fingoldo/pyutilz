@@ -2,6 +2,7 @@
 
 from pyutilz.llm.exceptions import (
     LLMProviderError,
+    ClaudeCodeToolUseError,
     JSONParsingError,
     LLMRefusalError,
     LLMSafetyBlockError,
@@ -69,6 +70,7 @@ __all__ = [
     "ClaudeCodeProvider",
     "get_llm_provider",
     "LLMProviderError",
+    "ClaudeCodeToolUseError",
     "JSONParsingError",
     "LLMRefusalError",
     "LLMSafetyBlockError",

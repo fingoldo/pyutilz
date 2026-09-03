@@ -68,8 +68,11 @@ def scan_tautological_guards(
         for node in ast.walk(tree):
             if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And)):
                 continue
-            thresholded: dict[str, ast.AST] = {}
-            pinned: dict[str, ast.AST] = {}
+            # ast.expr, not ast.AST: only ast.Compare nodes are ever stored, and the narrower
+            # type is what carries `lineno` -- the wider one forced a blanket attr-defined ignore
+            # on the min() below that would also have hidden any future real attribute error there.
+            thresholded: dict[str, ast.expr] = {}
+            pinned: dict[str, ast.expr] = {}
             for operand in node.values:
                 if not (isinstance(operand, ast.Compare) and len(operand.ops) == 1):
                     continue
@@ -90,7 +93,7 @@ def scan_tautological_guards(
             # a P1.
             pairs = sorted({(t, p) for t in thresholded for p in pinned if p == t or t.startswith(p + ".") or t.startswith(p + "[")})
             for target, pin_key in pairs:
-                line = min(thresholded[target].lineno, pinned[pin_key].lineno)  # type: ignore[attr-defined]
+                line = min(thresholded[target].lineno, pinned[pin_key].lineno)
                 findings.append(
                     Finding(
                         check="tautological_guard",

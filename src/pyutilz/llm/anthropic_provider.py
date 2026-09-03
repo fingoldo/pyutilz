@@ -387,7 +387,7 @@ class AnthropicProvider(LLMProvider):
                 )
             if result_text is None:
                 raise LLMProviderError(f"Anthropic returned no text block (stop_reason={self._last_finish_reason!r})")
-            return result_text  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return result_text  # type: ignore[no-any-return]  # anthropic SDK: the text of a content block is untyped in the installed version
 
     def _capture_response_headers(self, headers: Any) -> None:
         """Snapshot rate-limit headers + org id from the latest response.

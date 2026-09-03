@@ -197,7 +197,7 @@ def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
     value = re.sub(r"[^\w\s-]", "", value)
     value = re.sub(r"[-\s]+", "-", value).strip("-_")
 
-    return value  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return value  # type: ignore[no-any-return]  # value enters as an unannotated parameter, so re.sub keeps it Any
 
 
 def camel_case_split(str: str) -> list:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py

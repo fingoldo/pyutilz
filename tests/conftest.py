@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 import warnings
 import pytest
 import pandas as pd
@@ -210,6 +212,47 @@ def xai_key() -> str:
 def gemini_key() -> str:
     """API key for live Gemini tests; skips if absent."""
     return _require_provider_key("GEMINI_API_KEY", "Gemini")
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger_configuration():
+    """Undo any process-wide root-logger reconfiguration a test performs.
+
+    ``pyutilz.logginglib.init_logging`` calls ``logging.basicConfig(force=True)``, which REPLACES
+    every handler on the root logger -- including the one ``caplog`` installs. Any test that calls
+    it therefore silently disarms ``caplog`` for every test collected after it in the same process,
+    and because test order is randomised here the victim changes run to run. Found 2026-09-03 when
+    the audit's new ``caplog`` assertions in ``test_dev_audit_fixes.py`` started failing only when
+    ``test_logginglib_extra.py`` happened to run first.
+
+    ``init_logging`` also REBINDS ``pyutilz.dev.logginglib``'s module-global ``logger`` to a logger
+    named after the caller (``global logger; logger = logging.getLogger(caller_name)``), which is
+    documented behaviour for an application entry point but leaks in a test process: every later
+    ``caplog.at_level(..., logger="pyutilz.dev.logginglib")`` then watches a logger that module no
+    longer writes to. That global is snapshotted and restored here too.
+
+    Restoring around EVERY test (rather than in the two files that call ``init_logging`` today)
+    keeps the next caller from reintroducing it. The cost is two list copies per test.
+    """
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    # Only if already imported -- this fixture must not drag logginglib into every test process.
+    logginglib = sys.modules.get("pyutilz.dev.logginglib")
+    saved_module_logger = getattr(logginglib, "logger", None) if logginglib is not None else None
+    try:
+        yield
+    finally:
+        logginglib = sys.modules.get("pyutilz.dev.logginglib")
+        if logginglib is not None and saved_module_logger is not None and logginglib.logger is not saved_module_logger:
+            logginglib.logger = saved_module_logger
+        if list(root.handlers) != saved_handlers or root.level != saved_level:
+            for handler in list(root.handlers):
+                root.removeHandler(handler)
+                if handler not in saved_handlers:
+                    handler.close()
+            for handler in saved_handlers:
+                root.addHandler(handler)
+            root.setLevel(saved_level)
 
 
 # Default per-test spend ceiling for live calls. A live test going

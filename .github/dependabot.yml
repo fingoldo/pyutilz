@@ -43,6 +43,15 @@ updates:
   # but every repo on the account shares the same monthly quota). github-actions above stays
   # active since it's the priority ecosystem and opens far fewer PRs. Raise back to 1-3 once
   # the Actions-minutes budget allows.
+  #
+  # The disable is bounded, not open-ended (2026-09-03 security audit F10): with VERSION updates
+  # off and no lockfile, nothing in the repo recorded exposure to a published advisory in
+  # requests/selenium/boto3/..., so a CVE would surface only if a maintainer read advisories by
+  # hand. .github/workflows/pip-audit.yml now runs `pip-audit` weekly on ONE ubuntu-latest runner
+  # and fails on an advisory -- the security signal, at a fraction of the minutes a PR-per-bump
+  # ecosystem costs. Dependabot SECURITY updates (repo Settings -> Code security), which fire only
+  # on advisories rather than on routine bumps, are the complementary lever and can be enabled
+  # without lifting the limit below.
   - package-ecosystem: pip
     directory: "/"
     schedule:

@@ -217,7 +217,7 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
                 elems[key] = item
             elif isinstance(item, list):
                 elems[key] = extract_json_attribute(item, attribute)
-    return elems  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return elems  # type: ignore[no-any-return]  # elems is built from arbitrary decoded JSON
 
 
 def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:
@@ -325,7 +325,7 @@ class _PreSerializedJson:
         qs = QuotedString(self._raw)
         if self._conn is not None:
             qs.prepare(self._conn)
-        return qs.getquoted()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return qs.getquoted()  # type: ignore[no-any-return]  # psycopg2 ships no stubs, so QuotedString.getquoted() is Any
 
     def __str__(self) -> str:
         """The quoted literal as text (mirrors ``psycopg2.extras.Json.__str__``)."""

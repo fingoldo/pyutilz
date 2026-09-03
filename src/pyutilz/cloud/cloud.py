@@ -72,7 +72,7 @@ def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_na
 # Amazon cloud storage
 # --------------------------------------------------------------------------------------------------------------
 
-def connect_to_s3(file: str = "settings.ini"):
+def connect_to_s3(file: str = "settings.ini") -> _Optional[_Any]:
     """Read AWS credentials from the ``[S3]`` section of a config file and open an S3 resource.
 
     Sets the module-level ``s3`` global to the created boto3 S3 resource and returns it.
@@ -97,6 +97,7 @@ def connect_to_s3(file: str = "settings.ini"):
         boto_session = boto3.Session(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
         s3 = boto_session.resource("s3")
         return s3
+    return None
 
 
 def s3_file_exists(key: str, bucket: str) -> bool:

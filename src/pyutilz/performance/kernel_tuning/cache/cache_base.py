@@ -312,7 +312,7 @@ def _kernel32():
     if _KERNEL32 is None:
         import ctypes
 
-        _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
     return _KERNEL32
 
 
@@ -332,7 +332,7 @@ def _pid_alive(pid: int) -> bool:
             if not handle:
                 # ERROR_INVALID_PARAMETER (87) => no such pid (dead). Any other failure
                 # (e.g. ERROR_ACCESS_DENIED 5 => alive but not ours) => assume alive.
-                return ctypes.get_last_error() not in (87,)  # type: ignore[attr-defined]
+                return ctypes.get_last_error() not in (87,)  # type: ignore[attr-defined]  # Windows-only: ctypes.get_last_error is declared only under the Windows stubs
             try:
                 exit_code = ctypes.c_ulong()
                 if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):

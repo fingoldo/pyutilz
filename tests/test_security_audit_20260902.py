@@ -43,25 +43,98 @@ class TestF01JsonPathValidation:
 # --------------------------------------------------------------------------------------------
 
 
+def _fake_cli_proc_factory(captured: dict):
+    """Return a ``subprocess.Popen`` stand-in that records argv and replays one successful stream-json result event."""
+    import json as _json
+
+    class _FakeProc:
+        args = ["claude"]
+        returncode = 0
+
+        def __init__(self, cmd, **_kwargs):
+            captured["cmd"] = list(cmd)
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO(_json.dumps({"type": "result", "subtype": "success", "result": "ok"}) + "\n")
+            self.stderr = io.StringIO("")
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    return _FakeProc
+
+
+def _fake_sdk_query(captured: dict, messages):
+    """Return a ``cc_query`` stand-in that records the ``ClaudeCodeOptions`` it was handed and replays ``messages``."""
+
+    def _query(prompt=None, options=None):
+        captured["options"] = options
+
+        async def _gen():
+            for m in messages:
+                yield m
+
+        return _gen()
+
+    return _query
+
+
+class _StubAssistantMessage:
+    """Stands in for the SDK's ``AssistantMessage``; the provider dispatches on the class NAME."""
+
+    def __init__(self, content):
+        self.content = content
+
+
+_StubAssistantMessage.__name__ = "AssistantMessage"
+
+
+class _StubToolUseBlock:
+    """Stands in for the SDK's ``ToolUseBlock``; the provider dispatches on the class NAME."""
+
+    def __init__(self, name):
+        self.name = name
+
+
+_StubToolUseBlock.__name__ = "ToolUseBlock"
+
+
 class TestF02ClaudeCodeMcpIsolation:
     def test_cli_argv_carries_strict_mcp_config(self):
-        import inspect
+        import asyncio
 
         from pyutilz.llm import claude_code_provider as ccp
 
-        src = inspect.getsource(ccp.ClaudeCodeProvider._generate_cli)
-        # The argv is assembled inline in _generate_cli and the function is never run here (it
-        # would spawn the real CLI), so the flag's presence in the built list is asserted at the
-        # source level -- the one place the argv exists without a subprocess.
-        assert "'--strict-mcp-config'" in src or '"--strict-mcp-config"' in src
+        provider = ccp.ClaudeCodeProvider(model="opus", timeout=30)
+        provider._claude_path = "claude-not-executed"
+        captured: dict = {}
+        with patch.object(ccp.subprocess, "Popen", _fake_cli_proc_factory(captured)):
+            assert asyncio.run(provider._generate_cli("hi")) == "ok"
+
+        cmd = captured["cmd"]
+        assert "--strict-mcp-config" in cmd, cmd
+        # the flag only isolates MCP when no --mcp-config supplies servers of its own
+        assert "--mcp-config" not in cmd, cmd
 
     def test_sdk_extra_args_carry_strict_mcp_config(self):
-        import inspect
+        import asyncio
 
+        pytest.importorskip("claude_code_sdk")
         from pyutilz.llm import claude_code_provider as ccp
 
-        src = inspect.getsource(ccp.ClaudeCodeProvider._generate_sdk)
-        assert '"strict-mcp-config": None' in src
+        provider = ccp.ClaudeCodeProvider(model="opus", timeout=30)
+        captured: dict = {}
+        messages = [_StubAssistantMessage([ccp.TextBlock(text="ok")])]
+        with patch.object(ccp, "cc_query", _fake_sdk_query(captured, messages)):
+            assert asyncio.run(provider._generate_sdk("hi")) == "ok"
+
+        extra_args = captured["options"].extra_args
+        assert "strict-mcp-config" in extra_args
+        # a None value is how the SDK spells a valueless CLI flag
+        assert extra_args["strict-mcp-config"] is None
+        assert extra_args["tools"] == ""
 
     def test_tool_use_error_is_not_retryable_exception_type(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeToolUseError
@@ -71,15 +144,35 @@ class TestF02ClaudeCodeMcpIsolation:
         assert issubclass(ClaudeCodeToolUseError, RuntimeError)
         assert not issubclass(ClaudeCodeToolUseError, OSError)
 
-    def test_tool_use_block_raises(self):
-        import inspect
+    def test_tool_use_block_raises(self, caplog):
+        import asyncio
 
+        pytest.importorskip("claude_code_sdk")
         from pyutilz.llm import claude_code_provider as ccp
 
-        src = inspect.getsource(ccp.ClaudeCodeProvider._generate_sdk)
-        assert "raise ClaudeCodeToolUseError" in src
+        provider = ccp.ClaudeCodeProvider(model="opus", timeout=30)
+        captured: dict = {}
+        messages = [_StubAssistantMessage([ccp.TextBlock(text="before"), _StubToolUseBlock("Bash"), ccp.TextBlock(text="after")])]
+        with patch.object(ccp, "cc_query", _fake_sdk_query(captured, messages)):
+            caplog.set_level("WARNING")
+            with pytest.raises(ccp.ClaudeCodeToolUseError) as excinfo:
+                asyncio.run(provider._generate_sdk("hi"))
+
+        assert "Bash" in str(excinfo.value)
         # the old behaviour was a bare logger.warning(... "(blocked)") that let the turn continue
-        assert 'logger.warning("Model attempted tool use' not in src
+        assert "attempted tool use" not in caplog.text
+
+    def test_text_only_stream_is_not_treated_as_tool_use(self):
+        import asyncio
+
+        pytest.importorskip("claude_code_sdk")
+        from pyutilz.llm import claude_code_provider as ccp
+
+        provider = ccp.ClaudeCodeProvider(model="opus", timeout=30)
+        captured: dict = {}
+        messages = [_StubAssistantMessage([ccp.TextBlock(text="plain answer")])]
+        with patch.object(ccp, "cc_query", _fake_sdk_query(captured, messages)):
+            assert asyncio.run(provider._generate_sdk("hi")) == "plain answer"
 
 
 # --------------------------------------------------------------------------------------------
@@ -234,22 +327,57 @@ def _mode(path) -> int:
     return stat.S_IMODE(os.stat(path).st_mode)
 
 
+@contextmanager
+def _record_os_open():
+    """Record every ``os.open`` call made inside the block as ``(path, flags, mode)``, delegating to the real call."""
+    calls: list[tuple] = []
+    real_open = os.open
+
+    def _spy(path, flags, mode=0o777, *args, **kwargs):
+        calls.append((path, flags, mode))
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    with patch("os.open", _spy):
+        yield calls
+
+
+def _creating_modes(calls) -> list[int]:
+    """Modes of the O_CREAT calls among recorded ``os.open`` calls."""
+    return [mode for _path, flags, mode in calls if flags & os.O_CREAT]
+
+
 class TestF07FilePermissions:
-    def test_atomic_write_bytes_creates_with_explicit_mode(self):
-        import inspect
+    def test_atomic_write_bytes_creates_with_explicit_mode(self, tmp_path):
+        from pyutilz.core.serialization import atomic_write_bytes
 
-        from pyutilz.core import serialization
+        target = tmp_path / "payload.bin"
+        with _record_os_open() as calls:
+            atomic_write_bytes(str(target), lambda f: f.write(b"x"))
 
-        src = inspect.getsource(serialization.atomic_write_bytes)
-        assert "os.O_EXCL, 0o600" in src
+        creating = [(flags, mode) for _p, flags, mode in calls if flags & os.O_CREAT]
+        assert creating, "atomic_write_bytes must create its temp file through os.open with an explicit mode"
+        assert all(flags & os.O_EXCL for flags, _m in creating), creating
+        assert all(mode & 0o077 == 0 for _f, mode in creating), creating
+        assert target.read_bytes() == b"x"
 
-    def test_safe_dump_and_disk_cache_create_with_explicit_mode(self):
-        import inspect
+    def test_safe_dump_and_disk_cache_create_with_explicit_mode(self, tmp_path):
+        from pyutilz.core.disk_cache import DiskCache
+        from pyutilz.core.safe_pickle import safe_dump
 
-        from pyutilz.core import disk_cache, safe_pickle
+        target = tmp_path / "obj.pkl"
+        with _record_os_open() as calls:
+            safe_dump({"a": 1}, str(target))
+        modes = _creating_modes(calls)
+        assert modes, "safe_dump must create its temp file through os.open with an explicit mode"
+        assert all(mode & 0o077 == 0 for mode in modes), modes
 
-        assert "0o600" in inspect.getsource(safe_pickle)
-        assert "0o600" in inspect.getsource(disk_cache.DiskCache.put)
+        cache_dir = tmp_path / "cache"
+        cache = DiskCache(cache_dir=cache_dir)
+        with _record_os_open() as calls:
+            cache.put("deadbeef", {"a": 1})
+        modes = _creating_modes(calls)
+        assert modes, "DiskCache.put must create its temp file through os.open with an explicit mode"
+        assert all(mode & 0o077 == 0 for mode in modes), modes
 
     @_POSIX_ONLY
     def test_atomic_write_bytes_result_is_owner_only(self, tmp_path):
@@ -257,6 +385,14 @@ class TestF07FilePermissions:
 
         target = tmp_path / "payload.bin"
         atomic_write_bytes(str(target), lambda f: f.write(b"x"))
+        assert _mode(target) & 0o077 == 0
+
+    @_POSIX_ONLY
+    def test_safe_dump_result_is_owner_only(self, tmp_path):
+        from pyutilz.core.safe_pickle import safe_dump
+
+        target = tmp_path / "obj.pkl"
+        safe_dump({"a": 1}, str(target))
         assert _mode(target) & 0o077 == 0
 
     @_POSIX_ONLY

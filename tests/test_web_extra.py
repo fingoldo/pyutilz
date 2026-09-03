@@ -270,12 +270,20 @@ class TestSetProxyLastUseTime:
         assert isinstance(next(iter(d.values())), datetime)
 
     def test_none_dict_noop(self):
+        """A None store is skipped entirely: nothing is returned and no timestamp is recorded anywhere."""
         from pyutilz.web import web as mod
-        mod.set_proxy_last_use_time(None, {"http": "a"})  # no error
+        assert mod.set_proxy_last_use_time(None, {"http": "a"}) is None
 
     def test_non_dict_noop(self):
+        """A non-dict store is left untouched -- the guard is ``isinstance(dict)``, not ``try/except``.
+
+        Uses a list (a MUTABLE non-dict) so "did not write" is observable, not merely "did not raise".
+        """
         from pyutilz.web import web as mod
-        mod.set_proxy_last_use_time("notadict", {"http": "a"})  # no error
+        not_a_dict: list = []
+        assert mod.set_proxy_last_use_time(not_a_dict, {"http": "a"}) is None
+        assert not_a_dict == [], "a non-dict store must not be written into"
+        assert mod.set_proxy_last_use_time("notadict", {"http": "a"}) is None
 
 
 # ===== make_proxies_dict =====
@@ -401,7 +409,10 @@ class TestCredentialRedaction:
 
         with caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
             mod.report_params("https://example.com", None, None, None, None, None, 10)
-        # Must not raise.
+        # The redaction helpers must pass None through and still produce the diagnostic line.
+        logged = " ".join(r.getMessage() for r in caplog.records)
+        assert "https://example.com" in logged
+        assert "proxies=None" in logged, f"expected a None-proxies line, got: {logged!r}"
 
     def test_handle_blocking_no_indexerror_on_unauthenticated_proxy(self, caplog):
         """Regression test: proxies["https"].split("@")[1] raised IndexError for an
@@ -508,9 +519,16 @@ class TestIsRotatingProxy:
 # ===== report_params =====
 
 class TestReportParams:
-    def test_logs_without_error(self):
+    def test_logs_without_error(self, caplog):
+        """report_params emits exactly one INFO record carrying the url and the timeout."""
+        import logging
         from pyutilz.web import web as mod
-        mod.report_params("http://x", None, None, None, None, None, 10)
+        with caplog.at_level(logging.INFO, logger="pyutilz.web.web"):
+            mod.report_params("http://x", None, None, None, None, None, 10)
+        records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(records) == 1, f"expected one INFO record, got {len(records)}"
+        assert "url=http://x" in records[0].getMessage()
+        assert "timeout=10" in records[0].getMessage()
 
 
 # ===== get_new_session =====

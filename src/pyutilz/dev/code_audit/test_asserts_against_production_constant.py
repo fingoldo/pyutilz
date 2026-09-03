@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test that checks the code against the code -----------------------------------------------
 #
@@ -167,8 +167,7 @@ def scan_test_asserts_against_production_constant(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        name = py.name
-        if not (name.startswith("test_") or name.endswith("_test.py")):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

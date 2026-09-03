@@ -29,6 +29,7 @@ import os, subprocess  # nosec B404 - used only to invoke the fixed trusted "pyl
 
 
 from pyutilz.text.strings import remove_json_defaults
+from .probing import _resolve_binary  # absolute-path resolution for spawned probe binaries (see _resolve_binary's docstring)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # HDD
@@ -89,14 +90,14 @@ def list_linux_devices() -> Optional[dict]:
     # ensure_installed("pylspci")
 
     try:
-        devices = json.loads(subprocess.check_output(["pylspci", "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
+        devices = json.loads(subprocess.check_output([_resolve_binary("pylspci"), "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
         for device in devices:
             remove_json_defaults(
                 device,
                 {"progif": None, "driver": None, "kernel_modules": [], "numa_node": None, "iommu_group": None, "physical_slot": None},
                 warn_if_not_default=False,
             )
-        return devices  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return devices  # type: ignore[no-any-return]  # json.loads over pylspci output returns Any
     except Exception as e:
         logger.exception(e)
         return None

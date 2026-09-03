@@ -502,7 +502,12 @@ target-version = "py38"
 # type comparison, and 19 `# noqa` directives naming rules that were never enabled, i.e. dead
 # suppressions their authors believed were load-bearing). They are now in scope, with the
 # genuinely test-/script-idiomatic codes exempted per-file below rather than by hiding the dirs.
-exclude = ["_benchmarks", ".git", "__pycache__", "build", "dist"]
+# `_benchmarks` removed from this list 2026-09-03 (audit 06/F09): it was the last directory
+# with zero static analysis. Measured at removal time: 76 findings, ALL in codes already
+# exempted per-file for tests/scripts as genuinely idiomatic (66 T201, 8 NPY002, 1 PERF203,
+# 1 PERF401) -- `F`, `B` and `E9` were clean, so this is a zero-finding change that closes the
+# structural gap: a directory nobody lints will never report the F821 it eventually acquires.
+exclude = [".git", "__pycache__", "build", "dist"]
 
 # B006 (mutable default argument) is in the shared base's `ignore` list ("audited case-by-case per
 # call site"). Measured 2026-09-02: `ruff check src tests scripts --select B006 --isolated` reports
@@ -511,7 +516,17 @@ exclude = ["_benchmarks", ".git", "__pycache__", "build", "dist"]
 # already treats this as a real bug class (pyutilz.dev.code_audit ships a mutable_defaults scanner
 # for it), but that scanner is wired into no blocking hook -- this puts the class under a gate.
 [tool.ruff.lint]
-extend-select = ["B006"]
+# RET503 (implicit `return None` on a path that can also return a value) added 2026-09-03
+# (audit 06/F03,F04,F08): nine functions fell off the end returning None where their own
+# docstring promised a value, one of them (`get_table_fields`) feeding string concatenation
+# into SQL. All are fixed, so the class is at zero and this keeps it there. Only RET503 --
+# the rest of the RET5xx family (RET501/502/504) is stylistic and stays out.
+# PLE2510/2512/2513/2514/2515 (invalid unescaped control / invisible characters) added at the
+# same time: RUF001-003 are in the shared base's `ignore` list for good reason (this codebase
+# has intentional non-ASCII prose), and that exemption also covered genuinely INVISIBLE
+# characters, which are never legitimate -- a U+200B inside a test docstring went unseen by
+# every gate. These five are the false-positive-free subset of that problem.
+extend-select = ["B006", "RET503", "PLE2510", "PLE2512", "PLE2513", "PLE2514", "PLE2515"]
 
 # Measured 2026-07-09 when C90 was newly added via the shared base (pyutilz had never selected
 # it before): default threshold=10 flags 68 functions, median complexity among those 15, mean
@@ -546,10 +561,21 @@ max-complexity = 20
     "RUF017",   # quadratic list summation over fixture-sized (single-digit) lists
 ]
 
+# _benchmarks/ entered ruff's scope 2026-09-03 (audit 06/F09), same treatment as tests/ and
+# scripts/ before it: the directory is linted, and only the codes that are genuinely idiomatic
+# for a benchmark script are exempted, one line per code.
+"_benchmarks/**" = [
+    "T201",     # printing the timing/identity result to stdout IS a benchmark's interface, the same exemption class scripts/ gets
+    "NPY002",   # legacy global-seed RNG is deliberate: a benchmark reproduces a specific input stream, and np.random.seed is how these scripts pin it
+    "PERF203",  # try/except inside the timing loop keeps one failing size from aborting the whole sweep
+    "PERF401",  # an explicit append loop inside a benchmark is deliberately not the thing being optimised
+]
+
 # scripts/ entered ruff's scope 2026-09-02 alongside tests/.
 "scripts/vulture_whitelist.py" = ["F821", "B018"]  # the file's ENTIRE content is bare name references, so vulture counts those names as used -- undefined names and useless expressions are the file working exactly as designed
 "scripts/auto_refactor.py" = ["T201"]  # a CLI script whose output to stdout is its user interface
 "scripts/prove_meta_checks.py" = ["T201"]  # a CLI script whose CAUGHT/MISSED report to stdout is its user interface
+"scripts/check_pinned_tool_versions.py" = ["T201"]  # a pre-commit gate whose mismatch report to stdout is what the developer reads when it blocks
 
 # Deptry: unused / missing / transitive dependency scan. Made blocking 2026-07-09 after a real
 # triage pass (run with the [all,dev] extras actually installed -- deptry's DEP001/DEP002 are
@@ -716,6 +742,15 @@ warn_unreachable = true
 # - system.monitoring: required 13 added annotations (decorator factories and their wrappers).
 #   Prioritized because its unannotated `func` param was making `job_completed`'s wrong `data`
 #   type and a genuine `str | None` arg-type invisible to the whole-project run.
+# Added 2026-09-03 (audit 06/F07), each measured clean under the strict flags before listing:
+# - web.proxy (5 modules): 2 missing return annotations, both on @contextmanager session
+#   factories in session.py (-> Iterator[Any]).
+# - llm.openrouter_provider (4 modules): 3 functions -- _catalogue._pkg, _health._best and
+#   _provider._to_float.
+# The performance.kernel_tuning.cache measurement recorded above was RE-TAKEN 2026-09-03 and has
+# not moved in a month: still exactly 33 [no-untyped-def] across the same 6 files (_common.py 8,
+# cache_hooks.py 9, cache_tuning.py 9, cache_sweeping.py 3, cache_base.py 2, cache_class.py 2).
+# It is a note, not a queue; the two subpackages above were the cheap admissions.
 # Expansion to other subpackages should follow only after each is independently verified
 # clean, same policy as mlframe.
 [[tool.mypy.overrides]]
@@ -725,6 +760,8 @@ module = [
     "pyutilz.text.secrets_scrub",
     "pyutilz.system.single_flight_cache",
     "pyutilz.system.monitoring",
+    "pyutilz.web.proxy.*",
+    "pyutilz.llm.openrouter_provider.*",
 ]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true

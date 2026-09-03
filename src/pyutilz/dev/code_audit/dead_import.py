@@ -134,15 +134,7 @@ def _attribute_names_in_corpus(root: Path, exclude_dirs: frozenset[str]) -> set[
     elsewhere as ``module_a.some_name``) as a dead import. Deliberately not import-alias-resolved
     (no attempt to confirm the attribute access is on THIS SPECIFIC module) -- a cheap, safe-by-
     construction (favors false negatives, never manufactures a finding) whole-corpus scan."""
-    names: set[str] = set()
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute):
-                names.add(node.attr)
-    return names
+    return _corpus_import_index(root, exclude_dirs)[0]
 
 
 def _from_import_names_by_file(root: Path, exclude_dirs: frozenset[str]) -> dict[Path, set[str]]:
@@ -154,6 +146,19 @@ def _from_import_names_by_file(root: Path, exclude_dirs: frozenset[str]) -> dict
     consuming reference lives in a different file entirely). Confirmed as a real false-positive
     class: mlframe package ``__init__.py`` facades re-exporting via ``from .submodule import
     Name`` for downstream ``from mlframe.pkg import Name`` consumers were flagged wholesale."""
+    return _corpus_import_index(root, exclude_dirs)[1]
+
+
+def _corpus_import_index(root: Path, exclude_dirs: frozenset[str]) -> "tuple[set[str], dict[Path, set[str]]]":
+    """Both whole-corpus indexes in ONE ``ast.walk`` per file: the attribute names and the per-file
+    ``from ... import`` names.
+
+    They were two back-to-back full-corpus walks called one line apart, walking the same
+    (parse-cached) trees twice for two disjoint node types: 0.73 s against 0.39 s fused over
+    src/pyutilz, with both structures byte-identical. The two public helpers above stay as thin
+    wrappers so each keeps its own explanation of the false-positive class it exists to prevent.
+    """
+    attr_names: set[str] = set()
     by_file: dict[Path, set[str]] = {}
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
@@ -161,12 +166,14 @@ def _from_import_names_by_file(root: Path, exclude_dirs: frozenset[str]) -> dict
             continue
         names: set[str] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
+            if isinstance(node, ast.Attribute):
+                attr_names.add(node.attr)
+            elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
                     if alias.name != "*":
                         names.add(alias.name)
         by_file[py] = names
-    return by_file
+    return attr_names, by_file
 
 
 def _is_consumed_by_another_files_from_import(name: str, this_file: Path, from_import_names_by_file: dict[Path, set[str]]) -> bool:
@@ -206,8 +213,7 @@ def scan_possibly_dead_import(
     not a correctness bug).
     """
     findings: list[Finding] = []
-    corpus_attr_names = _attribute_names_in_corpus(root, exclude_dirs)
-    from_import_names_by_file = _from_import_names_by_file(root, exclude_dirs)
+    corpus_attr_names, from_import_names_by_file = _corpus_import_index(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)

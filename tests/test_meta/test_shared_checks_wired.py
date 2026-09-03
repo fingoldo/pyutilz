@@ -59,14 +59,34 @@ def _production_py_files() -> list[Path]:
     return sorted((REPO_ROOT / "src").rglob("*.py"))
 
 
+def _test_py_files() -> list[Path]:
+    """Every test module. The module-size rule is about what a human can hold in their head
+    while editing, which does not stop at the ``src/`` boundary: ``tests/test_code_audit.py``
+    reached 11306 lines while the production side of the same feature was being deliberately
+    split into one module per scanner under ``src/pyutilz/dev/code_audit/`` to respect it."""
+    return sorted((REPO_ROOT / "tests").rglob("*.py"))
+
+
 def test_no_new_file_over_1k_loc():
-    """CLAUDE.md's module-size rule, enforced instead of remembered."""
+    """CLAUDE.md's module-size rule, enforced instead of remembered.
+
+    ``src/`` and ``tests/`` share one budget and one baseline. The baseline grandfathers the
+    four test files already over 1000 lines at their measured size -- reviewed individually,
+    each is a flat list of independent test functions with no cheap seam, unlike the scanner
+    suite -- so none of them may grow, and no NEW oversized file may appear on either side.
+
+    The captured sizes were re-taken at the END of the 2026-09-03 test-quality wave: three of the
+    four grew while that wave was in flight, entirely from adding the missing assertion to tests
+    that already existed (the F01 drain), not from new bulk. Growth from here needs a split, not
+    another refresh.
+    """
     from py_ci_shared.loc_budget import assert_no_new_oversized_file
 
     assert_no_new_oversized_file(
-        files=_production_py_files(),
+        files=_production_py_files() + _test_py_files(),
         root=REPO_ROOT,
         baseline_path=Path(__file__).resolve().parent / "_loc_over_1k_baseline.json",
+        growth_slack=0,
     )
 
 

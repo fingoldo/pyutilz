@@ -1,5 +1,7 @@
 """Tests for DeepSeek provider."""
 
+import logging
+
 import pytest
 
 pytest.importorskip("httpx")
@@ -133,23 +135,32 @@ class TestDeepSeekConfig:
         p.model_name = "deepseek-reasoner"
         assert p.max_output_tokens == 65536
 
-    def test_handle_special_status_402_warns(self):
+    def test_handle_special_status_402_warns(self, caplog):
+        """402 is credit exhaustion; the operator's only signal must actually be emitted."""
         import httpx
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         resp = httpx.Response(
             status_code=402,
             request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
         )
-        p._handle_special_status(resp)
+        with caplog.at_level(logging.WARNING, logger="pyutilz.llm.deepseek_provider"):
+            p._handle_special_status(resp)
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert "402" in warnings[0].getMessage()
+        assert "balance" in warnings[0].getMessage().lower()
 
-    def test_handle_special_status_200_noop(self):
+    def test_handle_special_status_200_noop(self, caplog):
+        """The no-op half must be distinguishable from the 402 half: silence, not a warning."""
         import httpx
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         resp = httpx.Response(
             status_code=200,
             request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
         )
-        p._handle_special_status(resp)
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.llm.deepseek_provider"):
+            p._handle_special_status(resp)
+        assert caplog.records == []
 
     def test_provider_name(self):
         assert DeepSeekProvider._provider_name == "DeepSeek"

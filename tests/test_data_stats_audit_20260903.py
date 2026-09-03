@@ -47,6 +47,7 @@ def _subgroup_frame() -> pl.DataFrame:
 # F01 -------------------------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _has_polars_ds, reason="polars_ds not installed: build_aggregate_features_polars imports it")
 class TestWeightedAggregatesRespectSubgroupF01:
     def test_weighted_mean_differs_per_subgroup(self):
         """The subgroup prefix used to name the feature while the expression stayed unfiltered."""

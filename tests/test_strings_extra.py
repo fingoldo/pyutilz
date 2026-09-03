@@ -184,11 +184,19 @@ from pyutilz.strings import remove_json_attributes, leave_json_attributes
 
 
 def test_remove_json_attributes_none():
-    remove_json_attributes(None, ["a"])  # should not raise
+    """A None object is a documented no-op: returns None (the in-place mutator's own return) and never raises."""
+    assert remove_json_attributes(None, ["a"]) is None
+    # And the attributes sequence is not consumed/mutated on the None path.
+    attrs = ["a", "b"]
+    assert remove_json_attributes(None, attrs) is None
+    assert attrs == ["a", "b"]
 
 
 def test_leave_json_attributes_none():
-    leave_json_attributes(None, ["a"])  # should not raise
+    """Same no-op contract for the inverse function: None in, None out, attributes list untouched."""
+    attrs = ["a", "b"]
+    assert leave_json_attributes(None, attrs) is None
+    assert attrs == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +258,14 @@ def test_remove_json_defaults_removes_matching():
 
 
 def test_remove_json_defaults_none_input():
-    remove_json_defaults(None, attr_values={"a": 1})  # no crash
+    """None json_obj (and None attr_values) short-circuit: returns None, and the defaults mapping is untouched."""
+    defaults = {"a": 1}
+    assert remove_json_defaults(None, attr_values=defaults) is None
+    assert defaults == {"a": 1}, "attr_values is read-only; the None-object path must not consume it"
+    # The mirror-image guard: a real dict with no attr_values is equally a no-op.
+    d = {"a": 1}
+    assert remove_json_defaults(d, attr_values=None) is None
+    assert d == {"a": 1}
 
 
 # ---------------------------------------------------------------------------

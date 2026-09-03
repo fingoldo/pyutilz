@@ -312,27 +312,51 @@ def test_register_scraper_raises_when_the_nodes_table_yields_no_id(monkeypatch):
 # -------------------- F36/F37: prefect scheduling helpers --------------------
 
 
-def _prefect_module():
-    """Import the helper module, stubbing the optional `prefect` client package if it is absent.
+@pytest.fixture
+def prefect_helpers():
+    """Yield ``pyutilz.system.scheduling.prefect``, stubbing the optional `prefect` client package
+    if it is absent, and removing every module this fixture installed on teardown.
 
     Neither helper under test touches the client, so a stub keeps these behavioural checks running
     on hosts without the (heavy) prefect install instead of silently skipping.
+
+    Teardown matters: a bare ``sys.modules["prefect"] = ...`` write with no removal stays visible
+    to every test that runs after this file IN THE SAME PROCESS, so an attribute-less package looks
+    INSTALLED to any later ``find_spec("prefect")`` capability probe -- order-dependently, since
+    test order is randomised here. The helper module built against that stub is torn down the same
+    way, restoring both its ``sys.modules`` entry and the parent package's attribute so the two
+    import routes (``import pkg.sub`` / ``from pkg import sub``) cannot disagree afterwards.
     """
     import sys
     import types
+
+    import pyutilz.system.scheduling as scheduling_pkg
+
+    helper_name = "pyutilz.system.scheduling.prefect"
+    installed_stub = False
+    helper_was_imported = helper_name in sys.modules
 
     if "prefect" not in sys.modules:
         try:
             import prefect  # noqa: F401
         except ImportError:
             sys.modules["prefect"] = types.ModuleType("prefect")
-    from pyutilz.system.scheduling import prefect as prefect_helpers
+            installed_stub = True
+    try:
+        from pyutilz.system.scheduling import prefect as prefect_module
 
-    return prefect_helpers
+        yield prefect_module
+    finally:
+        if installed_stub:
+            sys.modules.pop("prefect", None)
+            if not helper_was_imported:
+                # Built against the stub, so it must not outlive it by either import route.
+                sys.modules.pop(helper_name, None)
+                if getattr(scheduling_pkg, "prefect", None) is not None:
+                    delattr(scheduling_pkg, "prefect")
 
 
-def test_get_running_flows_applies_both_label_filters(monkeypatch):
-    prefect_helpers = _prefect_module()
+def test_get_running_flows_applies_both_label_filters(prefect_helpers, monkeypatch):
     flows = [
         {"id": "f1", "flow_runs": [{"id": "r1", "labels": ["gpu", "dev"]}]},
         {"id": "f2", "flow_runs": [{"id": "r2", "labels": ["gpu", "ml", "production"]}]},
@@ -342,11 +366,27 @@ def test_get_running_flows_applies_both_label_filters(monkeypatch):
     assert [f["id"] for f in got] == ["f2"]
 
 
-def test_wait_for_absense_of_tasks_sleeps_at_most_max_retries_times(monkeypatch):
+def test_wait_for_absense_of_tasks_sleeps_at_most_max_retries_times(prefect_helpers, monkeypatch):
     """Guards the documented ceiling: max_retries sleeps, one final check after the last one."""
-    prefect_helpers = _prefect_module()
     sleeps = []
     monkeypatch.setattr(prefect_helpers, "sleep", lambda s: sleeps.append(s))
     monkeypatch.setattr(prefect_helpers, "get_running_flows", lambda **kw: [{"id": "f"}])
     assert prefect_helpers.wait_for_absense_of_tasks(max_retries=3, sleep_seconds=1) is False
     assert sleeps == [1, 1, 1]
+
+
+def test_get_schema_returns_empty_dict_when_no_client_is_connected(prefect_helpers, monkeypatch):
+    """No connected client is an expected state (connect() sets `client` to None without a key), so
+    the schema getter degrades to `{}` instead of dereferencing None."""
+    prefect_helpers = prefect_helpers
+    monkeypatch.setattr(prefect_helpers, "client", None)
+    assert prefect_helpers.get_schema() == {}
+
+
+def test_get_schema_delegates_to_graphql_when_a_client_is_connected(prefect_helpers, monkeypatch):
+    prefect_helpers = prefect_helpers
+    from pyutilz.web import graphql
+
+    monkeypatch.setattr(prefect_helpers, "client", object())
+    monkeypatch.setattr(graphql, "query_schema", lambda: {"__schema": {"types": []}})
+    assert prefect_helpers.get_schema() == {"__schema": {"types": []}}

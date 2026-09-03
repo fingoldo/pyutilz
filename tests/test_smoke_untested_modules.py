@@ -79,6 +79,11 @@ def test_module_aliases_resolve_for_smoke_set():
     }
     # Build reverse map: target → alias.
     reverse: dict[str, str] = {v: k for k, v in aliases.items()}
+    # Unconditional precondition: this cross-check is only meaningful while at least one smoke-tested
+    # module is actually aliased. If the alias table were emptied or renamed wholesale, the loop below
+    # would iterate over nothing and pass -- exactly the regression this test exists to catch.
+    aliased = sorted(smoke_paths & set(reverse))
+    assert aliased, f"no smoke-tested module is reachable via pyutilz._MODULE_ALIASES ({len(aliases)} alias(es) declared)"
     for path in smoke_paths:
         if path in reverse:
             alias = reverse[path]

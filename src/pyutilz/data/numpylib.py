@@ -135,4 +135,4 @@ def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_
     ``a``/``b``) to dampen that, matching whatever numeric-stability margin your use case needs.
     """
 
-    return div0(a - b, b + span_correction, na_fill=na_fill)  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return np.asarray(div0(a - b, b + span_correction, na_fill=na_fill))  # np.asarray(): div0 is unannotated, so its result is Any

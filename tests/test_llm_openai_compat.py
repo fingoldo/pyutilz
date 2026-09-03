@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -360,10 +361,9 @@ class TestCosts:
         p = _make_provider()
         result = await p.count_tokens("a" * 100)
         from pyutilz.llm.token_counter import _HAS_TIKTOKEN
-        if _HAS_TIKTOKEN:
-            assert result == 13
-        else:
-            assert result == 25
+
+        # 13 = the real BPE count for "a"*100; 25 = the len//4 heuristic used without tiktoken.
+        assert result == (13 if _HAS_TIKTOKEN else 25)
 
 
 class TestGenerateJson:
@@ -411,10 +411,14 @@ class TestHooks:
         p = _make_provider()
         assert p._get_timeout("any-model") == 120.0
 
-    def test_handle_special_status_noop(self):
+    def test_handle_special_status_noop(self, caplog):
+        """The base hook is a documented no-op: it must neither raise nor emit anything,
+        so a subclass override that starts logging on every status is visible here."""
         p = _make_provider()
         resp = _mock_response(status_code=200)
-        p._handle_special_status(resp)
+        with caplog.at_level(logging.DEBUG, logger="pyutilz.llm.openai_compat"):
+            assert p._handle_special_status(resp) is None
+        assert caplog.records == []
 
 
 class TestRateLimitHeaderCapture:

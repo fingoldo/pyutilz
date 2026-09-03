@@ -181,7 +181,7 @@ class _CachePersistenceMixin(_CacheState):
             return None
         # Newest by tuned_utc (ISO-8601 strings sort chronologically), then mtime.
         candidates.sort(key=lambda c: (c[0], c[1]))
-        return candidates[-1][2]  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+        return candidates[-1][2]  # type: ignore[no-any-return]  # entries come from a JSON file, so the tuple element is Any
 
     def _load(self) -> Optional[dict]:
         """Build the in-memory ``{schema_version, hw_fingerprint, kernels}`` view

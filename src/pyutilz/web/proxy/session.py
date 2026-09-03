@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 if TYPE_CHECKING:
     from .base import ProxyProvider
@@ -28,7 +28,7 @@ def curl_session(
     impersonate: str = "chrome142",
     port_offset: Optional[int] = None,
     timeout: Optional[float] = DEFAULT_SESSION_TIMEOUT,
-):
+) -> Iterator[Any]:
     """Context manager yielding a ``curl_cffi.requests.Session`` with proxy.
 
     Parameters
@@ -71,7 +71,7 @@ def requests_session(
     provider: "ProxyProvider",
     port_offset: Optional[int] = None,
     timeout: Optional[float] = DEFAULT_SESSION_TIMEOUT,
-):
+) -> Iterator[Any]:
     """Context manager yielding a ``requests.Session`` with proxy.
 
     Parameters

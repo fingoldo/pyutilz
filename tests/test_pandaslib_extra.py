@@ -79,9 +79,18 @@ class TestShowcaseDfColumns:
         assert "X" in captured.out
 
     def test_max_vars_positive(self, capsys):
+        """max_vars=1 must actually cap the value listing at the single most frequent value.
+
+        Asserting only "does not raise" cannot distinguish a cap that is ignored (all three
+        values printed) from one that is inverted (nothing printed) -- max_vars is the only
+        parameter under test here, so the assertion is on what the cap did to the output.
+        """
         df = pd.DataFrame({"x": [1, 1, 2, 2, 3]})
         showcase_df_columns(df, max_vars=1, use_markdown=False, use_print=True)
-        # Should not raise
+        captured = capsys.readouterr()
+        value_lines = [ln for ln in captured.out.splitlines() if ln.startswith(("1 ", "2 ", "3 "))]
+        assert len(value_lines) == 1, captured.out
+        assert value_lines[0].split()[0] == "1"  # the most frequent value survives the cap
 
     def test_dropna(self, capsys):
         df = pd.DataFrame({"x": [1, np.nan, 1]})

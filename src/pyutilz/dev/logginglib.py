@@ -31,6 +31,9 @@ from logging.handlers import RotatingFileHandler  # QueueHandler, TimedRotatingF
 
 from pyutilz.core.pythonlib import filter_elements_by_type, ensure_dict_elem, lookup_in_stack
 from pyutilz.text.strings import json_pg_dumps, suffixize
+# Private aliases: keep logginglib's own public surface unchanged (tests/test_meta/test_api_stability.py).
+from pyutilz.text.secrets_scrub import CREDENTIAL_NAME_RE as _CREDENTIAL_PARAM_NAME_RE
+from pyutilz.text.secrets_scrub import redact_secrets as _redact_secrets
 # pyutilz.database.db is deferred to call site (finalize_function_log() below, the only function
 # that uses it) -- logginglib.py is also exposed under the generic top-level alias
 # `pyutilz.logging`, which invites use by callers wanting basic Python logging setup with no DB
@@ -225,7 +228,7 @@ def _stop_clocks(obj: dict) -> float:
         duration = 0
     obj["duration"] = duration
 
-    return duration  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return float(duration)  # float(): obj is a plain dict, so obj.get("started_at") -- and the timedelta built from it -- is Any
 
 
 def _message(activity_name: str) -> None:
@@ -377,6 +380,33 @@ def _redact_credential_shaped_value(value: Any) -> str:
     return "***"
 
 
+# Name-based credential vocabulary for ``results_log["parameters"]``: a parameter whose NAME says
+# credential is redacted by value shape, and every other string parameter still goes through the
+# canonical content scrubber below, so a secret arriving under an innocuous name (a whole DSN passed
+# as ``url=``) is caught too. The vocabulary itself lives in ``pyutilz.text.secrets_scrub`` -- a
+# second copy here is precisely the drift that module was extracted to end.
+
+def _redact_parameters(params: dict) -> dict:
+    """Redact ``results_log["parameters"]`` before it is persisted to ``db_path`` and/or printed.
+
+    Two layers, because either one alone leaks: a NAME match (``password=``, ``api_key=``, ``token=``)
+    masks the value whatever it looks like, and every remaining string value is run through
+    :func:`pyutilz.text.secrets_scrub.redact_secrets` so a credential embedded in an ordinarily-named
+    argument (a DSN in ``url=``, an ``Authorization:`` header in a ``headers=`` repr) is caught too.
+    Non-string values (the other half of ``allowed_types``, i.e. numbers) are passed through
+    unchanged -- a number carries no secret shape and log rows are queried on them.
+    """
+    redacted = {}
+    for key, value in params.items():
+        if isinstance(key, str) and _CREDENTIAL_PARAM_NAME_RE.search(key):
+            redacted[key] = _redact_credential_shaped_value(value)
+        elif isinstance(value, str):
+            redacted[key] = _redact_secrets(value)
+        else:
+            redacted[key] = value
+    return redacted
+
+
 def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
     """Decorator factory that logs a function call's parameters, timing, and result.
 
@@ -415,7 +445,11 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
 
             results_log["module"] = basename(module_name)
             results_log["function"] = function_name
-            results_log["parameters"] = {key: value for key, value in params.items() if key not in special_vars}
+            # Redacted, not merely name-filtered: ``special_vars`` protected exactly three
+            # hardcoded names, so any OTHER credential-bearing argument (``password=``, ``api_key=``,
+            # ``token=``, a DSN in ``dsn=``/``url=``) was written verbatim into the persisted
+            # ``parameters`` column on every call, success or failure.
+            results_log["parameters"] = _redact_parameters({key: value for key, value in params.items() if key not in special_vars})
 
             if include_node_ip:
                 results_log["node"] = {"ip": get_node_external_ip()}
@@ -441,7 +475,10 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             except Exception as exc:
                 # A failed call is exactly the one worth a log row; record the error and finalize
                 # before re-raising, otherwise the log silently contains successes only.
-                results_log["results"]["error"] = f"{type(exc).__name__}: {exc}"
+                # Scrubbed: driver exception text routinely embeds the credential it failed with
+                # (psycopg2.OperationalError quotes the whole DSN, password included), and this
+                # string lands in a long-lived DB log table via finalize_function_log().
+                results_log["results"]["error"] = _redact_secrets(f"{type(exc).__name__}: {exc}")
                 raise
             finally:
                 try:

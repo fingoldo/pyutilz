@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- asserting a FORMATTED string against a lazily-formatted log record ------------------------
 #
@@ -152,7 +152,7 @@ def scan_lazy_log_assertion(
     formats, eager = _format_strings(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
-        if not (py.name.startswith("test_") or "tests" in py.parts):
+        if not is_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:

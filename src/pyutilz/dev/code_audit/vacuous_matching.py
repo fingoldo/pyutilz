@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- vacuous truth in a matching predicate --------------------------------------------------------
 #
@@ -53,20 +53,30 @@ def scan_vacuous_empty_pattern_match(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src = py.read_text(encoding="utf-8", errors="replace")
-        src_lines = split_src_lines(src)
+        src_lines = _read_src_lines(py)
+        src: "str | None" = None
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            fn_src = ast.get_source_segment(src, fn) or ""
+            # Built LAZILY, and from the already-materialised `src_lines`, only once a candidate
+            # `all(... for x in NAME)` has actually been found. `ast.get_source_segment` re-splits
+            # the WHOLE file on every call, so slicing eagerly per function was O(functions x file
+            # size): 23.5 s over `tests/` against 0.45 s for the same 7 findings.
+            fn_src: "str | None" = None
             for call in ast.walk(fn):
                 if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "all"):
                     continue
                 if not (call.args and isinstance(call.args[0], (ast.GeneratorExp, ast.ListComp))):
                     continue
                 iterable = call.args[0].generators[0].iter
-                if not isinstance(iterable, ast.Name) or _is_guarded(iterable.id, fn_src, src):
+                if not isinstance(iterable, ast.Name):
+                    continue
+                if src is None:
+                    src = "\n".join(src_lines)
+                if fn_src is None:
+                    fn_src = "\n".join(src_lines[fn.lineno - 1 : (fn.end_lineno or fn.lineno)])
+                if _is_guarded(iterable.id, fn_src, src):
                     continue
                 findings.append(
                     Finding(

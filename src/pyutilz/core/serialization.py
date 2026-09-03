@@ -19,7 +19,7 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 import sys
 import io
@@ -106,7 +106,45 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
         raise
 
 
-def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False) -> Any:
+# A zlib stream declares nothing about its output size, so `zlib.decompress` sizes the allocation
+# from data the caller may not have authored (a cache entry, a message-queue payload, a file from
+# elsewhere): a few-KB "zip bomb" expands to gigabytes before pickle.loads is ever reached. Same
+# shape of cap as web/cached_client's MAX_RETRY_AFTER_SECONDS on a remote-controlled quantity.
+# 4 GiB is deliberately generous -- this module is routinely used on large model/dataframe dumps,
+# so the default must bite only on the pathological case; pass `max_output_bytes=None` to opt out.
+DEFAULT_MAX_DECOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
+_DECOMPRESS_CHUNK_BYTES = 16 * 1024 * 1024
+
+
+def _decompress_capped(data: bytes, max_output_bytes: Optional[int]) -> bytes:
+    """zlib-decompress ``data``, raising ``ValueError`` once the output would exceed ``max_output_bytes``.
+
+    Incremental (``decompressobj().decompress(..., max_length=...)``) rather than one-shot, so the
+    ceiling is enforced BEFORE the memory is committed -- checking a size after ``zlib.decompress``
+    returned would already have allocated it. ``None`` restores the unbounded one-shot behaviour.
+    """
+    if max_output_bytes is None:
+        return zlib.decompress(data)
+    decompressor = zlib.decompressobj()
+    chunks: List[bytes] = []
+    produced = 0
+    pending = data
+    while True:
+        chunk = decompressor.decompress(pending, _DECOMPRESS_CHUNK_BYTES)
+        pending = decompressor.unconsumed_tail
+        produced += len(chunk)
+        if produced > max_output_bytes:
+            raise ValueError(
+                f"unserialize: decompressed payload exceeds max_output_bytes={max_output_bytes}; "
+                "refusing to continue (pass max_output_bytes=None to accept an unbounded expansion)"
+            )
+        chunks.append(chunk)
+        if not pending and (decompressor.eof or not chunk):
+            break
+    return b"".join(chunks)
+
+
+def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False, max_output_bytes: Optional[int] = DEFAULT_MAX_DECOMPRESSED_BYTES) -> Any:
     """
     If fname is passed, data will be read from disk.
     Otherwise, obj will be read from memory directl.
@@ -125,6 +163,10 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     Write the sidecar for a trusted file with ``pyutilz.core.safe_pickle.write_sidecar(path)``.
     Has no effect when ``obj`` is already bytes/a file-like object (there's no "path" to check a
     sidecar against; that in-memory data was already produced within the same process/caller).
+
+    ``max_output_bytes`` (default :data:`DEFAULT_MAX_DECOMPRESSED_BYTES`) bounds how much data the
+    compressed payload may expand to, raising ``ValueError`` instead of letting a zlib bomb allocate
+    without limit; pass ``None`` for the historical unbounded behaviour.
 
     Raises ``FileNotFoundError`` for a missing path, ``TypeError`` for an unsupported input type,
     and propagates any deserialization/I/O error. A ``None`` return therefore means exactly one
@@ -160,7 +202,7 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
             data = obj
             if compression is not None:
                 try:
-                    data = zlib.decompress(obj)
+                    data = _decompress_capped(obj, max_output_bytes)
                 except zlib.error:
                     # zlib raises "incorrect header check" / "incorrect data check" for uncompressed input:
                     # fall back to treating obj as raw (uncompressed) pickle bytes.

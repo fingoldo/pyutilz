@@ -86,3 +86,17 @@ class LLMUnparseableResponseError(LLMProviderError):
         # Kept because "the body was not JSON" is unactionable on its own - an HTML gateway page, an empty
         # string and a truncated envelope need different responses from a human reading the log.
         self.body_excerpt = body_excerpt
+
+
+class ClaudeCodeToolUseError(LLMProviderError, RuntimeError):
+    """Raised when a Claude Code session emits a tool-use block despite tools being disabled.
+
+    Also a ``RuntimeError`` (deliberately NOT an ``OSError``/``ConnectionError``) so the provider's
+    transient-failure retry arm does not swallow it: an escaped tool call is a security event to
+    surface to the caller, never something to retry.
+
+    Rooted at ``LLMProviderError`` -- and therefore living here rather than in
+    ``claude_code_provider`` -- because it used to subclass ``RuntimeError`` alone: the domain's
+    documented catch-all ``except LLMProviderError`` did not catch it, so the one error the design
+    most wants surfaced was the one that escaped the handler callers are told to write.
+    """

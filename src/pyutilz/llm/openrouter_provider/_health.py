@@ -58,7 +58,7 @@ def _resolve_or_api_key(explicit: str | None) -> str | None:
     try:
         s = _pkg().get_llm_settings()
         if s.openrouter_api_key:
-            return s.openrouter_api_key.get_secret_value()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+            return s.openrouter_api_key.get_secret_value()  # type: ignore[no-any-return]  # pydantic SecretStr on a settings object obtained from an untyped _pkg() lookup
     except Exception as e:  # nosec B110 - best-effort optional-settings lookup; absence of settings must fall through to the "no key configured" None return, not raise
         logger.debug("Could not load OR API key from settings: %s", e)
         pass
@@ -237,7 +237,7 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
             "supports_implicit_caching": e.get("supports_implicit_caching"),
         })
 
-    def _best(field: str, op):
+    def _best(field: str, op: Any) -> Any:
         """Apply `op` (e.g. min/max) over the numeric values of `field` across normalized endpoints, or None if none numeric."""
         vals = [n[field] for n in norm if isinstance(n[field], (int, float))]
         return op(vals) if vals else None

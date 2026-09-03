@@ -111,7 +111,7 @@ def get_own_memory_usage() -> "Optional[float]":
         return _LAST_OWN_MEMORY_USAGE_GB
 
     _LAST_OWN_MEMORY_USAGE_GB = memory_usage
-    return memory_usage  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    return float(memory_usage)  # float(): psutil ships no stubs, so its memory_info() reading is Any
 
 
 def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
@@ -125,26 +125,26 @@ def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
 
     # Get a handle to the current process
     if not pid:
-        pid = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]
+        pid = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
 
     # Define argument and return types for SetProcessWorkingSetSizeEx
-    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.argtypes = [  # type: ignore[attr-defined]
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.argtypes = [  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
         ctypes.wintypes.HANDLE,  # Process handle
         SIZE_T,  # Minimum working set size
         SIZE_T,  # Maximum working set size
         ctypes.wintypes.DWORD,  # Flags
     ]
-    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.restype = ctypes.wintypes.BOOL  # type: ignore[attr-defined]
+    ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.restype = ctypes.wintypes.BOOL  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
 
     # Define constants for SetProcessWorkingSetSizeEx
     QUOTA_LIMITS_HARDWS_MIN_DISABLE = 0x00000002
 
     # Attempt to set the working set size
-    result = ctypes.windll.kernel32.SetProcessWorkingSetSizeEx(pid, SIZE_T(-1), SIZE_T(-1), QUOTA_LIMITS_HARDWS_MIN_DISABLE)  # type: ignore[attr-defined]
+    result = ctypes.windll.kernel32.SetProcessWorkingSetSizeEx(pid, SIZE_T(-1), SIZE_T(-1), QUOTA_LIMITS_HARDWS_MIN_DISABLE)  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
 
     if result == 0:
         # Retrieve the error code
-        error_code = ctypes.windll.kernel32.GetLastError()  # type: ignore[attr-defined]
+        error_code = ctypes.windll.kernel32.GetLastError()  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
         logger.error("SetProcessWorkingSetSizeEx failed with error code: %s", error_code)
         return False
     else:

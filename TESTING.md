@@ -59,7 +59,10 @@ commit time. Selected entries:
 | `test_no_import_cycles.py`              | Tarjan's SCC over the AST-built import graph; flags multi-node cycles.                                                                               |
 | `test_logger_lazy_formatting.py`        | Logger calls use `%`-style formatting (lazy) instead of f-strings (eager) so messages aren't formatted when level is disabled.                       |
 | `test_deferred_drift.py`                | Counts every `_USER_DEFERRED_*` whitelist across the meta-test suite. Fails when a whitelist grows; refresh via `--refresh-debt-baseline`.           |
-| `test_shared_checks_wired.py`           | Runs the cross-project checks py-ci-shared already ships: 1000-LOC module budget, per-job CI `timeout-minutes`, reviewed `continue-on-error`, entry-point resolvability, markdown-link targets, git-dependency pinning, CI reachability of every `tests/` subdir. |
+| `test_shared_checks_wired.py`           | Runs the cross-project checks py-ci-shared already ships: 1000-LOC module budget over `src/` **and** `tests/`, per-job CI `timeout-minutes`, reviewed `continue-on-error`, entry-point resolvability, markdown-link targets, git-dependency pinning, CI reachability of every `tests/` subdir. |
+| `test_scanner_positive_and_negative_cases.py` | Every registered `code_audit` scanner has both a test asserting a non-empty result and one asserting an empty result; exemptions need a written reason and go stale loudly. |
+| `test_code_audit_tests_baseline.py`      | Points the TEST-QUALITY scanners at `tests/` itself — `nondiscriminating_test` and `source_text_assertion` included, so a test that asserts nothing, or asserts against source text instead of behaviour, fails here. Every baseline entry carries a written per-entry justification in the module docstring. |
+| `test_no_module_reload.py`               | Bans unreviewed `importlib.reload()`, `sys.modules.pop("pyutilz...")` and bare `sys.modules[...] = ...` writes under `tests/` — the three routes that split module identity or leave a stub package visible to the rest of the process. |
 | `test_gate_integrity.py`                | Every blocking gate's scope narrowing carries a written reason; mypy runs through a wrapper that requires its completion line, not just exit 0; the CI coverage floor equals `[tool.coverage.report] fail_under`. |
 | `test_prose_numeric_claims.py`          | Counted facts in prose (alias count, provider count, mypy source-file count) are computed, not typed. Rewording a claim's anchor is itself a failure. |
 | `test_docs_inventory_parity.py`         | Extras-group descriptions match `[project.optional-dependencies]`; documented paths and pytest markers exist; every shipped module appears in some orientation doc (warn). |
@@ -92,14 +95,39 @@ pre-commit hook blocks accidental commits of API keys to source files.
 
 ## Test layout
 
-Most test files sit flat at `tests/` root; three subfolders exist for a real reason:
-`tests/performance/kernel_tuning/`, `tests/stats/`, and `tests/system/` group tests for source
+Most test files sit flat at `tests/` root; four subfolders exist for a real reason:
+`tests/code_audit/`, `tests/performance/kernel_tuning/`, `tests/stats/`, and `tests/system/` group tests for source
 subpackages that were split into multiple files (`performance/kernel_tuning/*`, `stats/*`,
 `system/gpu_dispatch.py` + `system/system/*`) — one test-file-per-source-file would otherwise
 scatter closely-related coverage across many flat-root files. New tests for those three source
 areas go in the matching subfolder; everything else (including the rest of `system/` —
 `monitoring.py`, `parallel.py`, `distributed.py` — which predate this convention and stayed at
 flat-root for historical reasons) goes at `tests/` root as `test_<module_name>.py`.
+
+`tests/code_audit/` mirrors `src/pyutilz/dev/code_audit/` one-for-one: one `test_<family>.py` per
+scanner family, named after the source module it exercises (`test_mutable_defaults.py` for
+`mutable_defaults.py`), plus a few files named after an audit wave rather than a scanner
+(`test_audit_20260903_scanner_fixes_a_l.py`) where the wave's fixes landed as one reviewed set and
+each test names the finding it pins. It was carved out of a single 11306-line flat-root
+test_code_audit file — the production side of the same feature had already been split into
+one module per scanner to respect CLAUDE.md's module-size rule, while the test side had not.
+Fixtures used by more than one family (`_write`, and the snippet builders shared across waves)
+live in `tests/code_audit/_helpers.py`; a new scanner gets a new `test_<family>.py`, never an
+append to an unrelated one.
+
+Two meta-tests hold that structure in place:
+
+- `tests/test_meta/test_shared_checks_wired.py::test_no_new_file_over_1k_loc` applies the
+  1000-LOC module budget to `tests/` as well as `src/`. The files already over the limit are
+  grandfathered at their measured size in `_loc_over_1k_baseline.json` with zero growth slack, so
+  they may shrink but not grow, and no new oversized file may be added on either side. Refresh
+  the baseline (`--refresh-loc-budget-baseline`) only after a real split or shrink.
+- `tests/test_meta/test_scanner_positive_and_negative_cases.py` enforces, for every scanner in
+  `get_scanners()`, that some test asserts a NON-empty result (the scanner fires on the defect)
+  and some test asserts an EMPTY one (it stays silent on clean input). Both are read statically
+  out of the test sources. A scanner that genuinely cannot have a clean case goes in that file's
+  `_NO_CLEAN_CASE_POSSIBLE` with a written reason; the dict is empty today, and a third test
+  fails if an entry there goes stale.
 
 `_extra`/`_extra2`/`_extra3` suffixes on some files (e.g. `test_system_extra3.py`,
 `test_pandaslib_extra2.py`) mark tests added later to close a specific coverage gap in the base

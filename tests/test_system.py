@@ -9,6 +9,17 @@ Tests cover:
 import pytest
 import tracemalloc
 
+# The OS-probe binaries are resolved to an absolute path via `_resolve_binary()` (shutil.which per
+# PATH entry) before being spawned, so a planted executable in the process's current directory can
+# never win -- see its docstring. That resolution is a different concern from the output parsing
+# these tests exercise, and most of the probed binaries (lscpu, ioreg, getprop, pylspci) do not
+# exist on every OS this suite runs on, so it is stubbed to an identity here in all three modules
+# that call it.
+@pytest.fixture(autouse=True)
+def _stub_binary_resolution(monkeypatch):
+    for module in ("probing", "sysinfo", "fsutils"):
+        monkeypatch.setattr(f"pyutilz.system.system.{module}._resolve_binary", lambda name: name, raising=False)
+
 
 class TestGetSystemInfo:
     """Test get_system_info function - command injection fix"""
@@ -105,8 +116,9 @@ class TestShowTraceMallocSnapshot:
             # Call function
             show_tracemalloc_snapshot(N=5)
         except Exception:
-            # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
-            pass
+            # The cleanup contract holds on the raising path too -- assert it HERE rather than
+            # swallowing, so this handler cannot hide a leak behind an unrelated exception.
+            assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when show_tracemalloc_snapshot() raises"
 
         # Should NOT be tracing after function completes
         assert not tracemalloc.is_tracing(), "tracemalloc should be stopped after show_tracemalloc_snapshot() (resource leak)"
@@ -123,7 +135,8 @@ class TestShowTraceMallocSnapshot:
             # This might raise an exception
             show_tracemalloc_snapshot(N=-1)  # Invalid argument
         except Exception:
-            pass  # opportunistic: this test's real assertion is the cleanup check below, not whether this call raises
+            # Same contract on the raising path -- asserted inside the handler so it cannot swallow a leak.
+            assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when show_tracemalloc_snapshot() raises"
 
         # Should still stop tracemalloc even if exception occurred
         assert not tracemalloc.is_tracing(), "tracemalloc should be stopped even when exception occurs (try/finally fix)"
@@ -187,14 +200,19 @@ class TestGetCpuUsage:
         """Test that get_system_info includes CPU usage (not 0.0 from first call)"""
         from pyutilz.system import get_system_info
 
-        info = get_system_info()
+        # return_usage_stats=True, not the bare default: CPU load lives behind that flag (the
+        # documented default enables only return_sensitive_info/return_os_info), so a bare call
+        # asserts the flag's semantics rather than the "0.0 from the first psutil call" regression
+        # this test is named for.
+        info = get_system_info(return_usage_stats=True)
         if info is None:
             pytest.skip("get_system_info returned None (missing dependencies)")
-        # Should include CPU info
-        if "cpu_current_load_percent" in info:
-            usage = info["cpu_current_load_percent"]
-            assert isinstance(usage, (int, float))
-            assert 0 <= usage <= 100
+        # Unconditional: the key going missing is the STRONGER regression this test names, so assert
+        # its presence rather than treating its absence as "nothing to check".
+        assert "cpu_current_load_percent" in info, f"get_system_info() no longer reports CPU load; keys: {sorted(info)}"
+        usage = info["cpu_current_load_percent"]
+        assert isinstance(usage, (int, float))
+        assert 0 <= usage <= 100
 
     def test_psutil_cpu_percent_called_correctly(self, monkeypatch):
         """get_system_info asks psutil for BOTH the aggregate and the per-core CPU load.

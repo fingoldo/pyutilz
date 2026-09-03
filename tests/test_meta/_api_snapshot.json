@@ -33,6 +33,7 @@
       "login": "value",
       "login_input_name": "value",
       "logout_signs": "value",
+      "no_sandbox": "value",
       "password_input_name": "value",
       "proxy_server": "value",
       "pwd": "value",
@@ -183,10 +184,12 @@
       "log_loaded_rows": "callable(obj:any:0:, source:any:0:, source_type:any:1:'db_table', results_log:any:1:None, lang:any:1:None, verbose:any:1:False)",
       "log_result": "callable(results_log:any:0:, key:any:0:, value:any:0:, verbose:any:1:True)",
       "log_results": "callable(results_log:any:0:, results:any:0:, verbose:any:1:True)",
+      "log_throttle": "callable(key:any:0:, min_interval:any:1:60.0)",
       "logged": "callable(db_path:any:1:None, explicit_only:any:1:False, allowed_types:any:1:<unstable-default>, include_node_ip:any:1:True)",
       "logger": "value",
       "lookup_in_stack": "callable(variable:any:0:)",
       "random": "callable()",
+      "reset_log_throttles": "callable()",
       "sep": "value",
       "suffixize": "callable(noun:any:0:, qty:any:0:)"
     },
@@ -205,10 +208,12 @@
       "log_loaded_rows": "callable(obj:any:0:, source:any:0:, source_type:any:1:'db_table', results_log:any:1:None, lang:any:1:None, verbose:any:1:False)",
       "log_result": "callable(results_log:any:0:, key:any:0:, value:any:0:, verbose:any:1:True)",
       "log_results": "callable(results_log:any:0:, results:any:0:, verbose:any:1:True)",
+      "log_throttle": "callable(key:any:0:, min_interval:any:1:60.0)",
       "logged": "callable(db_path:any:1:None, explicit_only:any:1:False, allowed_types:any:1:<unstable-default>, include_node_ip:any:1:True)",
       "logger": "value",
       "lookup_in_stack": "callable(variable:any:0:)",
       "random": "callable()",
+      "reset_log_throttles": "callable()",
       "sep": "value",
       "suffixize": "callable(noun:any:0:, qty:any:0:)"
     },
@@ -402,12 +407,13 @@
       "rexecute": "callable(method_name:any:0:, args:*args:0:, max_retries:kw:1:None, kwargs:**kw:0:)"
     },
     "serialization": {
+      "DEFAULT_MAX_DECOMPRESSED_BYTES": "value",
       "PickleVerificationError": "class:pyutilz.core.safe_pickle.PickleVerificationError",
       "atomic_write_bytes": "callable(target_path:any:0:, writer_fn:any:0:, fsync:kw:1:False)",
       "logger": "value",
       "serialize": "callable(obj:any:0:, fname:any:1:None, compression:any:1:9)",
       "str_to_class": "callable(classname:any:0:)",
-      "unserialize": "callable(obj:any:0:, compression:any:1:9, verify_sidecar:any:1:False)"
+      "unserialize": "callable(obj:any:0:, compression:any:1:9, verify_sidecar:any:1:False, max_output_bytes:any:1:4294967296)"
     },
     "similarity": {
       "HAS_NUMBA": "value",
