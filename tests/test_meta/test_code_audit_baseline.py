@@ -27,6 +27,12 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
 
+2026-09-03, fourth batch (test_asserts_against_production_constant): one entry, `default_via_or`
+on `alias.asname or alias.name` -- the same canonical ast-alias idiom reviewed twice below, where
+`asname` is `str | None` and never the empty string. The scanner's own hits against real code were
+not baselined: six were false and were fixed in the rule, and the one true positive was fixed in
+the codebase it found (a scraper test comparing a variable with its own definition).
+
 2026-09-03, second batch (guard_decidable_from_constants, sql_selects_unread_column,
 count_then_fetch_same_table): one new entry, `default_via_or` on `alias.asname or alias.name`
 -- the same canonical ast-alias idiom already reviewed below, where `asname` is `str | None` and

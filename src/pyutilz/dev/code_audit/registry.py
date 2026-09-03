@@ -66,6 +66,7 @@ from .effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
 from .guard_decidable_from_constants import scan_guard_decidable_from_constants
 from .count_then_fetch_same_table import scan_count_then_fetch_same_table
 from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
+from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
 from .sql_selects_unread_column import scan_sql_selects_unread_column
 from .asymmetric_except_siblings import scan_asymmetric_except_siblings
@@ -209,6 +210,7 @@ register_scanner("sql_selects_unread_column", scan_sql_selects_unread_column)
 register_scanner("count_then_fetch_same_table", scan_count_then_fetch_same_table)
 register_scanner("sentinel_cached_as_answer", scan_sentinel_cached_as_answer)
 register_scanner("accumulator_helper_bypassed", scan_accumulator_helper_bypassed)
+register_scanner("test_asserts_against_production_constant", scan_test_asserts_against_production_constant)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
