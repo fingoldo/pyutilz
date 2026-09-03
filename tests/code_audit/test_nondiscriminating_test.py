@@ -51,3 +51,23 @@ def test_x():
     do_work()
 """)
     assert len(scan_nondiscriminating_test_functions(tmp_path)) == 1
+
+
+def test_nondiscriminating_test_accepts_a_PRIVATE_assertion_helper(tmp_path: Path):
+    """A shared checker named `_assert_...` carries the assertion just as `assert_...` does.
+
+    Factoring the check into one helper is the refactor this scanner should encourage; matching only the
+    public spelling reported every delegating test as checking nothing.
+    """
+    _write(
+        tmp_path,
+        "test_d.py",
+        """
+def _assert_traceback_preserved(msg):
+    assert msg in collect()
+
+def test_x():
+    _assert_traceback_preserved("could not save %s")
+""",
+    )
+    assert scan_nondiscriminating_test_functions(tmp_path) == []
