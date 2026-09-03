@@ -33,7 +33,11 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 # expected condition, and its substitution is the intended answer rather than a masked failure.
 
 DEFAULT_AUDIBLE_LOG_METHODS: frozenset[str] = frozenset({"warning", "error", "exception", "critical", "warn"})
-DEFAULT_AUDIBLE_FUNCTIONS: frozenset[str] = frozenset({"log_throttle"})
+# `print` counts. The concern this check raises is that the substituted value is
+# INDISTINGUISHABLE downstream from a real result, and a line on stdout distinguishes it -- for a
+# CLI script that is the notification channel, not a lapse. Three handlers in a harvest script
+# that print exactly what they substituted and why were reported as silent.
+DEFAULT_AUDIBLE_FUNCTIONS: frozenset[str] = frozenset({"log_throttle", "print"})
 
 
 def _is_import_error_only(handler: ast.ExceptHandler) -> bool:
