@@ -270,6 +270,57 @@ class TestUnbackedAuditDispositions:
 
         assert len(unbacked_audit_dispositions(audit, repo)) == 1
 
+    def test_prose_saying_resolved_in_lower_case_is_not_a_disposition(self, tmp_path):
+        """The marker is the fixed upper-case vocabulary word, not the English verb. Matching it case-
+        insensitively claimed 163 ordinary table rows on autopsia 2026-09-03 - "...the parameters were
+        resolved at age 70..." among them - each arriving as a demand to cite an artefact for a sentence
+        that was never a disposition."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "x = 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", "| F01 | P1 | the parameters were resolved at age 70 while the gate ignored them |\n")
+
+        assert unbacked_audit_dispositions(audit, repo) == []
+
+    def test_a_field_name_containing_resolved_is_not_a_disposition(self, tmp_path):
+        """The same failure with no English verb in sight: the row's only hit was a serialised field name."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "x = 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", "| F02 | P2 | `resolved[].observation_kind` is stripped by the response model |\n")
+
+        assert unbacked_audit_dispositions(audit, repo) == []
+
+    def test_a_resolved_row_citing_a_symbol_written_as_a_call_is_backed(self, tmp_path):
+        """A citation names a function the way prose names one - with the parentheses, or qualified by the
+        class it hangs off. Requiring an exact string match reported 25 autopsia rows citing real, findable
+        symbols as citing nothing."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/obs.py", "class Observation:\n    def is_all_population(self):\n        return True\n")
+        audit = repo / "audits"
+        self._write(audit, "call.md", "| F03 | RESOLVED | fixed in `Observation.is_all_population()` |\n")
+        self._write(audit, "bare.md", "| F04 | RESOLVED | fixed in `is_all_population()` |\n")
+
+        assert unbacked_audit_dispositions(audit, repo) == []
+
+    def test_a_resolved_row_merely_mentioning_an_identifier_is_still_reported(self, tmp_path):
+        """The other half of the bar. Accepting any row that CONTAINS a real name would make this rule fire
+        on nothing, so a citation has to BE a name rather than merely mention one."""
+        from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
+
+        repo = tmp_path / "repo"
+        self._write(repo, "src/mod.py", "def differential():\n    return 1\n")
+        audit = repo / "audits"
+        self._write(audit, "a.md", '| F05 | RESOLVED | see `assert differential[0]["rank"] == 1` |\n')
+
+        assert len(unbacked_audit_dispositions(audit, repo)) == 1
+
     def test_rows_that_are_not_resolved_are_ignored(self, tmp_path):
         from pyutilz.dev.meta_test_utils import unbacked_audit_dispositions
 

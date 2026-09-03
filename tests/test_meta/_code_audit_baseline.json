@@ -100,7 +100,7 @@
   "non_neutral_except_fallback::dev/freevar_analysis.py:425",
   "non_neutral_except_fallback::dev/meta_test_utils.py:240",
   "non_neutral_except_fallback::dev/meta_test_utils.py:279",
-  "non_neutral_except_fallback::dev/meta_test_utils.py:670",
+  "non_neutral_except_fallback::dev/meta_test_utils.py:682",
   "non_neutral_except_fallback::llm/claude_code_provider.py:743",
   "non_neutral_except_fallback::llm/openrouter_provider/_provider.py:310",
   "non_neutral_except_fallback::llm/token_counter.py:31",

@@ -617,8 +617,20 @@ def findings_ratchet(findings: Iterable[str], baseline_path: Path) -> tuple[list
     return sorted(current - known), sorted(known - current)
 
 
-_DISPOSITION_RE = re.compile(r"\bRESOLVED\b", re.IGNORECASE)
+# CASE-SENSITIVE on purpose. A disposition is written in the fixed vocabulary RESOLVED / DOCUMENTED /
+# FUTURE / REJECTED, always upper case, so matching case-insensitively claimed ordinary prose and field
+# names instead: measured on autopsia 2026-09-03, the IGNORECASE form claimed 163 table rows the
+# upper-case one does not - among them "...the parameters were resolved at age 70..." and a row whose
+# only hit was the field name `resolved[].observation_kind`. Every row it stops claiming was checked:
+# the nine whose own cell could read as a verdict are table HEADERS or data columns, never a
+# disposition, so nothing real stops being checked.
+_DISPOSITION_RE = re.compile(r"\bRESOLVED\b")
 _CITATION_RE = re.compile(r"`([^`]+)`")
+# A citation naming a symbol the way prose names one: `is_all_population()`, `_http.get_text`. Anchored
+# and narrow - a dotted identifier with an optional call suffix and nothing else - so a real name written
+# naturally is recognised without degenerating into "any row mentioning any identifier passes", which
+# would make the rule fire on nothing.
+_QUALIFIED_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?")
 
 
 @lru_cache(maxsize=8)
@@ -672,6 +684,24 @@ def _is_a_commit_this_repo_has(cite: str, repo_root: Path) -> bool:
     return done.returncode == 0
 
 
+def _names_a_repo_symbol(citation: str, repo_root: Path) -> bool:
+    """Whether a citation names a symbol this repository defines, written as prose writes one.
+
+    `is_all_population()` and `Observation.is_all_population()` name the same function an exact-match test
+    misses over a call suffix and an attribute prefix; `_http.get_text` and `TB_notif_num` are the same
+    shape. Measured on autopsia 2026-09-03: 25 rows citing a real, findable symbol were reported as citing
+    nothing for this reason alone. The match stays anchored to a whole dotted name, so a citation that
+    merely CONTAINS an identifier is still reported - a rule that accepted any row mentioning any name
+    would never fire.
+    """
+    text = citation.strip()
+    if not _QUALIFIED_NAME_RE.fullmatch(text):
+        return False
+    name = text.removesuffix("()")
+    symbols = _repo_symbols(repo_root)
+    return name in symbols or name.rsplit(".", 1)[-1] in symbols
+
+
 def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_prefix: str = "test_") -> list[str]:
     """Find audit rows marked RESOLVED that cite nothing which exists.
 
@@ -716,6 +746,8 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
                 elif _is_a_commit_this_repo_has(cite, repo_root):
                     backed = True
                 elif cite in _repo_symbols(repo_root):
+                    backed = True
+                elif _names_a_repo_symbol(cite, repo_root):
                     backed = True
             if not backed:
                 cited = ", ".join(citations) if citations else "nothing"
