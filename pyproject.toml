@@ -459,13 +459,13 @@ exclude_lines = [
 precision = 2
 show_missing = true
 
-# Coverage ratchet. Measured 84.87% on 2026-09-02 over the whole suite (Windows dev box,
-# `python -m coverage run -m pytest --no-cov`); set just under that, with a couple of points of
-# headroom for the platform delta (CI runs ubuntu-latest, where the Windows-only probes in
-# system/ go uncovered and the Linux-only ones do not). RAISE this when coverage rises; never
-# lower it to make a run pass. The CI job passes its own --cov-fail-under on the command line,
-# which overrides this value -- keep the two in step.
-fail_under = 82
+# Coverage ratchet. Measured 87.11% on 2026-09-03 over the whole suite (Windows dev box,
+# `python -m coverage run -m pytest --no-cov -m "not gpu"`), up from 84.87% the day before as two
+# audit waves added regression tests. Set a couple of points under that: the matrix now runs three
+# OSes, and each leaves the other platforms' probes in system/ uncovered, so the floor has to hold
+# on the least-covered one rather than on this box. RAISE this when coverage rises; never lower it
+# to make a run pass. ci.yml passes its own --cov-fail-under, and a meta-test keeps the two equal.
+fail_under = 85
 
 # Black code formatter
 [tool.black]

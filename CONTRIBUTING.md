@@ -213,7 +213,7 @@ start htmlcov/index.html  # Windows
 - **Naming**: `test_<function_name>` or `test_<feature>`
 - **Coverage**: keep new code above the enforced CI floor -- `--cov-fail-under` in
   `.github/workflows/ci.yml`, mirrored as `[tool.coverage.report] fail_under` in `pyproject.toml`
-  (currently 82; it is a ratchet, so read those two rather than trusting this figure). Note the
+  (currently 85; it is a ratchet, so read those two rather than trusting this figure). Note the
   measured percentage is against a
   shrunk denominator: `pyproject.toml`'s `[tool.coverage.run] omit` list excludes `system/scheduling/`,
   `cloud/`, `web/browser.py`, `dev/dashlib.py`, `dev/notebook_init.py`, and `text/tokenizers.py`
@@ -341,7 +341,7 @@ footer, so don't rely on one to surface the change.
 ## Pull Request Process
 
 1. **Update documentation** if adding features
-2. **Add tests** for new functionality (keep coverage above CI's `--cov-fail-under` floor, currently 82)
+2. **Add tests** for new functionality (keep coverage above CI's `--cov-fail-under` floor, currently 85)
 3. **Update CHANGELOG.md** under "Unreleased" section
 4. **Run full test suite** and ensure all tests pass
 5. **Run linters** (`python -m py_ci_shared.black_filtered_apply --config pyproject.toml --check .`, `ruff check .`) and fix issues -- never raw `black`, see "Style Guide" above

@@ -85,7 +85,7 @@ _DECLARED_NARROWINGS = {
     "pyproject::[tool.deptry]::exclude": "Dependency drift is a question about shipped imports; tests/scripts may import dev-only tooling. .claude excludes nested agent worktrees whose duplicate source trees deptry's non-git-aware scan would misattribute.",
     # -- coverage ---------------------------------------------------------------------
     "pyproject::[tool.coverage.report]::fail_under": "The coverage ratchet, measured 84.87% on 2026-09-02 and set at 82 to absorb the Windows/Linux platform delta. Raise it when coverage rises.",
-    "ci.yml::run::--cov-fail-under=82": "The CI half of the same ratchet; test_ci_coverage_gate_matches_pyproject below asserts the two numbers stay equal rather than trusting this note.",
+    "ci.yml::run::--cov-fail-under=85": "The CI half of the same ratchet; test_ci_coverage_gate_matches_pyproject below asserts the two numbers stay equal rather than trusting this note.",
 }
 
 # Tools whose exit code alone cannot certify that they ran to completion, mapped to the

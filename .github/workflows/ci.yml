@@ -88,7 +88,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=82 --durations=200
+        pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
       uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@51d618ad318e5ae1022bed214f91584953381113  # v1.3.5
