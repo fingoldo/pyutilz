@@ -107,8 +107,9 @@ _AI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bI bring (\d+)\s+years? of\b", re.I), r"I have \1 years of"),
     (re.compile(r"\bplay(?:s|ed)?\s+a\s+(?:vital|crucial|pivotal|key)\s+role\b", re.I), "is important"),
     # --- Filler adverbs ---
-    (re.compile(r"\bspecifically,?\s*", re.I), ""),
-    (re.compile(r"\bessentially,?\s*", re.I), ""),
+    # 2026-09-03: `specifically` and `essentially` moved OUT of this list into
+    # `_FILLER_ADVERB_OPENER_RE` below. Deleting them unconditionally destroyed meaning rather
+    # than trimming filler -- see that pattern for the measured damage.
 ]
 
 
@@ -126,6 +127,44 @@ _AI_HEDGING_OPENER_RE = re.compile(
     r"[!.,]*[ \t]*",
     re.I,
 )
+
+# Filler adverbs, POSITIONAL -- the same reasoning that keeps the hedging openers above out of
+# `_AI_PATTERNS`: the word is filler only in the opener slot.
+#
+# 2026-09-03. These were `(r"\bspecifically,?\s*", "")` and the same for `essentially`, i.e.
+# deleted wherever they appeared. Measured cost on the Upwork proposal generator that consumes
+# this module: 7 of its 19 stored cover letters had `specifically` removed mid-sentence, and
+# mid-sentence is exactly where the word carries meaning. That system prompt REQUIRES it --
+# "State a gap as a matter of degree, not as a categorical absence, and scope it to the specific
+# tool" -- so
+#
+#     "I haven't worked much with PostHog specifically"   (scoped, honest, door left open)
+#
+# reached a real client as
+#
+#     "I haven't worked much with PostHog"                (a categorical no)
+#
+# turning a softened gap into a flat denial inside a document written to win work. As an opener
+# ("Specifically, we need X") the word genuinely is filler and is still removed.
+#
+# `[ \t]*` after the optional comma rather than `\s*`: the old `\s*` also swallowed a following
+# newline, welding two paragraphs together when the adverb opened one.
+_FILLER_ADVERB_OPENER_RE = re.compile(
+    r"(\A|[.!?]\s+|\n)" r"(?:Specifically|Essentially|Basically|Fundamentally)" r",?[ \t]*",
+    re.I,
+)
+
+
+# A removal that leaves a space stranded before punctuation. 2026-09-03: the double-space
+# collapse in `strip_ai_patterns` only catches `  +`, so a rule deleting the last word of a
+# clause left a SINGLE orphaned space and `"SaaS implementations specifically."` shipped to a
+# client as `"SaaS implementations ."`.
+#
+# Restricted to `.` and `,` deliberately: French typography puts a space before `;` `:` `!` `?`
+# and this module is used on non-English text elsewhere, but no convention puts one before a
+# full stop or a comma.
+_ORPHANED_SPACE_BEFORE_PUNCT_RE = re.compile(r"(\w)[ \t]+([.,])")
+
 
 # Parenthetical self-justifications ("(more idiomatic)", "(which is cleaner)") -- the model
 # explaining its own stylistic choice inside the prose it was asked to write. The vocabulary is a
@@ -150,10 +189,18 @@ def strip_ai_patterns(text: str) -> str:
     started_capitalised = bool(text[:1].isupper())
     text, opener_removals = _AI_HEDGING_OPENER_RE.subn(r"\1", text)
     text = _AI_JUSTIFICATION_PARENTHETICAL_RE.sub("", text)
+    # `subn`, with the count folded into `opener_removals`: this rule removes an OPENER too, so
+    # it promotes the following clause to first position exactly as the hedging rule does, and
+    # needs the same capital restored below. Counting only the hedging removals shipped
+    # "Specifically, we need X" as "we need X" -- caught while testing this change.
+    text, _filler_removals = _FILLER_ADVERB_OPENER_RE.subn(r"\1", text)
+    opener_removals += _filler_removals
     for pattern, replacement in _AI_PATTERNS:
         text = pattern.sub(replacement, text)
     # Clean up double spaces left by removals.
     text = re.sub(r"  +", " ", text)
+    # ...and single spaces the same removals left stranded before punctuation.
+    text = _ORPHANED_SPACE_BEFORE_PUNCT_RE.sub(r"\1\2", text)
     # Fix sentence starts that lost their capital after a removal.
     text = re.sub(r"(?<=\.\s)([a-zа-яё])", lambda m: m.group(1).upper(), text)
     text = text.strip()
