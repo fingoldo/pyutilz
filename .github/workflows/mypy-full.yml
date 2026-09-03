@@ -7,7 +7,7 @@ name: MyPy
 # `speedups` was missing here until 2026-09-03, which type-checked every orjson call site in
 # the orjson-ABSENT branch while ci.yml ran the tests in the orjson-present one).
 # A real blocking gate (no continue-on-error) since 2026-07-13: `mypy src/pyutilz` verified
-# clean (0 errors, 247 source files as of 2026-09-03, with warn_unreachable now on) -- the
+# clean (0 errors, 248 source files as of 2026-09-03, with warn_unreachable now on) -- the
 # backlog is closed, same posture as mlframe's mypy-full.yml.
 #
 # Run inline rather than through fingoldo/py-ci-shared's reusable mypy-full.yml (which it used
@@ -58,12 +58,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
-          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.3.5"
+          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.3.6"
 
       - name: Show mypy version
         run: mypy --version
 
-      # --min-files 200 against a tree of 247 source files: fails a run whose scope has silently
+      # --min-files 200 against a tree of 248 source files: fails a run whose scope has silently
       # narrowed (a mistyped path, an over-eager exclude) as well as one that aborted midway.
       # Identical invocation to .pre-commit-config.yaml's mypy-full-blocking hook.
       - name: MyPy (whole project, completion-asserted)
