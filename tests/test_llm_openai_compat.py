@@ -683,3 +683,66 @@ def test_a_malformed_model_answer_inside_a_good_envelope_is_still_not_retryable(
     from pyutilz.llm.openai_compat import _is_retryable_http_error
 
     assert _is_retryable_http_error(JSONParsingError("model emitted broken JSON")) is False
+
+
+def test_the_request_timeout_scales_with_the_output_the_body_asks_for():
+    """`_get_timeout` classifies by model NAME and so cannot see how much output a call requested.
+
+    Measured 2026-09-03 on an autopsia arena run: `z-ai/glm-5.3-flash` asked for 54,853 output tokens,
+    matched none of the "slow tier" name substrings, and got the 240 s default. All nine of its captures
+    died in a ReadTimeout storm - attempts 5, 6 and 7 with 34 s, 67 s and 130 s backoffs - while the model
+    was still generating; the one call that did finish emitted 35,185 tokens, which no 240 s budget covers.
+    """
+    from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+
+    class _Probe(OpenAICompatibleProvider):
+        _base_url = "https://example.invalid"
+        _provider_name = "probe"
+        _input_cost_per_1m = 0.0
+        _output_cost_per_1m = 0.0
+
+        def _get_timeout(self, model: str) -> float:
+            return 240.0
+
+    probe = _Probe.__new__(_Probe)
+    probe.model_name = "z-ai/glm-5.3-flash"
+
+    # 54,853 tokens at the pessimistic 30 tok/s floor is ~1,828 s, which must win over the 240 s default.
+    assert probe._timeout_for({"max_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
+    # The name heuristic stays a FLOOR: a small request on a slow-tier model keeps its long allowance,
+    # because the reason that model is slow has nothing to do with how much it was asked to write.
+    assert probe._timeout_for({"max_tokens": 500}) == 240.0
+    # `max_completion_tokens` is the same request under the newer field name.
+    assert probe._timeout_for({"max_completion_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
+    # A body that names no budget at all falls back to the heuristic rather than to zero.
+    assert probe._timeout_for({}) == 240.0
+    assert probe._timeout_for({"max_tokens": None}) == 240.0
+    assert probe._timeout_for({"max_tokens": "not a number"}) == 240.0
+
+
+def test_the_post_passes_that_timeout_rather_than_the_clients_construction_time_one():
+    """A timeout computed and then not sent is the same bug with a passing unit test behind it."""
+    import asyncio
+
+    from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+
+    class _Probe(OpenAICompatibleProvider):
+        _base_url = "https://example.invalid"
+        _provider_name = "probe"
+        _input_cost_per_1m = 0.0
+        _output_cost_per_1m = 0.0
+
+    probe = _Probe.__new__(_Probe)
+    probe.model_name = "some/model"
+    seen: dict[str, object] = {}
+
+    class _Client:
+        async def post(self, path, json, timeout):  # `json` mirrors httpx's own parameter name
+            seen["timeout"] = timeout
+            raise RuntimeError("stop here - the timeout is what this test is about")
+
+    probe._client = _Client()
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(probe._post_and_unwrap({"max_tokens": 54_853}))
+    assert seen["timeout"] == pytest.approx(54_853 / 30.0)
