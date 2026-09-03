@@ -255,6 +255,9 @@ def capture_signature(obj: object) -> str:
     return "(" + ", ".join(params) + ")"
 
 
+_TYPING_ABSENT = object()
+
+
 def capture_module_surface(mod: object) -> dict[str, str]:
     """Return ``{public_name: kind_string}`` for every public symbol
     on a module (skips dunders + private). Used by API-stability
@@ -288,6 +291,11 @@ def capture_module_surface(mod: object) -> dict[str, str]:
         # instances — we WANT to track ``logger = logging.getLogger(...)``,
         # ``client = SomeClient()``, etc. as part of the surface even
         # though their ``__module__`` is outside pyutilz.
+        # A typing re-export identified by IDENTITY, not by __module__: `TYPE_CHECKING` is a plain
+        # bool, so it carries no module and slipped past the `owner == "typing"` filter below into
+        # the public snapshot of any module doing `from typing import TYPE_CHECKING`.
+        if getattr(typing, name, _TYPING_ABSENT) is obj:
+            continue
         owner = getattr(obj, "__module__", None)
         if inspect.isclass(obj):
             if owner and not owner.startswith("pyutilz"):

@@ -11,7 +11,6 @@
     },
     "browser": {
       "LoginAndGetCookies": "callable(default_headers:any:1:True, seconds_to_sleep_on_error:any:1:60, restart_on_no_cookie:any:1:False, _restart_attempt:any:1:0, _max_restart_attempts:any:1:50)",
-      "TYPE_CHECKING": "value",
       "TheCookies": "value",
       "basic_headers": "value",
       "browser": "value",
