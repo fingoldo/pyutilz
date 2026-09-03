@@ -40,6 +40,11 @@ The rest are reviewed false positives:
   entry.get("context_length")``, ``event.get("result") or event.get("error") or subtype``). The
   ast-alias case is now on its fifth review; every module that walks imports writes that line.
 
+* ``non_neutral_except_fallback [P1] dev/code_audit/registry.py:421`` -- ``_is_picklable`` exists to
+  answer exactly this question, so ``False`` in the handler IS the answer rather than a substituted
+  measurement, and the caller acts on it by running the scanner in-process. Debug level is deliberate:
+  every lambda scanner takes this path on every run.
+
 * ``default_via_or [Low] dev/freevar_analysis.py`` x2 -- ``self.stmt_lineno or lineno`` (line 0 is
   not a valid line number, so the falsy case cannot be a real value) and ``getattr(node, "targets",
   None) or [node.target]`` (AnnAssign carries ``target``, not ``targets``): both are the ast idiom,
@@ -136,6 +141,17 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   documenting defects found elsewhere is what these modules are for. Baselined rather than
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
+
+2026-09-03, log_throttle extraction: one drain and one re-add,  on
+dev/logginglib.py moving 294 -> 296. Pure line shift from the two imports the helper needs;
+the code it names is unchanged.
+
+2026-09-03, sixth batch (docstring_names_a_caller_that_does_not_call): four entries, all the
+scanner reporting its own prose. `comment_names_missing_symbol` cites `_flush_rows()`, the
+worked example from the codebase this rule was written for, which is the same illustrative-prose
+class reviewed twice below -- documenting a defect found elsewhere is what these modules are for.
+`default_via_or` is on `match.group("quoted") or match.group("bare")`, where exactly one of the
+two alternatives can have matched, so the `or` is a selection and not a default.
 
 2026-09-03, fifth batch (patch_target_is_a_reexport): one entry, `default_via_or` on
 `alias.asname or alias.name` again -- the canonical ast-alias idiom, reviewed three times below

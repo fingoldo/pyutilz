@@ -16,6 +16,24 @@ from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 logger = logging.getLogger(__name__)
 
 
+# Models whose API refuses a `temperature` argument. Populated at runtime by the retry in
+# `generate_json`, never hardcoded -- see the note at that call site. Process-local by design: it is
+# a cache of an API fact, not configuration, and it must not outlive a deployment that upgrades.
+_MODELS_REJECTING_TEMPERATURE: set[str] = set()
+
+
+def _is_temperature_rejection(exc: Exception) -> bool:
+    """Is this the specific 400 that says the model will not accept `temperature`?
+
+    Matched narrowly on BOTH the status and the message. A broad `except BadRequestError` here
+    would swallow every other 400 -- an over-long prompt, a malformed tool block -- and retry it
+    identically, turning one clear error into two and a confusing log.
+    """
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    return "temperature" in str(exc).lower() and ("deprecated" in str(exc).lower() or "not supported" in str(exc).lower() or "unsupported" in str(exc).lower())
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
 
@@ -270,9 +288,37 @@ class AnthropicProvider(LLMProvider):
                     }
                 ]
 
+            # Newer models REJECT `temperature` outright -- claude-opus-5 answers
+            # `400 invalid_request_error: \`temperature\` is deprecated for this model`. The
+            # parameter is not merely ignored, so a caller that has always passed one (this
+            # library's own default is 0.7) breaks the moment a deployment moves to such a model.
+            #
+            # Discovered 2026-09-03 the expensive way: a project switched its pipeline to
+            # claude-opus-5, and every call would have 400'd in production. It surfaced only
+            # because a suite of integration tests was made runnable the same day and hit it first.
+            #
+            # LEARNED, not hardcoded. A model list here would be wrong again the next time
+            # Anthropic ships one: instead the first rejection for a given model records it in
+            # `_MODELS_REJECTING_TEMPERATURE` and the call is retried once without the parameter.
+            # Every later call for that model skips it outright, so the cost is one wasted request
+            # per model per process.
+            if self.model in _MODELS_REJECTING_TEMPERATURE:
+                kwargs.pop("temperature", None)
+
             # ``with_raw_response`` exposes HTTP headers (rate-limit + org id)
             # alongside the parsed body. Without it the SDK swallows headers.
-            raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]  # anthropic's create() overloads can't be resolved through a **dict unpack; correct at runtime
+            try:
+                raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]  # anthropic's create() overloads can't be resolved through a **dict unpack; correct at runtime
+            except Exception as exc:
+                if "temperature" not in kwargs or not _is_temperature_rejection(exc):
+                    raise
+                logger.info(
+                    "%s rejects `temperature`; retrying without it and omitting it for the rest of this process",
+                    self.model,
+                )
+                _MODELS_REJECTING_TEMPERATURE.add(self.model)
+                kwargs.pop("temperature", None)
+                raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]
             response = raw.parse()
             self._capture_response_headers(raw.headers)
 

@@ -198,7 +198,20 @@ def scan_effect_flag_outside_its_effect(
                     # That is the shape the audited codebase adopted when it fixed this defect --
                     # the breaker-skip branch ends in `continue` and `reached_uids.add()` follows
                     # it -- and without modelling that, the rule reports the FIX as the bug.
-                    if isinstance(stmt.body[-1], (ast.Continue, ast.Return, ast.Raise, ast.Break)):
+                    # ANY terminator anywhere in the guarded block, not just as its last
+                    # statement. The failure branch is routinely nested one level deeper --
+                    #
+                    #     if rows:
+                    #         try: write_outputs(...)
+                    #         except Exception:
+                    #             ...; continue
+                    #     prog[crawl]["completed"] = True
+                    #
+                    # -- and checking only `body[-1]` missed it, so the rule reported that fixed
+                    # form as the defect for the third time. Conservative on purpose: it costs the
+                    # true positives whose guard happens to contain an unrelated early exit, and
+                    # this rule has already spent more of its budget on false alarms than on them.
+                    if any(isinstance(sub, (ast.Continue, ast.Return, ast.Raise, ast.Break)) for sub in ast.walk(stmt)):
                         continue
 
                     for follower in block[index + 1 :]:
@@ -207,7 +220,16 @@ def scan_effect_flag_outside_its_effect(
                         # hits on real code were this -- and both were the FIXED form of the very
                         # defect it looks for, where the failure branch ends in `continue` and the
                         # success record follows it.
-                        if isinstance(follower, (ast.Continue, ast.Return, ast.Raise, ast.Break)):
+                        # A statement that CONTAINS a terminator counts, not just one that is
+                        # one. The correct form puts the early exit behind its own guard:
+                        #
+                        #     if not _write_ok:
+                        #         ...; continue
+                        #     prog[crawl]["completed"] = True
+                        #
+                        # Looking only at the statement itself walked straight past that
+                        # `if` and reported the record it protects.
+                        if any(isinstance(sub, (ast.Continue, ast.Return, ast.Raise, ast.Break)) for sub in ast.walk(follower)):
                             break
                         record = _is_a_success_record(follower)
                         if record is None:

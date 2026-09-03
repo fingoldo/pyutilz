@@ -91,6 +91,10 @@ from pyutilz.dev.code_audit.effect_flag_outside_its_effect import scan_effect_fl
 from pyutilz.dev.code_audit.guard_decidable_from_constants import scan_guard_decidable_from_constants
 from pyutilz.dev.code_audit.count_then_fetch_same_table import scan_count_then_fetch_same_table
 from pyutilz.dev.code_audit.accumulator_helper_bypassed import scan_accumulator_helper_bypassed
+from pyutilz.dev.code_audit.sibling_guard_missing import scan_sibling_guard_missing
+from pyutilz.dev.code_audit.sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
+from pyutilz.dev.code_audit.docstring_names_a_caller_that_does_not_call import scan_docstring_names_a_caller_that_does_not_call
+from pyutilz.dev.code_audit.vacuous_loop_assertion import scan_vacuous_loop_assertion
 from pyutilz.dev.code_audit.column_no_write_path import scan_column_no_write_path
 from pyutilz.dev.code_audit.patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from pyutilz.dev.code_audit.test_asserts_against_production_constant import scan_test_asserts_against_production_constant
@@ -7661,6 +7665,36 @@ def go(table, flags, path):
     assert scan_effect_flag_outside_its_effect(tmp_path) == []
 
 
+def test_effect_flag_outside_its_effect_sees_an_intervening_guard(tmp_path: Path):
+    """The correct form puts the early exit behind its own guard, several statements later.
+
+    Real shape, from a harvest loop: the write failure sets `_write_ok = False`, a later
+    `if not _write_ok: ... continue` protects the completion mark, and the mark is therefore on
+    the other path. Checking only whether the intervening statement IS a terminator walked
+    straight past that `if`, and this rule reported the fixed form for the third time.
+    """
+    _write(
+        tmp_path,
+        "harvest.py",
+        """
+def run(crawls, prog):
+    for crawl in crawls:
+        write_ok = True
+        if crawl.rows:
+            try:
+                write_outputs(crawl)
+            except Exception:
+                write_ok = False
+        prog.setdefault(crawl, {})
+        if not write_ok:
+            save_progress(prog)
+            continue
+        prog[crawl]["completed"] = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
 def test_effect_flag_outside_its_effect_ignores_a_self_only_link(tmp_path: Path):
     """`self` is mentioned by nearly every statement in a method, so it links nothing.
 
@@ -10743,3 +10777,530 @@ def score_grounding(pred_triples, pred_triples_raw):
 """)
     findings = scan_partial_guard_across_siblings(tmp_path)
     assert len(findings) == 1 and "score_grounding" in findings[0].detail
+
+
+# ---- sibling_guard_missing -----------------------------------------------
+
+
+def test_sibling_guard_missing_flags_the_odd_one_out(tmp_path: Path):
+    """Three siblings open `if self._closed: return`; the fourth touches the same handle and does not."""
+    _write(
+        tmp_path,
+        "handle.py",
+        """
+class Handle:
+    def read(self):
+        if self._closed:
+            return None
+        return self._fd.read()
+
+    def write(self, data):
+        if self._closed:
+            return None
+        return self._fd.write(data)
+
+    def flush(self):
+        if self._closed:
+            return None
+        return self._fd.flush()
+
+    def truncate(self):
+        return self._fd.truncate()
+""",
+    )
+    findings = scan_sibling_guard_missing(tmp_path)
+    assert len(findings) == 1, findings
+    assert "truncate" in findings[0].detail and "_fd" in findings[0].detail
+
+
+def test_sibling_guard_missing_needs_three_siblings(tmp_path: Path):
+    """Two is a coincidence; three is a convention."""
+    _write(
+        tmp_path,
+        "handle.py",
+        """
+class Handle:
+    def read(self):
+        if self._closed:
+            return None
+        return self._fd.read()
+
+    def write(self, data):
+        if self._closed:
+            return None
+        return self._fd.write(data)
+
+    def flush(self):
+        return self._fd.flush()
+
+    def truncate(self):
+        return self._fd.truncate()
+""",
+    )
+    assert scan_sibling_guard_missing(tmp_path) == []
+
+
+def test_sibling_guard_missing_accepts_a_guard_spelled_differently(tmp_path: Path):
+    """A check written another way, or later in the body, is still a check.
+
+    Reporting it would be telling the author to write the guard they already wrote.
+    """
+    _write(
+        tmp_path,
+        "handle.py",
+        """
+class Handle:
+    def read(self):
+        if self._closed:
+            return None
+        return self._fd.read()
+
+    def write(self, data):
+        if self._closed:
+            return None
+        return self._fd.write(data)
+
+    def flush(self):
+        if self._closed:
+            return None
+        return self._fd.flush()
+
+    def truncate(self):
+        if not self._closed:
+            return self._fd.truncate()
+        return None
+""",
+    )
+    assert scan_sibling_guard_missing(tmp_path) == []
+
+
+def test_sibling_guard_missing_needs_a_shared_object_attribute(tmp_path: Path):
+    """A sibling that touches none of the guarded state has no business being guarded."""
+    _write(
+        tmp_path,
+        "handle.py",
+        """
+class Handle:
+    def read(self):
+        if self._closed:
+            return None
+        return self._fd.read()
+
+    def write(self, data):
+        if self._closed:
+            return None
+        return self._fd.write(data)
+
+    def flush(self):
+        if self._closed:
+            return None
+        return self._fd.flush()
+
+    def describe(self):
+        return self._name
+""",
+    )
+    assert scan_sibling_guard_missing(tmp_path) == []
+
+
+def test_sibling_guard_missing_ignores_names_that_are_not_object_state(tmp_path: Path):
+    """The link must be the object's own state, never any shared name.
+
+    Intersecting all names produced resources like `['os', 'path']` and
+    `['Any', 'Dict', 'Optional', 'ValueError']` -- imported type names and builtins appear in every
+    method of a class, so the intersection is never empty and the link it forms means nothing.
+    """
+    _write(
+        tmp_path,
+        "writer.py",
+        """
+import os
+
+
+class Writer:
+    def save(self, path):
+        if self._in_memory:
+            return None
+        return os.replace(path, path)
+
+    def load(self, path):
+        if self._in_memory:
+            return None
+        return os.stat(path)
+
+    def clear(self, path):
+        if self._in_memory:
+            return None
+        return os.remove(path)
+
+    def atomic_write(self, path):
+        return os.replace(path, path)
+""",
+    )
+    assert scan_sibling_guard_missing(tmp_path) == []
+
+
+# ---- sql_sibling_missing_time_bound --------------------------------------
+
+
+def test_sql_sibling_missing_time_bound_flags_the_unbounded_one(tmp_path: Path):
+    """Three statements over one scan table are bounded; the fourth reads every row ever written."""
+    _write(
+        tmp_path,
+        "queries.py",
+        '''
+RECENT_SQL = "SELECT uid FROM new_upwork.scans WHERE ts > now() - interval \'7 days\'"
+
+TODAY_SQL = "SELECT uid FROM new_upwork.scans WHERE ts >= current_date"
+
+WINDOW_SQL = "SELECT uid FROM new_upwork.scans WHERE ts BETWEEN %s AND %s"
+
+ALL_SQL = "SELECT uid, payload FROM new_upwork.scans ORDER BY uid"
+''',
+    )
+    findings = scan_sql_sibling_missing_time_bound(tmp_path)
+    assert len(findings) == 1, findings
+    assert "ALL_SQL" in findings[0].detail
+
+
+def test_sql_sibling_missing_time_bound_accepts_a_key_predicate(tmp_path: Path):
+    """A predicate against a caller-supplied parameter bounds the scan to what the caller passed.
+
+    This rule's only hit on real code was `WHERE fj.client_team_uid IN %s` -- a fallback that
+    retries a handful of named clients and reads nothing else however large the table gets.
+    """
+    _write(
+        tmp_path,
+        "queries.py",
+        '''
+RECENT_SQL = "SELECT uid FROM new_upwork.scans WHERE ts > now() - interval \'7 days\'"
+
+TODAY_SQL = "SELECT uid FROM new_upwork.scans WHERE ts >= current_date"
+
+WINDOW_SQL = "SELECT uid FROM new_upwork.scans WHERE ts BETWEEN %s AND %s"
+
+RETRY_SQL = "SELECT uid, payload FROM new_upwork.scans WHERE cl_uid IN %s ORDER BY uid"
+''',
+    )
+    assert scan_sql_sibling_missing_time_bound(tmp_path) == []
+
+
+def test_sql_sibling_missing_time_bound_accepts_a_limit(tmp_path: Path):
+    """A bounded fetch is bounded, whatever bounds it."""
+    _write(
+        tmp_path,
+        "queries.py",
+        '''
+RECENT_SQL = "SELECT uid FROM new_upwork.scans WHERE ts > now() - interval \'7 days\'"
+
+TODAY_SQL = "SELECT uid FROM new_upwork.scans WHERE ts >= current_date"
+
+WINDOW_SQL = "SELECT uid FROM new_upwork.scans WHERE ts BETWEEN %s AND %s"
+
+SAMPLE_SQL = "SELECT uid, payload FROM new_upwork.scans ORDER BY uid LIMIT 100"
+''',
+    )
+    assert scan_sql_sibling_missing_time_bound(tmp_path) == []
+
+
+def test_sql_sibling_missing_time_bound_needs_two_bounded_siblings(tmp_path: Path):
+    """One bounded neighbour is not a convention, and a convention is the only evidence here."""
+    _write(
+        tmp_path,
+        "queries.py",
+        '''
+RECENT_SQL = "SELECT uid FROM new_upwork.scans WHERE ts > now() - interval \'7 days\'"
+
+ALL_SQL = "SELECT uid, payload FROM new_upwork.scans ORDER BY uid"
+
+OTHER_SQL = "SELECT uid FROM new_upwork.clients ORDER BY uid"
+''',
+    )
+    assert scan_sql_sibling_missing_time_bound(tmp_path) == []
+
+
+def test_sql_sibling_missing_time_bound_ignores_a_different_table(tmp_path: Path):
+    """The convention belongs to one table; a query over another table is not in the family."""
+    _write(
+        tmp_path,
+        "queries.py",
+        '''
+RECENT_SQL = "SELECT uid FROM new_upwork.scans WHERE ts > now() - interval \'7 days\'"
+
+TODAY_SQL = "SELECT uid FROM new_upwork.scans WHERE ts >= current_date"
+
+WINDOW_SQL = "SELECT uid FROM new_upwork.scans WHERE ts BETWEEN %s AND %s"
+
+CLIENTS_SQL = "SELECT uid, name FROM new_upwork.clients ORDER BY uid"
+''',
+    )
+    assert scan_sql_sibling_missing_time_bound(tmp_path) == []
+
+
+# ---- vacuous_loop_assertion ----------------------------------------------
+
+
+def test_vacuous_loop_assertion_flags_the_canonical_case(tmp_path: Path):
+    """Every assertion inside a loop over a call's result, with nothing pinning the count."""
+    _write(
+        tmp_path,
+        "test_rows.py",
+        """
+def test_rows(db):
+    for row in db.fetch_all():
+        assert row.uid
+""",
+    )
+    findings = scan_vacuous_loop_assertion(tmp_path)
+    assert len(findings) == 1, findings
+    assert "test_rows" in findings[0].detail
+
+
+def test_vacuous_loop_assertion_accepts_a_count_first(tmp_path: Path):
+    """`assert lst` before the loop is the whole fix, and it is an assertion outside the loop.
+
+    The rule needs no separate guard check for this, and an earlier draft that had one could never
+    fire: the two conditions overlap completely, so removing either left the other holding.
+    """
+    _write(
+        tmp_path,
+        "test_rows.py",
+        """
+def test_rows(db, lst):
+    assert lst
+    for chunk in chunks(lst, 10):
+        assert chunk
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+def test_vacuous_loop_assertion_accepts_an_assertion_outside(tmp_path: Path):
+    """An assertion the loop does not own holds the test up whatever the loop does."""
+    _write(
+        tmp_path,
+        "test_rows.py",
+        """
+def test_rows(db):
+    assert db.is_connected()
+    for row in db.fetch_all():
+        assert row.uid
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+def test_vacuous_loop_assertion_ignores_an_imported_registry(tmp_path: Path):
+    """A registry defined anywhere in the tree cannot be empty, and iterating it is not a defect.
+
+    Resolved only within the test file, `_ALIASES.items()` and `_CC_REGISTRY.items()` read as
+    collections that might be empty; they were the bulk of this rule's hits before the name
+    resolution went package-wide.
+    """
+    _write(tmp_path, "registry.py", "_ALIASES = {'a': 'alpha', 'b': 'beta'}")
+    _write(
+        tmp_path,
+        "test_aliases.py",
+        """
+from registry import _ALIASES
+
+
+def test_aliases():
+    for alias, canonical in _ALIASES.items():
+        assert canonical
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+def test_vacuous_loop_assertion_ignores_an_index_loop(tmp_path: Path):
+    """`for i in range(len(df))` is an index loop; what could be empty is decided elsewhere."""
+    _write(
+        tmp_path,
+        "test_frame.py",
+        """
+def test_frame(df):
+    for i in range(len(df)):
+        assert df.iloc[i] is not None
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+def test_vacuous_loop_assertion_ignores_a_literal(tmp_path: Path):
+    """A literal with something in it cannot iterate zero times."""
+    _write(
+        tmp_path,
+        "test_modes.py",
+        """
+def test_modes(run):
+    for mode in ["fast", "slow"]:
+        assert run(mode)
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+def test_vacuous_loop_assertion_only_reads_test_functions(tmp_path: Path):
+    """A helper that loops and asserts is not a test that stopped testing.
+
+    Replaces a version that put the same code in a non-test FILE: the filename filter it claimed
+    to exercise was dead, because the function-name check already excluded it.
+    """
+    _write(
+        tmp_path,
+        "test_rows.py",
+        """
+def check_rows(db):
+    for row in db.fetch_all():
+        assert row.uid
+""",
+    )
+    assert scan_vacuous_loop_assertion(tmp_path) == []
+
+
+# ---- docstring_names_a_caller_that_does_not_call --------------------------
+
+
+def test_docstring_names_a_caller_flags_a_rotted_pointer(tmp_path: Path):
+    """The docstring names a caller; that function contains no call to it."""
+    _write(
+        tmp_path,
+        "batching.py",
+        '''
+def _flush_rows(rows):
+    """Write the batch."""
+    return write(rows)
+
+
+def stamp_deadline(batch):
+    """Called from `_flush_rows()` on every batch boundary."""
+    return batch
+
+
+def run(rows, batch):
+    return _flush_rows(rows), stamp_deadline(batch)
+''',
+    )
+    findings = scan_docstring_names_a_caller_that_does_not_call(tmp_path)
+    assert len(findings) == 1, findings
+    assert "stamp_deadline" in findings[0].detail and "_flush_rows" in findings[0].detail
+
+
+def test_docstring_names_a_caller_accepts_a_true_pointer(tmp_path: Path):
+    """The correct form, which must stay silent."""
+    _write(
+        tmp_path,
+        "batching.py",
+        '''
+def _flush_rows(rows, batch):
+    """Write the batch."""
+    return write(rows), stamp_deadline(batch)
+
+
+def stamp_deadline(batch):
+    """Called from `_flush_rows()` on every batch boundary."""
+    return batch
+
+
+def run(rows, batch):
+    return _flush_rows(rows, batch)
+''',
+    )
+    assert scan_docstring_names_a_caller_that_does_not_call(tmp_path) == []
+
+
+def test_docstring_names_a_caller_ignores_used_by(tmp_path: Path):
+    """"used by X()" describes data far more often than it describes the call graph.
+
+    `connect` registering "the client used by execute()" says nothing about who calls `connect`,
+    and that sentence was one of this rule's first two hits.
+    """
+    _write(
+        tmp_path,
+        "graphql.py",
+        '''
+def connect(client):
+    """Register the module-level client used by execute()."""
+    return client
+
+
+def execute(query):
+    """Run a query."""
+    return query
+
+
+def run(client, query):
+    return connect(client), execute(query)
+''',
+    )
+    assert scan_docstring_names_a_caller_that_does_not_call(tmp_path) == []
+
+
+def test_docstring_names_a_caller_needs_the_name_written_as_a_call(tmp_path: Path):
+    """"Called by the scheduler" names no function, and prose is not a call-graph claim.
+
+    Replaces a test that used `caller: str` in an Args block: once the `callers?:` form was
+    dropped from the pattern, nothing could match that text either way, so the test passed with
+    the call-form requirement removed and proved nothing.
+    """
+    _write(
+        tmp_path,
+        "batching.py",
+        '''
+def _flush_rows(rows):
+    """Write the batch."""
+    return write(rows)
+
+
+def stamp_deadline(batch):
+    """Called by _flush_rows in the nightly pass, once the rows are on disk."""
+    return batch
+
+
+def run(rows, batch):
+    return _flush_rows(rows), stamp_deadline(batch)
+''',
+    )
+    assert scan_docstring_names_a_caller_that_does_not_call(tmp_path) == []
+
+
+def test_docstring_names_a_caller_ignores_a_name_from_outside_the_tree(tmp_path: Path):
+    """A name that resolves nowhere is comment_names_missing_symbol's finding, not this one."""
+    _write(
+        tmp_path,
+        "batching.py",
+        '''
+def stamp_deadline(batch):
+    """Called from `celery_beat()` in the scheduler service."""
+    return batch
+
+
+def run(batch):
+    return stamp_deadline(batch)
+''',
+    )
+    assert scan_docstring_names_a_caller_that_does_not_call(tmp_path) == []
+
+
+def test_docstring_names_a_caller_ignores_a_dead_function(tmp_path: Path):
+    """If nothing calls the documented function, the interesting finding is that it is dead."""
+    _write(
+        tmp_path,
+        "batching.py",
+        '''
+def _flush_rows(rows):
+    """Write the batch."""
+    return write(rows)
+
+
+def stamp_deadline(batch):
+    """Called from `_flush_rows()` on every batch boundary."""
+    return batch
+
+
+def run(rows):
+    return _flush_rows(rows)
+''',
+    )
+    assert scan_docstring_names_a_caller_that_does_not_call(tmp_path) == []

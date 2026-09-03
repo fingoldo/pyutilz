@@ -69,6 +69,10 @@ from .guard_decidable_from_constants import scan_guard_decidable_from_constants
 from .count_then_fetch_same_table import scan_count_then_fetch_same_table
 from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
 from .column_no_write_path import scan_column_no_write_path
+from .sibling_guard_missing import scan_sibling_guard_missing
+from .sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
+from .docstring_names_a_caller_that_does_not_call import scan_docstring_names_a_caller_that_does_not_call
+from .vacuous_loop_assertion import scan_vacuous_loop_assertion
 from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
@@ -246,6 +250,10 @@ register_scanner("accumulator_helper_bypassed", scan_accumulator_helper_bypassed
 register_scanner("test_asserts_against_production_constant", scan_test_asserts_against_production_constant)
 register_scanner("patch_target_is_a_reexport", scan_patch_target_is_a_reexport)
 register_scanner("column_no_write_path", scan_column_no_write_path)
+register_scanner("sibling_guard_missing", scan_sibling_guard_missing)
+register_scanner("sql_sibling_missing_time_bound", scan_sql_sibling_missing_time_bound)
+register_scanner("vacuous_loop_assertion", scan_vacuous_loop_assertion)
+register_scanner("docstring_names_a_caller_that_does_not_call", scan_docstring_names_a_caller_that_does_not_call)
 # Exported from the package but previously never registered, so run_all()/--check could not reach
 # them however they were invoked; the registered-vs-exported bijection meta-test now pins both ways.
 register_scanner("assert_in_loop_first_failure_only", scan_assert_in_loop_reports_only_the_first)
@@ -260,7 +268,6 @@ register_check_alias("boundary_symbol_missing", "domain_vocabulary_leak")
 register_check_alias("field_read_never_written", "record_field_flow")
 register_check_alias("field_written_never_read", "record_field_flow")
 
-
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
 # downstream project's committed baseline the moment it upgrades pyutilz: several of these need
 # project configuration to say anything at all (consumer roots, test roots, filter pairs, the fields
@@ -268,6 +275,14 @@ register_check_alias("field_written_never_read", "record_field_flow")
 # fresh mistake, which is a decision a project takes deliberately rather than inherits. Name them in
 # ``checks=`` to run them.
 OPT_IN_ONLY: frozenset[str] = frozenset({
+    # Opt-in because its hits are real instances of the class and there are a lot of them: 10 in
+    # pyutilz, 13 in the scrapers, 80 in mlframe, 0 in llm_bench. Each one is a test whose every
+    # assertion sits inside a loop over something a call produced, with nothing pinning the count
+    # -- `for chunk in chunks(lst, n): assert ...`. Whether that matters depends on how plausible
+    # an empty result is for that particular producer, which is a judgement the rule cannot make.
+    # Ninety-nine baseline entries would teach every consumer to refresh without reading, so this
+    # is for pointing at a suite you already doubt, not for a ratchet.
+    "vacuous_loop_assertion",
     # Opt-in: 225 hits in one package, and most are legitimate -- coverage annotations in
     # tests ("lines 54-90"), and prose citing a line in a file it is discussing. The rule
     # cannot tell those from a rotted pointer, and the rotted ones are better caught by

@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_table_of, _sql_text
 
 # --- a COUNT round trip that the fetch beside it already answers -------------------------------
 #
@@ -27,7 +27,6 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _
 # * the count query is a bare COUNT with no GROUP BY, so its answer is a single number rather than
 #   a breakdown the fetch does not contain.
 
-_FROM = re.compile(r"\bFROM\s+([A-Za-z_][\w.\"]*)", re.IGNORECASE)
 _COUNT = re.compile(r"\bCOUNT\s*\(", re.IGNORECASE)
 _PAGINATED = re.compile(r"\b(LIMIT|OFFSET|FETCH\s+FIRST)\b", re.IGNORECASE)
 _GROUPED = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
@@ -51,12 +50,6 @@ def _outer_query(sql: str) -> str:
         elif depth == 0:
             out.append(ch)
     return "".join(out)
-
-
-def _table_of(sql: str) -> str | None:
-    """The table this query reads, as written after FROM."""
-    match = _FROM.search(sql)
-    return match.group(1).strip('"').lower() if match else None
 
 
 def _queries_in(func: ast.AST, constants: dict[str, str]) -> list[tuple[str, int]]:
@@ -107,7 +100,7 @@ def scan_count_then_fetch_same_table(
             for index, (sql, line) in enumerate(queries):
                 if not _COUNT.search(sql) or _GROUPED.search(sql):
                     continue
-                table = _table_of(sql)
+                table = _sql_table_of(sql)
                 if table is None:
                     continue
                 # The whole list, not only the suffix: the redundancy and the TOCTOU race are the
@@ -115,7 +108,7 @@ def scan_count_then_fetch_same_table(
                 for other_index, (other_sql, other_line) in enumerate(queries):
                     if other_index == index:
                         continue
-                    if _COUNT.search(other_sql) or _table_of(other_sql) != table:
+                    if _COUNT.search(other_sql) or _sql_table_of(other_sql) != table:
                         continue
                     if _PAGINATED.search(_outer_query(other_sql)):
                         continue

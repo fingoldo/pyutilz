@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -336,3 +337,12 @@ def _own_nodes(func: ast.AST) -> "Iterator[ast.AST]":
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
         todo.extend(ast.iter_child_nodes(node))
+
+
+_SQL_FROM = re.compile(r"\bFROM\s+([A-Za-z_][\w.\"]*)", re.I)
+
+
+def _sql_table_of(sql: str) -> "Optional[str]":
+    """The table a statement reads, as written after FROM. Shared: two scanners had copies of it."""
+    match = _SQL_FROM.search(sql)
+    return match.group(1).strip('"').lower() if match else None

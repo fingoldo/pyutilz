@@ -104,3 +104,39 @@ def test_non_neutral_except_throttle_helper_counts_as_audible(tmp_path: Path):
     _write(tmp_path, "maybe.py", src)
     assert scan_non_neutral_except_fallback(tmp_path) == []
     assert len(scan_non_neutral_except_fallback(tmp_path, audible_functions=frozenset())) == 1
+
+def test_a_print_counts_as_saying_so(tmp_path):
+    """A line on stdout distinguishes the substituted value from a real result.
+
+    For a CLI script that is the notification channel, not a lapse. Three handlers in a harvest
+    script that printed exactly what they substituted and why were reported as silent.
+    """
+    (tmp_path / "harvest.py").write_text(
+        """
+def parts_done(state):
+    value = state.get("parts_done_count", 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"parts_done_count corrupted ({value!r}); resetting to 0")
+        return 0
+""",
+        encoding="utf-8",
+    )
+    assert scan_non_neutral_except_fallback(tmp_path) == []
+
+
+def test_a_silent_substitution_is_still_reported(tmp_path):
+    """The same handler without the print is the finding, so the exemption is not a hole."""
+    (tmp_path / "harvest.py").write_text(
+        """
+def parts_done(state):
+    value = state.get("parts_done_count", 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+""",
+        encoding="utf-8",
+    )
+    assert len(scan_non_neutral_except_fallback(tmp_path)) == 1
