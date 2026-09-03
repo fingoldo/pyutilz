@@ -163,12 +163,15 @@ def test_assert_in_loop_detail_stays_per_site_without_ast_unparse(tmp_path: Path
     from pyutilz.dev.code_audit.assert_in_loop import scan_assert_in_loop_reports_only_the_first
 
     _write(tmp_path, "t.py", "def test_x():\n    for r in load_rows():\n        assert r\n    for q in load_rows():\n        assert q\n")
-    unparse = _ast.unparse
-    del _ast.unparse
+    # On 3.8 there is nothing to delete - that interpreter IS the fallback path under test.
+    unparse = getattr(_ast, "unparse", None)
+    if unparse is not None:
+        del _ast.unparse
     try:
         details = [f.detail for f in scan_assert_in_loop_reports_only_the_first(tmp_path)]
     finally:
-        _ast.unparse = unparse
+        if unparse is not None:
+            _ast.unparse = unparse
     assert len(details) == 2
     assert len(set(details)) == 2
 

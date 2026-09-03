@@ -267,7 +267,9 @@ def bin_numerical_columns(
         skipped_clips = []
         if min_nuniques_to_clip:
             # do not apply clipping if # of unique values is too low (under 10)
-            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).n_unique()).collect().row(0, named=True)
+            # Cast before counting: older polars refuses n_unique on Decimal, and the count is
+            # identical either way because the cast is value-preserving for the widths used here.
+            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).cast(pl.Float64).n_unique()).collect().row(0, named=True)
             for col, nuniques in n_uniques_dict.items():
                 if nuniques < min_nuniques_to_clip:
                     for field in "min max".split():

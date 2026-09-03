@@ -383,7 +383,10 @@ def showcase_df_columns(
     # dtype header, so a caller after nothing but the returned dicts (a feature-selection loop over
     # hundreds of columns) still got every value-count table -- and, with IPython present, got those
     # tables stripped of the headers that said which column each belonged to.
-    should_print = use_print or not _facade.HAS_IPYTHON
+    # `use_print` defaults to True, so an explicit False is a deliberate "be quiet" request and must
+    # win even where IPython is absent. The old `or not HAS_IPYTHON` fallback re-enabled every table
+    # on a plain terminal, which is exactly the caller this flag exists for.
+    should_print = use_print
 
     if cols is None or len(cols) == 0:
         cols = df.columns

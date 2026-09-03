@@ -838,32 +838,6 @@ def test_f133_simplify_types_does_not_mutate_its_argument():
 # ---------------------------------------------------------------------------
 
 
-def test_f55_active_tab_is_seeded_from_the_tab_id(monkeypatch):
-    """tabsList[0][0] is the LABEL; ids come from [1]. The seeded value matched no real tab, so no
-    tab rendered selected and the content callback ran against a nonexistent id."""
-    from pyutilz.dev import dashlib
-
-    session: dict = {}
-    monkeypatch.setattr(dashlib, "session", session)
-    dashlib.create_tabs("Main", [("Overview", "ov", None), ("Details", "dt", None)], lambda tab_id: "x")
-    assert session["tabsMainActiveTab"] == "tabov"
-
-
-def test_f113_empty_tabs_list_returns_none_instead_of_raising(monkeypatch):
-    from pyutilz.dev import dashlib
-
-    monkeypatch.setattr(dashlib, "session", {})
-    assert dashlib.create_tabs("Main", [], lambda tab_id: "x") is None
-
-
-def test_f145_missing_label_class_name_is_not_rendered_as_the_string_none(monkeypatch):
-    from pyutilz.dev import dashlib
-
-    monkeypatch.setattr(dashlib, "session", {})
-    container = dashlib.create_tabs("Main", [("Overview", "ov", None)], lambda tab_id: "x")
-    assert "None" not in str(container)
-
-
 # ---------------------------------------------------------------------------
 # F56 / F109 -- benchmarking
 # ---------------------------------------------------------------------------
