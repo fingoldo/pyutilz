@@ -161,7 +161,10 @@ dataframes = [
 # Database packages
 database = [
     "sqlalchemy>=1.4",
-    "psycopg2-binary>=2.9",
+    # Capped on 3.8: 2.9.9 is the last release with a cp38 wheel, and every later one makes pip
+    # build from source, which fails on the Windows runner (no libpq, link.exe exit 1181).
+    "psycopg2-binary>=2.9,<2.9.10 ; python_version < '3.9'",
+    "psycopg2-binary>=2.9 ; python_version >= '3.9'",
     "pymysql>=1.0",
     # database/db/__init__.py imports dateutil.relativedelta unconditionally at module level
     # (database/__init__.py itself is a 4-line re-export shim with no imports of its own --
