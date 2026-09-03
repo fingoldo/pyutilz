@@ -8,7 +8,11 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded PR runs are worth cancelling; a push to master is not. The 21-leg matrix takes
+  # longer than the gap between pushes on a busy day, so cancelling meant master's own result was
+  # never established -- three consecutive runs died at 10-20 of 21 legs with zero failures and
+  # nothing to show for the minutes spent.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
