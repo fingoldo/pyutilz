@@ -822,8 +822,17 @@ class ClaudeCodeProvider(LLMProvider):
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 0,
+        images: list[str] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output."""
+        # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
+        # the Claude Code CLI takes a prompt string and no image parts, so accepting the argument and dropping it would answer a question the caller asked
+        # about a picture the model never saw -- wrong, and with nothing in the output to show it.
+        if images:
+            raise NotImplementedError(
+                f"{type(self).__name__} has no vision path; pass images to an OpenAI-compatible " "provider (e.g. OpenRouter) or send the document as text."
+            )
+
         json_system = (system or "") + "\n\nRespond with valid JSON only. No markdown, no explanation."
 
         text = await self.generate(

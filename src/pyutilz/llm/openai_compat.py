@@ -16,6 +16,7 @@ from typing import Any, NamedTuple, Optional
 import httpx
 from tenacity import retry, retry_if_exception
 
+from ._messages import build_chat_messages
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
@@ -357,17 +358,26 @@ class OpenAICompatibleProvider(LLMProvider):
         """Close the underlying httpx client."""
         await self._client.aclose()
 
+    def _messages_for(self, prompt: str, system: str | None, images: "list[str] | None") -> list[dict[str, Any]]:
+        """``_build_messages``, called with the arity the request needs.
+
+        The third argument goes only when there ARE images: ``_build_messages`` is an override point
+        that a subclass or test double may still define as ``(self, prompt, system)``, so a text-only
+        call must reach it with two arguments and an unchanged body.
+        """
+        return self._build_messages(prompt, system, images) if images else self._build_messages(prompt, system)
+
     def _build_messages(
         self,
         prompt: str,
         system: str | None = None,
-    ) -> list[dict[str, str]]:
-        """Build the OpenAI-compatible chat ``messages`` list from a ``prompt`` and optional ``system`` message."""
-        messages: list[dict[str, str]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        return messages
+        images: "list[str] | None" = None,
+    ) -> list[dict[str, Any]]:
+        """The chat ``messages`` list -- see :func:`pyutilz.llm._messages.build_chat_messages`.
+
+        Kept as a delegating METHOD because it is a documented override point.
+        """
+        return build_chat_messages(prompt, system, images)
 
     def _extra_request_body(self, model: str) -> dict[str, Any]:
         """Return provider-specific extra fields to merge into the request body.
@@ -415,6 +425,7 @@ class OpenAICompatibleProvider(LLMProvider):
         json_mode: bool = False,
         thinking: bool | str | None = None,
         json_schema: dict[str, Any] | None = None,
+        images: list[str] | None = None,
     ):
         """Stream the model's response token-by-token via SSE.
 
@@ -437,7 +448,7 @@ class OpenAICompatibleProvider(LLMProvider):
         # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
         # (``context_window``) are sync properties that may hit the network on a catalogue miss.
         await self._async_prepare()
-        body = self._build_stream_body(prompt, system, temperature, max_tokens, json_mode, thinking, json_schema)
+        body = self._build_stream_body(prompt, system, temperature, max_tokens, json_mode, thinking, json_schema, images)
 
         attempt = 0
         emitted_any = False
@@ -562,6 +573,7 @@ class OpenAICompatibleProvider(LLMProvider):
         json_mode: bool,
         thinking: bool | str | None,
         json_schema: dict[str, Any] | None,
+        images: list[str] | None = None,
     ) -> dict[str, Any]:
         """Assemble the ``/chat/completions`` request body for a STREAMING call.
 
@@ -582,7 +594,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         body: dict[str, Any] = {
             "model": self.model_name,
-            "messages": self._build_messages(prompt, system),
+            "messages": self._messages_for(prompt, system, images),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
@@ -724,6 +736,7 @@ class OpenAICompatibleProvider(LLMProvider):
         json_mode: bool = False,
         thinking: bool | str | None = None,
         json_schema: dict[str, Any] | None = None,
+        images: list[str] | None = None,
     ) -> str:
         """Generate text using OpenAI-compatible chat/completions API.
 
@@ -771,7 +784,7 @@ class OpenAICompatibleProvider(LLMProvider):
         async with self.semaphore:
             body: dict[str, Any] = {
                 "model": self.model_name,
-                "messages": self._build_messages(prompt, system),
+                "messages": self._messages_for(prompt, system, images),
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
@@ -927,6 +940,9 @@ class OpenAICompatibleProvider(LLMProvider):
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 0,
+        # FIFTH, matching `LLMProvider.generate_json`: after this override's own extra parameters it
+        # would be a Liskov violation, and the same position would mean different things per provider.
+        images: list[str] | None = None,
         force_json_mode: bool = True,
         json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -938,7 +954,7 @@ class OpenAICompatibleProvider(LLMProvider):
         LLM must be able to emit non-JSON sentinels like ``[REFUSE]``:
         falls back to prompt-only JSON steering plus ``extract_json``.
         """
-        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=force_json_mode, json_schema=json_schema)
+        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=force_json_mode, json_schema=json_schema, images=images)
 
     # 2026-08-02 near-duplicate-function-body finding: generate_batch/process_request used to be
     # duplicated here near-verbatim from LLMProvider.generate_batch, EXCEPT the duplicate's except
