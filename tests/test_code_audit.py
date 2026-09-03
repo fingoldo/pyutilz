@@ -7649,6 +7649,36 @@ def go(table, flags, path):
     assert scan_effect_flag_outside_its_effect(tmp_path) == []
 
 
+def test_effect_flag_outside_its_effect_sees_an_intervening_guard(tmp_path: Path):
+    """The correct form puts the early exit behind its own guard, several statements later.
+
+    Real shape, from a harvest loop: the write failure sets `_write_ok = False`, a later
+    `if not _write_ok: ... continue` protects the completion mark, and the mark is therefore on
+    the other path. Checking only whether the intervening statement IS a terminator walked
+    straight past that `if`, and this rule reported the fixed form for the third time.
+    """
+    _write(
+        tmp_path,
+        "harvest.py",
+        """
+def run(crawls, prog):
+    for crawl in crawls:
+        write_ok = True
+        if crawl.rows:
+            try:
+                write_outputs(crawl)
+            except Exception:
+                write_ok = False
+        prog.setdefault(crawl, {})
+        if not write_ok:
+            save_progress(prog)
+            continue
+        prog[crawl]["completed"] = True
+""",
+    )
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+
+
 def test_effect_flag_outside_its_effect_ignores_a_self_only_link(tmp_path: Path):
     """`self` is mentioned by nearly every statement in a method, so it links nothing.
 
