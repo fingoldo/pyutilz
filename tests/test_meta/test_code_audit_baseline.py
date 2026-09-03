@@ -40,6 +40,10 @@ The rest are reviewed false positives:
   entry.get("context_length")``, ``event.get("result") or event.get("error") or subtype``). The
   ast-alias case is now on its fifth review; every module that walks imports writes that line.
 
+* ``default_via_or [P2] llm/openai_compat.py:158`` and ``:674`` -- ``body.get("max_tokens") or
+  body.get("max_completion_tokens") or 0`` and the cache-hit equivalent: every falsy branch resolves
+  to the same ``0``, so a caller-supplied 0 cannot be rewritten into anything else.
+
 * ``non_neutral_except_fallback [P1] dev/code_audit/registry.py:421`` -- ``_is_picklable`` exists to
   answer exactly this question, so ``False`` in the handler IS the answer rather than a substituted
   measurement, and the caller acts on it by running the scanner in-process. Debug level is deliberate:

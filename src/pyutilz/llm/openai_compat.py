@@ -140,6 +140,28 @@ class OpenAICompatibleProvider(LLMProvider):
         """Return request timeout in seconds. Override for model-specific."""
         return 120.0
 
+    #: Seconds of headroom to allow per requested output token. A 30 tok/s floor is deliberately
+    #: pessimistic: the cost of guessing high is a request that hangs a little longer before it is
+    #: retried, and the cost of guessing low is every long generation dying at the same wall.
+    _seconds_per_output_token: float = 1.0 / 30.0
+
+    def _timeout_for(self, body: dict[str, Any]) -> float:
+        """Request timeout in seconds, taking the LARGER of the model heuristic and what this body asks for.
+
+        `_get_timeout` classifies by model NAME, which cannot see how much output was requested: a
+        `z-ai/glm-5.3-flash` asked for 54,853 tokens matches no "slow tier" substring and got the 240 s
+        default, so every one of nine captures died in a ReadTimeout storm while the model was still
+        generating - 35,185 tokens on the one that finished, which no 240 s budget could ever cover. The
+        floor stays: a small request on a slow-tier model keeps its long allowance.
+        """
+        base = self._get_timeout(self.model_name)
+        requested = body.get("max_tokens") or body.get("max_completion_tokens") or 0
+        try:
+            needed = float(requested) * self._seconds_per_output_token
+        except (TypeError, ValueError):
+            return base
+        return max(base, needed)
+
     def _handle_special_status(self, resp: httpx.Response) -> None:
         """Raise on provider-specific non-retryable HTTP status codes.
 
@@ -819,7 +841,7 @@ class OpenAICompatibleProvider(LLMProvider):
         ``repairing`` marks the single re-issue `_body_after_rejected_request` is allowed, so a repaired body
         that is itself refused raises instead of looping.
         """
-        resp = await self._client.post("/chat/completions", json=body)
+        resp = await self._client.post("/chat/completions", json=body, timeout=self._timeout_for(body))
 
         # Snapshot rate-limit headers before any status check, so a
         # 429/5xx error response's headers are captured too — that's

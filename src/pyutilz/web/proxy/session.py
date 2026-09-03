@@ -105,7 +105,10 @@ def requests_session(
             kwargs.setdefault("timeout", timeout)
             return inner_request(method, url, **kwargs)
 
-        s.request = _request_with_timeout  # type: ignore[method-assign,assignment]  # per-instance wrapper; subclassing Session would change the type callers receive. Which code fires depends on whether requests ships type information in the checking environment: method-assign without its stubs, assignment with them (CI)
+        # Both codes: `method-assign` for replacing a bound method, `assignment` because the wrapper's
+        # `**kwargs` signature is deliberately looser than `Session.request`'s fully spelled-out one - it
+        # forwards whatever it is given. Subclassing `Session` instead would change the type callers receive.
+        s.request = _request_with_timeout  # type: ignore[method-assign,assignment]
     try:
         yield s
     finally:
