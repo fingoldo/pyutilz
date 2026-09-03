@@ -152,6 +152,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "test_asserts_against_production_constant": "code_audit scanner; covered by test_code_audit.py",
     "patch_target_is_a_reexport": "code_audit scanner; covered by test_code_audit.py",
     "column_no_write_path": "code_audit scanner; covered by test_code_audit.py",
+    "sibling_guard_missing": "code_audit scanner; covered by test_code_audit.py",
     "asymmetric_except_siblings": "code_audit scanner; covered by test_code_audit.py",
     "unreachable_import_fallback": "code_audit scanner; covered by test_code_audit.py",
     "comment_names_missing_symbol": "code_audit scanner; covered by test_code_audit.py",

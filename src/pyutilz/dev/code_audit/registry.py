@@ -67,6 +67,7 @@ from .guard_decidable_from_constants import scan_guard_decidable_from_constants
 from .count_then_fetch_same_table import scan_count_then_fetch_same_table
 from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
 from .column_no_write_path import scan_column_no_write_path
+from .sibling_guard_missing import scan_sibling_guard_missing
 from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
@@ -215,6 +216,7 @@ register_scanner("accumulator_helper_bypassed", scan_accumulator_helper_bypassed
 register_scanner("test_asserts_against_production_constant", scan_test_asserts_against_production_constant)
 register_scanner("patch_target_is_a_reexport", scan_patch_target_is_a_reexport)
 register_scanner("column_no_write_path", scan_column_no_write_path)
+register_scanner("sibling_guard_missing", scan_sibling_guard_missing)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
