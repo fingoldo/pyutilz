@@ -27,6 +27,11 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
 
+2026-09-03, fifth batch (patch_target_is_a_reexport): one entry, `default_via_or` on
+`alias.asname or alias.name` again -- the canonical ast-alias idiom, reviewed three times below
+now, where `asname` is `str | None` and never the empty string. Every module that walks imports
+writes this line, so this package will keep producing it.
+
 2026-09-03, fourth batch (test_asserts_against_production_constant): one entry, `default_via_or`
 on `alias.asname or alias.name` -- the same canonical ast-alias idiom reviewed twice below, where
 `asname` is `str | None` and never the empty string. The scanner's own hits against real code were

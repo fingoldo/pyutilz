@@ -21,6 +21,7 @@
   "default_via_or::dev/code_audit/log_throttle.py:178",
   "default_via_or::dev/code_audit/log_throttle.py:180",
   "default_via_or::dev/code_audit/missed_await.py:59",
+  "default_via_or::dev/code_audit/patch_target_is_a_reexport.py:88",
   "default_via_or::dev/code_audit/test_asserts_against_production_constant.py:40",
   "default_via_or::dev/logginglib.py:294",
   "default_via_or::llm/anthropic_provider.py:158",
