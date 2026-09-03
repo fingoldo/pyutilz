@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -206,3 +207,11 @@ def _subscript_index(node: ast.Subscript) -> ast.expr:
     if index.__class__.__name__ == "Index":  # ast.Index exists only pre-3.9
         return getattr(index, "value", index)  # type: ignore[no-any-return]
     return index
+
+_SQL_FROM = re.compile(r"\bFROM\s+([A-Za-z_][\w.\"]*)", re.I)
+
+
+def _sql_table_of(sql: str) -> "Optional[str]":
+    """The table a statement reads, as written after FROM. Shared: two scanners had copies of it."""
+    match = _SQL_FROM.search(sql)
+    return match.group(1).strip('"').lower() if match else None
