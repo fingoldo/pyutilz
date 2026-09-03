@@ -69,6 +69,7 @@ from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
 from .column_no_write_path import scan_column_no_write_path
 from .sibling_guard_missing import scan_sibling_guard_missing
 from .sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
+from .docstring_names_a_caller_that_does_not_call import scan_docstring_names_a_caller_that_does_not_call
 from .vacuous_loop_assertion import scan_vacuous_loop_assertion
 from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
@@ -221,6 +222,7 @@ register_scanner("column_no_write_path", scan_column_no_write_path)
 register_scanner("sibling_guard_missing", scan_sibling_guard_missing)
 register_scanner("sql_sibling_missing_time_bound", scan_sql_sibling_missing_time_bound)
 register_scanner("vacuous_loop_assertion", scan_vacuous_loop_assertion)
+register_scanner("docstring_names_a_caller_that_does_not_call", scan_docstring_names_a_caller_that_does_not_call)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a

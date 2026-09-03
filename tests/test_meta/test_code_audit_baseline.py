@@ -27,6 +27,13 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
 
+2026-09-03, sixth batch (docstring_names_a_caller_that_does_not_call): four entries, all the
+scanner reporting its own prose. `comment_names_missing_symbol` cites `_flush_rows()`, the
+worked example from the codebase this rule was written for, which is the same illustrative-prose
+class reviewed twice below -- documenting a defect found elsewhere is what these modules are for.
+`default_via_or` is on `match.group("quoted") or match.group("bare")`, where exactly one of the
+two alternatives can have matched, so the `or` is a selection and not a default.
+
 2026-09-03, fifth batch (patch_target_is_a_reexport): one entry, `default_via_or` on
 `alias.asname or alias.name` again -- the canonical ast-alias idiom, reviewed three times below
 now, where `asname` is `str | None` and never the empty string. Every module that walks imports
