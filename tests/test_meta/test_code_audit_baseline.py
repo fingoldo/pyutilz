@@ -27,6 +27,10 @@ real weaknesses in a new scanner and were fixed in it rather than baselined, lea
   weakening the rule for every consumer, and rather than rewriting correct documentation to
   satisfy a linter.
 
+2026-09-03, log_throttle extraction: one drain and one re-add,  on
+dev/logginglib.py moving 294 -> 296. Pure line shift from the two imports the helper needs;
+the code it names is unchanged.
+
 2026-09-03, sixth batch (docstring_names_a_caller_that_does_not_call): four entries, all the
 scanner reporting its own prose. `comment_names_missing_symbol` cites `_flush_rows()`, the
 worked example from the codebase this rule was written for, which is the same illustrative-prose

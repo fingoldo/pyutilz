@@ -19,6 +19,8 @@ from random import random
 import numbers, inspect
 import functools
 
+import threading
+import time
 import logging
 from logging import Handler, Logger
 from logging.handlers import RotatingFileHandler  # QueueHandler, TimedRotatingFileHandler
@@ -478,3 +480,52 @@ def debugged(max_retries: int = 3):
         return wrapper_debugged
 
     return decorator_debugged
+
+# --- per-key log throttling ---------------------------------------------------------------------
+#
+# A hot loop that logs on every iteration turns a symptom into a second incident: the disk fills,
+# the aggregator drops messages, and the one line that mattered is somewhere in fifty thousand
+# copies of itself. The usual fix -- a timestamp dict beside the call site -- gets hand-rolled once
+# per site, and each copy has its own lock bug.
+#
+# Lifted from the Upwork scrapers, where three sites had grown their own. The key is chosen by the
+# caller so that independent sites never share a window: two different errors throttled together
+# means the second one is invisible whenever the first is firing.
+#
+# `pyutilz.dev.code_audit`'s `unthrottled_hot_loop_log` check looks for the call sites this exists
+# to serve, so the check and the helper now live in the same package.
+
+_log_throttle_lock = threading.Lock()
+_log_throttle_last: Dict[str, float] = {}
+
+
+def log_throttle(key: str, min_interval: float = 60.0) -> bool:
+    """Return True at most once per ``min_interval`` seconds for a given ``key``.
+
+    Intended as a guard on a log call inside a hot loop::
+
+        if log_throttle(f"scan:gql_error:{label}"):
+            log.warning("GQL error for %s: %s", cid, msg)
+        else:
+            log.debug("GQL error for %s: %s", cid, msg)
+
+    The ``else`` branch matters: throttling should quieten a stream, not destroy it, and a debug
+    line keeps the full history available to anyone who turns the level up.
+
+    Monotonic rather than wall-clock, so a clock step cannot open the window early or hold it shut.
+    Thread-safe; the whole check-and-stamp happens under one lock, because doing it in two steps is
+    how a "once a minute" guard fires N times a minute under load.
+    """
+    with _log_throttle_lock:
+        now = time.monotonic()
+        last = _log_throttle_last.get(key, 0.0)
+        if now - last >= min_interval:
+            _log_throttle_last[key] = now
+            return True
+        return False
+
+
+def reset_log_throttles() -> None:
+    """Forget every throttle window. For tests, which must not inherit each other's clocks."""
+    with _log_throttle_lock:
+        _log_throttle_last.clear()
