@@ -115,6 +115,53 @@ The rest are reviewed false positives:
   in this wave: a bounded retry loop, not a hot path. Each iteration is a failed DB call already
   paced by its own backoff, so a warning per attempt is the intended signal.
 
+2026-09-03, scanner-precision wave (three checks repaired, baseline 229 -> 164). Driven by
+``audits/2026-09-03_downstream-scan.md``, which measured per-check false-positive rates on two
+fresh repos. Nothing was baselined to hide a finding and no severity was demoted; the drop is
+entirely three rules that stopped firing on shapes proven false there.
+
+* ``getattr_unknown_attribute`` 22 -> 0. The rule now requires a RECEIVER the scanned tree
+  defines (``self`` in an in-tree class, a name annotated with one, a variable assigned from one,
+  or a self-referencing module), which is what its high-precision sibling
+  ``getattr_literal_on_known_dataclass`` has always required. Its premise -- "that name is an
+  attribute of no class in this tree" -- says nothing about an ``ast`` node, a pandas dtype or a
+  foreign model object, and 13 of 13 sampled findings downstream were exactly that, with no true
+  positive observed in either repo. All 22 entries here were of that class (``'reconfigure'`` on
+  ``io.TextIOWrapper``, ``'run_line_magic'`` on IPython's ``InteractiveShell``, and 20 siblings).
+  Classes that bind their fields via a bulk ``setattr(self, k, v)`` loop are skipped too. The old
+  behaviour stays reachable as ``require_known_receiver=False`` and is still unit-tested.
+
+* ``default_via_or`` 90 -> 46. Four narrowings, each one a measured false-positive class: the
+  right operand must look like a DEFAULT rather than a read of another source (a lowercase name,
+  attribute or subscript is "try this other place" -- this is the canonical
+  ``alias.asname or alias.name`` idiom, on its fifth review in this file, and it retires that
+  entire class); regex capture-group alternation; the same key read off a second mapping; and
+  boolean operands the scanner previously could not see through -- ``Path.exists``/``is_dir``/
+  ``str.isdigit``-family methods, and bare names that are provably flags (a parameter declared
+  ``bool``, or a local every assignment of which is boolean-valued). ``x or DEFAULT_TIMEOUT``
+  stays flagged: the constant-naming convention is evidence of a real default.
+
+* ``parameter_aliasing_mutation``, the suite's only P0, produced no entries here but was 11 of 11
+  false downstream. Three gaps closed: ``i += 1`` on a scalar loop counter (a numeric literal
+  plus index/loop-bound use, which a numpy array cannot have), an alias and a mutation in
+  mutually exclusive ``if``/``try`` arms, and a parameter NAMED as a caller-owned output buffer
+  (``out``, ``*_shared``, ``*_buffer``), where writing through is the contract.
+
+Every remaining entry was re-read. No real defect was found among them: the surviving classes are
+the ones already dispositioned below (``non_neutral_except_fallback`` on optional-dependency
+probes and predicate handlers, ``unthrottled_hot_loop_log`` on per-column/per-setting warnings in
+small-N loops, the documented resource/extras/import-cycle classes), plus the 46
+``default_via_or`` survivors, which are the empty-string-means-unset (``effort or "medium"``,
+``lang or "en"``), the divide-by-zero-guard (``abs(x).max() or 1.0``, ``min(n, total) or 1`` --
+both carry the reasoning in-code at the site) and the resolved-credential
+(``api_key or (settings.x.get_secret_value() if ... else None)``) families.
+
+ONE genuinely new entry: ``non_neutral_except_fallback`` on ``dev/code_audit/default_via_or.py``
+gains a third hit, from the ``except (ValueError, RecursionError): return False`` guard around
+``ast.unparse`` in the new same-key helper. Identical in shape and rationale to the two already
+reviewed on that file -- ``ast.unparse`` is absent on 3.8 and can recurse out on a pathological
+expression, and "cannot decide" is the helper's answer, not a substituted measurement.
+
 2026-09-03, code_audit infrastructure batch (audit 07 F04/F10/F199/F207/F210): three entries.
 
 * `assert_in_loop_first_failure_only` x2, in `data/polarslib/binning.py` and

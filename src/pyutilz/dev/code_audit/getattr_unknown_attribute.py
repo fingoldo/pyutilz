@@ -95,10 +95,108 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
     return names
 
 
+def _dynamic_attribute_classes(tree: ast.Module) -> set[str]:
+    """Classes in one module that bind attributes onto ``self`` DYNAMICALLY -- a
+    ``setattr(self, k, v)`` with a non-literal name, or ``self.__dict__.update(...)``.
+
+    A name bound this way appears nowhere in the source as an attribute, so no walk can see it and
+    every ``getattr(self, "x", d)`` on such a class reads as a miss. Measured on a downstream repo
+    (2026-09-03): a config object whose fields are injected by a bulk ``setattr`` loop produced a
+    long tail of false ``getattr_unknown_attribute`` hits for its own, live fields.
+    """
+    dynamic: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "setattr" and len(inner.args) >= 2:
+                target, name_arg = inner.args[0], inner.args[1]
+                if isinstance(target, ast.Name) and target.id == "self" and not isinstance(name_arg, ast.Constant):
+                    dynamic.add(node.name)
+            elif isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "update":
+                base = inner.func.value
+                if isinstance(base, ast.Attribute) and base.attr == "__dict__" and isinstance(base.value, ast.Name) and base.value.id == "self":
+                    dynamic.add(node.name)
+    return dynamic
+
+
+def _in_tree_class_names(root: Path, exclude_dirs: frozenset[str]) -> tuple[set[str], set[str]]:
+    """``(class names defined in the tree, of those the ones with dynamic attribute binding)``."""
+    classes: set[str] = set()
+    dynamic: set[str] = set()
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        classes.update(node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
+        dynamic |= _dynamic_attribute_classes(tree)
+    return classes, dynamic
+
+
+def _receivers_defined_in_tree(tree: ast.Module, classes: set[str], dynamic: set[str]) -> set[int]:
+    """``{id(receiver_node)}`` for every ``getattr`` receiver this module can PROVE is an instance
+    of a class defined in the scanned tree, or a module of the scanned tree itself.
+
+    Deliberately conservative -- exactly three bindings are recognised, each of them written in the
+    file being scanned:
+
+    * ``self`` inside a class defined here (and not one that binds its attributes dynamically);
+    * a parameter or variable ANNOTATED with an in-tree class name (``sheet: Sheet``);
+    * a local assigned straight from an in-tree class's constructor (``sheet = Sheet(...)``).
+
+    Everything else is left alone. That is the whole repair of 2026-09-03: without it the rule's
+    premise ("an attribute of no class in this tree") is applied to receivers this tree does not
+    own -- an ``ast`` node, a pandas dtype, a CUDA error object, a foreign model tagged by a
+    sibling library -- for which the premise says nothing at all. 13 of 13 sampled findings across
+    two fresh repos were exactly that, with no true positive observed.
+    """
+    resolved: set[int] = set()
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        local: set[str] = set()
+        args = func.args
+        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+            if isinstance(arg.annotation, ast.Name) and arg.annotation.id in classes and arg.annotation.id not in dynamic:
+                local.add(arg.arg)
+        for node in ast.walk(func):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
+                if node.annotation.id in classes and node.annotation.id not in dynamic:
+                    local.add(node.target.id)
+            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+                if node.value.func.id in classes and node.value.func.id not in dynamic:
+                    local.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and node.id in local:
+                resolved.add(id(node))
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef) or cls.name in dynamic:
+            continue
+        for node in ast.walk(cls):
+            if isinstance(node, ast.Name) and node.id == "self":
+                resolved.add(id(node))
+    return resolved
+
+
+def _module_receiver_names(tree: ast.Module) -> set[str]:
+    """Names bound to a module object of THIS tree: the ``_facade = sys.modules[__name__]`` /
+    ``import <own package> as _facade`` self-reference idiom. Reading an unknown name off one is
+    the same provable miss as reading it off an in-tree class, since the module's globals are all
+    written here."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript):
+            base = node.value.value
+            if isinstance(base, ast.Attribute) and base.attr == "modules":
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
 def scan_getattr_unknown_attribute(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
     extra_known: frozenset[str] = frozenset(),
+    require_known_receiver: bool = True,
 ) -> list[Finding]:
     """Find ``getattr(obj, "name", default)`` where ``name`` is an attribute of no class in this tree.
 
@@ -116,6 +214,16 @@ def scan_getattr_unknown_attribute(
     Only the THREE-argument form is reported. Two-argument `getattr(obj, "name")` raises `AttributeError`
     on a miss, which is loud and needs no scanner; it is the default that converts the mistake into silence.
 
+    The RECEIVER must be an object this tree defines (``require_known_receiver``, on by default):
+    ``self`` in an in-tree class, a name annotated with an in-tree class, a variable assigned from
+    an in-tree constructor, or a self-referencing module object. The premise "this name is an
+    attribute of no class in this tree" is only decisive about a receiver the tree owns; applied
+    to an ``ast`` node, a pandas dtype or a foreign model object it says nothing, and a
+    2026-09-03 scan of two fresh repos measured 13 of 13 sampled findings as exactly that, with no
+    true positive observed. Pass ``require_known_receiver=False`` for the pre-2026-09-03,
+    tree-wide-name-union-only behaviour -- it is a broader net at a measured cost of near-total
+    noise on code that touches stdlib or third-party objects, which is all real code.
+
     ``extra_known`` is for names a project reads on objects it does not define - a third-party class, or a
     duck-typed protocol. Passing one is a statement that the attribute exists somewhere out of tree, so it
     belongs in the caller's parameters rather than in this rule.
@@ -124,6 +232,7 @@ def scan_getattr_unknown_attribute(
     same expression.
     """
     known = _class_attribute_names(root, exclude_dirs) | set(extra_known)
+    classes, dynamic = _in_tree_class_names(root, exclude_dirs) if require_known_receiver else (set(), set())
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
@@ -131,6 +240,8 @@ def scan_getattr_unknown_attribute(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
+        resolved = _receivers_defined_in_tree(tree, classes, dynamic) if require_known_receiver else set()
+        module_receivers = _module_receiver_names(tree) if require_known_receiver else set()
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"):
                 continue
@@ -143,6 +254,10 @@ def scan_getattr_unknown_attribute(
             name = attribute.value
             if name in known or name.startswith("__"):
                 continue
+            if require_known_receiver:
+                receiver = node.args[0]
+                if id(receiver) not in resolved and not (isinstance(receiver, ast.Name) and receiver.id in module_receivers):
+                    continue
             findings.append(
                 Finding(
                     check="getattr_unknown_attribute",

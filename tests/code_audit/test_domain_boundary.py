@@ -160,7 +160,9 @@ def test_getattr_unknown_attribute_catches_a_printer_reading_a_field_that_never_
         encoding="utf-8",
     )
     (tmp_path / "printer.py").write_text(
-        "def show(sheet):\n"
+        "from model import Sheet\n"
+        "\n"
+        "def show(sheet: Sheet):\n"
         "    for row in getattr(sheet, 'steps', None) or []:\n"
         "        print(row)\n"
         "    for row in getattr(sheet, 'ask', None) or []:\n"
@@ -169,9 +171,63 @@ def test_getattr_unknown_attribute_catches_a_printer_reading_a_field_that_never_
     )
 
     findings = scan_getattr_unknown_attribute(tmp_path)
-    assert [(f.file, f.line) for f in findings] == [("printer.py", 2)]
+    assert [(f.file, f.line) for f in findings] == [("printer.py", 4)]
     assert "'steps'" in findings[0].detail
     assert findings[0].severity == "P1"
+
+
+def test_getattr_unknown_attribute_needs_a_receiver_this_tree_defines(tmp_path):
+    """The 2026-09-03 repair. The premise this rule argues from - "that name is an attribute of no
+    class in this tree" - is only decisive about an object the tree OWNS. Applied to an unannotated
+    parameter that may hold an ``ast`` node, a pandas dtype or a foreign model object it says
+    nothing, and a scan of two fresh repos measured 13 of 13 sampled findings as exactly that with
+    no true positive observed. The old, wider behaviour stays reachable via
+    ``require_known_receiver=False`` so the trade is explicit rather than silent."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "walk.py").write_text(
+        "def end(node):\n" "    return getattr(node, 'end_lineno', None)\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_unknown_attribute(tmp_path) == []
+    assert len(scan_getattr_unknown_attribute(tmp_path, require_known_receiver=False)) == 1
+
+
+def test_getattr_unknown_attribute_skips_classes_that_bind_attributes_dynamically(tmp_path):
+    """A class whose fields are injected by a bulk ``setattr(self, k, v)`` loop has attributes that
+    appear nowhere in the source, so every ``getattr(self, 'x', d)`` on it reads as a miss. Measured
+    on a downstream repo as a long tail of false hits for a config object's own live fields."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "cfg.py").write_text(
+        "class Config:\n"
+        "    def __init__(self, **kwargs):\n"
+        "        for k, v in kwargs.items():\n"
+        "            setattr(self, k, v)\n"
+        "\n"
+        "    def margin(self):\n"
+        "        return getattr(self, 'ols_r_margin_sd', 0.0)\n",
+        encoding="utf-8",
+    )
+    assert scan_getattr_unknown_attribute(tmp_path) == []
+
+
+def test_getattr_unknown_attribute_fires_on_self_in_an_ordinary_class(tmp_path):
+    """``self`` in a class this tree defines IS a resolvable receiver, so the rule keeps its
+    sharpest in-tree case after the receiver narrowing."""
+    from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
+
+    (tmp_path / "panel.py").write_text(
+        "class Panel:\n"
+        "    def __init__(self):\n"
+        "        self.rows = []\n"
+        "\n"
+        "    def show(self):\n"
+        "        return getattr(self, 'lines', None) or []\n",
+        encoding="utf-8",
+    )
+    findings = scan_getattr_unknown_attribute(tmp_path)
+    assert [(f.file, f.line) for f in findings] == [("panel.py", 6)]
 
 
 def test_getattr_unknown_attribute_does_not_fire_on_names_the_tree_uses_as_attributes(tmp_path):
@@ -245,7 +301,10 @@ def test_getattr_unknown_attribute_accepts_out_of_tree_names(tmp_path):
     """`extra_known` is how a project states that an attribute belongs to a class it does not define."""
     from pyutilz.dev.code_audit import scan_getattr_unknown_attribute
 
-    (tmp_path / "client.py").write_text("def f(provider):\n    return getattr(provider, 'last_generation_id', '')\n", encoding="utf-8")
+    (tmp_path / "client.py").write_text(
+        "class Provider:\n" "    pass\n" "\n" "def f(provider: Provider):\n" "    return getattr(provider, 'last_generation_id', '')\n",
+        encoding="utf-8",
+    )
     assert len(scan_getattr_unknown_attribute(tmp_path)) == 1
     assert scan_getattr_unknown_attribute(tmp_path, extra_known=frozenset({"last_generation_id"})) == []
 

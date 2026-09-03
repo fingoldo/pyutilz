@@ -194,3 +194,72 @@ def m(x=None):
     return x
 """)
     assert scan_mutable_defaults(tmp_path) == []
+
+
+# ---- parameter_aliasing_mutation: 2026-09-03 downstream-scan precision round ----
+#
+# A scan of two fresh repos produced 11 findings from this check - the suite's only P0s - and all
+# 11 were false. Each shape below is one of them, kept as a negative case.
+
+
+def test_parameter_aliasing_mutation_scalar_loop_counter_is_clean(tmp_path: Path):
+    """`i = l; while i < r: buf[i]...; i += 1` -- the hand-rolled counter every @njit kernel is
+    written with. `+=` on a number REBINDS the local; the index and loop-bound uses prove it is a
+    number, since a numpy array cannot drive a `while` test."""
+    _write(tmp_path, "ok.py", """
+def bin_by_value(array, l, r, mask):
+    out = []
+    i = l
+    while i < r:
+        out.append(array[mask[i]])
+        i += 1
+    return out
+""")
+    assert scan_parameter_aliasing_mutation(tmp_path) == []
+
+
+def test_parameter_aliasing_mutation_mutually_exclusive_branches_are_clean(tmp_path: Path):
+    """The alias is established in the `if` arm and the mutation performed in the `else` arm, so
+    the two lines can never both run against the same object."""
+    _write(tmp_path, "ok.py", """
+def start(tags, parent_run_id=None):
+    run_tags = {"parent": parent_run_id} if parent_run_id else None
+    if tags:
+        if run_tags is None:
+            run_tags = tags
+        else:
+            run_tags.update(tags)
+    return run_tags
+""")
+    assert scan_parameter_aliasing_mutation(tmp_path) == []
+
+
+def test_parameter_aliasing_mutation_named_output_buffer_is_clean(tmp_path: Path):
+    """A parameter NAMED as a caller-owned buffer is one the callee is meant to write into -- that
+    is why the caller preallocated it. Writing through is the contract, not a leak."""
+    _write(tmp_path, "ok.py", """
+def score(values_shared, out, n):
+    vals = values_shared
+    dest = out
+    for i in range(n):
+        vals[i] = i
+        dest[i] = i
+    return vals
+""")
+    assert scan_parameter_aliasing_mutation(tmp_path) == []
+
+
+def test_parameter_aliasing_mutation_same_branch_mutation_still_flagged(tmp_path: Path):
+    """The branch-exclusivity fix must not eat an alias and a mutation living in the SAME arm --
+    the original confirmed bug (`returning_fields = history_fields; returning_fields += [hash]`)
+    sits inside an `if`."""
+    _write(tmp_path, "bad.py", """
+def upsert(history_fields, hash_field, with_hash):
+    if with_hash:
+        returning_fields = history_fields
+        returning_fields += [hash_field]
+        return returning_fields
+    return history_fields
+""")
+    findings = scan_parameter_aliasing_mutation(tmp_path)
+    assert len(findings) == 1 and findings[0].severity == "P0"

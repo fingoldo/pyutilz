@@ -335,8 +335,15 @@ def test_default_via_or_examines_a_chain_of_more_than_two_operands(tmp_path: Pat
     """F201: `arg or fallback or 5` was skipped outright."""
     from pyutilz.dev.code_audit.default_via_or import scan_default_via_or_trap
 
-    _write(tmp_path, "m.py", "def f(arg, fallback):\n    x = arg or fallback or 5\n    return x\n")
+    # Every ADJACENT pair of a chain is examined, not just the last one: both `or 7` and `or 5`
+    # are default values, so both are reported. (The 2026-09-03 precision wave narrowed what
+    # counts as a default: a bare lowercase name on the right is a read of another source, so
+    # `arg or fallback or 5` now reports only its second pair -- asserted below.)
+    _write(tmp_path, "m.py", "def f(arg):\n    x = arg or 7 or 5\n    return x\n")
     assert len(scan_default_via_or_trap(tmp_path)) == 2
+
+    _write(tmp_path, "m.py", "def f(arg, fallback):\n    x = arg or fallback or 5\n    return x\n")
+    assert len(scan_default_via_or_trap(tmp_path)) == 1
 
     _write(tmp_path, "m.py", "def f(a, b):\n    if a or b:\n        return 1\n    return 0\n")
     assert scan_default_via_or_trap(tmp_path) == []

@@ -73,7 +73,7 @@ def _is_alias_key_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     return a in b or b in a
 
 
-def _lhs_default_matches_rhs(lhs: ast.AST, rhs: ast.AST) -> bool:
+def _lhs_default_is_also_the_or_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     """True for ``d.get("key", D) or D`` / ``getattr(obj, "name", D) or D`` -- the SAME literal/
     expression ``D`` supplied as both the getter's own missing-key default AND the outer ``or``
     fallback. Extremely common in this codebase for object/dict configs that use ``None`` as an
@@ -281,10 +281,79 @@ _BOOLEAN_VALUED_CALL_NAMES = frozenset({"isinstance", "issubclass", "hasattr", "
 # every method-call spelling. ``str.startswith``/``str.endswith`` are the same class of
 # always-bool method (never an arbitrary falsy "empty" value) -- confirmed as a real
 # false-positive on a downstream consumer: ``lemma.endswith("a") or lemma.endswith("e")``.
-_BOOLEAN_VALUED_METHOD_NAMES = frozenset({"all", "any", "startswith", "endswith"})
+#
+# The ``exists``/``is_*``/``is<x>`` family below is the same class: every one of these is a
+# documented ``-> bool`` method on ``pathlib.Path`` or on ``str``/``set``, never an arbitrary
+# falsy value. Measured on a downstream repo (2026-09-03): ``(root / target).exists() or
+# any(root.glob(target))`` was reported as a default-substitution trap.
+_BOOLEAN_VALUED_METHOD_NAMES = frozenset({
+    "all", "any", "startswith", "endswith",
+    "exists", "is_dir", "is_file", "is_absolute", "is_symlink", "is_relative_to", "samefile",
+    "isidentifier", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "istitle",
+    "isdecimal", "isnumeric", "issubset", "issuperset", "isdisjoint",
+})
 
 
-def _is_boolean_valued(node: ast.AST) -> bool:
+def _is_predicate_name(name: str) -> bool:
+    """Whether an identifier follows this codebase's boolean-predicate naming convention.
+
+    Shared by the call-name check and by the bare-``Name``/attribute operand check below, so
+    ``is_cached(x) or is_fresh(x)`` and ``is_environ_get or is_getenv`` (the same predicate stored
+    in a local first) are recognised as the same thing -- the latter was a measured false positive
+    on a downstream repo, where the scanner saw two plain ``Name`` operands and had no way to know
+    they were bools."""
+    name = name.lstrip("_")
+    if name.startswith("is_") or (name.startswith("is") and len(name) > 2 and name[2].isupper()):
+        return True
+    if name.startswith("has_") or "_has_" in name or "_is_" in name or "_looks_" in name or name.startswith("looks_"):
+        return True
+    return name.startswith("can_") or name.startswith("should_") or name.startswith("was_") or name.startswith("uses_")
+
+
+def _module_boolean_names(tree: ast.AST) -> frozenset[str]:
+    """Names this module only ever assigns a BOOLEAN-valued expression to.
+
+    ``guarded = _guard_looks_throttled(test)`` ... ``child_guarded = guarded or
+    _guard_looks_throttled(node.test)`` is pure boolean logic, but nothing in the OR's own two
+    operands says so: one is a bare ``Name``. Requiring EVERY assignment of that name in the module
+    to be boolean-valued (a comparison, a ``not``, a bool literal, a predicate-named call) keeps
+    this sound in the direction that matters -- one non-boolean assignment anywhere disqualifies
+    the name, so a name that is sometimes a config value is never mistaken for a flag."""
+    assigned: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(tree):
+        # A parameter annotated ``bool`` or defaulting to a bool literal is a flag by declaration:
+        # ``def _visit(node, guarded: bool = False)`` then ``guarded or _guard_looks_throttled(t)``
+        # is boolean logic, and nothing in the OR's own operands can say so.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            a = node.args
+            positional = (*a.posonlyargs, *a.args)
+            declared = [arg for arg in (*positional, *a.kwonlyargs) if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "bool"]
+            for default, arg in zip(a.defaults, positional[len(positional) - len(a.defaults) :]):
+                if isinstance(default, ast.Constant) and isinstance(default.value, bool):
+                    declared.append(arg)
+            for kw_arg, kw_default in zip(a.kwonlyargs, a.kw_defaults):
+                if isinstance(kw_default, ast.Constant) and isinstance(kw_default.value, bool):
+                    declared.append(kw_arg)
+            for arg in declared:
+                assigned.setdefault(arg.arg, []).append(ast.Constant(value=True))
+        values: list[tuple[str, ast.AST]] = []
+        if isinstance(node, ast.Assign) and node.value is not None:
+            values = [(t.id, node.value) for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            values = [(node.target.id, node.value)]
+        elif isinstance(node, (ast.AugAssign,)) and isinstance(node.target, ast.Name):
+            values = [(node.target.id, node)]  # an augmented assign is never a bool
+        elif isinstance(node, (ast.For, ast.comprehension)):
+            target = node.target
+            values = [(t.id, node) for t in ast.walk(target) if isinstance(t, ast.Name)]
+        for name, value in values:
+            assigned.setdefault(name, []).append(value)
+    return frozenset(
+        name for name, values in assigned.items() if all((isinstance(v, ast.Constant) and isinstance(v.value, bool)) or _is_boolean_valued(v) for v in values)
+    )
+
+
+def _is_boolean_valued(node: ast.AST, bool_names: frozenset[str] = frozenset()) -> bool:
     """True when ``node`` can only ever evaluate to an actual ``bool`` (never an arbitrary falsy
     "empty" value like ``0``/``""``/``[]``) -- a comparison, a boolean-returning builtin call, a
     ``not`` unary op, or a BoolOp whose own operands are all themselves boolean-valued. When BOTH
@@ -313,21 +382,80 @@ def _is_boolean_valued(node: ast.AST) -> bool:
         return True
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return True
+    if isinstance(node, ast.Name):
+        return node.id in bool_names or _is_predicate_name(node.id)
+    if isinstance(node, ast.Attribute):
+        return _is_predicate_name(node.attr)
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Name):
-            if func.id in _BOOLEAN_VALUED_CALL_NAMES:
+            if func.id in _BOOLEAN_VALUED_CALL_NAMES or _is_predicate_name(func.id):
                 return True
-            name = func.id.lstrip("_")
-            if name.startswith("is_") or (name.startswith("is") and len(name) > 2 and name[2].isupper()):
-                return True
-            if "_looks_" in name or "_has_" in name or name.startswith("has_"):
-                return True
-        elif isinstance(func, ast.Attribute) and func.attr in _BOOLEAN_VALUED_METHOD_NAMES:
+        elif isinstance(func, ast.Attribute) and (func.attr in _BOOLEAN_VALUED_METHOD_NAMES or _is_predicate_name(func.attr)):
             return True
     if isinstance(node, ast.BoolOp):
-        return all(_is_boolean_valued(v) for v in node.values)
+        return all(_is_boolean_valued(v, bool_names) for v in node.values)
     return False
+
+
+def _is_alternative_source_read(rhs: ast.AST) -> bool:
+    """True when the ``or``'s RIGHT operand is a READ of another value rather than a DEFAULT.
+
+    ``a or b`` where ``b`` is a plain variable, an attribute or a subscript is "try this other
+    source", not "substitute this default": there is no literal the author chose as a stand-in, so
+    the finding carries no evidence of intent to default. Measured on a downstream repo
+    (2026-09-03 scan): this shape was the bulk of the false positives -- plain boolean disjunction
+    of two locals (``return is_environ_get or is_getenv``), and the universal ast import idiom
+    ``alias.asname or alias.name``, which every module that walks imports writes and which is now
+    on its fifth review in this project's own baseline.
+
+    An ALL-CAPS name (``timeout or DEFAULT_TIMEOUT``, ``x or cfg.MAX_ROWS``) is exempt from this
+    exclusion: the constant-naming convention is direct evidence the author IS supplying a default
+    value, which is precisely the trap this scanner exists for.
+    """
+    if isinstance(rhs, ast.Name):
+        return not rhs.id.isupper()
+    if isinstance(rhs, ast.Attribute):
+        return not rhs.attr.isupper()
+    return isinstance(rhs, ast.Subscript)
+
+
+def _is_regex_group_alternation(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """True for ``m.group("a") or m.group("b")`` -- reading alternative capture groups of one
+    regex match. A group that did not participate in the match is ``None``, so the ``or`` chain IS
+    the documented way to ask "whichever alternative matched"; there is no caller-supplied falsy
+    value for it to clobber (a group that matched the empty string and a group that did not match
+    mean the same thing to the caller)."""
+    def _is_group_call(node: ast.AST) -> bool:
+        """True for a ``<match>.group(...)``/``.groupdict(...)`` call, whatever the match object is called."""
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("group", "groupdict")
+
+    return _is_group_call(lhs) and _is_group_call(rhs)
+
+
+def _is_same_key_on_other_receiver(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """True for ``top.get("context_length") or entry.get("context_length")`` -- the SAME key read
+    off two different mappings. That is a lookup-chain ("ask the specific record, else the parent
+    default record"), not a default-value substitution: both sides are the same field, so a falsy
+    value under one receiver and absence under it are indistinguishable to the caller."""
+    def _get_parts(node: ast.AST) -> "tuple[ast.AST, ast.AST] | None":
+        """``(receiver, key expression)`` of a ``<expr>.get(<key>)`` call. The key does NOT have to
+        be a string literal: ``_QWERTY_ADJACENT.get(ch) or _YCUKEN_ADJACENT.get(ch)`` (one lookup
+        table then its alternate-layout twin) is the same shape as the literal-key form."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and len(node.args) == 1:
+            return node.func.value, node.args[0]
+        return None
+
+    lhs_parts, rhs_parts = _get_parts(lhs), _get_parts(rhs)
+    if lhs_parts is None or rhs_parts is None:
+        return False
+    _unparse = getattr(ast, "unparse", None)
+    if _unparse is None:
+        return False
+    try:
+        return bool(_unparse(lhs_parts[1]) == _unparse(rhs_parts[1]) and _unparse(lhs_parts[0]) != _unparse(rhs_parts[0]))
+    except (ValueError, RecursionError):
+        return False
 
 
 def _get_getattr_call(node: ast.AST) -> "tuple[str, ast.AST] | None":
@@ -385,6 +513,29 @@ def _is_wrapped_in_bool_call(node: ast.AST, parent_map: dict[int, tuple[ast.AST,
     return field == "args" and isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) and parent.func.id == "bool" and len(parent.args) == 1
 
 
+def _pair_is_exempt(lhs: ast.AST, rhs: ast.AST) -> bool:
+    """Whether one adjacent ``a or b`` operand pair is a reviewed non-trap shape.
+
+    Every exemption the scanner knows, gathered in one predicate so the scan loop stays a loop and
+    each rule stays independently testable (and one place to add the next measured false-positive
+    class). Each helper documents the evidence for its own class:
+
+    * ``_is_trivial_default`` -- the RHS is the type's own falsy value, so substitution is a no-op;
+    * ``_is_alternative_source_read`` -- the RHS reads another SOURCE rather than supplying a default;
+    * ``_is_regex_group_alternation`` / ``_is_same_key_on_other_receiver`` -- alternation, not defaulting;
+    * ``_lhs_is_documented_safe`` -- an LHS callable whose only falsy return is None or a guard;
+    * ``_is_alias_key_fallback`` / ``_is_getattr_alias_fallback`` -- two spellings of one field;
+    * ``_lhs_default_is_also_the_or_fallback`` -- the getter's own declared default repeated as the fallback.
+    """
+    if _is_trivial_default(rhs) or _is_alternative_source_read(rhs):
+        return True
+    if _is_regex_group_alternation(lhs, rhs) or _is_same_key_on_other_receiver(lhs, rhs):
+        return True
+    if _lhs_is_documented_safe(lhs) or _is_alias_key_fallback(lhs, rhs):
+        return True
+    return _is_getattr_alias_fallback(lhs, rhs) or _lhs_default_is_also_the_or_fallback(lhs, rhs)
+
+
 def scan_default_via_or_trap(root: Path,
                              exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                              ) -> list[Finding]:
@@ -395,6 +546,12 @@ def scan_default_via_or_trap(root: Path,
     Heuristic: AST ``BoolOp(Or, [a, b])`` where ``b`` is an integer
     literal != 0, a non-empty string, or a function call. False positives
     are common for ``label or "default"`` strings -> classified Low.
+
+    The RIGHT operand must look like a DEFAULT VALUE, not like a read of another source: a plain
+    lowercase name, attribute or subscript on the right is "try this other place" and is not
+    reported (see ``_is_alternative_source_read``), nor is regex capture-group alternation or the
+    same key read off a second mapping. Together with the boolean-valued-operand exclusion this
+    removed 10 of the 11 findings a 2026-09-03 downstream scan measured as false.
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -404,6 +561,7 @@ def scan_default_via_or_trap(root: Path,
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_field_map(tree)
+        bool_names = _module_boolean_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
                 continue
@@ -412,7 +570,7 @@ def scan_default_via_or_trap(root: Path,
             # as a bool, never assigned/returned/passed as a "default value".
             if _is_in_boolean_context(node, parent_map):
                 continue
-            if _is_boolean_valued(node):
+            if _is_boolean_valued(node, bool_names):
                 continue
             # Skip when the whole BoolOp is immediately coerced by bool(...) -- the OR's
             # intermediate value is unobservable regardless of what either side evaluates to.
@@ -423,23 +581,8 @@ def scan_default_via_or_trap(root: Path,
             # `fallback`) and used to be skipped outright.
             for position in range(len(node.values) - 1):
                 rhs = node.values[position + 1]
-                # Skip when RHS is itself "trivial" (None/empty/falsy).
-                if _is_trivial_default(rhs):
-                    continue
-                # Skip documented-safe LHS callables (cpu_count, std/var, len).
                 lhs = node.values[position]
-                if _lhs_is_documented_safe(lhs):
-                    continue
-                # Skip alias-key dual reads: d.get("notes") or d.get("note").
-                if _is_alias_key_fallback(lhs, rhs):
-                    continue
-                # Skip getattr-alias dispatch: getattr(m, "predict_proba", None) or getattr(m, "predict", None).
-                if _is_getattr_alias_fallback(lhs, rhs):
-                    continue
-                # Skip getattr(obj, "name", D) or D / d.get("key", D) or D -- the SAME default
-                # declared twice, provably a no-op widening (explicit-None coalesce), not a new
-                # fallback value.
-                if _lhs_default_matches_rhs(lhs, rhs):
+                if _pair_is_exempt(lhs, rhs):
                     continue
                 # Also skip when the LHS is wrapped in a non-mutating expression
                 # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,

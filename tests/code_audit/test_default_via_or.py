@@ -293,3 +293,97 @@ def f(rank_result):
     return next_rank
 """)
     assert scan_default_via_or_trap(tmp_path), "`or -1` must stay flagged"
+
+
+# ---- default_via_or: 2026-09-03 downstream-scan precision round -------------
+#
+# A scan of two fresh repos measured 10 of 11 findings as false. Each shape below is one of
+# those measured false positives, kept as a negative case.
+
+
+def test_default_via_or_plain_boolean_locals_skipped(tmp_path: Path):
+    """`return is_environ_get or is_getenv` -- two bools stored in locals first. The scanner saw
+    two bare Name operands with no default value anywhere and reported a substitution trap."""
+    _write(tmp_path, "ok.py", """
+def f(node):
+    is_environ_get = node.attr == "get"
+    is_getenv = node.attr == "getenv"
+    return is_environ_get or is_getenv
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_path_exists_predicate_skipped(tmp_path: Path):
+    """`(root / t).exists() or any(root.glob(t))` is pure boolean logic: `Path.exists` is
+    documented `-> bool` and can never produce a falsy-but-meaningful value."""
+    _write(tmp_path, "ok.py", """
+def f(root, targets):
+    return all((root / t).exists() or any(root.glob(t)) for t in targets)
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_regex_group_alternation_skipped(tmp_path: Path):
+    """`m.group("bc") or m.group("test")` reads alternative capture groups: a group that did not
+    participate is None, so the chain IS the documented way to ask which alternative matched."""
+    _write(tmp_path, "ok.py", """
+def f(m):
+    return m.group("bc") or m.group("test") or m.group("arith")
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_ast_alias_idiom_skipped(tmp_path: Path):
+    """`alias.asname or alias.name` -- the universal import-walking idiom, on its fifth review in
+    this project's own baseline. The RHS is a read of another field, not a default value."""
+    _write(tmp_path, "ok.py", """
+import ast
+
+def f(node):
+    return [alias.asname or alias.name for alias in node.names]
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_same_key_other_receiver_skipped(tmp_path: Path):
+    """`top.get("context_length") or entry.get("context_length")` -- one field looked up in a
+    specific record then in the parent record. Both sides are the same field."""
+    _write(tmp_path, "ok.py", """
+def f(top, entry):
+    return top.get("context_length") or entry.get("context_length")
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_all_caps_constant_rhs_still_flagged(tmp_path: Path):
+    """The RHS-is-a-read exclusion must NOT eat `timeout or DEFAULT_TIMEOUT`: the constant-naming
+    convention is direct evidence the author is supplying a default, which is the trap itself."""
+    _write(tmp_path, "bad.py", """
+DEFAULT_TIMEOUT = 30
+
+def f(timeout=None):
+    return timeout or DEFAULT_TIMEOUT
+""")
+    assert scan_default_via_or_trap(tmp_path), "`or DEFAULT_TIMEOUT` must stay flagged"
+
+
+def test_default_via_or_boolean_flag_parameter_skipped(tmp_path: Path):
+    """`guarded or _guard_looks_throttled(test)` -- the left operand is a parameter DECLARED
+    `bool`, so the whole expression is boolean logic. Found on this project's own scanners."""
+    _write(tmp_path, "ok.py", """
+def visit(node, guarded: bool = False):
+    child_guarded = guarded or _guard_looks_throttled(node.test)
+    return child_guarded
+""")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_same_computed_key_on_two_tables_skipped(tmp_path: Path):
+    """`_QWERTY_ADJACENT.get(ch) or _YCUKEN_ADJACENT.get(ch)` -- one lookup table then its
+    alternate-layout twin, the same key in both. A non-literal key is the same shape as a literal
+    one."""
+    _write(tmp_path, "ok.py", """
+def neighbours(lower, qwerty, ycuken):
+    return qwerty.get(lower) or ycuken.get(lower)
+""")
+    assert scan_default_via_or_trap(tmp_path) == []

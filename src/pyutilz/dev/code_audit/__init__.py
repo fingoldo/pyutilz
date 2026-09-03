@@ -30,8 +30,11 @@ list[Finding]):
 - ``scan_default_via_or_trap``: ``x = arg or DEFAULT`` shape where the
   RHS default is a non-trivial literal that would silently clobber
   ``0`` / ``""`` / ``[]`` / ``{}`` if the caller passed one of those
-  as a legitimate sentinel. Detected via AST ``BoolOp(Or, ...)`` with
-  a constant/call/name on the right. Heuristic; not 100% recall.
+  as a legitimate sentinel. Detected via AST ``BoolOp(Or, ...)`` whose right operand looks like a
+  DEFAULT VALUE -- a constant, a call, or an ALL-CAPS constant name. A lowercase name, attribute
+  or subscript on the right is a read of another SOURCE (``alias.asname or alias.name``), not a
+  default, and is not reported; nor is regex capture-group alternation, the same key read off a
+  second mapping, or an ``or`` whose operands are all boolean-valued. Heuristic; not 100% recall.
 
 - ``scan_broad_except_swallows``: ``except Exception:`` / ``except:``
   followed by a body of ``pass`` / ``continue`` / a bare ``return``
@@ -173,7 +176,10 @@ list[Finding]):
 - ``scan_parameter_aliasing_mutation``: ``local = param`` (a bare rebind,
   no ``.copy()``) followed by an in-place mutation of ``local`` in the
   same function -- the mutation silently reaches the CALLER's object
-  through the un-copied parameter reference.
+  through the un-copied parameter reference. Not reported: a scalar loop counter (``i += 1`` on a
+  name used as an index or a loop bound), an alias and a mutation in mutually exclusive branch
+  arms, and a parameter NAMED as a caller-owned output buffer (``out``, ``*_shared``,
+  ``*_buffer``), where writing through to the caller is the contract.
 
 - ``scan_sync_blocking_in_async``: a synchronous blocking call
   (``requests.*``, bare ``httpx.get/post/...``, ``time.sleep``,
@@ -219,7 +225,11 @@ list[Finding]):
   wrong row (e.g. treats ``"9"`` as greater than ``"10"``).
 
 - ``scan_getattr_unknown_attribute``: ``getattr(obj, "name", default)`` where ``name`` is an
-  attribute of no class in the tree, so the call can only ever return the default.
+  attribute of no class in the tree, so the call can only ever return the default. The RECEIVER
+  must be an object the tree DEFINES (``self`` in an in-tree class, a name annotated with one, a
+  variable assigned from one, or a self-referencing module): the premise says nothing about a
+  stdlib, third-party or dynamically-configured object. Pass ``require_known_receiver=False`` for
+  the wider, much noisier pre-2026-09-03 behaviour.
 - ``scan_getattr_literal_on_known_dataclass``: ``getattr(obj, "name", default)`` where ``obj`` is
   locally inferable as an instance of a SPECIFIC ``@dataclass`` in the tree and ``name`` is not one
   of that class's own fields -- narrower and stronger than ``scan_getattr_unknown_attribute``, which

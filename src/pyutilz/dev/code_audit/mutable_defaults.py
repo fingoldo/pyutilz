@@ -159,6 +159,96 @@ def _is_known_immutable_scalar_annotation(annotation: Optional[ast.expr]) -> boo
     return False
 
 
+_SHARED_BUFFER_SUFFIXES = ("_shared", "_buf", "_buffer", "_out", "_output")
+_SHARED_BUFFER_NAMES = frozenset({"out", "buf", "buffer", "output", "dest", "destination"})
+
+
+def _looks_like_a_shared_output_buffer(param_name: str) -> bool:
+    """Whether a parameter's NAME declares it to be a caller-owned buffer the callee is meant to
+    write into (``out``, ``dest``, ``scores_buf``, ``final_transformed_vals_shared``).
+
+    For such a parameter, writing through the caller's object is the entire contract -- it is why
+    the caller preallocated and passed it -- so the "silent cross-call corruption" this rule reports
+    is neither silent nor corruption. Measured on a downstream repo (2026-09-03): 4 of the 11 P0
+    findings were one deliberately reused preallocated column buffer whose slots are fully
+    overwritten before use, and 3 more were the same ``out``-buffer shape in tests.
+    """
+    return param_name in _SHARED_BUFFER_NAMES or param_name.endswith(_SHARED_BUFFER_SUFFIXES)
+
+
+def _branch_paths(func: ast.AST) -> dict[int, tuple[tuple[int, int], ...]]:
+    """``{id(node) -> its branch path}``, a tuple of ``(id(If/Try), arm index)`` for each
+    conditional arm the node sits inside.
+
+    Two nodes whose paths disagree on the ARM of a shared ``If``/``Try`` can never both execute, so
+    an alias established in one and a mutation performed in the other are not the same object's
+    story. The pre-existing source-line ordering only defended against a REBIND in a sibling branch;
+    it could still pair an alias in the ``if`` arm with a mutation in the ``else`` arm. Measured on
+    a downstream repo (2026-09-03): ``if run_tags is None: run_tags = tags`` / ``else:
+    run_tags.update(tags)`` was reported as a P0 caller-mutation leak, where the two lines are
+    mutually exclusive by construction.
+    """
+    paths: dict[int, tuple[tuple[int, int], ...]] = {}
+
+    def visit(node: ast.AST, path: tuple[tuple[int, int], ...]) -> None:
+        """Walks the tree, tagging every statement with the branch arms it sits under."""
+        paths[id(node)] = path
+        arms: list[list] = []
+        if isinstance(node, ast.If):
+            visit(node.test, path)
+            arms = [node.body, node.orelse]
+        elif isinstance(node, ast.Try):
+            arms = [node.body, *[h.body for h in node.handlers], node.orelse, node.finalbody]
+        if arms:
+            for index, arm in enumerate(arms):
+                for stmt in arm:
+                    visit(stmt, (*path, (id(node), index)))
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, path)
+
+    visit(func, ())
+    return paths
+
+
+def _branches_are_exclusive(left: tuple[tuple[int, int], ...], right: tuple[tuple[int, int], ...]) -> bool:
+    """Whether two branch paths sit in different arms of the same conditional."""
+    for a, b in zip(left, right):
+        if a == b:
+            continue
+        return a[0] == b[0]
+    return False
+
+
+def _augassign_target_is_a_scalar_counter(func: ast.AST, local_name: str, node: ast.AugAssign) -> bool:
+    """Whether ``local += <numeric literal>`` is provably arithmetic on a NUMBER rather than an
+    in-place mutation of a container the caller still holds.
+
+    ``+=`` on an ``int``/``float`` rebinds the name (``x = x + 1``); on a list or a numpy array it
+    mutates in place, so the numeric literal alone is not enough (``arr += 1`` is a real leak). The
+    second half of the evidence is that the name is used as a SUBSCRIPT INDEX or as the operand of a
+    comparison driving a ``while``/``if`` -- neither of which a numpy array can do (a truth-value
+    test on an array raises). Together they are the ``i = l; while i < r: ... buf[i] ...; i += 1``
+    hand-rolled loop counter, 3 of the 11 false P0s measured on a downstream repo (2026-09-03), all
+    of them inside ``@njit`` kernels where that spelling is mandatory.
+    """
+    if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, (int, float)) and not isinstance(node.value.value, bool)):
+        return False
+    for other in ast.walk(func):
+        if isinstance(other, ast.Subscript):
+            index = other.slice
+            if isinstance(index, ast.Name) and index.id == local_name:
+                return True
+        elif isinstance(other, (ast.While, ast.If)) and isinstance(other.test, ast.Compare):
+            operands = [other.test.left, *other.test.comparators]
+            if any(isinstance(o, ast.Name) and o.id == local_name for o in operands):
+                return True
+        elif isinstance(other, ast.Call) and isinstance(other.func, ast.Name) and other.func.id == "range":
+            if any(isinstance(a, ast.Name) and a.id == local_name for a in other.args):
+                return True
+    return False
+
+
 def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[str, str, int]]:
     """Find ``local = param`` (bare Name-to-Name rebind, no ``.copy()``/``list()``/``dict()``/
     ``[*...]`` wrapping) followed later in the SAME function by an in-place mutation of ``local``
@@ -183,16 +273,20 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
     the wild (a `remaining -= slice_sec` loop over a `total: float`
     parameter) during the first real run of this scanner.
     """
-    param_names = set(_arg_names(func))
+    param_names = {name for name in _arg_names(func) if not _looks_like_a_shared_output_buffer(name)}
     param_annotations = _param_annotations(func)
+    paths = _branch_paths(func)
     aliases: dict[str, str] = {}  # local_name -> param_name
+    alias_paths: dict[str, tuple[tuple[int, int], ...]] = {}  # local_name -> the branch path the alias was established in
     hits: list[tuple[str, str, int]] = []
     nodes = sorted(ast.walk(func), key=lambda n: getattr(n, "lineno", 0))
     for node in nodes:
+        node_path = paths.get(id(node), ())
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             local_name = node.targets[0].id
             if isinstance(node.value, ast.Name) and node.value.id in param_names:
                 aliases[local_name] = node.value.id
+                alias_paths[local_name] = node_path
                 continue
             elif local_name in aliases:
                 del aliases[local_name]  # reassigned to something else -- no longer a bare alias
@@ -207,7 +301,11 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
                 lineno = node.lineno
         elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id in aliases:
             aliased_param = aliases[node.target.id]
-            if not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param)) and not _param_default_looks_like_immutable_scalar(func, aliased_param):
+            if (
+                not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param))
+                and not _param_default_looks_like_immutable_scalar(func, aliased_param)
+                and not _augassign_target_is_a_scalar_counter(func, node.target.id, node)
+            ):
                 target_name = node.target.id
                 lineno = node.lineno
         elif isinstance(node, ast.Assign):
@@ -215,7 +313,7 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
                 if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id in aliases:
                     target_name = t.value.id
                     lineno = node.lineno
-        if target_name is not None:
+        if target_name is not None and not _branches_are_exclusive(alias_paths.get(target_name, ()), node_path):
             hits.append((aliases[target_name], target_name, lineno))
     return hits
 
@@ -231,6 +329,13 @@ def scan_parameter_aliasing_mutation(root: Path,
     ``returning_fields = history_fields; returning_fields += [hash_field]`` used
     ``list.__iadd__`` (in-place) to mutate the CALLER's own ``history_fields`` list, leaking
     ``hash_field`` into a history-table column list the caller never asked for it in.
+
+    Three shapes are deliberately NOT reported, each measured as a false P0 on a fresh repo
+    (2026-09-03, 11 findings, 11 false): a hand-rolled scalar loop counter (``i = l`` ... ``i += 1``
+    with ``i`` used as an index or a loop bound -- ``+=`` on a number rebinds, it does not mutate);
+    an alias and a mutation sitting in mutually exclusive arms of the same ``if``/``try``; and a
+    parameter whose NAME declares it a caller-owned output buffer (``out``, ``*_shared``,
+    ``*_buffer``), where writing through to the caller is the contract rather than the leak.
 
     Severity: P0 (silent cross-call state corruption, same class as a mutable-default leak).
     """
