@@ -56,7 +56,7 @@ repos:
   # CHANGELOG, CONTRIBUTING, TESTING, mkdocs site) -- proportionally more prose surface
   # here than mlframe since docstrings are the primary documentation, not inline comments.
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         args: ['--ignore-words-list=coo,ser,utilizaton,re-declared,re-declare,re-uses,re-using,unparseable,pre-empt,pre-empts,nd,caf,statics']
