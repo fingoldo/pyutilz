@@ -69,6 +69,7 @@ from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
 from .column_no_write_path import scan_column_no_write_path
 from .sibling_guard_missing import scan_sibling_guard_missing
 from .sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
+from .vacuous_loop_assertion import scan_vacuous_loop_assertion
 from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
@@ -219,6 +220,7 @@ register_scanner("patch_target_is_a_reexport", scan_patch_target_is_a_reexport)
 register_scanner("column_no_write_path", scan_column_no_write_path)
 register_scanner("sibling_guard_missing", scan_sibling_guard_missing)
 register_scanner("sql_sibling_missing_time_bound", scan_sql_sibling_missing_time_bound)
+register_scanner("vacuous_loop_assertion", scan_vacuous_loop_assertion)
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
@@ -228,6 +230,14 @@ register_scanner("sql_sibling_missing_time_bound", scan_sql_sibling_missing_time
 # fresh mistake, which is a decision a project takes deliberately rather than inherits. Name them in
 # ``checks=`` to run them.
 OPT_IN_ONLY: frozenset[str] = frozenset({
+    # Opt-in because its hits are real instances of the class and there are a lot of them: 10 in
+    # pyutilz, 13 in the scrapers, 80 in mlframe, 0 in llm_bench. Each one is a test whose every
+    # assertion sits inside a loop over something a call produced, with nothing pinning the count
+    # -- `for chunk in chunks(lst, n): assert ...`. Whether that matters depends on how plausible
+    # an empty result is for that particular producer, which is a judgement the rule cannot make.
+    # Ninety-nine baseline entries would teach every consumer to refresh without reading, so this
+    # is for pointing at a suite you already doubt, not for a ratchet.
+    "vacuous_loop_assertion",
     # Opt-in: 225 hits in one package, and most are legitimate -- coverage annotations in
     # tests ("lines 54-90"), and prose citing a line in a file it is discussing. The rule
     # cannot tell those from a rotted pointer, and the rotted ones are better caught by
