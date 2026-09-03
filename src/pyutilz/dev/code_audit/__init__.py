@@ -562,6 +562,28 @@ from .field_text_agreement import (
     check_records,
     cues_in_text,
 )
+# Every registered scanner is importable from the package: the registry is the single source of
+# truth for what exists, and a meta-test pins the registry and this facade in bijection.
+from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
+from .asymmetric_except_siblings import scan_asymmetric_except_siblings
+from .column_no_write_path import scan_column_no_write_path
+from .comment_names_missing_symbol import scan_comment_names_missing_symbol, scan_comment_cites_absolute_line
+from .constructor_param_overwritten import scan_constructor_param_overwritten
+from .count_then_fetch_same_table import scan_count_then_fetch_same_table
+from .docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_config
+from .effect_flag_outside_its_effect import scan_effect_flag_outside_its_effect
+from .guard_decidable_from_constants import scan_guard_decidable_from_constants
+from .lazy_log_assertion import scan_lazy_log_assertion
+from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
+from .raising_stub_swallowed import scan_raising_stub_swallowed
+from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
+from .sentinel_guard_mismatch import scan_sentinel_guard_mismatch
+from .source_text_assertions import scan_source_text_assertions
+from .sql_selects_unread_column import scan_sql_selects_unread_column
+from .stats_key_coverage import scan_stats_key_coverage
+from .test_asserts_against_production_constant import scan_test_asserts_against_production_constant
+from .unit_suffix_mismatch import scan_unit_suffix_mismatch
+from .unreachable_import_fallback import scan_unreachable_import_fallback
 # SCANNERS is deliberately NOT re-exported: the registry is private, read via get_scanners()
 # and written via register_scanner() (whose duplicate-name guard direct assignment bypassed).
 from .registry import OPT_IN_ONLY, run_all, register_scanner, get_scanners
@@ -659,6 +681,29 @@ __all__ = [
     "check_record",
     "check_records",
     "check_all",
+    # Registered scanners that had no public import; kept in bijection with the registry by
+    # tests/test_code_audit.py::test_registry_and_facade_are_in_bijection.
+    "scan_accumulator_helper_bypassed",
+    "scan_asymmetric_except_siblings",
+    "scan_column_no_write_path",
+    "scan_comment_cites_absolute_line",
+    "scan_comment_names_missing_symbol",
+    "scan_constructor_param_overwritten",
+    "scan_count_then_fetch_same_table",
+    "scan_docstring_numbers_moved_to_config",
+    "scan_effect_flag_outside_its_effect",
+    "scan_guard_decidable_from_constants",
+    "scan_lazy_log_assertion",
+    "scan_patch_target_is_a_reexport",
+    "scan_raising_stub_swallowed",
+    "scan_sentinel_cached_as_answer",
+    "scan_sentinel_guard_mismatch",
+    "scan_source_text_assertions",
+    "scan_sql_selects_unread_column",
+    "scan_stats_key_coverage",
+    "scan_test_asserts_against_production_constant",
+    "scan_unit_suffix_mismatch",
+    "scan_unreachable_import_fallback",
 ]
 
 # Keep the public attribute surface identical to the pre-split flat module:
@@ -687,6 +732,26 @@ for _submod in (
     "todo_hygiene", "import_cycles",
     "hardcoded_test_path", "async_primitive_reinit", "llm_max_tokens_cap",
     "per_call_state_on_shared_instance", "uncached_constant_cost_probe",
+    "accumulator_helper_bypassed",
+    "asymmetric_except_siblings",
+    "column_no_write_path",
+    "comment_names_missing_symbol",
+    "constructor_param_overwritten",
+    "count_then_fetch_same_table",
+    "docstring_numbers_moved_to_config",
+    "effect_flag_outside_its_effect",
+    "guard_decidable_from_constants",
+    "lazy_log_assertion",
+    "patch_target_is_a_reexport",
+    "raising_stub_swallowed",
+    "sentinel_cached_as_answer",
+    "sentinel_guard_mismatch",
+    "source_text_assertions",
+    "sql_selects_unread_column",
+    "stats_key_coverage",
+    "test_asserts_against_production_constant",
+    "unit_suffix_mismatch",
+    "unreachable_import_fallback",
 ):
     globals().pop(_submod, None)
 del _submod

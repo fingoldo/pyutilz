@@ -196,7 +196,10 @@ pytest tests/test_pandaslib.py
 # Run specific test
 pytest tests/test_dtypes_regression.py::test_optimize_dtypes_does_not_truncate_fractional_object_column
 
-# Run with coverage
+# Run with coverage -- this is the CI (Linux) form. On WINDOWS it raises PermissionError:
+# pytest-cov cannot write its data file there, so add --no-cov to every local pytest run and
+# get a local number via `python -m coverage run -m pytest --no-cov` + `python -m coverage report`.
+# See TESTING.md's "Running tests" section.
 pytest --cov=src/pyutilz --cov-report=html --cov-report=term-missing
 
 # View coverage report
@@ -208,7 +211,10 @@ start htmlcov/index.html  # Windows
 
 - **Location**: `tests/test_<module_name>.py`
 - **Naming**: `test_<function_name>` or `test_<feature>`
-- **Coverage**: Aim for >80% coverage for new code. Note the measured percentage is against a
+- **Coverage**: keep new code above the enforced CI floor -- `--cov-fail-under` in
+  `.github/workflows/ci.yml`, mirrored as `[tool.coverage.report] fail_under` in `pyproject.toml`
+  (currently 82; it is a ratchet, so read those two rather than trusting this figure). Note the
+  measured percentage is against a
   shrunk denominator: `pyproject.toml`'s `[tool.coverage.run] omit` list excludes `system/scheduling/`,
   `cloud/`, `web/browser.py`, `dev/dashlib.py`, `dev/notebook_init.py`, and `text/tokenizers.py`
   entirely (heavy-IO/external-service code not exercised by the unit suite) — those files aren't
@@ -335,10 +341,10 @@ footer, so don't rely on one to surface the change.
 ## Pull Request Process
 
 1. **Update documentation** if adding features
-2. **Add tests** for new functionality (maintain >80% coverage)
+2. **Add tests** for new functionality (keep coverage above CI's `--cov-fail-under` floor, currently 82)
 3. **Update CHANGELOG.md** under "Unreleased" section
 4. **Run full test suite** and ensure all tests pass
-5. **Run linters** (black, ruff) and fix issues
+5. **Run linters** (`python -m py_ci_shared.black_filtered_apply --config pyproject.toml --check .`, `ruff check .`) and fix issues -- never raw `black`, see "Style Guide" above
 6. **Write clear PR description** explaining changes
 7. **Link related issues** using "Closes #123" syntax
 

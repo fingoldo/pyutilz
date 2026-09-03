@@ -37,6 +37,11 @@ def _cols_matching(df: pl.DataFrame, predicate: pl.Expr) -> pl.DataFrame:
     caller (a third "find X cols" helper) doesn't paste a third copy.
     """
     meta = df.select(predicate)
+    if meta.width == 0:
+        # The selector matched nothing (e.g. an all-string frame under a numeric selector): the collected
+        # frame is 0x0 and .row(0) would raise a raw polars OutOfBoundsError the caller can't tell apart
+        # from a polars bug. "No column matches" is the answer, not an error.
+        return df.select([])
     true_cols = meta.row(0)
     return df.select([col for col, val in zip(meta.columns, true_cols) if val is True])
 
@@ -47,13 +52,24 @@ def find_nan_cols(df: pl.DataFrame) -> pl.DataFrame:
     Polars distinguishes float NaN from missing/null (unlike pandas, where isna()/isnull() catch
     both), so both ``is_nan()`` and ``is_null()`` are checked -- an all-null column would otherwise
     be invisible to a caller expecting pandas-style semantics.
+
+    NaN is asked of ``cs.float()`` only, while the null check keeps the full ``cs.numeric()`` reach:
+    ``cs.numeric()`` also matches Decimal, whose ``is_nan`` raises InvalidOperationError -- and a
+    Decimal can by construction hold no NaN, so there is nothing to lose. The two predicates are
+    evaluated separately rather than OR-ed into one expression because their selectors expand to
+    different column sets, which polars rejects as duplicate output names.
     """
-    return _cols_matching(df, cs.numeric().is_nan().fill_null(False).any() | cs.numeric().is_null().any())
+    matched = set(_cols_matching(df, cs.numeric().is_null().any()).columns) | set(_cols_matching(df, cs.float().is_nan().fill_null(False).any()).columns)
+    return df.select([col for col in df.columns if col in matched])
 
 
 def find_infinite_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Return a DataFrame keeping only the numeric columns that contain at least one infinite value."""
-    return _cols_matching(df, cs.numeric().is_infinite().any())
+    """Return a DataFrame keeping only the float columns that contain at least one infinite value.
+
+    ``cs.float()`` rather than ``cs.numeric()``: only floats can be infinite, and ``is_infinite``
+    raises InvalidOperationError on the Decimal columns ``cs.numeric()`` also matches.
+    """
+    return _cols_matching(df, cs.float().is_infinite().any())
 
 
 def clean_numeric(expr: pl.Expr, nans_filler: float = 0.0, fill_nulls: bool = False) -> pl.Expr:

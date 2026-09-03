@@ -90,7 +90,9 @@ def benchmark_dataframe_parquet_compression(
     """Benchmark parquet read/write across engines, compression codecs and (for supported codecs) compression levels.
 
     Returns a dataframe with one row per ``{engine}-{codec}[-{level}]`` config and mean/std
-    read/write time & size columns. Configs listed in ``skip_configs`` are skipped; per-level
+    read/write time & size columns (``config``, ``mean_read_time``, ``std_read_time``,
+    ``mean_write_time``, ``std_write_time``, ``mean_read_size``, ``std_read_size``,
+    ``mean_write_size``, ``std_write_size``). Configs listed in ``skip_configs`` are skipped; per-level
     configs that error out are logged and skipped rather than aborting the whole benchmark.
     """
     res: List[Any] = []
@@ -146,7 +148,9 @@ def benchmark_dataframe_parquet_compression(
         res,
         columns=[
             "config",
-            *"mean_read_times,std_read_times,mean_write_times,std_write_times,mean_read_sizes,std_read_sizes,mean_write_sizes,std_write_sizes".split(","),
+            # Singular, matching the column vocabulary benchmark_dataframe_compression assembles its
+            # combined frame with -- these rows are appended straight into it.
+            *"mean_read_time,std_read_time,mean_write_time,std_write_time,mean_read_size,std_read_size,mean_write_size,std_write_size".split(","),
         ],
     )
 
@@ -267,7 +271,11 @@ def benchmark_dataframe_compression(
     # Parquet has different signature, handle separately
     try:
         parquet_results = _facade.benchmark_dataframe_parquet_compression(df, temp_folder, nrepeats)
-        res.extend(parquet_results.to_dict("records"))
+        # Rows, not records: `res` holds LISTS (see pack_benchmark_results), and pd.DataFrame() renders a
+        # dict inside a list-of-rows as its KEYS, so every parquet row used to come out as a row of the
+        # literal strings "config", "mean_read_times", ... -- which the very next sort_values() then
+        # compared against floats and died on with an unrelated-looking numpy UFuncTypeError.
+        res.extend(parquet_results.itertuples(index=False, name=None))
     except Exception as e:
         logger.error(e)
 

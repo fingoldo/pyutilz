@@ -365,7 +365,14 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> object:
             raw = None
         if raw is not None and _ESCAPED_NUL not in raw:
             return _PreSerializedJson(raw)
-        return _PreSerializedJson(_orjson.dumps(_normalize_for_pg_json(obj), default=json_serial, option=opts).decode("utf-8"))
+        try:
+            return _PreSerializedJson(_orjson.dumps(_normalize_for_pg_json(obj), default=json_serial, option=opts).decode("utf-8"))
+        except TypeError:
+            # orjson rejects shapes stdlib json accepts -- non-str dict keys ("Dict key must be
+            # str") and lone surrogates ("surrogates not allowed"). The docstring promises the
+            # output does not depend on which backend is installed, so fall through to stdlib
+            # rather than raising only on the boxes that happen to have orjson.
+            pass
     return _PreSerializedJson(json.dumps(_normalize_for_pg_json(obj), default=json_serial, sort_keys=sort_keys))
 
 

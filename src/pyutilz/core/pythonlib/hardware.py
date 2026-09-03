@@ -67,8 +67,16 @@ def is_cuda_available() -> bool:
         _ensure_cuda_home_from_pip()
         from numba import cuda
         return cuda.is_available()  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
-    except (ImportError, Exception) as e:  # nosec B110 - best-effort optional CUDA probe; failing here (e.g. numba absent or no driver) just reports no CUDA support
-        logger.debug("Failed to probe CUDA availability: %s", e)
+    except ImportError as e:
+        # numba (or its cuda submodule) simply not installed -- an expected, uninteresting outcome.
+        logger.debug("CUDA probe: numba not importable: %s", e)
+        return False
+    except Exception as e:  # nosec B110 - best-effort optional CUDA probe; failing here (e.g. no driver) just reports no CUDA support
+        # `except (ImportError, Exception)` READ as narrow while catching everything. Anything that
+        # is not an ImportError is a real probe failure (driver hiccup, broken toolkit) and it is
+        # memoized for the whole process by @lru_cache, disabling every CUDA fast path for the run
+        # -- that deserves a WARNING, not a DEBUG line nobody sees.
+        logger.warning("Failed to probe CUDA availability (%s); reporting CUDA as unavailable for the rest of this process.", e)
         return False
 
 

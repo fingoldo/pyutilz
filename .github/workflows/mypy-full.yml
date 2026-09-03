@@ -1,13 +1,24 @@
 name: MyPy
 
-# Whole-project mypy check (the fast strict-mode beachhead workflow was retired). Extracted to
-# fingoldo/py-ci-shared (2026-07-09); the install-command below mirrors ci.yml's `test` job
-# install step (all runtime extras except [gpu]/[dash]/[prefect]/[tensorflow] -- pyproject.toml's
-# comment on the `all` extra is the single source of truth for why those four are excluded). `advisory: false` (real blocking gate) as of 2026-07-13:
-# `mypy src/pyutilz` verified clean (0 errors, 216 source files as of 2026-09-02, with
-# warn_unreachable now on) -- backlog is closed, same
-# posture as mlframe's mypy-full.yml. Flip back to advisory only if a future dependency-version
-# bump reopens the backlog wider than a same-PR fix.
+# Whole-project mypy check (the fast strict-mode beachhead workflow was retired). The install
+# command below mirrors ci.yml's `test` job install step exactly (all runtime extras except
+# [gpu]/[dash]/[prefect]/[tensorflow] -- pyproject.toml's comment on the `all` extra is the
+# single source of truth for why those four are excluded, and it names exactly those four:
+# `speedups` was missing here until 2026-09-03, which type-checked every orjson call site in
+# the orjson-ABSENT branch while ci.yml ran the tests in the orjson-present one).
+# A real blocking gate (no continue-on-error) since 2026-07-13: `mypy src/pyutilz` verified
+# clean (0 errors, 243 source files as of 2026-09-03, with warn_unreachable now on) -- the
+# backlog is closed, same posture as mlframe's mypy-full.yml.
+#
+# Run inline rather than through fingoldo/py-ci-shared's reusable mypy-full.yml (which it used
+# until 2026-09-03) for one reason: that workflow's step is a bare `mypy <path>`, and mypy's
+# exit code alone cannot distinguish "checked everything, found nothing" from "aborted partway
+# through with an INTERNAL ERROR inside a third-party stub". The local
+# .pre-commit-config.yaml mypy-full-blocking hook has required mypy's own
+# `Success: no issues found in N source files` terminator plus `--min-files 200` since it was
+# flipped blocking, so the reusable workflow made the MERGE gate strictly looser than the local
+# hook that claims to mirror it. Same wrapper, same threshold, same argument here. Fold this
+# back into the reusable workflow once it grows a completion-asserted mode.
 
 on:
   push:
@@ -25,10 +36,35 @@ permissions:
 
 jobs:
   mypy-full:
-    uses: fingoldo/py-ci-shared/.github/workflows/mypy-full.yml@v1
-    with:
-      package-name: pyutilz
-      mypy-version: "2.3.1"
-      advisory: false
-      install-command: |
-        uv pip install --system -e ".[pandas,polars,database,system,llm,nlp,cloud,dev]"
+    name: mypy (whole project, blocking, completion-asserted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # mypy itself comes from the [dev] extra's `mypy==2.3.1` pin, so this workflow cannot
+      # drift from pyproject.toml and .pre-commit-config.yaml's mirrors-mypy rev the way a
+      # separately-declared `mypy-version:` input could. py-ci-shared supplies the mypy_gate
+      # wrapper only; it is pinned to a release tag, not the moving @v1 the reusable workflows use.
+      - name: Install project + the mypy gate wrapper
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.3.5"
+
+      - name: Show mypy version
+        run: mypy --version
+
+      # --min-files 200 against a tree of 242 source files: fails a run whose scope has silently
+      # narrowed (a mistyped path, an over-eager exclude) as well as one that aborted midway.
+      # Identical invocation to .pre-commit-config.yaml's mypy-full-blocking hook.
+      - name: MyPy (whole project, completion-asserted)
+        run: python -m py_ci_shared.mypy_gate --min-files 200 src/pyutilz

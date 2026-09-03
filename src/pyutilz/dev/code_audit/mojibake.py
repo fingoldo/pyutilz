@@ -54,15 +54,30 @@ def scan_mojibake(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        # _safe_parse also validates the file is readable/parseable Python; reuse it as the gate,
-        # then re-read the raw text for line-by-line scanning (this check is text-based, not AST).
-        if _safe_parse(py) is None:
-            continue
+        rel = py.relative_to(root).as_posix()
         try:
             text = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except UnicodeDecodeError:
+            # A source file that is not valid UTF-8 at all is the STRONGEST mojibake signal there
+            # is (e.g. saved as CP1251); skipping it would drop the very artefact this scanner
+            # exists to find.
+            findings.append(
+                Finding(
+                    check="mojibake",
+                    severity="P2",
+                    file=rel,
+                    line=1,
+                    snippet="",
+                    detail="file is not valid UTF-8, so it cannot be read as text -- re-save it as UTF-8.",
+                )
+            )
             continue
-        rel = py.relative_to(root).as_posix()
+        except OSError:
+            continue
+        # _safe_parse also validates the file is parseable Python; reuse it as the gate (it is
+        # applied AFTER the decode above so an undecodable file is reported, not silently dropped).
+        if _safe_parse(py) is None:
+            continue
         for lineno, line in enumerate(text.split("\n"), start=1):
             for match in _NON_ASCII_RUN_RE.finditer(line):
                 if _is_roundtrip_mojibake(match.group()):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test stub that raises, into production code that swallows -----------------------------
 #
@@ -24,8 +24,9 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 
 _BROAD = {"Exception", "BaseException"}
 
-# Patch spellings that install a replacement callable.
-_PATCH_FUNCS = {"patch", "setattr", "patch.object"}
+# Patch spellings that install a replacement callable, as the CALLEE's last attribute:
+# `patch(...)`, `monkeypatch.setattr(...)`, `patch.object(...)`.
+_PATCH_FUNCS = {"patch", "setattr", "object"}
 
 
 def _raises_unconditionally(node: ast.AST) -> bool:
@@ -62,11 +63,11 @@ def _stub_names_that_raise(scope: ast.AST) -> set[str]:
 
 
 def _asserts_on_a_raise(func: ast.AST) -> bool:
-    """Does this test expect the exception itself -- `pytest.raises`, or an assertion on a return?
+    """Does this test expect the exception itself -- i.e. does it use `pytest.raises`?
 
-    Two exclusions in one. `pytest.raises` means the raise IS the subject. An assertion on the
-    driving call's RETURN VALUE means the test is exercising the degradation path on purpose, which
-    is the main real false positive for this rule.
+    This is ONE of the two exclusions the rule needs. The other -- an assertion on the driving
+    call's RETURN VALUE, which means the test exercises the degradation path on purpose -- is
+    decided separately by :func:`_spy_style_assertions`, not here.
     """
     for node in ast.walk(func):
         if isinstance(node, ast.Call):
@@ -133,7 +134,7 @@ def _patched_targets(func: ast.AST, raising_stubs: set[str]) -> list[tuple[str, 
             continue
         target = node.func
         fname = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
-        if fname not in {"patch", "setattr", "object"}:
+        if fname not in _PATCH_FUNCS:
             continue
 
         replacement_is_a_raiser = False
@@ -179,7 +180,9 @@ def scan_raising_stub_swallowed(
         if tree is None:
             continue
         rel = py.relative_to(root).as_posix()
-        if py.name.startswith("test_") or "tests" in py.parts:
+        # Relative to the scan root: `py.parts` is ABSOLUTE, so a checkout under any directory
+        # named `tests` classified every production file as a test and silenced the whole scan.
+        if py.name.startswith("test_") or py.name.endswith("_test.py") or "tests" in py.relative_to(root).parts:
             test_files.append(py)
         else:
             swallowed = _swallowing_calls(tree)
@@ -193,7 +196,7 @@ def scan_raising_stub_swallowed(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for func in ast.walk(tree):

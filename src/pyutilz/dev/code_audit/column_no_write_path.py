@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines
 
 # --- a column the schema declares that no statement anywhere can fill --------------------------
 #
@@ -24,8 +24,9 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text
 #   is the writing path.
 # * a primary key, which is either supplied by a default or by a conflict target this rule cannot
 #   see through.
-# * a column named anywhere in a `SELECT`, because a table this codebase only reads from is not
-#   something it is expected to write.
+# * a column named NOWHERE in a `SELECT`. Being READ is what makes a column reportable: a column
+#   nothing reads is dead weight, not a silently-NULL telemetry field, and the flat-panel failure
+#   this rule exists for needs a reader.
 #
 # MEASURED REACH, so silence is not read as coverage. On the scraper codebase this comes from, it
 # parses 20 tables and 85 columns that need a writing path of their own, and reports none: every
@@ -37,7 +38,7 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text
 # parameter dict key -- counts as a write path. A rule that demanded a parsed INSERT would miss
 # every ORM and every string-built statement, which is most of them.
 
-_CREATE_TABLE = re.compile(r"CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[\w.\"]+)\s*\((?P<body>.*?)\n\s*\)\s*;", re.I | re.S)
+_CREATE_TABLE = re.compile(r"CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[\w.\"]+)\s*\((?P<body>.*?)\s*\)\s*;", re.I | re.S)
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _COLUMN = re.compile(r"^\s*(?P<name>[a-z_][\w]*)\s+(?P<rest>.+)$", re.I)
@@ -48,8 +49,13 @@ _WRITES = re.compile(r"\b(INSERT\s+INTO|UPDATE\s+\w|SET\s+\w|DO\s+UPDATE|EXCLUDE
 
 
 def _strip_comments(text: str) -> str:
-    """SQL with comments removed -- a commented-out column is not a declaration."""
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+    """SQL with comments removed -- a commented-out column is not a declaration.
+
+    A block comment is replaced by its own newlines rather than deleted outright: every declaration
+    line number downstream is counted in this stripped text, so swallowing the newlines shifts each
+    reported line up by the comment's height.
+    """
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub(lambda m: chr(10) * m.group(0).count(chr(10)), text))
 
 
 def _declared_columns(sql: str) -> dict[str, list[tuple[str, int]]]:
@@ -95,8 +101,8 @@ def scan_column_no_write_path(
     in another, and nothing fails when a table has more columns than a statement names.
 
     Columns that fill themselves (DEFAULT, GENERATED, serial, identity, primary keys) are skipped,
-    as is any column named in a SELECT -- a table this codebase only reads is not one it is
-    expected to write.
+    Reported only when the column IS named in a SELECT somewhere: an unread column reading NULL
+    forever fools nobody, whereas a read one is exactly the flat-panel failure above.
     """
     sql_root = root / sql_dir
     if not sql_root.is_dir():
@@ -133,7 +139,7 @@ def scan_column_no_write_path(
         for column, line, rel in sorted(set(sites)):
             if column in written or column not in read_names:
                 continue
-            src_lines = (root / rel).read_text(encoding="utf-8", errors="replace").splitlines()
+            src_lines = _read_src_lines(root / rel)
             findings.append(
                 Finding(
                     check="column_no_write_path",

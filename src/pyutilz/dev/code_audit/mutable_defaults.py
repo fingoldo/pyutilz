@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator, Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text, _arg_names
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- Class A: mutable defaults ------------------------------------------
 
@@ -18,6 +18,8 @@ _MUTATING_METHODS = frozenset({
 
 _MUTABLE_LITERAL_TYPES = (ast.List, ast.Dict, ast.Set)
 _MUTABLE_CALLS = frozenset({"list", "dict", "set"})
+# collections factories that likewise build one shared mutable object at def time.
+_MUTABLE_FACTORIES = {"defaultdict": "dict", "OrderedDict": "dict", "Counter": "dict", "deque": "list"}
 
 
 def _is_mutable_default(default: ast.AST) -> Optional[str]:
@@ -29,9 +31,14 @@ def _is_mutable_default(default: ast.AST) -> Optional[str]:
         return "dict"
     if isinstance(default, ast.Set):
         return "set"
-    if isinstance(default, ast.Call) and isinstance(default.func, ast.Name):
-        if default.func.id in _MUTABLE_CALLS and not default.args and not default.keywords:
-            return default.func.id
+    if isinstance(default, ast.Call):
+        # Arguments do NOT make the call safe: ``dict(a=1)`` builds a fresh mutable object once,
+        # at def time, exactly like ``{}`` does.
+        name = default.func.id if isinstance(default.func, ast.Name) else (default.func.attr if isinstance(default.func, ast.Attribute) else None)
+        if name in _MUTABLE_CALLS:
+            return name
+        if name in _MUTABLE_FACTORIES:
+            return _MUTABLE_FACTORIES[name]
     return None
 
 
@@ -232,7 +239,7 @@ def scan_parameter_aliasing_mutation(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -267,7 +274,7 @@ def scan_mutable_defaults(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

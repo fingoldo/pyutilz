@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
@@ -81,7 +81,13 @@ def parse_ip_response(text: str) -> str:
             return body if _IP_SHAPE_RE.match(body) else "?"
         except (_JSONDecodeError, ValueError):
             return body if _IP_SHAPE_RE.match(body) else "?"
-    return body.split(",")[0].strip()
+    # Same shape guard as the JSON branch above, which previously covered only that half: a
+    # gateway or captive intermediary answering with an HTML error page ("<html>...503 Service
+    # Unavailable...") had that whole string returned as "the exit IP", and
+    # check_ip_matches_real() then reported True ("differs from the real IP, proxy works") for a
+    # proxy that is dead or leaking. "?" is the sentinel get_ip() already uses for unusable.
+    candidate = body.split(",")[0].strip()
+    return candidate if _IP_SHAPE_RE.match(candidate) else "?"
 
 
 def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, timeout: int = 10) -> str:
@@ -89,12 +95,25 @@ def get_ip(session_or_requests: Any, prx: Optional[Dict[str, str]] = None, *, ti
     kwargs: Dict[str, Any] = {"timeout": timeout}
     if prx is not None:
         kwargs["proxies"] = prx
-    failures = []
+    failures: List[Tuple[str, BaseException]] = []
     for url in IP_CHECK_URLS:
         try:
             r = session_or_requests.get(url, **kwargs)
-            return parse_ip_response(r.text)
-        except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (try the next URL)
+            # No status check at all previously: a 503/407 error BODY was parsed as the exit IP.
+            # getattr + isinstance(int), because this module's contract is "any HTTP client object
+            # with .get(...) returning something with .text" -- a response object that does not
+            # report an integer status (a minimal client, a test double) is not second-guessed
+            # here; only a real, stated non-200 is rejected.
+            status = getattr(r, "status_code", None)
+            if isinstance(status, int) and status != 200:
+                failures.append((url, RuntimeError(f"HTTP {status}")))
+                continue
+            ip = parse_ip_response(r.text)
+            if ip == "?":
+                failures.append((url, RuntimeError("unparseable IP response")))
+                continue
+            return ip
+        except Exception as e:
             # Regression fix: this module's own docstring promises "any HTTP client (requests,
             # curl_cffi, httpx, etc.)" -- but (OSError, ValueError, KeyError) only actually
             # covers requests/curl_cffi (both raise OSError subclasses); httpx's exceptions

@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text, _arg_names
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- docstring Args: section missing a real parameter -----------------------
 #
@@ -57,7 +57,7 @@ def scan_docstring_args_completeness(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

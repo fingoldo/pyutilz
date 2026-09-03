@@ -14,7 +14,7 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import redis
 from time import sleep
@@ -29,17 +29,30 @@ from pyutilz.database.exceptions import DatabaseConnectionError
 # checking of redis method names on this module's central object.
 rc: Optional[redis.Redis] = None
 
-def rconnect (redis_host:str, redis_port:int, redis_db_name:str, redis_db_pwd:str, decode_responses:bool=True):
+def rconnect (redis_host:str, redis_port:int, redis_db_name:Union[int,str], redis_db_pwd:str, decode_responses:bool=True):
     """
     Create a Redis connection with the given credentials, store it as the module-level global ``rc``, and return it.
+
+    ``redis_db_name`` is a Redis database INDEX, not a name: Redis databases are numbered (0..15 by
+    default), so the value must be an int or a string of digits. Anything else raises ValueError
+    before any state is touched.
     """
     global rc
+    # Regression fix: int(redis_db_name) used to happen inside the redis.Redis(...) call, i.e. AFTER
+    # old_rc had been read but BEFORE the new rc was bound -- a config value like "sessions" raised a
+    # bare `invalid literal for int()` naming neither the argument nor the "index, not a name" rule,
+    # leaving the previous connection installed and un-closed. Convert first, with a message that says
+    # which argument is wrong.
+    try:
+        redis_db_index = int(redis_db_name)
+    except (TypeError, ValueError):
+        raise ValueError(f"redis_db_name must be a Redis database INDEX (an integer, e.g. 0), got {redis_db_name!r}") from None
     # Regression fix (meta-test-driven finding, proactive resource-lifecycle audit): a second
     # rconnect() call (e.g. reconnecting with new credentials) used to drop the previous
     # connection with no close(), leaking its connection pool -- same bug class fixed in
     # web.init_vars()/get_new_session() this round.
     old_rc = rc
-    rc = redis.Redis(host=redis_host, port=redis_port, db=int(redis_db_name), password=redis_db_pwd, decode_responses=decode_responses)
+    rc = redis.Redis(host=redis_host, port=redis_port, db=redis_db_index, password=redis_db_pwd, decode_responses=decode_responses)
     if old_rc is not None:
         try:
             old_rc.close()

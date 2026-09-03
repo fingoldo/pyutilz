@@ -23,7 +23,49 @@ def _module_name_from_path(path: Path, root: Path, package_name: str) -> str:
     return ".".join([package_name, *parts])
 
 
-def _internal_imports(tree: ast.AST, current: str, package_name: str) -> set[str]:
+def _absolute_import_targets(node: ast.AST, package_name: str) -> "set[str]":
+    """In-package modules an ABSOLUTE import statement pulls in (``import pkg.x`` / ``from pkg.x import y``).
+
+    ``from pkg.x import y`` loads the SUBMODULE ``pkg.x.y`` when one exists, so both the module and
+    every ``pkg.x.<alias>`` candidate are emitted; the caller prunes candidates that are not real
+    modules. Returns an empty set for anything that is not an in-package absolute import.
+    """
+    out: "set[str]" = set()
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.name.startswith(package_name):
+                out.add(alias.name)
+    elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module and node.module.startswith(package_name):
+        out.add(node.module)
+        for alias in node.names:
+            out.add(f"{node.module}.{alias.name}")
+    return out
+
+
+def _relative_import_targets(node: ast.ImportFrom, current_parts: "list[str]", package_name: str, is_package: bool) -> "set[str]":
+    """In-package modules a RELATIVE ``from . import`` / ``from .mod import`` statement pulls in.
+
+    A package's ``__init__.py`` IS its package, so ``from .a import f`` there resolves against the
+    package itself -- one fewer component to strip than for a plain module. And bare
+    ``from . import other`` imports the SUBMODULES, not the base package; emitting an edge to the
+    base package fabricates a cycle through the parent that does not exist.
+    """
+    out: "set[str]" = set()
+    strip = node.level - 1 if is_package else node.level
+    base_parts = current_parts[: len(current_parts) - strip] if strip else list(current_parts)
+    if node.module:
+        base_parts.append(node.module)
+        if base_parts and base_parts[0] == package_name:
+            out.add(".".join(base_parts))
+            for alias in node.names:
+                out.add(".".join([*base_parts, alias.name]))
+    elif base_parts and base_parts[0] == package_name:
+        for alias in node.names:
+            out.add(".".join([*base_parts, alias.name]))
+    return out
+
+
+def _internal_imports(tree: ast.AST, current: str, package_name: str, is_package: bool = False) -> set[str]:
     """Yield fully-qualified names ``current`` imports from inside the same package, considering
     ONLY top-level imports -- lazy imports inside function bodies don't participate in the
     module-load dependency graph (they fire after both modules have finished loading), so a
@@ -32,38 +74,44 @@ def _internal_imports(tree: ast.AST, current: str, package_name: str) -> set[str
     out: set[str] = set()
     current_parts = current.split(".")
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith(package_name):
-                    out.add(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                if node.module and node.module.startswith(package_name):
-                    out.add(node.module)
-            else:
-                base_parts = current_parts[: -node.level]
-                if node.module:
-                    base_parts.append(node.module)
-                if base_parts and base_parts[0] == package_name:
-                    out.add(".".join(base_parts))
+        if isinstance(node, ast.ImportFrom) and node.level != 0:
+            out |= _relative_import_targets(node, current_parts, package_name, is_package)
         elif isinstance(node, ast.If):
             # `if TYPE_CHECKING: ... import X` is not at runtime, already excluded by iterating
             # top-level statements without walking into other If bodies -- but `try: import
             # optdep / except ...` IS top-level and contributes, so descend into If bodies here.
             for sub in ast.walk(node):
-                if isinstance(sub, ast.Import):
-                    for alias in sub.names:
-                        if alias.name.startswith(package_name):
-                            out.add(alias.name)
-                elif isinstance(sub, ast.ImportFrom):
-                    if sub.level == 0 and sub.module and sub.module.startswith(package_name):
-                        out.add(sub.module)
+                out |= _absolute_import_targets(sub, package_name)
+        else:
+            out |= _absolute_import_targets(node, package_name)
     return out
 
 
-def _build_graph(root: Path, package_name: str, exclude_dirs: FrozenSet[str]) -> dict:
-    """``{module_name: set_of_imported_internal_module_names}``."""
+def _package_roots(root: Path) -> list[Path]:
+    """The importable package directories under ``root``.
+
+    ``root`` is documented by the CLI as "source-tree root to scan (e.g. ./src)", which is NOT
+    itself a package -- taking ``root.name`` as the package name there ("src") matched no import
+    target at all and made the whole check a silent no-op.
+    """
+    if (root / "__init__.py").is_file():
+        return [root]
+    subs: list[Path] = []
+    try:
+        # `__init__.py` is not required: PEP 420 namespace packages are importable too.
+        subs.extend(d for d in sorted(root.iterdir()) if d.is_dir() and next(d.rglob("*.py"), None) is not None)
+    except OSError:
+        pass
+    if not subs or next(root.glob("*.py"), None) is not None:
+        subs.append(root)
+    return subs
+
+
+def _build_graph(root: Path, package_name: str, exclude_dirs: FrozenSet[str], display_root: Path | None = None) -> tuple[dict, dict]:
+    """``({module_name: imported internal module names}, {module_name: file path})``."""
     graph: dict = defaultdict(set)
+    files: dict = {}
+    base = display_root if display_root is not None else root
     for py in root.rglob("*.py"):
         if _is_excluded(py, root, exclude_dirs):
             continue
@@ -71,8 +119,9 @@ def _build_graph(root: Path, package_name: str, exclude_dirs: FrozenSet[str]) ->
         if tree is None:
             continue
         mod_name = _module_name_from_path(py, root, package_name)
-        graph[mod_name].update(_internal_imports(tree, mod_name, package_name))
-    return graph
+        graph[mod_name].update(_internal_imports(tree, mod_name, package_name, py.name == "__init__.py"))
+        files[mod_name] = py.relative_to(base).as_posix()
+    return graph, files
 
 
 def _strongly_connected_components(graph: dict) -> list:
@@ -145,8 +194,21 @@ def scan_import_cycles(
     exports before importing the sibling) -- these are not flagged. Each project maintains its own
     list; nothing is baked into this scanner.
     """
-    pkg = package_name or root.name
-    graph = _build_graph(root, pkg, exclude_dirs)
+    if package_name:
+        package_dirs = [(root, package_name)]
+    else:
+        package_dirs = [(directory, directory.name) for directory in _package_roots(root)]
+    graph: dict = defaultdict(set)
+    module_files: dict = {}
+    for directory, name in package_dirs:
+        sub_graph, sub_files = _build_graph(directory, name, exclude_dirs, root)
+        for module, targets in sub_graph.items():
+            graph[module].update(targets)
+        module_files.update(sub_files)
+    # Keep only edges that name a module actually present in the scan; `from pkg import CONSTANT`
+    # contributes the candidate `pkg.CONSTANT`, which is a name inside a module, not a module.
+    for module in list(graph):
+        graph[module] = {target for target in graph[module] if target in module_files and target != module}
     if not graph:
         return []
     sccs = _strongly_connected_components(graph)
@@ -170,7 +232,9 @@ def scan_import_cycles(
         findings.append(Finding(
             check="import_cycle",
             severity="P1",
-            file=comp[0].replace(f"{pkg}.", "", 1).replace(".", "/") + ".py",
+            # The real path, from the graph itself: a package member's file is `<name>/__init__.py`,
+            # which a dotted-name-to-path rewrite cannot produce.
+            file=module_files.get(comp[0], comp[0].replace(".", "/") + ".py"),
             line=1,
             snippet=cycle_display,
             detail=(

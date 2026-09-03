@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- unpicklable live-resource state without __getstate__ ----------------
 
@@ -12,10 +12,17 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 # ``self.<attr>``. Matched on the call's final attribute/name component so both ``threading.Lock()``
 # and a bare ``Lock()`` (imported via ``from threading import Lock``) are caught.
 _UNPICKLABLE_CTORS = frozenset({
-    "Lock", "RLock", "Condition", "Event", "Semaphore", "BoundedSemaphore", "Barrier",
-    "Thread", "Process", "Pool", "Queue", "SimpleQueue", "JoinableQueue",
+    "Lock", "RLock", "BoundedSemaphore",
+    "Thread", "Process", "SimpleQueue", "JoinableQueue",
     "Popen",
 })
+
+# Names that ALSO name ordinary picklable domain objects -- `catboost.Pool(X, y)` is the obvious
+# one in this codebase's ML domain, and a domain `Event`/`Queue`/`Condition` dataclass is routine.
+# These need a known concurrency base (or a `from threading import ...` trace), the same discipline
+# `_UNPICKLABLE_DOTTED_CTORS` already applies to the ambiguous `Stream`/`Event` spellings.
+_AMBIGUOUS_CTORS = frozenset({"Pool", "Queue", "Event", "Condition", "Barrier", "Semaphore"})
+_RESOURCE_MODULES = frozenset({"threading", "multiprocessing", "asyncio", "subprocess", "queue", "mp"})
 
 # Attribute-access chains (e.g. ``torch.cuda.Stream()``) whose LAST component alone is ambiguous
 # (``Stream`` could be anything) -- matched by the fully dotted call name instead.
@@ -50,7 +57,17 @@ def _last_component(dotted: str) -> str:
     return dotted.rsplit(".", 1)[-1]
 
 
-def _is_unpicklable_ctor_call(call: ast.Call) -> bool:
+def _resource_imported_names(tree: ast.Module) -> set[str]:
+    """Names bound by ``from threading import Lock`` / ``from multiprocessing import Pool`` etc."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in _RESOURCE_MODULES:
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+    return names
+
+
+def _is_unpicklable_ctor_call(call: ast.Call, resource_names: "set[str] | None" = None) -> bool:
     """True if ``call`` constructs a live, process-bound resource (lock, thread, open file, CUDA
     stream/event) that can't survive a plain pickle round-trip."""
     dotted = _dotted_call_name(call)
@@ -58,8 +75,14 @@ def _is_unpicklable_ctor_call(call: ast.Call) -> bool:
         return False
     if dotted in _UNPICKLABLE_DOTTED_CTORS:
         return True
-    if _last_component(dotted) in _UNPICKLABLE_CTORS:
+    last = _last_component(dotted)
+    if last in _UNPICKLABLE_CTORS:
         return True
+    if last in _AMBIGUOUS_CTORS:
+        base = dotted.rsplit(".", 2)[0] if "." in dotted else ""
+        if base in _RESOURCE_MODULES:
+            return True
+        return dotted == last and last in (resource_names or set())
     if dotted == _OPEN_BUILTIN:
         return True
     return False
@@ -74,7 +97,7 @@ def _self_attr_target(target: ast.AST) -> "str | None":
     return None
 
 
-def _find_unpicklable_self_assignments(init_body: list[ast.stmt]) -> list[tuple[str, ast.stmt]]:
+def _find_unpicklable_self_assignments(init_body: list[ast.stmt], resource_names: "set[str] | None" = None) -> list[tuple[str, ast.stmt]]:
     """Walk an ``__init__`` body for ``self.<attr> = <unpicklable ctor call>`` assignments (top-level
     Assign/AnnAssign only -- doesn't descend into nested function/lambda scopes, matching this
     scanner's other heuristics' conservative-false-negative bias). Returns ``[(attr, node), ...]``."""
@@ -90,7 +113,7 @@ def _find_unpicklable_self_assignments(init_body: list[ast.stmt]) -> list[tuple[
             continue
         if attr is None or not isinstance(value, ast.Call):
             continue
-        if _is_unpicklable_ctor_call(value):
+        if _is_unpicklable_ctor_call(value, resource_names):
             hits.append((attr, stmt))
     return hits
 
@@ -129,8 +152,9 @@ def scan_unpicklable_resource_state(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
+        resource_names = _resource_imported_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
@@ -140,7 +164,7 @@ def scan_unpicklable_resource_state(
             )
             if init_fn is None:
                 continue
-            hits = _find_unpicklable_self_assignments(init_fn.body)
+            hits = _find_unpicklable_self_assignments(init_fn.body, resource_names)
             if not hits:
                 continue
             if _class_defines_getstate(node):

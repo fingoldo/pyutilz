@@ -16,7 +16,7 @@ from ._common import (
     pl,
     explode_keeping_empty_as_null,
 )
-from typing import Literal
+from typing import Callable, Literal
 from .columns import apply_agg_func_safe, cast_f64_to_f32, clean_numeric
 
 # PROJECT IDIOM for a re-export package's submodules (see also pyutilz/data/pandaslib/frames.py and
@@ -113,7 +113,12 @@ def compute_concentrations(
 
 
 def add_weighted_aggregates(
-    columns_selector: object, weighting_columns: Iterable, fpref: str = "", fields_remap: Optional[dict] = None, nans_filler: float = 0.0
+    columns_selector: object,
+    weighting_columns: Iterable,
+    fpref: str = "",
+    fields_remap: Optional[dict] = None,
+    nans_filler: float = 0.0,
+    expr_filter: Optional[Callable[[Any], Any]] = None,
 ) -> list:
     """Computes weighted aggregates.
 
@@ -121,14 +126,20 @@ def add_weighted_aggregates(
     division produce Inf/NaN; ``nans_filler`` is applied via :func:`clean_numeric` before the
     ``_wmeanby_`` suffix is attached, so this never leaks unguarded Inf/NaN into the returned
     expressions the way an un-cleaned division would.
+
+    ``expr_filter``, when given, is applied to BOTH the weighted-value numerator and the weight
+    denominator. ``fpref`` only names the result: a caller that restricts a subgroup by prefixing
+    the alias but leaves the expression unfiltered gets the whole-group number under every
+    subgroup's name, i.e. one constant column presented as several distinct features.
     """
     if not fields_remap:
         fields_remap = {}
+    afilter: Callable[[Any], Any] = expr_filter if expr_filter is not None else (lambda expr: expr)
     wcols = []
     if weighting_columns:
         for wcol in weighting_columns:
             all_other_num_cols: Any = columns_selector - cs.by_name(wcol)
-            raw_weighted_mean = (all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()
+            raw_weighted_mean = afilter(all_other_num_cols * pl.col(wcol)).sum() / afilter(pl.col(wcol)).sum()
             weighted_mean = clean_numeric(raw_weighted_mean, nans_filler=nans_filler).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
             # !TODO causes error for now
@@ -371,6 +382,7 @@ def build_aggregate_features_polars(
                     weighting_columns=weighting_fields,
                     fpref=fpref,
                     fields_remap=fields_remap,
+                    expr_filter=af,
                 )
                 feature_expressions.extend(wcols)
 
@@ -391,8 +403,10 @@ def build_aggregate_features_polars(
                         if filter_field:
                             other_columns = other_columns - cs.by_name(filter_field)
 
-                        feature_expressions.append(other_columns.get(pl.col(col).arg_max().alias("arg_max")).name.suffix(f"_{fpref}at_{col}_max"))
-                        feature_expressions.append(other_columns.get(pl.col(col).arg_min().alias("arg_min")).name.suffix(f"_{fpref}at_{col}_min"))
+                        # Both sides must be restricted to the active subgroup: an arg_max computed over
+                        # the whole group indexes a row the filtered `other_columns` no longer contains.
+                        feature_expressions.append(af(other_columns).get(af(pl.col(col)).arg_max().alias("arg_max")).name.suffix(f"_{fpref}at_{col}_max"))
+                        feature_expressions.append(af(other_columns).get(af(pl.col(col)).arg_min().alias("arg_min")).name.suffix(f"_{fpref}at_{col}_min"))
 
             # Exponentially weighted mean/std
             feature_expressions.extend(
@@ -512,13 +526,21 @@ def build_aggregate_features_polars(
                         for corr_x, corr_y in corr_fields.items():
                             for corr_method in corr_methods:
                                 feature_expressions.append(
-                                    pds.corr(corr_x, corr_y, method=corr_method).cast(dtype).alias(f"{fpref}corr_{corr_x}-{corr_y}-{corr_method}")
+                                    # Expressions, not bare column names: a name carries no filter, so the
+                                    # correlation would be the whole-group one under a subgroup alias.
+                                    pds.corr(af(pl.col(corr_x)), af(pl.col(corr_y)), method=corr_method)
+                                    .cast(dtype)
+                                    .alias(f"{fpref}corr_{corr_x}-{corr_y}-{corr_method}")
                                 )
 
                     # Linregs
                     for field in linreg_fields:
                         alias = f"{fpref}{fields_remap.get(field,field)}_linreg"
-                        feature_expressions.append(pds.simple_lin_reg(pl.int_range(pl.len()), target=pl.col(field), add_bias=True).alias(alias))
+                        # pl.len() and the target both have to see the subgroup only, otherwise the fit is
+                        # the whole-group one and gets emitted identically under every subgroup's alias.
+                        feature_expressions.append(
+                            pds.simple_lin_reg(pl.int_range(af(pl.col(field)).len()), target=af(pl.col(field)), add_bias=True).alias(alias)
+                        )
                         columns_to_unnest.extend(
                             [
                                 pl.col(alias).list.to_struct(
@@ -532,8 +554,8 @@ def build_aggregate_features_polars(
                             alias = f"{fpref}{fields_remap.get(field,field)}_linregby_{linreg_timestamp_field}"
                             feature_expressions.append(
                                 pds.simple_lin_reg(
-                                    (pl.col(linreg_timestamp_field) - pl.col(linreg_timestamp_field).min()).dt.total_seconds(),
-                                    target=pl.col(field),
+                                    (af(pl.col(linreg_timestamp_field)) - af(pl.col(linreg_timestamp_field)).min()).dt.total_seconds(),
+                                    target=af(pl.col(field)),
                                     add_bias=True,
                                 ).alias(alias)
                             )

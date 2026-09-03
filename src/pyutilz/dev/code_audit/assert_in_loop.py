@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def _is_data_sweep(node: ast.expr) -> bool:
@@ -85,7 +85,7 @@ def scan_assert_in_loop_reports_only_the_first(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.For) or not _is_data_sweep(node.iter) or _accumulates(node.body):
@@ -97,8 +97,11 @@ def scan_assert_in_loop_reports_only_the_first(
                 # consumer keying a baseline on (check, file, detail) - the convention that keeps a
                 # suppression from drifting onto a different site as line numbers move - would otherwise
                 # silence the whole FILE for this check on the first entry.
-                target = ast.unparse(node.target) if hasattr(ast, "unparse") else "<item>"
-                source = ast.unparse(node.iter) if hasattr(ast, "unparse") else "<source>"
+                # `ast.dump` on the 3.8 fallback, not a fixed placeholder: a constant string makes
+                # every finding in the file share one `detail`, so a single baseline entry would
+                # silence the whole file -- the very outcome the paragraph above rules out.
+                target = ast.unparse(node.target) if hasattr(ast, "unparse") else ast.dump(node.target)
+                source = ast.unparse(node.iter) if hasattr(ast, "unparse") else ast.dump(node.iter)
                 findings.append(
                     Finding(
                         check="assert_in_loop_first_failure_only",

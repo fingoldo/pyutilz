@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # Context-manager call names that guard a multi-statement/server-side-cursor
 # operation (e.g. ``async with conn.transaction():``). Projects with their
@@ -30,6 +30,25 @@ DEFAULT_GUARDABLE_OP_SUFFIXES: frozenset[str] = frozenset({
     "execute", "executemany", "cursor", "fetch", "fetchrow", "fetchval", "fetchmany", "fetchall",
     "query", "transaction", "commit", "rollback", "write", "delete", "insert", "update",
 })
+
+
+# Names that make the receiver of a guardable op a real DB handle rather than an in-memory
+# container. `update`/`write`/`delete`/`insert`/`query` are ordinary dict/list/set method names
+# too, and a plain cache mutated under a lock in one method and not another is a deliberate,
+# harmless asymmetry -- P0 is this package's crash tier and must not be spent on it.
+_HANDLE_NAME_PARTS: frozenset[str] = frozenset({
+    "conn", "connection", "cur", "cursor", "db", "database", "session", "pool", "engine",
+    "tx", "txn", "transaction", "client", "sql", "psql", "pg", "store",
+})
+
+
+def _receiver_is_a_handle(shape: str) -> bool:
+    """Does the receiver of this dotted call shape resolve to a connection/cursor-shaped name?"""
+    receiver_parts = shape.split(".")[:-1]
+    for part in receiver_parts:
+        if set(part.lower().strip("_").split("_")) & _HANDLE_NAME_PARTS:
+            return True
+    return False
 
 
 def _call_shape(node: ast.expr) -> str | None:
@@ -155,7 +174,7 @@ def scan_asymmetric_resource_guard(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for cls in ast.walk(tree):
@@ -178,7 +197,9 @@ def scan_asymmetric_resource_guard(
                 first_unguarded_node = unguarded[0][1]
                 findings.append(Finding(
                     check="asymmetric_resource_guard",
-                    severity="P0",
+                    # P0 only when the receiver is evidently a DB handle; otherwise this is an
+                    # in-memory container and the asymmetry is usually deliberate.
+                    severity="P0" if _receiver_is_a_handle(shape) else "P2",
                     file=rel,
                     line=first_unguarded_node.lineno,
                     snippet=_line_text(src_lines, first_unguarded_node.lineno),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- dead wiring: built, measured, documented, never called ---------------------------------------
 #
@@ -87,15 +87,21 @@ def scan_dead_public_callables(
                 scope |= _names_mentioned(node)
         module_scope[path] = scope
 
-    external = {path: _names_mentioned(tree) for path, tree in trees.items()}
+    # Seeded from the CONSUMER files only. Built from every tree, an audited sibling merely naming
+    # a callee seeded it live before propagation ran, so "a public function called only by another
+    # dead public function is dead too" -- this module's stated purpose -- never held.
+    audited_paths = set(audited)
+    external = {path: _names_mentioned(tree) for path, tree in trees.items() if path not in audited_paths}
 
     seed: set[tuple[Path, str]] = set()
     for (path, name), node in funcs.items():
         if name in entry_point_names or getattr(node, "decorator_list", []):
             seed.add((path, name))
-        elif name in module_scope.get(path, ()):
+        elif any(name in scope for scope in module_scope.values()):
+            # Module scope in ANY audited file still seeds (`__all__`, a dispatch table, a default
+            # argument) -- that is a wiring statement, not a call from a possibly-dead function.
             seed.add((path, name))
-        elif any(name in names for other, names in external.items() if other != path):
+        elif any(name in names for names in external.values()):
             seed.add((path, name))
 
     by_name: dict[str, list[tuple[Path, str]]] = {}
@@ -116,7 +122,7 @@ def scan_dead_public_callables(
     for (path, name), node in sorted(funcs.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
         if (path, name) in live or name.startswith("_"):
             continue
-        src_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(path)
         findings.append(
             Finding(
                 check="dead_public_callable",

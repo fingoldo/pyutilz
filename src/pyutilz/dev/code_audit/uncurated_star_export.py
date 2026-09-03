@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- `from .submodule import *` with no curated __all__ anywhere ----------
 
@@ -19,28 +19,33 @@ def _module_defines_all(tree: ast.Module) -> bool:
     return False
 
 
-def _star_import_targets(tree: ast.Module) -> list[tuple[str, int]]:
+def _star_import_targets(tree: ast.Module) -> list[tuple[str, int, int]]:
     """Return ``[(relative_module, lineno), ...]`` for every ``from .x import *`` (or
     ``from .x.y import *``) at module top level. Only relative imports are considered -- a star
     import from a third-party package is that package's own API-hygiene problem, not this
     project's."""
-    out: list[tuple[str, int]] = []
+    out: list[tuple[str, int, int]] = []
     for node in tree.body:
         if not isinstance(node, ast.ImportFrom):
             continue
         if node.level < 1:
             continue  # absolute import, not this package's own submodule
         if any(alias.name == "*" for alias in node.names):
-            out.append((node.module or "", node.lineno))
+            out.append((node.module or "", node.lineno, node.level))
     return out
 
 
-def _resolve_relative_module_path(pkg_init_path: Path, dotted: str) -> Path:
+def _resolve_relative_module_path(pkg_init_path: Path, dotted: str, level: int = 1) -> Path:
     """Best-effort resolution of a relative ``from .submodule import *``'s target file, given the
     importing ``__init__.py``'s own path. Handles both a plain submodule (``submodule.py``) and a
     subpackage (``submodule/__init__.py``); returns a path that may not exist if resolution fails,
     the caller checks."""
+    # `level` is the number of leading dots: one dot means the importing module's own package,
+    # each extra dot climbs one more. Discarding it resolved `from ..shared import *` against the
+    # WRONG directory -- matching a same-named decoy sibling instead of the module actually imported.
     pkg_dir = pkg_init_path.parent
+    for _ in range(max(level - 1, 0)):
+        pkg_dir = pkg_dir.parent
     parts = dotted.split(".") if dotted else []
     candidate_file = pkg_dir.joinpath(*parts).with_suffix(".py") if parts else pkg_dir / "__init__.py"
     if candidate_file.exists():
@@ -78,10 +83,10 @@ def scan_uncurated_star_exports(
             continue
         if _module_defines_all(tree):
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for dotted, lineno in _star_import_targets(tree):
-            target_path = _resolve_relative_module_path(py, dotted)
+        for dotted, lineno, level in _star_import_targets(tree):
+            target_path = _resolve_relative_module_path(py, dotted, level)
             if not target_path.exists():
                 continue  # can't resolve (e.g. a namespace package quirk) -- don't guess
             target_tree = _safe_parse(target_path)

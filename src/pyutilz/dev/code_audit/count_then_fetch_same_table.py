@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _module_sql_constants, _safe_parse, _sql_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
 
 # --- a COUNT round trip that the fetch beside it already answers -------------------------------
 #
@@ -32,6 +32,25 @@ _COUNT = re.compile(r"\bCOUNT\s*\(", re.IGNORECASE)
 _PAGINATED = re.compile(r"\b(LIMIT|OFFSET|FETCH\s+FIRST)\b", re.IGNORECASE)
 _GROUPED = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
 _EXECUTORS = frozenset({"execute", "execute_query", "fetch", "fetchall", "fetchone", "query", "scalar"})
+
+
+def _outer_query(sql: str) -> str:
+    """``sql`` with every balanced parenthesised group removed.
+
+    The pagination test has to speak about the OUTER statement only: a `LIMIT` inside a subquery
+    (`SELECT * FROM (SELECT id FROM t LIMIT 10) x`) bounds the subquery, not the rows this
+    statement returns, so it is no reason for a separate COUNT round trip.
+    """
+    out: list[str] = []
+    depth = 0
+    for ch in sql:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
 
 
 def _table_of(sql: str) -> str | None:
@@ -75,9 +94,12 @@ def scan_count_then_fetch_same_table(
         if tree is None:
             continue
         constants = _module_sql_constants(tree)
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
+        # Nested functions are walked as part of their parent too, so the same site is visited
+        # more than once; one finding per (file, count line, fetch line, table).
+        reported: set[tuple[str, int, int, str]] = set()
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -88,11 +110,19 @@ def scan_count_then_fetch_same_table(
                 table = _table_of(sql)
                 if table is None:
                     continue
-                for other_sql, other_line in queries[index + 1 :]:
+                # The whole list, not only the suffix: the redundancy and the TOCTOU race are the
+                # same when the fetch is written BEFORE the COUNT.
+                for other_index, (other_sql, other_line) in enumerate(queries):
+                    if other_index == index:
+                        continue
                     if _COUNT.search(other_sql) or _table_of(other_sql) != table:
                         continue
-                    if _PAGINATED.search(other_sql):
+                    if _PAGINATED.search(_outer_query(other_sql)):
                         continue
+                    key = (rel, line, other_line, table)
+                    if key in reported:
+                        break
+                    reported.add(key)
                     findings.append(
                         Finding(
                             check="count_then_fetch_same_table",

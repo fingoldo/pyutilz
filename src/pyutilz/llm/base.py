@@ -7,6 +7,7 @@ import contextvars
 import json
 import logging
 import re
+import weakref
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Callable
 
@@ -48,29 +49,64 @@ class PerCallAttr:
     def __init__(self, default_factory: Callable[[], Any]) -> None:
         self._default_factory = default_factory
         self._name = "_unnamed"
+        # One ContextVar per DESCRIPTOR (i.e. per class attribute), created here rather than
+        # lazily per (instance, attribute) on first touch. Two independent bugs are closed by
+        # that single change:
+        #  * the lazy per-instance creation was a check-then-act with no lock, so two threads
+        #    first touching the same attribute on one shared (factory-cached) provider could each
+        #    build a DISTINCT ContextVar; the loser wrote to a var no longer reachable and its own
+        #    next read fell through to the default -- indistinguishable from "the model returned
+        #    nothing" (2026-09-03 audit F10, reproduced in 287 of 3000 threaded trials).
+        #  * CPython documents ContextVars as objects to create at module/class scope and never
+        #    inside a function, because live Context objects keep strong references to them. One
+        #    var per instance meant a service constructing a provider per request (the
+        #    unhashable-kwargs path in llm.factory bypasses the LRU) minted vars nothing could
+        #    reclaim (F41). The count is now bounded by the number of declared class attributes.
+        # The var's VALUE is a per-instance mapping keyed by id(), validated through a weakref so
+        # a recycled id can never surface a dead instance's state. It is replaced copy-on-write on
+        # every set, never mutated in place, so a value set inside an asyncio Task stays invisible
+        # to every other Task -- the whole point of this descriptor.
+        self._var: contextvars.ContextVar[dict[int, Any]] = contextvars.ContextVar("PerCallAttr._unnamed")
 
     def __set_name__(self, owner: type, name: str) -> None:
         self._name = name
+        self._var = contextvars.ContextVar(f"{owner.__name__}.{name}")
 
-    def _var(self, instance: Any) -> "contextvars.ContextVar[Any]":
-        """Return (creating if absent) the per-instance ContextVar backing this attribute on ``instance``."""
-        store: dict[str, contextvars.ContextVar[Any]] = instance.__dict__.setdefault("_percall_vars", {})
-        var = store.get(self._name)
-        if var is None:
-            var = contextvars.ContextVar(f"{type(instance).__name__}.{self._name}")
-            store[self._name] = var
-        return var
+    def default(self) -> Any:
+        """Return a freshly built default value for this attribute (used by ``_reset_per_call_state``)."""
+        return self._default_factory()
 
-    def __get__(self, instance: Any, owner: type) -> Any:
+    def __get__(self, instance: Any, owner: type | None = None) -> Any:
         if instance is None:
             return self
-        try:
-            return self._var(instance).get()
-        except LookupError:
-            return self._default_factory()
+        entry = self._var.get({}).get(id(instance))
+        if entry is not None:
+            ref, value = entry
+            if ref() is instance:
+                return value
+        return self._default_factory()
 
     def __set__(self, instance: Any, value: Any) -> None:
-        self._var(instance).set(value)
+        ref: Callable[[], Any]
+        try:
+            ref = weakref.ref(instance)
+        except TypeError:  # instance's type forbids weak references
+            ref = _StrongRef(instance)
+        store = dict(self._var.get({}))
+        store[id(instance)] = (ref, value)
+        self._var.set(store)
+
+
+class _StrongRef:
+    """``weakref.ref``-compatible fallback for instances whose type disallows weak references."""
+
+    __slots__ = ("_obj",)
+
+    def __init__(self, obj: Any) -> None:
+        self._obj = obj
+
+    def __call__(self) -> Any:
+        return self._obj
 
 
 class LazySemaphore:
@@ -149,7 +185,13 @@ def _longest_prefix_pricing(
     if best_val is None:
         for key, val in pricing_table.items():
             prefix = key.rsplit("-", 1)[0]
-            if model.startswith(prefix) and len(prefix) > best_len:
+            # The trimmed prefix must still name a MODEL, not just a vendor family: every xAI key
+            # trims to a bare ``grok``, so any future ``grok-5`` matched some arbitrary row and
+            # was priced from it, with the unknown-model warning unreachable inside the vendor's
+            # own namespace (2026-09-03 audit F19). Requiring a surviving ``-`` keeps the cases
+            # this stage exists for (``claude-opus-4-6-20250610`` -> ``claude-opus-4-6``) and
+            # rejects the vendor-prefix degenerate one.
+            if "-" in prefix and model.startswith(prefix) and len(prefix) > best_len:
                 best_len = len(prefix)
                 best_val = val
     if best_val is not None:
@@ -182,7 +224,13 @@ def longest_prefix_lookup(model: str, table: dict[str, Any], default: Any) -> An
     if best_val is None:
         for key, val in table.items():
             prefix = key.rsplit("-", 1)[0]
-            if model.startswith(prefix) and len(prefix) > best_len:
+            # The trimmed prefix must still name a MODEL, not just a vendor family: every xAI key
+            # trims to a bare ``grok``, so any future ``grok-5`` matched some arbitrary row and
+            # was priced from it, with the unknown-model warning unreachable inside the vendor's
+            # own namespace (2026-09-03 audit F19). Requiring a surviving ``-`` keeps the cases
+            # this stage exists for (``claude-opus-4-6-20250610`` -> ``claude-opus-4-6``) and
+            # rejects the vendor-prefix degenerate one.
+            if "-" in prefix and model.startswith(prefix) and len(prefix) > best_len:
                 best_len = len(prefix)
                 best_val = val
     return best_val if best_val is not None else default
@@ -407,7 +455,15 @@ class LLMProvider(ABC):
                 re.DOTALL,
             )
             if fence_match:
-                return _require_json_object(json.loads(fence_match.group(1)), provider_name)
+                # A fenced payload that does not parse must DEGRADE into paths 2-5 rather than
+                # abort the whole extraction (2026-09-03 audit F13): models routinely emit a
+                # broken sketch in a fence followed by the real, clean object. Only the decode
+                # error is swallowed -- _require_json_object's raise still propagates, so a fenced
+                # top-level array remains a hard error exactly as before.
+                try:
+                    return _require_json_object(json.loads(fence_match.group(1)), provider_name)
+                except json.JSONDecodeError:
+                    pass
 
             # 2. Strip leading fence even without a closing fence (some
             #    streaming LLMs forget to close).
@@ -538,7 +594,53 @@ class LLMProvider(ABC):
         "last_function_calls",
         "last_cached_content_tokens",
         "last_all_candidates",
+        # Response-scoped too, despite reading like instance-wide "most recent response" state:
+        # both are written from EVERY response on a shared, factory-cached provider, so during a
+        # generate_batch() ``check_account_limits()`` used to return whichever request answered
+        # last -- plausibly a failed request's 429 window, attributed to the batch as a whole
+        # (2026-09-03 audit F32).
+        "last_rate_limits",
+        "last_organization_id",
     )
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Register every ``PerCallAttr`` the subclass declares into ``_PERCALL_METADATA_ATTRS``.
+
+        The tuple used to be hand-maintained, and every mechanism keyed off it -- the per-call
+        reset and the batch snapshot -- silently skipped whatever a provider author forgot to add.
+        That is not a fault a test can catch at the moment the attribute is written, so the union
+        is computed here instead: declaring the descriptor IS the registration, and an explicit
+        tuple entry only fixes the ORDER of names that are already known. Names inherited from a
+        base class are already in the resolved tuple and are not duplicated.
+        """
+        super().__init_subclass__(**kwargs)
+        names: list[str] = list(getattr(cls, "_PERCALL_METADATA_ATTRS", ()))
+        seen = set(names)
+        for klass in cls.__mro__:
+            for name, value in vars(klass).items():
+                if isinstance(value, PerCallAttr) and name not in seen:
+                    seen.add(name)
+                    names.append(name)
+        cls._PERCALL_METADATA_ATTRS = tuple(names)
+
+    def _reset_per_call_state(self) -> None:
+        """Reset every ``PerCallAttr`` this class declares to its default, at the START of every
+        ``generate()`` / ``generate_stream()``.
+
+        DERIVED from ``_PERCALL_METADATA_ATTRS`` rather than hand-written per provider: the
+        hand-written variants drifted (``last_json_mode_fallback`` was declared and listed but
+        never reset, so it latched ``True`` for the rest of the context -- 2026-09-03 audit F09),
+        and three providers never got the hook at all (F31). Iterating the tuple means a newly
+        declared per-call attribute is reset the moment it is registered for batch capture, with
+        no second list to keep in sync. Names not declared as a ``PerCallAttr`` on this class are
+        skipped (the tuple is the UNION across providers). Cumulative ``total_*`` counters are
+        deliberately NOT reset.
+        """
+        cls = type(self)
+        for name in self._PERCALL_METADATA_ATTRS:
+            descriptor = getattr(cls, name, None)
+            if isinstance(descriptor, PerCallAttr):
+                setattr(self, name, descriptor.default())
 
     def _capture_percall_metadata(self) -> dict[str, Any]:
         """Snapshot this provider's "last successful call" attributes, called immediately after
@@ -634,7 +736,11 @@ class LLMProvider(ABC):
                     prompt=req["prompt"],
                     system=req.get("system"),
                     temperature=req.get("temperature", 0.7),
-                    max_tokens=req.get("max_tokens", 1024),
+                    # 0 == "use the model's own max_output_tokens, clamped to the context window",
+                    # the same default generate() applies. The former hard-coded 1024 silently
+                    # truncated batch responses that the identical single call returned in full
+                    # (2026-09-03 audit F39).
+                    max_tokens=req.get("max_tokens", 0),
                 )
                 out = {"id": request_id, "result": result}
                 out.update(self._capture_percall_metadata())

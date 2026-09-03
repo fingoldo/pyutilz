@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- custom exception class defined but never raised -----------------------
 #
@@ -52,10 +52,13 @@ def scan_unraised_exceptions(
     computing the difference, since a class's raise sites are commonly in a different file than
     its definition (provider/plugin architectures especially).
 
-    Severity: Medium (a fully-specified error-signaling contract that silently never fires --
+    Severity: P2 (a fully-specified error-signaling contract that silently never fires --
     callers relying on ``except SpecificError:`` for the documented behavior never see it).
     """
-    all_classes: dict[str, tuple[str, int, list[str]]] = {}  # name -> (file, line, src_line)
+    # Keyed by (file, name), NOT by bare name: two modules each defining their own `DupError`
+    # (ordinary in provider/plugin layouts, which this scanner's own header cites) collapsed onto
+    # one entry, so only the last one scanned could ever be reported.
+    all_classes: dict[tuple[str, str], tuple[str, int, list[str]]] = {}
     exception_class_names: set[str] = set(_KNOWN_EXCEPTION_BASES)
     raised_names: set[str] = set()
     per_file_lines: dict[str, list[str]] = {}
@@ -66,7 +69,7 @@ def scan_unraised_exceptions(
         if tree is None:
             continue
         trees.append((py, tree))
-        per_file_lines[py.relative_to(root).as_posix()] = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        per_file_lines[py.relative_to(root).as_posix()] = _read_src_lines(py)
 
     # Pass 1: collect every ClassDef (name -> is it exception-like) -- iterate twice to catch
     # exception classes that subclass ANOTHER custom exception class defined elsewhere in the tree.
@@ -87,7 +90,7 @@ def scan_unraised_exceptions(
         if node.name in _KNOWN_EXCEPTION_BASES:
             continue
         if _exception_base_names(node) & exception_class_names:
-            all_classes[node.name] = (rel, node.lineno, per_file_lines[rel])
+            all_classes[(rel, node.name)] = (rel, node.lineno, per_file_lines[rel])
 
     # Pass 2: collect every raised name across the whole tree.
     for _py, tree in trees:
@@ -122,7 +125,7 @@ def scan_unraised_exceptions(
     changed = True
     while changed:
         changed = False
-        for name in all_classes:
+        for _rel_key, name in all_classes:
             if name in covered_via_subclass:
                 continue
             subclasses = base_to_subclasses.get(name, set())
@@ -131,12 +134,12 @@ def scan_unraised_exceptions(
                 changed = True
 
     findings: list[Finding] = []
-    for name, (rel, lineno, src_lines) in all_classes.items():
+    for (_key_rel, name), (rel, lineno, src_lines) in all_classes.items():
         if name in raised_names or name in covered_via_subclass:
             continue
         findings.append(Finding(
             check="unraised_exception_class",
-            severity="Medium",
+            severity="P2",
             file=rel,
             line=lineno,
             snippet=_line_text(src_lines, lineno),

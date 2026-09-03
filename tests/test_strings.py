@@ -463,8 +463,13 @@ class TestTextCleaning:
 
         assert fix_missed_space_between_sentences("Hi!There?Yo.End") == "Hi! There? Yo. End"
         assert fix_missed_space_between_sentences("Already ok. Fine. Done.") == "Already ok. Fine. Done."
-        # Numeric follower and no punctuation cases.
-        assert fix_missed_space_between_sentences("Cost is 5.99 dollars") == "Cost is 5. 99 dollars"
+        # Numeric follower and no punctuation cases. A period BETWEEN two digits is a decimal
+        # point, not a sentence boundary: the function's contract is restoring missing sentence
+        # spacing, and mangling every price, version and measurement in the text is a corruption
+        # of the input, not a service to it. This assertion previously pinned that corruption.
+        assert fix_missed_space_between_sentences("Cost is 5.99 dollars") == "Cost is 5.99 dollars"
+        # A digit still starts a new sentence when the period does NOT sit between two digits.
+        assert fix_missed_space_between_sentences("It ended.99 bottles remained") == "It ended. 99 bottles remained"
         assert fix_missed_space_between_sentences("no punctuation here") == "no punctuation here"
 
     def test_merge_punctuation_signs(self):

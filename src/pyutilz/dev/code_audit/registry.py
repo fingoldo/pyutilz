@@ -5,7 +5,9 @@ from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
+import logging
+
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, severity_rank
 from .mutable_defaults import scan_mutable_defaults, scan_parameter_aliasing_mutation
 from .closures import scan_late_binding_closures
 from .default_via_or import scan_default_via_or_trap
@@ -87,11 +89,40 @@ from .docstring_numbers_moved_to_config import scan_docstring_numbers_moved_to_c
 from .additive_epsilon_denominator import scan_additive_epsilon_denominator
 from .non_neutral_except_fallback import scan_non_neutral_except_fallback
 from .nondiscriminating_test import scan_nondiscriminating_test_functions
+from .assert_in_loop import scan_assert_in_loop_reports_only_the_first
+from .reexport_patch_target import scan_reexport_patch_target
 
 # --- registry -----------------------------------------------------------
 
 
+logger = logging.getLogger(__name__)
+
 _SCANNERS: dict[str, Callable[..., list[Finding]]] = {}
+
+# Emitted ``Finding.check`` id -> the registry key that produces it. A scanner may emit several
+# ids (retry_loops emits ``busy_retry_loop`` and ``unbounded_retry_loop`` while it is registered
+# as ``retry_loop``), and a reader who is handed one of those ids must be able to re-run it:
+# ``--check <emitted id>`` and ``run_all(checks=[...])`` both resolve through this table.
+_CHECK_ALIASES: dict[str, str] = {}
+
+
+def register_check_alias(alias: str, scanner_name: str) -> None:
+    """Make ``alias`` (an id a scanner puts in ``Finding.check``) resolve to registered ``scanner_name``."""
+    if alias in _SCANNERS:
+        raise ValueError(f"{alias!r} is a scanner name, not an alias")
+    _CHECK_ALIASES[alias] = scanner_name
+
+
+def get_check_aliases() -> dict[str, str]:
+    """Return a COPY of the emitted-id -> scanner-name alias table."""
+    return dict(_CHECK_ALIASES)
+
+
+def resolve_check(name: str) -> "Optional[str]":
+    """The registry key ``name`` selects - itself if registered, its target if an alias, else None."""
+    if name in _SCANNERS:
+        return name
+    return _CHECK_ALIASES.get(name)
 
 
 def register_scanner(name: str, fn: Callable[..., list[Finding]], *, allow_override: bool = False) -> None:
@@ -215,6 +246,19 @@ register_scanner("accumulator_helper_bypassed", scan_accumulator_helper_bypassed
 register_scanner("test_asserts_against_production_constant", scan_test_asserts_against_production_constant)
 register_scanner("patch_target_is_a_reexport", scan_patch_target_is_a_reexport)
 register_scanner("column_no_write_path", scan_column_no_write_path)
+# Exported from the package but previously never registered, so run_all()/--check could not reach
+# them however they were invoked; the registered-vs-exported bijection meta-test now pins both ways.
+register_scanner("assert_in_loop_first_failure_only", scan_assert_in_loop_reports_only_the_first)
+register_scanner("reexport_patch_target", scan_reexport_patch_target)
+
+# Scanners whose emitted ids differ from their registry key - see _CHECK_ALIASES.
+register_check_alias("busy_retry_loop", "retry_loop")
+register_check_alias("unbounded_retry_loop", "retry_loop")
+register_check_alias("duplicate_dict_key", "duplicate_condition")
+register_check_alias("duplicate_function_body_subset", "duplicate_function_body")
+register_check_alias("boundary_symbol_missing", "domain_vocabulary_leak")
+register_check_alias("field_read_never_written", "record_field_flow")
+register_check_alias("field_written_never_read", "record_field_flow")
 
 
 # Scanners that ``run_all()`` does NOT select by default. Two reasons, both about not breaking a
@@ -254,6 +298,11 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     # (a liveness check) from one that must not. Both feed a triage list, not a commit gate.
     "per_call_state_on_shared_instance",
     "uncached_constant_cost_probe",
+    # reexport_patch_target is the older, narrower half of the rename that produced
+    # patch_target_is_a_reexport (registered and on by default). Keeping it registered means the
+    # id it emits is re-runnable and the module is not silently dead; keeping it opt-in means a
+    # project upgrading pyutilz does not suddenly get both halves reporting the same site.
+    "reexport_patch_target",
 })
 
 
@@ -266,12 +315,36 @@ def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     return dict(_SCANNERS)
 
 
-def _run_one(args: tuple[str, Path, frozenset[str]]) -> list[Finding]:
-    """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one named
-    scanner and returns its findings. A bound/local closure can't be pickled for the
-    cross-process call, so this indirection is required, not just style."""
-    name, root, exclude_dirs = args
-    return _SCANNERS[name](root, exclude_dirs=exclude_dirs)
+def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> list[Finding]:
+    """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one scanner and
+    returns its findings. A bound/local closure can't be pickled for the cross-process call, so
+    this indirection is required, not just style.
+
+    The callable travels WITH the name because a worker rebuilds ``_SCANNERS`` by re-importing
+    this module, so it holds only the registrations hard-coded here: a scanner added by the parent
+    through ``register_scanner()`` was absent in the child and the whole run died on a ``KeyError``.
+    ``fn=None`` means "resolve it from the worker's own registry" (the built-ins, not re-pickled
+    per task).
+    """
+    name, fn, root, exclude_dirs = args
+    if fn is None:
+        fn = _SCANNERS.get(name)
+    if fn is None:  # pragma: no cover - guarded against upstream by run_all's resolution pass
+        raise KeyError(f"scanner {name!r} is not available in this worker; register_scanner() it before run_all()")
+    return _run_scanner(name, fn, root, exclude_dirs)
+
+
+def _run_scanner(name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str]) -> list[Finding]:
+    """Run one scanner, converting a raised exception into a logged warning and zero findings.
+
+    One scanner tripping over one pathological file must not delete the other 88 scanners' output,
+    which is what an exception escaping into ``pool.map`` (or the sequential loop) did.
+    """
+    try:
+        return fn(root, exclude_dirs=exclude_dirs)
+    except Exception:
+        logger.warning("code_audit scanner %r failed; its findings are missing from this run", name, exc_info=True)
+        return []
 
 
 # Below this many scanners, process-pool startup (import pyutilz + its scanner modules in
@@ -313,6 +386,31 @@ def _physical_cpu_count() -> int:
     return os.cpu_count() or 1
 
 
+# The registrations made by importing this module, i.e. exactly what a fresh worker process
+# rebuilds for itself. Captured after the register_scanner() calls above run.
+_BUILTIN_SCANNERS: dict[str, Callable[..., list[Finding]]] = dict(_SCANNERS)
+
+
+def _module_registered(name: str, fn: Callable[..., list[Finding]]) -> bool:
+    """Whether a fresh import of this module in a worker yields this exact scanner under ``name``."""
+    return _BUILTIN_SCANNERS.get(name) is fn
+
+
+def _is_picklable(fn: Callable[..., list[Finding]]) -> bool:
+    """Whether ``fn`` can cross a process boundary (module-level functions and partials of them can)."""
+    import pickle
+
+    picklable = True
+    try:
+        pickle.dumps(fn)
+    except (pickle.PicklingError, AttributeError, TypeError, ValueError) as exc:
+        # A lambda, a closure, or a bound method of an unpicklable object: it cannot cross to a
+        # worker, so run_all keeps it in this process rather than failing the run.
+        logger.debug("scanner %r cannot be sent to a worker process (%s); running it in-process", getattr(fn, "__name__", fn), exc)
+        picklable = False
+    return picklable
+
+
 def run_all(
     root: Path,
     checks: Optional[Iterable[str]] = None,
@@ -334,10 +432,16 @@ def run_all(
     (workers don't share memory), a real but much smaller cost than the AST-walk time saved
     by running scanners concurrently across cores.
     """
-    selected = [n for n in _SCANNERS if n not in OPT_IN_ONLY] if checks is None else list(checks)
-    for name in selected:
-        if name not in _SCANNERS:
-            raise ValueError(f"unknown check {name!r}; available: {sorted(_SCANNERS)}")
+    if checks is None:
+        selected = [n for n in _SCANNERS if n not in OPT_IN_ONLY]
+    else:
+        selected = []
+        for requested in checks:
+            resolved = resolve_check(requested)
+            if resolved is None:
+                raise ValueError(f"unknown check {requested!r}; available: {sorted(_SCANNERS) + sorted(_CHECK_ALIASES)}")
+            if resolved not in selected:  # two emitted ids can name the same scanner
+                selected.append(resolved)
 
     out: list[Finding] = []
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
@@ -347,15 +451,31 @@ def run_all(
         # worker to amortize its fixed spawn+import+re-parse cost", never by the raw
         # scanner count (which used to spawn one interpreter per scanner on a big machine).
         max_workers = max(2, min(_physical_cpu_count(), len(selected) // _MIN_SCANNERS_PER_WORKER))
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
-            for findings in pool.map(_run_one, [(name, root, exclude_dirs) for name in selected]):
-                out.extend(findings)
+        # A worker resolves a built-in from its own re-imported registry (nothing to pickle); a
+        # scanner registered at runtime by the parent exists only here, so its callable is sent.
+        # An unpicklable one (a closure, a bound method) can't cross at all - it runs in-process.
+        tasks: list[tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]] = []
+        local_only: list[str] = []
+        for name in selected:
+            fn = _SCANNERS[name]
+            if _module_registered(name, fn):
+                tasks.append((name, None, root, exclude_dirs))
+            elif _is_picklable(fn):
+                tasks.append((name, fn, root, exclude_dirs))
+            else:
+                local_only.append(name)
+        if tasks:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
+                for findings in pool.map(_run_one, tasks):
+                    out.extend(findings)
+        for name in local_only:
+            out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
     else:
         for name in selected:
-            out.extend(_SCANNERS[name](root, exclude_dirs=exclude_dirs))
+            out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
 
-    sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
-    out.sort(key=lambda f: (sev_order.get(f.severity, 99), f.check, f.file, f.line))
+    # Unknown severities rank -1, i.e. ABOVE P0: a stray value is loud, never silently last.
+    out.sort(key=lambda f: (severity_rank(f.severity), f.check, f.file, f.line))
     return out
 
 

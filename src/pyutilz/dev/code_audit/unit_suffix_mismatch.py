@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a quantity stored under one unit and read from another ------------------------------------
 #
@@ -27,6 +27,7 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # across families (seconds vs bytes) is almost always a coincidence of naming, so both are
 # reported but the message names the family.
 _UNIT_FAMILIES: dict[str, str] = {
+    # `min` is deliberately absent: it is a statistical MINIMUM far more often than minutes.
     "s": "time",
     "sec": "time",
     "secs": "time",
@@ -35,7 +36,6 @@ _UNIT_FAMILIES: dict[str, str] = {
     "ms": "time",
     "msec": "time",
     "millis": "time",
-    "min": "time",
     "mins": "time",
     "minute": "time",
     "minutes": "time",
@@ -61,7 +61,6 @@ _SYNONYMS: dict[str, str] = {
     "s": "seconds",
     "msec": "ms",
     "millis": "ms",
-    "min": "minutes",
     "mins": "minutes",
     "minute": "minutes",
     "h": "hours",
@@ -73,7 +72,12 @@ _SYNONYMS: dict[str, str] = {
 
 def _unit_of(name: str) -> tuple[str, str] | None:
     """(canonical unit, family) for a trailing unit token in *name*, or None."""
-    token = name.rstrip("_").rsplit("_", 1)[-1].lower()
+    stripped = name.rstrip("_")
+    token = stripped.rsplit("_", 1)[-1].lower()
+    # A ONE-LETTER unit only counts in a `_`-separated SUFFIX position: `work_s` declares seconds,
+    # a parameter literally named `s` (matplotlib's marker-size kwarg) does not.
+    if len(token) == 1 and "_" not in stripped:
+        return None
     family = _UNIT_FAMILIES.get(token)
     if family is None:
         return None
@@ -135,15 +139,22 @@ def scan_unit_suffix_mismatch(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         pairs: list[tuple[str, ast.AST, int]] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 pairs.extend((name, node.value, node.lineno) for target in node.targets for name in _target_names(target))
+            # Annotated and augmented assignments too: typed code is where unit suffixes are most
+            # used, and exempting it silently excluded the style this project's conventions mandate.
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
+            elif isinstance(node, ast.AugAssign):
+                pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
             elif isinstance(node, ast.Call):
-                pairs.extend((kw.arg, kw.value, node.lineno) for kw in node.keywords if kw.arg)
+                # The keyword VALUE's own line, so a multi-line call does not report the opening paren.
+                pairs.extend((kw.arg, kw.value, getattr(kw.value, "lineno", node.lineno)) for kw in node.keywords if kw.arg)
 
         for target_name, value, line in pairs:
             target_unit = _unit_of(target_name)

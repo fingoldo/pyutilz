@@ -86,6 +86,11 @@ class SingleFlightCache(Generic[_K, _V]):
         state = self.__dict__.copy()
         del state["_inflight_lock"]
         state["_inflight"] = {}
+        # The bound event loop is unpicklable too (it drags in a WeakSet local closure), and
+        # __setstate__ already sets it to None -- dropping it only there meant an instance pickled
+        # fine BEFORE first use and failed only after real work, the worst possible timing for a
+        # joblib/multiprocessing hand-off.
+        state["_loop"] = None
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:
@@ -183,9 +188,12 @@ class SingleFlightCache(Generic[_K, _V]):
     def clear(self) -> None:
         """Reset in-flight tracking and hit/miss counters.
 
-        Does NOT touch the caller's cache object(s) -- call this only when no concurrent
-        ``get_or_fetch`` coroutines are in flight (e.g. between batch runs), since it discards
-        in-flight-fetch bookkeeping without waking waiters.
+        Does NOT touch the caller's cache object(s). Any waiter currently blocked on an in-flight
+        fetch is WOKEN before the bookkeeping is dropped: discarding the Events without setting
+        them stranded such a waiter permanently (the fetcher's own ``finally`` then pops nothing).
+        The woken waiter re-checks the cache and simply refetches on a miss.
         """
+        for evt in list(self._inflight.values()):
+            evt.set()
         self._inflight.clear()
         self.reset_metrics()

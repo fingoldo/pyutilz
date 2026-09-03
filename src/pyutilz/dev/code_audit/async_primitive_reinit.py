@@ -4,19 +4,49 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # asyncio coordination primitives whose whole purpose is being SHARED across
 # concurrent callers -- one created fresh per call is a private, useless copy.
 DEFAULT_PRIMITIVE_NAMES: frozenset[str] = frozenset({"Lock", "Event", "Semaphore", "BoundedSemaphore", "Condition"})
 
 
-def _is_asyncio_primitive_call(node: ast.AST, primitive_names: frozenset[str]) -> bool:
-    """True if ``node`` is a call shaped like ``asyncio.Lock()`` / ``asyncio.Semaphore(n)``."""
+def _asyncio_bindings(tree: ast.Module, primitive_names: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
+    """(module aliases, directly-bound primitive names) for ``asyncio`` in this file.
+
+    ``import asyncio as aio`` binds the module under another name, and ``from asyncio import Lock``
+    binds the constructor with no module qualifier at all -- both spell the very construction this
+    scanner exists to find, so neither may be invisible to the matcher.
+    """
+    aliases: set[str] = set()
+    direct: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "asyncio":
+                    aliases.add(alias.asname or "asyncio")
+        elif isinstance(node, ast.ImportFrom) and node.module == "asyncio" and not node.level:
+            for alias in node.names:
+                if alias.name in primitive_names:
+                    direct.add(alias.asname or alias.name)
+    aliases.add("asyncio")
+    return frozenset(aliases), frozenset(direct)
+
+
+def _is_asyncio_primitive_call(
+    node: ast.AST,
+    primitive_names: frozenset[str],
+    module_aliases: frozenset[str] = frozenset({"asyncio"}),
+    direct_names: frozenset[str] = frozenset(),
+) -> bool:
+    """True if ``node`` is a call shaped like ``asyncio.Lock()`` / ``aio.Semaphore(n)`` / a bare
+    ``Lock()`` where ``Lock`` was imported from ``asyncio``."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    return isinstance(func, ast.Attribute) and func.attr in primitive_names and isinstance(func.value, ast.Name) and func.value.id == "asyncio"
+    if isinstance(func, ast.Attribute):
+        return func.attr in primitive_names and isinstance(func.value, ast.Name) and func.value.id in module_aliases
+    return isinstance(func, ast.Name) and func.id in direct_names
 
 
 def _is_persistent_target(
@@ -39,6 +69,9 @@ def _is_persistent_target(
     is, because such a container is shared by every caller."""
     if isinstance(target, ast.Attribute):
         return True
+    if isinstance(target, (ast.Tuple, ast.List)):
+        # `self.a, self.b = asyncio.Lock(), asyncio.Event()` persists both halves.
+        return bool(target.elts) and all(_is_persistent_target(el, global_names, module_names, via_subscript=via_subscript) for el in target.elts)
     if isinstance(target, ast.Subscript):
         return _is_persistent_target(target.value, global_names, module_names, via_subscript=True)
     if isinstance(target, ast.Name):
@@ -79,13 +112,23 @@ def _attribute_assigned_primitive_calls(func: ast.AST, module_names: frozenset[s
             targets, value = [node.target], node.value
         else:
             continue
-        if any(_is_persistent_target(t, global_names, module_names) for t in targets):
-            direct.add(value)
-            if isinstance(value, ast.Name):
-                persisted_var_names.add(value.id)
-        for t in targets:
-            if isinstance(t, ast.Name):
-                local_var_of_call[t.id] = value
+        # Unpack `self.a, self.b = Lock(), Event()` element-wise, so each constructor is judged
+        # against the target it actually lands on rather than against the whole tuple.
+        pairs: list[tuple[list[ast.expr], ast.expr]] = []
+        sequence_targets = [t for t in targets if isinstance(t, (ast.Tuple, ast.List))]
+        if isinstance(value, (ast.Tuple, ast.List)) and len(sequence_targets) == len(targets) and all(len(t.elts) == len(value.elts) for t in sequence_targets):
+            for position, element in enumerate(value.elts):
+                pairs.append(([t.elts[position] for t in sequence_targets], element))
+        else:
+            pairs.append((list(targets), value))
+        for sub_targets, sub_value in pairs:
+            if any(_is_persistent_target(t, global_names, module_names) for t in sub_targets):
+                direct.add(sub_value)
+                if isinstance(sub_value, ast.Name):
+                    persisted_var_names.add(sub_value.id)
+            for t in sub_targets:
+                if isinstance(t, ast.Name):
+                    local_var_of_call[t.id] = sub_value
     aliased = {local_var_of_call[name] for name in persisted_var_names if name in local_var_of_call}
     return direct | aliased
 
@@ -214,9 +257,10 @@ def scan_async_primitive_reinit_per_call(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         module_names = _module_level_names(tree)
+        module_aliases, direct_names = _asyncio_bindings(tree, primitive_names)
 
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -227,14 +271,21 @@ def scan_async_primitive_reinit_per_call(
             nested_defs = {n for n in ast.walk(func) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func}
             attr_assigned = _attribute_assigned_primitive_calls(func, module_names)
             fanout_exempt = _fanout_limiter_calls(func, nested_defs)
+            # A default argument is evaluated ONCE, at `def` time, so such a primitive IS shared by
+            # every call -- the opposite of this scanner's defect, and its advice would break it.
+            default_nodes = {id(sub) for default in [*func.args.defaults, *func.args.kw_defaults] if default is not None for sub in ast.walk(default)}
             for node in ast.walk(func):
                 if any(node in ast.walk(nested) for nested in nested_defs):
                     continue
-                if not _is_asyncio_primitive_call(node, primitive_names):
+                if id(node) in default_nodes:
+                    continue
+                if not _is_asyncio_primitive_call(node, primitive_names, module_aliases, direct_names):
                     continue
                 if node in attr_assigned or node in fanout_exempt:
                     continue
-                assert isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                assert isinstance(node, ast.Call)
+                callee = node.func
+                primitive = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "?")
                 findings.append(Finding(
                     check="async_primitive_reinit_per_call",
                     severity="P1",
@@ -242,7 +293,7 @@ def scan_async_primitive_reinit_per_call(
                     line=node.lineno,
                     snippet=_line_text(src_lines, node.lineno),
                     detail=(
-                        f"asyncio.{node.func.attr}() created inside {func.name}()'s body -- every call gets its "
+                        f"asyncio.{primitive}() created inside {func.name}()'s body -- every call gets its "
                         "own private instance, so concurrent callers never actually coordinate through it. Create "
                         "the primitive once (module scope, an __init__-set instance attribute, or a cached "
                         "factory) so every caller shares the SAME object."

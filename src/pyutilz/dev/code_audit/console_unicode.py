@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
-from typing import Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+
+logger = logging.getLogger(__name__)
+
+# One warning per unreadable file for the life of the process: the walk below revisits the same
+# parent __init__.py for every module in a package, so an unguarded warning would repeat per file.
+_UNREADABLE_INIT_WARNED: set = set()
 
 # --- non-ASCII console/log output -----------------------------------------
 
@@ -22,17 +28,19 @@ def _is_console_call(call: ast.Call) -> bool:
     return False
 
 
-def _first_str_arg_value(call: ast.Call) -> Optional[str]:
-    """If the first positional arg is a string literal (plain or f-string), return it."""
-    if not call.args:
-        return None
-    first = call.args[0]
-    if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return first.value
-    if isinstance(first, ast.JoinedStr):
-        parts = [v.value for v in first.values if isinstance(v, ast.Constant) and isinstance(v.value, str)]
-        return "".join(parts) if parts else None
-    return None
+def _str_arg_values(call: ast.Call) -> list[str]:
+    """Every positional argument that is a string literal (plain or f-string), in order.
+
+    All of them, not just the first: `print("done", "->")` and `logger.info("x %s", "->")` reach
+    the console exactly as `print("->")` does, and raise the same UnicodeEncodeError on cp1251.
+    """
+    out: list[str] = []
+    for arg in call.args:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            out.append(arg.value)
+        elif isinstance(arg, ast.JoinedStr):
+            out.extend(part.value for part in arg.values if isinstance(part, ast.Constant) and isinstance(part.value, str))
+    return out
 
 
 def _has_non_ascii(s: str) -> bool:
@@ -54,6 +62,22 @@ def _has_stdio_utf8_reconfigure(source: str) -> bool:
     return "reconfigure(encoding" in source and (".stdout.reconfigure(encoding" in source or ".stderr.reconfigure(encoding" in source)
 
 
+def _read_init_source(init_file: Path) -> str:
+    """The file's text, or "" when it cannot be read - warned about once per path per process.
+
+    An unreadable ``__init__.py`` is indistinguishable from one that does not reconfigure stdio,
+    which silently disables this check for the whole package below it. The caller revisits the same
+    parent for every module in a package, hence the once-per-path guard.
+    """
+    try:
+        return init_file.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        if init_file not in _UNREADABLE_INIT_WARNED:
+            _UNREADABLE_INIT_WARNED.add(init_file)
+            logger.warning("Cannot read %s (%s); treating the package as not reconfiguring stdio.", init_file, e)
+        return ""
+
+
 def _ancestor_package_has_stdio_utf8_reconfigure(py: Path, root: Path) -> bool:
     """True if any ``__init__.py`` from ``py``'s own package up through ``root`` reconfigures
     stdio to UTF-8. A package ``__init__.py`` runs on the FIRST ``import <package>`` regardless
@@ -68,10 +92,7 @@ def _ancestor_package_has_stdio_utf8_reconfigure(py: Path, root: Path) -> bool:
     while True:
         init_file = current / "__init__.py"
         if init_file.is_file():
-            try:
-                init_src = init_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                init_src = ""
+            init_src = _read_init_source(init_file)
             if _has_stdio_utf8_reconfigure(init_src):
                 return True
         if current.resolve() == root or current.parent == current:
@@ -102,7 +123,7 @@ def scan_console_unicode(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         if _has_stdio_utf8_reconfigure("\n".join(src_lines)):
             continue
         if _ancestor_package_has_stdio_utf8_reconfigure(py, root):
@@ -111,8 +132,7 @@ def scan_console_unicode(
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_console_call(node):
                 continue
-            literal = _first_str_arg_value(node)
-            if not literal or not _has_non_ascii(literal):
+            if not any(_has_non_ascii(literal) for literal in _str_arg_values(node)):
                 continue
             findings.append(Finding(
                 check="console_unicode",

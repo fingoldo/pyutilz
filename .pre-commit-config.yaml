@@ -260,19 +260,26 @@ repos:
         stages: [manual]
 
   # Whole-project mypy, MANUAL stage only (heavier than the fast beachhead hook above -- see
-  # py-ci-shared's own .pre-commit-hooks.yaml for the full rationale). Mirrors CI's
-  # mypy-full.yml exactly (same `mypy src/pyutilz` invocation) -- still useful to run in full
-  # on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
+  # py-ci-shared's own .pre-commit-hooks.yaml for the full rationale). A bare `mypy src/pyutilz`
+  # with no completion assertion, so it is the LOOSER of the two whole-project runs -- the
+  # blocking mypy-full-blocking hook below and CI's mypy-full.yml are the gates. Still useful to
+  # run on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
+  # rev bumped v1.2.1 -> v1.3.5 on 2026-09-03: it had drifted three minor releases behind the
+  # moving `@v1` tag CI's reusable workflows resolve to, so a hook run could behave differently
+  # from CI (packaging audit 03/F05).
   - repo: https://github.com/fingoldo/py-ci-shared
-    rev: v1.2.1
+    rev: v1.3.5
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 242 source files as of 2026-09-03), so mypy-full.yml's reusable workflow now sets
-  # `advisory: false` in CI (a real blocking gate there, matching mlframe's posture) -- this hook
-  # mirrors that exactly, same pattern as black-filtered-blocking above. Previously this was a
+  # verified clean (0 errors; 243 source files as of 2026-09-03), and CI's mypy-full.yml is a
+  # real blocking gate too (matching mlframe's posture) -- this hook mirrors it exactly, same
+  # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
+  # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate
+  # was LOOSER than this hook; mypy-full.yml now runs this same `py_ci_shared.mypy_gate
+  # --min-files 200 src/pyutilz` command inline (packaging audit 03/F03). Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
   # local warn-only hook would be LOOSER than CI, letting a broken commit land locally and only
   # fail later in CI.

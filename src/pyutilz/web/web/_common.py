@@ -7,7 +7,6 @@ documented there, so this module can be imported by every sibling without any cy
 """
 
 import logging
-import urllib.parse
 from typing import Any, Optional
 
 from joblib import hash as joblib_hash  # noqa: F401 -- re-exported: the package binds it for callers/tests
@@ -17,17 +16,26 @@ from joblib import hash as joblib_hash  # noqa: F401 -- re-exported: the package
 # and every caplog/logging-config lookup keyed on that name, behaving exactly as before the split.
 logger = logging.getLogger(__package__)
 
+# Kept as a re-exported public-ish constant (pyutilz.web.web binds it); the authoritative
+# allow-list now lives in pyutilz.web.url_guard.ALLOWED_SCHEMES, which _ensure_http_scheme uses.
 _ALLOWED_URL_SCHEMES = ("http", "https")
 
 
 def _ensure_http_scheme(url: str) -> str:
-    """Raise ValueError unless ``url`` uses http(s) -- guards ``urllib.request.urlopen``
-    against a caller-supplied ``file:///etc/passwd``-style scheme (local file disclosure)
-    or other unexpected custom scheme."""
-    scheme = urllib.parse.urlsplit(url).scheme.lower()
-    if scheme not in _ALLOWED_URL_SCHEMES:
-        raise ValueError(f"Refusing to urlopen {url!r}: scheme {scheme!r} not in {_ALLOWED_URL_SCHEMES}")
-    return url
+    """Raise ValueError unless ``url`` uses http(s) AND names a host -- guards
+    ``urllib.request.urlopen`` against a caller-supplied ``file:///etc/passwd``-style scheme
+    (local file disclosure) or other unexpected custom scheme.
+
+    Delegates to :func:`pyutilz.web.url_guard.require_http_url` rather than keeping a second,
+    drifting copy of the same rule: that one also rejects a hostless URL and tolerates
+    surrounding whitespace / ``HTTP://``. ``UnsafeURLError`` is a ``ValueError`` subclass, so
+    every existing ``pytest.raises(ValueError)`` / ``except ValueError`` call site is unaffected.
+    """
+    # Imported lazily (function-local) so this module, which every pyutilz.web.web submodule
+    # imports, adds no import-time edge to the pyutilz.web package __init__.
+    from ..url_guard import require_http_url
+
+    return require_http_url(url)
 
 
 _SENSITIVE_HEADER_NAMES = frozenset({"authorization", "cookie", "set-cookie", "proxy-authorization", "x-api-key"})

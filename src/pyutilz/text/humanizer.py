@@ -112,15 +112,57 @@ _AI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+# Hedging / deference openers. Kept OUT of ``_AI_PATTERNS`` because they are positional: the
+# words are perfectly ordinary mid-sentence ("we are certainly not done", "of course he knew"),
+# and only the opener slot -- start of text, start of a line, or straight after a sentence end --
+# makes them the assistant-voice tic this function exists to remove. The leading context is
+# captured and restored rather than looked behind, because ``[.!?]\s+`` is variable-width and
+# Python's ``re`` rejects a variable-width lookbehind.
+_AI_HEDGING_OPENER_RE = re.compile(
+    r"(\A|[.!?]\s+|\n)"
+    r"(?:Certainly|Sure thing|Sure|Absolutely|Of course|Definitely|No problem|"
+    r"Great question|Excellent question|Good question|"
+    r"I(?:'d| would) be (?:happy|glad) to help|Happy to help|Glad to help)"
+    r"[!.,]*[ \t]*",
+    re.I,
+)
+
+# Parenthetical self-justifications ("(more idiomatic)", "(which is cleaner)") -- the model
+# explaining its own stylistic choice inside the prose it was asked to write. The vocabulary is a
+# CLOSED list and the whole parenthetical must consist of nothing else, so an ordinary aside that
+# happens to contain one of these words ("(the robust variant ships in 3.12)") is left alone.
+_AI_JUSTIFICATION_PARENTHETICAL_RE = re.compile(
+    r"[ \t]*\((?:which is |this is |and |or |a |an |the |more |much more |most |very )*"
+    r"(?:natural|idiomatic|elegant|clean|cleaner|clearer|concise|readable|robust|efficient|"
+    r"standard|conventional|preferred|best practice|self-explanatory)"
+    r"(?:[ \t]+(?:way|approach|choice|option|style|here|in Python|for clarity|for readability|for consistency))?\)",
+    re.I,
+)
+
+
 def strip_ai_patterns(text: str) -> str:
-    """Replace common AI-generated phrases with more natural alternatives."""
+    """Replace common AI-generated phrases with more natural alternatives.
+
+    Covers three families: positional hedging openers ("Certainly!", "Great question,"),
+    parenthetical self-justifications ("(more idiomatic)"), and the ``_AI_PATTERNS`` table of
+    filler phrases, vocabulary downgrades and transition-word downgrades.
+    """
+    started_capitalised = bool(text[:1].isupper())
+    text, opener_removals = _AI_HEDGING_OPENER_RE.subn(r"\1", text)
+    text = _AI_JUSTIFICATION_PARENTHETICAL_RE.sub("", text)
     for pattern, replacement in _AI_PATTERNS:
         text = pattern.sub(replacement, text)
     # Clean up double spaces left by removals.
     text = re.sub(r"  +", " ", text)
     # Fix sentence starts that lost their capital after a removal.
     text = re.sub(r"(?<=\.\s)([a-zа-яё])", lambda m: m.group(1).upper(), text)
-    return text.strip()
+    text = text.strip()
+    # Removing an opener promotes the following clause to first position; restore the capital only
+    # when an opener was actually removed AND the input itself opened with one, so neither a
+    # deliberately lowercase input nor a plain vocabulary downgrade gets recapitalised.
+    if opener_removals and started_capitalised and text[:1].islower():
+        text = text[:1].upper() + text[1:]
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +199,16 @@ _EMOJI_RE = re.compile(
     "\U0001f900-\U0001f9ff"  # supplemental symbols
     "\U0001fa00-\U0001fa6f"  # chess symbols
     "\U0001fa70-\U0001faff"  # symbols extended-A
-    "\U00002600-\U000027bf"  # misc symbols + dingbats
+    # Misc Symbols + Dingbats MINUS U+2713 CHECK MARK / U+2714 HEAVY CHECK MARK: those are ordinary
+    # typographic bullets in a checklist, and stripping them mangled the list they introduced.
+    "\U00002600-\U00002712"  # misc symbols + dingbats (lower part)
+    "\U00002715-\U000027bf"  # misc symbols + dingbats (upper part)
+    "\U0001f1e6-\U0001f1ff"  # regional indicators (flag emoji), previously not covered at all
+    "\U000020e3"  # combining enclosing keycap, the tail of a keycap sequence
     "\U0000fe00-\U0000fe0f"  # variation selectors
     "\U0000200d"  # ZWJ
-    "\U00002702-\U000027b0"
+    # (U+2702-U+27B0 used to be listed here as well; it is fully contained in the two dingbat
+    # ranges above, and repeating it would have re-added the check marks they deliberately skip.)
     "\U0000231a-\U0000231b"
     "\U000023e9-\U000023f3"
     "\U000023f8-\U000023fa"
@@ -250,30 +298,34 @@ def _apply_char_typo(
     typo_type: str,
     protected: Sequence[tuple[int, int]],
     rng: random.Random,
-) -> str:
-    """Apply a single character-level typo to *text*."""
+) -> "tuple[str, int, int]":
+    """Apply a single character-level typo to *text*.
+
+    Returns ``(new_text, edit_position, length_delta)``. The caller needs the last two to keep
+    ``protected_spans`` offsets valid across successive length-changing typos.
+    """
     # Build word list with offsets.
     words: list[tuple[int, str]] = [(m.start(), m.group()) for m in re.finditer(r"\S+", text)]
     target = _pick_word_for_typo(words, protected, rng)
     if target is None:
-        return text
+        return text, 0, 0
     offset, word = target
 
     if typo_type == "adjacent_key":
         # Replace one character with an adjacent QWERTY/ЙЦУКЕН key.
         indices = [i for i in range(len(word)) if word[i].isalpha() and _get_adjacent(word[i])]
         if not indices:
-            return text
+            return text, 0, 0
         idx = rng.choice(indices)
         adj = _get_adjacent(word[idx])
         if adj is None:
-            return text
+            return text, 0, 0
         new_char = rng.choice(adj)
         new_word = word[:idx] + new_char + word[idx + 1 :]
 
     elif typo_type == "transpose":
         if len(word) < 3:
-            return text
+            return text, 0, 0
         idx = rng.randint(1, len(word) - 2)
         new_word = word[:idx] + word[idx + 1] + word[idx] + word[idx + 2 :]
 
@@ -286,9 +338,9 @@ def _apply_char_typo(
         new_word = word[:idx] + word[idx + 1 :]
 
     else:
-        return text
+        return text, 0, 0
 
-    return text[:offset] + new_word + text[offset + len(word) :]
+    return text[:offset] + new_word + text[offset + len(word) :], offset, len(new_word) - len(word)
 
 
 def _apply_space_typo(
@@ -296,36 +348,39 @@ def _apply_space_typo(
     typo_type: str,
     protected: Sequence[tuple[int, int]],
     rng: random.Random,
-) -> str:
-    """Apply a single spacing typo to *text*."""
+) -> "tuple[str, int, int]":
+    """Apply a single spacing typo to *text*.
+
+    Returns ``(new_text, edit_position, length_delta)`` -- see :func:`_apply_char_typo`.
+    """
     if typo_type == "extra_space":
         # Find multi-word gaps (single spaces between words).
         gaps = [m.start() for m in re.finditer(r"(?<=\S) (?=\S)", text)]
         gaps = [g for g in gaps if not _is_protected(g, 1, protected)]
         if not gaps:
-            return text
+            return text, 0, 0
         pos = rng.choice(gaps)
-        return text[:pos] + "  " + text[pos + 1 :]
+        return text[:pos] + "  " + text[pos + 1 :], pos, 1
 
     elif typo_type == "missing_space_comma":
         # Find ", " patterns and remove the space.
         hits = [m.start() for m in re.finditer(r", ", text)]
         hits = [h for h in hits if not _is_protected(h, 2, protected)]
         if not hits:
-            return text
+            return text, 0, 0
         pos = rng.choice(hits)
-        return text[: pos + 1] + text[pos + 2 :]  # remove space after comma
+        return text[: pos + 1] + text[pos + 2 :], pos + 1, -1  # remove space after comma
 
     elif typo_type == "missing_space_period":
         # Find ". X" patterns (sentence boundary) and remove the space.
         hits = [m.start() for m in re.finditer(r"\. [A-ZА-ЯЁ]", text)]
         hits = [h for h in hits if not _is_protected(h, 2, protected)]
         if not hits:
-            return text
+            return text, 0, 0
         pos = rng.choice(hits)
-        return text[: pos + 1] + text[pos + 2 :]  # remove space after period
+        return text[: pos + 1] + text[pos + 2 :], pos + 1, -1  # remove space after period
 
-    return text
+    return text, 0, 0
 
 
 def introduce_typos(
@@ -354,9 +409,15 @@ def introduce_typos(
     for _ in range(count):
         typo_type = rng.choices(_TYPO_NAMES, weights=_TYPO_WEIGHTS, k=1)[0]
         if typo_type in ("extra_space", "missing_space_comma", "missing_space_period"):
-            text = _apply_space_typo(text, typo_type, protected, rng)
+            text, edit_pos, delta = _apply_space_typo(text, typo_type, protected, rng)
         else:
-            text = _apply_char_typo(text, typo_type, protected, rng)
+            text, edit_pos, delta = _apply_char_typo(text, typo_type, protected, rng)
+        if delta:
+            # Every typo that changes the string LENGTH shifts every offset after the edit point.
+            # `protected` was previously captured once and reused verbatim for all `count` rounds,
+            # so after the first insertion/deletion the guarded window pointed at the wrong
+            # characters and a later typo could land inside the protected phrase.
+            protected = [(start + delta, end + delta) if start >= edit_pos else (start, end + delta if end > edit_pos else end) for start, end in protected]
     return text
 
 

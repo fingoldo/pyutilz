@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a falsy in-band sentinel meeting a caller guard that tests `is None` ----------------------
 #
@@ -44,6 +44,10 @@ def _returns_falsy_from_except(func: ast.AST) -> list[tuple[object, int]]:
             if not isinstance(sub, ast.Return) or sub.value is None:
                 continue
             value = sub.value
+            # `return -1` parses as UnaryOp(USub, Constant(1)), never as Constant(-1), so the
+            # `-1` sentinel the module header cites as its motivating case never matched.
+            if isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.USub) and isinstance(value.operand, ast.Constant) and isinstance(value.operand.value, (int, float)) and not isinstance(value.operand.value, bool):
+                value = ast.copy_location(ast.Constant(value=-value.operand.value), value)
             if isinstance(value, ast.Constant) and any(value.value is s or (type(value.value) is type(s) and value.value == s) for s in _FALSY_SENTINELS):
                 out.append((value.value, sub.lineno))
             elif isinstance(value, (ast.List, ast.Dict, ast.Tuple)) and not getattr(value, "elts", getattr(value, "keys", [])):
@@ -144,7 +148,7 @@ def scan_sentinel_guard_mismatch(
         if not guards:
             continue
         assigned = _assigned_from_call(tree)
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
 
         for callee, names in sorted(assigned.items()):
             if callee not in sentinel_returners:

@@ -178,7 +178,17 @@ def parse_dmidecode_info(
     from pyutilz.core.pythonlib import is_float, to_float
 
     try:
-        result = subprocess.run(["sudo", "dmidecode"], capture_output=True, text=True)  # nosec B603 B607 - fixed trusted binaries "sudo"/"dmidecode" with hardcoded argv, no shell, no external/user-controlled input
+        # `sudo -n` (non-interactive) + DEVNULL stdin + a timeout: with stdin still attached a
+        # password-needing sudo waited FOREVER, and register_scraper calls this while holding
+        # _identity_lock, deadlocking every other thread's heartbeat. The sibling nvidia-smi call
+        # already carries a timeout.
+        result = subprocess.run(  # nosec B603 B607 - fixed trusted binaries "sudo"/"dmidecode" with hardcoded argv, no shell, no external/user-controlled input
+            ["sudo", "-n", "dmidecode"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            stdin=subprocess.DEVNULL,
+        )
     except Exception as e:
         logger.error("dmidecode running problem: %s", e)
         return None
@@ -611,7 +621,12 @@ def get_nvidia_smi_info(
     res = res.get("nvidia_smi_log")
 
     remove_json_attributes(res, ["timestamp", "processes"])
-    for gpu in res.get("gpu", []):
+    # remove_nas() is PURE -- it returns a cleaned copy and mutates nothing -- so both calls below
+    # must have their result assigned back. Called as bare statements, every "N/A" survived into
+    # the returned dict and to_float("N/A") then raised inside _collect_sample, losing EVERY sample
+    # on a card reporting e.g. power_draw: N/A.
+    gpu_list = res.get("gpu", [])
+    for gpu_idx, gpu in enumerate(gpu_list):
         remove_json_defaults(
             gpu,
             {
@@ -662,12 +677,12 @@ def get_nvidia_smi_info(
             if gpu_power_readings:
                 remove_json_attributes(gpu_power_readings, "power_state power_draw".split())
 
-        remove_nas(gpu)
+        gpu_list[gpu_idx] = remove_nas(gpu)
 
     if "gpu" in res:
         res["gpu"] = [sort_dict_by_key(gpu) for gpu in res["gpu"]]
 
-    remove_nas(res)
+    res = remove_nas(res)
 
     return res
 
@@ -752,7 +767,10 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
     """
     if isinstance(attrs, str):
         attrs = attrs.split(",")
-    assert "id" in attrs  # nosec B101 - internal precondition ("id" is used below to key devices), not a security/permission check
+    if "id" not in attrs:
+        # Was an `assert`, which vanishes under `python -O`; gpu_dispatch then indexed g["id"]
+        # unconditionally and failed with a KeyError deep in dispatch instead of here, by name.
+        raise ValueError(f'get_gpuutil_gpu_info: "id" must be among the requested attrs, got {attrs}')
 
     devices: _List[_Any] = []
 

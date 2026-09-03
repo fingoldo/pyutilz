@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- duplicate conditions (copy-paste bugs) ----------------------------------
 #
@@ -71,7 +71,7 @@ def scan_duplicate_conditions(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         # ast.walk visits every If, including the nested Ifs that ARE the
         # elif branches of an outer chain. Starting a chain walk at one of

@@ -74,6 +74,7 @@ from pyutilz.llm.openrouter_provider._catalogue import (
     _ensure_catalogue_warm_async,
     _fetch_models_catalogue,
     _per_token_cost_pair,
+    _per_token_cost_pair_or_none,
     _resolve_model_limits,
 )
 from pyutilz.llm.openrouter_provider._health import (

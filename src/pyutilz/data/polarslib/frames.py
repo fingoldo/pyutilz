@@ -41,7 +41,13 @@ def drop_constant_columns(df: pl.DataFrame, max_log_text_width: int = 300, verbo
         all_num_cols.max().name.suffix("_max"),
     ]
 
-    stats = df.lazy().select(stats_expr).collect().row(0, named=True)
+    stats_df = df.lazy().select(stats_expr).collect()
+    if stats_df.width == 0:
+        # No numeric column at all (an all-string/categorical staging frame is an ordinary input): the
+        # collected stats frame is 0x0 and .row(0) would raise a raw polars OutOfBoundsError. There is
+        # nothing constant to drop, so the frame passes through unchanged.
+        return df
+    stats = stats_df.row(0, named=True)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Deciding

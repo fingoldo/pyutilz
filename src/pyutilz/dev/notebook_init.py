@@ -1,9 +1,14 @@
 """
 Jupyter notebook initialization utilities
 """
+import logging
 import os
-import psutil
+import sys
 from typing import Any
+
+import psutil
+
+logger = logging.getLogger(__name__)
 
 try:
     from IPython import get_ipython
@@ -34,11 +39,34 @@ except ImportError:
             return data
 
 def setup_polars_config():
-    """Setup Polars threading and memory configuration"""
+    """Setup Polars threading and memory configuration.
+
+    ``POLARS_MAX_THREADS`` is read by polars ONCE, at import; setting it afterwards has no effect on
+    the already-built thread pool, so this reports honestly instead of printing a thread count polars
+    is not using.
+    """
     physical_cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 1
     os.environ["POLARS_MAX_THREADS"] = str(max(1, int(physical_cores / 2)))
-    print(f"Using {os.environ['POLARS_MAX_THREADS']} polars threads")
+    if "polars" in sys.modules:
+        print(f"[!] polars is already imported: POLARS_MAX_THREADS={os.environ['POLARS_MAX_THREADS']} will NOT apply to this session; call setup_polars_config() before importing polars")
+    else:
+        print(f"Using {os.environ['POLARS_MAX_THREADS']} polars threads")
     os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:500"
+
+def _run_magic(ipython, line: str) -> None:
+    """Run one IPython line magic, preferring ``run_line_magic`` over the removed ``magic()``.
+
+    ``InteractiveShell.magic()`` was deprecated for years and REMOVED in IPython 9.0, so every call
+    site raised there -- and each is wrapped in a handler that only appends to a `failed` list, so
+    init_notebook still printed "[OK]Notebook initialization complete!" with autoreload silently off.
+    """
+    magic_name, _, rest = line.partition(" ")
+    run_line_magic = getattr(ipython, "run_line_magic", None)
+    if run_line_magic is not None:
+        run_line_magic(magic_name, rest)
+        return
+    ipython.magic(line)
+
 
 def setup_jupyter_display():
     """Setup Jupyter notebook display options"""
@@ -67,15 +95,14 @@ def load_jupyter_extensions():
 
     for ext in extensions_to_load:
         try:
-            # Use magic() method instead of % syntax
-            ipython.magic(f"load_ext {ext}")
+            _run_magic(ipython, f"load_ext {ext}")
             loaded.append(ext)
         except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one extension failing shouldn't skip the rest)
             failed.append((ext, str(e)))
 
     # Set autoreload
     try:
-        ipython.magic("autoreload 2")
+        _run_magic(ipython, "autoreload 2")
         loaded.append("autoreload 2")
     except Exception as e:
         failed.append(("autoreload 2", str(e)))
@@ -83,7 +110,10 @@ def load_jupyter_extensions():
     if loaded:
         print(f"[OK]Loaded extensions: {', '.join(loaded)}")
     if failed:
+        # Both printed AND logged at WARNING: a print inside a notebook cell scrolls away, and a
+        # silently-off autoreload is exactly the failure people spend an hour not noticing.
         print(f"[!] Failed to load: {[f[0] for f in failed]}")
+        logger.warning("notebook_init: could not load IPython extensions: %s", failed)
 
 def import_common_packages():
     """Import common packages and return them"""
@@ -130,8 +160,8 @@ def load_jupyter_extensions_minimal():
 
     # Only load built-in extensions that should always be available
     try:
-        ipython.magic("load_ext autoreload")
-        ipython.magic("autoreload 2")
+        _run_magic(ipython, "load_ext autoreload")
+        _run_magic(ipython, "autoreload 2")
         print("[OK]Loaded autoreload extension")
     except Exception as e:
         print(f"[!] Failed to load autoreload: {e}")
@@ -171,8 +201,11 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
                     raise RuntimeError("no caller frame available")
                 frame.f_globals.update(packages)
                 print("[*] Packages injected into global namespace")
-            except Exception:
-                print("[!] Could not inject into global namespace")
+            except Exception as e:
+                # Bind and report the reason, like every other handler in this module: a bare
+                # `except Exception:` left the caller with no way to tell what actually failed.
+                print(f"[!] Could not inject into global namespace: {e}")
+                logger.warning("notebook_init: global-namespace injection failed: %s", e)
 
         print("[OK]Notebook initialization complete!")
         return packages

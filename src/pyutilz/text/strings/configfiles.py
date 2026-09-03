@@ -49,6 +49,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                 cur_variables = variables
 
             for var in cur_variables:
+                target_key = next_section.lower() + "_" + var if prepend_section_names else var
                 try:
                     val = config[next_section][var]
                     if isinstance(val, str):
@@ -63,12 +64,12 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                         val = ast.literal_eval(val)
                     except Exception as e:  # nosec B110 - best-effort literal-type coercion (int/float/bool/etc.) of a config string; falling back to the plain string is the intended behavior when it isn't a Python literal
                         logger.debug("Value for %s is not a Python literal, keeping as string: %s", var, e)
-                    if prepend_section_names:
-                        object[next_section.lower() + "_" + var] = val
-                    else:
-                        object[var] = val
-                except Exception:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this variable, continue with the rest)
-                    object[var] = None
+                    object[target_key] = val
+                except Exception:
+                    # Same key shape as the success path above: the failure branch used to write the
+                    # BARE `var`, so a missing variable landed under an unprefixed key and two sections
+                    # missing the same variable collided on it.
+                    object[target_key] = None
     except Exception as e:
         logger.exception(e)
         return None
@@ -81,7 +82,8 @@ def write_config_file(
 ) -> Optional[bool]:
     """Write values from ``object`` into an INI-style config file under ``section``.
 
-    Values are stringified (with ``%`` escaped for configparser interpolation) and, when
+    Values are stringified (verbatim -- interpolation is disabled on both the writer and the
+    reader, so ``%`` is NOT escaped and survives a write/read round trip unchanged) and, when
     ``encryption="xor"``, base64-encoded before being written. When ``mode="append"`` and
     the file already exists, its existing contents are read first and merged with the new
     section/variables before the file is overwritten. Returns True on success, None on failure.
@@ -100,7 +102,7 @@ def write_config_file(
             variables = list(object.keys())
         assert isinstance(variables, list)  # nosec B101 - internal type invariant on a locally-derived variable (already normalized above), not a security/permission gate
 
-        config = configparser.ConfigParser()
+        config = configparser.ConfigParser(interpolation=None)
 
         if mode == "append":
             if os.path.exists(file):
@@ -116,7 +118,11 @@ def write_config_file(
 
         for var in variables:
             if var in object:
-                val = str(object[var]).replace("%", "%%")
+                # No "%%" escaping: read_config_file builds its parser with interpolation=None and
+                # therefore never un-escapes, so escaping here doubled every "%" on each write/read
+                # cycle ("50% off" -> "50%% off" -> "50%%%% off"). The writer's parser below also
+                # disables interpolation, keeping the round trip symmetric.
+                val = str(object[var])
 
                 if encryption == "xor":
                     val = b64encode(val.encode("utf-8")).decode("utf-8")

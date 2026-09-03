@@ -20,9 +20,9 @@ import random
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
-from pyutilz.llm.base import LLMProvider
+from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
 logger = logging.getLogger(__name__)
@@ -278,6 +278,27 @@ class ClaudeCodeProvider(LLMProvider):
     INPUT_COST_PER_1M = 0.0
     OUTPUT_COST_PER_1M = 0.0
 
+    # Per-call "last successful call" state -- contextvar-backed via PerCallAttr, NOT plain
+    # instance attributes (2026-09-03 audit F08). generate_batch() fires N concurrent
+    # self.generate() calls on ONE shared, factory-cached provider; as plain attributes the
+    # ResultMessage and its cost/cache figures leaked between in-flight calls, so a call could
+    # bill another call's cost twice or fall back to tiktoken estimates for its own.
+    _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    _last_result_message: PerCallAttr = PerCallAttr(lambda: None)
+    last_cost_usd: PerCallAttr = PerCallAttr(lambda: 0.0)
+    last_cache_creation_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_cache_read_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
+    last_session_id: PerCallAttr = PerCallAttr(lambda: None)
+    last_num_turns: PerCallAttr = PerCallAttr(lambda: None)
+
+    _PERCALL_METADATA_ATTRS: tuple[str, ...] = (
+        *LLMProvider._PERCALL_METADATA_ATTRS,
+        "_last_result_message",
+        "last_cost_usd",
+        "last_session_id",
+        "last_num_turns",
+    )
+
     def __init__(
         self,
         model: str = "opus",
@@ -288,7 +309,8 @@ class ClaudeCodeProvider(LLMProvider):
         self.model_name = model
         self.timeout = timeout
         self._max_concurrent = max_concurrent
-        self._last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
+        # Per-call usage/cost/cache/session state: PerCallAttr class-level descriptors (declared
+        # above __init__) provide the defaults; nothing to initialize here.
         self._call_count = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -297,13 +319,8 @@ class ClaudeCodeProvider(LLMProvider):
         # reports the underlying API cost as if they were -- useful for
         # tracking session burn even on subscription accounts.
         self.total_cost_usd = 0.0
-        self.last_cost_usd = 0.0
         self.total_cache_creation_input_tokens = 0
         self.total_cache_read_input_tokens = 0
-        self.last_cache_creation_input_tokens = 0
-        self.last_cache_read_input_tokens = 0
-        self.last_session_id: str | None = None
-        self.last_num_turns: int | None = None
 
     def get_session_cost(self) -> dict:
         """Return cost data, sourced from ResultMessage.usage when SDK path
@@ -377,11 +394,12 @@ class ClaudeCodeProvider(LLMProvider):
             system = (system or "") + json_hint
 
         self._call_count += 1
-        # Cleared per call: _last_result_message was only ever ASSIGNED (on the SDK path, when a
-        # ResultMessage arrived) and never reset, so a subsequent call that produced none -- an
-        # SDK error path, or the CLI fallback -- re-read the PREVIOUS call's object and added its
-        # cost and cache tokens to the totals a second time.
-        self._last_result_message: Optional[Any] = None
+        # The per-call reset lives INSIDE the semaphore, at the top of _generate_sdk/_generate_cli
+        # (2026-09-03 audit F08): generate() itself holds no lock, so with max_concurrent=1 a
+        # queued call used to clear state while the call ahead of it was still inside the
+        # semaphore -- either erasing that call's ResultMessage (silent fallback to tiktoken
+        # estimates, zero cache tokens, nothing added to total_cost_usd) or letting it read and
+        # bill the other call's cost twice.
         # NEITHER transport forwards budget or sampling temperature: the SDK path passes no such
         # field to ClaudeCodeOptions, and the CLI has no --temperature/--max-tokens flag to pass one
         # to. This is the factory's default provider, so say so once on both paths instead of
@@ -508,6 +526,7 @@ class ClaudeCodeProvider(LLMProvider):
     ) -> str:
         """Generate text using claude-code-sdk."""
         async with self.semaphore:
+            self._reset_per_call_state()
             override_env = {k: "" for k in self._NESTED_BLOCK_VARS if k in os.environ}
 
             combined_len = len(prompt) + len(system or "")
@@ -609,6 +628,7 @@ class ClaudeCodeProvider(LLMProvider):
         only made the drop look deliberate. ``generate()`` warns about them once instead.
         """
         async with self.semaphore:
+            self._reset_per_call_state()
             if not hasattr(self, "_claude_path"):
                 self._claude_path = _find_claude_executable()
 

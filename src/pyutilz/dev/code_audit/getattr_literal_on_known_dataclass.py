@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, Finding
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def _dataclass_fields(tree: ast.Module) -> dict[str, set[str]]:
@@ -16,14 +16,48 @@ def _dataclass_fields(tree: ast.Module) -> dict[str, set[str]]:
     class-level constant, not a field, and including it would let a genuine miss on the real fields hide
     behind an unrelated class constant of the same name.
     """
-    out: dict[str, set[str]] = {}
+    members, bases, decorated = _class_shapes(tree)
+    return {name: _resolved_members(name, members, bases) for name in decorated}
+
+
+def _class_shapes(tree: ast.Module) -> tuple[dict[str, set[str]], dict[str, set[str]], set[str]]:
+    """``(own members, base class names, @dataclass-decorated class names)`` for every class here.
+
+    "Own members" is deliberately wider than the annotated fields: a method or a property is a real
+    attribute of the instance, and reporting ``getattr(c, "helper", None)`` on one is a false
+    positive on correct code.
+    """
+    members: dict[str, set[str]] = {}
+    bases: dict[str, set[str]] = {}
+    decorated: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        if not any(_is_dataclass_decorator(dec) for dec in node.decorator_list):
+        own = {item.target.id for item in node.body if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)}
+        own |= {item.name for item in node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        # Two modules can define same-named classes; union the shapes rather than let the last one
+        # win, so an unrelated namesake can never make a correct read look like a miss.
+        members.setdefault(node.name, set()).update(own)
+        base_names = {b.id for b in node.bases if isinstance(b, ast.Name)}
+        base_names |= {b.attr for b in node.bases if isinstance(b, ast.Attribute)}
+        bases.setdefault(node.name, set()).update(base_names)
+        if any(_is_dataclass_decorator(dec) for dec in node.decorator_list):
+            decorated.add(node.name)
+    return members, bases, decorated
+
+
+def _resolved_members(name: str, members: dict[str, set[str]], bases: dict[str, set[str]]) -> set[str]:
+    """``name``'s own members plus, transitively, those of every in-tree base class."""
+    out: set[str] = set()
+    pending = [name]
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in seen:
             continue
-        fields = {item.target.id for item in node.body if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)}
-        out[node.name] = fields
+        seen.add(current)
+        out |= members.get(current, set())
+        pending.extend(bases.get(current, ()))
     return out
 
 
@@ -103,22 +137,33 @@ def scan_getattr_literal_on_known_dataclass(
     """
     trees: dict[Path, ast.Module] = {}
     known: dict[str, set[str]] = {}
+    all_members: dict[str, set[str]] = {}
+    all_bases: dict[str, set[str]] = {}
+    decorated: set[str] = set()
     dynamic_attrs: set[str] = set()
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
         if tree is None:
             continue
         trees[py] = tree
-        known.update(_dataclass_fields(tree))
+        module_members, module_bases, module_decorated = _class_shapes(tree)
+        for cls, own in module_members.items():
+            all_members.setdefault(cls, set()).update(own)
+        for cls, parents in module_bases.items():
+            all_bases.setdefault(cls, set()).update(parents)
+        decorated |= module_decorated
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 dynamic_attrs.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
                 dynamic_attrs.add(node.target.attr)
 
+    # Base classes resolve across the whole scanned tree, not just within one module.
+    known = {cls: _resolved_members(cls, all_members, all_bases) for cls in decorated}
+
     findings: list[Finding] = []
     for py, tree in trees.items():
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -149,8 +194,8 @@ def scan_getattr_literal_on_known_dataclass(
                         snippet=_line_text(src_lines, node.lineno),
                         detail=(
                             f"getattr({obj_arg.id}, {literal!r}, default): {obj_arg.id} is a {cls_name!r} "
-                            f"instance and {cls_name!r} has no field named {literal!r} ({sorted(known[cls_name])!r} "
-                            "are its real fields) - this call can only ever return the default."
+                            f"instance and {cls_name!r} has no attribute named {literal!r} ({sorted(known[cls_name])!r} "
+                            "are its known attributes, inherited ones included) - this call can only ever return the default."
                         ),
                     )
                 )

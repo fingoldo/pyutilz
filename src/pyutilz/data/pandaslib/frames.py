@@ -12,6 +12,7 @@ from ._common import (
     Dict,
     Optional,
     Sequence,
+    Tuple,
     Union,
     np,
     pd,
@@ -80,6 +81,174 @@ def prefixize_columns(
     else:
         df = df.rename(columns=columns, inplace=False)
     return df, columns
+
+
+def _rare_and_uninformative_from_lists(vals: list, counts: list, max_unique_percent: float) -> "Tuple[list, Optional[float]]":
+    """``(rare values, uninformative fraction)`` for one column, from parallel value/count lists.
+
+    A value is rare when its share of the column's OWN value_counts total is at most
+    ``max_unique_percent``. The denominator is that per-column total, not the frame height: with
+    ``dropna=True`` the counts exclude nulls, so dividing by the full height mixes two populations
+    and reports the same "uninformative" fraction for both dropna modes.
+
+    The second element is the fraction of non-dominant rows when at most ONE distinct value
+    survives the rare filter (the column carries almost no information), else ``None``.
+    """
+    col_total = sum(counts)
+    rare_threshold = max_unique_percent * col_total
+    col_rare = [v for v, c in zip(vals, counts) if c <= rare_threshold]
+    if not col_rare:
+        return col_rare, None
+    non_rare_unique = sum(1 for c in counts if c > rare_threshold)
+    if non_rare_unique > 1:
+        return col_rare, None
+    non_rare_count = sum(c for c in counts if c > rare_threshold)
+    return col_rare, (1 - non_rare_count / col_total if col_total > 0 else 0.0)
+
+
+def _rare_and_uninformative_from_value_counts(stats, max_unique_percent: float) -> "Tuple[list, Optional[float]]":
+    """``_rare_and_uninformative_from_lists`` for a pandas ``value_counts()`` Series.
+
+    Kept as a separate entry point rather than converting the Series to python lists: the pandas
+    branch never needs the lists for anything else, so the vectorised mask is strictly cheaper.
+    ``stats`` is the FULL value_counts result -- the ``.head(max_vars)`` above only affects what
+    gets printed and never truncates it.
+    """
+    col_total = int(stats.sum())
+    rare_threshold = max_unique_percent * col_total
+    col_rare = stats[stats <= rare_threshold].index.tolist()
+    if not col_rare:
+        return col_rare, None
+    non_rare = stats[stats > rare_threshold]
+    if len(non_rare) > 1:
+        return col_rare, None
+    non_rare_count = int(non_rare.sum()) if len(non_rare) == 1 else 0
+    return col_rare, (1 - non_rare_count / col_total if col_total > 0 else 0.0)
+
+
+def _showcase_polars_columns(
+    df: "pl.DataFrame",
+    target_cols: list,
+    dropna: bool,
+    use_markdown: bool,
+    should_print: bool,
+    max_vars: "Optional[int]",
+    max_cat_uniq_qty: int,
+    max_unique_percent: float,
+) -> tuple:
+    """The polars half of ``showcase_df_columns``: print each column's value counts and collect
+    its rare / uninformative verdict. Returns ``(rare_categories, uninformative_features)``."""
+    rare_categories: Dict[Any, Any] = {}
+    uninformative_features: Dict[Any, Any] = {}
+    # Build lazy value_counts queries for all columns, collect in parallel
+    lazy_queries = []
+    for var in target_cols:
+        lq = df.lazy().select(pl.col(var))
+        if dropna:
+            lq = lq.drop_nulls()
+        lq = lq.group_by(var).agg(pl.len().alias("count")).sort("count", descending=True)
+        lazy_queries.append(lq)
+
+    # pl.collect_all runs all queries in parallel via the Polars thread pool
+    vc_results = pl.collect_all(lazy_queries)
+
+    for var, vc in zip(target_cols, vc_results):
+        dtype = df.schema[var]
+        if use_markdown and _facade.HAS_IPYTHON:
+            _facade.display(_facade.Markdown(f"**{var}** {dtype}"))
+        if should_print:
+            print(f"{var.upper()} {dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+
+        # Rare/uninformative analysis reads exactly the same two columns the display block
+        # does, so convert each Arrow column to python ONCE and share it. Both blocks used to
+        # call ``.to_list()`` independently -- two full Arrow-to-python conversions of the same
+        # unchanged frame per column. `vc` is grouped under the same dropna treatment as
+        # n_unique would be (drop_nulls() before group_by when dropna=True, null counted as
+        # its own group otherwise), so vc.height already IS n_unique -- no second full-column
+        # scan needed.
+        n_unique = vc.height
+        wants_display = n_unique > 0 and not (max_vars is not None and max_vars == 0)
+        wants_rare = 0 < n_unique <= max_cat_uniq_qty
+        if wants_display or wants_rare:
+            vals = vc.get_column(var).to_list()
+            counts = vc.get_column("count").to_list()
+
+        if should_print:
+            if max_vars is not None and max_vars == 0:
+                print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+            elif vc.height == 0:
+                stats = pd.Series([], name="count", dtype="int64")
+                stats.index.name = var
+                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+            else:
+                stats = pd.Series(counts, index=vals, name="count")
+                stats.index.name = var
+                if max_vars is not None and max_vars > 0:
+                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+                else:
+                    print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+
+        # bench-attempt-rejected (2026-09-02): doing the rare filter in polars
+        # (vc.filter(pl.col("count") <= threshold)) instead of over the python lists. Rejected on
+        # reading, not timing: the display block above needs the FULL lists whenever max_vars != 0,
+        # so a polars filter would ADD a pass over the frame rather than remove one. The measured
+        # win here came from sharing the single conversion (16.9/17.7/13.4 ms of a 250/315/265 ms
+        # call, 40 cols x 5000 uniques), which the shared vals/counts above already banks.
+        if wants_rare:
+            col_rare, uninformative = _rare_and_uninformative_from_lists(vals, counts, max_unique_percent)
+            if col_rare:
+                rare_categories[var] = col_rare
+                if uninformative is not None:
+                    uninformative_features[var] = uninformative
+    return rare_categories, uninformative_features
+
+
+def _showcase_pandas_columns(
+    df: "pd.DataFrame",
+    target_cols: list,
+    dropna: bool,
+    use_markdown: bool,
+    should_print: bool,
+    max_vars: "Optional[int]",
+    max_cat_uniq_qty: int,
+    max_unique_percent: float,
+) -> tuple:
+    """The pandas half of ``showcase_df_columns``: print each column's value counts and collect
+    its rare / uninformative verdict. Returns ``(rare_categories, uninformative_features)``."""
+    rare_categories: Dict[Any, Any] = {}
+    uninformative_features: Dict[Any, Any] = {}
+    for var in target_cols:
+        if use_markdown and _facade.HAS_IPYTHON:
+            _facade.display(_facade.Markdown(f"**{var}** {df[var].dtype}"))
+        if should_print:
+            print(f"{var.upper()} {df[var].dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+        stats = df[var].value_counts(dropna=dropna)
+        if max_vars is not None:
+            assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
+        if should_print:
+            if max_vars is not None:
+                if max_vars > 0:
+                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+                else:
+                    print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+            else:
+                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+
+        # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
+        # computed above), so a column that's within max_cat_uniq_qty distinct non-null
+        # values isn't silently skipped just because it also has nulls the caller asked to ignore.
+        # `stats` already IS the full value_counts(dropna=dropna) result (`.head(max_vars)`
+        # above only affects what gets printed, never truncates `stats` itself), so both
+        # `len(stats)` and re-running value_counts() are redundant full-column rescans of a
+        # value already on hand.
+        n_unique = len(stats)
+        if n_unique <= max_cat_uniq_qty and n_unique > 0:
+            col_rare, uninformative = _rare_and_uninformative_from_value_counts(stats, max_unique_percent)
+            if col_rare:
+                rare_categories[var] = col_rare
+                if uninformative is not None:
+                    uninformative_features[var] = uninformative
+    return rare_categories, uninformative_features
 
 
 def showcase_df_columns(
@@ -209,6 +378,12 @@ def showcase_df_columns(
 
     _is_polars = isinstance(df, pl.DataFrame)
 
+    # Whether ANY of this function's stdout output happens. `use_print` used to gate only the one-line
+    # dtype header, so a caller after nothing but the returned dicts (a feature-selection loop over
+    # hundreds of columns) still got every value-count table -- and, with IPython present, got those
+    # tables stripped of the headers that said which column each belonged to.
+    should_print = use_print or not _facade.HAS_IPYTHON
+
     if cols is None or len(cols) == 0:
         cols = df.columns
 
@@ -226,107 +401,14 @@ def showcase_df_columns(
     # two populations and reported the same "uninformative" fraction for both dropna modes.
 
     if _is_polars:
-        # Build lazy value_counts queries for all columns, collect in parallel
-        lazy_queries = []
-        for var in target_cols:
-            lq = df.lazy().select(pl.col(var))
-            if dropna:
-                lq = lq.drop_nulls()
-            lq = lq.group_by(var).agg(pl.len().alias("count")).sort("count", descending=True)
-            lazy_queries.append(lq)
-
-        # pl.collect_all runs all queries in parallel via the Polars thread pool
-        vc_results = pl.collect_all(lazy_queries)
-
-        for var, vc in zip(target_cols, vc_results):
-            dtype = df.schema[var]
-            if use_markdown and _facade.HAS_IPYTHON:
-                _facade.display(_facade.Markdown(f"**{var}** {dtype}"))
-            if use_print or not _facade.HAS_IPYTHON:
-                print(f"{var.upper()} {dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-
-            # Rare/uninformative analysis reads exactly the same two columns the display block
-            # does, so convert each Arrow column to python ONCE and share it. Both blocks used to
-            # call ``.to_list()`` independently -- two full Arrow-to-python conversions of the same
-            # unchanged frame per column. `vc` is grouped under the same dropna treatment as
-            # n_unique would be (drop_nulls() before group_by when dropna=True, null counted as
-            # its own group otherwise), so vc.height already IS n_unique -- no second full-column
-            # scan needed.
-            n_unique = vc.height
-            wants_display = n_unique > 0 and not (max_vars is not None and max_vars == 0)
-            wants_rare = 0 < n_unique <= max_cat_uniq_qty
-            if wants_display or wants_rare:
-                vals = vc.get_column(var).to_list()
-                counts = vc.get_column("count").to_list()
-
-            if max_vars is not None and max_vars == 0:
-                print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            elif vc.height == 0:
-                stats = pd.Series([], name="count", dtype="int64")
-                stats.index.name = var
-                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            else:
-                stats = pd.Series(counts, index=vals, name="count")
-                stats.index.name = var
-                if max_vars is not None and max_vars > 0:
-                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-                else:
-                    print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-
-            # bench-attempt-rejected (2026-09-02): doing the rare filter in polars
-            # (vc.filter(pl.col("count") <= threshold)) instead of over the python lists. Rejected on
-            # reading, not timing: the display block above needs the FULL lists whenever max_vars != 0,
-            # so a polars filter would ADD a pass over the frame rather than remove one. The measured
-            # win here came from sharing the single conversion (16.9/17.7/13.4 ms of a 250/315/265 ms
-            # call, 40 cols x 5000 uniques), which the shared vals/counts above already banks.
-            if wants_rare:
-                rare_mask = counts
-                rare_vals = vals
-                col_total = sum(rare_mask)
-                rare_threshold = max_unique_percent * col_total
-                col_rare = [v for v, c in zip(rare_vals, rare_mask) if c <= rare_threshold]
-                if col_rare:
-                    rare_categories[var] = col_rare
-                    non_rare_count = sum(c for c in rare_mask if c > rare_threshold)
-                    non_rare_unique = sum(1 for c in rare_mask if c > rare_threshold)
-                    if non_rare_unique <= 1:
-                        uninformative_features[var] = 1 - non_rare_count / col_total if col_total > 0 else 0.0
+        rare_categories, uninformative_features = _showcase_polars_columns(
+            df, target_cols, dropna, use_markdown, should_print, max_vars, max_cat_uniq_qty, max_unique_percent
+        )
     else:
-        assert isinstance(df, pd.DataFrame)
-        for var in target_cols:
-            if use_markdown and _facade.HAS_IPYTHON:
-                _facade.display(_facade.Markdown(f"**{var}** {df[var].dtype}"))
-            if use_print or not _facade.HAS_IPYTHON:
-                print(f"{var.upper()} {df[var].dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            stats = df[var].value_counts(dropna=dropna)
-            if max_vars is not None:
-                assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
-                if max_vars > 0:
-                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-                else:
-                    print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            else:
-                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-
-            # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
-            # computed above), so a column that's within max_cat_uniq_qty distinct non-null
-            # values isn't silently skipped just because it also has nulls the caller asked to ignore.
-            # `stats` already IS the full value_counts(dropna=dropna) result (`.head(max_vars)`
-            # above only affects what gets printed, never truncates `stats` itself), so both
-            # `len(stats)` and re-running value_counts() are redundant full-column rescans of a
-            # value already on hand.
-            n_unique = len(stats)
-            if n_unique <= max_cat_uniq_qty and len(stats) > 0:
-                full_stats = stats
-                col_total = int(full_stats.sum())
-                rare_threshold = max_unique_percent * col_total
-                col_rare = full_stats[full_stats <= rare_threshold].index.tolist()
-                if col_rare:
-                    rare_categories[var] = col_rare
-                    non_rare = full_stats[full_stats > rare_threshold]
-                    if len(non_rare) <= 1:
-                        non_rare_count = int(non_rare.sum()) if len(non_rare) == 1 else 0
-                        uninformative_features[var] = 1 - non_rare_count / col_total if col_total > 0 else 0.0
+        assert isinstance(df, pd.DataFrame)  # nosec B101 - the polars branch above is the only other DataFrame flavour this function accepts
+        rare_categories, uninformative_features = _showcase_pandas_columns(
+            df, target_cols, dropna, use_markdown, should_print, max_vars, max_cat_uniq_qty, max_unique_percent
+        )
 
     return rare_categories, uninformative_features
 

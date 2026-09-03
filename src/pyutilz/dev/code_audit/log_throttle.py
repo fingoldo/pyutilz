@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 _LOG_METHODS = ("warning", "error", "exception", "critical")
 _THROTTLE_HINTS = ("throttle", "rate_limit", "ratelimit", "debounce")
@@ -144,8 +144,9 @@ def _visit_if_aware(
     src_lines: list[str],
 ) -> None:
     """Manual recursive descent (not ast.walk) so If nodes can pass the "throttle-guarded" flag
-    to their `body` only (not `orelse`), and loop nodes bump depth for their body/orelse but not
-    their own target/iter/test expressions. Takes findings/rel/src_lines as explicit params
+    to their `body` only (not `orelse`), and loop nodes bump depth for their body/orelse. A `for`
+    loop's own target/iter expressions evaluate ONCE and keep the enclosing depth; a `while` loop's
+    test is re-evaluated every iteration and is treated as part of the loop. Takes findings/rel/src_lines as explicit params
     (not closure captures) so this can be a plain module-level function reused across files."""
     method = _is_log_call(node)
     if method is not None and loop_depth > 0 and not guarded:
@@ -165,23 +166,30 @@ def _visit_if_aware(
         ))
     if isinstance(node, (ast.For, ast.AsyncFor)):
         already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body)
-        for child in (node.target, node.iter, *node.body, *node.orelse):
-            if child is not None:
-                _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
+        # `target`/`iter` evaluate ONCE, outside the iteration, so they keep the enclosing depth --
+        # as the docstring above says. Only body/orelse run per iteration.
+        for once_evaluated in (node.target, node.iter):
+            if once_evaluated is not None:
+                _visit_if_aware(once_evaluated, loop_depth, guarded or already_throttled, findings, rel, src_lines)
+        for stmt in (*node.body, *node.orelse):
+            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.While):
         already_throttled = (
             _loop_looks_bounded_retry(node.test)
             or _loop_body_has_meaningful_sleep(node.body)
             or (_while_test_is_unconditionally_true(node.test) and _loop_body_has_bounded_retry_break(node.body))
         )
-        for child in (node.test, *node.body, *node.orelse):
-            _visit_if_aware(child, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
+        # A `while` test, unlike a `for` target/iter, IS re-evaluated every iteration, so a log
+        # call in it is per-iteration spam and keeps the bumped depth.
+        _visit_if_aware(node.test, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
+        for stmt in (*node.body, *node.orelse):
+            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines)
     elif isinstance(node, ast.If):
         child_guarded = guarded or _guard_looks_throttled(node.test)
-        for child in node.body:
-            _visit_if_aware(child, loop_depth, child_guarded, findings, rel, src_lines)
-        for child in node.orelse:
-            _visit_if_aware(child, loop_depth, guarded, findings, rel, src_lines)
+        for stmt in node.body:
+            _visit_if_aware(stmt, loop_depth, child_guarded, findings, rel, src_lines)
+        for stmt in node.orelse:
+            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines)
         _visit_if_aware(node.test, loop_depth, guarded, findings, rel, src_lines)
     else:
         for child in ast.iter_child_nodes(node):
@@ -224,7 +232,7 @@ def scan_unthrottled_hot_loop_log(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         _visit_if_aware(tree, 0, False, findings, rel, src_lines)
     return findings

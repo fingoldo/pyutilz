@@ -8,6 +8,116 @@ test. Refresh with ``--refresh-code-audit-baseline`` after a deliberate
 change, or add a narrow, commented exclusion in the ``exclude_dirs``
 passed below for a confirmed false positive.
 
+2026-09-03, five-direction audit wave (packaging / docs / core-dev-system / data-stats /
+db-web-cloud-llm-text). The baseline is keyed ``check::file:line``, so the bulk of the delta is
+line shift from the batch. Diffed per ``(check, file)`` pair instead of per key: 41 pairs where
+the COUNT actually rose, reviewed individually below. Five scanners are NEW in this wave and had
+no baseline entries at all (``credential_shaped_log_arg``, ``import_cycle``,
+``sql_limit_without_order_by``, ``undeclared_import``, ``unpicklable_resource_state``), so every
+one of their hits is a first sighting rather than a regression.
+
+THREE were real and were FIXED in the code, not baselined -- all ``duplicate_function_body``:
+``spy_arity._dotted_module``/``_module_aliases`` were verbatim copies of
+``patch_target_is_a_reexport._module_name``/``_module_aliases``, and
+``uncached_constant_cost_probe._own_nodes`` was a verbatim copy of
+``readonly_to_numpy_mutation._own_nodes``. All three moved into ``_base`` as
+``_dotted_module_path``/``_module_aliases``/``_own_nodes`` and are imported from there now.
+
+The rest are reviewed false positives:
+
+* ``credential_shaped_log_arg`` x6 -- none of the logged values is a secret. Two log the integer
+  constant ``SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD``; ``web/browser.py`` logs
+  ``password_input_name``, the NAME of a form field, in the "could not locate the field" error;
+  the proxy ones log ``proxy_server``/``proxy_port``/``local_proxy_server``, a host and a port.
+  The rule keys on the identifier's shape, which cannot tell a field name from a field value.
+
+* ``default_via_or`` (the largest group) -- the canonical ``alias.asname or alias.name`` ast
+  idiom in the wave's new scanners (``asname`` is ``str | None``, never the empty string), plus
+  ordinary boolean ``or`` chains (``guarded or _guard_looks_throttled(...)``,
+  ``use_print or not HAS_IPYTHON``) and string/int fallbacks where the falsy value and the default
+  mean the same thing (``usage.get("prompt_cache_hit_tokens") or ... or 0``,
+  ``payload.get("data") or payload.get("models") or []``, ``top.get("context_length") or
+  entry.get("context_length")``, ``event.get("result") or event.get("error") or subtype``). The
+  ast-alias case is now on its fifth review; every module that walks imports writes that line.
+
+* ``default_via_or [Low] dev/freevar_analysis.py`` x2 -- ``self.stmt_lineno or lineno`` (line 0 is
+  not a valid line number, so the falsy case cannot be a real value) and ``getattr(node, "targets",
+  None) or [node.target]`` (AnnAssign carries ``target``, not ``targets``): both are the ast idiom,
+  not a caller-supplied default.
+
+* ``non_neutral_except_fallback [P1] dev/freevar_analysis.py:485`` -- the handler is a CLI ``main()``
+  error path: it prints the message to stderr and returns exit code 1. A process exit status is not a
+  substituted measurement, and the caller is the shell.
+
+* ``default_via_or [Low] database/db/schema.py:62`` (``or 'public'``) -- reviewed by an earlier
+  agent in this wave: an empty schema name means UNSET, so rewriting it to the Postgres default
+  is the intended behaviour, not a trap.
+
+* ``duplicate_function_body`` x2 on ``llm/openai_provider.py``'s one-line pricing accessors --
+  reviewed by an earlier agent in this wave: identical by coincidence. The tuples they index
+  differ in arity and in meaning (input vs output vs cache-hit price), so there is nothing to
+  share; merging them would couple three unrelated price tables through one accessor.
+
+* ``getattr_unknown_attribute`` x2 -- ``'reconfigure'`` is on ``io.TextIOWrapper`` and
+  ``'run_line_magic'`` on IPython's ``InteractiveShell``; both are classes defined OUTSIDE this
+  tree, which is exactly the case the rule's own message says to pass via ``extra_known``. Same
+  class as the 20 such entries already baselined.
+
+* ``import_cycle`` x4 (pandaslib, polarslib, db, web.web) -- every one closes through
+  ``import <parent> as _facade``, this project's documented re-export-package idiom (see the
+  comment block at the top of each submodule and ``test_reexport_package_idiom.py``, which
+  enforces it mechanically). Plain ``import x`` binds the partially-initialised ``sys.modules``
+  entry and defers attribute lookup to call time, so it survives the cycle by construction; the
+  forbidden ``from <parent> import <name>`` spelling is what the idiom exists to prevent, and no
+  submodule uses it. The scanner cannot distinguish the two spellings' runtime consequences.
+
+* ``non_neutral_except_fallback`` x2 -- both are PREDICATES, where the handler's "no" IS the
+  answer: ``packages.py`` sets ``found = False`` when ``find_spec`` raises (which means "not
+  installed", and errs toward installing rather than skipping), and ``hardcoded_test_path.py``
+  returns ``False`` when ``relative_to`` raises (the path is outside the scan root, so it is not
+  test code). Same rationale as the already-baselined ``registry._is_picklable``.
+
+* ``resource_handle_safety`` x7 -- each has explicit, exception-safe cleanup the rule cannot see:
+  ``core/image.py`` tracks ``opened_here`` and closes in the exit path, ``filesystem.py`` is a
+  ``@contextlib.contextmanager`` whose ``finally`` closes the shelve, ``serialization.py`` and
+  ``cache_sweeping.py`` open raw fds and close them in ``finally`` (with a documented
+  fd-adoption flag for the ``os.fdopen`` failure window), and ``web/url_guard.py`` RETURNS the
+  handle as its public API -- the exact case the rule's own message names as intentional.
+
+* ``sql_limit_without_order_by`` on ``database/db/execution.py:550`` -- a generic
+  ``SELECT * FROM <table> <condition> LIMIT n`` escape hatch. There is no column it could order
+  by: the table is a parameter, so any ORDER BY would have to be supplied by the caller, which is
+  what the ``condition`` parameter already allows. Not fixable without changing the public
+  signature, and arbitrary order is the documented contract of a "give me n rows" helper.
+
+* ``undeclared_import`` x5 -- ``dev/dashlib.py`` needs the ``[dash]`` extra and
+  ``system/scheduling/prefect.py`` needs ``[prefect]``. The rule infers the required extras group
+  from the file's top-level DIRECTORY, which is a layout convention this repo does not follow:
+  neither module is imported by its package ``__init__`` (both are name-only ``__all__``
+  entries), so ``pip install pyutilz[dev]`` imports fine and only an explicit
+  ``import pyutilz.dev.dashlib`` needs dash -- which is what the ``[dash]`` extra is for.
+
+* ``unpicklable_resource_state`` on ``core/disk_cache.py:64`` -- ``_KeyLockEntry`` is an internal
+  value in ``DiskCache._key_locks``, and ``DiskCache.__getstate__`` deletes ``_key_locks`` and
+  ``_key_locks_guard`` (``__setstate__`` rebuilds them). The entry is never pickled; the rule
+  looks for ``__getstate__`` on the class holding the lock, not on the class that owns it.
+
+* ``unthrottled_hot_loop_log`` x5 on ``database/db/execution.py`` -- reviewed by an earlier agent
+  in this wave: a bounded retry loop, not a hot path. Each iteration is a failed DB call already
+  paced by its own backoff, so a warning per attempt is the intended signal.
+
+2026-09-03, code_audit infrastructure batch (audit 07 F04/F10/F199/F207/F210): three entries.
+
+* `assert_in_loop_first_failure_only` x2, in `data/polarslib/binning.py` and
+  `database/db/upsert.py`. The scanner existed, was exported and was unit-tested but had never
+  been registered, so run_all() could not reach it; registering it surfaced two real pre-existing
+  asserts-inside-a-loop. Baselined as pre-existing debt in modules this batch does not own.
+
+* `non_neutral_except_fallback` on `registry.py`'s `_is_picklable`: the handler's "no" IS the
+  predicate's answer, so there is no neutral value to substitute. Narrowing the except to the four
+  pickling exceptions and assigning a flag instead of returning from the handler does not change
+  the verdict; the rule cannot tell a predicate from a value-producing fallback.
+
 2026-09-03 baseline refresh, reviewed individually rather than bulk-accepted. Eleven new
 scanners were registered in this commit. They produced nine entries here; two of the nine were
 real weaknesses in a new scanner and were fixed in it rather than baselined, leaving seven.

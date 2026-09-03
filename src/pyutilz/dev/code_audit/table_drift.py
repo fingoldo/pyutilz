@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- header and row built from two different places -----------------------------------------------
 #
@@ -40,6 +40,80 @@ def _format_field_count(node: ast.expr) -> int:
     return sum(1 for v in node.values if isinstance(v, ast.FormattedValue)) if isinstance(node, ast.JoinedStr) else 0
 
 
+def _dictwriter_headers(fn: ast.AST) -> "tuple[dict[str, tuple[set[str], int]], list[tuple[set[str], int]]]":
+    """``({writer variable -> (literal fieldnames, line)}, [(literal fieldnames, line), ...])``.
+
+    Headers are kept PER WRITER VARIABLE: keeping only the last DictWriter seen in the function made
+    two internally consistent writers (`w1` with ["a","b"], `w2` with ["x","y"]) report a P1 drift
+    against each other. A DictWriter constructed but never bound to a name (or bound to an
+    attribute) lands in the anonymous list, and can still be matched when it is the only one here.
+    """
+    writers: "dict[str, tuple[set[str], int]]" = {}
+    anonymous: "list[tuple[set[str], int]]" = []
+    for stmt in ast.walk(fn):
+        if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Call):
+            continue
+        ctor = stmt.value
+        if not (isinstance(ctor.func, ast.Attribute) and ctor.func.attr == "DictWriter"):
+            continue
+        for kw in ctor.keywords:
+            if kw.arg != "fieldnames":
+                continue
+            literal = _literal_str_list(kw.value)
+            if literal is None:
+                continue
+            target = stmt.targets[0] if stmt.targets else None
+            if isinstance(target, ast.Name):
+                writers[target.id] = (literal, ctor.lineno)
+            else:
+                anonymous.append((literal, ctor.lineno))
+    for call in ast.walk(fn):
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "DictWriter":
+            if not any(call.lineno == line for _h, line in list(writers.values()) + anonymous):
+                for kw in call.keywords:
+                    if kw.arg == "fieldnames":
+                        literal = _literal_str_list(kw.value)
+                        if literal is not None:
+                            anonymous.append((literal, call.lineno))
+    return writers, anonymous
+
+
+def _dictwriter_drifts(fn: ast.AST) -> "list[tuple[int, set[str], set[str]]]":
+    """``(header line, header-only keys, row-only keys)`` for every literal row that disagrees."""
+    writers, anonymous = _dictwriter_headers(fn)
+    if not writers and not anonymous:
+        return []
+    only = (list(writers.values()) + anonymous)[0] if len(writers) + len(anonymous) == 1 else None
+    drifts: "list[tuple[int, set[str], set[str]]]" = []
+    for call in ast.walk(fn):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "writerow" and call.args):
+            continue
+        receiver = call.func.value
+        if isinstance(receiver, ast.Name) and receiver.id in writers:
+            declared, declared_line = writers[receiver.id]
+        elif only is not None:
+            declared, declared_line = only
+        else:
+            continue  # cannot say which writer this row belongs to; silence beats a coin flip
+        arg = call.args[0]
+        if not isinstance(arg, ast.Dict) or any(k is None for k in arg.keys):
+            continue  # a **spread or a variable: not statically decidable, and not this shape
+        written = {k.value for k in arg.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if written != declared:
+            drifts.append((declared_line, declared - written, written - declared))
+    return drifts
+
+
+def _unpaired_wide_fstrings(fn: ast.AST, min_fields: int) -> "tuple[int, list[int]] | None":
+    """``(first line, sorted distinct field counts)`` when a function formats a wide table from
+    two or more f-strings whose replacement-field counts disagree, else ``None``."""
+    wide = [(node, _format_field_count(node)) for node in ast.walk(fn) if isinstance(node, ast.JoinedStr) and _format_field_count(node) >= min_fields]
+    counts = {count for _node, count in wide}
+    if len(wide) >= 2 and len(counts) > 1:
+        return min(node.lineno for node, _count in wide), sorted(counts)
+    return None
+
+
 def scan_table_header_row_drift(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -63,48 +137,30 @@ def scan_table_header_row_drift(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
 
-            declared: set[str] | None = None
-            declared_line = 0
-            for call in ast.walk(fn):
-                if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "DictWriter":
-                    for kw in call.keywords:
-                        if kw.arg == "fieldnames":
-                            literal = _literal_str_list(kw.value)
-                            if literal is not None:
-                                declared, declared_line = literal, call.lineno
-            if declared is not None:
-                for call in ast.walk(fn):
-                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "writerow" and call.args):
-                        continue
-                    arg = call.args[0]
-                    if not isinstance(arg, ast.Dict) or any(k is None for k in arg.keys):
-                        continue  # a **spread or a variable: not statically decidable, and not this shape
-                    written = {k.value for k in arg.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-                    if written != declared:
-                        findings.append(
-                            Finding(
-                                check="table_header_row_drift",
-                                severity="P1",
-                                file=rel,
-                                line=declared_line,
-                                snippet=_line_text(src_lines, declared_line),
-                                detail=(
-                                    f"csv header/row drift in {fn.name}(): header-only {sorted(declared - written)}, "
-                                    f"row-only {sorted(written - declared)}. DictWriter fills a missing key with restval and says nothing."
-                                ),
-                            )
-                        )
+            for declared_line, header_only, row_only in _dictwriter_drifts(fn):
+                findings.append(
+                    Finding(
+                        check="table_header_row_drift",
+                        severity="P1",
+                        file=rel,
+                        line=declared_line,
+                        snippet=_line_text(src_lines, declared_line),
+                        detail=(
+                            f"csv header/row drift in {fn.name}(): header-only {sorted(header_only)}, "
+                            f"row-only {sorted(row_only)}. DictWriter fills a missing key with restval and says nothing."
+                        ),
+                    )
+                )
 
-            wide = [(node, _format_field_count(node)) for node in ast.walk(fn) if isinstance(node, ast.JoinedStr) and _format_field_count(node) >= min_fields]
-            counts = {count for _node, count in wide}
-            if len(wide) >= 2 and len(counts) > 1:
-                line = min(node.lineno for node, _count in wide)
+            unpaired = _unpaired_wide_fstrings(fn, min_fields)
+            if unpaired is not None:
+                line, counts = unpaired
                 findings.append(
                     Finding(
                         check="table_header_row_drift",
@@ -113,7 +169,7 @@ def scan_table_header_row_drift(
                         line=line,
                         snippet=_line_text(src_lines, line),
                         detail=(
-                            f"{fn.name}() formats a wide table from independent f-strings with {sorted(counts)} fields. "
+                            f"{fn.name}() formats a wide table from independent f-strings with {counts} fields. "
                             f"Build labels and cells from one indexed structure and zip them with strict=True."
                         ),
                     )

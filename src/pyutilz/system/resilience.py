@@ -191,11 +191,31 @@ class CircuitBreaker:
         def create_order(...): ...
     """
 
-    def __init__(self, name: str, failure_threshold: int = 5, recovery_timeout_sec: int = 60, half_open_max_calls: int = 3):
+    def __init__(
+        self,
+        name: str,
+        failure_threshold: int = 5,
+        recovery_timeout_sec: int = 60,
+        half_open_successes_to_close: int = 3,
+        half_open_max_calls: Optional[int] = None,
+    ):
+        """``half_open_successes_to_close`` is the number of CONSECUTIVE successes that close the
+        circuit again. Its former name, ``half_open_max_calls``, promised an admission cap this
+        class never had -- nothing limits how many callers enter the half-open state, so 200 threads
+        arriving at the recovery boundary are all admitted to the still-recovering service. The old
+        keyword still works and is treated as the success count it always was.
+        """
+        if half_open_max_calls is not None:
+            logger.warning(
+                "CircuitBreaker(%s): `half_open_max_calls` is a deprecated alias of "
+                "`half_open_successes_to_close` -- it never capped concurrent admissions; please rename it.",
+                name,
+            )
+            half_open_successes_to_close = half_open_max_calls
         self.name = name
         self.failure_threshold = failure_threshold
         self.recovery_timeout_sec = recovery_timeout_sec
-        self.half_open_max_calls = half_open_max_calls
+        self.half_open_successes_to_close = half_open_successes_to_close
 
         self.state = CircuitState()
         self._lock = threading.Lock()
@@ -235,7 +255,7 @@ class CircuitBreaker:
                 with self._lock:
                     if self.state.is_half_open:
                         self.state.half_open_successes += 1
-                        if self.state.half_open_successes >= self.half_open_max_calls:
+                        if self.state.half_open_successes >= self.half_open_successes_to_close:
                             logger.info("Circuit %s CLOSED (recovered)", self.name)
                             self.state.is_half_open = False
                             self.state.failure_count = 0
@@ -353,7 +373,11 @@ class DeadLetterQueue:
             return list(reversed(self.queue))
 
     def get_recent(self, n: int = 10) -> List[Dict[str, Any]]:
-        """Return the ``n`` most recent failures, newest first."""
+        """Return the ``n`` most recent failures, newest first; ``n <= 0`` returns an empty list."""
+        if n <= 0:
+            # `self.queue[-0:]` is a WHOLE-list slice -- get_recent(0) returned everything, and a
+            # negative n returned all but the first few. Same `[-0:]` trap already fixed for max_size.
+            return []
         with self._lock:
             return list(reversed(self.queue[-n:]))
 

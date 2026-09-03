@@ -25,6 +25,19 @@ _DEFAULT_MAX_RETRY_ATTEMPTS = 50
 try:
     MAX_RETRY_ATTEMPTS: int = int(os.environ.get("PYUTILZ_LLM_MAX_RETRIES", str(_DEFAULT_MAX_RETRY_ATTEMPTS)))
 except ValueError:
+    logger.warning(
+        "PYUTILZ_LLM_MAX_RETRIES=%r is not an integer; falling back to %d.",
+        os.environ.get("PYUTILZ_LLM_MAX_RETRIES"), _DEFAULT_MAX_RETRY_ATTEMPTS,
+    )
+    MAX_RETRY_ATTEMPTS = _DEFAULT_MAX_RETRY_ATTEMPTS
+if MAX_RETRY_ATTEMPTS < 0:
+    # A negative value produced stop_after_attempt(-1), which stops after the FIRST attempt --
+    # i.e. it silently disabled retries entirely, the exact opposite of the "0 = infinite" scale
+    # this module documents (2026-09-03 audit F40). Refuse it loudly instead.
+    logger.warning(
+        "PYUTILZ_LLM_MAX_RETRIES=%d is negative, which would silently disable retries; falling back to %d. Use 0 for infinite retries.",
+        MAX_RETRY_ATTEMPTS, _DEFAULT_MAX_RETRY_ATTEMPTS,
+    )
     MAX_RETRY_ATTEMPTS = _DEFAULT_MAX_RETRY_ATTEMPTS
 
 

@@ -39,6 +39,10 @@ def get_partitioned_filepath(fname: str, depth: int = 2, replace_char="_"):
     """
     from os import sep
 
+    if not fname:
+        # ``sep.join([]) + sep`` is a bare separator, i.e. an ABSOLUTE prefix: os.path.join then
+        # discards every component before it and the file lands at the filesystem root.
+        return ""
     folders = []
     for char in fname[:depth].lower():
         if char.isalnum():
@@ -76,8 +80,6 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
     """
     Load plicked object, dataframe, Catboost model, based on file presence and name.
     """
-    import pandas as pd
-
     is_here = False
     fpath = abspath(fpath)
     try:
@@ -92,6 +94,12 @@ def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
             return joblib.load(fpath)
         elif fpath.lower().endswith(".pckl"):
             if unpickle_to_pd:
+                # Imported here, not at function entry: only this branch needs pandas, and a
+                # top-level import made load_file("m.joblib") fail outright wherever joblib is
+                # installed but pandas is not -- the same lazy-import reasoning the catboost
+                # branch below already documents.
+                import pandas as pd
+
                 return pd.read_pickle(fpath)  # nosec B301 - fpath is caller-supplied (same trust level as the joblib.load branch above); this loader's whole purpose is deserializing a named local file
             from pyutilz.core.safe_pickle import safe_load
 
@@ -182,7 +190,7 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
     """Dumps container to disk.
 
     Usage Example:
-        >>>ObjectsDumper().process_objects("discovered_fields required_arguments nested_fields", path="vars")
+        >>> ObjectsDumper().process_objects("discovered_fields required_arguments nested_fields", path="vars")  # doctest: +SKIP
         3
     """
 
@@ -207,7 +215,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
     """Populates container from disk.
 
     Usage Example:
-        >>>ObjectsLoader(rewrite_existing=True).process_objects("discovered_fields required_arguments nested_fields", path="vars")
+        >>> ObjectsLoader(rewrite_existing=True).process_objects("discovered_fields required_arguments nested_fields", path="vars")  # doctest: +SKIP
         3
     """
 
@@ -236,7 +244,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
 def get_human_readable_set_size(set_size: int, rounding: int = 1) -> str:
     """Converts integer number of records into something human-redable
 
-    >>>get_human_readable_set_size(100500)
+    >>> get_human_readable_set_size(100500)
     '100.5K'
 
     """
@@ -289,5 +297,12 @@ def suppress_stdout_stderr():
         try:
             yield
         finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+            # Restore ONLY if this block's own devnull is still installed. The snapshot is
+            # per-invocation but sys.stdout is process-global, so with two overlapping blocks
+            # (threads, interleaved generators, ExitStack) the inner block's exit used to install
+            # the outer block's already-CLOSED devnull as sys.stdout permanently -- every later
+            # print raised "I/O operation on closed file".
+            if sys.stdout is devnull:
+                sys.stdout = old_stdout
+            if sys.stderr is devnull:
+                sys.stderr = old_stderr

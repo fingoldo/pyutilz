@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _arg_names, _iter_py_files, _line_text, _safe_parse, _subscript_index
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a shared accumulator that some call sites write around ------------------------------------
 #
@@ -34,7 +34,10 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _arg_names, _iter_py_files, _
 # Setup functions (`__init__`, `reset`, `_reset_stats`) are never bypasses: building the structure
 # is not writing around the accumulator that maintains it.
 
-_SETUP_NAMES = ("init", "reset", "clear", "setup", "load", "restore", "from_", "_new", "copy", "snapshot", "getstate", "setstate")
+# Matched as whole `_`-separated SEGMENTS of the function name, never as substrings: as substrings
+# `load`/`copy`/`init` exempted `upload_batch`, `download_page`, `reload_rows`, `payload_scan` and
+# `recopy` -- ordinary methods, every one of them a possible bypass site.
+_SETUP_NAMES = frozenset({"init", "reset", "clear", "setup", "load", "restore", "from", "new", "copy", "snapshot", "getstate", "setstate"})
 _MUTATING_METHODS = frozenset({"append", "add", "extend", "update", "insert"})
 _ACCUMULATOR_HINTS = ("stat", "count", "counter", "metric", "tally", "total", "histogram", "skipped", "errors", "failures", "seen")
 
@@ -59,8 +62,7 @@ def _mutated_structures(node: ast.AST, module_level: frozenset[str]) -> set[str]
 
 def _is_setup(name: str) -> bool:
     """Whether this function's job is to build the structure rather than accumulate into it."""
-    lowered = name.lower()
-    return any(hint in lowered for hint in _SETUP_NAMES)
+    return bool(_SETUP_NAMES & set(name.lower().split("_")))
 
 
 def _module_level_names(tree: ast.Module) -> frozenset[str]:
@@ -140,9 +142,18 @@ def _lines_under_a_lock(func: ast.AST) -> set[int]:
     for node in ast.walk(func):
         if not isinstance(node, (ast.With, ast.AsyncWith)):
             continue
-        names = {sub.attr for sub in ast.walk(node) if isinstance(sub, ast.Attribute)}
-        names |= {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
-        if not any("lock" in name.lower() or "mutex" in name.lower() for name in names):
+        # Only the context expressions themselves (`with self._ids_lock:`), and matched on whole
+        # `_`-separated segments: scanning the whole subtree for the substring "lock" let
+        # `with self._block_reader:`, `with blocking_section():` and `with clock_timer:` silence
+        # genuine bypasses.
+        names: set[str] = set()
+        for item in node.items:
+            for sub in ast.walk(item.context_expr):
+                if isinstance(sub, ast.Attribute):
+                    names.add(sub.attr)
+                elif isinstance(sub, ast.Name):
+                    names.add(sub.id)
+        if not any({"lock", "mutex"} & set(name.lower().split("_")) for name in names):
             continue
         for stmt in node.body:
             for sub in ast.walk(stmt):
@@ -192,12 +203,15 @@ def _bypasses_in(
         protected = _lines_under_a_lock(func)
         for structure in sorted(_mutated_structures(func, module_level)):
             entry = owners.get(structure)
-            if not entry or any(name == func.name for name, _file in entry):
+            # (file, name), not the bare name: a same-named helper in an unrelated module must not
+            # suppress a genuine bypass here.
+            if not entry or any(name == func.name and owner_file == rel for name, owner_file in entry):
                 continue
             site = _first_bypass(func, structure, protected)
             if site is None:
                 continue
             named = ", ".join(f"`{name}`" for name, _file in entry)
+            owns, they, are, keys = ("own", "they", "are", "key") if len(entry) > 1 else ("owns", "it", "is", "keys")
             findings.append(
                 Finding(
                     check="accumulator_helper_bypassed",
@@ -207,7 +221,7 @@ def _bypasses_in(
                     snippet=_line_text(src_lines, site),
                     detail=(
                         f"`{func.name}` accumulates into `{structure}` directly, while {named} "
-                        f"({entry[0][1]}) own it -- they are what key the accumulator by an "
+                        f"({entry[0][1]}) {owns} it -- {they} {are} what {keys} the accumulator by an "
                         "argument. Whatever they do on the way in (registering the key, clamping, "
                         "locking) this write skips, and an unregistered key reached production as "
                         "a KeyError exactly this way. Route it through the helper, or say why "
@@ -249,7 +263,7 @@ def scan_accumulator_helper_bypassed(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        parsed.append((py.relative_to(root).as_posix(), tree, py.read_text(encoding="utf-8", errors="replace").splitlines()))
+        parsed.append((py.relative_to(root).as_posix(), tree, _read_src_lines(py)))
 
     # Every name called ANYWHERE in the tree. Per-file was wrong: `_inc_stat` is defined in a mixin
     # and called only from its siblings, so its own file never mentions it and the helper was

@@ -26,6 +26,7 @@ from typing import Any as _Any
 from typing import Optional, Sequence, Union
 
 import locale
+import sys as _sys
 import threading as _threading
 import tqdm
 import psutil
@@ -220,7 +221,11 @@ def count_app_instances(processname=None, cmdline=None):
                 continue
         if cmdline is not None:
             try:
-                if cmdline not in proc.cmdline():
+                # Join first: ``cmdline not in proc.cmdline()`` tested list-ELEMENT equality
+                # against a live argv like ['python.exe', 'worker/scraper.py', '--id', '3'], so a
+                # documented substring such as "scraper.py" never matched and a duplicate-instance
+                # guard silently admitted unlimited duplicates.
+                if cmdline not in " ".join(proc.cmdline()):
                     continue
             except Exception as e:  # nosec B112 - transient psutil access errors (process exited / no access) on a single proc while iterating all processes; skip that proc and keep counting
                 logger.debug("Could not read cmdline for process %s: %s", proc, e)
@@ -236,15 +241,22 @@ def get_script_file(file: Optional[str] = __file__) -> str:
     return os.path.basename(file or __file__)
 
 
-def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None):
+def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None, namespace: Optional[dict] = None):
     """Log any module-level global object whose deep size exceeds ``min_size_mb``.
+
+    ``namespace`` is the mapping to scan; it defaults to the CALLER's module globals. A bare
+    ``globals()`` here scanned THIS module's own namespace, so the diagnostic reported "no large
+    objects" on the very run it was added to debug (and the tracemalloc comparison below, guarded
+    by ``nbig > 0``, never ran either).
 
     If ``initial_memory_snapshot`` is given, also computes and prints a ``tracemalloc``
     comparison between the current memory state and that snapshot to help locate growth.
     """
+    if namespace is None:
+        namespace = _sys._getframe(1).f_globals
     report = "Large objects in RAM:"
     nbig = 0
-    for name, obj in globals().items():
+    for name, obj in namespace.items():
         if name != "asizeof":
             size_mb = round(asizeof.asizeof(obj) / 1024 / 1024, 1)
             if size_mb > min_size_mb:
@@ -266,6 +278,25 @@ def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Option
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _idle_wait_deadline(wait_started_at: float, max_wait_seconds: Optional[float]) -> float:
+    """Absolute time at which ensure_idle_devices gives up; infinity when no bound was requested."""
+    if max_wait_seconds is None:
+        return float("inf")
+    return wait_started_at + float(max_wait_seconds)
+
+
+def _warn_if_still_waiting(waited: float, now: float, last_warned_at: float, every_seconds: float = 60.0) -> float:
+    """Log a WARNING at most every ``every_seconds`` while waiting; returns the new last-warned time.
+
+    At DEBUG only (the previous behaviour), an unbounded wait looked exactly like a hang at default
+    log levels.
+    """
+    if now - last_warned_at < every_seconds:
+        return last_warned_at
+    logger.warning("ensure_idle_devices: still waiting for idle devices after %.0f s.", waited)
+    return now
+
+
 def ensure_idle_devices(
     duration_seconds: int = 5,
     max_cpu_load_percent: float = 10.0,
@@ -273,6 +304,7 @@ def ensure_idle_devices(
     max_gpu_load_percent: float = 15.0,
     min_gpu_free_ram_gb: float = 1.0,
     gpu_ids: Optional[list] = None,
+    max_wait_seconds: Optional[float] = None,
 ):
     """Ensure CPU and GPU devices are idle before running benchmarks.
 
@@ -286,9 +318,12 @@ def ensure_idle_devices(
         max_gpu_load_percent: Maximum allowed GPU utilization (0-100%)
         min_gpu_free_ram_gb: Minimum required free GPU RAM (GB)
         gpu_ids: List of GPU IDs to monitor (empty = all GPUs)
+        max_wait_seconds: Give up after this many seconds of waiting and return False. ``None``
+            waits forever, which is the historical behaviour -- a permanently busy device then
+            hangs the caller with no visible reason, since progress was reported at DEBUG only.
 
     Returns:
-        bool: True if conditions met, False if initial validation failed
+        bool: True if conditions met, False if initial validation failed or the wait timed out
     """
     if gpu_ids is None:
         gpu_ids = []
@@ -381,17 +416,27 @@ def ensure_idle_devices(
         return all_conditions_met
 
     start_time = time.time()
+    wait_started_at = start_time
+    last_warned_at = start_time
+    # The deadline and the periodic warning are computed by module-level helpers so this already
+    # complex function gains no further branches (tests/test_meta/test_complexity_ratchet.py).
+    deadline = _idle_wait_deadline(wait_started_at, max_wait_seconds)
+    now = start_time
 
-    while True:
+    while now < deadline:
         if check_cpu_conditions() and check_gpu_conditions():
-            elapsed_time = time.time() - start_time
-            if elapsed_time >= duration_seconds:
+            if now - start_time >= duration_seconds:
                 logger.info("Devices are idle and ready for benchmarking")
                 return True
         else:
-            start_time = time.time()
+            start_time = now
 
+        last_warned_at = _warn_if_still_waiting(now - wait_started_at, now, last_warned_at)
         time.sleep(1)
+        now = time.time()
+
+    logger.warning("ensure_idle_devices: devices still busy after %.0f s; giving up.", now - wait_started_at)
+    return False
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Locales, Date/Time, etc.
@@ -412,7 +457,7 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
     :param str locale_name: Desired locale name, or empty string for OS default locale.
     :param tuple only_fields: Desired locale fields, or None for all fields.
 
-    >>>get_locale_settings(locale_name="en_US.utf8", only_fields=("decimal_point", "thousands_sep"))
+    >>> get_locale_settings(locale_name="en_US.utf8", only_fields=("decimal_point", "thousands_sep"))
     {'decimal_point': '.', 'thousands_sep': ','}
 
     WARNING: ``locale.setlocale`` mutates PROCESS-WIDE C-library locale state (not thread-local)
@@ -423,11 +468,21 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
     calling this from worker threads that also do locale-sensitive work concurrently.
     """
     with _locale_lock:
-        locale.setlocale(locale.LC_ALL, locale_name)
-        settings: _Any = locale.localeconv()
-        if settings:
-            if only_fields:
-                settings = {field: value for field, value in settings.items() if field in only_fields}
+        previous = locale.setlocale(locale.LC_ALL)
+        try:
+            locale.setlocale(locale.LC_ALL, locale_name)
+            settings: _Any = locale.localeconv()
+            if settings:
+                if only_fields:
+                    settings = {field: value for field, value in settings.items() if field in only_fields}
+        finally:
+            # A diagnostic READ must not leave LC_ALL changed for the rest of the process: every
+            # later strftime and every LC_NUMERIC consumer (float formatting's decimal separator
+            # included) would silently follow the queried locale.
+            try:
+                locale.setlocale(locale.LC_ALL, previous)
+            except locale.Error as exc:
+                logger.warning("get_locale_settings: could not restore previous locale %r: %s", previous, exc)
     return settings  # type: ignore[no-any-return]  # untyped upstream source (locale.localeconv()); return value verified correct at runtime
 
 # ----------------------------------------------------------------------------------------------------------------------------

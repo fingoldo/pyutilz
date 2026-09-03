@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- an invariant asserted in prose and nowhere else -----------------------------------------------
 #
@@ -87,7 +87,7 @@ def scan_unenforced_docstring_invariants(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         callers_of = _callers_within(tree)
         for node in ast.walk(tree):

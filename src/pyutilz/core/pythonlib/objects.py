@@ -67,9 +67,19 @@ def flatten_keys_to_set(
     if isinstance(obj, dict):
         for key, value in obj.items():
             # print(key,value)
-            if isinstance(value, (dict, Iterable)):
-                # print('pasing recursively %s' % key)
-                res.update(flatten_keys_to_set(value, dict_merge_symbol=dict_merge_symbol))
+            if isinstance(value, (dict, Iterable)) and not isinstance(value, (str, bytes)):
+                # str/bytes are Iterable, so a string VALUE used to recurse and reach the
+                # ``res.add(obj)`` branch below -- dropping its KEY entirely ({"a": "b"} -> {'b'}),
+                # which made two configs differing only in key name compare equal.
+                res.update(
+                    flatten_keys_to_set(
+                        value,
+                        dict_merge_symbol=dict_merge_symbol,
+                        stringify=stringify,
+                        verbose=verbose,
+                        max_chars=max_chars,
+                    )
+                )
             else:
                 if dict_merge_symbol:
                     res.add(str(key) + dict_merge_symbol + str(value))
@@ -85,7 +95,15 @@ def flatten_keys_to_set(
             res.add(obj)
     elif isinstance(obj, Iterable):
         for subobj in obj:
-            res.update(flatten_keys_to_set(subobj, dict_merge_symbol=dict_merge_symbol))
+            res.update(
+                flatten_keys_to_set(
+                    subobj,
+                    dict_merge_symbol=dict_merge_symbol,
+                    stringify=stringify,
+                    verbose=verbose,
+                    max_chars=max_chars,
+                )
+            )
     else:
         if stringify:
             if verbose:
@@ -125,10 +143,13 @@ def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET,
     # the same time, so they stay in sync for the lifetime of any single function object.
     if default_value is _unset:
         default_value = []
-    if obj == unwanted_value:
+    # ``is`` when the sentinel is None: ``==`` against a numpy array/Series value raises
+    # "truth value of an array ... is ambiguous", so any results dict holding a feature vector
+    # used to crash on plain lookup.
+    if (obj is unwanted_value) if unwanted_value is None else (obj == unwanted_value):
         return default_value
     res = obj.get(attr_name, default_value)
-    if res == unwanted_value:
+    if (res is unwanted_value) if unwanted_value is None else (res == unwanted_value):
         return default_value
     else:
         return res
@@ -136,23 +157,29 @@ def get_attr(obj: dict, attr_name: str, default_value: object = _GET_ATTR_UNSET,
 
 def keys_changed_enough(obj: dict, prev_obj: dict, min_change_percent: float = 10.0, key_contains: Optional[str] = None) -> bool:
     """Signals if numerical keys (optionally containing some value) of a dict-like object have changed by at least some percent.
-    >>>keys_changed_enough(obj={"a": 100, "b": 180, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
+    >>> keys_changed_enough(obj={"a": 100, "b": 180, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
     True
 
-    >>>keys_changed_enough(obj={"a": 100, "b": 181, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
+    >>> keys_changed_enough(obj={"a": 100, "b": 181, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
     False
 
-    >>>keys_changed_enough(obj={"a": 100, "b": 220, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
+    >>> keys_changed_enough(obj={"a": 100, "b": 220, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
     True
 
-    >>>keys_changed_enough(obj={"a": 100, "b": 221, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
+    >>> keys_changed_enough(obj={"a": 100, "b": 221, "c": 300}, prev_obj={"a": 100, "b": 200, "c": 300}, min_change_percent=10.0, key_contains="b")
     True
 
     """
+    _ABSENT = object()
     for key, prev_value in prev_obj.items():
         if key_contains is None or key_contains in key:
             if is_float(prev_value):
-                new_value = obj.get(key)
+                new_value = obj.get(key, _ABSENT)
+                if new_value is _ABSENT:
+                    # A metric that VANISHED is the largest change there is; reporting "no change"
+                    # meant a change-triggered alert never fired for a disappearing key.
+                    logger.debug("keys_changed_enough: key %r present in prev_obj but absent from obj -- counting as a change.", key)
+                    return True
                 if is_float(new_value):
                     prev_value = to_float(prev_value)
                     if prev_value != 0.0:
@@ -206,11 +233,11 @@ def anyof_elements_in_string(elems: Sequence, target: str) -> bool:
 def filter_elements_by_type(obj: Union[dict, Sequence], allowed_types: tuple = (numbers.Number, str)) -> Union[dict, Sequence]:
     """
     Only leaves
-    >>>filter_elems_by_type(obj=dict(a="test", b=3), allowed_types=(str))
+    >>> filter_elements_by_type(obj=dict(a="test", b=3), allowed_types=(str,))
     {'a': 'test'}
 
-    >>>filter_elems_by_type(obj={"a", 1, "test"}, allowed_types=(str,))
-    ['test', 'a']
+    >>> sorted(filter_elements_by_type(obj={"a", 1, "test"}, allowed_types=(str,)))
+    ['a', 'test']
     """
     if isinstance(obj, MappingABC):
         # Covers plain dict as well as Mapping-but-not-dict types such as

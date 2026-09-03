@@ -64,6 +64,12 @@ def _cue_pattern(cue: str) -> re.Pattern[str]:
     of records; compiling per call dominated the cost in the first profile of this module's caller.
     """
     parts = [re.escape(w) for w in normalise_text(cue).split() if w]
+    if not parts:
+        # A cue that normalises to nothing ("_", "-", whitespace) would compile to a bare
+        # double word-boundary, which matches at every word boundary: as a cue it would fire on
+        # every record, as an anti-cue it would cancel every cue. An unwritable cue matches
+        # nothing instead.
+        return re.compile(r"(?!)")
     return re.compile(r"\b" + r"\s+".join(parts) + r"\b")
 
 
@@ -142,7 +148,8 @@ class FieldTextVerdict:
     ``outcome`` is AGREE / CONTRADICT / UNCHECKABLE. ``kind`` is empty unless ``outcome`` is CONTRADICT,
     where it is ``KIND_UNFILLED`` or ``KIND_OPPOSED``. ``supported`` is the value the text cues (empty
     when nothing was read) and ``cue`` is the phrase that carried it, so a reader can judge the call
-    without re-running the checker.
+    without re-running the checker. ``alternatives`` names the other values the same text cued but
+    which lost the tiebreak, so a verdict decided between several readings says so.
     """
 
     rule: str
@@ -152,6 +159,7 @@ class FieldTextVerdict:
     cue: str
     kind: str = ""
     record_id: str = ""
+    alternatives: tuple[str, ...] = ()
 
     def detail(self) -> str:
         """One-line human reason, safe to put in a report or an exception message."""
@@ -199,25 +207,32 @@ def check_record(rule: FieldTextRule, record: Mapping[str, object], record_id: s
     a text that fills it.
     """
     declared = str(record.get(rule.field, "") or "")
+    alternatives: tuple[str, ...] = ()
     if rule.resolver is not None:
         supported, cue = rule.resolver(record)
     else:
         hits = cues_in_text(rule, rule.text_of(record))
+        norm_text = normalise_text(rule.text_of(record))
         # A declared value the text also supports settles the row, even when the text cues several
         # values: prose saying "vital" and "post-mortem" in one sentence supports both readings and the
         # author's choice between them is not a contradiction.
         if declared and declared in hits:
             return FieldTextVerdict(rule.name, AGREE, declared, declared, hits[declared], record_id=record_id)
-        supported, cue = next(iter(sorted(hits.items())), ("", ""))
+        # Longest winning cue first, then earliest in the text, and only then alphabetically. Taking
+        # the alphabetically-first value made the verdict -- and therefore whether `opposes()` fires
+        # at all -- depend on how the values happen to be spelled.
+        ordered = sorted(hits.items(), key=lambda kv: (-len(kv[1]), norm_text.find(normalise_text(kv[1])), kv[0]))
+        supported, cue = ordered[0] if ordered else ("", "")
+        alternatives = tuple(value for value, _cue in ordered[1:])
     if not supported:
         return FieldTextVerdict(rule.name, UNCHECKABLE, declared, "", "", record_id=record_id)
     if declared == supported:
-        return FieldTextVerdict(rule.name, AGREE, declared, supported, cue, record_id=record_id)
+        return FieldTextVerdict(rule.name, AGREE, declared, supported, cue, record_id=record_id, alternatives=alternatives)
     if not declared or declared in rule.neutral_values:
-        return FieldTextVerdict(rule.name, CONTRADICT, declared, supported, cue, kind=KIND_UNFILLED, record_id=record_id)
+        return FieldTextVerdict(rule.name, CONTRADICT, declared, supported, cue, kind=KIND_UNFILLED, record_id=record_id, alternatives=alternatives)
     if rule.opposes(declared, supported):
-        return FieldTextVerdict(rule.name, CONTRADICT, declared, supported, cue, kind=KIND_OPPOSED, record_id=record_id)
-    return FieldTextVerdict(rule.name, AGREE, declared, supported, cue, record_id=record_id)
+        return FieldTextVerdict(rule.name, CONTRADICT, declared, supported, cue, kind=KIND_OPPOSED, record_id=record_id, alternatives=alternatives)
+    return FieldTextVerdict(rule.name, AGREE, declared, supported, cue, record_id=record_id, alternatives=alternatives)
 
 
 @dataclass(frozen=True)

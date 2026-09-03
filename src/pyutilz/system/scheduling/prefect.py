@@ -53,7 +53,9 @@ def connect(prefect_key: Optional[str] = None) -> None:
         graphql.connect(client)
     else:
         client = None
-    logger.info("prefect_key=%s", prefect_key)
+    # Never the key itself: at INFO (setup_cli_logging's default) it landed in stdout, log files and
+    # CI job logs on every connect().
+    logger.info("prefect connect: api key %s", "provided" if prefect_key else "MISSING")
 
 def get_schema() -> dict:
     """Return the Prefect GraphQL schema via the connected client, or ``{}`` if no client is connected."""

@@ -510,7 +510,10 @@ def occupancy_aware_block_size(
     else:
         stated_ceiling = _limit("max_threads_per_block", 0)
         ceiling = stated_ceiling if stated_ceiling > 0 else min_threads
-    if not (shared_per_sm and threads_per_sm and blocks_per_sm) or ceiling < min_threads:
+    # shared_per_sm is only REQUIRED when shared memory actually binds: with bytes_per_thread == 0
+    # (this code's own definition of "does not bind") a device reporting max_shared_mem_per_sm: 0
+    # used to bail to a single warp, silently crippling occupancy the other limits fully determine.
+    if (shared_per_sm <= 0 and int(bytes_per_thread) > 0) or not (threads_per_sm and blocks_per_sm) or ceiling < min_threads:
         return max(min_threads, warp), max(0, int(bytes_per_thread)) * max(min_threads, warp)
 
     best = (0, 0, 0)  # (resident threads, width, shared bytes) - the width breaks ties, wider wins

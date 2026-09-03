@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a counter written but never initialised by the reset that owns its dict --------------------
 #
@@ -52,12 +52,20 @@ def _declared_by(method: ast.AST) -> dict[str, set[str]]:
     """{attribute: keys} this method initialises, from `self.stats = {...}` literals."""
     declared: dict[str, set[str]] = {}
     for stmt in ast.walk(method):
-        if not isinstance(stmt, ast.Assign):
+        # AnnAssign too -- `self.stats: dict = {...}` is the annotated spelling this project's
+        # conventions mandate, and skipping it silently disabled the whole check for such code.
+        if isinstance(stmt, ast.Assign):
+            targets: list[ast.expr] = list(stmt.targets)
+            value = stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets = [stmt.target]
+            value = stmt.value
+        else:
             continue
-        for target in stmt.targets:
+        for target in targets:
             attr = _is_counter_attribute(target)
             if attr:
-                declared.setdefault(attr, set()).update(_dict_literal_keys(stmt.value))
+                declared.setdefault(attr, set()).update(_dict_literal_keys(value))
     return declared
 
 
@@ -80,9 +88,18 @@ def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
             target = node.target
             if isinstance(target, ast.Subscript) and _is_counter_attribute(target.value) == attr:
                 _record(_subscript_index(target), node.lineno)
-        # self.stats.get("k", 0) / self.stats.setdefault("k", 0)
+        # `self.stats[k] = self.stats.get(k, 0) + n` -- a read-modify-write, so it accumulates.
+        # A BARE `self.stats.get(k, 0)` is a READ and must not count: counting it reported a
+        # read-only accessor as the writer of a key nothing writes.
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            store = node.targets[0]
+            if isinstance(store, ast.Subscript) and _is_counter_attribute(store.value) == attr:
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "get" and _is_counter_attribute(sub.func.value) == attr:
+                        _record(_subscript_index(store), node.lineno)
+        # self.stats.setdefault("k", 0)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in ("get", "setdefault") and _is_counter_attribute(node.func.value) == attr:
+            if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
                 if node.args:
                     _record(node.args[0], node.lineno)
             # self._inc_stat("k")
@@ -146,7 +163,7 @@ def scan_stats_key_coverage(
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
         if any(w[2] == rel for w in writes):
-            sources[rel] = py.read_text(encoding="utf-8", errors="replace").splitlines()
+            sources[rel] = _read_src_lines(py)
 
     for attr, key, rel, line, cls_name in sorted(writes, key=lambda w: (w[2], w[3])):
         known = declared.get(attr)

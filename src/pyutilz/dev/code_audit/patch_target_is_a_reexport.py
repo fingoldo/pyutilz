@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _module_aliases, _line_text, _read_src_lines, _safe_parse
 
 # --- a patch aimed at a re-export, where the real call site never looks -------------------------
 #
@@ -40,26 +40,47 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # * the facade module itself does not call it -- if the facade calls it too, the patch does reach
 #   that call, and whether the test means the other one is not decidable from here.
 
-_PATCHERS = frozenset({"patch", "patch.object"})
+def _dotted(node: ast.AST) -> str:
+    """`a.b.c` as an expression -> the string "a.b.c"; "" for anything else."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return ""
+    parts.append(node.id)
+    return ".".join(reversed(parts))
 
 
 def _patch_targets(tree: ast.Module) -> list[tuple[str, int]]:
-    """(dotted target, line) for every `patch("a.b.c")` in this module."""
+    """(dotted target, line) for every `patch("a.b.c")` and `patch.object(mod, "c")` here.
+
+    `patch.object(...)` is a standard spelling; matching only on the callee's last attribute saw
+    it as `object` and never examined it.
+    """
+    aliases = _module_aliases(tree)
     targets: list[tuple[str, int]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "patch":
-            continue
-        first = node.args[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str) and "." in first.value:
-            targets.append((first.value, node.lineno))
+        chain = _dotted(node.func)
+        tail = chain.rsplit(".", 2)[-2:] if "." in chain else [chain]
+        if tail[-1] == "patch":
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str) and "." in first.value:
+                targets.append((first.value, node.lineno))
+        elif len(tail) == 2 and tail == ["patch", "object"] and len(node.args) >= 2:
+            owner = _dotted(node.args[0])
+            attr = node.args[1]
+            if not owner or not (isinstance(attr, ast.Constant) and isinstance(attr.value, str)):
+                continue
+            head, _, rest = owner.partition(".")
+            resolved = aliases.get(head, head) + (f".{rest}" if rest else "")
+            targets.append((f"{resolved}.{attr.value}", node.lineno))
     return targets
 
 
-def _resolve(module: str | None, level: int, package: str) -> str:
+def _resolve(module: str | None, level: int, package: str, is_package: bool = True) -> str:
     """Turn a possibly-relative `from . import x` module into an absolute dotted path.
 
     Relative imports are the normal spelling inside a package, and leaving them unresolved was why
@@ -68,20 +89,24 @@ def _resolve(module: str | None, level: int, package: str) -> str:
     """
     if not level:
         return module or ""
-    base = package.split(".")
+    # `package` is the module's OWN dotted path. For a plain module (`pkg/facade.py` -> `pkg.facade`)
+    # the containing package is one segment shorter; for a `__init__.py` it is the path itself.
+    # Getting this wrong made `pkg/facade.py`'s `from ._impl import fetch` resolve to
+    # `pkg.facade._impl`, a module that does not exist, so the relative spelling never matched.
+    base = package.split(".") if is_package else package.split(".")[:-1]
     # `from . import x` inside `pkg.mod` is `pkg`; each extra dot climbs one more level.
     prefix = base[: len(base) - level + 1] if len(base) >= level else []
     return ".".join([*prefix, module]) if module else ".".join(prefix)
 
 
-def _reexports(tree: ast.Module, package: str) -> dict[str, str]:
+def _reexports(tree: ast.Module, package: str, is_package: bool = True) -> dict[str, str]:
     """Names this module binds by `from X import name` rather than defining, mapped to X."""
     defined = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
     imported: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
-        origin = _resolve(node.module, node.level, package)
+        origin = _resolve(node.module, node.level, package, is_package)
         if not origin:
             continue
         for alias in node.names:
@@ -118,14 +143,6 @@ def _any_calls(tree: ast.Module) -> set[str]:
     return called
 
 
-def _module_name(rel: str) -> str:
-    """The dotted module path a repo-relative file corresponds to."""
-    stem = rel[:-3] if rel.endswith(".py") else rel
-    if stem.endswith("/__init__"):
-        stem = stem[: -len("/__init__")]
-    return stem.replace("/", ".")
-
-
 def scan_patch_target_is_a_reexport(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -143,10 +160,14 @@ def scan_patch_target_is_a_reexport(
     """
     findings: list[Finding] = []
     modules: dict[str, ast.Module] = {}
+    packages: set[str] = set()
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
         if tree is not None:
-            modules[_module_name(py.relative_to(root).as_posix())] = tree
+            dotted = _dotted_module_path(py.relative_to(root).as_posix())
+            modules[dotted] = tree
+            if py.name == "__init__.py":
+                packages.add(dotted)
 
     for py in _iter_py_files(root, exclude_dirs):
         name = py.name
@@ -155,7 +176,7 @@ def scan_patch_target_is_a_reexport(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for target, line in _patch_targets(tree):
@@ -163,7 +184,7 @@ def scan_patch_target_is_a_reexport(
             facade = modules.get(module_path)
             if facade is None:
                 continue
-            origin = _reexports(facade, module_path).get(attribute)
+            origin = _reexports(facade, module_path, module_path in packages).get(attribute)
             if origin is None:
                 continue
             # The facade reaching the name itself means the patch does land somewhere real.

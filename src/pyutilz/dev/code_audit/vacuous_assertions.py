@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import ast
+from fnmatch import fnmatch
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- vacuous / tautological test assertions -------------------------------
 #
@@ -116,7 +117,7 @@ def scan_tautological_is_not_none_only_tests(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")):
@@ -155,12 +156,15 @@ def scan_vacuous_assertions(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not py.name.startswith("test_") and test_glob == "test_*.py":
+        # `test_glob` is a GLOB, matched with fnmatch. It used to be compared for equality against
+        # its own default, so any other value (`"check_*.py"`) scanned every .py file in the tree,
+        # production modules included -- the exact inverse of what the parameter name promises.
+        if not fnmatch(py.name, test_glob):
             continue
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assert):

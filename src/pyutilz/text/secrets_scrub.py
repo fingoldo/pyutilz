@@ -79,7 +79,38 @@ TELEGRAM_TOKEN_RE = re.compile(
 # re-match that already-redacted text (value = the literal word "Bearer") and mangle it into
 # "Authorization=*** ***" (double redaction). "authorization: <token>" with no "Bearer" word is
 # unaffected and still redacted normally.
-SECRET_KEY_VALUE_RE = re.compile(r"(?i)(password|passwd|api[_-]?key|token|secret|authorization|auth)\s*[:=]\s*(?!(?:Bearer|Basic)\b)\S+")
+# Key AFFIXES: the keyword alternation is wrapped in optional ``[A-Za-z0-9_.-]*`` runs on each side,
+# so a key that merely CONTAINS one of the keywords matches too -- without them ``secret_key=``,
+# ``aws_secret_access_key=`` and ``api_key_id=`` all passed through in the clear (only keys ENDING in
+# a bare keyword, e.g. ``client_secret=``, were redacted).
+# The affix runs are BOUNDED ({0,64}) and the whole key is preceded by a negative lookbehind so a
+# match can only start at a token boundary: an unbounded leading ``*`` re-scanned the rest of the
+# line from every offset, which is quadratic on a long unbroken identifier run.
+# Separator padding is ``[ \t]*``, NOT ``\s*``: ``\s`` matches a newline, so a line ending in a bare
+# ``password:`` label swallowed the line break AND the first token of the following line (the first
+# frame of a traceback).
+SECRET_KEY_VALUE_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,64}(?:password|passwd|api[_-]?key|token|secret|authorization|auth)[A-Za-z0-9_.-]{0,64})"
+    r"[ \t]*[:=][ \t]*(?!(?:Bearer|Basic)\b)\S+"
+)
+
+# ---------------------------------------------------------------------------
+# Standalone high-entropy credential shapes (no ``key=`` label needed).
+# ---------------------------------------------------------------------------
+# These appear bare in pasted logs, env dumps and commit diffs, where the generic key=value pattern
+# has no label to anchor on. Every alternative is a fixed literal prefix followed by ONE bounded
+# character class -- no nested quantifier, so there is no catastrophic backtracking on a long
+# non-matching run.
+HIGH_ENTROPY_TOKEN_RE = re.compile(
+    r"\bgh[pousr]_[A-Za-z0-9]{36,}"  # GitHub personal-access / OAuth / server / user / refresh tokens
+    r"|\bAKIA[0-9A-Z]{16}\b"  # AWS access key id
+    r"|\bsk-[A-Za-z0-9_-]{20,}"  # OpenAI-style secret keys, including sk-proj-...
+)
+
+# PEM private-key blocks are redacted whole (header, body and footer): a partial key body in a log is
+# still a leak. ``[\s\S]*?`` is lazy and the closing literal is mandatory, so an unterminated header
+# does not match at all rather than eating the rest of the text.
+PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+ )?PRIVATE KEY-----")
 
 
 def sanitize_dsn(text: str) -> str:
@@ -129,7 +160,8 @@ def redact_secrets(text: object, limit: Optional[int] = None) -> str:
 
     Applies, in order: scheme-qualified DSN (full redaction), generic ``user:pass@`` DSN, DSN
     ``?password=`` query param, Telegram bot-token/Bearer/Authorization forms, then generic
-    ``key=value`` secret fields. Order matters: Bearer/Authorization is scrubbed BEFORE the
+    ``key=value`` secret fields, then PEM private-key blocks and standalone high-entropy token
+    shapes (``ghp_``/``AKIA``/``sk-``). Order matters: Bearer/Authorization is scrubbed BEFORE the
     generic key=value pass so ``Authorization: Bearer ghp_XYZ`` doesn't get half-eaten by the
     generic pattern (which would consume ``authorization:`` and stop at the first
     whitespace-delimited token, leaving ``Bearer`` and a truncated key visible).
@@ -155,6 +187,8 @@ def redact_secrets(text: object, limit: Optional[int] = None) -> str:
     s = DSN_PASSWORD_QUERY_RE.sub(r"\1***", s)
     s = TELEGRAM_TOKEN_RE.sub(_telegram_sub, s)
     s = SECRET_KEY_VALUE_RE.sub(lambda m: f"{m.group(1)}=***", s)
+    s = PEM_PRIVATE_KEY_RE.sub("<private-key-redacted>", s)
+    s = HIGH_ENTROPY_TOKEN_RE.sub("***", s)
     if limit is not None:
         s = s[:limit]
     return s

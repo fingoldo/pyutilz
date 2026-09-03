@@ -7,8 +7,8 @@ from pathlib import Path
 from dataclasses import asdict
 from typing import Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
-from .registry import get_scanners, run_all
+from ._base import SEVERITIES, Finding, UNKNOWN_SEVERITY_RANK, _DEFAULT_EXCLUDE_DIRS, severity_rank
+from .registry import get_check_aliases, get_scanners, run_all
 
 # --- CLI ----------------------------------------------------------------
 
@@ -60,11 +60,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         ),
     )
     parser.add_argument("root", type=Path, help="source-tree root to scan (e.g. ./src)")
+    # The emitted ``Finding.check`` ids are accepted too, so a check id read off a report row is
+    # always runnable -- several scanners emit an id that differs from their registry key.
+    selectable = sorted(set(get_scanners()) | set(get_check_aliases()))
     parser.add_argument(
         "--check",
         action="append",
-        choices=sorted(get_scanners()),
-        help=("scanner(s) to run; repeat for multiple. Default: run all. " "Available: " + ", ".join(sorted(get_scanners()))),
+        choices=selectable,
+        help=("scanner(s) to run; repeat for multiple. Default: run all. " "Available: " + ", ".join(selectable)),
     )
     parser.add_argument(
         "--format", choices=("markdown", "json"), default="markdown",
@@ -77,7 +80,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         help=("directory name to exclude (matched against any path part). " "Repeat. Adds to the default set of build/cache/venv dirs."),
     )
     parser.add_argument(
-        "--min-severity", choices=("P0", "P1", "P2", "Low"), default="Low",
+        "--min-severity", choices=SEVERITIES, default="Low",
         help="filter out findings below this severity (default Low: show all).",
     )
     args = parser.parse_args(argv)
@@ -89,15 +92,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     exclude_dirs = frozenset(_DEFAULT_EXCLUDE_DIRS | set(args.exclude_dir or ()))
 
     all_findings = run_all(root, checks=args.check, exclude_dirs=exclude_dirs)
-    sev_order = {"P0": 0, "P1": 1, "P2": 2, "Low": 3}
-    cutoff = sev_order[args.min_severity]
-    findings = [f for f in all_findings if sev_order.get(f.severity, 99) <= cutoff]
+    cutoff = severity_rank(args.min_severity)
+    # An unrecognised severity ranks -1, ABOVE P0: it renders at every --min-severity setting and
+    # gates the exit code, rather than sorting last and being filtered out of every report unseen.
+    unknown = sorted({f.severity for f in all_findings if severity_rank(f.severity) == UNKNOWN_SEVERITY_RANK})
+    if unknown:
+        sys.stderr.write(f"warning: findings carry severities outside {list(SEVERITIES)}: {unknown}\n")
+    findings = [f for f in all_findings if severity_rank(f.severity) <= cutoff]
 
     out = _render_json(findings) if args.format == "json" else _render_markdown(findings)
     sys.stdout.write(out)
     # exit code computed from the UNFILTERED findings: --min-severity only controls what's
     # rendered, it must never weaken the CI gate.
-    return 1 if any(f.severity in {"P0", "P1"} for f in all_findings) else 0
+    return 1 if any(severity_rank(f.severity) <= severity_rank("P1") for f in all_findings) else 0
 
 
 if __name__ == "__main__":

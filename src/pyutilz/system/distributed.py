@@ -78,8 +78,11 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
         # get content-based version of the calling file (hash)
         import hashlib
         import sys
-        frame = inspect.stack()[1]
-        module = inspect.getmodule(frame[0])
+        # sys._getframe(1), not inspect.stack()[1]: the latter materialises a FrameInfo (with source
+        # context) for EVERY frame on the stack and pins the caller's locals, all to read one module.
+        frame = sys._getframe(1)
+        module = inspect.getmodule(frame)
+        frame = None  # drop the reference immediately: a live frame pins the caller's whole locals mapping
         if module is None or module.__file__ is None:
             raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
         with open(module.__file__, "rb") as f:
@@ -198,4 +201,8 @@ def heartbeat_scraper(status: str = "ok", ip: Optional[str] = None) -> None:
         status: scraper status to record.
         ip: IP to record; falls back to the registered IP when None.
     """
-    db.safe_execute(get_heartbeat_sql(status, ip))
+    # UNPACK the (sql, params) tuple: passing it whole handed the cursor a 2-tuple as query TEXT
+    # and None as parameters, so no heartbeat could ever execute.
+    sql, params = get_heartbeat_sql(status, ip)
+    if sql:
+        db.safe_execute(sql, params)

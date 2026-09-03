@@ -33,12 +33,19 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
     """Store FileMaker connection credentials in module globals and open a session.
 
     Must be called once before any other function; subsequent calls re-authenticate.
+
+    Raises:
+        RuntimeError: no session token could be obtained. The token was previously discarded, so
+            a failed init() returned normally while ``web.connect``'s Basic-auth headers stayed in
+            place -- every later post_filemaker_record then 401'd with a misleading ValueError.
     """
     global filemaker_url, filemaker_username, filemaker_password
     filemaker_url = m_filemaker_url
     filemaker_username = m_filemaker_username
     filemaker_password = m_filemaker_password
-    get_session_token(username=filemaker_username, password=filemaker_password)
+    token = get_session_token(username=filemaker_username, password=filemaker_password)
+    if token is None:
+        raise RuntimeError(f"filemaker init: could not obtain a session token from {m_filemaker_url} -- not initialized.")
 
 
 def get_session_token(username: Optional[str] = None, password: Optional[str] = None, max_retries: int = 10, sleep_int_seconds: int = 10) -> Optional[str]:
@@ -60,7 +67,7 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
             "Content-Type": "application/json",
         },
     )
-    for _ in range(max_retries):
+    for attempt in range(max_retries):
         res = web.get_url(filemaker_url + "/sessions", b_random_ua=False, verb="post")
         if res is None:
             logger.warning("No response while getting filemaker session token")
@@ -82,21 +89,28 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
             else:
                 web.connect(m_template_headers={"Authorization": "Bearer " + def_token, "Content-Type": "application/json"})
                 return def_token
-        sleep(sleep_int_seconds)
+        if attempt < max_retries - 1:
+            # No sleep after the LAST attempt: there is nothing left to wait for, and the defaults
+            # added a full 10 s of dead time to every failed boot.
+            sleep(sleep_int_seconds)
     return None
 
 
 def simplify_types(obj: dict, sep=",") -> dict:
-    """FM does not accept fields that are lists & dicts easily"""
+    """FM does not accept fields that are lists & dicts easily.
 
-    for key, val in obj.copy().items():
+    Returns a NEW dict; ``obj`` is left untouched. ``obj.copy()`` used to copy only the iteration
+    view, so the caller's own dict silently lost its list/dict fields and its None-valued keys.
+    """
+    res = {}
+    for key, val in obj.items():
         if isinstance(val, list):
-            obj[key] = sep.join([str(el) for el in val])
+            res[key] = sep.join([str(el) for el in val])
         elif isinstance(val, dict):
-            obj[key] = str(val)
-        elif val is None:
-            del obj[key]
-    return obj
+            res[key] = str(val)
+        elif val is not None:
+            res[key] = val
+    return res
 
 
 def post_filemaker_record(filemaker_url: str, layout: str, data: dict, num_attempts: int = 3) -> Optional[bool]:

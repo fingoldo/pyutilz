@@ -10,7 +10,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider, PerCallAttr
+from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,11 @@ class GeminiProvider(LLMProvider):
         in_rate, out_rate = self._get_pricing()
         cache_hit = min(self.total_cached_content_tokens, self.total_prompt_tokens)
         cache_miss = self.total_prompt_tokens - cache_hit
-        cache_rate = self._CACHE_HIT_COST.get(self.model_name, in_rate)
+        # Prefix-matched, like the base rates from ``_get_pricing`` just above: an exact
+        # ``dict.get`` silently fell back to the FULL input rate for any versioned id
+        # (``gemini-2.5-flash-002``), over-reporting a heavily cached session ~10x with no log
+        # line (2026-09-03 audit F33).
+        cache_rate = longest_prefix_lookup(self.model_name, self._CACHE_HIT_COST, in_rate)
         input_cost = (cache_miss / 1_000_000) * in_rate + (cache_hit / 1_000_000) * cache_rate
         output_cost = ((self.total_completion_tokens + self.total_reasoning_tokens) / 1_000_000) * out_rate
         return {
@@ -222,6 +226,7 @@ class GeminiProvider(LLMProvider):
         json_mode: bool = False,
     ) -> str:
         """Generate text using Gemini."""
+        self._reset_per_call_state()
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
@@ -297,8 +302,21 @@ class GeminiProvider(LLMProvider):
             # LLMSafetyBlockError ("do not retry") permanently abandoned a call whose documented
             # remedy is "double max_tokens and re-issue".
             if "MAX_TOKENS" in _fr:
+                # partial_text carries whatever was already generated (and paid for) so a caller
+                # catching this can salvage it, exactly as Anthropic and openai_compat do --
+                # Gemini alone used to hand back an empty string (2026-09-03 audit F34).
+                try:
+                    partial = response.text or ""
+                except (ValueError, AttributeError) as text_exc:
+                    # WARNING, not a silent "": an empty partial_text otherwise reads downstream as
+                    # "the model generated nothing before the cap", which is a measurement, when in
+                    # fact the salvage attempt itself failed and the truth is simply unknown.
+                    logger.warning("Could not read partial text off a truncated Gemini response; reporting it as empty: %s", text_exc)
+                    partial = ""
                 raise LLMTruncationError(
-                    f"Gemini response truncated by max_tokens (finish_reason={self._last_finish_reason})", finish_reason=self._last_finish_reason
+                    f"Gemini response truncated by max_tokens (finish_reason={self._last_finish_reason})",
+                    finish_reason=self._last_finish_reason,
+                    partial_text=partial,
                 )
             try:
                 text_out = response.text
@@ -337,6 +355,9 @@ class GeminiProvider(LLMProvider):
                 self.last_grounding_metadata = None
                 self.last_citation_metadata = None
                 self.last_function_calls = []
+                # Cleared too (2026-09-03 audit F35): assigned only on the success path below, it
+                # used to leave a safety-blocked call reading the PREVIOUS call's candidates.
+                self.last_all_candidates = []
                 return
             cand = candidates[0]
             ratings = getattr(cand, "safety_ratings", None) or []

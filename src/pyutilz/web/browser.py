@@ -93,7 +93,11 @@ use_subprocess = False
 required_cookies: Tuple[Any, ...] = tuple()
 fixed_cookies: Dict[str, Any] = {}
 basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en;q=0.9", "accept": "*/*"}
-headers = basic_headers
+# dict(), not an alias: `headers = basic_headers` made browser.headers IS browser.basic_headers at
+# import time and kept it so whenever LoginAndGetCookies(default_headers=False) is used or is never
+# reached, so any caller mutating browser.headers silently rewrote the documented neutral
+# basic_headers default for every other consumer in the process.
+headers = dict(basic_headers)
 
 def find_element_by_xpath(browser: Any, query: str) -> "WebElement":
     """Locates an element by XPath."""
@@ -407,7 +411,12 @@ def LoginAndGetCookies(
                 logger.exception(e)
                 if "window was already closed" in str(e) or "window already closed" in str(e) or "chrome not reachable" in str(e):
                     logger.info("Restarting webdriver")
-                    browser = None
+                    # close_browser(), not `browser = None`: on the "window was already closed"
+                    # half of this condition the chromedriver (and, with use_subprocess=True,
+                    # Chrome) process is typically still alive, so dropping the handle orphaned one
+                    # per restart -- the same leak the sibling browser_get restart path below and
+                    # the one at the end of this function already close by quitting first.
+                    close_browser()
                 else:
                     # Regression fix: any OTHER exception (e.g. InvalidSessionIdException, a
                     # stale-element/timeout error, a non-English driver message) previously fell

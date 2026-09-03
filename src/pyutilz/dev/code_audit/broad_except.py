@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- broad-except swallow (wave 16) -------------------------------------
 
@@ -62,7 +62,14 @@ def _is_silent_swallow(handler: ast.ExceptHandler) -> bool:
         if isinstance(s, (ast.Pass, ast.Continue, ast.Break)):
             continue
         if isinstance(s, ast.Return):
-            continue
+            # Only a value-less `return` (or an explicit `return None`/`return False`) is silent.
+            # `return {"ok": False, "error": str(e)}` propagates a structured error -- that IS the
+            # escalation this scanner asks for, so it must not be reported.
+            if s.value is None:
+                continue
+            if isinstance(s.value, ast.Constant) and (s.value.value is None or s.value.value is False):
+                continue
+            return False
         return False
     return True
 
@@ -163,7 +170,7 @@ def scan_broad_except_swallows(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):

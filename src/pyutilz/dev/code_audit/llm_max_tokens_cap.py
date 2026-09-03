@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # LLMProvider methods whose ``max_tokens`` kwarg defaults to 0 ("provider max") --
 # see pyutilz.llm.base.LLMProvider.generate/generate_json.
@@ -12,8 +12,12 @@ _CAPPED_METHOD_NAMES: frozenset[str] = frozenset({"generate", "generate_json", "
 
 
 def _is_zero_literal(node: ast.expr) -> bool:
-    """True if ``node`` is the bare integer literal ``0``."""
-    return isinstance(node, ast.Constant) and node.value == 0
+    """True if ``node`` is the bare integer literal ``0``.
+
+    Not ``== 0``: that is also true of ``False`` and ``0.0``, and ``max_tokens=False`` is a
+    different mistake with a different fix than an explicit zero cap.
+    """
+    return isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool) and node.value == 0
 
 
 def _provider_var_names(tree: ast.AST) -> set[str]:
@@ -70,7 +74,7 @@ def scan_llm_call_missing_max_tokens_cap(
         provider_vars = _provider_var_names(tree)
         if not provider_vars:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for node in ast.walk(tree):

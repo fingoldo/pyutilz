@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- network call with no timeout= ----------------------------------------
 #
@@ -33,6 +33,68 @@ def _call_root_name(func: ast.AST) -> str:
     return ""
 
 
+def _timeout_preconfigured_vars(tree: ast.AST) -> "set[str]":
+    """Local variable names assigned from a call that itself set ``timeout=``.
+
+    Same-file heuristic (not type inference): ``session = httpx.Client(timeout=10)`` makes every
+    ``session.get(...)`` pre-configured, so flagging those would be pure noise.
+    """
+    out: "set[str]" = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            if any(kw.arg == "timeout" for kw in node.value.keywords):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        out.add(t.id)
+    return out
+
+
+def _directly_imported_network_calls(tree: ast.AST) -> "dict[str, str]":
+    """{local name -> network call attr} for ``from urllib.request import urlopen``-style imports.
+
+    The directly imported spelling is at least as common as the dotted one, and a bare ``Name``
+    callee has no receiver to key on, so resolve it back to the module it came from.
+    """
+    out: "dict[str, str]" = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            if node.module.split(".")[0] in _NETWORK_MODULE_HINTS:
+                for alias in node.names:
+                    if alias.name in _NETWORK_CALL_ATTRS:
+                        out[alias.asname or alias.name] = alias.name
+    return out
+
+
+def _resolve_network_callee(node: ast.Call, directly_imported: "dict[str, str]") -> "tuple[str, str] | None":
+    """``(root name, call attr)`` if this Call looks like a network call, else ``None``."""
+    if isinstance(node.func, ast.Name):
+        if node.func.id not in directly_imported:
+            return None
+        return node.func.id, directly_imported[node.func.id]
+    if isinstance(node.func, ast.Attribute):
+        if node.func.attr not in _NETWORK_CALL_ATTRS:
+            return None
+        return _call_root_name(node.func), node.func.attr
+    return None
+
+
+def _is_flagged_network_call(node: ast.Call, root_name: str, attr: str, preconfigured: "set[str]") -> bool:
+    """Whether a resolved network callee should be reported (no ``timeout=``, real receiver)."""
+    if not isinstance(node.func, ast.Name):
+        # Neither a known network-library root name nor a locally pre-configured session/client
+        # variable -- likely an unrelated .get()/.post() on some other object (e.g. dict.get());
+        # skip to avoid noise.
+        if root_name not in _NETWORK_MODULE_HINTS and root_name not in preconfigured and attr not in ("urlopen",):
+            return False
+    if root_name in preconfigured:
+        return False
+    if any(kw.arg == "timeout" for kw in node.keywords):
+        return False
+    if any(kw.arg is None for kw in node.keywords):  # **kwargs -- can't tell, skip
+        return False
+    return True
+
+
 def scan_missing_network_timeout(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -53,36 +115,20 @@ def scan_missing_network_timeout(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        # Same-file heuristic: variable names assigned from a call that itself set timeout=
-        # (e.g. `session = httpx.Client(timeout=10)`) are treated as pre-configured.
-        timeout_preconfigured_vars: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-                if any(kw.arg == "timeout" for kw in node.value.keywords):
-                    for t in node.targets:
-                        if isinstance(t, ast.Name):
-                            timeout_preconfigured_vars.add(t.id)
+        preconfigured = _timeout_preconfigured_vars(tree)
+        directly_imported = _directly_imported_network_calls(tree)
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            if not isinstance(node, ast.Call):
                 continue
-            if node.func.attr not in _NETWORK_CALL_ATTRS:
+            resolved = _resolve_network_callee(node, directly_imported)
+            if resolved is None:
                 continue
-            root_name = _call_root_name(node.func)
-            if root_name not in _NETWORK_MODULE_HINTS and root_name not in timeout_preconfigured_vars:
-                # Neither a known network-library root name nor a locally pre-configured
-                # session/client variable -- likely an unrelated .get()/.post() on some other
-                # object (e.g. dict.get()); skip to avoid noise.
-                if node.func.attr not in ("urlopen",):
-                    continue
-            if root_name in timeout_preconfigured_vars:
-                continue
-            has_timeout = any(kw.arg == "timeout" for kw in node.keywords)
-            has_star_kwargs = any(kw.arg is None for kw in node.keywords)  # **kwargs -- can't tell, skip
-            if has_timeout or has_star_kwargs:
+            root_name, attr = resolved
+            if not _is_flagged_network_call(node, root_name, attr, preconfigured):
                 continue
             findings.append(Finding(
                 check="missing_network_timeout",
@@ -91,7 +137,7 @@ def scan_missing_network_timeout(
                 line=node.lineno,
                 snippet=_line_text(src_lines, node.lineno),
                 detail=(
-                    f"`{root_name}.{node.func.attr}(...)` has no `timeout=` -- can hang "
+                    f"`{root_name}.{attr}(...)` has no `timeout=` -- can hang " if not isinstance(node.func, ast.Name) else f"`{root_name}(...)` has no `timeout=` -- can hang "
                     "indefinitely on an unresponsive server/black-holed connection instead of "
                     "raising after a bounded wait."
                 ),

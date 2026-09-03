@@ -50,6 +50,39 @@ from .probing import (
 from .fsutils import get_max_singledisk_free_space_gb, list_linux_devices
 from pyutilz.system.psutil_compat import get_cpu_freq as _get_cpu_freq  # private alias: keeps the facade's public surface unchanged
 
+# Child-process output is NOT UTF-8 on Windows: wmic/nvcc emit the console OEM codepage, and a
+# localized non-ASCII error message raised UnicodeDecodeError, which the broad handlers below
+# reported as the generic "Could not extract Windows serial!" -- the machine then fell back to the
+# MAC-derived GUID with the real cause invisible. errors="replace" keeps a stray byte from hiding
+# the message entirely.
+def _decode_child_output(raw: bytes) -> str:
+    """Decode subprocess output using the platform's console encoding, never failing on a bad byte."""
+    if platform.system() == "Windows":
+        try:
+            return raw.decode("oem", errors="replace")
+        except LookupError:  # pragma: no cover - "oem" codec is always present on Windows
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+
+# Identity fields distributed.register_scraper requires; see the handler at the end of get_system_info.
+_REQUIRED_IDENTITY_FIELDS = frozenset({"host_name", "os_machine_guid", "os_serial"})
+
+
+def _reraise_if_identity_incomplete(info: dict, return_sensitive_info: bool) -> None:
+    """Re-raise the exception currently being handled when the node-identity fields are missing.
+
+    A partial dict is acceptable for the OPTIONAL probe sections, but never for the fields
+    distributed.register_scraper keys nodes on: it is built on get_system_info's documented
+    "propagates any error" contract and would otherwise run its
+    where_fields="host_name,os_machine_guid,os_serial" lookup against a source missing them,
+    silently registering the wrong node identity. Lives here, not inline, so get_system_info's
+    own branch count is unchanged (tests/test_meta/test_complexity_ratchet.py).
+    """
+    if return_sensitive_info and not _REQUIRED_IDENTITY_FIELDS.issubset(info):
+        raise
+
+
 def get_system_info(
     return_hdd_info: bool = False,
     return_os_info: bool = False,
@@ -121,7 +154,7 @@ def get_system_info(
                     os_serial = None
                     try:
                         # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
-                        os_serial = subprocess.check_output("wmic csproduct get uuid").decode().split("\n")[1].strip()  # nosec B603 B607 - fixed trusted Windows binary "wmic", hardcoded literal command, no shell, no external input
+                        os_serial = _decode_child_output(subprocess.check_output("wmic csproduct get uuid")).split("\n")[1].strip()  # nosec B603 B607 - fixed trusted Windows binary "wmic", hardcoded literal command, no shell, no external input
                         info["os_machine_guid"] = os_serial
                         info["os_serial"] = os_serial  # Also store as separate field for distributed.py
                     except Exception:
@@ -131,12 +164,12 @@ def get_system_info(
 
                 elif current_system == "Linux":
                     try:
-                        machine_id = subprocess.check_output(["cat", "/var/lib/dbus/machine-id"]).decode().strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
+                        machine_id = _decode_child_output(subprocess.check_output(["cat", "/var/lib/dbus/machine-id"])).strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
                         info["os_machine_guid"] = machine_id
                         info["os_serial"] = machine_id
                     except Exception:
                         try:
-                            machine_id = subprocess.check_output(["cat", "/etc/machine-id"]).decode().strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
+                            machine_id = _decode_child_output(subprocess.check_output(["cat", "/etc/machine-id"])).strip()  # nosec B603 B607 - fixed trusted binary "cat" with a hardcoded file path, no shell, no external input
                             info["os_machine_guid"] = machine_id
                             info["os_serial"] = machine_id
                         except Exception:
@@ -144,7 +177,7 @@ def get_system_info(
                             info["os_serial"] = info.get("os_machine_guid", "")
                 elif current_system == "Android":
                     try:
-                        serial = subprocess.check_output(["getprop", "ril.serialnumber"])[:-1].decode().strip()  # nosec B603 B607 - fixed trusted Android binary "getprop" with a hardcoded property name, no shell, no external input
+                        serial = _decode_child_output(subprocess.check_output(["getprop", "ril.serialnumber"])[:-1]).strip()  # nosec B603 B607 - fixed trusted Android binary "getprop" with a hardcoded property name, no shell, no external input
                         info["os_machine_guid"] = serial
                         info["os_serial"] = serial
                     except Exception:
@@ -168,7 +201,7 @@ def get_system_info(
                             assert ioreg_proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
                             ioreg_proc.stdout.close()
                             output = grep_proc.communicate()[0]
-                        guid = output.decode().split('"')[-2]
+                        guid = _decode_child_output(output).split('"')[-2]
                         info["os_machine_guid"] = guid
                         info["os_serial"] = guid
                     except Exception:
@@ -260,7 +293,7 @@ def get_system_info(
                     # form always raised FileNotFoundError on Linux/macOS regardless of whether nvcc was
                     # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
                     # "\n" on Linux/macOS, not "\r\n".
-                    cuda_version = re.findall(r", V(\S+)", subprocess.check_output(["nvcc", "--version"]).decode())  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal argv, no shell, no external input
+                    cuda_version = re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output(["nvcc", "--version"])))  # nosec B603 B607 - fixed trusted binary "nvcc", hardcoded literal argv, no shell, no external input
                 except Exception:
                     cuda_version = [""]
 
@@ -325,4 +358,5 @@ def get_system_info(
         return info
     except Exception as e:
         logger.exception(e)
+        _reraise_if_identity_incomplete(info, return_sensitive_info)
         return info

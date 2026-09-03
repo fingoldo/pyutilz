@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
 
 # --- vacuous truth in a matching predicate --------------------------------------------------------
 #
@@ -18,7 +19,10 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # `any(...)` is deliberately NOT flagged. On an empty sequence it returns False -- the refusing
 # direction -- so it fails closed. Flagging it would roughly triple the hit count for no defect.
 
-_GUARD_TEMPLATES = ("not {v}", "if {v}", "len({v})", "bool({v})", "{v} and ", "and {v}", "{v} or ")
+# Matched as WORD-BOUNDED regexes, not with `in` against raw source: a plain substring test let any
+# longer identifier starting with the variable's name satisfy the guard, so `if xs:` counted as a
+# guard for `x` and silenced a real hit.
+_GUARD_TEMPLATES = ("not {v}", "if {v}", r"len\({v}\)", r"bool\({v}\)", "{v} and ", "and {v}", "{v} or ")
 
 
 def _is_guarded(name: str, function_source: str, module_source: str) -> bool:
@@ -28,8 +32,8 @@ def _is_guarded(name: str, function_source: str, module_source: str) -> bool:
     caller (`scope()` refuses on an empty stem list before it ever reaches `_covers()`), and
     flagging the helper would be a false positive on correct code.
     """
-    guards = tuple(t.format(v=name) for t in _GUARD_TEMPLATES)
-    return any(g in function_source for g in guards) or any(g in module_source for g in guards)
+    patterns = [re.compile(t.format(v=r"\b" + re.escape(name) + r"\b")) for t in _GUARD_TEMPLATES]
+    return any(p.search(function_source) for p in patterns) or any(p.search(module_source) for p in patterns)
 
 
 def scan_vacuous_empty_pattern_match(
@@ -50,7 +54,7 @@ def scan_vacuous_empty_pattern_match(
         if tree is None:
             continue
         src = py.read_text(encoding="utf-8", errors="replace")
-        src_lines = src.splitlines()
+        src_lines = split_src_lines(src)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):

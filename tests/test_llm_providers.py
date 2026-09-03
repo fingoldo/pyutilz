@@ -344,17 +344,30 @@ class TestAnthropicProvider:
 
 
 class TestOpenAIProvider:
-    def test_pricing_unknown_falls_back_to_gpt5_mini(self, caplog):
-        from pyutilz.llm.openai_provider import OpenAIProvider
+    def test_pricing_unknown_warns_and_resolves_by_prefix(self, caplog):
+        """Reframed 2026-09-03 (audit F20): all three pricing lookups now use the SAME longest-prefix
+        resolution as ``max_output_tokens``/``context_window``, so an unrecognised ``gpt-5-*`` id is priced
+        from the gpt-5 family it names rather than from the unrelated gpt-5-mini row - which understated a
+        ``gpt-5-pro-<date>`` snapshot's spend ~60x. The one-time warning still fires for the miss."""
+        from pyutilz.llm.openai_provider import _CACHE_HIT_COST, _PRICING, OpenAIProvider
 
         p = OpenAIProvider.__new__(OpenAIProvider)
         with caplog.at_level("WARNING"):
             inp = p._input_cost_per_1m("gpt-5-typo-does-not-exist")
             out = p._output_cost_per_1m("gpt-5-typo-does-not-exist")
             cache = p._cache_hit_cost_per_1m("gpt-5-typo-does-not-exist")
-        assert inp == 0.25
-        assert out == 2.00
-        assert cache == 0.025
+        assert (inp, out) == _PRICING["gpt-5"]
+        assert cache == _CACHE_HIT_COST["gpt-5"]
+        assert any("unknown" in rec.message.lower() for rec in caplog.records)
+
+    def test_pricing_for_a_model_outside_every_family_falls_back_to_gpt5_mini(self, caplog):
+        from pyutilz.llm.openai_provider import _PRICING, OpenAIProvider
+
+        p = OpenAIProvider.__new__(OpenAIProvider)
+        with caplog.at_level("WARNING"):
+            inp = p._input_cost_per_1m("totally-unrelated-model")
+            out = p._output_cost_per_1m("totally-unrelated-model")
+        assert (inp, out) == _PRICING["gpt-5-mini"]
         assert any("unknown" in rec.message.lower() for rec in caplog.records)
 
 

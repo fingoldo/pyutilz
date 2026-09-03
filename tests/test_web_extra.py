@@ -65,7 +65,7 @@ class TestInitVars:
 # ===== get_external_ip =====
 
 class TestGetExternalIp:
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_returns_ipv4(self, mock_urlopen):
         from pyutilz.web import web as mod
         resp = Mock()
@@ -74,7 +74,7 @@ class TestGetExternalIp:
         mock_urlopen.return_value = resp
         assert mod.get_external_ip() == "1.2.3.4"
 
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_returns_ipv6(self, mock_urlopen):
         from pyutilz.web import web as mod
         resp = Mock()
@@ -83,7 +83,7 @@ class TestGetExternalIp:
         mock_urlopen.return_value = resp
         assert mod.get_external_ip() == "::1"
 
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_weird_ip_skipped(self, mock_urlopen):
         from pyutilz.web import web as mod
         resp = Mock()
@@ -92,17 +92,17 @@ class TestGetExternalIp:
         mock_urlopen.return_value = resp
         assert mod.get_external_ip() is None
 
-    @patch("pyutilz.web.web.urllib.request.urlopen", side_effect=ssl.SSLCertVerificationError("cert"))
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen", side_effect=ssl.SSLCertVerificationError("cert"))
     def test_ssl_error_skipped(self, mock_urlopen):
         from pyutilz.web import web as mod
         assert mod.get_external_ip() is None
 
-    @patch("pyutilz.web.web.urllib.request.urlopen", side_effect=RuntimeError("fail"))
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen", side_effect=RuntimeError("fail"))
     def test_generic_exception(self, mock_urlopen):
         from pyutilz.web import web as mod
         assert mod.get_external_ip() is None
 
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_explicit_timeout_zero_is_not_silently_rewritten(self, mock_urlopen):
         """Regression: `timeout=timeout or 10` used to silently rewrite an explicit
         module-level `timeout = 0` to 10 -- `0 or 10` evaluates to `10` regardless of
@@ -124,7 +124,7 @@ class TestGetExternalIp:
 # ===== get_ipinfo =====
 
 class TestGetIpinfo:
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_explicit_timeout_zero_is_not_silently_rewritten(self, mock_urlopen):
         """Regression: `timeout=timeout or 10` used to silently rewrite an explicit
         module-level `timeout = 0` to 10 -- fixed to `timeout if timeout is not None else 10`."""
@@ -141,7 +141,7 @@ class TestGetIpinfo:
         finally:
             mod.timeout = orig_timeout
 
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_urllib_ok(self, mock_urlopen):
         from pyutilz.web import web as mod
         resp = Mock()
@@ -150,7 +150,7 @@ class TestGetIpinfo:
         mock_urlopen.return_value = resp
         assert mod.get_ipinfo(use_urllib=True) == {"ip": "1.2.3.4"}
 
-    @patch("pyutilz.web.web.urllib.request.urlopen")
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen")
     def test_urllib_non_ok(self, mock_urlopen):
         """Regression (2026-07-21 audit round 2, LOW): a non-200 response used to return `{}`
         while an exception returned None -- two different failure values for the same "the
@@ -161,7 +161,7 @@ class TestGetIpinfo:
         mock_urlopen.return_value = resp
         assert mod.get_ipinfo(use_urllib=True) is None
 
-    @patch("pyutilz.web.web.urllib.request.urlopen", side_effect=Exception("fail"))
+    @patch("pyutilz.web.web.ipinfo._direct_urlopen", side_effect=Exception("fail"))
     def test_urllib_exception(self, mock_urlopen):
         from pyutilz.web import web as mod
         assert mod.get_ipinfo(use_urllib=True) is None
@@ -172,13 +172,13 @@ class TestGetIpinfo:
         function's own use_urllib=False branch, which already returns None uniformly."""
         from pyutilz.web import web as mod
 
-        with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+        with patch("pyutilz.web.web.ipinfo._direct_urlopen") as mock_urlopen:
             resp = Mock()
             resp.status = http.HTTPStatus.FORBIDDEN
             mock_urlopen.return_value = resp
             non_ok_result = mod.get_ipinfo(use_urllib=True)
 
-        with patch("pyutilz.web.web.urllib.request.urlopen", side_effect=Exception("fail")):
+        with patch("pyutilz.web.web.ipinfo._direct_urlopen", side_effect=Exception("fail")):
             exception_result = mod.get_ipinfo(use_urllib=True)
 
         assert non_ok_result is exception_result is None
@@ -984,7 +984,9 @@ class TestDownloadToFile:
         mock_get.side_effect = Exception("fail")
         out = tmp_path / "out.bin"
         result = mod.download_to_file("http://x.com/f", str(out), max_attempts=3)
-        assert result is None
+        # Reframed for the 2026-09-03 F46 fix: the function now returns False on total failure
+        # (it returned None for success AND failure alike, so a caller could not branch on it).
+        assert result is False
         assert not out.exists()
 
     @patch("pyutilz.web.web.sleep")
@@ -1057,5 +1059,6 @@ class TestDownloadToFile:
 
         out = tmp_path / "out.bin"
         result = mod.download_to_file("http://x.com/f", str(out), max_attempts=2)
-        assert result is None
+        # Reframed for the 2026-09-03 F46 fix: total failure is now reported as False, not None.
+        assert result is False
         assert not out.exists()

@@ -5,14 +5,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- per-call state on a shared instance ---------------------------------
 
-# A name mentioned in a `with` header that makes the block a critical section. Substring match on the
-# lowered source of the context expression, so `self._lock`, `_provider_lock`, `asyncio.Lock()` and
-# `threading.RLock()` all count.
-_LOCK_HINTS = ("lock", "semaphore", "mutex")
+# A name mentioned in a `with` header that makes the block a critical section. Matched on `_`-separated
+# SEGMENTS of the identifiers in the context expression, so `self._lock`, `_provider_lock`,
+# `asyncio.Lock()` and `threading.RLock()` count while `blocking`, `blocklist`, `unlocked` and
+# `clock` -- which a substring match accepted, silently suppressing real findings -- do not.
+_LOCK_HINTS = frozenset({"lock", "rlock", "semaphore", "mutex"})
 
 # Attribute-name shapes that are per-CALL by construction: whatever the last call left behind, read
 # back later by a summary accessor. These are the names the defect keeps reappearing under.
@@ -20,9 +21,14 @@ _PERCALL_PREFIXES = ("last_", "_last_", "current_", "_current_")
 
 
 def _mentions_lock(node: ast.AST) -> bool:
-    """Whether a ``with``/``async with`` header names something lock-shaped."""
-    text = ast.dump(node).lower()
-    return any(hint in text for hint in _LOCK_HINTS)
+    """Whether a ``with``/``async with`` context expression names something lock-shaped."""
+    for inner in ast.walk(node):
+        name = inner.id if isinstance(inner, ast.Name) else (inner.attr if isinstance(inner, ast.Attribute) else None)
+        if name is None:
+            continue
+        if any(segment.lower() in _LOCK_HINTS for segment in name.split("_")):
+            return True
+    return False
 
 
 def _self_attr_stores(func: ast.AST, self_name: str) -> dict[str, tuple[int, bool]]:
@@ -43,6 +49,8 @@ def _self_attr_stores(func: ast.AST, self_name: str) -> dict[str, tuple[int, boo
             if isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
                 for target in targets:
+                    if isinstance(child, ast.AnnAssign) and child.value is None:
+                        continue  # `self.x: int` declares the attribute's type; it stores nothing.
                     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == self_name:
                         # First write wins for the reported line; guardedness is OR'd, so a single
                         # unguarded write among several locked ones still reports.
@@ -99,8 +107,17 @@ def _collect_shared_class_names(trees: dict[Path, ast.Module]) -> set[str]:
                     for inner in ast.walk(node):
                         if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
                             shared.add(inner.func.id)
-            elif isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
-                for element in ast.walk(node):
+    # Signal 3 is deliberately restricted to MODULE-LEVEL containers (the registry shape). Walking the
+    # whole tree instead let any capitalised identifier-shaped string in any local list -- e.g.
+    # `labels = ["Worker", "Other"]` in an unrelated function -- mark a class as shared.
+    for tree in trees.values():
+        for stmt in tree.body:
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+                continue
+            for container in ast.walk(stmt.value):
+                if not isinstance(container, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+                    continue
+                for element in ast.walk(container):
                     if isinstance(element, ast.Constant) and isinstance(element.value, str) and element.value.isidentifier() and element.value[:1].isupper():
                         shared.add(element.value)
     return shared
@@ -157,7 +174,7 @@ def scan_per_call_state_on_shared_instance(
             break
 
     for py, tree in trees.items():
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef) or node.name not in shared_names:

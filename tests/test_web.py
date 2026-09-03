@@ -110,7 +110,7 @@ class TestEnsureHttpScheme:
     def test_get_ipinfo_rejects_file_url_before_reading_it(self):
         from pyutilz.web.web import get_ipinfo
 
-        with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+        with patch("pyutilz.web.web.ipinfo._direct_urlopen") as mock_urlopen:
             result = get_ipinfo(use_urllib=True, url="file:///etc/passwd")
             mock_urlopen.assert_not_called()
         assert result is None
@@ -121,7 +121,7 @@ class TestEnsureHttpScheme:
         original_providers = web.IP_PROVIDERS
         try:
             web.IP_PROVIDERS = ["file:///etc/passwd"]
-            with patch("pyutilz.web.web.urllib.request.urlopen") as mock_urlopen:
+            with patch("pyutilz.web.web.ipinfo._direct_urlopen") as mock_urlopen:
                 web.get_external_ip()
                 mock_urlopen.assert_not_called()
         finally:

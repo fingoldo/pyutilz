@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, split_src_lines
 
 # --- non-idempotent SQL migrations ------------------------------------------
 
@@ -65,6 +65,21 @@ def _existence_guarded_line_ranges(text: str) -> list[tuple[int, int]]:
     return ranges
 
 
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _strip_sql_comments(text: str) -> str:
+    """Blank out SQL comments while PRESERVING line numbering.
+
+    A changelog note such as ``-- DROP TABLE legacy_users;`` inside a migration is prose, not a
+    statement; matching the patterns against it turned every such note into a P1 whose snippet was
+    the comment itself. Block comments are replaced by their own newlines so no line shifts.
+    """
+    text = _BLOCK_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    return _LINE_COMMENT_RE.sub("", text)
+
+
 def scan_sql_migration_idempotency(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -92,13 +107,15 @@ def scan_sql_migration_idempotency(
     findings: list[Finding] = []
     excluded = set(exclude_dirs)
     for sql_path in root.glob(sql_glob):
-        if any(part in excluded for part in sql_path.parts):
+        # Relative to the scan root: `sql_path.parts` is ABSOLUTE, so a repository checked out
+        # below any component named `build`/`dist`/`env`/`.git`/... reported zero SQL findings.
+        if any(part in excluded for part in sql_path.relative_to(root).parts):
             continue
         try:
             text = sql_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        lines = text.splitlines()
+        lines = split_src_lines(_strip_sql_comments(text))
         rel = sql_path.relative_to(root).as_posix()
         has_do_block = bool(_DO_BLOCK_RE.search(text))
         guarded_ranges = _existence_guarded_line_ranges(text)

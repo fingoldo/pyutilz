@@ -14,6 +14,28 @@ updates:
     cooldown:
       default-days: 7
 
+  # Added 2026-09-03 (packaging audit 03/F09): without it the third-party revs pinned in
+  # .pre-commit-config.yaml -- detect-secrets, actionlint-py, shellcheck-py, codespell and
+  # mirrors-mypy -- were the only pinned third-party versions in the repo no bot ever looked at,
+  # while the SHA-pinned actions above got weekly bumps. Two of the five gate CI-equivalent
+  # checks (codespell mirrors ci.yml's codespell-paths; mirrors-mypy must stay equal to
+  # pyproject.toml's `mypy==2.3.1` pin), which is exactly the pre-commit-vs-CI drift class the
+  # ruff pin's comment in pyproject.toml documents. Grouped like github-actions above so the
+  # whole ecosystem costs one PR (and one CI run) per week rather than one per hook, which is
+  # what keeps it inside the Actions-minutes budget that disabled `pip` below.
+  - package-ecosystem: pre-commit
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      pre-commit:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
+
   # Temporarily disabled 2026-07-10 (open-pull-requests-limit: 0): every PR/branch this
   # ecosystem opens triggers the repo's own CI matrix (ci.yml/Black/MyPy) on push, which was
   # contributing to the account's Actions-minutes exhaustion (see mlframe's ci.yml matrix

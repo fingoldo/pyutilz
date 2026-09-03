@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
 
 # --- in-place numpy mutation of an uncopied pandas .to_numpy() result --------
 
@@ -65,18 +65,18 @@ def scan_readonly_to_numpy_mutation(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for func_node in ast.walk(tree):
             if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             risky_names: set[str] = set()
-            for node in ast.walk(func_node):
+            for node in _own_nodes(func_node):
                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _is_to_numpy_call_without_copy(node.value):
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             risky_names.add(target.id)
-            for node in ast.walk(func_node):
+            for node in _own_nodes(func_node):
                 if not isinstance(node, ast.Call):
                     continue
                 target_name = _is_np_inplace_mutator_call(node)

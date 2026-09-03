@@ -28,7 +28,17 @@ logger = logging.getLogger(__name__)
 # for the rest of the process lifetime.
 _provider_cache: "OrderedDict[tuple, LLMProvider]" = OrderedDict()
 _provider_lock = threading.Lock()
-_PROVIDER_CACHE_MAX_SIZE = int(os.environ.get("PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE", "128"))
+_DEFAULT_PROVIDER_CACHE_MAX_SIZE = 128
+try:
+    _PROVIDER_CACHE_MAX_SIZE = int(os.environ.get("PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE", str(_DEFAULT_PROVIDER_CACHE_MAX_SIZE)))
+except ValueError:
+    # A typo in this env var used to abort ``import pyutilz.llm.factory`` outright (2026-09-03
+    # audit F40). Warn and use the documented default, as _retry.py already did.
+    logger.warning(
+        "PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE=%r is not an integer; falling back to %d.",
+        os.environ.get("PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE"), _DEFAULT_PROVIDER_CACHE_MAX_SIZE,
+    )
+    _PROVIDER_CACHE_MAX_SIZE = _DEFAULT_PROVIDER_CACHE_MAX_SIZE
 # Providers built with unhashable kwargs bypass the cache (below), and providers evicted from
 # the LRU above (when no running event loop can schedule their async close immediately) land
 # here too -- weakly tracked so the atexit handler still closes their HTTP clients instead of

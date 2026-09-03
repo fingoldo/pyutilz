@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # The three idioms that rebind a name on a module object for the duration of a test.
 _PATCH_CALLS = frozenset({"setattr", "patch", "object"})
@@ -134,7 +134,7 @@ def scan_reexport_patch_target(
         patched = _patched_targets(tree)
         if not patched:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         aliases = _module_aliases(tree)
         rel = py.relative_to(root).as_posix()
 

@@ -4,6 +4,7 @@ Reads API keys from environment variables / .env files.
 Callers can also inject their own settings object into the factory.
 """
 
+import logging
 import os
 import threading
 import time
@@ -11,6 +12,8 @@ from typing import Optional
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class LLMSettings(BaseSettings):
@@ -36,7 +39,18 @@ class LLMSettings(BaseSettings):
 # A short TTL removes the "stuck forever" failure mode while still avoiding a
 # ``LLMSettings()``/``.env`` re-read on every single call (this is looked up once per
 # ``get_llm_provider()`` call, including cache HITS -- see factory.py).
-_SETTINGS_TTL_SECONDS = float(os.environ.get("PYUTILZ_LLM_SETTINGS_TTL_SECONDS", "60"))
+_DEFAULT_SETTINGS_TTL_SECONDS = 60.0
+try:
+    _SETTINGS_TTL_SECONDS = float(os.environ.get("PYUTILZ_LLM_SETTINGS_TTL_SECONDS", str(_DEFAULT_SETTINGS_TTL_SECONDS)))
+except ValueError:
+    # A typo in this env var used to abort ``import pyutilz.llm.config`` outright, with a
+    # traceback pointing at a module-level float() rather than at the operator's environment
+    # (2026-09-03 audit F40). Warn and use the documented default, as _retry.py already did.
+    logger.warning(
+        "PYUTILZ_LLM_SETTINGS_TTL_SECONDS=%r is not a number; falling back to %.0fs.",
+        os.environ.get("PYUTILZ_LLM_SETTINGS_TTL_SECONDS"), _DEFAULT_SETTINGS_TTL_SECONDS,
+    )
+    _SETTINGS_TTL_SECONDS = _DEFAULT_SETTINGS_TTL_SECONDS
 _settings_lock = threading.Lock()
 _cached_settings: Optional[LLMSettings] = None
 _cached_settings_at: float = float("-inf")

@@ -4,6 +4,8 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
+import re
+
 from ._common import Optional, date, datetime, logger, time, timezone
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -53,23 +55,21 @@ def utc_ts_2_locstr(
     return res
 
 
+# A timezone offset is a trailing +HH:MM / -HH:MM, ANCHORED at the end of the string. Searching for
+# a bare "+"/"-" anywhere matched the date's own hyphens, so a timestamp with NO offset had every
+# colon stripped out of its time ('2020-02-20T11:54:00' -> '2020-02-20T115400').
+_TZ_OFFSET_RE = re.compile(r"([+-]\d{2}):(\d{2})$")
+
+
 def read_timezoned_ts(inp):
+    """Drop the colon from a trailing timezone offset; a string without one is returned unchanged.
+
+    >>> read_timezoned_ts('2020-02-20T11:54:00.000-07:00')
+    '2020-02-20T11:54:00.000-0700'
+    >>> read_timezoned_ts('2020-02-20T11:54:00')
+    '2020-02-20T11:54:00'
     """
-    read_timezoned_ts('2020-02-20T11:54:00.000-07:00')->'2020-02-20T11:54:00.000-0700'
-    """
-    parts = None
-    for sign_char in ("+", "-"):
-        if sign_char in inp:
-            parts = inp.split(sign_char)
-            break
-    if parts is None:
-        return inp
-    else:
-        if len(parts) >= 2:
-            return sign_char.join((sign_char.join(parts[:-1]), parts[-1].replace(":", "")))
-        else:
-            logger.error("Unexpected: split by %s of ts %s returned less than 2 results", sign_char, inp)
-            return inp
+    return _TZ_OFFSET_RE.sub(r"\1\2", inp)
 
 
 def datetime_to_unix_ts(dt):
@@ -99,7 +99,7 @@ def imitate_delay(
 ) -> datetime:
     """
     Waits random time interval (delay) since the last action.
-    >>>last_call_ts=None;last_call_ts=imitate_delay(2,4,last_call_ts);last_call_ts=imitate_delay(2,4,last_call_ts);
+    >>> last_call_ts=None;last_call_ts=imitate_delay(2,4,last_call_ts);last_call_ts=imitate_delay(2,4,last_call_ts);
 
     """
     from datetime import datetime, timezone

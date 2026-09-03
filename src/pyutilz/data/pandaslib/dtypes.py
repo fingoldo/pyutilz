@@ -4,8 +4,11 @@ Split out of the historical flat ``pyutilz.data.pandaslib`` module; re-exported
 from the package ``__init__`` to preserve the public import surface.
 """
 
+import re
+
 from ._common import (
     Any,
+    Dict,
     Union,
     Optional,
     Sequence,
@@ -16,6 +19,23 @@ from ._common import (
     tqdmu,
     logger,
 )
+
+# Formatting that a number would not reproduce: a leading zero before another digit ("01234", "-0501"),
+# leading/trailing whitespace, or an explicit "+" sign. Anchored alternatives, so it is a cheap scan.
+_IDENTIFIER_LIKE_TEXT_RE = re.compile(r"^\s|\s$|^\+|^-?0\d")
+
+
+def _has_identifier_like_text(series: pd.Series) -> bool:
+    """True if any non-null value of ``series`` carries text an equivalent number would not reproduce.
+
+    Such a column is an identifier that happens to be spelled with digits (zip code, zero-padded
+    account/customer id, phone number, EAN/ISBN), not a quantity: casting it to an integer is a
+    lossy rewrite of the data, not the storage optimization :func:`optimize_dtypes` promises.
+
+    Only ever consulted for a column whose numeric cast already succeeded, so the scan stays off the
+    hot path for ordinary free-text columns (which the cast rejects on their first non-numeric value).
+    """
+    return any(_IDENTIFIER_LIKE_TEXT_RE.search(str(value)) is not None for value in series.dropna())
 
 
 def set_df_columns_types(df: pd.DataFrame, types_dict: dict) -> None:
@@ -64,6 +84,68 @@ def get_columns_of_type(df: pd.DataFrame, type_names: Sequence) -> list:
     return res
 
 
+def _promote_object_columns(
+    df: pd.DataFrame,
+    old_dtypes: dict,
+    new_dtypes: dict,
+    int_fields: list,
+    float_fields: list,
+    skip_columns: Sequence,
+    max_categories: int,
+    inplace: bool,
+    verbose: bool,
+) -> None:
+    """Retype every object/string column of ``df`` in place: int64, else float64, else category.
+
+    Mutates ``old_dtypes``/``int_fields``/``float_fields`` for a numeric promotion (the size
+    reduction pass downstream reads them back) and ``new_dtypes`` for a category one. Columns with
+    more than ``max_categories`` distinct values, and anything the casts reject, are left alone.
+    """
+    for col, the_type in old_dtypes.items():
+        if "object" in the_type or "str" in the_type or "string" in the_type:
+            if col in skip_columns:
+                continue
+
+            # first try to int64, then to float64, then to category
+            try:
+                candidate = df[col].astype(np.int64)
+                # np.int64 cast silently truncates fractional floats (3.5 -> 3) instead of raising,
+                # so verify the round-trip is exactly equal to the original values before accepting it.
+                if not (candidate.astype(np.float64) == df[col].astype(np.float64)).all():
+                    raise ValueError(f"Column {col} contains fractional values; cannot be int64")
+                # That round-trip compares VALUES, so textual detail a number reproduces identically
+                # (a leading zero above all) passes it and is then thrown away. Such a column is an
+                # identifier spelled with digits, not a quantity; leave it to the category branch.
+                if _has_identifier_like_text(df[col]):
+                    raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
+                df[col] = candidate
+                old_dtypes[col] = "int64"
+                int_fields.append(col)
+            except Exception:
+                try:
+                    as_float = df[col].astype(np.float64)
+                    if _has_identifier_like_text(df[col]):
+                        raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
+                    df[col] = as_float
+                    old_dtypes[col] = "float64"
+                    float_fields.append(col)
+                except Exception:
+                    try:
+                        n = df[col].nunique()
+                        if n <= max_categories:
+                            if verbose:
+                                logger.info("%s %s->category", col, the_type)
+
+                            new_dtypes[col] = "category"
+                            if inplace:
+                                df[col] = df[col].astype(new_dtypes[col])
+
+                    except Exception as e3:
+                        if verbose:
+                            logger.warning(f"Could not convert to category column {col}: {e3}")
+                        pass  # to avoid stumbling on lists like [1]
+
+
 def optimize_dtypes(
     df: pd.DataFrame,
     max_categories: Optional[int] = 100,
@@ -101,10 +183,10 @@ def optimize_dtypes(
     if not inplace:
         df = df.copy()
 
-    old_dtypes = {}
-    new_dtypes = {}
-    int_fields = []
-    float_fields = []
+    old_dtypes: Dict[Any, str] = {}
+    new_dtypes: Dict[Any, str] = {}
+    int_fields: list = []
+    float_fields: list = []
     for field, the_type in df.dtypes.to_dict().items():
         if field not in skip_columns:
             old_dtypes[field] = the_type.name
@@ -118,41 +200,8 @@ def optimize_dtypes(
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
     if max_categories is not None:
-        for col, the_type in old_dtypes.items():
-            if "object" in the_type or "str" in the_type or "string" in the_type:
-                if col in skip_columns:
-                    continue
+        _promote_object_columns(df, old_dtypes, new_dtypes, int_fields, float_fields, skip_columns, max_categories, inplace, verbose)
 
-                # first try to int64, then to float64, then to category
-                try:
-                    candidate = df[col].astype(np.int64)
-                    # np.int64 cast silently truncates fractional floats (3.5 -> 3) instead of raising,
-                    # so verify the round-trip is exactly equal to the original values before accepting it.
-                    if not (candidate.astype(np.float64) == df[col].astype(np.float64)).all():
-                        raise ValueError(f"Column {col} contains fractional values; cannot be int64")
-                    df[col] = candidate
-                    old_dtypes[col] = "int64"
-                    int_fields.append(col)
-                except Exception:
-                    try:
-                        df[col] = df[col].astype(np.float64)
-                        old_dtypes[col] = "float64"
-                        float_fields.append(col)
-                    except Exception:
-                        try:
-                            n = df[col].nunique()
-                            if n <= max_categories:
-                                if verbose:
-                                    logger.info("%s %s->category", col, the_type)
-
-                                new_dtypes[col] = "category"
-                                if inplace:
-                                    df[col] = df[col].astype(new_dtypes[col])
-
-                        except Exception as e3:
-                            if verbose:
-                                logger.warning(f"Could not convert to category column {col}: {e3}")
-                            pass  # to avoid stumbling on lists like [1]
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Finds minimal size suitable to hold each variable of interest without loss of coverage
     # -----------------------------------------------------------------------------------------------------------------------------------------------------

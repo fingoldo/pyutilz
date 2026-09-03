@@ -13,6 +13,32 @@ from pyutilz.database.db.sql_helpers import validate_sql_identifier
 from typing import Iterable, Optional
 
 
+def _fresh_data_returning_fields(history_fields, hash_fields, fields_names, history_table_name, conflict_fields) -> list:
+    """Columns the ``fresh_data`` CTE must RETURN, given what the history CTE downstream reads.
+
+    Split out of ``build_upsert_query`` to keep that function within the project's C901 budget.
+
+    A COPY of ``history_fields`` is built, never an alias: ``returning_fields += [hash_field]`` is
+    an in-place mutation, and binding to the caller's own list leaked hash fields into the history
+    table's INSERT column list permanently.
+
+    The history CTE joins ``fresh_data u`` to the base table on the conflict key
+    (``u.<conflict_field>=c.<conflict_field>``), so every conflict field must be projected here.
+    A caller who did not happen to also list the key in ``history_fields`` got
+    ``ERROR: column u.<key> does not exist`` at execution time, from a builder whose only job is to
+    emit valid SQL. ``dict.fromkeys`` preserves order while de-duplicating.
+    """
+    returning_fields = list(history_fields)
+    if hash_fields:
+        for hash_field in hash_fields:
+            assert hash_field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces hash_fields is a subset of the insert columns, a business-logic invariant
+            if hash_field not in history_fields:
+                returning_fields += [hash_field]
+    if history_table_name:
+        returning_fields = list(dict.fromkeys(returning_fields + list(conflict_fields)))
+    return returning_fields
+
+
 def build_upsert_query(
     fields_names: list,
     table_name: str,
@@ -38,6 +64,14 @@ def build_upsert_query(
     Params:
     timestamp_check_fields: when element was last checked (queried from source)
     timestamp_update_fields: when element was last updated (queried from source and found changed)
+    default_timestamp: the SQL expression written for every timestamp_check_field in the insert's
+        select list (default ``now()``).
+
+    WARNING: ``default_timestamp``, ``custom_onconflict`` and the values of
+    ``on_conflict_update_values`` are spliced verbatim into the generated statement (raw SQL
+    fragments, unvalidated). They must NEVER be built from external/user-controlled input; only
+    pass trusted, hard-coded or internally-constructed expressions. Every other argument is
+    validated as a SQL identifier.
     """
     if conflict_fields is None:
         conflict_fields = ["id"]
@@ -74,7 +108,8 @@ def build_upsert_query(
     assert len(fields_names) > 0  # nosec B101 - trivial arity guard against building a query with zero columns, not an identifier check
 
     # Validate every identifier that ends up spliced into the raw SQL below (table/history table/column names).
-    # ``custom_onconflict`` and ``on_conflict_update_values`` values are accepted as raw SQL fragments by design.
+    # ``custom_onconflict``, ``on_conflict_update_values`` values and ``default_timestamp`` are accepted as raw SQL
+    # fragments by design (see the WARNING in the docstring).
     validate_sql_identifier(table_name)
     if history_table_name:
         validate_sql_identifier(history_table_name)
@@ -191,12 +226,7 @@ def build_upsert_query(
         # permanently, leaking hash_field(s) into the history-table INSERT's column list
         # (history_fields_final, built from history_fields further down) even though the caller
         # never asked for them there.
-        returning_fields = list(history_fields)
-        if hash_fields:
-            for hash_field in hash_fields:
-                assert hash_field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces hash_fields is a subset of the insert columns, a business-logic invariant
-                if hash_field not in history_fields:
-                    returning_fields += [hash_field]
+        returning_fields = _fresh_data_returning_fields(history_fields, hash_fields, fields_names, history_table_name, conflict_fields)
         fresh_query += f" returning {','.join(returning_fields)}"
 
     query += ", fresh_data as (" + fresh_query + ")"
@@ -215,7 +245,12 @@ def build_upsert_query(
         else:
             the_list = conflict_fields
 
-        f_ = [field for field in the_list if field not in history_fields_aliases]
+        # Regression fix: an aliased field used to be DROPPED from changed_data's RETURNING list, yet
+        # the trailing `update ... from changed_data as c where u.<key>=c.<key>` still referenced it
+        # under its ORIGINAL name -- `ERROR: column c.<key> does not exist`, and only on the second
+        # statement, after the first had already inserted into both tables. Project it back under the
+        # original name instead, the same `<alias> as <field>` form used for timestamp_check_fields below.
+        f_ = [f"{history_fields_aliases[field]} as {field}" if field in history_fields_aliases else field for field in the_list]
         if len(timestamp_update_fields) > 0:
             for field in timestamp_check_fields:
                 new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field

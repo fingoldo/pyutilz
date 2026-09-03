@@ -14,7 +14,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F01. [High] Weighted aggregates ignore the active `subgroups` filter, so every subgroup gets the same whole-group number under a subgroup-specific name — src/pyutilz/data/polarslib/aggregations.py:369
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `add_weighted_aggregates` gained an `expr_filter` callable applied to BOTH the weighted-value numerator and the weight denominator (aggregations.py:142), and `build_aggregate_features_polars` now passes the per-subgroup `af` helper into it (aggregations.py:385); the frame in the report now yields 15.0 (buy) / 150.0 (sell) instead of 82.5 twice.
 - **Category**: groupby-semantics
 - **Problem**: Inside `build_aggregate_features_polars`, every other family of expressions is wrapped in the per-subgroup helper `af(...)` (defined at :312) which appends `.filter(pl.col(filter_field) == filter_value)`. The `weighting_fields` branch at :368-375 calls `add_weighted_aggregates(columns_selector=(cs.numeric() - cs.by_name(...)), ...)` and passes `fpref` — the subgroup name prefix — for **naming only**. `add_weighted_aggregates` (:131) then builds `(all_other_num_cols * pl.col(wcol)).sum() / pl.col(wcol).sum()` with no filter anywhere, so the expression is evaluated over the whole group while the alias claims it belongs to one subgroup.
 - **Failure scenario**: `df = pl.DataFrame({"g":[1,1,1,1], "side":["buy","buy","sell","sell"], "px":[10.,20.,100.,200.], "vol":[1.,1.,1.,1.]})` with `numerical_fields=["px"]`, `weighting_fields=["vol"]`, `subgroups={"side":["buy","sell"]}`, then `df.group_by("g").agg(exprs)`. Observed:
@@ -27,7 +27,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F02. [High] `polars-ds` linreg / corr / othersvals expressions also ignore the `subgroups` filter, emitting identical values under distinct subgroup names — src/pyutilz/data/polarslib/aggregations.py:521
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - every polars-ds family is now built from `af(...)`-wrapped expressions: `pds.corr` takes expressions instead of bare column names (aggregations.py:531), the linreg row index and target (aggregations.py:542), the linreg-by-timestamp timestamp and target (aggregations.py:556-558), and both sides of the othersvals-at-extremums `get`/`arg_max`/`arg_min` (aggregations.py:408-409); buy/sell linreg slopes are now 10.0 / 100.0 rather than 65.0 twice.
 - **Category**: groupby-semantics
 - **Problem**: Same root cause as F01 but three more expression families, each of which builds `pl.col(field)` directly instead of `af(pl.col(field))` while still aliasing with `fpref`:
   - linreg, :521 — `pds.simple_lin_reg(pl.int_range(pl.len()), target=pl.col(field), add_bias=True).alias(alias)` (neither the row index nor the target is filtered);
@@ -44,7 +44,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F03. [High] `mi_for_column(drop_nulls=True)` mixes three different row populations and returns a mutual information larger than either marginal entropy — src/pyutilz/data/polarslib/binning.py:81
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `mi_for_column` with `drop_nulls=True` now derives H(x), H(y) and H(x, y) from one complete-case subset `bins.drop_nulls(subset=[col, target_col])` and ignores the per-column precomputed marginals (binning.py:86-93); MI is back within [0, min(H)]. The 2026-09-02 F17 contract is not reintroduced but strengthened - a column whose only signal is its null pattern scored ln(2) before and scores exactly 0 now; both contracts are pinned by tests.
 - **Category**: statistical-formula
 - **Problem**: `_group_freqs(bins, cols, drop_nulls=True)` (:51-55) calls `bins.drop_nulls(subset=cols)` and normalizes by the length of *that* subset. `entropy_for_column` therefore estimates H(X) on the rows where X is non-null, H(Y) on the rows where Y is non-null, and `mi_for_column`'s joint term on the rows where BOTH are non-null. `mi = H(X) + H(Y) - H(X,Y)` is only valid when all three come from the same sample, so the identity breaks and the bound `MI <= min(H(X), H(Y))` is violated. This code path did not exist before the 2026-09-02 fix for that audit's F17, which added the `drop_nulls` parameter.
 - **Failure scenario**:
@@ -65,7 +65,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F04. [High] `benchmark_dataframe_compression` corrupts the parquet rows into a row of column-name strings and then raises `UFuncTypeError` — src/pyutilz/data/pandaslib/benchmarks.py:270
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the parquet sweep is appended as rows rather than dicts (`itertuples(index=False, name=None)`, benchmarks.py:278) and `benchmark_dataframe_parquet_compression` emits the singular column vocabulary the combined frame is built with (benchmarks.py:153, docstring at :90-96); no other caller used the plural names.
 - **Category**: dataframe-construction
 - **Problem**: `res` is accumulated by `pack_benchmark_results` as **lists** (`[config, mean, std, ...]`, :78). The parquet block then does `res.extend(parquet_results.to_dict("records"))` (:270), appending **dicts**. `pd.DataFrame(list_of_mixed_lists_and_dicts, columns=[...])` treats each dict as an iterable of its keys, so each parquet row becomes a literal row of the strings `config, mean_read_times, std_read_times, ...`. Compounding it, `benchmark_dataframe_parquet_compression` names its columns in the plural (`mean_read_times`, :149) while the final frame uses the singular (`mean_read_time`, :278) and the default `sort_by="mean_write_size"`, so even a correct dict-to-row alignment would not have matched.
 - **Failure scenario**: One feather config plus one parquet config, reproduced with the exact constructor from :277-281:
@@ -83,7 +83,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F05. [High] `optimize_dtypes` silently converts identifier-like string columns to integers, destroying leading zeros — src/pyutilz/data/pandaslib/dtypes.py:128
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `optimize_dtypes` keeps identifier-like text as text (dtypes.py:24-36, guard applied at :155 and :163). BEHAVIOUR CHANGE, narrowly scoped: a string column whose numeric cast would otherwise have been accepted is now rejected if any non-null value has a leading zero before another digit ("01234", "-0501"), leading/trailing whitespace, or an explicit "+" sign; such a column falls through to the existing category branch instead. Plain numeric strings ("1", "1.5", "-3") still compress to int/float exactly as before, and the text scan only runs on columns whose numeric cast already succeeded, so free-text columns pay nothing.
 - **Category**: dtype-coercion
 - **Problem**: For every object/`str`/`string` column the function first attempts `df[col].astype(np.int64)` (:128) and accepts it if `candidate.astype(np.float64) == df[col].astype(np.float64)` holds (:131). That guard was added to reject fractional truncation and does exactly that, but it compares **numerically**, so any purely-textual information that is not numeric — most importantly a leading zero — round-trips as equal and the cast is accepted. Zip codes, account/customer numbers, phone numbers, ISBN/EAN codes and zero-padded ids are all silently rewritten.
 - **Failure scenario**:
@@ -100,7 +100,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F06. [Medium] `bin_numerical_columns` raises `InvalidOperationError` on any Decimal column, because `cs.numeric()` selects Decimal but `.fill_nan()` does not support it — src/pyutilz/data/polarslib/binning.py:327
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `cols_with_floats` is now computed unconditionally and the NaN handling is confined to it (binning.py:318, 348-350), so a Decimal column - what `pl.read_database` returns for a SQL NUMERIC - is binned instead of raising InvalidOperationError from `fill_nan`.
 - **Category**: dtype-support
 - **Problem**: `cs.numeric()` in polars 1.44 includes `Decimal` (verified: `cs.expand_selector(df, cs.numeric()) -> ('d', 'f')` for a `Decimal(12,2)` + `Float64` frame), but `cs.float()` does not (`-> ('f',)`). So a Decimal column is selected for binning and reaches the unconditional `.fill_nan(0)` on the binning expression at :327 while never being routed through the float-only `clean_numeric` guard at :324-325. `fill_nan` is not implemented for Decimal.
 - **Failure scenario**:
@@ -119,7 +119,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F07. [Medium] `find_nan_cols` / `find_infinite_cols` raise `InvalidOperationError` on Decimal columns — src/pyutilz/data/polarslib/columns.py:51
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the NaN/infinity predicates were narrowed to `cs.float()` while the null check keeps the `cs.numeric()` reach (columns.py:62, 72); the two predicates are evaluated separately because their selectors expand to different column sets, which polars rejects as duplicate output names.
 - **Category**: dtype-support
 - **Problem**: Same `cs.numeric()`-includes-Decimal mismatch as F06, on a different pair of functions: `find_nan_cols` applies `cs.numeric().is_nan()` (:51) and `find_infinite_cols` applies `cs.numeric().is_infinite()` (:56); neither predicate is defined for Decimal.
 - **Failure scenario**:
@@ -137,7 +137,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F08. [Medium] `drop_constant_columns`, `find_nan_cols` and `find_infinite_cols` crash with a raw `OutOfBoundsError` on a frame that has no numeric columns — src/pyutilz/data/polarslib/frames.py:44
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - width guards added before `.row(0)` mirroring binning.py:290-295: `drop_constant_columns` returns the frame unchanged (frames.py:45-50) and `_cols_matching` returns an empty frame (columns.py:40-44), so an all-string frame is answered rather than crashed on.
 - **Category**: empty-edge-case
 - **Problem**: All three call `.row(0)` on the result of a selector-based aggregate: `drop_constant_columns` at `frames.py:44` (`df.lazy().select(stats_expr).collect().row(0, named=True)`) and `_cols_matching` at `columns.py:40` (`meta.row(0)`), which backs both `find_nan_cols` and `find_infinite_cols`. When the selector expands to nothing the collected frame has 0 columns AND 0 rows, so `.row(0)` raises. The sibling `bin_numerical_columns` was given exactly this guard on 2026-09-02 (see `binning.py:290-295`); these three were not.
 - **Failure scenario**:
@@ -155,7 +155,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F09. [Medium] `bin_numerical_columns` still folds NaN into bin 0 when `fill_nans=False`, so the flag does not do what it says — src/pyutilz/data/polarslib/binning.py:327
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the `.fill_nan(...)` on the binning expression is now conditional on `fill_nans` and applies only to float columns (binning.py:348-350): with filling on, NaN still lands in bin 0, agreeing with the `nans_filler=min_val` path; with it off, NaN becomes null, matching what `fill_nulls=False` already yields, so a missing value is no longer indistinguishable from the column minimum.
 - **Category**: nan-handling
 - **Problem**: `fill_nans=False` skips the `clean_numeric(col_expr, nans_filler=min_val)` wrapper at :324-325, but the binning expression itself ends with an unconditional `.fill_nan(0)` at :327. Bin 0 is also where the column's true minimum lands, so a NaN and the smallest real observation become indistinguishable. The parallel `fill_nulls=False` path behaves correctly (nulls survive as null), which makes the asymmetry a genuine surprise rather than a documented convention.
 - **Failure scenario**:
@@ -174,7 +174,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F10. [Low] `showcase_df_columns` writes the value-count table to stdout even with `use_print=False` — src/pyutilz/data/pandaslib/frames.py:262
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a single `should_print` boolean now gates every stdout write in both branches, not just the dtype header (frames.py:216, applied at :251, :268-281, :306-318); with `use_print=False` the function is silent, and the doctests that pass `use_print=True` are unchanged.
 - **Category**: output-contract
 - **Problem**: `use_print` gates only the one-line dtype header (polars :245, pandas :299). The actual `print(stats)` / `print(stats.head(max_vars))` / `print("")` calls that emit the distribution table (polars :263, :267, :272, :274; pandas :305, :307, :309) are unconditional. With IPython installed the header goes through `display(Markdown(...))` and is correctly suppressed, so the caller ends up with the table but no header.
 - **Failure scenario**:
@@ -194,7 +194,7 @@ Findings: 5 High, 4 Medium, 2 Low (11 total).
 
 ### F11. [Low] `concat_and_flush_df_list` discards the index of every input frame without saying so — src/pyutilz/data/pandaslib/io_ops.py:65
 
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `concat_and_flush_df_list` gained an `ignore_index: bool = True` parameter (io_ops.py:62, used at :77) with the index-discarding behaviour now stated in the docstring; the default is unchanged, so no caller is affected until it opts in.
 - **Category**: index-alignment
 - **Problem**: The concat is hardcoded to `pd.concat(lst, axis=0, ignore_index=True)`, which throws away whatever index the caller's frames carried and replaces it with a fresh `RangeIndex`. The docstring (:57-62) describes concatenation, writing and the `set_index` option but never mentions that an existing index is dropped; `set_index` can only *promote a column*, so an index that was not also a column is unrecoverable after the call. `read_stats_from_multiple_files` (:159) is the in-repo caller, so files whose pickles carry a meaningful index (a timestamp index, an entity id) lose it during the merge.
 - **Failure scenario**: `concat_and_flush_df_list([pd.DataFrame({"v":[1,2]}, index=["a","b"])], "out")` returns a frame indexed `0,1`; the labels `"a"`,`"b"` are gone from both the return value and the written pickle, and `set_index=` cannot bring them back because they were never a column.

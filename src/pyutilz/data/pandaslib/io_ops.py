@@ -52,7 +52,14 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
 
 
 def concat_and_flush_df_list(
-    lst: list, file_name: str, to_csv: bool = False, csv_cols: Optional[list] = None, write_fcn: str = "to_pickle", write_extension: str = "pckl", set_index: Optional[str] = None
+    lst: list,
+    file_name: str,
+    to_csv: bool = False,
+    csv_cols: Optional[list] = None,
+    write_fcn: str = "to_pickle",
+    write_extension: str = "pckl",
+    set_index: Optional[str] = None,
+    ignore_index: bool = True,
 ) -> Optional[pd.DataFrame]:
     """
     Concatenate all dataframes in ``lst`` into one, clear ``lst`` in place to free memory, then write and return the result.
@@ -60,9 +67,14 @@ def concat_and_flush_df_list(
     If ``to_csv`` is True the joined dataframe is written as CSV (header+overwrite when ``csv_cols`` is None,
     else appending only ``csv_cols`` without header); otherwise it is optionally indexed by ``set_index`` and
     written via ``getattr(joined_df, write_fcn)`` to ``f"{file_name}.{write_extension}"``. Returns None if ``lst`` is empty.
+
+    ``ignore_index`` defaults to True, which DISCARDS whatever index the input frames carried and replaces
+    it with a fresh RangeIndex -- an index that was not also a column (a timestamp index, an entity id) is
+    unrecoverable afterwards, and ``set_index`` cannot bring it back because it can only promote a column.
+    Pass False to keep the inputs' index labels in the concatenated result and in the written file.
     """
     if len(lst) > 0:
-        joined_df = pd.concat(lst, axis=0, ignore_index=True)
+        joined_df = pd.concat(lst, axis=0, ignore_index=ignore_index)
         lst.clear()
         gc.collect()
         if to_csv:

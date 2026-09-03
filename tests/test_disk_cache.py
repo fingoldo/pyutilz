@@ -267,5 +267,7 @@ def test_disk_cache_picklable(tmp_path: Path):
 
 def test_disk_cache_key_path_traversal_rejected(tmp_path: Path):
     cache = DiskCache(tmp_path)
-    with pytest.raises(ValueError, match="resolves outside cache_dir"):
+    # A traversing key is now rejected by the separator guard before the resolve() check -- both
+    # are the same contract ("a key is a content digest, not a path"), so either message is correct.
+    with pytest.raises(ValueError, match=r"resolves outside cache_dir|path separator"):
         cache._key_path("../evil")

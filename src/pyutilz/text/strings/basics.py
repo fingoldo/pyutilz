@@ -27,13 +27,19 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
     if len(start) == 0:
         # Honour idx1 here too: returning content from before the caller's requested start was
         # exactly what the window argument was meant to exclude.
+        # A negative idx1 gets Python slice semantics (resolved against len(s)) instead of
+        # falling through to the `p1 >= 0` test below and silently returning None.
         p1 = idx1 or 0
+        if p1 < 0:
+            p1 = max(0, len(s) + p1)
     else:
         p1 = s.find(start, idx1, idx2)
     if p1 >= 0:
         p1 = p1 + len(start)
         if len(end) == 0:
-            p2 = len(s)
+            # idx2, not len(s): an empty `end` means "to the end of the caller's window", and
+            # ignoring idx2 here returned content from past the declared upper bound.
+            p2 = idx2
         else:
             p2 = s.find(end, p1, idx2)
         if p2 >= 0:

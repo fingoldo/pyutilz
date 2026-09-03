@@ -156,6 +156,10 @@ def _claude_code_provider_for_generate(monkeypatch, result_message=None):
     p._last_result_message = result_message
 
     async def fake_sdk(prompt, system=None):
+        # Stands in for the real _generate_sdk, which resets per-call state INSIDE its semaphore
+        # (moved there 2026-09-03, audit F08: generate() holds no lock, so a queued call used to
+        # clear the running call's state). The F26 contract asserted below is unchanged.
+        p._reset_per_call_state()
         return "answer"
 
     p._generate_sdk = fake_sdk

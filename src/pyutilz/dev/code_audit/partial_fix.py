@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
 
 # --- two shapes that only show up when you look ACROSS functions ----------------------------------
 #
@@ -28,7 +29,9 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 
 # Only shapes that actually TEST emptiness. `len(p)` alone is not one of them - `len(rows) * 3` is
 # arithmetic, and treating it as a guard made every member of a family look guarded and the check silent.
-_GUARD_TEMPLATES = ("if not {p}", "not {p}:", "if {p}:", "bool({p})", "{p} and ", "and {p}", "len({p}) ==", "len({p}) >", "len({p}) <")
+# Matched as WORD-BOUNDED regexes (see the same fix in `vacuous_matching`): a plain substring test
+# let a longer identifier sharing the parameter's prefix count as its guard.
+_GUARD_TEMPLATES = ("if not {p}", "not {p}:", "if {p}:", r"bool\({p}\)", "{p} and ", "and {p}", r"len\({p}\) ==", r"len\({p}\) >", r"len\({p}\) <")
 
 
 def scan_partial_guard_across_siblings(
@@ -53,7 +56,7 @@ def scan_partial_guard_across_siblings(
         if tree is None:
             continue
         src = py.read_text(encoding="utf-8", errors="replace")
-        src_lines = src.splitlines()
+        src_lines = split_src_lines(src)
         rel = py.relative_to(root).as_posix()
 
         families: dict[tuple[str, str], list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
@@ -68,12 +71,12 @@ def scan_partial_guard_across_siblings(
         for (prefix, param), members in sorted(families.items()):
             if len(members) < min_family:
                 continue
-            guards = tuple(t.format(p=param) for t in _GUARD_TEMPLATES)
+            guards = [re.compile(t.format(p=r"\b" + re.escape(param) + r"\b")) for t in _GUARD_TEMPLATES]
             guarded: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
             unguarded: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
             for member in members:
                 body = ast.get_source_segment(src, member) or ""
-                (guarded if any(g in body for g in guards) else unguarded).append(member)
+                (guarded if any(g.search(body) for g in guards) else unguarded).append(member)
             if not unguarded or len(guarded) / len(members) < min_share:
                 continue
             findings.extend(
@@ -118,7 +121,7 @@ def scan_inconsistent_filter(
         if tree is None:
             continue
         src = py.read_text(encoding="utf-8", errors="replace")
-        src_lines = src.splitlines()
+        src_lines = split_src_lines(src)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):

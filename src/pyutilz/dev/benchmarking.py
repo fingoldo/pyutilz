@@ -52,6 +52,22 @@ def synchronize_gpu_if_available() -> None:
         logger.debug("synchronize_gpu_if_available: no-op (%s)", e)  # nosec B110
 
 
+def _preserve_axis_value(value):
+    """Return an axis value as ``int`` when it is integral, otherwise unchanged.
+
+    ``axes`` is documented as ``{dim: [values]}`` with no integrality requirement, so a blanket
+    ``int()`` silently truncated fractional axes (density 0.25 and 0.5 both became 0) and made the
+    emitted ``<dim>_max`` bounds indistinguishable to the kernel_tuning_cache matcher.
+    """
+    try:
+        if float(value) == int(value):
+            return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return value
+    logger.warning("benchmarking: axis value %r is not integral; keeping it as-is in the emitted region bound.", value)
+    return value
+
+
 def benchmark_algos_by_runtime(
     implementations: list, algo_name: str = "", n_reps: int = 2, verbose: int = 0, synchronize_gpu: bool = True, **algo_kwargs
 ) -> tuple:
@@ -66,6 +82,11 @@ def benchmark_algos_by_runtime(
     code and without cupy. Also benchmark DRAM-resident and VRAM-resident inputs
     separately when comparing a GPU backend: the optimal choice is
     residency-AND-HW-dependent (transfer cost vs on-device compute)."""
+
+    if n_reps < 1:
+        # With no repetition the min-tracking sentinel below was returned AS A TIMING: every backend
+        # came back at 1e20 s and a dispatcher persisted that with an arbitrary argsort order.
+        raise ValueError(f"benchmark_algos_by_runtime: n_reps must be >= 1, got {n_reps}")
 
     durations: Any = []
     if verbose > 1:
@@ -246,7 +267,10 @@ def sweep_backend_crossover(
         band_max = per_size_winner[j][0]
         is_last = j == len(per_size_winner) - 1
         worst_diff = max(d for _, _, d in per_size_winner[i : j + 1])
-        region = {f"{primary_axis}_max": None if is_last else int(band_max), decision_key: per_size_winner[i][1]}
+        # Axis values keep their own type: int() truncated a non-integer axis (density 0.25/0.5 both
+        # became 0), so the kernel_tuning_cache matcher could not tell the measured cells apart and every
+        # real value fell through to the catch-all entry.
+        region = {f"{primary_axis}_max": None if is_last else _preserve_axis_value(band_max), decision_key: per_size_winner[i][1]}
         if np.isfinite(worst_diff):
             region["max_abs_diff"] = float(worst_diff)
         region.update(extra)
@@ -480,7 +504,7 @@ def sweep_backend_grid(
                 ms = timings[name]
                 if ms < best_ms:
                     best_name, best_ms, best_diff = name, ms, diffs[name]
-            region: dict = {f"{d}_max": int(dims[d]) for d in dim_names}
+            region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
             if len(residencies) > 1:
                 region["location_eq"] = res
             region[decision_key] = best_name or ref

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- discarded coroutine (missed await) ---------------------------------------
 #
@@ -29,6 +30,18 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 #    legitimately shadows a same-named async method).
 
 
+def _walk_module_level(tree: ast.Module) -> "Iterator[ast.AST]":
+    """Like ``ast.walk(tree)`` but never descends into a function body -- those are visited as
+    their own scope, so descending here would double-report every finding inside one."""
+    todo: list[ast.AST] = list(ast.iter_child_nodes(tree))
+    while todo:
+        node = todo.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+
+
 def scan_missed_await(root: Path,
                       exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                       ) -> list[Finding]:
@@ -47,13 +60,15 @@ def scan_missed_await(root: Path,
         async_names = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)}
         if not async_names:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
+        scopes: list[ast.AST] = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        # Module scope counts too: a script body (or an `if __name__ == "__main__":` block) that
+        # calls an async def without awaiting it exits having done nothing.
+        scopes.append(tree)
+        for func in scopes:
             rebound: set[str] = set()
-            for n in ast.walk(func):
+            for n in (_walk_module_level(tree) if func is tree else ast.walk(func)):
                 if isinstance(n, (ast.Import, ast.ImportFrom)):
                     for alias in n.names:
                         rebound.add((alias.asname or alias.name).split(".")[0])
@@ -61,11 +76,11 @@ def scan_missed_await(root: Path,
                     rebound.add(n.id)
                 elif isinstance(n, ast.arg):
                     rebound.add(n.arg)
-                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func:
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func and func is not tree:
                     # A nested def with the same name as a module-level async function is a
                     # legitimate local shadow (same idea as the local-import shadow above).
                     rebound.add(n.name)
-            for stmt in ast.walk(func):
+            for stmt in (_walk_module_level(tree) if func is tree else ast.walk(func)):
                 if not isinstance(stmt, ast.Expr):
                     continue
                 call = stmt.value
@@ -178,7 +193,7 @@ def scan_sync_blocking_in_async(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for func in ast.walk(tree):
             if not isinstance(func, ast.AsyncFunctionDef):

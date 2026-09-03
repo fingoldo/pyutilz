@@ -46,6 +46,7 @@ import hmac
 import logging
 import os
 import pickle  # nosec B403 - this module's whole purpose is guarding pickle.load behind sha256 sidecar verification (see safe_load below and the module-level THREAT MODEL CAVEAT docstring); callers needing tamper-resistance against a co-located attacker must layer keyed integrity on top
+import re
 import threading
 import time
 from os.path import isfile
@@ -62,6 +63,9 @@ __all__ = [
 ]
 
 DEFAULT_ALLOW_UNVERIFIED_ENV_VAR = "PYUTILZ_ALLOW_UNVERIFIED_PICKLE"
+
+# A well-formed sha256 sidecar digest: exactly 64 lowercase hex characters.
+_SHA256_HEX_RE = re.compile("^[0-9a-f]{64}$")
 
 # Per-path locks so a (payload replace + sidecar write) pair is atomic AS A UNIT across threads
 # in this process. Without this, two threads writing the same path can interleave such that the
@@ -171,6 +175,8 @@ def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_va
 
     * sidecar present + digest matches -> True
     * sidecar present + digest does NOT match -> False
+    * sidecar present but malformed (not 64 hex chars) -> False
+    * payload file itself missing -> False
     * sidecar missing -> False by default (RCE-bypass guard)
     * sidecar missing + the ``env_var`` env var truthy -> True with WARN
 
@@ -179,6 +185,13 @@ def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_va
     pin behaviour regardless of ambient environment. ``env_var`` lets an embedding
     project keep its own historical opt-in variable name.
     """
+    if not isfile(path):
+        # An ORPHANED sidecar (payload deleted, sidecar left behind) is a state this codebase
+        # produces itself -- DiskCache._evict_if_needed unlinks the payload first and tolerates a
+        # failure on the sidecar. _sha256_of_file below sits outside every handler, so it used to
+        # raise FileNotFoundError out of a function documented to return only True/False.
+        logger.error("verify_sidecar: payload %s does not exist -- refusing to verify.", path)
+        return False
     sidecar = path + ".sha256"
     if not isfile(sidecar):
         allow = _allow_unverified(env_var) if allow_unverified is None else bool(allow_unverified)
@@ -205,6 +218,12 @@ def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_va
             expected = f.read().strip().split()[0].lower()
     except (OSError, UnicodeDecodeError, IndexError) as exc:
         logger.error("verify_sidecar: could not read sidecar %s: %s", sidecar, exc)
+        return False
+    if not _SHA256_HEX_RE.match(expected):
+        # ``hmac.compare_digest`` raises TypeError for a non-ASCII str, and the sidecar is
+        # unvalidated on-disk content: a sidecar of 64 accented characters escaped both this
+        # function and safe_load (DiskCache.get does not catch TypeError either).
+        logger.error("verify_sidecar: sidecar %s does not contain a 64-character hex sha256 digest -- refusing to verify.", sidecar)
         return False
     actual = _sha256_of_file(path).lower()
     return hmac.compare_digest(expected, actual)

@@ -6,7 +6,7 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 ``explain_table``).
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from ._common import (
     logger,
@@ -50,6 +50,39 @@ def get_table_fields(table, alias, prefix="", suffix="", excluding=""):
         return ",".join([alias + "." + col.name + " " + prefix + col.name + suffix for col in local_cur.description if col.name not in excluding])
 
 
+def _close_local_named_cursor(cursor_name: Optional[str], local_cur: Any) -> None:
+    """Close a named/server-side cursor this call declared, best-effort, before its error is re-raised.
+
+    Split out of ``basic_db_execute`` to keep that function within the project's C901 budget.
+    Only a NAMED cursor is closed here: an unnamed one is the shared per-thread cursor the module
+    keeps alive on purpose.
+    """
+    if cursor_name is None or local_cur is None:
+        return
+    try:
+        local_cur.close()
+    except Exception as close_exc:
+        logger.exception(close_exc)
+
+
+def _close_colliding_named_cursor(cursor_name: Optional[str]) -> None:
+    """CLOSE the server-side cursor whose name a DECLARE just collided with, best-effort.
+
+    Split out of ``basic_db_execute`` to keep that function within the project's C901 budget.
+    Failure to close is logged and swallowed: the caller is already on a retry path, and a cursor
+    that cannot be closed is not a reason to abandon the statement.
+    """
+    if cursor_name is None:
+        return
+    try:
+        validate_sql_identifier(cursor_name)
+        closing_cur = _facade.get_cursor(_facade.get_cursor_type(None, None))
+        closing_cur.execute(f'CLOSE "{cursor_name}"')  # nosec B608 - cursor_name validated as an identifier one line above
+        logger.info("Closed the colliding server-side cursor %r before retrying", cursor_name)
+    except Exception as close_exc:
+        logger.warning("Could not close the colliding server-side cursor %r: %s", cursor_name, close_exc)
+
+
 def basic_db_execute(
     ex_type,
     statement,
@@ -69,6 +102,11 @@ def basic_db_execute(
     collision; a statement with no result set yields an empty list. Server-side cursors this function
     does not hand back to the caller are closed here so they cannot leak for the connection's lifetime.
     """
+    if max_retries < 1:
+        # A non-positive budget made `while retry_count < max_retries` skip the body entirely: the
+        # statement never reached the database and the function returned None -- indistinguishable
+        # from a statement with no result set, with no log line either.
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
     if not auto_commit:
         # The connection runs in ISOLATION_LEVEL_AUTOCOMMIT, so every statement commits on its own;
         # a caller batching statements under auto_commit=False has no transaction and no rollback.
@@ -147,21 +185,22 @@ def basic_db_execute(
                 # Also, `cur = get_cursor(...)` above raised BEFORE completing its assignment, so
                 # the module-level `cur` still held whatever the PREVIOUS call left it as -- an
                 # unrelated cursor, not the one that actually collided -- so `cur.close()` was
-                # closing the wrong object. Only the stale cache entry is cleared here now;
-                # nothing is closed that this function can't positively identify.
+                # closing the wrong object. The recovery below closes the colliding cursor BY NAME
+                # instead, which is the only handle this function can positively identify.
                 retry_count += 1
                 if retry_count >= max_retries:
                     logger.error("Max retries (%s) exceeded for database operation (cursor collision, statement=%s)", max_retries, stmt_preview)
                     raise
-                _facade._get_thread_cursors().pop(cursor_type, None)
+                # Regression fix: the recovery used to be `_get_thread_cursors().pop(cursor_type)`,
+                # which is unconditionally a no-op -- get_cursor() never CACHES a named cursor
+                # ("_named" is excluded from both its read and its write), so nothing was ever there
+                # to pop. The retry then re-issued DECLARE <same name> and collided again, burning
+                # the whole retry budget. Close the colliding server-side cursor for real instead.
+                _close_colliding_named_cursor(cursor_name)
                 _facade.sleep(1)
                 continue
             else:
-                if cursor_name is not None and local_cur is not None:
-                    try:
-                        local_cur.close()
-                    except Exception as close_exc:
-                        logger.exception(close_exc)
+                _close_local_named_cursor(cursor_name, local_cur)
                 raise
         else:
             _facade.cur = local_cur
@@ -212,17 +251,38 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
     field order. Every row in ``elements`` is applied in turn, so the last one wins.
     """
     if isinstance(fields, str):
-        fields = fields.split(",")
+        # .strip(): `returning` is documented as a raw fragment and "id, name" is its natural
+        # spelling, so an unstripped split() used to create an attribute literally named " name",
+        # reachable only via getattr() -- while the obvious `obj.<prefix>name` raised AttributeError
+        # with nothing pointing at the whitespace.
+        fields = [f.strip() for f in fields.split(",")]
     if elements is not None:
         if fields == ["*"]:
             # Per-thread cursor, for the same cross-thread-rebinding reason as get_table_fields().
             local_cur = _facade.get_cursor(_facade.get_cursor_type(None, None))
             assert local_cur is not None, "fetch_db_elements() requires connect_to_db() to have been called first"
+            if local_cur.description is None:
+                # A cursor that has not executed a result-returning statement (e.g. this thread never
+                # ran a query of its own, the rows were fetched elsewhere and handed over) has no
+                # description; the comprehension below would fail with an opaque
+                # "'NoneType' object is not iterable" naming neither cause.
+                raise ValueError(
+                    "fetch_db_elements(fields='*') needs the calling thread's cursor to have executed a result-returning "
+                    "statement; it has no description. Pass an explicit comma-separated fields list instead."
+                )
             fields = [col.name for col in local_cur.description]
         if indices is None:
             indices = range(len(fields))
+        # Keep each field's ORIGINAL position when skipping an unusable name, so the remaining
+        # fields stay aligned with their columns.
+        usable = []
+        for i, field in enumerate(fields):
+            if not field.isidentifier():
+                logger.warning("fetch_db_elements: skipping %r -- not a valid Python attribute name (expression or alias in the fields list?)", field)
+                continue
+            usable.append((i, field))
         for element in elements:
-            for i, field in enumerate(fields):
+            for i, field in usable:
                 setattr(self, prefix + field, element[indices[i]])
 
 
@@ -347,10 +407,22 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                 typename = "string"
             ltypename = typename.lower()
             if val is not None:
+                # Regression fix: only the json branch used to be guarded, so ONE unparseable row
+                # ("oops" typed int, or a genuine bool value typed bool -- bool has no .lower())
+                # raised out of read_db_settings entirely, leaving the caller's namespace populated
+                # with whichever settings sorted before it and last_db_settings_read_at unset, so the
+                # very next call repeated the failure instead of being throttled by interval_minutes.
+                # The docstring already promised the value is left untouched when it fails to parse.
                 if ltypename == "int":
-                    val = int(val)
+                    try:
+                        val = int(val)
+                    except (ValueError, TypeError):
+                        logger.warning("Setting %r has type %r but value %r is not an integer -- left untouched", setting_name, typename, val)
                 elif ltypename in ["float", "real", "double", "numeric"]:
-                    val = float(val)
+                    try:
+                        val = float(val)
+                    except (ValueError, TypeError):
+                        logger.warning("Setting %r has type %r but value %r is not a number -- left untouched", setting_name, typename, val)
                 elif ltypename in ["str", "string"]:
                     val = str(val)
                 elif ltypename in ["json", "jsonb"]:
@@ -371,7 +443,9 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                             # Leave non-JSON values untouched rather than crashing settings load.
                             logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
                 elif ltypename in ["bool", "boolean"]:
-                    val = val.lower() in ["true", "1", "t", "y", "yes"]
+                    # str(val) so an already-boolean (or numeric) column value does not blow up on
+                    # .lower(); True/1 still map to True via their str() forms.
+                    val = str(val).lower() in ["true", "1", "t", "y", "yes"]
             g[setting_name] = val
         _facade.last_db_settings_read_at = datetime.now(timezone.utc)
 
@@ -495,6 +569,11 @@ def execute_alchemy(sql: str, max_retries: int = 3) -> None:
     from external/user-controlled input directly; only pass trusted, hard-coded or
     internally-constructed statements.
     """
+    if max_retries < 1:
+        # Same shape as basic_db_execute: with a non-positive budget the loop body never ran, so the
+        # statement was never sent, last_exc stayed None (skipping the `raise last_exc` below) and the
+        # function returned None after logging "giving up after 0 attempts".
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
     conn_alchemy = _facade.conn_alchemy
     assert conn_alchemy is not None, "execute_alchemy() requires conn_alchemy to be configured first"
     n = 0

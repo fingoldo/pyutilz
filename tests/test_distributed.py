@@ -265,10 +265,13 @@ class TestIdentityRaceCondition:
         def fake_get_system_info(only_stats=False):
             return {"host_name": "h", "os_machine_guid": "g", "os_serial": "s"}
 
-        def fake_safe_execute(sql_params):
-            sql, params = sql_params
+        def fake_safe_execute(sql, data=None):
+            # db.safe_execute(statement, data=None): heartbeat_scraper unpacks get_heartbeat_sql()'s
+            # (sql, params) tuple and passes them as two arguments. The fake used to accept the
+            # tuple as a single positional, enshrining the very call shape that made every heartbeat
+            # fail at the driver (2026-09-03 audit, F03).
             if sql:
-                captured.append(params)
+                captured.append(data)
 
         captured = []
         _current_identity = threading.local()

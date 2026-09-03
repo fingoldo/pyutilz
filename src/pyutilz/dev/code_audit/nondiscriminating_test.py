@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- test functions that cannot fail -------------------------------------
 #
@@ -47,8 +47,12 @@ _REASON_HELP = {
 
 
 def _own_nodes(func: ast.AST) -> Iterator[ast.AST]:
-    """Walk ``func`` without descending into nested function definitions -- a helper's assertions are its own."""
-    stack = list(ast.iter_child_nodes(func))
+    """Walk ``func``'s BODY without descending into nested function definitions -- a helper's assertions are its own.
+
+    Only the body: ``ast.iter_child_nodes`` would also yield ``decorator_list``, which turns the
+    declarative ``@pytest.mark.xfail`` this scanner RECOMMENDS into an imperative-xfail finding.
+    """
+    stack: list[ast.AST] = list(func.body) if isinstance(func, _FUNC_NODES) else list(ast.iter_child_nodes(func))
     while stack:
         node = stack.pop()
         yield node
@@ -82,6 +86,9 @@ def _swallows_assertion_error(func: ast.AST) -> bool:
         # A handler containing its own assertion is CHECKING the failure, not swallowing it.
         if any(isinstance(inner, ast.Assert) for inner in ast.walk(node)):
             continue
+        # `pytest.fail(...)` / `self.fail(...)` fails HARDER than the assertion it replaces.
+        if any(isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == "fail" for inner in ast.walk(node)):
+            continue
         return True
     return False
 
@@ -105,7 +112,12 @@ def _has_pass_only_if(func: ast.AST) -> bool:
 
 def _has_imperative_xfail(func: ast.AST) -> bool:
     """True when the body calls ``pytest.xfail(...)``, which discards whatever was measured."""
-    return any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "xfail" for node in _own_nodes(func))
+    return any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "xfail"
+        # The receiver must be `pytest` itself: `pytest.mark.xfail` is the declarative marker.
+        and isinstance(node.func.value, ast.Name)
+        for node in _own_nodes(func)
+    )
 
 
 def _reasons(func: ast.AST, asserting_calls: frozenset[str]) -> list[str]:
@@ -142,12 +154,13 @@ def scan_nondiscriminating_test_functions(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not py.name.startswith(test_prefix):
+        # Both conventions: `test_x.py` and `x_test.py` (the sibling scanners accept both).
+        if not (py.name.startswith(test_prefix) or py.name.endswith("_" + test_prefix.rstrip("_") + ".py")):
             continue
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for func in ast.walk(tree):
             if not isinstance(func, _FUNC_NODES) or not func.name.startswith(test_prefix):

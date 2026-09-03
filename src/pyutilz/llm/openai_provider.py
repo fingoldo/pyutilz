@@ -197,17 +197,31 @@ class OpenAIProvider(OpenAICompatibleProvider):
             model,
         )
 
+    def _resolve_pricing(self, model: str) -> tuple[float, float]:
+        """Return ``(input, output)`` USD per 1M for ``model``, longest-prefix resolved.
+
+        Prefix-matched for the same reason ``max_output_tokens``/``context_window`` are: a dated
+        snapshot id such as ``gpt-5-pro-2026-01-15`` used to miss the exact ``dict.get`` here and
+        be priced from ``gpt-5-mini`` while resolving its LIMITS correctly by prefix -- the two
+        lookups disagreed about the same id, understating that model's spend ~60x behind a single
+        WARNING line (2026-09-03 audit F20). The warning still fires for a genuine miss.
+        """
+        exact = _PRICING.get(model)
+        if exact is not None:
+            return exact
+        resolved = longest_prefix_lookup(model, _PRICING, None)
+        self._warn_unknown_model_once(model)
+        if resolved is None:
+            return _PRICING["gpt-5-mini"]
+        return resolved  # type: ignore[no-any-return]  # longest_prefix_lookup is typed Any; the table's value type is the tuple returned here
+
     def _input_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
-        if model not in _PRICING:
-            self._warn_unknown_model_once(model)
-        return _PRICING.get(model, _PRICING["gpt-5-mini"])[0]
+        return self._resolve_pricing(model)[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M output tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
-        if model not in _PRICING:
-            self._warn_unknown_model_once(model)
-        return _PRICING.get(model, _PRICING["gpt-5-mini"])[1]
+        return self._resolve_pricing(model)[1]
 
     @property
     def max_output_tokens(self) -> int:
@@ -227,6 +241,9 @@ class OpenAIProvider(OpenAICompatibleProvider):
 
     def _cache_hit_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M cache-hit input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
-        if model not in _CACHE_HIT_COST:
-            self._warn_unknown_model_once(model)
-        return _CACHE_HIT_COST.get(model, _CACHE_HIT_COST["gpt-5-mini"])
+        exact = _CACHE_HIT_COST.get(model)
+        if exact is not None:
+            return exact
+        self._warn_unknown_model_once(model)
+        # Prefix-resolved for the same reason as the base rates above (audit F20).
+        return float(longest_prefix_lookup(model, _CACHE_HIT_COST, _CACHE_HIT_COST["gpt-5-mini"]))

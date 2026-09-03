@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a docstring still describing constants the code no longer has -----------------------------
 #
@@ -49,7 +49,14 @@ _CONFIG_READERS = {"cfg", "config", "getenv", "get_config", "settings", "get_set
 # thing -- it states where the number lives, and the number beside it is an illustration rather
 # than a claim. Both of the first version's only two hits across three repos were this shape, e.g.
 # "``MIN_WH_RESCAN_FREQ_DAYS`` = 14". Flagging the good pattern is worse than flagging nothing.
-_NAMES_A_SOURCE_RE = re.compile(r"[A-Z][A-Z0-9_]{3,}|[a-z_]+\.[a-z_]+|``[^`]+``")
+# `e.g.`/`i.e.` and a bare `run.py` are prose, not a named source: the dotted-name alternative
+# used to match them and discard the whole line, silencing the rule on any sentence containing
+# one. Both sides need >= 2 characters and the two abbreviations are excluded outright.
+_ABBREVIATION_RE = re.compile(r"\b(?:e\.g|i\.e|etc|vs|cf)\.", re.IGNORECASE)
+# A FILE name is not a named source either -- "per run.py invocation" says nothing about
+# where the number lives.
+_FILENAME_RE = re.compile(r"\b[\w-]+\.(?:py|pyi|sql|json|ya?ml|toml|ini|cfg|txt|md|csv|log)\b", re.IGNORECASE)
+_NAMES_A_SOURCE_RE = re.compile(r"[A-Z][A-Z0-9_]{3,}|\b[a-z_]{2,}\.[a-z_]{2,}\b|``[^`]+``")
 
 # "audit 04.1", "round 13", "wave 20" -- references to a document, not a tunable. They sit in prose
 # that routinely also contains words like "after" and "every", which is how one got through.
@@ -65,7 +72,7 @@ def _docstring_numbers(doc: str) -> list[str]:
     """
     found: list[str] = []
     for line in doc.splitlines():
-        if _NAMES_A_SOURCE_RE.search(line):
+        if _NAMES_A_SOURCE_RE.search(_FILENAME_RE.sub(" ", _ABBREVIATION_RE.sub(" ", line))):
             continue
         cleaned = _REFERENCE_RE.sub(" ", _YEAR_RE.sub(" ", line))
         for keyword in _THRESHOLD_PROSE_RE.finditer(cleaned):
@@ -92,6 +99,14 @@ def _body_numbers(func: ast.AST) -> set[str]:
 def _reads_configuration(func: ast.AST) -> bool:
     """Does the body fetch a value from configuration or the environment?"""
     for node in ast.walk(func):
+        # `os.environ["PRUNE"]` is the normal spelling for `environ`, which is in _CONFIG_READERS;
+        # only matching Call nodes saw the `.get(...)` form and nothing else.
+        if isinstance(node, ast.Subscript):
+            receiver = node.value
+            if isinstance(receiver, ast.Attribute) and receiver.attr in _CONFIG_READERS:
+                return True
+            if isinstance(receiver, ast.Name) and receiver.id in _CONFIG_READERS:
+                return True
         if not isinstance(node, ast.Call):
             continue
         target = node.func
@@ -131,7 +146,7 @@ def scan_docstring_numbers_moved_to_config(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _module_sql_constants, _safe_parse, _sql_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
 
 # --- a SELECT list wider than the rows anyone reads --------------------------------------------
 #
@@ -79,6 +79,25 @@ def _read_names(scope: ast.AST, ignore: ast.AST) -> set[str]:
     return {node.id for node in ast.walk(scope) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in skip}
 
 
+_FETCH_METHODS = frozenset({"fetchone", "fetchall", "fetchmany"})
+
+
+def _from_cursor(expr: ast.expr, cursor_names: "set[str]") -> bool:
+    """Whether ``expr`` yields rows of the query executed on one of ``cursor_names``.
+
+    Either a ``.fetchone()``/``.fetchall()``/``.fetchmany()`` call on the cursor, or the cursor
+    itself (iterating a cursor yields its rows).
+    """
+    if isinstance(expr, ast.Name) and expr.id in cursor_names:
+        return True
+    for sub in ast.walk(expr):
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr in _FETCH_METHODS:
+            receiver = sub.func.value
+            if not cursor_names or (isinstance(receiver, ast.Name) and receiver.id in cursor_names) or not isinstance(receiver, ast.Name):
+                return True
+    return False
+
+
 def scan_sql_selects_unread_column(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -99,7 +118,7 @@ def scan_sql_selects_unread_column(
         if tree is None:
             continue
         constants = _module_sql_constants(tree)
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for func in ast.walk(tree):
@@ -107,6 +126,7 @@ def scan_sql_selects_unread_column(
                 continue
             # The SELECT lists this function executes, in order.
             executed: list[tuple[list[str], int]] = []
+            cursor_names: set[str] = set()
             for node in ast.walk(func):
                 if not isinstance(node, ast.Call):
                     continue
@@ -119,19 +139,32 @@ def scan_sql_selects_unread_column(
                 columns = _select_columns(sql) if sql else None
                 if columns:
                     executed.append((columns, node.lineno))
+                    if isinstance(callee.value, ast.Name):
+                        cursor_names.add(callee.value.id)
             if len(executed) != 1:
                 # More than one SELECT in a function, and this cannot say which unpacking belongs
                 # to which query without following the cursor. Silence beats a coin flip.
                 continue
             columns, sql_line = executed[0]
+            # Names that carry rows OF THIS QUERY: `rows = cur.fetchall()`, `row = cur.fetchone()`.
+            # Without this link the check matched ANY same-arity unpacking in the function -- an
+            # unrelated `lo, hi = compute()` was reported as "this query fetches `name`".
+            row_names: set[str] = set()
+            for node in ast.walk(func):
+                if isinstance(node, ast.Assign) and node.targets and isinstance(node.targets[0], ast.Name) and _from_cursor(node.value, cursor_names):
+                    row_names.add(node.targets[0].id)
 
             for node in ast.walk(func):
                 if isinstance(node, (ast.For, ast.AsyncFor)):
                     target: ast.expr = node.target
+                    source: ast.expr = node.iter
                 elif isinstance(node, ast.Assign) and node.targets:
                     target = node.targets[0]
+                    source = node.value
                 else:
                     continue
+                if not (_from_cursor(source, cursor_names) or (isinstance(source, ast.Name) and source.id in row_names)):
+                    continue  # the unpacked value must actually come from this query's cursor
                 names = _plain_targets(target)
                 if names is None or len(names) != len(columns):
                     continue

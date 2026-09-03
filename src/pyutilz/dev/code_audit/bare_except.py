@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- bare `except:` / `except BaseException:` ----------------------------
 
@@ -17,14 +17,14 @@ def _is_bare_except(handler: ast.ExceptHandler) -> bool:
     phase-tracking context managers, request-scope cleanup, and similar patterns that audit EVERY
     exit path. A bare re-raise inside the handler is allowed.
     """
-    if handler.type is None:
-        return True
-    if isinstance(handler.type, ast.Name) and handler.type.id == "BaseException":
-        for sub in ast.walk(handler):
-            if isinstance(sub, ast.Raise) and sub.exc is None:
-                return False
-        return True
-    return False
+    if handler.type is not None and not (isinstance(handler.type, ast.Name) and handler.type.id == "BaseException"):
+        return False
+    # Bare re-raise exemption applies to BOTH shapes -- a bare `except:` whose body immediately
+    # re-raises swallows nothing either, exactly as the docstring promises.
+    for sub in ast.walk(handler):
+        if isinstance(sub, ast.Raise) and sub.exc is None:
+            return False
+    return True
 
 
 def scan_bare_except(
@@ -48,7 +48,7 @@ def scan_bare_except(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):

@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- numbers that claim more than the code behind them supports ------------------------------------
 #
@@ -56,7 +56,7 @@ def scan_regex_integer_parse(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -103,7 +103,7 @@ def scan_thresholds_below_documented_result(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name.startswith("test_")):
@@ -112,21 +112,34 @@ def scan_thresholds_below_documented_result(
             if not match:
                 continue
             claimed = int(re.sub(r"[,_ ]", "", next(g for g in match.groups() if g is not None)))
-            for cmp_node in ast.walk(fn):
-                if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
+            # Only a comparison INSIDE an assert is "what the test gates on" -- an ordinary loop
+            # guard such as `if i > 0:` says nothing about the documented quantity, and comparing
+            # the docstring claim against every `>`/`>=` in the function reports it at the wrong
+            # line. Of the real assert bounds, only the weakest (minimum) one is the effective gate.
+            bounds: list[ast.Compare] = []
+            for assert_node in ast.walk(fn):
+                if not isinstance(assert_node, ast.Assert):
                     continue
-                right = cmp_node.comparators[0]
-                if not (isinstance(right, ast.Constant) and isinstance(right.value, int) and not isinstance(right.value, bool)):
-                    continue
-                if right.value < claimed:
-                    findings.append(
-                        Finding(
-                            check="threshold_below_documented_result",
-                            severity="P2",
-                            file=rel,
-                            line=cmp_node.lineno,
-                            snippet=_line_text(src_lines, cmp_node.lineno),
-                            detail=(f"{fn.name}() documents {claimed} but asserts >= {right.value}: the gate is set below the behaviour it describes, so a regression to {right.value} passes."),
-                        )
+                for cmp_node in ast.walk(assert_node.test):
+                    if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
+                        continue
+                    right = cmp_node.comparators[0]
+                    if not (isinstance(right, ast.Constant) and isinstance(right.value, int) and not isinstance(right.value, bool)):
+                        continue
+                    bounds.append(cmp_node)
+            if not bounds:
+                continue
+            weakest = min(bounds, key=lambda c: c.comparators[0].value)  # type: ignore[attr-defined,union-attr]
+            asserted = weakest.comparators[0].value  # type: ignore[attr-defined,union-attr]
+            if asserted < claimed:
+                findings.append(
+                    Finding(
+                        check="threshold_below_documented_result",
+                        severity="P2",
+                        file=rel,
+                        line=weakest.lineno,
+                        snippet=_line_text(src_lines, weakest.lineno),
+                        detail=(f"{fn.name}() documents {claimed} but asserts >= {asserted}: the gate is set below the behaviour it describes, so a regression to {asserted} passes."),
                     )
+                )
     return findings

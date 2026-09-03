@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test that checks the code against the code -----------------------------------------------
 #
@@ -25,6 +25,10 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # is checking conformance to a declared set, not re-deriving an answer.
 
 _ASSERT_HELPERS = frozenset({"assertEqual", "assertAlmostEqual", "assertNotEqual", "approx"})
+# The subset that forms a two-sided comparison by itself. `approx` is NOT one: `pytest.approx(x, rel)`
+# takes a tolerance as its second argument, and pairing that with `x` mis-read the tolerance as
+# "the other side" -- it is unwrapped by `_unwrap_approx` instead.
+_UNITTEST_ASSERT_HELPERS = frozenset({"assertEqual", "assertAlmostEqual", "assertNotEqual"})
 
 
 def _imported_from_production(tree: ast.Module) -> set[str]:
@@ -63,21 +67,57 @@ def _arithmetic_over(node: ast.expr, constants: set[str]) -> set[str]:
     # in for its answer: `choose_corr_backend(CORR_MIN_ROWS - 1, ...) == "numpy"` is a correct
     # boundary test whose expected value is the literal on the other side. That shape was six of
     # sixteen hits.
+    # `pytest.approx(BASE_DELAY * 2)` wraps the expected value; bailing on it neutralised the whole
+    # check for the (very common) approximate spelling, even though `approx` is already listed as an
+    # assertion helper. Unwrap to the value it wraps, then apply the ordinary rule.
+    node = _unwrap_approx(node)
     if any(isinstance(sub, ast.Call) for sub in ast.walk(node)):
         return set()
     used: set[str] = set()
     for sub in ast.walk(node):
+        # `assert f() == -BASE_DELAY` re-derives the expectation just as `BASE_DELAY * -1` does.
+        if isinstance(sub, ast.UnaryOp) and isinstance(sub.op, (ast.USub, ast.UAdd)) and isinstance(sub.operand, ast.Name) and sub.operand.id in constants:
+            used.add(sub.operand.id)
         if not isinstance(sub, ast.BinOp):
             continue
-        # `CHECKPOINT_DIR / "~01abc.jsonl"` is path construction wearing an operator, not
-        # arithmetic over a number.
-        if any(isinstance(side, ast.Constant) and isinstance(side.value, str) for side in (sub.left, sub.right)):
+        if _is_path_construction(sub):
             continue
         for operand in (sub.left, sub.right):
             for name in ast.walk(operand):
                 if isinstance(name, ast.Name) and name.id in constants:
                     used.add(name.id)
     return used
+
+
+_PATH_NAME_SUFFIXES = ("DIR", "PATH", "ROOT", "FOLDER")
+
+
+def _is_path_construction(node: ast.BinOp) -> bool:
+    """`CHECKPOINT_DIR / "~01.jsonl"` / `CHECKPOINT_DIR / sub` -- path building, not arithmetic.
+
+    Recognising only a bare string Constant operand missed the two shapes the module's own comment
+    names as must-be-silent: an f-string filename and a plain variable segment.
+    """
+    if any(isinstance(side, ast.Constant) and isinstance(side.value, str) for side in (node.left, node.right)):
+        return True
+    if not isinstance(node.op, ast.Div):
+        return False
+    left = node.left
+    if isinstance(left, ast.BinOp):
+        return _is_path_construction(left)
+    if isinstance(left, ast.Name) and left.id.upper().endswith(_PATH_NAME_SUFFIXES):
+        return True
+    return False
+
+
+def _unwrap_approx(node: ast.expr) -> ast.expr:
+    """`pytest.approx(x)` / `approx(x)` -> `x`; anything else unchanged."""
+    if isinstance(node, ast.Call) and node.args:
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name == "approx":
+            return node.args[0]
+    return node
 
 
 def _mentions(node: ast.expr, constants: set[str]) -> bool:
@@ -88,15 +128,24 @@ def _mentions(node: ast.expr, constants: set[str]) -> bool:
 def _asserted_comparisons(tree: ast.Module) -> list[tuple[ast.expr, ast.expr, int]]:
     """(left, right, line) for every equality this module asserts, statement or helper call."""
     pairs: list[tuple[ast.expr, ast.expr, int]] = []
+    # Nodes inside a `test_*` function: the unittest-helper arm applies only there.
+    in_test: set[int] = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name.startswith("test_"):
+            for sub in ast.walk(fn):
+                in_test.add(id(sub))
     for node in ast.walk(tree):
         if isinstance(node, ast.Assert) and isinstance(node.test, ast.Compare):
             compare = node.test
             if len(compare.ops) == 1 and isinstance(compare.ops[0], (ast.Eq, ast.NotEq)):
                 pairs.append((compare.left, compare.comparators[0], node.lineno))
-        elif isinstance(node, ast.Call) and len(node.args) >= 2:
+        elif isinstance(node, ast.Call) and len(node.args) >= 2 and id(node) in in_test:
             func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name in _ASSERT_HELPERS:
+            # A `self`/`cls` receiver inside a test function: an `assertEqual`-shaped method on an
+            # arbitrary object (`recorder.assertEqual(...)`) is somebody else's API, not an assertion.
+            if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in {"self", "cls"}):
+                continue
+            if func.attr in _UNITTEST_ASSERT_HELPERS:
                 pairs.append((node.args[0], node.args[1], node.lineno))
     return pairs
 
@@ -127,7 +176,7 @@ def scan_test_asserts_against_production_constant(
         constants = _imported_from_production(tree)
         if not constants:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for left, right, line in _asserted_comparisons(tree):
@@ -140,13 +189,16 @@ def scan_test_asserts_against_production_constant(
                 # rarer) mistake, and reporting it here would blur the message.
                 if _mentions(other, constants):
                     continue
+                # The offending ARGUMENT's own position: a multi-line `self.assertEqual(` reported
+                # the opening-paren line, whose snippet showed nothing of the expression at fault.
+                offending_line = getattr(side, "lineno", line)
                 findings.append(
                     Finding(
                         check="test_asserts_against_production_constant",
                         severity="P2",
                         file=rel,
-                        line=line,
-                        snippet=_line_text(src_lines, line),
+                        line=offending_line,
+                        snippet=_line_text(src_lines, offending_line),
                         detail=(
                             f"the expected value here is derived from `{sorted(used)[0]}`, the "
                             "same constant the code under test reads, so this assertion passes "

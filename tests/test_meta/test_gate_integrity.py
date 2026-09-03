@@ -23,6 +23,7 @@ Runtime: one YAML parse, one TOML parse, and a line scan of eight workflow files
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,61 @@ _DECLARED_NARROWINGS = {
 # Tools whose exit code alone cannot certify that they ran to completion, mapped to the
 # wrapper that requires their own success terminator instead.
 _COMPLETION_WRAPPED_TOOLS = {"python -m mypy": "py_ci_shared.mypy_gate"}
+
+# A gate that installs a different set of optional dependencies than the suite it claims to
+# mirror is checking a different program. Measured 2026-09-03: mypy-full.yml and
+# numba-coverage.yml both omitted `speedups`, so the blocking mypy gate type-checked every
+# orjson call site in the orjson-ABSENT branch (where the import reports `import-not-found`)
+# while ci.yml ran the tests in the orjson-PRESENT one (`no-redef`) -- see CLAUDE.md's
+# "Never trim a `# type: ignore` code" section for why those two branches differ. The extras
+# set below is ci.yml's; a workflow that deliberately installs a different one belongs in
+# _DECLARED_DIFFERENT_EXTRAS with the reason, exactly like a gate narrowing.
+_CANONICAL_EXTRAS = frozenset("pandas polars database system llm nlp cloud speedups dev".split())
+
+# Key shape "<workflow>::<comma-joined sorted extras>", so exempting one install command in a
+# file does not exempt the file's other install commands too.
+_DECLARED_DIFFERENT_EXTRAS = {
+    "publish.yml::all,dev": "A release smoke test must import what `pip install pyutilz[all]` gets, not just what the test matrix exercises.",
+    "ci.yml::all,dev": "deptry's own install: the dependency-drift scan has to see every declared extra, or it reports each unseen one as unused.",
+    "docs.yml::docs": "mkdocs builds prose; it imports no runtime extra, and installing them would add minutes to every docs run.",
+}
+
+_EXTRAS_INSTALL_RE = re.compile(r"""pip install (?:--system )?-e ["']?\.\[([a-z0-9,_-]+)\]["']?""")
+
+
+def _workflow_extras_sets():
+    """Every ``pip install -e ".[...]"`` in .github/workflows, as {filename: [set, ...]}."""
+    found = {}
+    for path in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        sets = [frozenset(m.group(1).split(",")) for m in _EXTRAS_INSTALL_RE.finditer(path.read_text(encoding="utf-8"))]
+        if sets:
+            found[path.name] = sets
+    return found
+
+
+def test_every_workflow_installs_the_same_extras_or_says_why():
+    """One codebase, one dependency graph -- or a written reason for the difference."""
+    found = _workflow_extras_sets()
+    assert found, 'no workflow declares a `pip install -e ".[...]"`; the regex above has gone stale'
+
+    mismatches = []
+    seen_keys = set()
+    for name, sets in found.items():
+        for extras in sets:
+            key = f"{name}::{','.join(sorted(extras))}"
+            seen_keys.add(key)
+            if extras == _CANONICAL_EXTRAS or key in _DECLARED_DIFFERENT_EXTRAS:
+                continue
+            missing = sorted(_CANONICAL_EXTRAS - extras)
+            unexpected = sorted(extras - _CANONICAL_EXTRAS)
+            mismatches.append(f"{key}: missing {missing or 'nothing'}, unexpected {unexpected or 'nothing'}")
+
+    assert not mismatches, "Workflow extras differ from ci.yml's without a declared reason:\n  " + "\n  ".join(mismatches)
+
+    # A declaration that no longer matches any install command is a reviewed decision that has
+    # silently expired, the same failure mode _DECLARED_NARROWINGS guards against above.
+    stale = sorted(set(_DECLARED_DIFFERENT_EXTRAS) - seen_keys)
+    assert not stale, "Declared extras exceptions match no install command any more: " + ", ".join(stale)
 
 
 def test_every_blocking_gate_narrowing_is_declared():

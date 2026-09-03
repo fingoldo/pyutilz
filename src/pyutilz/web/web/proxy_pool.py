@@ -70,12 +70,17 @@ def get_new_smartproxy(
     if last_used_dict is None:
         last_used_dict = {}
     n = 0
-    now_time = datetime.now(timezone.utc).replace(tzinfo=None)  # must stay naive to subtract against caller-supplied last_used_dict/failed_dict entries, which follow this module's naive-UTC timestamp convention (see set_proxy_last_use_time)
     wait_started_at: Optional[datetime] = None
     # Captured once: rebinding the `proxy_port` PARAMETER inside the loop froze the first random
     # draw forever, so the "keeps re-rolling a random port" contract above never held.
     fixed_port = proxy_port
     while True:
+        # Refreshed every iteration: the loop sleeps `delay` seconds every warn_after_n_failures
+        # attempts, and with now_time captured once before the loop that wall time was invisible to
+        # the eligibility test below -- a cooldown could never expire while the function waited for
+        # it, so a single-candidate pool (proxy_min_port == proxy_max_port, or a fixed proxy_port)
+        # blocked forever after one transient failure even once the cooldown genuinely elapsed.
+        now_time = datetime.now(timezone.utc).replace(tzinfo=None)  # naive-UTC, matching the caller-supplied last_used_dict/failed_dict convention (see set_proxy_last_use_time)
         # ----------------------------------------------------------------------------------------------------------------------------
         # Get random port
         # ----------------------------------------------------------------------------------------------------------------------------

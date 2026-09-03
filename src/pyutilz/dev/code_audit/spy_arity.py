@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _line_text, _module_aliases, _read_src_lines, _safe_parse
 
 
 def _is_test_path(rel: str) -> bool:
@@ -36,7 +36,15 @@ def _short_name(target: str) -> str:
 
 
 def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str, int]:
-    """Pass 1: production functions -> max positional args seen at any real call site."""
+    """Pass 1: production functions -> max positional args seen at any real call site.
+
+    Keyed by the call site's QUALIFIED name (``pkg.mod.build_rows``), not by the bare short name.
+    Keying on the short name let an unrelated ``Other.build_rows(self, a, b, c)`` in another class
+    raise the maximum for a module-level ``prod.build_rows``, producing exactly the false positive
+    this scanner's docstring promises it will not produce. A call whose receiver cannot be resolved
+    to a module (any ordinary method call) is not recorded at all -- a false negative, the safe
+    failure mode here.
+    """
     prod_call_max: dict[str, int] = {}
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
@@ -45,22 +53,40 @@ def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str
         tree = _safe_parse(py)
         if tree is None:
             continue
+        own_module = _dotted_module_path(rel)
+        aliases = _module_aliases(tree)
+        module_level_defs = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            fname = None
             if isinstance(node.func, ast.Name):
-                fname = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                fname = node.func.attr
-            if fname is None:
+                # A bare call names something defined in (or imported into) THIS module.
+                if node.func.id in module_level_defs:
+                    qualified = f"{own_module}.{node.func.id}"
+                elif node.func.id in aliases:
+                    qualified = aliases[node.func.id]
+                else:
+                    continue
+            elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id in aliases:
+                qualified = f"{aliases[node.func.value.id]}.{node.func.attr}"
+            else:
                 continue
             n = _call_positional_count(node)
             if n < 0:
                 continue
-            if n > prod_call_max.get(fname, -1):
-                prod_call_max[fname] = n
+            if n > prod_call_max.get(qualified, -1):
+                prod_call_max[qualified] = n
     return prod_call_max
+
+
+def _real_max_for(target: str, prod_call_max: dict[str, int]) -> "int | None":
+    """The production maximum for a patch target, matched on a dotted-path SUFFIX.
+
+    The scan root is rarely the import root (``src/pkg/mod.py`` is imported as ``pkg.mod``), so an
+    exact match would make the scanner a no-op on an ordinary layout.
+    """
+    hits = [count for key, count in prod_call_max.items() if key == target or key.endswith("." + target)]
+    return max(hits) if hits else None
 
 
 def _is_patch_call(node: ast.Call) -> bool:
@@ -96,7 +122,7 @@ def _find_spy_findings_in_test_file(
         if spy is None:
             continue
         short = _short_name(target)
-        real_max = prod_call_max.get(short)
+        real_max = _real_max_for(target, prod_call_max)
         if real_max is None:
             continue
         spy_max = _positional_arity(spy)
@@ -158,6 +184,6 @@ def scan_stale_test_spy_arity(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         findings.extend(_find_spy_findings_in_test_file(tree, rel, src_lines, prod_call_max))
     return findings

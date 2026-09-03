@@ -3,7 +3,7 @@ rotation (``get_new_session``) and block-handling (``handle_blocking``) it drive
 
 import http
 import warnings
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 # Imported for the ``Optional[requests.Response]`` return annotation on get_url() only -- every
 # actual call goes through ``_facade.requests`` so that patching ``pyutilz.web.web.requests``
@@ -64,6 +64,23 @@ def get_url(
     """
     n_retries = 0
     res = None
+
+    # Bound BEFORE the loop: these are assigned from the locked snapshot block below, which sits
+    # AFTER the get_new_session() call. Any exception out of get_new_session (proxy-gateway
+    # outage, bad credentials) lands in the `except` handler, whose "proxy"/"timed out"/"sslerror"
+    # substring branch reads proxy_server_snapshot -- previously an UnboundLocalError on attempt 1,
+    # escaping get_url() entirely and bypassing both the retry loop and the Optional[Response]
+    # return contract.
+    sess_snapshot: Any = None
+    proxies_snapshot: Optional[dict] = None
+    headers_snapshot: Optional[dict] = None
+    proxy_user_snapshot: Optional[str] = None
+    proxy_pass_snapshot: Optional[str] = None
+    proxy_server_snapshot: Optional[str] = None
+    proxy_min_port_snapshot: Optional[int] = None
+    proxy_max_port_snapshot: Optional[int] = None
+    proxy_port_snapshot: Optional[int] = None
+    proxy_type_snapshot: Optional[str] = None
 
     while n_retries < max_retries:
         try:

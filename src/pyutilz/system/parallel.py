@@ -52,16 +52,21 @@ import os
 import tempfile
 from joblib import load, dump
 
-from pyutilz.system.system import tqdmu
+from pyutilz.system.system import tqdmu  # noqa: F401 -- re-exported historically from this module
 
 
 def split_list_into_chunks(the_list: list, chunk_size: int) -> Iterator[list]:
     """
-    >>>list(split_list_into_chunks(list(range(10)),3))
+    >>> list(split_list_into_chunks(list(range(10)),3))
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+
+    Raises:
+        ValueError: ``chunk_size < 1``. A negative size used to yield NOTHING at all, so the caller
+            silently processed no data; the sibling ``split_list_into_nchunks_indices`` already
+            raises for the same input.
     """
-    if chunk_size == 0:
-        chunk_size = 1
+    if chunk_size < 1:
+        raise ValueError(f"split_list_into_chunks: chunk_size must be >= 1, got {chunk_size}")
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
@@ -78,11 +83,12 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[
 
     >>> list(split_list_into_chunks_indices(list(range(10)), 3))
     [(0, 3), (3, 6), (6, 9), (9, 10)]
+
+    Raises:
+        ValueError: ``chunk_size < 1``, same contract as the value-returning sibling.
     """
-    # Same clamp as the value-returning sibling: chunk_size == 0 otherwise divided by zero here
-    # while returning one-element chunks there, for identical input.
-    if chunk_size == 0:
-        chunk_size = 1
+    if chunk_size < 1:
+        raise ValueError(f"split_list_into_chunks_indices: chunk_size must be >= 1, got {chunk_size}")
     t = len(the_list)
     n = int(t / chunk_size)
     for i in range(n + 1):
@@ -96,7 +102,7 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[
 
 def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tuple]:
     """
-    >>>list(split_list_into_nchunks_indices(list(range(10)),3))
+    >>> list(split_list_into_nchunks_indices(list(range(10)),3))
     [(0, 3), (3, 6), (6, 10)]
     """
     total_length = len(the_list)
@@ -119,13 +125,8 @@ def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tu
 def split_array(arr: Sized, step: int) -> list:
     """
     Returns list of (a,b) tuples of array split into chunks using certain step size.
-    >>>split_array(np.random.uniform(0,1,5477),step=1000)
-    [(0, 1000),
-     (1000, 2000),
-     (2000, 3000),
-     (3000, 4000),
-     (4000, 5000),
-     (5000, 5477)]
+    >>> split_array(np.random.uniform(0,1,5477),step=1000)
+    [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000), (4000, 5000), (5000, 5477)]
     """
 
     length = len(arr)
@@ -216,7 +217,10 @@ def applyfunc_parallel(
     """Runs function in parallel using the multiprocessing Pool.
 
     Returns a ``pd.DataFrame`` (via ``pd.concat``) when ``return_dataframe=True`` (the default),
-    or a bare ``list`` of per-chunk results when ``return_dataframe=False``.
+    or a bare ``list`` of per-chunk results when ``return_dataframe=False``. The results used to be
+    wrapped in a ``tqdmu(...)`` progress bar over an ALREADY-COMPLETE list -- the bar could never
+    progress, was never closed, and the "list" the docstring promised was a ``tqdm`` object on which
+    ``len()``/indexing raised.
 
     ``n_cores`` is a deprecated alias for ``n_jobs`` (kept for backward compatibility) -- see
     :func:`distribute_work`'s docstring for why ``n_jobs`` is now this module's standard name.
@@ -248,7 +252,7 @@ def applyfunc_parallel(
             initializer=initializer,
             initargs=initargs,
         ) as pool:
-            res = tqdmu(pool.starmap(func, iterable))
+            res = list(pool.starmap(func, iterable))
     else:
 
         with Pool(
@@ -256,7 +260,7 @@ def applyfunc_parallel(
             initializer=initializer,
             initargs=initargs,
         ) as pool:
-            res = tqdmu(pool.starmap(func, iterable))
+            res = list(pool.starmap(func, iterable))
 
     logger.info("Function applied.")
 

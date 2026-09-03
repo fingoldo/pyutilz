@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a runtime guard whose answer is already fixed at import time ------------------------------
 #
@@ -68,7 +68,7 @@ def _all_bindings(tree: ast.Module) -> tuple[dict[str, int], set[str]]:
     return counts, params
 
 
-def _externally_written_names(trees: dict[str, ast.Module]) -> set[str]:
+def _externally_written_names(trees: dict[str, ast.Module]) -> tuple[set[str], dict[str, set[str]]]:
     """Names any file in the tree writes from OUTSIDE the module that defines them.
 
     A module-level name in Python is never truly fixed: another file can rebind it by attribute
@@ -78,14 +78,18 @@ def _externally_written_names(trees: dict[str, ast.Module]) -> set[str]:
     scoped to one module it reported four constants that a sibling file sets on every run.
     """
     written: set[str] = set()
-    for tree in trees.values():
+    subscript_keys: dict[str, set[str]] = {}
+    for rel, tree in trees.items():
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
                 written.add(node.attr)
             elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
                 index = _subscript_index(node)
                 if isinstance(index, ast.Constant) and isinstance(index.value, str):
-                    written.add(index.value)
+                    # Per FILE. A string-keyed store is evidence about a name only where the two can
+                    # plausibly be the same thing; collected package-wide, `d['_ENABLED'] = 1` in an
+                    # unrelated module silenced `if _ENABLED:` everywhere.
+                    subscript_keys.setdefault(rel, set()).add(index.value)
             elif isinstance(node, ast.Call):
                 func = node.func
                 name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
@@ -93,10 +97,12 @@ def _externally_written_names(trees: dict[str, ast.Module]) -> set[str]:
                     for arg in node.args:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             written.add(arg.value)
-                for kw in node.keywords:
-                    if kw.arg:
-                        written.add(kw.arg)
-    return written
+                    # Keyword names count only for these rebinding calls: read from EVERY call,
+                    # an ordinary `helper(_ENABLED=1)` anywhere in the tree exempted the constant.
+                    for kw in node.keywords:
+                        if kw.arg:
+                            written.add(kw.arg)
+    return written, subscript_keys
 
 
 def _module_constants(tree: ast.Module) -> dict[str, object]:
@@ -165,17 +171,18 @@ def scan_guard_decidable_from_constants(
         tree = _safe_parse(py)
         if tree is not None:
             trees[py.relative_to(root).as_posix()] = tree
-    externally_written = _externally_written_names(trees)
+    externally_written, subscript_keys = _externally_written_names(trees)
 
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
         tree = trees.get(rel)
         if tree is None:
             continue
-        constants = {n: v for n, v in _module_constants(tree).items() if n not in externally_written}
+        excluded = externally_written | subscript_keys.get(rel, set())
+        constants = {n: v for n, v in _module_constants(tree).items() if n not in excluded}
         if not constants:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
 
         for node in ast.walk(tree):
             if not isinstance(node, (ast.If, ast.IfExp)):
@@ -183,6 +190,7 @@ def scan_guard_decidable_from_constants(
             name = _decided_by(node.test, constants)
             if name is None:
                 continue
+            guard_line = node.test.lineno if isinstance(node, ast.IfExp) else node.lineno
             # No exemption for `if TYPE_CHECKING:` or `__debug__`, which an earlier draft carried:
             # the private-name restriction above already makes both unreachable here, and a guard
             # that cannot fire reads as protection this rule does not actually have.
@@ -191,8 +199,10 @@ def scan_guard_decidable_from_constants(
                     check="guard_decidable_from_constants",
                     severity="P2",
                     file=rel,
-                    line=node.lineno,
-                    snippet=_line_text(src_lines, node.lineno),
+                    # An `IfExp`'s own lineno is the start of the VALUE expression, which for a
+                    # multi-line ternary is a different line from the test.
+                    line=guard_line,
+                    snippet=_line_text(src_lines, guard_line),
                     detail=(
                         f"this condition is already decided at import time: `{name}` is bound once "
                         f"in this module to the literal {constants[name]!r} and nothing can rebind "

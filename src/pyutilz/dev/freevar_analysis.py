@@ -74,7 +74,7 @@ import builtins
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Core
@@ -135,23 +135,79 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
     src = Path(path).read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(path))
 
-    # name -> list of (lineno, col_offset, is_store) occurrences within the range, in source order.
+    # name -> list of (stmt_lineno, is_assign_target, col_offset, lineno, is_store) occurrences within
+    # the range. The first three fields are the SORT key; ordering by the Name's own (lineno, col_offset)
+    # got same-line accumulator patterns exactly backwards: in ``selected = [i for i in selected if i]``
+    # the Store sits at column 0 and the Load at column ~11, so the name read as "written before read"
+    # and was reported as neither free nor needing an incoming value -- the very trap this module exists
+    # to catch. An assignment's value is evaluated BEFORE its targets are bound, so a target Store is
+    # ordered after every Load of the same statement.
     occurrences: dict = {}
 
     class _Visitor(ast.NodeVisitor):
-        """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier, as ``(lineno, col_offset, is_store)`` tuples in visitation order."""
+        """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier."""
+
+        def __init__(self) -> None:
+            self.stmt_lineno = 0
+            self.in_assign_target = False
+
+        def visit(self, node: ast.AST) -> Any:
+            """Track the enclosing statement's line so occurrences sort by statement, not by column."""
+            if isinstance(node, ast.stmt):
+                self.stmt_lineno = node.lineno
+            return super().visit(node)
+
+        def _record(self, name: str, lineno: int, col: int, is_store: bool) -> None:
+            """Append one occurrence tuple for ``name``."""
+            occurrences.setdefault(name, []).append((self.stmt_lineno or lineno, int(is_store and self.in_assign_target), col, lineno, is_store))
 
         def visit_Name(self, node: ast.Name) -> None:
             """Record one ``ast.Name`` node's position and Store/Load-ness if it falls inside the analysed line range."""
             if start_line <= node.lineno <= end_line:
-                is_store = isinstance(node.ctx, (ast.Store, ast.Del))
-                occurrences.setdefault(node.id, []).append((node.lineno, node.col_offset, is_store))
+                self._record(node.id, node.lineno, node.col_offset, isinstance(node.ctx, (ast.Store, ast.Del)))
             self.generic_visit(node)
 
+        def _visit_assignment(self, node) -> None:
+            """Visit an assignment's VALUE before its targets, so a same-statement read is seen first."""
+            self.stmt_lineno = node.lineno
+            value = getattr(node, "value", None)
+            if value is not None:
+                self.visit(value)
+            was_target = self.in_assign_target
+            self.in_assign_target = True
+            try:
+                targets = getattr(node, "targets", None) or [node.target]
+                for target in targets:
+                    self.visit(target)
+            finally:
+                self.in_assign_target = was_target
+
+        visit_Assign = _visit_assignment  # noqa: N815 - ast.NodeVisitor's own dispatch-method naming convention
+        visit_AnnAssign = _visit_assignment  # noqa: N815
+        visit_AugAssign = _visit_assignment  # noqa: N815
+
         def _visit_def(self, node) -> None:
-            """Record a ``def``/``async def``/``class`` statement's own name as a Store occurrence when its header line falls inside the analysed range."""
+            """Record a ``def``/``async def``/``class`` statement's own name -- and, for a function, its
+            PARAMETERS -- as Store occurrences when its header line falls inside the analysed range.
+
+            Parameters are ``ast.arg`` nodes, never ``ast.Name``, so they were never seen as bound and a
+            moved function's own parameters were reported as free names, making split_out_module refuse
+            a perfectly valid move.
+            """
             if start_line <= node.lineno <= end_line:
-                occurrences.setdefault(node.name, []).append((node.lineno, node.col_offset, True))
+                self.stmt_lineno = node.lineno
+                self._record(node.name, node.lineno, node.col_offset, True)
+                args = getattr(node, "args", None)
+                if args is not None:
+                    every_arg = [
+                        *getattr(args, "posonlyargs", []),
+                        *args.args,
+                        *([args.vararg] if args.vararg else []),
+                        *args.kwonlyargs,
+                        *([args.kwarg] if args.kwarg else []),
+                    ]
+                    for a in every_arg:
+                        self._record(a.arg, a.lineno, a.col_offset, True)
             self.generic_visit(node)
 
         visit_FunctionDef = _visit_def  # noqa: N815 - ast.NodeVisitor's own dispatch-method naming convention
@@ -163,13 +219,13 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
     free_names: list = []
     needs_incoming: list = []
     for name, occs in occurrences.items():
-        occs.sort(key=lambda o: (o[0], o[1]))
-        has_store = any(is_store for (_, _, is_store) in occs)
-        first_is_store = occs[0][2]
+        occs.sort(key=lambda o: (o[0], o[1], o[2]))
+        has_store = any(occ[4] for occ in occs)
+        first_is_store = occs[0][4]
         if not has_store:
             free_names.append(name)
         elif not first_is_store:
-            needs_incoming.append(IncomingNameUse(name=name, first_load_lineno=occs[0][0]))
+            needs_incoming.append(IncomingNameUse(name=name, first_load_lineno=occs[0][3]))
 
     return FreeVarReport(
         free_names=sorted(free_names),
@@ -235,7 +291,11 @@ def _top_level_bodies(src: str) -> "dict[str, str]":
         if name is None and isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             name = node.target.id
         if name is not None:
-            out[name] = "\n".join(lines[node.lineno - 1 : _end_line(node)])
+            # Start at the first DECORATOR line, matching _top_level_span's moved range: slicing from
+            # node.lineno excluded decorators from the comparison, so a move that dropped an
+            # @lru_cache still passed the "every body verified byte-identical" claim.
+            start = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
+            out[name] = "\n".join(lines[start - 1 : _end_line(node)])
     return out
 
 

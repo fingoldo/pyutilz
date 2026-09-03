@@ -120,24 +120,50 @@ async def _ensure_catalogue_warm_async(timeout: float = 10.0) -> None:
         await loop.run_in_executor(None, _fetch_models_catalogue, timeout)
 
 
-def _per_token_cost_pair(model: str) -> tuple[float, float]:
-    """Return (input_cost_per_1m, output_cost_per_1m) for ``model``.
+_UNPRICED_MODELS_WARNED: set = set()
 
-    OpenRouter publishes pricing as USD-per-token strings under
-    ``pricing.prompt`` and ``pricing.completion``. Multiply by 1e6 to match
-    the per-1M-tokens convention used everywhere else in pyutilz.
+
+def _per_token_cost_pair_or_none(model: str) -> "tuple[float, float] | None":
+    """Return ``(input_cost_per_1m, output_cost_per_1m)`` for ``model``, or ``None`` when the
+    catalogue cannot say.
+
+    OpenRouter publishes pricing as USD-per-token strings under ``pricing.prompt`` and
+    ``pricing.completion``. Multiply by 1e6 to match the per-1M-tokens convention used everywhere
+    else in pyutilz.
+
+    ``None`` and ``(0.0, 0.0)`` are DIFFERENT answers (2026-09-03 audit F37): the catalogue comes
+    back empty after any ``/models`` outage and on the first call made from the event-loop thread,
+    and collapsing that into a confident zero made a whole process's OpenRouter spend read as free
+    on a cost dashboard, indistinguishable from a genuinely free model. Callers that must have a
+    number keep using ``_per_token_cost_pair``, which warns once per unpriced model id.
     """
     catalogue = _fetch_models_catalogue()
     entry = catalogue.get(model)
     if not entry:
-        return (0.0, 0.0)
+        return None
     pricing = entry.get("pricing") or {}
     try:
         in_per_1m = float(pricing.get("prompt", "0") or "0") * 1_000_000
         out_per_1m = float(pricing.get("completion", "0") or "0") * 1_000_000
     except (TypeError, ValueError):
-        return (0.0, 0.0)
+        return None
     return (in_per_1m, out_per_1m)
+
+
+def _per_token_cost_pair(model: str) -> tuple[float, float]:
+    """Return ``(input_cost_per_1m, output_cost_per_1m)`` for ``model``, or ``(0.0, 0.0)`` with a
+    one-time warning when the catalogue has no pricing for it."""
+    pair = _per_token_cost_pair_or_none(model)
+    if pair is not None:
+        return pair
+    if model not in _UNPRICED_MODELS_WARNED:
+        _UNPRICED_MODELS_WARNED.add(model)
+        logger.warning(
+            "OpenRouter has no catalogue pricing for %r (catalogue unavailable or model absent); "
+            "per-token cost estimates for it are reported as 0. Reconcile with actual_cost_usd.",
+            model,
+        )
+    return (0.0, 0.0)
 
 
 def _resolve_model_limits(model: str) -> tuple[int | None, int | None]:

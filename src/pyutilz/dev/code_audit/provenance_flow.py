@@ -6,7 +6,7 @@ import ast
 import difflib
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse, _subscript_index
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a record field with only one side of the contract --------------------------------------------
 #
@@ -33,13 +33,19 @@ _MIN_KEY_LEN = 3  # single letters and two-letter keys are loop variables and ax
 
 def _is_field_like(value: object) -> bool:
     """Whether the name looks like a record field rather than a local: no leading underscore, snake case."""
-    return isinstance(value, str) and len(value) >= _MIN_KEY_LEN and value.replace("_", "").isalnum() and not value[0].isdigit()
+    return isinstance(value, str) and len(value) >= _MIN_KEY_LEN and not value.startswith("_") and value.replace("_", "").isalnum() and not value[0].isdigit()
 
 
-def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
-    """(writes, defaulted_reads) as key -> first line number."""
+def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    """(writes, defaulted_reads, plain_reads) as key -> first line number.
+
+    ``plain_reads`` (``d["k"]`` with no default) is deliberately kept SEPARATE: such a read raises
+    on a missing key, which is a loud failure, so it must not be reported as "read with a default".
+    It still counts as a read for the written-never-read direction.
+    """
     writes: dict[str, int] = {}
     reads: dict[str, int] = {}
+    plain_reads: dict[str, int] = {}
 
     def note(store: dict[str, int], key: object, line: int) -> None:
         """Record one read-without-writer site, keyed so the same field is not reported twice."""
@@ -50,7 +56,7 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
         if isinstance(node, ast.Dict):
             for k in node.keys:
                 if isinstance(k, ast.Constant):
-                    note(writes, k.value, node.lineno)
+                    note(writes, k.value, k.lineno)  # the key's own line, not the literal's opening brace
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Subscript) and isinstance(key := _subscript_index(target), ast.Constant):
@@ -64,8 +70,8 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int]]:
             if isinstance(node.args[1], ast.Constant):
                 note(reads, node.args[1].value, node.lineno)
         elif isinstance(node, ast.Subscript) and isinstance(key := _subscript_index(node), ast.Constant) and isinstance(node.ctx, ast.Load):
-            note(reads, key.value, node.lineno)
-    return writes, reads
+            note(plain_reads, key.value, node.lineno)
+    return writes, reads, plain_reads
 
 
 def scan_record_field_flow(
@@ -98,6 +104,7 @@ def scan_record_field_flow(
     """
     writes: dict[str, tuple[str, int]] = {}
     reads: dict[str, tuple[str, int]] = {}
+    plain_reads: dict[str, tuple[str, int]] = {}
     lines_by_file: dict[str, list[str]] = {}
 
     for py in _iter_py_files(root, exclude_dirs):
@@ -105,12 +112,14 @@ def scan_record_field_flow(
         if tree is None:
             continue
         rel = py.relative_to(root).as_posix()
-        lines_by_file[rel] = py.read_text(encoding="utf-8", errors="replace").splitlines()
-        file_writes, file_reads = _collect(tree)
+        lines_by_file[rel] = _read_src_lines(py)
+        file_writes, file_reads, file_plain_reads = _collect(tree)
         for key, line in file_writes.items():
             writes.setdefault(key, (rel, line))
         for key, line in file_reads.items():
             reads.setdefault(key, (rel, line))
+        for key, line in file_plain_reads.items():
+            plain_reads.setdefault(key, (rel, line))
 
     findings: list[Finding] = []
     written_names = sorted(set(writes))
@@ -132,7 +141,7 @@ def scan_record_field_flow(
         )
     if not report_written_never_read:
         return findings
-    for key in sorted(set(writes) - set(reads) - known_external_fields):
+    for key in sorted(set(writes) - set(reads) - set(plain_reads) - known_external_fields):
         rel, line = writes[key]
         findings.append(
             Finding(

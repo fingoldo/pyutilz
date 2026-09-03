@@ -143,6 +143,11 @@ def monitored(
 
     The wrapped function must return either ``None`` or a ``dict``. When ``duration_field`` is set,
     the elapsed wall-clock time is added to that key of the result dict before logging/reporting.
+
+    ``should_have_data=True`` means a FALSY result (``None``, ``{}``) is treated as a failed run:
+    the wrapper returns immediately and NO heartbeat is sent, so a dead-man's-switch monitor fires.
+    Do not set it on a job that can legitimately produce an empty result -- a nightly job returning
+    ``{}`` on a quiet day would raise a false alert.
     """
     def decorator_logged(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wraps func so each call is timed, logged, and reported via job_completed."""
@@ -155,6 +160,10 @@ def monitored(
 
             data = func(*args, **kwargs)
             if should_have_data and not data:
+                # Documented early return: a falsy result under `should_have_data` is treated as
+                # "the job produced nothing", so NO heartbeat is sent and a dead-man's-switch
+                # monitor will fire. A job that can legitimately return an empty result must not
+                # set should_have_data.
                 return data
 
             assert isinstance(data, (type(None), dict))  # nosec B101 - internal invariant on decorated func's own return type, not a security/permission gate
@@ -263,7 +272,9 @@ def log_duration(threshold: float = 1.0, logger_name: Optional[str] = None, max_
                     if len(repr_str) > max_size:
                         # Truncate and add ellipsis
                         half = max_size // 2
-                        return f"{repr_str[:half]}...[truncated {len(repr_str) - max_size} chars]...{repr_str[-half:]}"
+                        # `len - 2*half`, not `len - max_size`: only 2*half characters are KEPT, so
+                        # for an odd max_arg_size the notice under-reported the drop by one.
+                        return f"{repr_str[:half]}...[truncated {len(repr_str) - 2 * half} chars]...{repr_str[-half:]}"
                     return repr_str
 
                 # Format args and kwargs safely with truncation

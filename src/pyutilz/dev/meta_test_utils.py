@@ -82,6 +82,7 @@ __all__ = [
     "ATTRIBUTION_RE",
     "findings_ratchet",
     "unbacked_audit_dispositions",
+    "clear_repo_scan_caches",
 ]
 
 # ---------------------------------------------------------------------------
@@ -429,8 +430,10 @@ def count_user_deferred_entries(
                     out[key] = len(value.elts)
                 elif isinstance(value, ast.Dict):
                     out[key] = len(value.keys)
-                elif isinstance(value, ast.Call):
-                    # ``set()`` / ``dict()`` empty constructor.
+                elif isinstance(value, ast.Call) and not value.args and not value.keywords:
+                    # An EMPTY ``set()`` / ``dict()`` constructor only. ``set(_LEGACY_ENTRIES)`` is
+                    # also an ast.Call, and recording it as 0 made 40 tracked entries read as none --
+                    # the drift tracker reported shrinking debt in exactly the case where it grew.
                     out[key] = 0
     return out
 
@@ -457,7 +460,10 @@ def snake_case_variants_of(cls_name: str) -> set[str]:
     projects so the regex isn't re-implemented per repo.
     """
     snake = re.sub(r"(?<!^)(?=[A-Z])", "_", cls_name).lower()
-    short = snake.replace("_config", "")
+    # endswith-guarded slice, not an unanchored replace: "MyConfigManagerConfig" -> "my_manager"
+    # dropped the INNER "_config" too, so the plausible real binding "my_config_manager" was never
+    # generated and a valid symbol got reported as missing.
+    short = snake[: -len("_config")] if snake.endswith("_config") else snake
     candidates = {snake, short}
     parts = short.split("_")
     if parts:
@@ -512,6 +518,10 @@ def sentinel_for_type(tp: Any) -> Optional[object]:
     ``None``" (``bool``/``str``/``float``/``int`` never legitimately
     produce a ``None`` sentinel here, so the return value is unambiguous).
 
+    The ``bool`` sentinel returned here is ``True``, which is also the commonest default value;
+    :func:`optional_scalar_fields` therefore flips it to ``not field.default`` where it knows the
+    default, so the probe can distinguish "populated" from "dropped".
+
     ``bool`` is checked before ``int`` deliberately: ``bool`` is a
     subclass of ``int`` in Python, but ``isinstance``/type-identity checks
     here compare the annotation object itself (``tp is bool``), not an
@@ -565,8 +575,15 @@ def optional_scalar_fields(cls: type, skip: Iterable[str] = ()) -> dict[str, obj
         if tp is None:
             continue
         value = sentinel_for_type(tp)
-        if value is not None:
-            out[f.name] = value
+        if value is None:
+            continue
+        if isinstance(value, bool) and isinstance(f.default, bool):
+            # The bool sentinel is True, which is also the commonest default: with the comparison
+            # being ``actual != expected``, a parser that DROPPED the field entirely still matched
+            # its True default and passed as intact -- precisely the "declared field never
+            # extracted" bug this harness exists to catch. Probe with the NON-default value.
+            value = not f.default
+        out[f.name] = value
     return out
 
 
@@ -641,9 +658,21 @@ _TALLY_COUNT_RE = re.compile(r"^[*_ ]*\d+[*_ ]*$")
 _QUALIFIED_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?")
 
 
+def clear_repo_scan_caches() -> None:
+    """Drop the cached repository filename/symbol scans.
+
+    ``_repo_filenames`` / ``_repo_symbols`` are ``lru_cache``d on the ROOT PATH ALONE and never
+    invalidated, so within one pytest session a test that writes a file and a later test that scans
+    the same root see a stale set -- making the result depend on test ORDER. Any test (or tool) that
+    mutates the tree between scans must call this.
+    """
+    _repo_filenames.cache_clear()
+    _repo_symbols.cache_clear()
+
+
 @lru_cache(maxsize=8)
 def _repo_filenames(repo_root: Path) -> frozenset[str]:
-    """Every filename in the repository, so a citation may name a file without naming its whole path."""
+    """Every filename in the repository, cached on the root path -- see :func:`clear_repo_scan_caches`."""
     skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
     return frozenset(p.name for p in repo_root.rglob("*") if p.is_file() and not skip & set(p.parts))
 
@@ -705,7 +734,9 @@ def _names_a_repo_symbol(citation: str, repo_root: Path) -> bool:
     text = citation.strip()
     if not _QUALIFIED_NAME_RE.fullmatch(text):
         return False
-    name = text.removesuffix("()")
+    # Not str.removesuffix: that is Python 3.9+ (PEP 616) and this package supports 3.8, where the
+    # call raises AttributeError on the first bare qualified-name citation.
+    name = text[:-2] if text.endswith("()") else text
     symbols = _repo_symbols(repo_root)
     return name in symbols or name.rsplit(".", 1)[-1] in symbols
 

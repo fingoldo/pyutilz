@@ -71,6 +71,9 @@ class AnthropicProvider(LLMProvider):
     last_cache_read_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_thinking_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_thinking_tokens_estimated: PerCallAttr = PerCallAttr(lambda: False)
+    # Response-scoped, same reasoning as every attribute above (audit F32).
+    last_rate_limits: PerCallAttr = PerCallAttr(dict)
+    last_organization_id: PerCallAttr = PerCallAttr(lambda: None)
 
     def __init__(
         self,
@@ -102,11 +105,8 @@ class AnthropicProvider(LLMProvider):
         self.total_thinking_tokens = 0
         # Per-call usage/cache/thinking/finish_reason: PerCallAttr class-level descriptors
         # (declared above __init__) provide the defaults; nothing to initialize here.
-        # Rate-limit info captured from response headers on every call.
-        # Populated lazily by ``check_account_limits()`` from the snapshot
-        # of the most recent response.
-        self.last_rate_limits: dict[str, str] = {}
-        self.last_organization_id: str | None = None
+        # ``last_rate_limits`` / ``last_organization_id`` are PerCallAttr descriptors declared
+        # above, captured from each response's headers; nothing to initialize here.
 
     # Source: https://platform.claude.com/docs/en/docs/about-claude/models
     #   Opus 4.6+: 128K, Opus 4/4.1: 32K, Sonnet family: 64K, Haiku family: 64K.
@@ -234,6 +234,7 @@ class AnthropicProvider(LLMProvider):
                 Anthropic call ran without reasoning regardless of the setting,
                 including the ones whose docstrings claimed to be disabling it.
         """
+        self._reset_per_call_state()
         if max_tokens <= 0:
             max_tokens = min(self.max_output_tokens, 21000)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
@@ -310,7 +311,7 @@ class AnthropicProvider(LLMProvider):
             self._last_usage = {
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
-                "reasoning_tokens": thinking,
+                "reasoning_tokens": thinking_tokens,
                 "cache_creation_input_tokens": cache_creation,
                 "cache_read_input_tokens": cache_read,
             }
@@ -357,12 +358,11 @@ class AnthropicProvider(LLMProvider):
             return
         # Lower-case the keys for case-insensitive lookup downstream.
         lower = {k.lower(): v for k, v in mapping.items()}
-        rl = {k: v for k, v in lower.items() if k.startswith("anthropic-ratelimit-")}
-        if rl:
-            self.last_rate_limits = rl
+        # Assigned unconditionally: the snapshot describes THIS response, so a response carrying
+        # no rate-limit headers must read as "none", not silently keep the previous call's window.
+        self.last_rate_limits = {k: v for k, v in lower.items() if k.startswith("anthropic-ratelimit-")}
         org = lower.get("anthropic-organization-id")
-        if isinstance(org, str):
-            self.last_organization_id = org
+        self.last_organization_id = org if isinstance(org, str) else None
 
     async def count_tokens(
         self,

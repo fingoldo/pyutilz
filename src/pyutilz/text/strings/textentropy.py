@@ -85,7 +85,10 @@ def entropy(stats: Counter, normalization_factor: float = 1.0) -> float:
     """
     Computes Shannon entropy (in bits) of the counts in stats, normalizing each count by normalization_factor before treating it as a probability.
     """
-    return -sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values())
+    # abs(), not a bare negation: a single-symbol distribution has p == 1.0 and log2(1) == 0.0, so
+    # the negation produced -0.0 for a quantity documented as non-negative (it serializes as the
+    # literal "-0.0" in JSON/CSV and fails naive repr/string comparisons downstream).
+    return abs(sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values()))
 
 
 def entropy_rate(conditional_stats, stats) -> float:
@@ -129,7 +132,9 @@ def naive_entropy_rate(a: str) -> float:
     # print(cnt)
     p = cnt / np.sum(cnt)
 
-    return -np.sum(p * np.log2(p))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    # abs() for the same -0.0 reason as `entropy` above -- this function's own docstring says
+    # avoiding -0.0 is the point of its empty-string branch.
+    return abs(float(np.sum(p * np.log2(p))))  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
 
 def stringify_dict(the_dict:dict,sep:str=",")->str:
     """

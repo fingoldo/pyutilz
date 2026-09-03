@@ -16,135 +16,21 @@ from typing import Any
 import httpx
 from tenacity import retry, retry_if_exception
 
-from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError, LLMUnparseableResponseError
+from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
+from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
+    _NON_RETRYABLE_STATUSES,
+    _JSONDecodeError,
+    _accumulate_stream_tool_calls,
+    _is_retryable_http_error,
+    _json_backend,
+    _json_loads,
+    parse_response_envelope,
+    parse_retry_after,
+)
 
 logger = logging.getLogger(__name__)
-
-# orjson is faster than stdlib json for the per-chunk streaming parse below;
-# resolved once at import time (not per-call, this loop runs per token chunk)
-# and falls back to stdlib if missing (kept optional -- core has no hard
-# requirements).
-_json_backend: Any
-try:
-    import orjson as _json_backend  # type: ignore[import-not-found,no-redef]  # absent in a minimal install (import-not-found), resolvable in CI where it then redefines the annotation above (no-redef); BOTH codes are needed, which environment you check from decides which one fires
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
-except ImportError:
-    import json as _json_backend  # type: ignore[no-redef]
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
-
-
-_NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({
-    400,  # bad request — body invalid, retry won't help
-    401,  # unauthorized — wrong/expired API key
-    403,  # forbidden — RBAC/region block
-    404,  # not found — model deprecated or misspelled; OpenRouter
-          # /chat/completions returns 404 even when /models/{id}/endpoints
-          # still lists provider endpoints (catalog can lag). Retrying with
-          # exponential backoff burns 30+ minutes per dead model before
-          # the wall-clock timeout fires.
-    405,  # method not allowed — endpoint doesn't accept POST. Same
-          # underlying pattern as 404: catalog claims model is alive, but
-          # the actual /chat/completions endpoint won't service the call.
-          # Observed 2026-05-05 on llama-guard-4-12b, nemotron-3-nano-30b-a3b,
-          # olmo-3.1-32b-instruct — 110+ calls each spinning through 50
-          # retry attempts, blocking the concurrency pool for hours.
-    410,  # gone — endpoint permanently removed; identical reasoning to 404.
-    422,  # unprocessable entity — request well-formed but semantically
-          # rejected (bad enum, schema violation); won't be accepted on retry.
-})
-
-
-def _is_retryable_http_error(exc: BaseException) -> bool:
-    """Return True for transient HTTP errors that should be retried infinitely.
-
-    Non-retryable: 400, 401, 403, 404, 410, 422 (see ``_NON_RETRYABLE_STATUSES``).
-    Retryable: 402 (billing), 429 (rate limit), 5xx, transport errors.
-    """
-    if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code not in _NON_RETRYABLE_STATUSES
-    # An empty or non-JSON body on an otherwise-successful response is the same class of transient fault as
-    # a transport error, but `resp.json()` reports it as `json.JSONDecodeError` (a `ValueError`), which
-    # matches neither branch above - so it used to escape this predicate entirely and fail the call outright.
-    if isinstance(exc, LLMUnparseableResponseError):
-        return True
-    return isinstance(exc, httpx.TransportError)
-
-
-def parse_response_envelope(resp: Any, provider_name: str) -> dict[str, Any]:
-    """`resp.json()` as a dict, or `LLMUnparseableResponseError` so the retry decorator can see it.
-
-    Three failure shapes collapse into one raise, because the caller's response to all three is the same
-    (re-issue): an empty body, a body that is not JSON at all (an intermediary's HTML gateway page), and
-    valid JSON that is not an object (a bare string or list, which every downstream `.get` would crash on).
-    The excerpt is capped rather than dropped - a log line saying only "not JSON" cannot distinguish a
-    504 page from a truncated envelope, and that distinction is the whole reason to read the log.
-    """
-    body = resp.text or ""
-    if not body.strip():
-        raise LLMUnparseableResponseError(
-            f"{provider_name} returned an empty body with status {resp.status_code}",
-            status_code=resp.status_code,
-        )
-    try:
-        data = resp.json()
-    except (ValueError, _JSONDecodeError) as exc:
-        raise LLMUnparseableResponseError(
-            f"{provider_name} returned a non-JSON body with status {resp.status_code}: {exc}",
-            status_code=resp.status_code,
-            body_excerpt=body[:500],
-        ) from exc
-    if not isinstance(data, dict):
-        raise LLMUnparseableResponseError(
-            f"{provider_name} returned JSON of type {type(data).__name__}, not the expected object",
-            status_code=resp.status_code,
-            body_excerpt=body[:500],
-        )
-    return data
-
-
-def parse_retry_after(resp: Any) -> float | None:
-    """Parse ``Retry-After`` / ``retry-after-ms`` headers from an HTTP response.
-
-    Providers (Anthropic, OpenAI, Gemini) return ``Retry-After`` on 429 —
-    honouring it is cheaper than blind exponential backoff and avoids
-    re-triggering the rate limit. Returns seconds (float) or None.
-
-    Honoured by the manual retry loop in ``generate_stream`` (it takes
-    ``max(server_hint, exponential_floor)`` between attempts). The
-    non-streaming ``generate()`` path uses tenacity's pure exponential+jitter
-    wait and does NOT read this hint — wiring it into the shared tenacity
-    wait would change retry timing for every provider and is left out
-    pending a benchmark on rate-limit-heavy paths.
-    """
-    if resp is None:
-        return None
-    headers = getattr(resp, "headers", None)
-    if not headers:
-        return None
-    # Case-insensitive lookup via dict-like; httpx does this natively.
-    for key in ("retry-after-ms", "x-retry-after-ms"):
-        val = headers.get(key)
-        if val:
-            try:
-                return float(val) / 1000.0
-            except (TypeError, ValueError):
-                pass
-    for key in ("retry-after", "x-retry-after"):
-        val = headers.get(key)
-        if val:
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                # RFC-7231 also allows HTTP-date; fall back to None and
-                # let the generic backoff kick in.
-                pass
-    return None
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -191,6 +77,10 @@ class OpenAICompatibleProvider(LLMProvider):
     # True when a json_mode call came back with NO content and was re-issued without response_format.
     last_json_mode_fallback: PerCallAttr = PerCallAttr(bool)
 
+    # Rate-limit headers of the response THIS call received (audit F32): as a plain attribute on a
+    # shared instance, a concurrent request's 429 window was readable as this one's.
+    last_rate_limits: PerCallAttr = PerCallAttr(dict)
+
     _PERCALL_METADATA_ATTRS: tuple[str, ...] = (*LLMProvider._PERCALL_METADATA_ATTRS, "_last_json_schema_applied", "last_json_mode_fallback")
 
     def __init__(
@@ -221,11 +111,9 @@ class OpenAICompatibleProvider(LLMProvider):
         self._call_count = 0
         # Per-call usage/tool_calls/citations/finish_reason: PerCallAttr class-level descriptors
         # (declared above __init__) provide the defaults; nothing to initialize here.
-        # Most recent rate-limit headers seen on a response. Captured
-        # automatically from x-ratelimit-* (OpenAI-family) and the
-        # legacy ratelimit-* form some providers use. Read from
-        # ``check_account_limits()``.
-        self.last_rate_limits: dict[str, str] = {}
+        # ``last_rate_limits`` is a PerCallAttr declared above -- captured automatically from
+        # x-ratelimit-* (OpenAI-family) and the legacy ratelimit-* form some providers use, and
+        # read from ``check_account_limits()``. Nothing to initialize here.
 
     # ── hooks for subclasses ─────────────────────────────────────────
 
@@ -269,19 +157,11 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         return None
 
-    def _reset_per_call_state(self) -> None:
-        """Hook called at the START of every ``generate()`` / ``generate_stream()``.
-
-        Resets every ``PerCallAttr`` this class declares, so a call that raises after a previous
-        success does not leave the previous call's usage/tool-calls/citations readable in the same
-        context masquerading as the latest one. Subclasses adding their own per-call attributes
-        should extend (not replace) this.
-        """
-        self._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
-        self._last_finish_reason = None
-        self.last_tool_calls = []
-        self.last_citations = []
-        self._last_json_schema_applied = False
+    # No ``_reset_per_call_state`` override: LLMProvider's derives the reset from
+    # ``_PERCALL_METADATA_ATTRS``. The hand-written version that used to live here reset only
+    # five of the seven attributes it declared -- ``last_json_mode_fallback`` latched True for the
+    # rest of the context (2026-09-03 audit F09), which is exactly the drift the derived
+    # implementation makes impossible.
 
     async def _async_prepare(self) -> None:
         """Async hook called (only when ``max_tokens<=0``, i.e. before ``self.max_output_tokens``
@@ -311,9 +191,9 @@ class OpenAICompatibleProvider(LLMProvider):
         except Exception as e:
             logger.debug("Could not parse response headers for rate-limit capture: %s", e)
             return
-        captured = {k: v for k, v in mapping.items() if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")}
-        if captured:
-            self.last_rate_limits = captured
+        # Assigned unconditionally: the snapshot describes THIS response, so a response carrying
+        # no rate-limit headers must read as "none", not silently keep the previous call's window.
+        self.last_rate_limits = {k: v for k, v in mapping.items() if k.startswith("x-ratelimit-") or k.startswith("ratelimit-")}
 
     async def check_account_limits(self) -> dict[str, Any]:
         """Return rate-limit info from the most recent response headers.
@@ -503,6 +383,138 @@ class OpenAICompatibleProvider(LLMProvider):
         # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
         # (``context_window``) are sync properties that may hit the network on a catalogue miss.
         await self._async_prepare()
+        body = self._build_stream_body(prompt, system, temperature, max_tokens, json_mode, thinking, json_schema)
+
+        attempt = 0
+        emitted_any = False
+        # One repair re-issue, mirroring _post_and_unwrap's: an endpoint that refuses
+        # ``reasoning: {enabled: false}`` used to fail 100% of STREAMING calls made with
+        # thinking=False (a 400/404 is non-retryable) while the identical non-streaming call
+        # succeeded after one repaired re-issue (2026-09-03 audit F14).
+        body_repaired = False
+        # Usage is RECORDED ONCE, after the stream closes, from the last usage block seen.
+        # Recording per chunk double-counted spend and call count on upstreams that emit
+        # cumulative usage on more than the final chunk, and again whenever a stream that had
+        # already carried a usage block was retried by the loop below.
+        usage_recorded = False
+        while True:
+            attempt += 1
+            latest_usage: dict[str, Any] | None = None
+            try:
+                async with self.semaphore:
+                    async with self._client.stream(
+                        "POST", "/chat/completions", json=body,
+                    ) as resp:
+                        self._capture_rate_limit_headers(resp.headers)
+                        self._handle_special_status(resp)
+                        resp.raise_for_status()
+                        first_chunk: dict[str, Any] | None = None
+                        last_chunk: dict[str, Any] | None = None
+                        # Truncation / tool-call / citation state, previously never written on the
+                        # streaming path at all: _reset_per_call_state() zeroed them at the top and
+                        # nothing here filled them in, so a stream cut off by max_tokens returned
+                        # normally with _last_finish_reason None and the documented "double
+                        # max_tokens and re-issue" contract never engaged, while a tool-call-only
+                        # reply reported last_tool_calls == [] as fact (2026-09-03 audit F11).
+                        streamed_text: list[str] = []
+                        tool_call_fragments: dict[int, dict[str, Any]] = {}
+                        async for line in resp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_part = line[5:].strip()
+                            if data_part == "[DONE]":
+                                break
+                            try:
+                                chunk = _json_loads(data_part)
+                            except _JSONDecodeError:
+                                continue
+                            if first_chunk is None:
+                                first_chunk = chunk
+                            last_chunk = chunk
+                            # Usage block tends to arrive on a chunk with empty
+                            # choices AFTER the last content delta; track it
+                            # whenever it's seen.
+                            usage = chunk.get("usage")
+                            if usage:
+                                latest_usage = usage
+                            content = self._apply_stream_chunk(chunk, tool_call_fragments)
+                            if content:
+                                emitted_any = True
+                                streamed_text.append(content)
+                                yield content
+                        # Response-level metadata (id, model, provider) usually rides on the FIRST
+                        # chunk; some upstreams send it on the last. BOTH are consulted now --
+                        # passing only the last chunk (typically the usage-only trailer, whose
+                        # choices are empty) left last_generation_id None after every streamed
+                        # call, so the fetch_generation_stats() reconciliation OpenRouter's own
+                        # docstring recommends for streams raised ValueError (audit F36).
+                        for meta_chunk in (first_chunk, last_chunk):
+                            if meta_chunk is not None:
+                                self._track_provider_specific_response(meta_chunk)
+                        if tool_call_fragments:
+                            self.last_tool_calls = [tool_call_fragments[i] for i in sorted(tool_call_fragments)]
+                if latest_usage is not None and not usage_recorded:
+                    usage_recorded = True
+                    self._track_streaming_usage(latest_usage)
+                if self._last_finish_reason == "length":
+                    raise LLMTruncationError(
+                        f"{self._provider_name} streamed response truncated by max_tokens (finish_reason='length')",
+                        finish_reason="length",
+                        partial_text="".join(streamed_text),
+                    )
+                return
+            except Exception as exc:
+                # Only the stream-open / pre-first-token phase is safely
+                # retryable. After we've yielded content, re-raise so the
+                # caller doesn't receive duplicated tokens.
+                if isinstance(exc, LLMTruncationError):
+                    raise
+                if not emitted_any and not body_repaired:
+                    repaired = await self._repaired_stream_body(exc, body)
+                    if repaired is not None:
+                        body_repaired = True
+                        body = repaired
+                        logger.warning(
+                            "%s/%s rejected a streaming request parameter - re-opening the stream once with it adjusted.",
+                            self._provider_name, self.model_name,
+                        )
+                        continue
+                if emitted_any or not _is_retryable_http_error(exc):
+                    raise
+                if MAX_RETRY_ATTEMPTS != 0 and attempt >= MAX_RETRY_ATTEMPTS:
+                    raise
+                # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
+                # (multiplier=2, min=5, max=300) plus random jitter [0,5).
+                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
+                # Honour a server-supplied Retry-After when present on a 429,
+                # taking the larger of (server hint, exponential floor) so we
+                # never retry sooner than the server asked and re-trigger the
+                # rate limit. This is the one live caller of parse_retry_after.
+                resp_obj = getattr(exc, "response", None)
+                server_hint = parse_retry_after(resp_obj)
+                wait_s = max(backoff, server_hint) if server_hint is not None else backoff
+                logger.warning(
+                    "Streaming attempt %d failed (%s: %s), retrying in %.0fs...",
+                    attempt, type(exc).__name__, str(exc)[:200], wait_s,
+                )
+                await asyncio.sleep(wait_s)
+
+    def _build_stream_body(
+        self,
+        prompt: str,
+        system: str | None,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool,
+        thinking: bool | str | None,
+        json_schema: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Assemble the ``/chat/completions`` request body for a STREAMING call.
+
+        Split out of ``generate_stream`` so the streaming state machine stays within the project's
+        C901 budget; the caller must already have awaited ``_async_prepare()``, because the
+        ``max_output_tokens`` / ``context_window`` properties read here can hit the catalogue.
+        """
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
         # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
@@ -535,83 +547,49 @@ class OpenAICompatibleProvider(LLMProvider):
         # is set. Without it the stream never publishes usage at all,
         # leaving streaming callers with zero cost / token tracking.
         body.setdefault("stream_options", {"include_usage": True})
+        return body
 
-        attempt = 0
-        emitted_any = False
-        # Usage is RECORDED ONCE, after the stream closes, from the last usage block seen.
-        # Recording per chunk double-counted spend and call count on upstreams that emit
-        # cumulative usage on more than the final chunk, and again whenever a stream that had
-        # already carried a usage block was retried by the loop below.
-        usage_recorded = False
-        while True:
-            attempt += 1
-            latest_usage: dict[str, Any] | None = None
-            try:
-                async with self.semaphore:
-                    async with self._client.stream(
-                        "POST", "/chat/completions", json=body,
-                    ) as resp:
-                        self._capture_rate_limit_headers(resp.headers)
-                        self._handle_special_status(resp)
-                        resp.raise_for_status()
-                        last_chunk: dict[str, Any] | None = None
-                        async for line in resp.aiter_lines():
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data_part = line[5:].strip()
-                            if data_part == "[DONE]":
-                                break
-                            try:
-                                chunk = _json_loads(data_part)
-                            except _JSONDecodeError:
-                                continue
-                            last_chunk = chunk
-                            # Usage block tends to arrive on a chunk with empty
-                            # choices AFTER the last content delta; track it
-                            # whenever it's seen.
-                            usage = chunk.get("usage")
-                            if usage:
-                                latest_usage = usage
-                            choices = chunk.get("choices") or []
-                            if not choices:
-                                continue
-                            delta = choices[0].get("delta") or {}
-                            content = delta.get("content")
-                            if content:
-                                emitted_any = True
-                                yield content
-                        # Response-level metadata (id, model, provider) usually
-                        # rides on the first chunk; some upstreams send it on
-                        # the last.
-                        if last_chunk is not None:
-                            self._track_provider_specific_response(last_chunk)
-                if latest_usage is not None and not usage_recorded:
-                    usage_recorded = True
-                    self._track_streaming_usage(latest_usage)
-                return
-            except Exception as exc:
-                # Only the stream-open / pre-first-token phase is safely
-                # retryable. After we've yielded content, re-raise so the
-                # caller doesn't receive duplicated tokens.
-                if emitted_any or not _is_retryable_http_error(exc):
-                    raise
-                if MAX_RETRY_ATTEMPTS != 0 and attempt >= MAX_RETRY_ATTEMPTS:
-                    raise
-                # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
-                # (multiplier=2, min=5, max=300) plus random jitter [0,5).
-                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
-                # Honour a server-supplied Retry-After when present on a 429,
-                # taking the larger of (server hint, exponential floor) so we
-                # never retry sooner than the server asked and re-trigger the
-                # rate limit. This is the one live caller of parse_retry_after.
-                resp_obj = getattr(exc, "response", None)
-                server_hint = parse_retry_after(resp_obj)
-                wait_s = max(backoff, server_hint) if server_hint is not None else backoff
-                logger.warning(
-                    "Streaming attempt %d failed (%s: %s), retrying in %.0fs...",
-                    attempt, type(exc).__name__, str(exc)[:200], wait_s,
-                )
-                await asyncio.sleep(wait_s)
+    def _apply_stream_chunk(self, chunk: dict[str, Any], tool_call_fragments: dict[int, dict[str, Any]]) -> str | None:
+        """Fold one SSE chunk's choice into per-call metadata, returning its content delta if any.
+
+        Finish reason, citations and tool-call fragments are recorded here; the caller keeps the
+        usage block and the first/last-chunk bookkeeping, which are read off the envelope rather
+        than the choice.
+        """
+        choices = chunk.get("choices") or []
+        if not choices:
+            return None
+        choice = choices[0]
+        finish_reason = choice.get("finish_reason")
+        if finish_reason:
+            self._last_finish_reason = finish_reason
+        chunk_citations = chunk.get("citations")
+        if chunk_citations:
+            self.last_citations = list(chunk_citations)
+        delta = choice.get("delta") or {}
+        _accumulate_stream_tool_calls(tool_call_fragments, delta.get("tool_calls"))
+        content = delta.get("content")
+        return content if isinstance(content, str) else None
+
+    async def _repaired_stream_body(self, exc: Exception, body: dict[str, Any]) -> dict[str, Any] | None:
+        """Return a repaired request body for a STREAM the upstream refused over a parameter, else ``None``.
+
+        Streaming counterpart of the ``_body_after_rejected_request`` consultation in
+        ``_post_and_unwrap``: a streamed error response's body has not been read yet, so it is
+        pulled here before the detail is handed to the same provider hook. No delta can have been
+        yielded on a 4xx, so re-opening the stream cannot duplicate already-emitted tokens.
+        """
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None)
+        if resp is None or status is None:
+            return None
+        detail = ""
+        try:
+            raw = await resp.aread()
+            detail = raw.decode("utf-8", errors="replace")
+        except Exception as read_exc:
+            logger.debug("Could not read the refused stream's error body: %s", read_exc)
+        return self._body_after_rejected_request(body, int(status), detail)
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
         """Shared token-usage accounting for both ``generate()`` and
@@ -624,8 +602,13 @@ class OpenAICompatibleProvider(LLMProvider):
         drifted (only the non-streaming path logged; the cache_hit/
         reasoning-token default computation differed in style).
         """
-        prompt_tok = usage.get("prompt_tokens", 0)
-        compl_tok = usage.get("completion_tokens", 0)
+        # ``or 0``, matching the cache_hit/reasoning lines below: an upstream or proxy that emits
+        # an explicit JSON ``null`` for either field used to yield None here and blow up on the
+        # ``+=`` a few lines down with total_prompt_tokens already advanced and _call_count not --
+        # a TypeError no retry predicate matches, failing a call the model already billed
+        # (2026-09-03 audit F12).
+        prompt_tok = usage.get("prompt_tokens") or 0
+        compl_tok = usage.get("completion_tokens") or 0
         # DeepSeek reports cache hits under the legacy "prompt_cache_hit_tokens" key. OpenAI's
         # actual Chat Completions response (and xAI, whose API is explicitly OpenAI-compatible)
         # instead nests it under "prompt_tokens_details.cached_tokens" -- a DIFFERENT key one
@@ -745,7 +728,27 @@ class OpenAICompatibleProvider(LLMProvider):
                 thinking_field = self._thinking_request_field(thinking)
                 if thinking_field is not None:
                     body.update(thinking_field)
-            content = await self._post_and_unwrap(body)
+            try:
+                content = await self._post_and_unwrap(body)
+            except LLMTruncationError as truncation:
+                # A length-capped EMPTY answer under response_format is the same failure the
+                # re-issue below exists for, wearing a different finish_reason: the model burned
+                # the whole budget on a response_format it cannot honour and returned nothing.
+                # Raising truncation first made that branch unreachable, so a caller whose
+                # truncation handler only doubles max_tokens re-issued the identical broken shape
+                # and paid twice (2026-09-03 audit F38). A truncation carrying partial text is a
+                # genuine budget cutoff and still propagates untouched.
+                if rf is None or truncation.partial_text:
+                    raise
+                self.last_json_mode_fallback = True
+                logger.warning(
+                    "%s/%s returned an EMPTY completion cut off by max_tokens under response_format "
+                    "- re-issuing once without it before reporting truncation",
+                    self._provider_name, self.model_name,
+                )
+                content = await self._post_and_unwrap({k: v for k, v in body.items() if k != "response_format"})
+                if not content:
+                    raise
             if content is None and rf is not None:
                 # Measured live 2026-09-02 on OpenRouter ``z-ai/glm-4.7-flash``: the catalogue lists
                 # ``response_format`` as supported, the call returns ``finish_reason="stop"``, ``content=None``,

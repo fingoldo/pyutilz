@@ -11,10 +11,17 @@ class TestSplitListIntoChunks:
         result = list(split_list_into_chunks(list(range(10)), 3))
         assert result == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
 
-    def test_chunk_size_zero(self):
+    def test_chunk_size_below_one_raises(self):
+        """A non-positive chunk size is a caller error, not something to silently reinterpret.
+
+        chunk_size=0 used to be clamped to 1 while chunk_size=-3 yielded NOTHING at all, so a
+        caller processed no data and saw no error. Both now raise, matching the sibling
+        split_list_into_nchunks_indices (2026-09-03 audit, F107)."""
         from pyutilz.system.parallel import split_list_into_chunks
-        result = list(split_list_into_chunks([1, 2, 3], 0))
-        assert result == [[1], [2], [3]]
+
+        for bad in (0, -3):
+            with pytest.raises(ValueError, match="chunk_size must be >= 1"):
+                list(split_list_into_chunks([1, 2, 3], bad))
 
     def test_chunk_larger_than_list(self):
         from pyutilz.system.parallel import split_list_into_chunks

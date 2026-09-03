@@ -50,15 +50,32 @@ def ensure_bytes_converted(obj: dict) -> dict:
 
 
 def get_image_properties(
-    img, skip_empty_exif: bool = True, filesize: Optional[int] = None, allow_truncated: bool = False
+    img,
+    skip_unknown_exif_tags: bool = True,
+    filesize: Optional[int] = None,
+    allow_truncated: bool = False,
+    skip_empty_exif: Optional[bool] = None,
 ) -> Tuple[Optional[bytes], Optional[dict]]:
     """
     For an image, uising PIL, read dimensions, info, exif data into a JSON-serializable dict.
+
+    ``skip_unknown_exif_tags`` (default True) drops exif entries whose tag id Pillow's ``TAGS``
+    table cannot name. It has nothing to do with EMPTY exif -- its former name, ``skip_empty_exif``,
+    described behaviour the function never had; turning it off injects raw integer keys and
+    undecoded ``bytes`` values into a dict this function promises is JSON-serializable, so
+    ``json.dumps`` then raises "keys must be str...". ``skip_empty_exif`` remains accepted as a
+    deprecated alias.
+
+    ``filesize`` is honoured when supplied by the caller (only looked up from disk when it was not),
+    and a genuine 0 is reported rather than dropped.
 
     ``allow_truncated`` tolerates a truncated image for the duration of THIS call only. Pillow's
     ``ImageFile.LOAD_TRUNCATED_IMAGES`` is a process-global that changes decoding for every other
     PIL user in the process, so it is restored on exit rather than left flipped on.
     """
+    if skip_empty_exif is not None:
+        logger.warning("get_image_properties: `skip_empty_exif` is a deprecated alias of `skip_unknown_exif_tags`; please rename the argument.")
+        skip_unknown_exif_tags = skip_empty_exif
 
     prev_load_truncated = ImageFile.LOAD_TRUNCATED_IMAGES
     ImageFile.LOAD_TRUNCATED_IMAGES = allow_truncated
@@ -69,7 +86,8 @@ def get_image_properties(
 
     opened_here = False
     if isinstance(img, str):
-        filesize = getsize(img)
+        if filesize is None:
+            filesize = getsize(img)
         try:
             img = PIL.Image.open(img)
             opened_here = True
@@ -112,7 +130,7 @@ def get_image_properties(
 
                 decoded_exif[tag] = tag_value
             else:
-                if not skip_empty_exif:
+                if not skip_unknown_exif_tags:
                     decoded_exif[tag_id] = tag_value
 
         width, height = img.size
@@ -143,7 +161,7 @@ def get_image_properties(
         else:
             res = {"height": height, "width": width, "size": getsizeof(image_bytes)}
 
-        if filesize:
+        if filesize is not None:
             res["filesize"] = filesize
 
         if decoded_exif:

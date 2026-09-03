@@ -166,15 +166,15 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                             # print('next_symbol %d=%s' % (j,next_symbol))
                             # next symbol is space
                             if next_symbol == " ":
-                                if j + 1 <= text_len:
+                                if j + 1 < text_len:
                                     next_next_symbol = text[j + 1]
                                     # followed by a capital or number
                                     if next_next_symbol.isnumeric() or next_next_symbol.isupper():
-                                        i = p - 1
-                                        while True:
+                                        # p == 0 leaves no previous character at all: i = -1 used to
+                                        # index from the END of the string and walk backwards from there.
+                                        i = p - 1 if p > 0 else -1
+                                        while i > 0:
                                             if text[i] not in whitespaces:
-                                                break
-                                            if i == 0:
                                                 break
                                             i = i - 1
                                         if i >= 0:
@@ -186,11 +186,11 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                                                 s = p + len(token)
                             # next symbol is a capital or number
                             elif next_symbol.isnumeric() or next_symbol.isupper():
-                                i = p - 1
-                                while True:
+                                # p == 0 leaves no previous character at all: i = -1 used to
+                                # index from the END of the string and walk backwards from there.
+                                i = p - 1 if p > 0 else -1
+                                while i > 0:
                                     if text[i] not in whitespaces:
-                                        break
-                                    if i == 0:
                                         break
                                     i = i - 1
                                 if i >= 0:
@@ -213,11 +213,11 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                                         s = p + len(token)
                             elif next_symbol.isalpha():
                                 #'I Love My Mom - Over 50 Cute Animal Babies with Their Mothers: A Celebration of Motherhood Kindle Edition\nby Bob Frothingham.'
-                                i = p - 1
-                                while True:
+                                # p == 0 leaves no previous character at all: i = -1 used to
+                                # index from the END of the string and walk backwards from there.
+                                i = p - 1 if p > 0 else -1
+                                while i > 0:
                                     if text[i] not in whitespaces:
-                                        break
-                                    if i == 0:
                                         break
                                     i = i - 1
                                 if i >= 0:
@@ -254,7 +254,10 @@ def fix_missed_space_between_sentences(text: str) -> str:
             j = p + len(token)
             if 0 < j < len(text):
                 next_symbol = text[j]
-                if next_symbol != " " and (next_symbol.isalpha() or next_symbol.isnumeric()):
+                # digit-dot-digit is a decimal number / version / IP octet, not a sentence boundary:
+                # splitting it turned "$2.50" into "$2. 50".
+                is_decimal_point = p > 0 and text[p - 1].isdigit() and next_symbol.isdigit()
+                if next_symbol != " " and not is_decimal_point and (next_symbol.isalpha() or next_symbol.isnumeric()):
                     text = text[:j] + " " + text[j:]
                     # Advance past the token and the newly inserted space to avoid re-matching.
                     p = j + 1
@@ -384,10 +387,12 @@ def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[boo
     # Also handle tildas!!!
     for tilda in ["~", "-"]:
         if tilda in text:
+            # Slice, don't `replace`: an uncounted replace also removed every INTERIOR occurrence,
+            # so "- Great product - really" lost its internal clause separator too.
             if text.startswith(tilda + " "):
-                text = text.replace(tilda + " ", "")
+                text = text[len(tilda) + 1 :]
             if text.endswith(" " + tilda):
-                text = text.replace(" " + tilda, "")
+                text = text[: -(len(tilda) + 1)]
 
     last_char = text[-1]
     last_2chars = text[-2:]

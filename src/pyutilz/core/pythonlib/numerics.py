@@ -4,7 +4,20 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
+import re
+
 from ._common import Any, Tuple, njit
+
+# A comma is a THOUSANDS separator only where it actually separates groups of three digits
+# ("1,234", "1,234.56"). Stripping commas unconditionally silently reinterprets a decimal comma --
+# "1,5" (1.5 in most of Europe) became 15.0, a 10x error with no warning -- so anything that is not
+# this shape keeps its commas and simply fails to parse as a float.
+_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d*)?$")
+
+
+def _strip_thousands_separators(text: str) -> str:
+    """Return ``text`` with commas removed IF they occupy genuine thousands positions, else unchanged."""
+    return text.replace(",", "") if _THOUSANDS_RE.match(text) else text
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Numerics
@@ -12,17 +25,24 @@ from ._common import Any, Tuple, njit
 
 
 def is_float(string: Any) -> bool:
-    """Checks if `string` (with thousands-separator commas stripped) can be parsed as a float."""
+    """Checks if `string` (with GENUINE thousands-separator commas stripped) can be parsed as a float.
+
+    A comma that is not a thousands separator (e.g. the decimal comma of ``"1,5"``) is left in
+    place, so such a value reports ``False`` rather than being silently read as ``15.0``.
+    """
     try:
-        float(str(string).replace(",", ""))
+        float(_strip_thousands_separators(str(string)))
         return True
     except ValueError:
         return False
 
 
 def to_float(string: Any) -> float:
-    """Parses `string` as a float, stripping thousands-separator commas first."""
-    return float(str(string).replace(",", ""))
+    """Parses `string` as a float, stripping GENUINE thousands-separator commas first.
+
+    Raises ``ValueError`` for a decimal comma such as ``"1,5"`` instead of returning ``15.0``.
+    """
+    return float(_strip_thousands_separators(str(string)))
 
 
 @njit()
@@ -45,34 +65,22 @@ def integer_digits(n: int) -> Tuple[int, set]:
 
 # @njit()
 def float_distinct_digits_percent(number: float, precision: int = 5) -> float:
-    """
-    >>>float_distinct_digits_percent(11.882, precision=3)
+    """Share of DISTINCT decimal digits among the digits ``number`` shows at ``precision``.
+
+    Both counts are taken from the decimal rendering, not from arithmetic on the binary float:
+    ``int(frac_part * 10**precision)`` truncated (``0.05063 * 100000`` is ``5062.999...`` -> 5062)
+    and ``integer_digits`` could not see a fractional part's LEADING zeros at all (``0.005`` at
+    precision 3 counted as one digit), so numerator and denominator were both wrong for 12.8% of
+    random 5-decimal values.
+
+    >>> float_distinct_digits_percent(11.882, precision=3)
     0.6
+    >>> float_distinct_digits_percent(25.05063, precision=5)
+    0.7142857142857143
     """
-    # Extract the integer and fractional parts of the float
-    int_part = int(number)
-    frac_part = round(abs(number - int_part), precision)  # rounding needed for cases like 11.882
-    if precision:
-        frac_part = min(frac_part, 1 - 10**-precision)  # a rounding carry (e.g. 0.99999996 -> 1.0) must not push the fractional-digit count past `precision`
-
-    # Initialize a set to store unique digits
-    unique_digits = set()
-    ntotal = 0
-
-    # Count digits in the integer part
-    nsubtotal, digits = integer_digits(abs(int_part))
-    unique_digits.update(digits)
-    ntotal += nsubtotal
-
-    # Count digits in the fractional part (up to a certain precision)
-    if precision:
-        frac_digits = int(frac_part * (10**precision))  # Adjust precision as needed
-        nsubtotal, digits = integer_digits(frac_digits)
-        unique_digits.update(digits)
-        ntotal += nsubtotal
-
-    # Count the number of unique digits
-    return len(unique_digits) / ntotal if ntotal > 0 else 1.0
+    digits_str = format(abs(float(number)), f".{max(precision, 0)}f").replace(".", "")
+    ntotal = len(digits_str)
+    return len(set(digits_str)) / ntotal if ntotal > 0 else 1.0
 
 
 def count_trailing_zeros(number: float, precision: int = 5) -> int:
@@ -82,7 +90,13 @@ def count_trailing_zeros(number: float, precision: int = 5) -> int:
     1
     >>> count_trailing_zeros(100.0, precision=5)
     5
+    >>> count_trailing_zeros(100.0, precision=0)
+    0
     """
+    if precision <= 0:
+        # ``format(x, ".0f")`` has no decimal separator at all, so the separator ``break`` below
+        # never fires and the INTEGER part's zeros get counted as fractional ones.
+        return 0
     # Convert the float to a string
     num_str = format(number, f".{precision}f")
     nzeros = 0

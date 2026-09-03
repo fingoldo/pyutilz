@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- non-neutral literal substituted by a silent except handler ----------
 #
@@ -76,20 +77,64 @@ def _describe_literal(value: ast.AST) -> str | None:
     return None
 
 
+def _own_nodes(handler: ast.ExceptHandler) -> "Iterator[ast.AST]":
+    """Walk the handler body WITHOUT descending into nested function/lambda scopes.
+
+    A `def cb(): return 0.0` defined inside the handler is a callback the handler registers, not
+    a value the handler substitutes for the failed computation.
+    """
+    todo: list[ast.AST] = list(handler.body)
+    while todo:
+        node = todo.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+
+
+def _target_name(target: ast.AST) -> str:
+    """Best-effort display name for an assignment target."""
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return "<target>"
+
+
 def _substituted_literal(handler: ast.ExceptHandler) -> str | None:
-    """A short description of the non-neutral literal this handler substitutes, or None."""
-    for node in ast.walk(handler):
+    """A short description of the non-neutral literal this handler substitutes, or None.
+
+    Candidates are ordered by source position so the reported handler line and the quoted value
+    always describe the FIRST substitution -- ``ast.walk`` is breadth-first and would pick an
+    arbitrary one when a handler has several.
+    """
+    candidates: list[tuple[tuple[int, int], str]] = []
+    for node in _own_nodes(handler):
+        pos = (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
         if isinstance(node, ast.Return) and node.value is not None:
             desc = _describe_literal(node.value)
             if desc is not None:
-                return f"returns {desc}"
-        if isinstance(node, ast.Assign) and node.targets:
+                candidates.append((pos, f"returns {desc}"))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            # `_max_err: float = 0.0` -- the annotated spelling this project's conventions mandate.
             desc = _describe_literal(node.value)
             if desc is not None:
-                target = node.targets[0]
-                name = target.id if isinstance(target, ast.Name) else "<target>"
-                return f"assigns {name} = {desc}"
-    return None
+                candidates.append((pos, f"assigns {_target_name(node.target)} = {desc}"))
+        elif isinstance(node, ast.Assign) and node.targets:
+            target = node.targets[0]
+            if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)) and len(target.elts) == len(node.value.elts):
+                for elt_target, elt_value in zip(target.elts, node.value.elts):
+                    desc = _describe_literal(elt_value)
+                    if desc is not None:
+                        candidates.append((pos, f"assigns {_target_name(elt_target)} = {desc}"))
+                        break
+                continue
+            desc = _describe_literal(node.value)
+            if desc is not None:
+                candidates.append((pos, f"assigns {_target_name(target)} = {desc}"))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: c[0])[1]
 
 
 def scan_non_neutral_except_fallback(
@@ -112,7 +157,7 @@ def scan_non_neutral_except_fallback(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for handler in [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]:
             if _is_import_error_only(handler) or _is_audible(handler, audible_log_methods, audible_functions):

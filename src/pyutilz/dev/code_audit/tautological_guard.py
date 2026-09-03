@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a threshold ANDed with a pin that makes it vacuous -------------------------------------------
 #
@@ -63,7 +63,7 @@ def scan_tautological_guards(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And)):
@@ -78,15 +78,19 @@ def scan_tautological_guards(
                     continue
                 op, right = operand.ops[0], operand.comparators[0]
                 if isinstance(op, _ORDERING):
-                    thresholded[_root_of(key)] = operand
+                    thresholded[key] = operand
                 elif isinstance(op, (ast.Is, ast.Eq)):
                     # `is None` / `== True` narrow a type, they do not fix a value out of an ordering.
                     if isinstance(right, ast.Constant) and (right.value is None or isinstance(right.value, bool)):
                         continue
-                    pinned[_root_of(key)] = operand
-            shared = sorted(set(thresholded) & set(pinned))
-            for target in shared:
-                line = min(thresholded[target].lineno, pinned[target].lineno)  # type: ignore[attr-defined]
+                    pinned[key] = operand
+            # The pin must actually fix the THRESHOLDED value: pinning `item` fixes `item.score`,
+            # but pinning `item.label` constrains nothing about `item.score`. Collapsing both to
+            # the root object `item` made the ordinary `if item.score > 0.5 and item.label == "ok"`
+            # a P1.
+            pairs = sorted({(t, p) for t in thresholded for p in pinned if p == t or t.startswith(p + ".") or t.startswith(p + "[")})
+            for target, pin_key in pairs:
+                line = min(thresholded[target].lineno, pinned[pin_key].lineno)  # type: ignore[attr-defined]
                 findings.append(
                     Finding(
                         check="tautological_guard",
@@ -95,7 +99,7 @@ def scan_tautological_guards(
                         line=line,
                         snippet=_line_text(src_lines, line),
                         detail=(
-                            f"`and` combines a threshold on {target!r} with a pin of {target!r} to one value: only that value "
+                            f"`and` combines a threshold on {target!r} with a pin of {pin_key!r} to one value: only that value "
                             f"can reach the threshold, so the threshold is vacuous and the guard reduces to the pin."
                         ),
                     )

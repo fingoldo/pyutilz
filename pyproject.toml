@@ -357,6 +357,16 @@ dev = [
     "pytest-instafail>=0.5",
     "pytest-progress>=1.3",
     "pytest-timeout>=2.1",
+    # pytest-randomly randomises test ORDER each run, which is what makes order-dependence
+    # (shared module state such as pyutilz.llm.factory._provider_cache, or a sys.modules stub
+    # leaking between files) actually surface instead of hiding behind a fixed alphabetical
+    # order. tests/conftest.py ships a thinc seed-overflow compat shim that only has a reason
+    # to exist when the plugin is installed. It lived in requirements-dev.txt alone until the
+    # 2026-09-03 packaging audit found that NO workflow installs that file, so the
+    # randomisation the suite is designed around never ran on any CI leg; unlike py-ci-shared
+    # it is an ordinary PyPI package with no direct reference, so it belongs here, where every
+    # workflow's `[dev]` install picks it up.
+    "pytest-randomly>=3.12",
     # black==26.5.1 requires Python >=3.10 (found 2026-07-19: installing dev-extras on the py3.8/
     # py3.9 CI matrix cells hard-failed the whole `pip install -e ".[dev]"` step, since pip can't
     # satisfy an unconditional exact pin against an interpreter the release doesn't support). The
@@ -586,6 +596,7 @@ DEP002 = [
     "pytest-instafail",
     "pytest-progress",
     "pytest-timeout",
+    "pytest-randomly",  # a pytest PLUGIN: loaded by pytest through its entry point, never `import`-ed by the suite
     "black",
     "ruff",
     "mypy",
@@ -608,7 +619,6 @@ DEP001 = [
     "IPython",  # core/pythonlib.py is_jupyter_notebook(), data/pandaslib/_common.py, dev/notebook_init.py -- notebook-only
     "nvidia",  # core/pythonlib.py -- CUDA_HOME discovery from the nvidia pip package, guarded
     "polars_ds",  # data/polarslib.py -- gated on check_cpu_flag("avx2")
-    "orjson",  # database/db, llm/openai_compat.py, performance/kernel_tuning/remote.py, text/strings/jsonutils.py, web/* -- faster-than-stdlib json, falls back if missing
     "filelock",  # database/deltalakes.py -- guarded, FileLock/Timeout set to None on ImportError
     "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature
     "concurrent_log_handler",  # dev/logginglib.py -- guarded, falls back to stdlib RotatingFileHandler
@@ -628,7 +638,7 @@ DEP001 = [
 # this repo controls or wants to depend on staying stable, so both codes are ignored
 # for the same verified-optional names rather than re-triaging every time a transitive pin shifts.
 DEP003 = [
-    "catboost", "IPython", "nvidia", "polars_ds", "orjson", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
+    "catboost", "IPython", "nvidia", "polars_ds", "filelock", "matplotlib", "seaborn", "anyio", "botocore",
     "flask_login",  # dev/dashlib.py -- guarded, Dash-only feature; now pulled in transitively in some envs (previously genuinely absent)
     "pgvector",  # database/psycopg2_pool.py -- guarded, only used if the caller's DB has the pgvector extension
     "claude_code_sdk",  # llm/claude_code_provider.py -- guarded SDK monkey-patch block; present in dev envs with the CLI SDK installed
@@ -679,7 +689,7 @@ warn_unreachable = true
 # on this Windows box with the [all,dev] extras installed, but essentially all of them are
 # platform- or optional-dependency-conditional and are REQUIRED elsewhere -- system/system/memory.py
 # and probing.py's `ctypes.windll` / `winsound` ignores are needed on CI's Linux runner, and the
-# orjson / pgvector / filelock / IPython / numba / cupy import ignores are needed in any install
+# pgvector / filelock / IPython / numba / cupy import ignores are needed in any install
 # that lacks those extras. Turning the flag on would make the blocking gate fail differently per
 # platform and per extras set, i.e. exactly the nondeterminism the gate exists to prevent. The
 # environment-INDEPENDENT stale ignores were removed by hand instead (2026-09-02).

@@ -106,12 +106,15 @@ flat-root for historical reasons) goes at `tests/` root as `test_<module_name>.p
 `test_<module>.py` file for the same module — check the base file first for existing coverage of
 a function before adding a new test, regardless of which numbered file it ends up in.
 
-Four separate "benchmark" surfaces exist, easy to confuse by name: `_benchmarks/bench_*.py`
+Three separate "benchmark" surfaces exist, easy to confuse by name: `_benchmarks/bench_*.py`
 (standalone scripts, `python -m _benchmarks.bench_*`, never run by pytest/CI — hard-coded
 identity assertions comparing an old vs. new implementation) vs. `tests/test_kernel_tuning_benchmark.py`
 (real, CI-collected pytest coverage for `pyutilz.performance.kernel_tuning.benchmark`) vs.
 `tests/test_dev_benchmarking.py` (real, CI-collected pytest coverage for the unrelated
-`pyutilz.dev.benchmarking` module).
+`pyutilz.dev.benchmarking` module). A fourth name looks like a surface and is not one: the
+`pytest-benchmark` plugin is declared in `[dev]` and loads on every run (it appears in the pytest
+header), but no test uses its `benchmark` fixture -- a `test_*_benchmark` name in `tests/` always
+belongs to one of the three surfaces above, never to that plugin.
 
 ## Pre-commit hook
 
@@ -137,8 +140,10 @@ other gate too (Black, ruff, bandit, vulture, deptry) and is not the cheaper opt
 
 `pip-audit --desc` (the default text formatter) crashes with `UnicodeEncodeError`
 on a Windows console using the cp1251 codepage -- some CVE descriptions contain
-Unicode arrows the console can't encode. CI is unaffected (runs on `ubuntu-latest`,
-UTF-8). For a local Windows run, write JSON instead of printing text:
+Unicode arrows the console can't encode. No GitHub Actions workflow runs pip-audit at all --
+its only wiring in this repo is the advisory, warn-only `.pre-commit-config.yaml` hook -- so a
+developer's console is the only place it ever runs, and on this project's reference box that is
+the Windows console this note is about. Run it locally, writing JSON instead of printing text:
 
 ```bash
 pip-audit --desc -f json -o pip-audit-report.json

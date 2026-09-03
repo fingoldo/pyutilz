@@ -5,7 +5,7 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- tests that assert on SOURCE TEXT rather than on behaviour -----------
 #
@@ -50,7 +50,18 @@ _DISASSEMBLERS = {"dis", "get_instructions", "code_info"}
 _SOURCE_ATTRS = {"co_code", "co_consts", "co_names"}
 
 
-def _reads_source(node: ast.AST) -> str | None:
+def _dis_aliases(tree: ast.AST) -> set[str]:
+    """Local names that refer to the ``dis`` module, including ``import dis as d``."""
+    names = {"dis"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "dis":
+                    names.add(alias.asname or "dis")
+    return names
+
+
+def _reads_source(node: ast.AST, dis_aliases: "set[str] | None" = None) -> str | None:
     """Name the source-reading construct inside *node*, or None.
 
     Matches `inspect.getsource(f)`, a bare `getsource(f)` (it is imported that way often enough
@@ -64,7 +75,7 @@ def _reads_source(node: ast.AST) -> str | None:
                 return f"{name}()"
             if name in _DISASSEMBLERS and isinstance(func, ast.Attribute):
                 mod = func.value
-                if isinstance(mod, ast.Name) and mod.id == "dis":
+                if isinstance(mod, ast.Name) and mod.id in (dis_aliases or {"dis"}):
                     return f"dis.{name}()"
         if isinstance(sub, ast.Attribute) and sub.attr in _SOURCE_ATTRS:
             return sub.attr
@@ -111,7 +122,7 @@ def _is_membership_or_match(test: ast.AST) -> bool:
     return False
 
 
-def _source_bound_names(tree: ast.AST) -> dict[str, str]:
+def _source_bound_names(tree: ast.AST, dis_aliases: "set[str] | None" = None) -> dict[str, str]:
     """Map local names bound from a source reader to the construct that produced them.
 
     This is the spelling that actually occurs. Almost nobody writes the reader inline inside the
@@ -126,15 +137,18 @@ def _source_bound_names(tree: ast.AST) -> dict[str, str]:
     because its silence reads as a clean bill of health.
     """
     bound: dict[str, str] = {}
+    # Aliases come from the MODULE, not from this scope: `import dis as d` is a module-level statement.
+    aliases = dis_aliases if dis_aliases is not None else _dis_aliases(tree)
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        # AnnAssign too: `src: str = inspect.getsource(g)` is the same binding, annotated.
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
-        reader = _reads_source(node.value)
+        reader = _reads_source(node.value, aliases)
         if reader is None and _reads_a_python_file(node.value):
             reader = "reading a .py/.sql file"
         if reader is None:
             continue
-        for target in node.targets:
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
             for name in ast.walk(target):
                 if isinstance(name, ast.Name):
                     bound[name.id] = reader
@@ -149,20 +163,42 @@ def _scopes(tree: ast.Module) -> Iterator[ast.AST]:
     (`assert fn("tabMarket") == "body:tabMarket"`) look like a source-text claim because some
     unrelated test three hundred lines away had bound `fn` from a reader.
     """
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            yield node
+    # INNERMOST FIRST. `ast.walk` is breadth-first, so it yields an outer function before the
+    # functions nested in it; combined with the caller's `seen` set that locked every assert to
+    # the OUTERMOST scope claiming it, so a sibling inner function's bindings leaked across --
+    # exactly the false positive this scoping exists to prevent. Reversing the BFS order puts the
+    # narrowest enclosing scope first.
+    funcs = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    yield from reversed(funcs)
     yield tree
 
 
-def _looks_like_a_test_file(path: Path) -> bool:
+def _looks_like_a_test_file(path: Path, root: Path) -> bool:
     """Whether this file is test code.
 
     Only test files are scanned: a build script or a code generator manipulates source text as
     its actual job, and flagging it would be noise.
+
+    The ``tests`` directory test is made against the path RELATIVE to the scan root: ``path.parts``
+    is absolute, so a checkout under any directory named ``tests`` classified every production
+    file in the repository as a test.
     """
     name = path.name
-    return name.startswith("test_") or name.endswith("_test.py") or "tests" in path.parts
+    try:
+        rel_parts = path.relative_to(root).parts
+    except ValueError:
+        rel_parts = path.parts
+    return name.startswith("test_") or name.endswith("_test.py") or "tests" in rel_parts
+
+
+def _fails_in_body(node: ast.If) -> bool:
+    """Does this ``if``'s body do nothing but call ``pytest.fail`` / ``self.fail``? Then it is an assertion."""
+    for stmt in node.body:
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            func = stmt.value.func
+            if isinstance(func, ast.Attribute) and func.attr == "fail":
+                return True
+    return False
 
 
 def scan_source_text_assertions(
@@ -189,21 +225,24 @@ def scan_source_text_assertions(
     """
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
-        if not _looks_like_a_test_file(py):
+        if not _looks_like_a_test_file(py, root):
             continue
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         seen: set[int] = set()
+        aliases = _dis_aliases(tree)
         for scope in _scopes(tree):
-            bound_here = _source_bound_names(scope)
+            bound_here = _source_bound_names(scope, aliases)
             for node in ast.walk(scope):
-                if not isinstance(node, ast.Assert) or id(node) in seen:
+                # `if "x" not in src: pytest.fail(...)` is the same source-text assertion in a
+                # different spelling; the docstring has always claimed to handle it.
+                if not (isinstance(node, ast.Assert) or (isinstance(node, ast.If) and _fails_in_body(node))) or id(node) in seen:
                     continue
                 seen.add(id(node))
-                reader = _reads_source(node.test)
+                reader = _reads_source(node.test, aliases)
                 if reader is None and _reads_a_python_file(node.test):
                     reader = "reading a .py/.sql file"
                 if reader is None:

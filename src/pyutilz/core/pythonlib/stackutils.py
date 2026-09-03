@@ -4,6 +4,8 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
+import sys
+
 from ._common import Any, Optional, Sequence, inspect, logger
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -29,14 +31,21 @@ def lookup_in_stack(variable):
 
     Returns None if no calling frame's globals define a truthy value for it.
     """
-
-    st = inspect.stack()
-    for i in range(len(st)):
-        frame = st[i]
-        caller_globals = frame[0].f_globals
-        res = caller_globals.get(variable)
-        if res:
-            return res
+    # Walk ``f_back`` rather than calling ``inspect.stack()``: the latter materialises a
+    # ``FrameInfo`` for EVERY frame (reading and caching each one's source context) before the
+    # first candidate is even examined, and the returned list pins every enclosing frame's locals
+    # -- arrays included -- for as long as the caller holds it. The loop below touches only
+    # ``f_globals`` and drops its frame reference in the ``finally``.
+    frame: Optional[Any] = sys._getframe(1)
+    try:
+        while frame is not None:
+            res = frame.f_globals.get(variable)
+            if res:
+                return res
+            frame = frame.f_back
+    finally:
+        del frame
+    return None
 
 
 def get_parent_func_args(skip_args: Sequence = ("self",)) -> dict:
@@ -81,10 +90,25 @@ def store_params_in_object(obj: object, params: dict, postfix: str = "_param_"):
 
 
 def load_object_params_into_func(obj: object, locals: dict, postfix: str = "_param_"):  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
-    """Contrary action to store_params_in_object, but does not work with locals (())."""
+    """Inverse of :func:`store_params_in_object`: collect ``obj``'s ``*postfix`` attributes.
+
+    The collected ``{name: value}`` mapping is written into ``locals`` AND returned. Passing a
+    function's own ``locals()`` does NOT restore anything: writes to an optimized frame's
+    ``locals()`` snapshot never reach its fast locals, in every CPython version, so the target
+    parameters stayed ``None`` and nothing signalled it. Use the RETURN value instead::
+
+        params = load_object_params_into_func(obj, {})
+        alpha = params.get("alpha", alpha)
+
+    Returns:
+        dict: the ``{stripped_attr_name: value}`` pairs found on ``obj`` (empty when ``obj`` is None).
+    """
+    collected: dict = {}
     if obj is None:
-        return
+        return collected
     for attr in dir(obj):
         if attr.endswith(postfix):
             key, value = attr[: -len(postfix)], getattr(obj, attr)
+            collected[key] = value
             locals[key] = value
+    return collected

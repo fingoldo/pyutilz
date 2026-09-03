@@ -90,6 +90,11 @@ def column_sum_min_max(arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndar
     """
     if arr.ndim < 2:
         raise ValueError(f"column_sum_min_max expects ndim >= 2, got {arr.ndim}")
+    if arr.size == 0:
+        # The numba kernel seeds ``lo`` from ``a2[0, j]`` with bounds-checking compiled OFF, so a
+        # zero-row array would read uninitialized memory and return garbage; the numpy fallback
+        # raises for the same input. Raise from both paths so they stay interchangeable.
+        raise ValueError(f"column_sum_min_max: cannot reduce an empty array (shape {arr.shape})")
     col_axis = tuple(range(arr.ndim - 1))
     if not _HAVE_NUMBA or arr.dtype.kind not in NUMBA_SUPPORTED_KINDS or arr.dtype == np.float16:
         return _numpy_col_reductions(arr, col_axis)

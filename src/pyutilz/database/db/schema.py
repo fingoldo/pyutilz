@@ -9,6 +9,8 @@ from typing import Optional, Union
 
 from ._common import (
     logger,
+    datetime,
+    timezone,
     date,
     sql,
     weekofmonth,
@@ -16,7 +18,7 @@ from ._common import (
     relativedelta,
     Enum,
 )
-from .sql_helpers import make_set_excluded_clause, u, validate_sql_identifier
+from .sql_helpers import make_set_excluded_clause, validate_sql_identifier
 
 # See the PROJECT IDIOM comment in connection.py.
 import pyutilz.database.db as _facade
@@ -53,7 +55,11 @@ def ensure_pg_table_exists(
     validate_sql_identifier(table)
     validate_sql_identifier(key_field_name)
     validate_sql_identifier(id_field_name)
-    if not _facade.check_if_pg_table_exists(table):
+    # The existence probe must look in the schema this connection actually writes to: connect_to_db's
+    # m_db_schema sets the search_path AND is stored on the facade, so a table living in "myschema"
+    # was reported absent by a hard-coded "public" probe -- and the CREATE TABLE that followed then
+    # failed with DuplicateTable, which basic_db_execute swallows as a warning.
+    if not _facade.check_if_pg_table_exists(table, schema_name=getattr(_facade, "db_schema", None) or "public"):
         if autocreate_id_type_name:
             if autocreate_id_type_name.lower() not in ("smallserial serial bigserial uuid".split()):
                 # autocreate_id_type_name is spliced verbatim into the CREATE TABLE statement below with no other
@@ -83,6 +89,11 @@ def read_table_into_dict(
     """
     Reads id->value mapping into a dictionary
     if autocreate_id_type_name is specified, if table does not exist, it gets created with specified key type
+
+    WARNING: condition is spliced verbatim into the SQL statement (raw WHERE fragment,
+    unvalidated). This function executes raw, unvalidated SQL - condition must NEVER
+    be built from external/user-controlled input directly; only pass trusted, hard-coded
+    or internally-constructed condition strings.
 
     Also importable as :func:`ReadTableIntoDic` -- a deprecated alias, same function, kept for
     backward compatibility with the legacy PascalCase/Hungarian-notation name.
@@ -167,6 +178,15 @@ def get_id_by_key_field_and_insert_if_needed(
 ) -> str:
     """Look up ``key_field_value``'s id in ``dict_enums`` (or the DB), inserting a new row if needed.
 
+    ``key_field_value`` is bound through a driver placeholder, so it is safe to pass externally
+    sourced data there (``key_is_not_string`` only documents that the column is not textual; the
+    value is parameterized either way).
+
+    WARNING: ``alternate_fields_values`` is spliced verbatim into the generated INSERT's VALUES
+    list (a raw SQL fragment, unvalidated) - it must NEVER be built from external/user-controlled
+    input; only pass trusted, hard-coded or internally-constructed expressions. Every identifier
+    argument is validated.
+
     Also importable as :func:`GetIdByKeyFieldAndInsertIfNeeded` -- a deprecated alias, same
     function, kept for backward compatibility with the legacy PascalCase/Hungarian-notation name.
     """
@@ -193,15 +213,21 @@ def get_id_by_key_field_and_insert_if_needed(
         for _name in [n for n in unique_constraint_fields.split(",") if n]:
             validate_sql_identifier(_name)
 
-        if key_is_not_string:
-            Data = key_field_value
-        else:
-            Data = u(key_field_value)
-        # All identifiers below (table, key_field_name, id_field_name, alternate_fields_names, unique_constraint_fields) are validated above
+        # key_is_not_string still selects how the value is handed to the driver (as-is for a numeric /
+        # boolean key column, coerced to text otherwise), it just no longer selects between "quoted"
+        # and "spliced raw".
+        bound_key_value = key_field_value if key_is_not_string else str(key_field_value)
+        # Regression fix: key_field_value used to be spliced into the statement -- u()-quoted in the
+        # string case, but VERBATIM under key_is_not_string=True (the documented way to pass a numeric
+        # key), so a value like "1),(2" was executed as SQL. It is bound through a %s placeholder now,
+        # which also removes the quote-doubling round trip for the string case.
+        # All identifiers below (table, key_field_name, id_field_name, alternate_fields_names, unique_constraint_fields) are
+        # validated above; alternate_fields_values remains an accepted raw fragment (see the docstring WARNING).
         if len(alternate_fields_names) > 0:
             if not use_alternate_fields_only:
                 rs = _facade.safe_execute(
-                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values ({Data},{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                    f"insert into {table} ({key_field_name} , {alternate_fields_names}) values (%s,{alternate_fields_values}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}",  # nosec B608
+                    (bound_key_value,),
                 )
             else:
                 rs = _facade.safe_execute(
@@ -209,7 +235,8 @@ def get_id_by_key_field_and_insert_if_needed(
                 )
         else:
             rs = _facade.safe_execute(
-                f"insert into {table} ({key_field_name}) values ({Data}) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}"  # nosec B608
+                f"insert into {table} ({key_field_name}) values (%s) on conflict ({unique_constraint_fields}) do update set {make_set_excluded_clause(key_field_name, add_updated_at_timestamp)} returning {id_field_name}",  # nosec B608
+                (bound_key_value,),
             )
 
         the_id = rs[0][0]
@@ -247,6 +274,14 @@ def _partition_table_name(table_name: str, d: date) -> str:
     return f"z_{table_name}_y{d.year:04d}m{d.month:02d}w{weekofmonth(d):02d}d{d.day:02d}"
 
 
+def _as_utc_datetime(d: date) -> datetime:
+    """A ``datetime.date`` as midnight UTC; an actual ``datetime`` is returned unchanged (only its
+    missing tzinfo is filled in as UTC), so epoch conversion works for both."""
+    if isinstance(d, datetime):
+        return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+
 def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
     """Creates one range partition of ``table_name`` per period between ``from_date`` and ``to_date``.
 
@@ -262,7 +297,11 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
         if bigint_degree is None or bigint_degree == 0:
             cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{d:%Y-%m-%d %H:%M:%S}') TO ('{n:%Y-%m-%d %H:%M:%S}')"
         else:
-            cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(d)*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(n)*int(10**bigint_degree)}')"
+            # datetime_to_utc_timestamp() calls dt.utctimetuple(), which only datetime.datetime has --
+            # so the bigint bounds branch used to raise AttributeError for exactly the datetime.date
+            # arguments this function's own signature declares, on the very first period. Normalize the
+            # period bounds to midnight-UTC datetimes here (a datetime is passed through unchanged).
+            cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(_as_utc_datetime(d))*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(_as_utc_datetime(n))*int(10**bigint_degree)}')"
         # print(cmd)
         _facade.safe_execute(cmd)
 

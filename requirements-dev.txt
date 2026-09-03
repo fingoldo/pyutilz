@@ -12,12 +12,10 @@
 # the marker keeps this file usable on a py3.8 interpreter, where those hooks are not needed.
 py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'
 
-# pytest-randomly: randomises test ORDER each run, which is what makes order-dependence
-# (shared module state such as pyutilz.llm.factory._provider_cache, or a sys.modules stub
-# leaking between files) actually surface instead of hiding behind a fixed alphabetical order.
-# tests/conftest.py ships a thinc seed-overflow compat shim for it, and tests/test_image.py +
-# tests/test_pandaslib_extra.py both justify their design by it -- so it is a real requirement,
-# not an optional nicety. Declared here rather than in pyproject.toml's [dev] extra alongside
-# the other pytest plugins purely to keep this file the single place a contributor is told to
-# install from together with it; `pip install -e ".[dev]" -r requirements-dev.txt` gets both.
-pytest-randomly>=3.12
+# pytest-randomly moved to pyproject.toml's [dev] extra on 2026-09-03 (packaging audit 03/F02).
+# It was declared here alone, and NO workflow installs this file -- `grep -rn requirements-dev
+# .github/` finds only prose -- so the test-order randomisation the suite is designed around
+# (and the thinc seed-overflow compat shim in tests/conftest.py that exists only for it) ran on
+# none of the 21 CI legs. Unlike py-ci-shared above it is an ordinary PyPI package with no direct
+# reference, so nothing kept it out of project metadata; every workflow's `[dev]` install now
+# gets it. Do not re-add it here: two declarations are two things to drift.

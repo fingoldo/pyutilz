@@ -6,6 +6,7 @@ from __future__ import annotations
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import unicodedata
 import logging
 
 # Pin the logger name to the historical flat-module path so log records keep the same channel after the split into a subpackage.
@@ -62,6 +63,20 @@ def _check_word_coverage(
     if required_coverage is not None and covered / len(content_indices) < required_coverage:
         return False
     return True
+
+
+def _nfc_words(words: list) -> list:
+    """`words` with every entry NFC-normalized (composed form).
+
+    The pure-Python path measures distance with ``jellyfish.levenshtein_distance``, whose Rust
+    implementation counts a base character plus its combining marks as ONE unit, while the numba
+    kernel operates on raw utf-32 codepoints and is codepoint-exact. Without a shared
+    normalization, an NFD input (routine from PDF extraction and macOS filenames) scored
+    differently depending only on whether numba happened to be installed -- e.g.
+    ``["cafe\u0301"]`` vs ``["caf\u00e9"]`` gave 0.775 pure-Python and 0.675 under numba.
+    Normalizing BOTH sides to NFC makes the two paths see identical strings.
+    """
+    return [unicodedata.normalize("NFC", w) if isinstance(w, str) else w for w in words]
 
 
 def _strip_stop_words(words: list, stop_words: Optional[list]) -> list:

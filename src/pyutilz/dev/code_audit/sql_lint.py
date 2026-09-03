@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
 
 # --- SQL-literal heuristics -----------------------------------------------
 
@@ -71,7 +71,7 @@ def scan_sql_aggregate_before_cast(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node, sql in _string_constants(tree):
             for m in _MIN_MAX_CALL_RE.finditer(sql):
@@ -127,18 +127,35 @@ def _docstring_constant_ids(tree: ast.Module) -> set[int]:
     return ids
 
 
-def _string_constants(tree: ast.Module) -> list[tuple[ast.Constant, str]]:
+def _string_constants(tree: ast.Module) -> list[tuple[ast.expr, str]]:
     """Every ``ast.Constant`` string literal in the module, in traversal order, paired with its
     string value (mypy can't narrow ``Constant.value``'s union type through an isinstance filter
     inside a comprehension, so the str is captured alongside the node) -- module/class/function
     docstrings are excluded (see ``_docstring_constant_ids``), since prose documentation can never
     be an executed SQL literal."""
     docstring_ids = _docstring_constant_ids(tree)
-    out: list[tuple[ast.Constant, str]] = []
+    # An f-string is a JoinedStr whose literal pieces are SPLIT at every interpolation, so
+    # `SELECT` and `LIMIT` land in different Constant nodes and no single node passes both gates.
+    # `_base._sql_text` reassembles it, rendering each interpolation as `?`, which keeps the
+    # recovered text matchable -- without it all three SQL-lint scanners were blind to every
+    # interpolated query, the common shape.
+    constants = _module_sql_constants(tree)
+    inside_fstring: set[int] = set()
+    joined: list[tuple[ast.expr, str]] = []
     for n in ast.walk(tree):
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstring_ids:
+        if not isinstance(n, ast.JoinedStr):
+            continue
+        for part in ast.walk(n):
+            if isinstance(part, ast.Constant):
+                inside_fstring.add(id(part))
+        text = _sql_text(n, constants)
+        if text:
+            joined.append((n, text))
+    out: list[tuple[ast.expr, str]] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstring_ids and id(n) not in inside_fstring:
             out.append((n, n.value))  # noqa: PERF401 -- a comprehension loses mypy's isinstance narrowing here
-    return out
+    return out + joined
 
 
 def scan_sql_limit_without_order_by(
@@ -162,7 +179,7 @@ def scan_sql_limit_without_order_by(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node, sql in _string_constants(tree):
             if not _SELECT_RE.search(sql):
@@ -215,7 +232,7 @@ def scan_sql_offset_pagination(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node, sql in _string_constants(tree):
             if not _SELECT_RE.search(sql):

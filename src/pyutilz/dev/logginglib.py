@@ -18,6 +18,7 @@ from os.path import sep, basename
 from random import random
 import numbers, inspect
 import functools
+import sys
 
 import logging
 from logging import Handler, Logger
@@ -35,6 +36,27 @@ from pyutilz.text.strings import json_pg_dumps, suffixize
 # none of which are declared by the `dev` extras group this module otherwise only needs.
 
 EXTERNAL_IP = None
+_EXTERNAL_IP_RESOLVED = False
+
+
+def get_node_external_ip() -> Optional[str]:
+    """This node's externally visible IP, resolved at most ONCE per process (``None`` on failure).
+
+    ``EXTERNAL_IP`` was declared and read but never assigned -- its only assignment was commented out
+    in ``init_logging`` -- so the default-on ``include_node_ip`` field recorded ``{"ip": None}`` in
+    every log row ever written. Resolution is lazy rather than at import/init time so a process that
+    never logs a node IP never makes the network call.
+    """
+    global EXTERNAL_IP, _EXTERNAL_IP_RESOLVED
+    if not _EXTERNAL_IP_RESOLVED:
+        _EXTERNAL_IP_RESOLVED = True
+        try:
+            from pyutilz.web import get_external_ip
+
+            EXTERNAL_IP = get_external_ip()
+        except Exception as e:
+            logger.warning("Could not resolve this node's external IP for logging: %s", e)
+    return EXTERNAL_IP
 # Sane default so calling log_loaded_rows()/_message() before init_logging()
 # doesn't crash with 'NoneType' object has no attribute 'info'; init_logging()
 # still reassigns this to a caller-named logger when called.
@@ -100,6 +122,18 @@ def init_logging(
                 ConcurrentRotatingFileHandler(filename=_log_filename(caller_name), backupCount=2, mode="a", encoding="utf-8", maxBytes=maxBytes, use_gzip=True)
             )
 
+    # The file handlers above are explicitly encoding="utf-8"; the stream handler inherits the
+    # console's encoding, so a Cyrillic record (log_loaded_rows emits Russian when lang == "ru")
+    # printed "--- Logging error ---" instead of the message on a console codepage that cannot
+    # represent it. sys.stderr.reconfigure(errors="replace") fixes that IN PLACE -- wrapping
+    # sys.stderr.buffer in a new TextIOWrapper instead would close the underlying buffer when that
+    # wrapper is garbage-collected, losing stderr for the process.
+    reconfigure = getattr(sys.stderr, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError) as e:
+            logging.getLogger(__name__).debug("Could not set errors='replace' on sys.stderr: %s", e)
     handlers.append(logging.StreamHandler())
 
     logging.basicConfig(
@@ -382,7 +416,7 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
             results_log["parameters"] = {key: value for key, value in params.items() if key not in special_vars}
 
             if include_node_ip:
-                results_log["node"] = {"ip": EXTERNAL_IP}
+                results_log["node"] = {"ip": get_node_external_ip()}
 
             for var in special_vars:
                 if var in kwargs:
@@ -408,7 +442,13 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
                 results_log["results"]["error"] = f"{type(exc).__name__}: {exc}"
                 raise
             finally:
-                finalize_function_log(kwargs["results_log"], db_path=db_path)
+                try:
+                    finalize_function_log(kwargs["results_log"], db_path=db_path)
+                except Exception:
+                    # An exception raised from a `finally` SUPERSEDES whatever was propagating, so a
+                    # transient DB/logging outage replaced every decorated call's real error with its
+                    # own -- and discarded the return value on the success path.
+                    logger.exception("finalize_function_log failed; the wrapped function's own result/exception is preserved")
             return value
 
         return wrapper_logged

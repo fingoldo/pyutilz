@@ -305,7 +305,17 @@ def create_tabs(
     switches instantly on click since that is client-side, while the body waits on the callback --
     without the overlay a slow tab shows the PREVIOUS tab's content under the new tab's header,
     which reads as finished rather than pending. Pass False to opt out.
+
+    Returns:
+        A ``dbc.Container`` with the tab bar and the active tab's body, or ``None`` on any of three
+        no-render paths, each logged at DEBUG: ``tabsList`` is empty, the current user is not
+        authenticated, or no tab survived the per-tab role filter.
     """
+    if not tabsList:
+        # tabsList[0] below is unguarded; an empty list raised IndexError at render time instead of
+        # simply rendering nothing.
+        logger.debug("create_tabs(%s): empty tabsList, nothing to render", tabsName)
+        return None
     # print('In create_tabs of %s' % tabsName)
     # user starts unauthenticated (None), not just unassigned: if flask_login is absent (or
     # there's no request/session context) the except branch below must still leave a defined,
@@ -316,9 +326,13 @@ def create_tabs(
     try:
         from flask_login import current_user
 
+        # `is_authenticated` is read BEFORE `user` is bound: the LocalProxy's own attribute access
+        # raises outside an app/request context, and binding the proxy first put that raise outside
+        # the fallback, so the anonymous view could not render.
+        if not current_user.is_authenticated:
+            logger.debug("create_tabs(%s): current user is not authenticated, nothing to render", tabsName)
+            return None
         user = current_user
-        if not user.is_authenticated:
-            return
     except Exception as e:
         # Legitimate best-effort: flask_login may not be installed, or there may be no request/session
         # context (e.g. called outside a Dash callback); tab rendering should proceed either way.
@@ -327,7 +341,11 @@ def create_tabs(
     varName = get_active_tab_var_name(tabsName, prefix=prefix)
 
     if varName not in session:
-        session[varName] = prefix + tabsList[0][0]
+        # tabsList[0][1] is the tab ID; [0] is the LABEL. Seeding from the label produced an
+        # active_tab value matching no real tab id, so no tab rendered selected, activeLabelClassName
+        # never applied, and the content callback ran against a nonexistent id. The label remains the
+        # fallback because create_tabs itself defaults a missing id to the label below.
+        session[varName] = prefix + (tabsList[0][1] or tabsList[0][0])
 
     active_tab = session[varName]
     # print('active_tab=%s' % active_tab)
@@ -363,7 +381,9 @@ def create_tabs(
                     label=tabLabel,
                     tab_id=prefix + tabId,
                     tabClassName=tabClassName,
-                    labelClassName=f"{labelClassName} {activeLabelClassName if prefix+tabId==active_tab and activeLabelClassName else ''}",
+                    # `labelClassName or ""`: an absent value was interpolated straight into the
+                    # attribute, emitting the literal CSS class "None " on every such tab.
+                    labelClassName=f"{labelClassName or ''} {activeLabelClassName if prefix+tabId==active_tab and activeLabelClassName else ''}".strip(),
                 )
             )
             if tabTooltip:
@@ -390,3 +410,5 @@ def create_tabs(
             data = [header, body]
         data = [*data, *tooltips] if isinstance(data, list) else [data, *tooltips]
         return dbc.Container(data, fluid=True, className=contentClassName)
+    logger.debug("create_tabs(%s): no tab passed the role filter for the current user, nothing to render", tabsName)
+    return None

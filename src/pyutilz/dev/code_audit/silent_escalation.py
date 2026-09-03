@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
 from .broad_except import _has_log_call, _has_raise, _is_broad_except, _handler_has_documented_rationale
 
 # --- logged-but-not-escalated except ---------------------------------------
@@ -162,7 +162,7 @@ def scan_log_only_except(
         if not _file_uses_escalation_convention(tree, escalation_attrs):
             continue
         src_lines = py.read_text(encoding="utf-8", errors="replace")
-        lines = src_lines.splitlines()
+        lines = split_src_lines(src_lines)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _line_text, _read_src_lines, _safe_parse
 
 # --- domain vocabulary inside code declared domain-neutral ----------------------------------------
 #
@@ -111,7 +111,10 @@ def scan_domain_vocabulary_leak(
         vocabulary: terms belonging to the current domain, matched case-insensitively on word boundaries.
         allowed: terms exempted, for the case where a vocabulary term has an unrelated general meaning
             in this codebase. Matched the same way and applied to the MATCHED TEXT, not the line.
-        severity: severity tag for emitted findings.
+        severity: severity tag for emitted ``domain_vocabulary_leak`` findings. It deliberately does
+            NOT apply to ``boundary_symbol_missing``, which is always P1: a manifest naming a symbol
+            that no longer exists makes the boundary pass by vacuity, so it must stay loud however
+            advisory the leak check itself is configured to be.
     """
     pattern = _term_pattern(vocabulary)
     if pattern is None or not boundary:
@@ -125,7 +128,7 @@ def scan_domain_vocabulary_leak(
     for module in sorted(by_module):
         path = root / module
         tree = _safe_parse(path) if path.is_file() else None
-        src_lines = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+        src_lines = _read_src_lines(path) if path.is_file() else []
         named = _iter_named(tree) if tree is not None else {}
         for item in sorted(by_module[module], key=lambda b: b.symbol):
             node = named.get(item.symbol)
@@ -133,6 +136,7 @@ def scan_domain_vocabulary_leak(
                 findings.append(
                     Finding(
                         check="boundary_symbol_missing",
+                        # Always P1 -- see the `severity` parameter's docstring above.
                         severity="P1",
                         file=module,
                         line=1,

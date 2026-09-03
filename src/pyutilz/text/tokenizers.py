@@ -169,7 +169,10 @@ class AdvancedTokenizer:
                         # stats
                         if w == 0:
                             self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
-                        elif w == k - 1:
+                        # Independent `if`, not `elif`: in a ONE-word sentence w == 0 == k - 1, and
+                        # the elif made every such word first-word-only, so NUM_LASTWORD_INSENTENCE
+                        # stayed at zero for a corpus of headlines/titles.
+                        if w == k - 1:
                             # print(word,base_morpheme)
                             self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
 
@@ -203,7 +206,8 @@ class AdvancedTokenizer:
                     base_morpheme = word.lower()
                     if w == 0:
                         self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
-                    elif w == k - 1:
+                    # Independent `if` for the same one-word-sentence reason as the loop above.
+                    if w == k - 1:
                         self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
                     if FIRSTLETTER_CAPITAL:
                         self.NUM_FIRSTLETTER_CAPITAL[base_morpheme] += 1

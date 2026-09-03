@@ -76,10 +76,22 @@ def mi_for_column(bins: pl.DataFrame, entropies: dict, col: str, target_col: str
 
     ``drop_nulls`` mirrors :func:`entropy_for_column`: with the default False, missingness is a
     category of its own and a feature whose only signal is its null pattern scores as informative.
-    Pass True (and compute ``entropies`` the same way) to score observed rows only.
+    Pass True to score observed rows only -- note that in that mode the precomputed ``entropies``
+    are IGNORED and both marginals are recomputed locally, because the identity
+    ``mi = H(x) + H(y) - H(x, y)`` only holds when all three terms come from the same sample.
+    Per-column marginals dropped nulls per column, so H(x), H(y) and H(x, y) were estimated on
+    three different row populations and the result could exceed min(H(x), H(y)) -- impossible for
+    a mutual information, and it ranked columns with complementary missingness highest.
     """
-    joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col], drop_nulls=drop_nulls))
-    return entropies[target_col] + entropies[col] - joint_entropy  # type: ignore[no-any-return]  # untyped upstream source (json/external lib/dynamic attr); return value verified correct at runtime
+    if drop_nulls:
+        complete = bins.drop_nulls(subset=[col, target_col])
+        h_col = _shannon_entropy(_group_freqs(complete, col))
+        h_target = _shannon_entropy(_group_freqs(complete, target_col))
+        joint_entropy = _shannon_entropy(_group_freqs(complete, [col, target_col]))
+    else:
+        h_col, h_target = float(entropies[col]), float(entropies[target_col])
+        joint_entropy = _shannon_entropy(_group_freqs(bins, [col, target_col]))
+    return h_target + h_col - joint_entropy
 
 
 _BIN_DTYPE_MAX: Dict[Any, int] = {
@@ -299,8 +311,11 @@ def bin_numerical_columns(
 
     if fill_nulls:
         cols_with_nulls = [key for key, value in df.lazy().select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
-    if fill_nans:
-        cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
+    # Needed whether or not fill_nans is set: only float columns can hold NaN at all, so they are also
+    # the only ones the NaN handling below may touch. cs.numeric() includes Decimal, for which every
+    # NaN predicate (is_nan/is_not_nan, and therefore fill_nan) raises InvalidOperationError -- a
+    # Decimal column is what pl.read_database returns for a SQL NUMERIC, i.e. an entirely ordinary input.
+    cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
 
     for col in cs.expand_selector(df.head(), all_num_cols):
         if binned_targets is not None:
@@ -324,7 +339,16 @@ def bin_numerical_columns(
             if fill_nans and (col in cols_with_floats):
                 col_expr = clean_numeric(col_expr, nans_filler=min_val)
 
-            binned_col = ((col_expr - min_val) / bin_width).floor().fill_nan(0).clip(0, num_bins - 1).cast(bin_dtype)
+            binned_col = ((col_expr - min_val) / bin_width).floor()
+            if col in cols_with_floats:
+                # Bin 0 is where the column's true minimum lands, so folding NaN into it makes a missing
+                # value indistinguishable from the smallest real observation -- and it used to happen even
+                # with fill_nans=False, which is exactly what that flag asks not to happen. With filling on,
+                # clean_numeric above has already mapped NaN to min_val (hence bin 0) so this is a no-op
+                # agreeing with that path; with filling off, NaN becomes null, matching what fill_nulls=False
+                # yields for a missing value and what .cast() needs to not raise on NaN.
+                binned_col = binned_col.fill_nan(0 if fill_nans else None)
+            binned_col = binned_col.clip(0, num_bins - 1).cast(bin_dtype)
 
             bin_expressions.append(binned_col)
 

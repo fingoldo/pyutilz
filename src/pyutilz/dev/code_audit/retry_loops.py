@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- unbounded or silently-exhausting retry loop --------------------------
 #
@@ -25,16 +26,25 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 # the success path either.
 
 
+def _own_nodes(loop: ast.AST) -> "Iterator[ast.AST]":
+    """Walk ``loop``'s own body WITHOUT descending into a nested loop.
+
+    ``ast.walk`` + ``continue`` does not do this: ``continue`` skips only the nested loop NODE,
+    whose children ``ast.walk`` has already queued, so a ``break``/``raise`` belonging to the
+    nested loop was still found and silenced the enclosing retry loop.
+    """
+    todo: list[ast.AST] = [c for c in ast.iter_child_nodes(loop)]
+    while todo:
+        node = todo.pop()
+        yield node
+        if isinstance(node, (ast.While, ast.For, ast.AsyncFor, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+
+
 def _loop_has_break(loop: ast.While) -> bool:
     """True if ``loop``'s own body (not nested loops) contains a ``break``."""
-    for node in ast.walk(loop):
-        if node is loop:
-            continue
-        if isinstance(node, (ast.While, ast.For)):
-            continue  # a break in a NESTED loop doesn't exit this one
-        if isinstance(node, ast.Break):
-            return True
-    return False
+    return any(isinstance(node, ast.Break) for node in _own_nodes(loop))
 
 
 def _loop_has_bounding_raise(loop: ast.While) -> bool:
@@ -46,14 +56,7 @@ def _loop_has_bounding_raise(loop: ast.While) -> bool:
     exit path is just "raise out of the loop" instead of "break out of the loop". Previously only
     ``break`` was recognized, flagging every raise-bounded retry loop as unbounded.
     """
-    for node in ast.walk(loop):
-        if node is loop:
-            continue
-        if isinstance(node, (ast.While, ast.For)):
-            continue  # a raise in a NESTED loop doesn't necessarily bound THIS loop
-        if isinstance(node, ast.Raise):
-            return True
-    return False
+    return any(isinstance(node, ast.Raise) for node in _own_nodes(loop))
 
 
 def _try_has_sleep_or_continue(node: ast.AST) -> bool:
@@ -119,7 +122,7 @@ def scan_retry_loops(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not (isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True):

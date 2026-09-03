@@ -65,7 +65,7 @@ class CIReport:
     failures: dict[str, FailureEntry] = field(default_factory=dict)  # nodeid -> FailureEntry
     warnings: dict[tuple[str, str], WarningGroup] = field(default_factory=dict)  # (category, message_prefix) -> WarningGroup
     job_names: dict[str, str] = field(default_factory=dict)  # job_id -> name
-    fetch_errors: list[str] = field(default_factory=list)  # job_ids whose log couldn't be fetched
+    fetch_errors: list[str] = field(default_factory=list)  # "<job name> (job id <id>)" for each job whose log couldn't be fetched
 
     def render(self, top: int = 30) -> str:
         """Human-readable summary: failures first (deduped, with every job they hit), then the
@@ -103,7 +103,12 @@ def _gh_json(args: list[str]) -> Any:
     Returns ``Any`` deliberately: the shape is whatever the requested ``--json`` fields
     produce, so each caller annotates the concrete shape it asked for at its own use site.
     """
-    result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)  # nosec B603 B607 - fixed `gh` binary, args are caller-controlled repo/run identifiers, not untrusted input
+    # encoding="utf-8", errors="replace" -- NOT text=True, which decodes with
+    # locale.getpreferredencoding(False) (cp1251 on a Russian-locale Windows box). CI logs are
+    # UTF-8: a byte undefined in the ambient codepage raises UnicodeDecodeError inside subprocess's
+    # own reader thread, where it is swallowed, and stdout silently becomes None -- json.loads(None)
+    # then raises TypeError with no trace of the real cause. Without such a byte it merely mojibakes.
+    result = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8", errors="replace", check=True)  # nosec B603 B607 - fixed `gh` binary, args are caller-controlled repo/run identifiers, not untrusted input
     return json.loads(result.stdout)
 
 
@@ -125,7 +130,10 @@ def _fetch_job_log(repo: str, job_id: str) -> str:
     result = subprocess.run(  # nosec B603 B607 - fixed `gh` binary, job_id/repo are caller-controlled identifiers
         ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],
         capture_output=True,
-        text=True,
+        # See _gh_json: text=True would decode UTF-8 CI logs with the ambient codepage, losing the
+        # whole log to a swallowed UnicodeDecodeError.
+        encoding="utf-8",
+        errors="replace",
         check=True,
     )
     return result.stdout
@@ -180,7 +188,9 @@ def analyze_run(repo: str, run_id: str, conclusion: str | None = "failure") -> C
         try:
             text = _fetch_job_log(repo, job_id)
         except subprocess.CalledProcessError:
-            report.fetch_errors.append(job_id)
+            # Name first: the raw numeric id is the least useful identifier for exactly the leg
+            # that failed ("tests (windows-latest, 3.8)" is what the reader needs).
+            report.fetch_errors.append(f"{job_name} (job id {job_id})")
             continue
         analyze_log_text(text, job_id, job_name, report)
     return report

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- one sibling's except handler weaker than its twin's ----------------------------------------
 #
@@ -48,16 +48,32 @@ def _handler_exception_names(handler: ast.ExceptHandler) -> frozenset[str]:
     return frozenset()
 
 
-def _recovery_calls(handler: ast.ExceptHandler) -> dict[str, bool]:
-    """{recovery function name: is it wrapped in its own try} for calls inside this handler."""
+_CATCH_ALL = frozenset({"<bare>", "Exception", "BaseException"})
+
+
+def _guards_compatibly(inner: ast.Try, outer_exceptions: frozenset[str]) -> bool:
+    """Does this inner ``try`` catch something that would contain the OUTER handler's failure?
+
+    An inner `try/except ValueError` around `rollback()` does not contain the `OSError` the sibling
+    comparison is about, so counting any enclosing `try` as "wrapped" silenced genuine asymmetries.
+    """
+    for handler in inner.handlers:
+        caught = _handler_exception_names(handler)
+        if caught & _CATCH_ALL or caught & outer_exceptions:
+            return True
+    return False
+
+
+def _recovery_calls(handler: ast.ExceptHandler, exceptions: frozenset[str]) -> dict[str, tuple[bool, int]]:
+    """{recovery function name: (is it wrapped in a compatible try, line of the call)}."""
     wrapped_ids: set[int] = set()
     for node in ast.walk(handler):
-        if isinstance(node, ast.Try):
+        if isinstance(node, ast.Try) and _guards_compatibly(node, exceptions):
             for stmt in node.body:
                 for sub in ast.walk(stmt):
                     wrapped_ids.add(id(sub))
 
-    calls: dict[str, bool] = {}
+    calls: dict[str, tuple[bool, int]] = {}
     for node in ast.walk(handler):
         if not isinstance(node, ast.Call):
             continue
@@ -67,8 +83,35 @@ def _recovery_calls(handler: ast.ExceptHandler) -> dict[str, bool]:
             continue
         # A call seen both wrapped and bare stays recorded as wrapped: the guarded site is what
         # the sibling comparison is about.
-        calls[name] = calls.get(name, False) or id(node) in wrapped_ids
+        was_wrapped, line = calls.get(name, (False, node.lineno))
+        calls[name] = (was_wrapped or id(node) in wrapped_ids, line if was_wrapped else node.lineno)
     return calls
+
+
+def _methods_of(cls: ast.ClassDef) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Every method of this class, including ones nested in a class-body `if`/`try`.
+
+    Walking only direct children of the class body missed a correctly-reported asymmetric pair the
+    moment it sat under `if TYPE_CHECKING:`-style conditional definition.
+    """
+    out: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+
+    def descend(statements: list[ast.stmt]) -> None:
+        """Collect FunctionDefs from these statements, not entering nested classes or functions."""
+        for stmt in statements:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out.append(stmt)
+            elif isinstance(stmt, ast.ClassDef):
+                continue
+            elif isinstance(stmt, (ast.If, ast.Try, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)):
+                descend(list(stmt.body))
+                descend(list(getattr(stmt, "orelse", [])))
+                descend(list(getattr(stmt, "finalbody", [])))
+                for inner in getattr(stmt, "handlers", []):
+                    descend(list(inner.body))
+
+    descend(list(cls.body))
+    return out
 
 
 def scan_asymmetric_except_siblings(
@@ -90,7 +133,7 @@ def scan_asymmetric_except_siblings(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for cls in ast.walk(tree):
@@ -98,26 +141,30 @@ def scan_asymmetric_except_siblings(
                 continue
             # (exception names, recovery call) -> [(method, wrapped, line)]
             seen: dict[tuple[frozenset[str], str], list[tuple[str, bool, int]]] = {}
-            for method in cls.body:
-                if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
+            for method in _methods_of(cls):
                 for node in ast.walk(method):
                     if not isinstance(node, ast.ExceptHandler):
                         continue
                     exceptions = _handler_exception_names(node)
                     if not exceptions:
                         continue
-                    for call, wrapped in _recovery_calls(node).items():
-                        seen.setdefault((exceptions, call), []).append((method.name, wrapped, node.lineno))
+                    for call, (wrapped, call_line) in _recovery_calls(node, exceptions).items():
+                        seen.setdefault((exceptions, call), []).append((method.name, wrapped, call_line))
 
             for (exceptions, call), sites in sorted(seen.items(), key=lambda kv: sorted(kv[0][0])):
-                if len(sites) < 2:
+                # At least two DISTINCT methods: two handlers inside one method are not siblings,
+                # and the finding text ("while its sibling `run` wraps ...") named the method itself.
+                if len({name for name, _wrapped, _line in sites}) < 2:
                     continue
                 guarded = [m for m, wrapped, _ in sites if wrapped]
                 bare = [(m, line) for m, wrapped, line in sites if not wrapped]
                 if not guarded or not bare:
                     continue
                 bare_method, bare_line = bare[0]
+                # The sibling named in the detail has to be a DIFFERENT method.
+                sibling = next((name for name in guarded if name != bare_method), None)
+                if sibling is None:
+                    continue
                 findings.append(
                     Finding(
                         check="asymmetric_except_siblings",
@@ -128,7 +175,7 @@ def scan_asymmetric_except_siblings(
                         detail=(
                             f"`{cls.name}.{bare_method}` calls `{call}` bare inside "
                             f"`except {'/'.join(sorted(exceptions))}`, while its sibling "
-                            f"`{guarded[0]}` wraps the identical call. A failure in the recovery "
+                            f"`{sibling}` wraps the identical call. A failure in the recovery "
                             "then escapes the handler that exists to contain it."
                         ),
                     )

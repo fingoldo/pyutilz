@@ -6,7 +6,7 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a success record set outside the conditional work it records ------------------------------
 #
@@ -53,8 +53,11 @@ def _shared_tokens(node: ast.AST) -> set[str]:
 
 def _is_a_success_record(stmt: ast.stmt) -> tuple[str, set[str]] | None:
     """(what it records, tokens it mentions) if this statement records that work happened."""
-    if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant) and stmt.value.value in _RECORD_VALUES:
-        return "a True flag", _shared_tokens(stmt.targets[0])
+    # `is True`, never `== True`: `1 == True` and `1.0 == True` in Python, so an ordinary counter
+    # assignment (`counts['rows'] = 1`) would otherwise be read as a boolean success flag.
+    if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and isinstance(stmt.value, ast.Constant) and any(stmt.value.value is v for v in _RECORD_VALUES):
+        target = stmt.targets[0] if isinstance(stmt, ast.Assign) else stmt.target
+        return "a True flag", _shared_tokens(target)
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
         call = stmt.value
         # `.add` only, never `.append`. Appending to a list is ordinary accumulation and
@@ -167,7 +170,7 @@ def scan_effect_flag_outside_its_effect(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for func in ast.walk(tree):

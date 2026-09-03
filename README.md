@@ -33,7 +33,7 @@ pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.schedu
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
-pip install pyutilz[dev]              # pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + ruff + black + mypy + bandit + sqlglot
+pip install pyutilz[dev]              # pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-randomly + ruff + black + mypy + bandit + sqlglot
 ```
 
 `[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats,speedups`. It deliberately leaves out four
@@ -75,7 +75,7 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 | `pyutilz.system`     | System/hardware introspection, monitoring with timeouts, parallel execution, distributed coordination, `gpu_dispatch` backend selection, `resilience` retry/circuit-breaker/dead-letter queue, async `single_flight_cache`, `cli_logging`, hot-reloadable TOML `config` |
 | `pyutilz.performance`| Per-host `KernelTuningCache` for dispatching CUDA/numba/cupy kernel variants |
 | `pyutilz.text`       | String processing, Numba-accelerated similarity, AI-text humanisation, NLP tokenisers, `secrets_scrub` redaction of credentials in logs/tracebacks |
-| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities, AST-based `code_audit` bug-class scanner + CLI, `ci_log_analyzer`, `freevar_analysis` refactor planner |
+| `pyutilz.dev`        | Logging, benchmarking, dashboards, Jupyter helpers, meta-test utilities, AST-based `code_audit` bug-class scanner + CLI (91 scanners; `get_scanners()` / the CLI's `--check` choices are the authoritative list, no prose enumeration is complete), `ci_log_analyzer`, `freevar_analysis` refactor planner |
 | `pyutilz.llm`        | Unified async interface across Anthropic, OpenAI, Google Gemini, DeepSeek, xAI Grok, OpenRouter, Claude Code |
 | `pyutilz.stats`      | Numba-jitted normality testing (D'Agostino K², Anderson-Darling) |
 
@@ -169,8 +169,10 @@ print(tracker.stats())                              # banned_count + averages
 ```
 
 **Strip the AI fingerprint from generated text** — replaces em-dashes,
-hedging openers ("Certainly!"), parenthetical justifications,
-overused vocabulary ("delve into", "leverage", "in conclusion"):
+filler phrases ("It's worth noting that", "In conclusion,") and overused
+vocabulary ("delve into" → "look into", "leverage" → "use"). Note it does
+NOT remove hedging openers ("Certainly!") or parenthetical justifications —
+those are not in the pattern table:
 
 ```python
 from pyutilz.text.humanizer import humanize, strip_ai_patterns, introduce_typos

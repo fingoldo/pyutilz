@@ -201,7 +201,13 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
 
     clean_ram()
 
-    logger.info("Own process RAM usage: %.2f GB", get_own_memory_usage())
+    own_ram = get_own_memory_usage()
+    # get_own_memory_usage() documents returning None when psutil fails and there is no prior
+    # reading; "%.2f" then raised TypeError out of a pure diagnostic helper.
+    if own_ram is None:
+        logger.info("Own process RAM usage: unavailable")
+    else:
+        logger.info("Own process RAM usage: %.2f GB", own_ram)
 
     # Start tracing memory allocations
     # tracemalloc.start()

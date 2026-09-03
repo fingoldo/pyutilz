@@ -5,12 +5,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
 
 # --- uncached constant-cost probe ----------------------------------------
 
-# Decorators that already memoize the whole call.
-_CACHING_DECORATORS = ("lru_cache", "cache", "cached_property", "cached", "memoize", "once")
+# Decorators that already memoize the whole call. Matched STRUCTURALLY on the decorator's own
+# name -- a substring search over `ast.dump` let any decorator whose ARGUMENTS merely contain the
+# text (`@app.route("/cache")`) exempt the function. Under structural matching `lru_cache` is no
+# longer subsumed by `cache`, so both entries carry their weight.
+_CACHING_DECORATORS = frozenset({"lru_cache", "cache", "cached_property", "cached", "memoize", "once"})
 
 # (dotted-call fragment, what it costs) -- the probe families whose cost is effectively constant
 # per process, so paying it on every call is pure waste.
@@ -46,16 +49,40 @@ def _dotted_name(node: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
+def _decorator_name(node: ast.expr) -> str:
+    """The bare name of a decorator expression: ``@lru_cache``, ``@functools.lru_cache(maxsize=1)`` -> ``lru_cache``."""
+    if isinstance(node, ast.Call):
+        node = node.func
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
 def _is_cached(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """True if ``func`` carries any decorator that memoizes its result, so repeated calls cost nothing."""
-    text = " ".join(ast.dump(d) for d in func.decorator_list)
-    return any(name in text for name in _CACHING_DECORATORS)
+    return any(_decorator_name(d) in _CACHING_DECORATORS for d in func.decorator_list)
 
 
 def _has_module_level_memo(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """Whether the body writes a module-level memo (``global _cached_x`` / ``nonlocal``), which is
-    the hand-rolled equivalent of a caching decorator."""
-    return any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(func))
+    """Whether the body WRITES a module-level memo (``global _cached_x`` and then assigns it).
+
+    The declaration alone is not a memo: an unrelated ``global counter`` used only for a statistic
+    exempted a genuinely uncached probe. The declared name must actually be stored to.
+    """
+    declared: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+    if not declared:
+        return False
+    for node in ast.walk(func):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id in declared:
+            return True
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and isinstance(node.value, ast.Name) and node.value.id in declared:
+            return True
+    return False
 
 
 def _takes_only_config_parameters(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -76,6 +103,22 @@ def _takes_only_config_parameters(func: ast.FunctionDef | ast.AsyncFunctionDef) 
     return n_defaults >= n_defaultable
 
 
+def _probe_imports(tree: ast.Module) -> dict[str, str]:
+    """Local name -> its probe module, for `from subprocess import run` style imports.
+
+    A single-segment call name is only a probe when the file actually imported it from the probe's
+    module; without this a locally defined `def run()` was reported as "spawns a process" in a file
+    with no imports at all.
+    """
+    probe_modules = {probe.split(".")[0] for probe, _cost in _PROBES}
+    bound: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in probe_modules and node.level == 0:
+            for alias in node.names:
+                bound[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return bound
+
+
 def _matching_probe(dotted: str) -> "tuple[str, str] | None":
     """Match a dotted call name against ``_PROBES`` on its trailing segments.
 
@@ -88,8 +131,6 @@ def _matching_probe(dotted: str) -> "tuple[str, str] | None":
     for probe, cost in _PROBES:
         probe_segments = probe.split(".")
         if segments[-len(probe_segments) :] == probe_segments:
-            return probe, cost
-        if len(segments) == 1 and segments[0] == probe_segments[-1]:
             return probe, cost
     return None
 
@@ -123,8 +164,10 @@ def scan_uncached_constant_cost_probe(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
+
+        probe_imports = _probe_imports(tree)
 
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -132,13 +175,24 @@ def scan_uncached_constant_cost_probe(
             if _is_cached(func) or _has_module_level_memo(func) or not _takes_only_config_parameters(func):
                 continue
 
-            for node in ast.walk(func):
+            for node in _own_nodes(func):
                 if not isinstance(node, ast.Call):
                     continue
                 dotted = _dotted_name(node.func)
                 if not dotted:
                     continue
                 match = _matching_probe(dotted)
+                if match is None and isinstance(node.func, ast.Name) and node.func.id in probe_imports:
+                    match = _matching_probe(probe_imports[node.func.id])
+                if match is None and isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir":
+                    # `p.mkdir(...)` / `Path(x).mkdir(...)` -- the spelling that is actually written.
+                    # `_dotted_name` renders the receiver as "" for anything but a Name chain, so the
+                    # registered `Path.mkdir` entry could only ever match `Path.mkdir(p)`, which nobody writes.
+                    receiver = node.func.value
+                    receiver_name = receiver.func.id if isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Name) else (receiver.id if isinstance(receiver, ast.Name) else None)
+                    if receiver_name in (None, "Path") or receiver_name not in {"os", "shutil", "subprocess"}:
+                        match = ("Path.mkdir", "hits the filesystem")
+                        dotted = f"{receiver_name}.mkdir" if receiver_name else "Path(...).mkdir"
                 if match is None:
                     continue
                 _probe, cost = match

@@ -249,9 +249,19 @@ def release_connection(conn: Any) -> None:
     except Exception as e:
         logger.warning("rollback on release failed: %s", e)
     pool = _pool
+    returned = False
     if pool is not None:
-        pool.putconn(conn)
-    else:
+        try:
+            pool.putconn(conn)
+            returned = True
+        except psycopg2.pool.PoolError as e:
+            # The pool was recreated (or closed) while this connection was checked out, so the
+            # current pool object does not know this connection: psycopg2 raises PoolError
+            # ("trying to put unkeyed connection" / "connection pool is closed"). Letting that
+            # escape would mask whatever exception the caller was already unwinding AND leak the
+            # server-side backend; fall through to the orphaned-connection close below instead.
+            logger.warning("putconn refused the connection (pool recreated while it was checked out?): %s", e)
+    if not returned:
         # The pool was closed (or reset) while this connection was checked out; dropping the
         # reference here would leak the server-side backend until GC or process exit.
         try:
@@ -262,17 +272,30 @@ def release_connection(conn: Any) -> None:
 
 @contextmanager
 def managed_connection(dsn: str, pool_max: int = 8) -> Iterator[Any]:
-    """Context manager that yields a connection and auto-releases it.
+    """Context manager that yields a connection, COMMITS on clean exit, and auto-releases it.
+
+    Pooled connections are not in autocommit mode, so every statement runs inside an implicit
+    transaction. Leaving the block normally commits that transaction; leaving it via an exception
+    rolls it back (via release_connection) and re-raises. This matches psycopg2's own
+    ``with connection:`` semantics -- and
+    without it the unconditional rollback in :func:`release_connection` silently discarded every
+    write made through this context manager.
 
     Usage::
 
         with managed_connection(dsn) as conn:
-            do_stuff(conn)
-        # connection is returned to pool even if do_stuff raises
+            conn.cursor().execute("insert into t values (1)")
+        # committed here, and the connection is returned to the pool
+        # (on an exception the transaction is rolled back and the connection still returned)
     """
     conn = get_connection(dsn, pool_max)
     try:
         yield conn
+        # Reached only when the body left the block cleanly (an exception propagates out of the
+        # yield instead). The exception path needs no explicit rollback: release_connection()
+        # below unconditionally rolls back before returning the connection to the pool, which is
+        # exactly the abort semantics wanted here.
+        conn.commit()
     finally:
         release_connection(conn)
 

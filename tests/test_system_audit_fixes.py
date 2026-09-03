@@ -96,9 +96,16 @@ def test_split_list_into_nchunks_indices_even_partition_unchanged():
     assert list(split_list_into_nchunks_indices(list(range(10)), 3)) == [(0, 3), (3, 6), (6, 10)]
 
 
-def test_split_list_into_chunks_indices_clamps_zero_chunk_size():
-    """Matches the value-returning sibling, which clamps chunk_size 0 to 1."""
-    assert list(split_list_into_chunks_indices([1, 2, 3], 0)) == [(0, 1), (1, 2), (2, 3)]
+def test_split_list_into_chunks_indices_rejects_non_positive_chunk_size():
+    """Matches the value-returning sibling, which now RAISES for chunk_size < 1.
+
+    Clamping 0 to 1 kept a caller error invisible, and it did not extend to a negative size, which
+    made both chunkers yield nothing at all (2026-09-03 audit, F107). Both raise now."""
+    import pytest
+
+    for bad in (0, -3):
+        with pytest.raises(ValueError, match="chunk_size must be >= 1"):
+            list(split_list_into_chunks_indices([1, 2, 3], bad))
 
 
 def test_applyfunc_parallel_on_an_empty_iterable():

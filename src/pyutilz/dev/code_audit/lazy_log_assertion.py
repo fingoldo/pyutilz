@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- asserting a FORMATTED string against a lazily-formatted log record ------------------------
 #
@@ -54,7 +54,13 @@ def _format_strings(root: Path, exclude_dirs: frozenset[str]) -> tuple[set[str],
                 continue
             if node.func.attr not in _LOG_LEVELS or not node.args:
                 continue
-            first = node.args[0]
+            # `logger.log(LEVEL, fmt, ...)` puts the level first: the format string is args[1].
+            # Harvesting args[0] there collected the level object as a "format", so the real format
+            # was never known and every assertion against it was reported.
+            index = 1 if node.func.attr == "log" else 0
+            if len(node.args) <= index:
+                continue
+            first = node.args[index]
             if isinstance(first, ast.Constant) and isinstance(first.value, str):
                 formats.add(first.value)
             elif isinstance(first, ast.JoinedStr):
@@ -99,12 +105,30 @@ def _touches_a_log_record(node: ast.AST) -> str | None:
     return None
 
 
+_UNITTEST_ASSERTIONS = frozenset({"assertIn", "assertNotIn", "assertTrue", "assertFalse", "assertEqual", "assertNotEqual"})
+
+
+def _assertion_expression(node: ast.AST) -> ast.expr | None:
+    """The expression an assertion tests, for both the `assert` statement and unittest's methods.
+
+    A suite written with `self.assertIn('reached only 0/3', str(log.warning.call_args))` carries
+    exactly the defect this rule names, and reading only `ast.Assert` never saw it.
+    """
+    if isinstance(node, ast.Assert):
+        return node.test
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _UNITTEST_ASSERTIONS and node.args:
+        return node
+    return None
+
+
 def _asserted_literals(test: ast.AST) -> list[str]:
     """String literals this assertion compares against something."""
     out: list[str] = []
     for node in ast.walk(test):
         if isinstance(node, ast.Compare):
             out.extend(side.value for side in [node.left, *node.comparators] if isinstance(side, ast.Constant) and isinstance(side.value, str))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _UNITTEST_ASSERTIONS:
+            out.extend(arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str))
     return out
 
 
@@ -133,16 +157,19 @@ def scan_lazy_log_assertion(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assert):
+            # `assert x in y` and the unittest spelling `self.assertIn(x, y)` state the same thing.
+            expression = _assertion_expression(node)
+            if expression is None:
                 continue
-            record = _touches_a_log_record(node.test)
+            assertion_line: int = getattr(node, "lineno", expression.lineno)
+            record = _touches_a_log_record(expression)
             if record is None:
                 continue
-            for literal in _asserted_literals(node.test):
+            for literal in _asserted_literals(expression):
                 if not _HAS_DIGIT.search(literal):
                     continue
                 # The literal must carry MESSAGE text, not just a value. `"j1"` is a job id the
@@ -160,8 +187,8 @@ def scan_lazy_log_assertion(
                         check="lazy_log_assertion",
                         severity="P2",
                         file=rel,
-                        line=node.lineno,
-                        snippet=_line_text(src_lines, node.lineno),
+                        line=assertion_line,
+                        snippet=_line_text(src_lines, assertion_line),
                         detail=(
                             f"asserts the literal {literal!r} against `{record}`, but no logger "
                             "format string in this package contains it and it carries a digit -- "

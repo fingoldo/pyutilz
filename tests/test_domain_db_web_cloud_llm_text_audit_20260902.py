@@ -383,7 +383,10 @@ def test_f07_broken_stream_leaves_no_zero_byte_file(tmp_path):
         return resp
 
     with patch.object(webmod, "sleep", lambda *a, **kw: None), patch.object(webmod.requests, "get", side_effect=lambda *a, **kw: make_resp()):
-        assert webmod.download_to_file("http://x/f", str(out), max_attempts=2) is None
+        # Reframed for the 2026-09-03 F46 fix: total failure is now reported as False, not None
+        # -- the point this test makes (a broken stream must not look like a success) is stronger
+        # under the new contract, since success is now an explicit True.
+        assert webmod.download_to_file("http://x/f", str(out), max_attempts=2) is False
     assert not out.exists()
 
 

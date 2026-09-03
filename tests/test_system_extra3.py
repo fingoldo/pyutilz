@@ -371,10 +371,25 @@ class TestGetSystemInfoGpuStatsExceptions:
 
 class TestGetSystemInfoOuterException:
     @patch("pyutilz.system.system.sysinfo.platform")
-    def test_outer_exception_returns_partial(self, mock_plat):
+    def test_outer_exception_propagates_when_identity_fields_are_missing(self, mock_plat):
+        """A bare get_system_info() enables return_sensitive_info (the distributed.py path), and the
+        identity fields it returns are what register_scraper keys node identity on. Swallowing the
+        error and handing back a partial dict made that lookup run against a source missing
+        host_name/os_machine_guid/os_serial -- wrong node identity, no error anywhere
+        (2026-09-03 audit, F41). Optional probe sections still degrade to a partial dict; see
+        test_devices_list_exception below."""
+        import pytest
+
         from pyutilz.system.system import get_system_info
         mock_plat.system.side_effect = Exception("boom")
-        result = get_system_info()
+        with pytest.raises(Exception, match="boom"):
+            get_system_info()
+
+    @patch("pyutilz.system.system.sysinfo.platform")
+    def test_outer_exception_returns_partial_without_sensitive_info(self, mock_plat):
+        from pyutilz.system.system import get_system_info
+        mock_plat.system.side_effect = Exception("boom")
+        result = get_system_info(only_stats=True)
         assert isinstance(result, dict)
 
 
@@ -716,8 +731,9 @@ class TestReportLargeObjects:
         assert "300.0 MB" in caplog.text, f"the offending size must be named; got {caplog.text!r}"
         # Every reported line names the global it measured, so the report is actionable.
         reported = [ln for ln in caplog.text.splitlines() if " MB" in ln]
-        assert reported
-        assert all(":" in ln for ln in reported)
+        # bool(reported) inside the same assert: `all(...)` alone is vacuously True over an empty
+        # list, so the emptiness check must not be separable from the pattern it guards.
+        assert bool(reported) and all(":" in ln for ln in reported)
         assert "asizeof:" not in caplog.text, "the measuring module itself is excluded from the report"
 
     @patch("pyutilz.system.system.misc.asizeof")

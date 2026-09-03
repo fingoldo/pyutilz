@@ -111,7 +111,11 @@ class TestSerialize:
         """Regression (2026-07-21 audit round 2, MEDIUM): a serialize() failure used to log a
         bare traceback with no fname/obj info -- identifying WHICH of a batch job's many
         objects/paths failed required re-running under a debugger. The exception log now
-        includes both."""
+        includes both.
+
+        The failure is also RE-RAISED now (2026-09-03 audit, F115): returning a bare None let a
+        caller store the None as if it were the payload, and the round-trip partner
+        ``unserialize`` already raises. The log assertions below are unchanged."""
 
         class _Unpicklable:
             def __reduce__(self):
@@ -119,9 +123,8 @@ class TestSerialize:
 
         import logging
 
-        with caplog.at_level(logging.ERROR):
-            result = serialize(_Unpicklable(), fname="some_target_file.bin")
-        assert result is None
+        with caplog.at_level(logging.ERROR), pytest.raises(TypeError, match="cannot pickle this"):
+            serialize(_Unpicklable(), fname="some_target_file.bin")
         assert "some_target_file.bin" in caplog.text
         assert "_Unpicklable" in caplog.text
 

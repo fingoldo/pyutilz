@@ -38,6 +38,7 @@ consumers there). Design:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -46,12 +47,22 @@ import struct
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Iterator, Optional, Union
 
 import numpy as np
 
 from pyutilz.core.array_summary import column_sum_min_max
 from pyutilz.core.safe_pickle import PickleVerificationError, safe_load, write_sidecar
+
+
+class _KeyLockEntry:
+    """A per-key lock plus a count of callers currently holding/waiting on it."""
+
+    __slots__ = ("lock", "refcount")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refcount = 0
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +96,10 @@ _HASH_DIGEST_BYTES = 16
 #   v2 (2026-09-02): per-column sum/min/max moved to a fused numba pass (sequential accumulation
 #   differs from numpy's pairwise summation in the last ulp) and the up-front whole-array
 #   ``ascontiguousarray`` copy was dropped.
-_HASH_VERSION = 2
+#   v3 (2026-09-03): non-numeric dtypes are no longer summarised by head/tail bytes alone --
+#   bool/datetime64/timedelta64 get exact integer column reductions, string/void dtypes hash their
+#   full buffer, and object dtype hashes element values instead of heap pointers.
+_HASH_VERSION = 3
 
 
 def _hasher() -> Any:
@@ -123,14 +137,36 @@ def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_R
     h.update(dtype_bytes)
     if arr.size == 0:
         return str(h.hexdigest())
-    if arr.ndim == 0:
+    kind = arr.dtype.kind
+    if kind == "O":
+        # ``tobytes()`` on an object array serialises PyObject* ADDRESSES, which differ in every
+        # process -- the key would never be reproducible. Hash the element VALUES instead; there is
+        # no per-column reduction that could catch a middle-row change otherwise, so the whole
+        # array is fed, not just head/tail.
+        h.update(repr(arr.tolist()).encode("utf-8", "backslashreplace"))
+    elif kind in "SUV":
+        # Fixed-width string / bytes / structured dtypes have no numeric reduction below, so
+        # head/tail bytes would be the ONLY content-bearing input and every middle-row difference
+        # would collide. Feed the full buffer.
+        h.update(np.ascontiguousarray(arr).tobytes())
+    elif arr.ndim == 0:
         h.update(arr.tobytes())
     else:
         head_n = min(n_summary_rows, arr.shape[0])
         tail_n = min(n_summary_rows, arr.shape[0])
         h.update(np.ascontiguousarray(arr[:head_n]).tobytes())
         h.update(np.ascontiguousarray(arr[-tail_n:]).tobytes())
-    if arr.ndim >= 2 and np.issubdtype(arr.dtype, np.number):
+    if kind in "bMm":
+        # bool / datetime64 / timedelta64 are not ``np.number`` subtypes, so the reductions below
+        # used to be skipped entirely and only head/tail rows discriminated. View them through
+        # their integer counterparts and reduce EXACTLY in int64 (a float64 cast would lose the
+        # low bits of nanosecond timestamps).
+        red = arr.view(np.int8) if kind == "b" else arr.view(np.int64)
+        axis = 0 if red.ndim >= 2 else None
+        h.update(np.asarray(red.sum(axis=axis, dtype=np.int64)).tobytes())
+        h.update(np.asarray(red.min(axis=axis)).astype(np.int64).tobytes())
+        h.update(np.asarray(red.max(axis=axis)).astype(np.int64).tobytes())
+    elif arr.ndim >= 2 and np.issubdtype(arr.dtype, np.number):
         # One fused pass instead of three full strided numpy reductions -- measured 175 ms -> 5.4 ms
         # on a (2_000_000, 4) float64 array. This is the cache-KEY computation, so on a cache HIT it
         # used to be able to cost more than the work being cached.
@@ -264,7 +300,7 @@ class DiskCache:
         self.put_failures = 0
         # Per-key locks so a (payload replace, sidecar write) pair is atomic as a unit across
         # threads sharing this instance -- see the class docstring.
-        self._key_locks: Dict[str, threading.Lock] = {}
+        self._key_locks: Dict[str, "_KeyLockEntry"] = {}
         self._key_locks_guard = threading.Lock()
 
     def __getstate__(self) -> Dict[str, Any]:
@@ -280,14 +316,31 @@ class DiskCache:
         self._key_locks = {}
         self._key_locks_guard = threading.Lock()
 
-    def _get_key_lock(self, key: str) -> threading.Lock:
-        """Return the lock for ``key``, creating it on first use."""
+    @contextlib.contextmanager
+    def _get_key_lock(self, key: str) -> Iterator[None]:
+        """Serialize (payload replace + sidecar write) for ``key`` across threads of this process.
+
+        Reference-counted exactly like ``safe_pickle._get_path_lock``: cache keys are content
+        digests, so they are effectively unique per call and a plain dict would grow one
+        ``threading.Lock`` per key EVER written for the life of the process. A plain LRU bound is
+        unsafe here (evicting an entry another thread is still blocked on would hand a later caller
+        for the same key a different Lock), so entries are dropped only when nobody holds or waits
+        on them -- keeping ``_key_locks`` proportional to keys currently in flight.
+        """
         with self._key_locks_guard:
-            lock = self._key_locks.get(key)
-            if lock is None:
-                lock = threading.Lock()
-                self._key_locks[key] = lock
-            return lock
+            entry = self._key_locks.get(key)
+            if entry is None:
+                entry = _KeyLockEntry()
+                self._key_locks[key] = entry
+            entry.refcount += 1
+        try:
+            with entry.lock:
+                yield
+        finally:
+            with self._key_locks_guard:
+                entry.refcount -= 1
+                if entry.refcount == 0:
+                    del self._key_locks[key]
 
     def _key_path(self, key: str) -> Path:
         """File path under ``cache_dir`` for ``key``.
@@ -299,14 +352,24 @@ class DiskCache:
         caller already produces safe hex digests via ``hash_object``/``compose_key``/
         ``hash_array_summary``, but ``get``/``put`` accept an arbitrary ``str`` from any caller.
         """
+        if not key or os.sep in key or (os.altsep and os.altsep in key) or "/" in key:
+            # A key with a path separator survives the parents-traversal guard below ("sub/deep"
+            # stays inside cache_dir) but names a file in a directory ``put`` never creates, so
+            # every put fails and every get misses -- permanently, and silently. Reject it up front.
+            raise ValueError(f"DiskCache: key {key!r} must not be empty or contain a path separator.")
         candidate = (self.cache_dir / f"{key}.pkl").resolve()
         cache_root = self.cache_dir.resolve()
         if cache_root not in candidate.parents:
             raise ValueError(f"DiskCache: key {key!r} resolves outside cache_dir ({candidate} not under {cache_root}); refusing.")
         return candidate
 
-    def get(self, key: str) -> Optional[Any]:
-        """Return the cached value for ``key``, or ``None`` on miss.
+    def get(self, key: str, default: Any = None) -> Any:
+        """Return the cached value for ``key``, or ``default`` (``None``) on miss.
+
+        ``None`` is a perfectly legal cached VALUE, so a bare ``None`` return cannot be read as a
+        miss: ``put(k, None)`` followed by ``get(k)`` is a HIT (and is counted as one). Callers
+        that need to tell the two apart must pass their own sentinel as ``default`` and compare
+        with ``is``, e.g. ``MISS = object(); v = cache.get(k, MISS); if v is MISS: ...``.
 
         On hit, the file's mtime is touched (best-effort) so LRU eviction considers it
         recently-used. Touch failure is non-fatal.
@@ -314,7 +377,7 @@ class DiskCache:
         path = self._key_path(key)
         if not path.exists():
             self.misses += 1
-            return None
+            return default
         try:
             # Fail CLOSED by default: a cache file with no .sha256 sidecar is refused so a payload
             # planted in the cache dir is never unpickled silently. See
@@ -328,14 +391,14 @@ class DiskCache:
             logger.debug("DiskCache: sidecar verification failed for %s: %s; removing", path, exc)
             self._drop_corrupt_entry(path)
             self.misses += 1
-            return None
+            return default
         except (pickle.UnpicklingError, EOFError, OSError) as exc:
             # Corrupt entry (e.g. mid-rename crash on a non-atomic FS). Drop the file so the next
             # put rebuilds cleanly.
             logger.debug("DiskCache: corrupt entry %s (%s); removing", path, exc)
             self._drop_corrupt_entry(path)
             self.misses += 1
-            return None
+            return default
         try:
             os.utime(path, None)
         except OSError:

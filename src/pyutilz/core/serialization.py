@@ -61,7 +61,20 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
     """
     If fname is passed, data will be persisted onto disk and success code will be returned
     Otherwise, serialized representation of the obj in memory will be returned.
+
+    ``fname`` may be a path or ANY writable file object (duck-typed on ``.write``), which includes
+    ``tempfile.NamedTemporaryFile`` -- not an ``io.IOBase`` subclass, so it used to be rejected.
+
+    Raises:
+        TypeError: ``fname`` is neither a path nor a writable file object.
+        Exception: re-raised after logging when serialization/writing fails -- matching
+            ``unserialize``'s contract instead of returning a bare ``None`` a caller would happily
+            store.
     """
+    if fname is not None and not isinstance(fname, str) and not hasattr(fname, "write"):
+        # Dispatched BEFORE the try: raised inside it, this TypeError was swallowed by the blanket
+        # handler and reported as a plain None -- the caller believed a file had been written.
+        raise TypeError(f"Unsupported fname type for serialize: {type(fname)}")
     if compression is not None:
         assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard on caller's zlib compression level arg, not a security boundary
         assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
@@ -83,16 +96,14 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
                     system.ensure_dir_exists(dirname)
                 with open(fname, "wb") as f:
                     f.write(data)
-            elif isinstance(fname, io.IOBase):
-                fname.write(data)
             else:
-                raise TypeError(f"Unsupported fname type for serialize: {type(fname)}")
+                fname.write(data)
             return True
         else:
             return data
     except Exception as e:
         logger.exception("serialize failed (fname=%r, type=%s): %s", fname, type(obj).__name__, e)
-        return None
+        raise
 
 
 def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False) -> Any:

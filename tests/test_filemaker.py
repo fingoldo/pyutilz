@@ -45,12 +45,17 @@ class TestSimplifyTypes:
         out = fm.simplify_types({"a": 1, "b": "text", "c": 2.5})
         assert out == {"a": 1, "b": "text", "c": 2.5}
 
-    def test_mutates_and_returns_the_same_dict(self):
-        """The function mutates its argument in place and also returns it."""
-        obj = {"a": [1, 2]}
+    def test_returns_a_new_dict_and_leaves_the_argument_untouched(self):
+        """simplify_types is a transform, not an in-place mutator (2026-09-03 audit, F133).
+
+        It used to mutate the caller's dict -- ``obj.copy()`` copied only the iteration view -- so
+        a caller that still needed its original list fields, or its None-valued keys, silently lost
+        them. The returned dict carries the simplified values; the input is unchanged."""
+        obj = {"a": [1, 2], "b": None}
         out = fm.simplify_types(obj)
-        assert out is obj
-        assert obj["a"] == "1,2"
+        assert out is not obj
+        assert out["a"] == "1,2"
+        assert obj == {"a": [1, 2], "b": None}
 
 
 class TestGetSessionToken:
@@ -96,7 +101,9 @@ class TestGetSessionToken:
             token = fm.get_session_token(max_retries=2, sleep_int_seconds=0)
         assert token is None
         assert mock_web.get_url.call_count == 2
-        assert mock_sleep.call_count == 2
+        # N attempts cost N-1 sleeps: there is nothing to wait for after the final one
+        # (2026-09-03 audit, F110).
+        assert mock_sleep.call_count == 1
 
     def test_non_ok_status_retries_then_gives_up(self):
         fm.filemaker_url = "https://fm.example.com"

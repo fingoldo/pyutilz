@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Iterator
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a defensive import guard for a module already imported unconditionally --------------------
 #
@@ -38,7 +39,33 @@ def _is_type_checking_guard(test: ast.expr) -> bool:
     return False
 
 
-def _unconditional_module_imports(tree: ast.Module) -> set[str]:
+def _package_of(rel: str) -> str:
+    """The dotted PACKAGE a repo-relative file's relative imports resolve against."""
+    stem = rel[:-3] if rel.endswith(".py") else rel
+    parts = stem.split("/")
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    else:
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _resolved_module(node: ast.ImportFrom, package: str) -> "str | None":
+    """The absolute dotted module an ``ImportFrom`` names, resolving ``from . import x`` too.
+
+    Excluding relative imports outright made the rule blind in BOTH directions: a genuinely dead
+    handler around `from . import util` was invisible, and a relative unconditional import never
+    counted as certain.
+    """
+    if node.level == 0:
+        return node.module
+    base = package.split(".") if package else []
+    prefix = base[: len(base) - node.level + 1] if len(base) >= node.level else []
+    parts = [*prefix, *(node.module.split(".") if node.module else [])]
+    return ".".join(parts) if parts else None
+
+
+def _unconditional_module_imports(tree: ast.Module, package: str = "") -> set[str]:
     """FULL dotted module paths imported OUTSIDE any try block.
 
     The full path, not the top-level package. `import pyutilz.distributed` can fail on a missing
@@ -46,33 +73,31 @@ def _unconditional_module_imports(tree: ast.Module) -> set[str]:
     reported every optional-submodule guard in a test suite as dead -- thirteen of this rule's
     fourteen first hits.
     """
-    guarded: set[int] = set()
-    for node in ast.walk(tree):
-        # A try block's imports are conditional by construction.
-        if isinstance(node, ast.Try):
-            for stmt in ast.walk(node):
-                guarded.add(id(stmt))
-        # ...and so are a TYPE_CHECKING block's, which never execute at runtime.
-        # Without this the rule fires on the standard shape for an optional
-        # dependency: a TYPE_CHECKING-only import so a function can carry a real
-        # return annotation, PLUS a genuine try/except ImportError fallback. The
-        # fallback there is reachable; the "unconditional" import is not an
-        # import at all at runtime. Two such false positives in one downstream
-        # repo (glossum synset_matcher.py, token_counter.py), both on packages
-        # whose absence the code demonstrably handles.
-        elif isinstance(node, ast.If) and _is_type_checking_guard(node.test):
-            for stmt in ast.walk(node):
-                guarded.add(id(stmt))
-
+    # DIRECT CHILDREN OF THE MODULE BODY ONLY. Walking the whole tree counted a function-local
+    # lazy import, a `if sys.platform == "win32":` branch import and a TYPE_CHECKING-only import
+    # as unconditional, declaring live `except ImportError` handlers dead. A statement nested in
+    # ANY compound statement is conditional by construction, which subsumes the try-block and
+    # TYPE_CHECKING special cases the previous version needed.
     names: set[str] = set()
-    for node in ast.walk(tree):
-        if id(node) in guarded:
-            continue
+    for node in tree.body:
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            resolved = _resolved_module(node, package)
+            if resolved:
+                names.add(resolved)
     return names
+
+
+def _statements_in(body: "list[ast.stmt]") -> "Iterator[ast.stmt]":
+    """Every statement in ``body``, descending into compound statements but not into nested defs."""
+    todo: list[ast.stmt] = list(body)
+    while todo:
+        node = todo.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        todo.extend(child for child in ast.iter_child_nodes(node) if isinstance(child, ast.stmt))
 
 
 def scan_unreachable_import_fallback(
@@ -95,11 +120,12 @@ def scan_unreachable_import_fallback(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        certain = _unconditional_module_imports(tree)
+        rel = py.relative_to(root).as_posix()
+        package = _package_of(rel)
+        certain = _unconditional_module_imports(tree, package)
         if not certain:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
-        rel = py.relative_to(root).as_posix()
+        src_lines = _read_src_lines(py)
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
@@ -112,12 +138,15 @@ def scan_unreachable_import_fallback(
             if not catches_import_error:
                 continue
 
-            for stmt in node.body:
+            # The whole guarded block, not only its direct children: `try:` / `if True:` /
+            # `import numpy` is the same guarded import one level deeper.
+            for stmt in _statements_in(node.body):
                 modules: set[str] = set()
                 if isinstance(stmt, ast.Import):
                     modules = {a.name for a in stmt.names}
-                elif isinstance(stmt, ast.ImportFrom) and stmt.module and stmt.level == 0:
-                    modules = {stmt.module}
+                elif isinstance(stmt, ast.ImportFrom):
+                    resolved = _resolved_module(stmt, package)
+                    modules = {resolved} if resolved else set()
                 already = sorted(modules & certain)
                 if not already:
                     continue

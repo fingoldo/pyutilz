@@ -11,6 +11,7 @@ from ._common import (
     Optional,
     SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
     _check_word_coverage,
+    _nfc_words,
     _strip_stop_words,
     _validate_coverage_side,
     levenshtein_distance,
@@ -71,8 +72,8 @@ def sentences_similarity(
         >>> sentences_similarity(["A", "B"], ["A", "B"], required_coverage=1.0)
         1.0
     """
-    SentenceA = _strip_stop_words(SentenceA, stop_words)
-    SentenceB = _strip_stop_words(SentenceB, stop_words)
+    SentenceA = _nfc_words(_strip_stop_words(SentenceA, stop_words))
+    SentenceB = _nfc_words(_strip_stop_words(SentenceB, stop_words))
     N_a = len(SentenceA)
     N_b = len(SentenceB)
     if N_a < 1 or N_b < 1:

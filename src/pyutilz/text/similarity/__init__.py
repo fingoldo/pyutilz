@@ -24,6 +24,7 @@ from ._common import (
     _VALID_COVERAGE_SIDES,
     _validate_coverage_side,
     _check_word_coverage,
+    _nfc_words,
     _strip_stop_words,
 )
 
@@ -109,6 +110,7 @@ __all__ = [
     "_VALID_COVERAGE_SIDES",
     "_validate_coverage_side",
     "_check_word_coverage",
+    "_nfc_words",
     "_strip_stop_words",
     "levenshtein_strings_similarity",
     "contigous_strings_similarity",

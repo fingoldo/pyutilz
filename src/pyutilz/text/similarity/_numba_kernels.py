@@ -9,6 +9,8 @@ that a single import attempt decides which implementation set goes live.
 
 from __future__ import annotations
 
+import unicodedata
+
 try:
     import numba as nb
     import numpy as np
@@ -400,7 +402,10 @@ if HAS_NUMBA:
         pos = 0
         for i, w in enumerate(words):
             offsets[i] = pos
-            chunk = np.frombuffer(w.encode("utf-32-le", errors="surrogatepass"), dtype="<u4").astype(np.int32)
+            # NFC before packing: the pure-Python reference measures distance with jellyfish, which treats
+            # a base character plus its combining marks as ONE unit, so an unnormalized NFD input scored
+            # differently on the two paths. See `_nfc_words` in `_common`.
+            chunk = np.frombuffer(unicodedata.normalize("NFC", w).encode("utf-32-le", errors="surrogatepass"), dtype="<u4").astype(np.int32)
             parts.append(chunk)
             pos += len(chunk)
         offsets[n] = pos

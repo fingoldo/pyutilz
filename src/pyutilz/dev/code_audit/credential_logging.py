@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- credential-shaped value reaching a logger call ------------------------
 #
@@ -16,7 +16,11 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, 
 # `special_vars` were excluded from one log dict key but copied unredacted into another
 # ("relocation, not redaction" -- Medium).
 
-_CREDENTIAL_NAME_RE = re.compile(r"(?i)\b(proxy|proxies|password|passwd|pass|auth|token|credential|secret|api_key|apikey|cookie)\b")
+# Segment boundaries, not ``: `_` is a word character, so `password` never matched inside
+# `db_password` -- and snake_case compounds (`db_password`, `auth_token`, `user_api_key`,
+# `proxy_url`) are how credentials are actually named. `bypass` still does not match, because
+# the character before `pass` there is alphanumeric.
+_CREDENTIAL_NAME_RE = re.compile(r"(?i)(?:^|[^A-Za-z0-9])(proxy|proxies|password|passwd|pass|auth|token|credential|secret|api_key|apikey|cookie)(?:[^A-Za-z0-9]|$)")
 _REDACT_HINT_RE = re.compile(r"(?i)redact|mask|sanitiz|\.split\(.@.\)|scrub")
 
 
@@ -33,6 +37,23 @@ def _looks_credential_shaped(node: ast.AST) -> bool:
 _LOG_METHODS = frozenset({"debug", "info", "warning", "warn", "error", "exception", "critical", "log"})
 
 
+def _is_logger_receiver(receiver: ast.expr) -> bool:
+    """Whether ``receiver`` in ``<receiver>.info(...)`` names a logger.
+
+    Same rule as ``log_throttle._is_log_call``: any name ENDING in `log`/`logger`, and attribute
+    receivers too. Requiring the literal names `logger`/`log`/`logging` skipped `self.logger`,
+    `self._log` and `LOGGER` -- and this scanner is the security-adjacent one of the pair.
+    """
+    if isinstance(receiver, ast.Name):
+        name = receiver.id
+    elif isinstance(receiver, ast.Attribute):
+        name = receiver.attr
+    else:
+        return False
+    low = name.lower()
+    return low.endswith("log") or low.endswith("logger") or low == "logging"
+
+
 def scan_credential_shaped_log_args(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -41,6 +62,11 @@ def scan_credential_shaped_log_args(
     NAME matches a credential-shaped vocabulary (proxy, password, token, auth, secret, api_key,
     cookie, credential), with no redaction hint (``.split("@")``, a name/call containing
     redact/mask/sanitize/scrub) anywhere in the same source line.
+
+    The credential vocabulary is matched on SEGMENT boundaries, so snake_case compounds
+    (``db_password``, ``auth_token``, ``user_api_key``) match as well as bare names, and the logger
+    receiver is recognised by suffix (``self.logger``, ``self._log``, ``LOGGER``), not by an exact
+    name.
 
     Deliberately name-based (not value/type-based -- statically impossible in general) and
     therefore prone to false positives on legitimately-safe values whose name happens to match
@@ -54,12 +80,12 @@ def scan_credential_shaped_log_args(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _LOG_METHODS):
                 continue
-            if not (isinstance(node.func.value, ast.Name) and node.func.value.id in ("logger", "log", "logging")):
+            if not _is_logger_receiver(node.func.value):
                 continue
             offending = [a for a in node.args if _looks_credential_shaped(a)]
             offending += [kw.value for kw in node.keywords if _looks_credential_shaped(kw.value)]

@@ -182,3 +182,16 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
                     else:
                         logger.info("Unzipped model from archive %s", local_object_path + ".zip")
                         os.remove(local_object_path + ".zip")
+                        # The archive is extracted to temp_dir, which need not be the parent of
+                        # local_object_path, and nothing verified the object actually appeared
+                        # there. When it did not, the enclosing `while not exists(...)` loop simply
+                        # re-downloaded, re-unpacked and re-deleted forever with no sleep on the
+                        # success path -- an unbounded S3 download loop incurring real transfer
+                        # charges. Fail loudly instead: no amount of retrying changes an archive
+                        # whose internal layout does not match the caller's expectation.
+                        if not exists(local_object_path):
+                            raise FileNotFoundError(
+                                f"get_from_s3_or_cache: archive {s3_object_path} was unpacked into {temp_dir!r} "
+                                f"but {local_object_path!r} still does not exist -- check the archive layout "
+                                f"and that temp_dir is the directory the object is expected in"
+                            )

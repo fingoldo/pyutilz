@@ -19,442 +19,449 @@ Read `CLAUDE.md` (all closed decisions respected: no repo-wide reformat proposed
 ## Findings
 
 ### F01. [High] Anthropic records the request-side `thinking` toggle as the call's reasoning-token count — src/pyutilz/llm/anthropic_provider.py:313
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_last_usage["reasoning_tokens"]` now records the counted `thinking_tokens` instead of the request-side toggle, src/pyutilz/llm/anthropic_provider.py:313; regression test `TestF01AnthropicReasoningTokens` in tests/test_domain_db_web_cloud_llm_text_audit_20260903_llm.py.
 - **Category**: token-accounting
 - **Problem**: `self._last_usage = {..., "reasoning_tokens": thinking, ...}` binds the `generate()` PARAMETER `thinking` (anthropic_provider.py:218), not the `thinking_tokens` integer accumulated at :289-293. The comment at :287-288 states the variable was renamed to `thinking_tokens` precisely so that shadowing "would silently rebind it" — the rename never reached line 313. `self.last_thinking_tokens = thinking_tokens` at :299 gets the correct value, so the two reported figures disagree for the same call.
 - **Failure scenario**: `await p.generate(prompt, thinking="high")` leaves `p._last_usage["reasoning_tokens"] == "high"`. `generate_batch()` copies `_last_usage` verbatim into each yielded result dict (base.py:557-562), so a telemetry loop doing `sum(r["usage"]["reasoning_tokens"] for r in results)` raises `TypeError: unsupported operand type(s) for +: 'int' and 'str'`. With the default `thinking=False` it instead sums booleans silently, reporting 0 or 1 "reasoning tokens" per call.
 - **Suggested fix**: `"reasoning_tokens": thinking_tokens,` at :313.
 
 ### F02. [High] `get_url()`'s exception handler raises `UnboundLocalError` when `get_new_session()` fails — src/pyutilz/web/web/fetching.py:154
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the ten `*_snapshot` locals are initialised to `None` before the retry loop, so a `get_new_session()` failure reaches the documented warning path instead of `UnboundLocalError`, src/pyutilz/web/web/fetching.py:64-75; test `test_f02_get_new_session_failure_does_not_raise_unbound_local`.
 - **Category**: retry-correctness
 - **Problem**: the seven `proxy_*_snapshot` locals are bound at fetching.py:95-101, AFTER the `_facade.get_new_session(...)` call at :78. Any exception raised by `get_new_session` (it constructs a Session and calls `get_new_smartproxy`) enters the `except` at :142; the substring test at :152 matches on "proxy"/"timed out"/"sslerror", and :154 then reads `proxy_server_snapshot`, never assigned on this iteration. Reproduced with `get_new_session` raising `ConnectionError("Cannot connect to proxy gateway")`: `UnboundLocalError: cannot access local variable 'proxy_server_snapshot' where it is not associated with a value`, escaping `get_url` on attempt 1 of 2.
 - **Failure scenario**: a proxy-gateway outage makes every `get_url()` call abort with `UnboundLocalError`. The retry loop, the "Could not get url" warning and the documented `Optional[Response]` return contract are all bypassed, and the caller sees an exception type naming nothing about the network.
 - **Suggested fix**: initialise the seven `*_snapshot` locals to `None` before the `while` loop, or move the snapshot block above the `need_new_session` branch.
 
 ### F03. [High] `get_new_smartproxy()` computes `now_time` once, so a cooldown can never expire while it waits — src/pyutilz/web/web/proxy_pool.py:73, 101
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `now_time` is recomputed at the top of every loop iteration, so a cooldown that elapses while the loop sleeps is seen, src/pyutilz/web/web/proxy_pool.py:101; test `test_f03_cooldown_expires_while_the_loop_sleeps`.
 - **Category**: rate-limiting
 - **Problem**: `now_time` is captured at proxy_pool.py:73, before `while True:`, and never refreshed. The eligibility test at :101 is `(now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_interval`, so the wall time the loop actually spends sleeping (`_facade.sleep(delay)` per `warn_after_n_failures` attempts, :135) is invisible to the comparison. Reproduced with a fixed port whose `failed_dict` entry was 30s old and `min_failed_idle_interval_minutes=1`: after 400 simulated seconds of sleeping — far past the 60s cooldown — the port was still rejected and the loop still spinning.
 - **Failure scenario**: exactly the single-proxy / `proxy_min_port == proxy_max_port` case the docstring calls out at :58-63. One transient failure marks the sole candidate, and the function blocks indefinitely even after the cooldown genuinely elapses. `max_wait_seconds` (default `None`) is the only escape and converts the hang into a `TimeoutError` rather than the correct "now eligible" answer.
 - **Suggested fix**: recompute `now_time` at the top of each loop iteration, or at minimum after each `_facade.sleep(delay)`.
 
 ### F04. [High] `release_connection` raises `PoolError` and leaks the backend when the pool was recreated mid-flight — src/pyutilz/database/psycopg2_pool.py:251
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `putconn` is wrapped in `except psycopg2.pool.PoolError` and falls through to the existing `conn.close()` branch, so a pool recreated mid-flight closes rather than leaks the backend, src/pyutilz/database/psycopg2_pool.py:251-265; test `test_release_connection_survives_a_foreign_pool_and_closes_the_connection`.
 - **Category**: connection-lifecycle
 - **Problem**: `release_connection` reads `pool = _pool` and calls `pool.putconn(conn)` with no check that `conn` originated from that pool object. `get_connection`'s retry path calls `_reset_pool()` (psycopg2_pool.py:176), which does `_pool.closeall()` and sets `_pool = None`; the next `_ensure_pool` builds a NEW `ThreadedConnectionPool` (:88). Verified against the installed psycopg2 2.9.9: `AbstractConnectionPool._putconn` does `key = self._rused.get(id(conn))` and raises `PoolError("trying to put unkeyed connection")` for a foreign connection, and `PoolError("connection pool is closed")` when `self.closed`. Neither is caught — the `try/except` at :247-250 wraps only `conn.rollback()`.
 - **Failure scenario**: thread A is inside `with managed_connection(dsn)`. Thread B's `get_connection` hits an `OperationalError`, calls `_reset_pool()` (which `closeall()`s A's connection out from under it) and builds a fresh pool. A's `finally` at :277 calls `release_connection`, `putconn` raises `PoolError` out of the context manager — masking whatever exception A was already unwinding — and A's connection is neither returned nor closed.
 - **Suggested fix**: wrap the `putconn` in `try/except psycopg2.pool.PoolError` falling through to the `conn.close()` branch already written for `pool is None` at :257-260; additionally record a pool generation on borrow and compare it on release, or have `_reset_pool` skip `closeall()` for connections still checked out.
 
 ### F05. [High] `fix_broken_sentences` raises `IndexError` on any text ending in a linebreak followed by a space — src/pyutilz/text/strings/webtext.py:169
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the guard is now `if j + 1 < text_len:`, src/pyutilz/text/strings/webtext.py:169; test `test_f05_fix_broken_sentences_no_indexerror_on_trailing_linebreak_space` over the three reproducing inputs.
 - **Category**: off-by-one
 - **Problem**: `if j + 1 <= text_len:` guards the read `next_next_symbol = text[j + 1]` at :170. When `j + 1 == text_len` the guard passes but the index is out of range (valid indices are `0..text_len-1`); the comparison must be `<`. Reproduced: `fix_broken_sentences("\n ")`, `fix_broken_sentences("\r\n ")` and `fix_broken_sentences("Hello world.\nA b\n ")` all raise `IndexError: string index out of range`.
 - **Failure scenario**: any caller passing scraped text ending with a newline plus trailing space crashes. The function is public (exported via `pyutilz.text.strings.__all__`) and is also step 5 of `clean_description`; the in-pipeline case is masked only because `fix_html` happens to `.strip()` first, so direct callers take the crash.
 - **Suggested fix**: change :169 to `if j + 1 < text_len:`.
 
 ### F06. [High] Pure-Python and numba sentence similarity disagree on text containing combining marks — src/pyutilz/text/similarity/sentences.py:132 vs src/pyutilz/text/similarity/_numba_kernels.py:108
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - both paths NFC-normalize their words through the new `_nfc_words` helper, src/pyutilz/text/similarity/_common.py:70; tests `test_f06_pure_python_similarity_is_nfc_normalized` and `test_f06_numba_and_pure_python_agree_on_nfd_vs_nfc`.
 - **Category**: numba-python-parity
 - **Problem**: `sentences_similarity` measures distance with `jellyfish.levenshtein_distance` (jellyfish 1.0.1, `_rustyfish`), which counts a base character plus its combining marks as ONE unit: `levenshtein_distance("e\u0301\u0302", "e") == 1` where the codepoint-exact answer is 2, and `levenshtein_distance("cafe\u0301", "caf\u00e9") == 1` where the exact answer is 2. `_lev_dist_flat` operates on the utf-32 codepoints produced by `_pack_words` (_numba_kernels.py:403) and is codepoint-exact. Neither path normalizes. Measured: `sentences_similarity(["cafe\u0301"], ["caf\u00e9"])` = 0.775; `sentences_similarity_numba(["cafe\u0301"], ["caf\u00e9"])` = 0.675. Parity otherwise held over 600 random ASCII cases, 200 batch cases and the scan-vs-sorted greedy matcher — the break is unicode-specific.
 - **Failure scenario**: a decomposed-NFD candidate list (common from PDF extraction, macOS filenames, or any non-NFC upstream) scores differently depending only on whether numba is installed, so `SentenceSimilarityIndex` ranks candidates differently from the documented pure-Python reference, and a coverage gate at `min_word_similarity=0.7` accepts on one path and rejects on the other for identical input.
 - **Suggested fix**: normalize both sides identically — `unicodedata.normalize("NFC", w)` inside `_pack_words` and at the top of `sentences_similarity`'s word loop (or in `normalize_sentence`) — and add a differential NFD/NFC test to `test_similarity_kernel_twin_parity.py`.
 
 ### F07. [High] `redact_secrets` leaks `secret_key=` and `aws_secret_access_key=` values — src/pyutilz/text/secrets_scrub.py:82
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `SECRET_KEY_VALUE_RE` now matches bounded key AFFIXES behind a token-boundary lookbehind, so `secret_key=`, `aws_secret_access_key=` and `api_key_id=` are masked; PEM blocks and standalone `ghp_`/`AKIA`/`sk-` shapes are redacted too, src/pyutilz/text/secrets_scrub.py:82-113, 189-191. Verified leaking-before / masked-after, plus a no-catastrophic-backtracking test.
 - **Category**: secret-redaction-false-negative
 - **Problem**: `SECRET_KEY_VALUE_RE`'s key alternatives must be immediately followed by the separator, so a key name that merely CONTAINS one of them is not matched. Verified: `redact_secrets("secret_key=abc123")` returns `'secret_key=abc123'` unredacted; `redact_secrets("aws_secret_access_key=wJalrXUtnFEMI/K7MDENG")` is unchanged; `redact_secrets("api_key_id=zzz")` is unchanged. (`client_secret=`, `auth_token=` and `access_token=` do redact, since the alternative lands at the end of the key.) Separately, no pattern covers the bare high-entropy token shapes the docstring's "ANY secret shape" claim implies: `ghp_1234567890abcdefghijklmnopqrstuvwxyzAB`, `AKIAIOSFODNN7EXAMPLE`, `sk-proj-ABCDEFGHIJKLMNOP` and a PEM `-----BEGIN RSA PRIVATE KEY-----` block all pass through verbatim.
 - **Failure scenario**: an exception message such as `KeyError: 'secret_key=abc123'`, or an env dump containing `AWS_SECRET_ACCESS_KEY=...`, is written to a log file or persisted DB column with the credential in plaintext, while the caller believes it was scrubbed.
 - **Suggested fix**: allow a key-name affix in the group (a `[A-Za-z0-9_.-]*` on each side of the keyword alternation) and add standalone patterns for `gh[pousr]_[A-Za-z0-9]{36,}`, `AKIA[0-9A-Z]{16}`, `sk-[A-Za-z0-9-]{20,}` and PEM private-key blocks.
 
 ### F08. [Medium] `ClaudeCodeProvider` clears `_last_result_message` OUTSIDE the semaphore, and its whole per-call set is plain shared state — src/pyutilz/llm/claude_code_provider.py:384, 291-306
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `ClaudeCodeProvider`'s seven per-call attributes are `PerCallAttr` descriptors registered in `_PERCALL_METADATA_ATTRS`, and the reset moved inside the semaphore, src/pyutilz/llm/claude_code_provider.py:96-112, 384; tests `TestF08ClaudeCodePerCallState`.
 - **Category**: per-call-state
 - **Problem**: the F26 fix placed `self._last_result_message = None` at `generate()` :384, but `generate()` holds no lock — the semaphore is acquired only inside `_generate_sdk` (:510) and `_generate_cli` (:611). Further, `_last_result_message` (assigned :567), `last_cost_usd`, `last_cache_creation_input_tokens`, `last_cache_read_input_tokens`, `last_session_id`, `last_num_turns` and `_last_usage` (declared :291-306) are all ordinary instance attributes: none is a `PerCallAttr` and this class declares no `_PERCALL_METADATA_ATTRS` at all. This is a regression of the F08/F09/F53/F57 class.
 - **Failure scenario**: `asyncio.gather(p.generate(a), p.generate(b))` with the default `max_concurrent=1`. Task B executes :384 while task A is still inside the semaphore. If B's reset lands after A's assignment, A reads `rm is None` at :421 and silently falls back to tiktoken estimates (:442), recording `last_cache_*` as 0 and adding nothing to `total_cost_usd`; in the reverse interleaving B reads A's `ResultMessage` and bills A's cost twice — the exact F26 symptom.
 - **Suggested fix**: move the reset inside the semaphore (into `_generate_sdk`/`_generate_cli`), and convert the six `last_*`/`_last_*` names to `PerCallAttr` with a `_PERCALL_METADATA_ATTRS` extension, matching every other provider.
 
 ### F09. [Medium] `_reset_per_call_state` skips `last_json_mode_fallback`, so the flag latches `True` for the rest of the context — src/pyutilz/llm/openai_compat.py:280-284
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_reset_per_call_state` is now a single DERIVED implementation on `LLMProvider` iterating `_PERCALL_METADATA_ATTRS`, so `last_json_mode_fallback` can no longer be listed-but-unreset, src/pyutilz/llm/base.py:626-647; tests `TestF09DerivedReset`.
 - **Category**: per-call-state
 - **Problem**: `last_json_mode_fallback` is declared as a `PerCallAttr` at openai_compat.py:192 and listed in `_PERCALL_METADATA_ATTRS` at :194, but `_reset_per_call_state` resets only the other five (:280-284) despite its docstring stating it "Resets every ``PerCallAttr`` this class declares". Reproduced on a stub subclass: set `True`, call `_reset_per_call_state()`, read back `True`. This is a regression of the F08/F09/F53/F57 class.
 - **Failure scenario**: a sequential `for p in prompts: await provider.generate(...)` loop runs in one asyncio context. Call 1 hits the empty-completion-under-`response_format` path (:756) and sets the flag; every later call reports `last_json_mode_fallback == True` and `_capture_percall_metadata` emits `json_mode_fallback: True` although `response_format` was sent and honoured. Worse, the empty-completion error at :762-768 then computes `sent = "dropped"` for a call that actually SENT `response_format`, pointing the operator at the wrong cause — the exact diagnostic that comment block exists to provide.
 - **Suggested fix**: add `self.last_json_mode_fallback = False` to `_reset_per_call_state`, and derive the reset from `_PERCALL_METADATA_ATTRS` so a future attribute cannot drift out again.
 
 ### F10. [Medium] `PerCallAttr._var` creates its backing `ContextVar` without a lock; concurrent first touch loses one thread's per-call state — src/pyutilz/llm/base.py:55-62
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `PerCallAttr` builds ONE `ContextVar` per class attribute in `__set_name__` and stores a copy-on-write `{id(instance): (weakref, value)}` mapping in it, removing the unlocked check-then-act entirely, src/pyutilz/llm/base.py:49-98; test `test_concurrent_first_touch_never_loses_a_write`.
 - **Category**: concurrency
 - **Problem**: `store.get(self._name)` followed by `store[self._name] = var` is a check-then-act with no lock. Two threads first touching the same attribute on the same shared provider instance can each construct a distinct `ContextVar`; the loser's `__set__` writes to a var no longer in `store`, so its own subsequent `__get__` raises `LookupError` and silently returns the default. Reproduced with `sys.setswitchinterval(1e-9)` and 16 barrier-synchronised threads: 287 of 3000 trials produced divergent `ContextVar` objects for one (instance, attribute) pair.
 - **Failure scenario**: two threads each running their own event loop share one factory-cached provider (the factory cache is explicitly thread-safe and hands out shared instances). On the first concurrent `generate()`, one thread's `last_tool_calls`/`_last_usage` reads back empty/zero — the failure the descriptor was introduced to eliminate, now in the thread dimension rather than the task dimension, and indistinguishable from "the model returned no tool calls".
 - **Suggested fix**: guard `_var` with a module-level `threading.Lock`, or use `store.setdefault(name, ContextVar(...))` so a single winner is returned to every caller.
 
 ### F11. [Medium] Streaming never records finish reason, truncation, tool calls or citations — src/pyutilz/llm/openai_compat.py:556-591
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the streaming loop records finish reason, citations and reassembled tool calls (`_accumulate_stream_tool_calls`) and raises `LLMTruncationError` with `partial_text` on a length cap, src/pyutilz/llm/_openai_compat_http.py:150 and src/pyutilz/llm/openai_compat.py:_apply_stream_chunk; tests `TestF11StreamingMetadata`.
 - **Category**: truncation-classification
 - **Problem**: the SSE loop reads only `usage` and `choices[0]["delta"]["content"]`; grep over :539-600 finds no `finish_reason`, `tool_calls` or `citations` handling. `_reset_per_call_state()` at :501 sets `_last_finish_reason = None`, `last_tool_calls = []` and `last_citations = []`, and nothing on the streaming path ever writes them again. The non-streaming twin raises `LLMTruncationError` on `finish_reason == "length"` at :850-862 with `partial_text`.
 - **Failure scenario**: a stream cut off by `max_tokens` yields its partial text and returns normally. `_last_finish_reason` reads `None`, no exception fires, and the "double `max_tokens` and re-issue" contract documented at exceptions.py:49-52 never engages — truncated JSON from a streaming call surfaces downstream as a parse error blamed on the model. A tool-call-only streamed reply likewise leaves `last_tool_calls` permanently `[]`, which `_capture_percall_metadata` reports as fact.
 - **Suggested fix**: capture `choices[0].get("finish_reason")` into `self._last_finish_reason`, accumulate `delta.tool_calls` fragments by index, and after the stream closes raise `LLMTruncationError(..., partial_text=<accumulated>)` when the reason is `"length"`.
 
 ### F12. [Medium] `_record_usage` crashes on a `null` token field and leaves the cumulative counters half-updated — src/pyutilz/llm/openai_compat.py:627-628
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_record_usage` coerces a `null` token field with `or 0` before any counter is touched, so no crash and no half-updated cumulative totals, src/pyutilz/llm/openai_compat.py:_record_usage; tests `TestF12NullTokenFields`.
 - **Category**: token-accounting
 - **Problem**: `prompt_tok = usage.get("prompt_tokens", 0)` and `compl_tok = usage.get("completion_tokens", 0)` have no `or 0`, unlike the `cache_hit` and `reasoning_tok` lines immediately below (:637, :639) which do. A key present with JSON `null` therefore yields `None`. Reproduced: `_record_usage({"prompt_tokens": 10, "completion_tokens": None})` raises `TypeError: unsupported operand type(s) for +=: 'int' and 'NoneType'` with `total_prompt_tokens` already advanced to 10 and `_call_count` still 0.
 - **Failure scenario**: an OpenAI-compatible upstream or proxy emits `"completion_tokens": null` in the usage block of an otherwise-successful 200. `TypeError` is not matched by `_is_retryable_http_error`, so it escapes the tenacity decorator and fails a call the model already generated and billed — while `total_prompt_tokens` has been incremented and `_call_count` has not, permanently skewing `get_session_cost()` for the session.
 - **Suggested fix**: `prompt_tok = usage.get("prompt_tokens") or 0` and `compl_tok = usage.get("completion_tokens") or 0`, matching the two lines below.
 
 ### F13. [Medium] `extract_json` aborts on an unparseable fenced block instead of falling through to the raw_decode scan — src/pyutilz/llm/base.py:404-410
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a fenced block that fails to decode now falls through to paths 2-5 instead of aborting; `_require_json_object`'s raise still propagates, src/pyutilz/llm/base.py:455-466; tests `TestF13ExtractJsonFenceFallthrough`.
 - **Category**: json-extraction
 - **Problem**: path 1's `json.loads(fence_match.group(1))` is not wrapped in a local `try`, unlike path 3 (:425-428). Any `JSONDecodeError` from the fenced payload jumps straight to the outer handler at :449 and raises `JSONParsingError`, so paths 2 through 5 never run. Reproduced with a prose preamble, a fenced block containing `{"a":1,}` and a trailing clean `{"ok":2}`: `JSONParsingError: Expecting property name enclosed in double quotes`, even though the raw_decode scan at :436-444 would have found the clean object.
 - **Failure scenario**: a model emits a fenced block with a trailing comma or an unterminated fragment followed by a clean object (a common "here's a sketch, here's the answer" shape). The whole response is discarded and the retry layer re-buys the call, instead of the recovery the docstring at :378-382 advertises.
 - **Suggested fix**: wrap path 1 in `try: ... except json.JSONDecodeError: pass` so a fence failure degrades into paths 2-5, keeping the `_require_json_object` raise propagating as it does today.
 
 ### F14. [Medium] OpenRouter's streaming path has no repair for endpoints that refuse `reasoning: {enabled: false}` — src/pyutilz/llm/openrouter_provider/_provider.py:448-465, src/pyutilz/llm/openai_compat.py:517-556
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_repaired_stream_body()` reads the refused streamed error body and re-opens the stream once through the same `_body_after_rejected_request` hook the non-streaming path uses, src/pyutilz/llm/openai_compat.py:_repaired_stream_body; tests `TestF14StreamingBodyRepair`.
 - **Category**: error-handling
 - **Problem**: `_body_after_rejected_request` is invoked only from `_post_and_unwrap` (openai_compat.py:803), the non-streaming path. `generate_stream` builds the same body via `_thinking_request_field` (:528-531, which returns the `reasoning.enabled: False` block for `thinking=False`) and posts it with no repair hook. A 400/404 there is in `_NON_RETRYABLE_STATUSES`, so `_is_retryable_http_error` returns `False` and the stream fails outright.
 - **Failure scenario**: the two model families the docstring itself names as answering "Reasoning is mandatory for this endpoint and cannot be disabled" (_provider.py:436-439) fail 100% of streaming calls made with `thinking=False`, while the identical non-streaming call succeeds after one repaired re-issue. The per-process `_REASONING_CANNOT_BE_DISABLED` note is never populated from streaming either, so it cannot self-heal after a non-streaming call.
 - **Suggested fix**: consult `_body_after_rejected_request` in `generate_stream`'s exception handler before the `emitted_any` guard (no delta can have been yielded on a 4xx) and re-open the stream once with the repaired body.
 
 ### F15. [Medium] `build_upsert_query` emits a history CTE that joins on columns the `fresh_data` CTE never returns — src/pyutilz/database/db/upsert.py:384-390, 427
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the conflict key is added to `fresh_data`'s RETURNING list (de-duplicated) whenever a history table is generated, src/pyutilz/database/db/upsert.py:208-215; tests `test_fresh_data_returns_conflict_key_even_when_not_in_history_fields` and the not-duplicated twin.
 - **Category**: sql-building
 - **Problem**: `fresh_data`'s RETURNING list is `list(history_fields)` plus `hash_fields` only (:384-389). The history CTE then references `u.<conflict_field>` in its join (:427, built at :418) and `u.<history_field>` in its select — but a `conflict_field` not present in `history_fields`/`hash_fields` is never projected. Reproduced with `fields_names=['id','name','h']`, `conflict_fields=['id']`, `on_conflict_update_fields=['name']`, `history_table_name='t_hist'`, `history_fields=['name']`, `hash_fields='h'`: the generated SQL contains `returning name,h` followed by `... from fresh_data u left join t c on u.id=c.id ...` — `u.id` does not exist in `fresh_data`. The same shape occurs for `timestamp_check_fields` appearing in the `changed_data` RETURNING (`f_`, :404-413) without being in `history_fields`.
 - **Failure scenario**: any caller who does not happen to list the conflict key in `history_fields` gets `ERROR: column u.id does not exist` at execution time on every upsert batch, from a builder whose only job is to emit valid SQL, with no build-time signal.
 - **Suggested fix**: union the downstream-referenced columns into the `fresh_data` RETURNING list (`dict.fromkeys(history_fields + list(hash_fields) + conflict_fields + timestamp_check_fields)`), or raise a `ValueError` naming the missing columns as already done for `history_table_name`/`history_fields` at :274-275.
 
 ### F16. [Medium] An aliased conflict field is dropped from `changed_data`'s RETURNING while the final UPDATE still joins on it — src/pyutilz/database/db/upsert.py:408, 442-445
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - an aliased conflict field is projected back under its original name in `changed_data`'s RETURNING, so the final UPDATE's join resolves, src/pyutilz/database/db/upsert.py:233-240; test `test_aliased_conflict_field_is_projected_back_under_its_original_name`.
 - **Category**: sql-building
 - **Problem**: `f_ = [field for field in the_list if field not in history_fields_aliases]` (:408) removes any conflict field carrying an alias from the `changed_data` RETURNING list. But `join_condtion` (:418) is reused verbatim at :442 in a DIFFERENT alias context, where `c` is `changed_data as c` (:445) rather than the base table. Reproduced with `history_fields_aliases={'id':'hist_id'}`, `conflict_fields=['id']`, `timestamp_update_fields=['updated_at']`: `changed_data` projects only `checked_at`, yet the tail statement reads `update t AS u set updated_at=c.checked_at from changed_data as c where u.id=c.id` — `c.id` is undefined.
 - **Failure scenario**: a caller who aliases the primary key in the history table (the exact purpose of `history_fields_aliases`) and also uses `timestamp_update_fields` gets `ERROR: column c.id does not exist` on the second statement, AFTER the first statement has already inserted into both the base and history tables.
 - **Suggested fix**: keep aliased conflict fields in `f_` under their original name via `f"{history_fields_aliases[field]} as {field}"`, the form already used for `timestamp_check_fields` at :411.
 
 ### F17. [Medium] `read_db_settings` aborts the whole settings load on one unparseable value, contrary to its own docstring — src/pyutilz/database/db/execution.py:350-355
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - each unparseable value is logged and left untouched instead of aborting the whole settings load, matching the docstring, src/pyutilz/database/db/execution.py:387-404; test `test_read_db_settings_skips_unparseable_values_and_keeps_going`.
 - **Category**: silent-failure
 - **Problem**: the docstring (:326-327) promises each value is cast "leaving it untouched when it fails to parse", but only the json/jsonb branch has a `try/except` (:358-372); `int(val)`, `float(val)` and `val.lower()` are unguarded. Reproduced with `safe_execute` stubbed to return `[('a','12','int'),('b','oops','int'),('c','x','bool')]`: `ValueError: invalid literal for int() with base 10: 'oops'`, with the target namespace left as `{'a': 12}` and `last_db_settings_read_at` still `None`. A boolean-typed row breaks it differently: `[('c', True, 'bool')]` gives `AttributeError: 'bool' object has no attribute 'lower'`.
 - **Failure scenario**: one typo'd row in the `settings` table makes every `read_db_settings(globals())` call raise; because `last_db_settings_read_at` is only stamped after the loop completes (:376), the failure repeats on every call rather than being throttled by `interval_minutes`, while the caller's namespace stays half-updated with whichever settings sorted before the bad row.
 - **Suggested fix**: wrap each cast in `try/except (ValueError, TypeError, AttributeError)` with a `logger.warning` naming the setting, mirroring the json branch, and coerce with `str(val).lower()` in the bool branch.
 
 ### F18. [Medium] `create_postgres_range_partitions(bigint_degree>0)` raises `AttributeError` for the `date` arguments its own signature declares — src/pyutilz/database/db/schema.py:265
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - new `_as_utc_datetime()` promotes a `date` to midnight UTC before the epoch conversion, so the `bigint_degree>0` branch accepts the `date` arguments the signature declares, src/pyutilz/database/db/schema.py:276-286, 299; two tests covering `date` and `datetime`.
 - **Category**: input-validation
 - **Problem**: the signature is `from_date: date, to_date: date` (:250) and `_iter_partition_dates` yields those values plus `relativedelta` offsets, so `d`/`n` are `datetime.date`. The non-zero-`bigint_degree` branch calls `datetime_to_utc_timestamp(d)`, which is `calendar.timegm(dt.utctimetuple())` (src/pyutilz/core/pythonlib/datetimes.py:143). `datetime.date` has no `utctimetuple` — only `datetime.datetime` does. Verified: `date(2024,1,5).utctimetuple()` raises `AttributeError: 'datetime.date' object has no attribute 'utctimetuple'`. The default `bigint_degree=0` branch at :263 works fine with a `date`, so the failure is configuration-dependent.
 - **Failure scenario**: a table partitioned on an integer epoch column — the sole reason `bigint_degree` exists — cannot be partitioned at all when the caller passes the annotated `date` type; the loop dies on the first period having created zero partitions.
 - **Suggested fix**: normalize inside `_iter_partition_dates` or at the call site (`datetime(d.year, d.month, d.day, tzinfo=timezone.utc)`), or widen `datetime_to_utc_timestamp` to accept a `date`.
 
 ### F19. [Medium] xAI's prefix pricing degenerates to the bare vendor prefix `grok`, silently pricing any unknown model from an arbitrary row — src/pyutilz/llm/xai_provider.py:183, 201
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the trimmed-prefix stage in both `_longest_prefix_pricing` and `longest_prefix_lookup` now requires a surviving `-`, so a bare vendor prefix such as `grok` no longer matches and the unknown-model warning is reachable, src/pyutilz/llm/base.py:188, 227; tests `TestF19VendorPrefixDegeneracy`.
 - **Category**: cost-accounting
 - **Problem**: `longest_prefix_lookup`'s stage (b) (base.py:182-187) trims each key's trailing `-<segment>`, and every xAI key trims to `grok` (`"grok-4.3".rsplit("-",1)[0] == "grok"`), so every id beginning with `grok` matches something and `resolved` is never `None` — making `_warn_unknown_model_once` (:185) unreachable for any `grok*` id. Reproduced: `grok-5` resolves to `(1.25, 2.50)` with cache `0.13`; `grok-2` resolves to `(1.25, 2.50)`; `grok-4.4-beta` resolves to `(3.00, 15.00)`. F54's disposition relies on the warning path covering unrecognised models; inside the vendor's own namespace it does not.
 - **Failure scenario**: a future `grok-5` priced at flagship rates is billed by `get_session_cost()` at grok-4.3 rates with nothing in the log — the silent-mispricing outcome F54 was filed to end.
 - **Suggested fix**: require the trimmed prefix to retain at least one `-` (or a minimum length, or a family-segment match) before accepting it, in both `longest_prefix_lookup` and `_longest_prefix_pricing`.
 
 ### F20. [Medium] OpenAI prices dated snapshot ids from `gpt-5-mini` while resolving their limits by prefix — src/pyutilz/llm/openai_provider.py:200-210, 228-232
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - new `_resolve_pricing()` resolves the three price lookups by longest prefix, the same way the limit lookups already did, so pricing and limits agree about a dated snapshot id, src/pyutilz/llm/openai_provider.py:_resolve_pricing; tests `TestF20OpenAIDatedSnapshotPricing`.
 - **Category**: cost-accounting
 - **Problem**: F36 routed `max_output_tokens`/`context_window` through `longest_prefix_lookup` (:221, :226), but `_input_cost_per_1m`, `_output_cost_per_1m` and `_cache_hit_cost_per_1m` still perform an exact `_PRICING.get(model, _PRICING["gpt-5-mini"])`. The two lookups therefore disagree about what a dated id is.
 - **Failure scenario**: `gpt-5-pro-2026-01-15` gets the correct 128k/400k limits but is priced at `(0.25, 2.00)` instead of `(15.00, 120.00)` — a 60x understatement of session spend, mitigated only by one WARNING line easily lost in a long batch log.
 - **Suggested fix**: route all three pricing lookups through `longest_prefix_lookup` (with the stage-(b) tightening from F19), keeping the one-shot warning for a genuine miss.
 
 ### F21. [Medium] `download_to_file()` writes a 4xx/5xx error page to disk and reports success — src/pyutilz/web/web/downloads.py:114-124, 132
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a non-2xx status raises `requests.HTTPError` into the retry loop instead of being written to disk, and a configured fatal status returns `False`, src/pyutilz/web/web/downloads.py:123-133; tests `test_f21_error_page_is_not_written_as_the_file` and the 502-then-200 retry.
 - **Category**: error-handling
 - **Problem**: only statuses in the caller-supplied `exit_codes` tuple (default `()`) are checked, and `requests` does not raise on 4xx/5xx, so any other error status falls straight into the `open(filename,"wb")` + `iter_content` loop and the error body becomes the file — after which the `else: return None` at :132 reports exactly the value a successful download does. Reproduced with a stubbed 500 response: the output file contains `b'<html>Internal Server Error</html>'`.
 - **Failure scenario**: a batch downloading models or datasets behind a proxy that answers 502 ends up with a directory of small HTML files that all look like completed downloads; `rewrite_existing=False` on the next run then skips them permanently (:102).
 - **Suggested fix**: treat any non-2xx as an attempt failure (retry, then delete and log, as the exhausted-attempts path at :139-143 already does), and return a value that distinguishes success from failure.
 
 ### F22. [Medium] `get_ip()` accepts an HTML error page as the exit IP, turning a broken proxy into "proxy works" — src/pyutilz/web/proxy/ip_check.py:84, 96
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `get_ip()` rejects a stated non-200 status and `parse_ip_response` accepts only an IP-shaped candidate, so an HTML error page yields `"?"` rather than a fake exit IP, src/pyutilz/web/proxy/ip_check.py:83-91, 107-114; four tests.
 - **Category**: response-validation
 - **Problem**: :96 calls `parse_ip_response(r.text)` with no `status_code` check, and the non-JSON path at :84 returns `body.split(",")[0].strip()` with no shape validation — the `_IP_SHAPE_RE` guard added for the `{"origin": null}` case (:81, :83) covers only the JSON branch. Reproduced: `parse_ip_response("<html><head><title>503 Service Unavailable</title></head></html>")` returns that entire string, and `check_ip_matches_real(that, "8.8.8.8", "requests")` returns `True`.
 - **Failure scenario**: a proxy gateway or a captive/blocking intermediary answers 503 with an HTML body; `verify_proxy_ip()` reports the proxy verified because the "IP" differs from the real one, and the caller proceeds to scrape through a proxy that is dead — or leaking, since nothing was actually checked.
 - **Suggested fix**: skip responses whose `status_code` is not 200, and apply `_IP_SHAPE_RE` (or `ipaddress.ip_address()`) to the plain-text branch as well, returning `"?"` otherwise.
 
 ### F23. [Medium] The `ipinfo` fetch paths use bare `urlopen`, so a redirect can leave the http(s) allow-list — src/pyutilz/web/web/ipinfo.py:63-65, 160-162
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - both `ipinfo` fetch paths go through `urlopen_checked` / `_CheckedRedirectHandler`, applying the http(s) allow-list to every redirect hop, src/pyutilz/web/web/ipinfo.py:_direct_urlopen and the proxied opener; four tests.
 - **Category**: ssrf
 - **Problem**: `_ensure_http_scheme` (web/_common.py:23-30) validates only the INITIAL url. Both call sites then use `_facade.urllib.request.urlopen` / a `ProxyHandler` opener built at :39, whose stock `HTTPRedirectHandler` permits `http`, `https` AND `ftp` hops — precisely the gap `url_guard._CheckedRedirectHandler` (url_guard.py:48-66) exists to close and which cached_client.py:140 already uses. `_ensure_http_scheme` also never checks `netloc`, unlike `require_http_url` (url_guard.py:43-44).
 - **Failure scenario**: `get_country_by_ip(ip, providers=[...])` and `get_ipinfo(use_urllib=True, url=...)` both accept a caller- or config-supplied URL; a provider (or a hijacked/expired provider domain) that 302s to `ftp://internal-host/...` is followed, and the body is JSON-parsed and returned as geolocation data.
 - **Suggested fix**: route both call sites through `pyutilz.web.url_guard.urlopen_checked` (passing the proxy opener's handlers where needed), or make `_ensure_http_scheme` delegate to `require_http_url` and install `_CheckedRedirectHandler` on the opener at ipinfo.py:39.
 
 ### F24. [Medium] `get_id_by_key_field_and_insert_if_needed` splices two caller-supplied VALUES into SQL raw, with no validation and no trusted-input warning — src/pyutilz/database/db/schema.py:197, 204, 208
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `key_field_value` is bound through a driver placeholder and the remaining raw splice (`alternate_fields_values`) carries an explicit trusted-input WARNING, src/pyutilz/database/db/schema.py:180-190, 215, 228-240; two binding tests.
 - **Category**: sql-building
 - **Problem**: every identifier in this function is validated (:186-194), but two value-carrying arguments are not. `key_is_not_string=True` takes `Data = key_field_value` (:197) verbatim into the `values (...)` clause, bypassing the `u()` quoting the `else` branch applies; `alternate_fields_values` is spliced raw at :204 and :208 and is never validated or documented anywhere. Unlike `showcase_table`, `select`, `execute_alchemy` and `read_table_into_dict_reversed`, this docstring (:168-172) carries no "trusted input only" warning, and the deprecated `GetIdByKeyFieldAndInsertIfNeeded` alias (legacy.py:277-308) forwards both unchanged.
 - **Failure scenario**: this is the module's lookup-or-insert-by-name helper, so `key_field_value` is exactly where externally-sourced data arrives. With `key_is_not_string=True` (the documented way to pass a numeric key) a value of `1),(2` — or anything else — is executed as SQL, and nothing in the API surface states the argument is a raw fragment.
 - **Suggested fix**: bind both through `%s` placeholders passed as `data` to `safe_execute`; at minimum validate `key_is_not_string` values as numeric/boolean literals and add the trusted-input docstring warning its siblings carry.
 
 ### F25. [Medium] `managed_connection` silently rolls back any uncommitted work on exit — src/pyutilz/database/psycopg2_pool.py:263-277
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `managed_connection` COMMITS on clean exit (rollback stays on the exception path), matching psycopg2's own `with connection:` semantics, src/pyutilz/database/psycopg2_pool.py:274-299; tests `test_managed_connection_commits_on_clean_exit` and `..._does_not_commit_on_exception`.
 - **Category**: transaction-correctness
 - **Problem**: connections come from `psycopg2.pool.ThreadedConnectionPool`, which does not set autocommit, so every statement runs in an implicit transaction. The context manager's `finally` calls `release_connection`, whose documented behaviour is "always rolls back before returning to the pool" (:232-233, :248). Nothing commits, and neither the context manager's docstring nor its usage example (`do_stuff(conn)`, :269-271) mentions that the caller must commit.
 - **Failure scenario**: `with managed_connection(dsn) as conn: conn.cursor().execute("insert into t ...")` completes with no exception and no log line, and the row is discarded by the rollback at :248. The sibling module `pyutilz.database.db` puts its connection in `ISOLATION_LEVEL_AUTOCOMMIT` (db/connection.py:128), so a reader moving between the two modules gets opposite semantics with no signal.
 - **Suggested fix**: commit on clean exit and roll back only on exception, or state the caller-owns-the-transaction contract explicitly in the docstring and the usage example.
 
 ### F26. [Medium] Config round-trip doubles every `%` in a value, exponentially — src/pyutilz/text/strings/configfiles.py:119
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the writer constructs `ConfigParser(interpolation=None)` like the reader, so `%` is neither escaped nor doubled across round trips, src/pyutilz/text/strings/configfiles.py:104, 120; test `test_f26_percent_survives_repeated_config_round_trips` over repeated round trips.
 - **Category**: encoding-roundtrip
 - **Problem**: `write_config_file` escapes `%` to `%%` (:119) for configparser interpolation, but `read_config_file` constructs its parser with `interpolation=None` (:31), which never unescapes. Verified with `encryption=None`: writing `{"rate": "50% off"}` and reading back yields `'50%% off'`; three write/read cycles give `'50%% off'`, `'50%%%% off'`, `'50%%%%%%%% off'`.
 - **Failure scenario**: any non-base64 config value containing `%` (a discount string, a printf format, a URL-encoded token) is silently corrupted, and the corruption doubles on every append-mode save/load cycle.
 - **Suggested fix**: since the reader disables interpolation, the writer must not escape — drop the `.replace("%", "%%")` at :119, and pass `interpolation=None` at :103 so the append-mode read is symmetric.
 
 ### F27. [Medium] `introduce_typos` uses stale protected-span offsets after the first length-changing typo — src/pyutilz/text/humanizer.py:353
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `_apply_char_typo`/`_apply_space_typo` return `(text, edit_pos, delta)` and `introduce_typos` shifts every protected span by the delta after each length-changing typo, src/pyutilz/text/humanizer.py:300-420; test `test_f27_protected_span_survives_many_length_changing_typos`.
 - **Category**: off-by-one
 - **Problem**: `protected = list(protected_spans)` is captured once (:353) and reused unchanged for all `count` iterations (:354), but `extra_space`/`double_letter` add a character and `missing_space_comma`/`missing_space_period`/`skip_letter` remove one, shifting every downstream offset. Measured on a 60-word prefix + protected word + 10-word suffix with `count=40`: the protected text drifts up to 9 characters from its declared span, and with a 5-character protected word (`"abcde"`) 56 of 500 seeds (11.2%) corrupted it (e.g. it became `"abde"`).
 - **Failure scenario**: `humanize(text, typo_count=2)` — the module docstring's own example — with an attention-check compliance phrase in `protected_spans`, the exact use case the parameter documents, can inject a typo into that phrase and fail the compliance check.
 - **Suggested fix**: have `_apply_char_typo`/`_apply_space_typo` return the applied delta and its position, and shift every protected span whose start is past that position inside the `for _ in range(count)` loop; alternatively re-locate protected spans by content after each iteration, as `humanize` already does once.
 
 ### F28. [Medium] `fix_missed_space_between_sentences` splits decimal numbers — src/pyutilz/text/strings/webtext.py:257
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a period between two digits is recognised as a decimal point and not split, src/pyutilz/text/strings/webtext.py:256-259; tests for decimals and for real sentence boundaries. `tests/test_strings.py::TestTextCleaning::test_fix_missed_space_multiple_and_noop` pinned the old corrupting output and was reframed to the corrected contract, plus a digit-starts-a-sentence control.
 - **Category**: regex-correctness
 - **Problem**: the function inserts a space whenever `.`/`!`/`?` is directly followed by an alphanumeric, with no guard for digit-dot-digit. Verified: `fix_missed_space_between_sentences("Version 3.5 costs $2.50")` returns `'Version 3. 5 costs $2. 50'`.
 - **Failure scenario**: prices, versions, IP addresses and measurements in scraped product text are mangled, and a downstream `nltk.sent_tokenize` then splits one sentence into several.
 - **Suggested fix**: require `not (p > 0 and text[p-1].isdigit() and next_symbol.isdigit())` before the insert at :257.
 
 ### F29. [Medium] `sentencize_text` deletes every interior `" - "` / `" ~ "` when the text starts or ends with one — src/pyutilz/text/strings/webtext.py:388
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a leading/trailing separator is removed by slicing the ends rather than an unbounded `replace`, so interior `" - "` / `" ~ "` survive, src/pyutilz/text/strings/webtext.py:389-396; test `test_f29_interior_separators_survive_leading_or_trailing_stripping`.
 - **Category**: correctness
 - **Problem**: the leading/trailing tilda guards (`text.startswith(tilda + " ")`, `text.endswith(" " + tilda)`) are correct, but the bodies call `text.replace(...)` with no count, removing ALL occurrences. Verified: `sentencize_text("- Great product - really")` returns `'Great product really.'` (interior separator gone); `sentencize_text("Hello - world -")` returns `'Hello world.'`; `sentencize_text("~ x ~ y ~")` returns `'X y.'`.
 - **Failure scenario**: a bulleted review line such as `"- Great product - really loved it"` silently loses its internal clause separator before tokenization, merging two clauses into one.
 - **Suggested fix**: slice instead of replacing — `text = text[len(tilda) + 1:]` for the prefix and `text = text[: -(len(tilda) + 1)]` for the suffix.
 
 ### F30. [Medium] `json_pg_dumps` raises with orjson installed for inputs the stdlib branch serializes fine — src/pyutilz/text/strings/jsonutils.py:368
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the orjson branch falls back to the stdlib serializer on `TypeError`, so orjson-installed and orjson-absent environments accept the same inputs, src/pyutilz/text/strings/jsonutils.py:367-376; parametrised test over the shapes orjson rejects.
 - **Category**: silent-backend-divergence
 - **Problem**: the docstring promises "the output is identical regardless of which JSON backend is installed", and :362 catches `TypeError` from the first orjson attempt — but the retry at :368 calls orjson again with no guard, and `_normalize_for_pg_json` fixes neither non-str dict keys nor lone surrogates. Verified with orjson 3.x present: `json_pg_dumps({1: "intkey"})` raises `TypeError: Dict key must be str` and `json_pg_dumps({"s": "\ud800"})` raises `TypeError: str is not valid UTF-8: surrogates not allowed`. With `_orjson` forced to `None`, the same two inputs succeed, returning `'{"1": "intkey"}'` and the escaped-surrogate form.
 - **Failure scenario**: a jsonb bulk insert of a document with an int key (or a surrogate-escaped string recovered from a mis-decoded scrape) works on a box without orjson and crashes the insert on a box with it — exactly the environment-dependent divergence the surrounding comments say the design exists to prevent.
 - **Suggested fix**: wrap the :368 retry in `try/except TypeError` falling through to `json.dumps(_normalize_for_pg_json(obj), ...)`, or pass `option=opts | _orjson.OPT_NON_STR_KEYS` and coerce lone surrogates in `_normalize_for_pg_json`'s string branch.
 
 ### F31. [Low] Anthropic, Gemini and Claude Code have no `_reset_per_call_state`, so a raising call leaves the previous call's metadata readable — src/pyutilz/llm/anthropic_provider.py:212, src/pyutilz/llm/gemini_provider.py:216, src/pyutilz/llm/claude_code_provider.py:366
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - Anthropic, Gemini and Claude Code all call `_reset_per_call_state()` at the top of `generate()`, using the single derived implementation from F09, src/pyutilz/llm/anthropic_provider.py:212, gemini_provider.py:216, claude_code_provider.py:366/384; tests `TestF31ResetCalledByEveryProvider`.
 - **Category**: per-call-state
 - **Problem**: grep across `src/pyutilz/llm/` shows `_reset_per_call_state` defined and called only in openai_compat.py (:272, :501, :714) and openrouter_provider/_provider.py (:201, :209). F53's fix gave the OpenAI-compat family a real implementation; the three non-OpenAI-compat providers never received the hook at all.
 - **Failure scenario**: within one context, call 1 succeeds with `last_cache_read_input_tokens=8000` / `last_safety_ratings=[HARASSMENT...]`; call 2 raises before the assignment block (anthropic_provider.py:295, gemini_provider.py:263). A caller logging `provider.last_cache_read_input_tokens` or `last_safety_ratings` in its `except` handler attributes call 1's cache hit and safety ratings to the failed call.
 - **Suggested fix**: lift `_reset_per_call_state` onto `LLMProvider`, iterating `_PERCALL_METADATA_ATTRS` and re-applying each descriptor's default, and call it at the top of every `generate()`.
 
 ### F32. [Low] `last_rate_limits` / `last_organization_id` are plain per-response attributes outside `_PERCALL_METADATA_ATTRS` — src/pyutilz/llm/openai_compat.py:228, 316; src/pyutilz/llm/anthropic_provider.py:108-109, 362, 365
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `last_rate_limits` and `last_organization_id` are `PerCallAttr` descriptors in `_PERCALL_METADATA_ATTRS`, src/pyutilz/llm/openai_compat.py:82 and anthropic_provider.py:108-109; tests `TestF32RateLimitsArePerCall` including a concurrent-task isolation case.
 - **Category**: per-call-state
 - **Problem**: both are written from every response (`_capture_rate_limit_headers`, `_capture_response_headers`) as ordinary instance attributes on the shared, factory-cached instance, and neither appears in any `_PERCALL_METADATA_ATTRS` tuple — the only such attributes left in the LLM layer. `_capture_rate_limit_headers` also overwrites only when the new snapshot is non-empty (`if captured:` at :315), so an old snapshot survives a response carrying no headers.
 - **Failure scenario**: during `generate_batch`, `check_account_limits()` (openai_compat.py:328, anthropic_provider.py:416) returns whichever request answered last — plausibly a 429's headers from a request that failed, attributed to the batch as a whole. A caller using `remaining` to pace subsequent work reads another request's window with no way to tell.
 - **Suggested fix**: convert both to `PerCallAttr` and add them to the respective `_PERCALL_METADATA_ATTRS`, or document them explicitly as instance-wide "most recent response" state and stamp each snapshot with a monotonic timestamp.
 
 ### F33. [Low] Gemini's cache-hit rate is looked up by exact model id while its base pricing is prefix-matched — src/pyutilz/llm/gemini_provider.py:197
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the cache-hit rate is resolved with `longest_prefix_lookup`, matching how the base prices are resolved, src/pyutilz/llm/gemini_provider.py:197; test `test_versioned_id_keeps_the_cache_discount`.
 - **Category**: cost-accounting
 - **Problem**: `cache_rate = self._CACHE_HIT_COST.get(self.model_name, in_rate)` is an exact `dict.get`, whereas `in_rate`/`out_rate` come from `_get_pricing()` via `_longest_prefix_pricing` (base.py:508). The fallback is the FULL input rate, so the cache discount silently vanishes rather than being flagged.
 - **Failure scenario**: a versioned id such as `gemini-2.5-flash-002` resolves base pricing by prefix to `(0.30, 2.50)` but bills every cached prompt token at `0.30` instead of `0.03`, over-reporting a heavily cached session's input cost roughly tenfold with no log line.
 - **Suggested fix**: `longest_prefix_lookup(self.model_name, self._CACHE_HIT_COST, in_rate)`.
 
 ### F34. [Low] Gemini raises `LLMTruncationError` without `partial_text` — src/pyutilz/llm/gemini_provider.py:300-302
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - Gemini's `LLMTruncationError` carries `partial_text` (read defensively from `response.text`), and a failed salvage read is WARNED rather than silently reported as an empty generation, src/pyutilz/llm/gemini_provider.py:300-314; test `test_generate_raises_truncation_with_partial_text`.
 - **Category**: error-handling
 - **Problem**: the raise passes `finish_reason=` but no `partial_text=` — the exact defect F31 of the prior wave fixed for Anthropic (anthropic_provider.py:339) and that openai_compat.py:861 also carries. exceptions.py:60-65 documents the field as existing so a caller can salvage a paid-for call.
 - **Failure scenario**: a Gemini extraction truncated at `max_tokens` after producing 90% of its output discards all of it; a caller catching `LLMTruncationError` to keep partial output gets `partial_text == ""` on Gemini alone.
 - **Suggested fix**: read `response.text` inside a `try/except (ValueError, AttributeError)` before the raise and pass `partial_text=text or ""`.
 
 ### F35. [Low] Gemini leaves the previous call's candidates in `last_all_candidates` when a response has none — src/pyutilz/llm/gemini_provider.py:334-340
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a response with no candidates clears `last_all_candidates` instead of leaving the previous call's list readable, src/pyutilz/llm/gemini_provider.py:334-341; test `test_empty_candidates_clears_the_previous_calls_candidates`.
 - **Category**: per-call-state
 - **Problem**: the empty-candidates early return clears `last_safety_ratings`, `last_grounding_metadata`, `last_citation_metadata` and `last_function_calls`, but not `last_all_candidates`, which is assigned only on the success path (:369).
 - **Failure scenario**: a safety-blocked call returning zero candidates leaves `provider.last_all_candidates` holding the PREVIOUS call's candidate objects; a multi-candidate caller iterating it after the block processes another prompt's answers as this prompt's.
 - **Suggested fix**: add `self.last_all_candidates = []` to the early-return block.
 
 ### F36. [Low] OpenRouter streaming inspects only the LAST chunk for response-level metadata, contradicting its own comment — src/pyutilz/llm/openai_compat.py:583-587
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - response-level metadata is taken from the FIRST chunk as well as the last, so `last_generation_id` is populated after a streamed call, src/pyutilz/llm/openai_compat.py (generate_stream metadata loop); test `test_response_level_metadata_is_read_from_the_first_chunk_too`.
 - **Category**: streaming
 - **Problem**: the comment states "Response-level metadata (id, model, provider) usually rides on the first chunk; some upstreams send it on the last", then passes only `last_chunk` to `_track_provider_specific_response`. Because the usage block typically arrives on a trailing chunk with empty `choices`, _provider.py:554-569 also skips `native_finish_reason` and web-search citations on that chunk.
 - **Failure scenario**: after a streamed call, `last_generation_id` is `None`, so `fetch_generation_stats()` raises `ValueError("No generation_id passed...")` (_provider.py:692) — the very reconciliation path its own docstring recommends for streamed responses (_provider.py:671-673).
 - **Suggested fix**: call `_track_provider_specific_response(chunk)` for the first chunk as well as the last, or merge fields across chunks taking the first non-null for each.
 
 ### F37. [Low] OpenRouter reports `total_cost_usd = 0.0` whenever the catalogue is unavailable — src/pyutilz/llm/openrouter_provider/_catalogue.py:130-133
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - new `_per_token_cost_pair_or_none()` distinguishes "catalogue cannot say" from a genuine zero; the cost dict reports `None` plus `pricing_available: False` instead of `0.0`, src/pyutilz/llm/openrouter_provider/_catalogue.py:130-175 and _provider.py; tests `TestF37OpenRouterUnknownPricing`.
 - **Category**: cost-accounting
 - **Problem**: `_per_token_cost_pair` returns `(0.0, 0.0)` for any model missing from the catalogue, and `_fetch_models_catalogue` returns `{}` on a fetch failure or when first called from the event-loop thread (:76-78) — with no warning at the `(0.0, 0.0)` site. `get_session_cost()` (used at _provider.py:579-585, :789) then reports `input_cost_usd`/`output_cost_usd`/`total_cost_usd` as exactly 0 next to a truthful `actual_cost_usd`.
 - **Failure scenario**: a dashboard summing `total_cost_usd` across providers shows OpenRouter as free for the whole process after one transient `/models` outage at startup, with nothing distinguishing "genuinely free model" from "pricing unknown".
 - **Suggested fix**: return `None` (or log once per model id) when the entry is absent, and have `get_session_cost` omit or null the estimate rather than emitting a confident 0.
 
 ### F38. [Low] A length-capped empty answer pre-empts the measured empty-completion retry — src/pyutilz/llm/openai_compat.py:850-862 vs 749-761
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - an EMPTY length-capped answer under `response_format` is re-issued once without it before truncation is reported; a genuine truncation carrying `partial_text` still propagates untouched, src/pyutilz/llm/openai_compat.py (generate's truncation handler); tests `TestF38EmptyLengthCappedUnderResponseFormat`.
 - **Category**: truncation-classification
 - **Problem**: `_post_and_unwrap` raises `LLMTruncationError` for `finish_reason == "length"` before returning, so `generate()`'s "empty completion under `response_format` -> re-issue once without it" branch (:749, condition `content is None and rf is not None`) is unreachable for a length-capped empty response. The docstring at _provider.py:430 records exactly that shape as observed ("z-ai/glm-4.7-flash 348 tok and an EMPTY answer cut off by `length`"). This audits the deliberate new truncation behaviour for correctness rather than objecting to the change.
 - **Failure scenario**: a model whose `response_format` handling burns the entire budget and returns nothing raises `LLMTruncationError` instead of being retried without `response_format`; a caller whose truncation handler only doubles `max_tokens` re-issues the same broken shape and pays twice.
 - **Suggested fix**: when `finish_reason == "length"` AND the content is empty AND `response_format` was sent, take the no-`response_format` re-issue first, raising the truncation error only if that also comes back empty.
 
 ### F39. [Low] `generate_batch` defaults `max_tokens` to 1024 while `generate()` defaults it to 0 (auto) — src/pyutilz/llm/base.py:637
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `generate_batch` defaults `max_tokens` to 0 (auto), the same default `generate()` applies, src/pyutilz/llm/base.py:716-723; tests `TestF39BatchMaxTokensDefault`.
 - **Category**: parameter-handling
 - **Problem**: `req.get("max_tokens", 1024)` hard-codes a budget for any batch request omitting the key, whereas `generate(max_tokens=0)` means "use the model's own `max_output_tokens`, then clamp to the context window" (openai_compat.py:718-732). The two entry points behave differently for the same request.
 - **Failure scenario**: a caller who runs one prompt through `generate()` successfully and then moves the same prompts into `generate_batch()` gets responses truncated at 1024 tokens — and, per F11, on a streaming provider with no truncation signal at all.
 - **Suggested fix**: default to `0` in `process_request` so batch and single-call paths share the auto-budget semantics, or document the 1024 default in `generate_batch`'s docstring.
 
 ### F40. [Low] Malformed numeric env vars crash `import pyutilz.llm.factory` / `config`, and a negative retry count silently disables retries — src/pyutilz/llm/factory.py:31, src/pyutilz/llm/config.py:263, src/pyutilz/llm/_retry.py:321
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - all three numeric env vars are parsed defensively with a warning and a documented fallback, and a negative retry count is clamped to the default (0 still means infinite), src/pyutilz/llm/factory.py:31, config.py:263, _retry.py:321; tests `TestF40EnvVarValidation`.
 - **Category**: config-validation
 - **Problem**: `_retry.py:320-323` guards its `int()` with `try/except ValueError` and a documented default; factory.py:31 (`int(...)`) and config.py:263 (`float(...)`) do not. Reproduced: `PYUTILZ_LLM_PROVIDER_CACHE_MAX_SIZE=abc` makes `import pyutilz.llm.factory` raise `ValueError: invalid literal for int()`; `PYUTILZ_LLM_SETTINGS_TTL_SECONDS=x` makes `import pyutilz.llm.config` raise `ValueError: could not convert string to float`. Separately `_retry.py` accepts a negative `PYUTILZ_LLM_MAX_RETRIES`, producing `stop_after_attempt(-1)`, which stops after the first attempt — the opposite of the "0 = infinite" scale the module docstring documents, with no warning.
 - **Failure scenario**: a typo'd env var makes `import pyutilz.llm` fail at process start with a traceback pointing at a module-level `int()` rather than at the operator's environment. A `-1` retry setting silently disables the retry policy that "long-running pipeline batches survive temporary outages" depends on.
 - **Suggested fix**: apply `_retry.py`'s guarded warn-and-default pattern to both other sites, and clamp negative `MAX_RETRY_ATTEMPTS` to the default with a warning.
 
 ### F41. [Low] `PerCallAttr` constructs `ContextVar`s outside module scope, which CPython documents as unreclaimable — src/pyutilz/llm/base.py:60
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - subsumed by the F10 rework: `ContextVar`s are constructed once per class attribute in `__set_name__` (class-creation time), so the count is bounded by the number of declared attributes rather than by instances, src/pyutilz/llm/base.py:63; test `test_one_contextvar_per_class_attribute_not_per_instance`.
 - **Category**: resource-lifecycle
 - **Problem**: `contextvars.ContextVar(...)` is created lazily per (instance, attribute) inside `_var`. The `contextvars` documentation states variables should be created at module top level and never in closures or functions, because `Context` objects hold strong references to them, preventing collection. Each provider instance mints up to 6 (OpenAI-compat) or 13+ (OpenRouter) such vars. Bounded in practice by the 128-entry LRU, so this is slow accumulation rather than an unbounded leak — flagged because the unhashable-kwargs path (factory.py:167-169) bypasses the LRU entirely and constructs a fresh provider per call.
 - **Failure scenario**: a long-running service that passes a `list`/`dict` kwarg to `get_llm_provider()` (the documented bypass) builds a new provider per request; each mints new `ContextVar`s that surviving `Context`s keep alive, so RSS grows over days with no cache to bound it.
 - **Suggested fix**: back `PerCallAttr` with one module-level `ContextVar` holding a dict keyed by `(id(instance), name)`, or with a per-class `ContextVar` created in `__set_name__` (once per class, at class-creation time) whose value is a per-instance dict.
 
 ### F42. [Low] `LoginAndGetCookies()` drops the driver handle without quitting on the session-refresh failure path — src/pyutilz/web/browser.py:410
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the session-refresh failure path calls `close_browser()` instead of dropping the handle, src/pyutilz/web/browser.py:414-419; test `test_f42_window_already_closed_quits_the_driver`.
 - **Category**: resource-lifecycle
 - **Problem**: the F52 fix landed on the `browser_get` restart path, which now calls `close_browser()` (:439). The sibling site at :410 still does `browser = None` on `"window was already closed"` / `"chrome not reachable"`, then loops to :393 and calls `start_selenium()`. On the "window already closed" half of that condition the chromedriver process is typically still alive — the orphan class F52 described. The nearby restart at :540-543 does call `browser.quit()` first.
 - **Failure scenario**: a long-running scraper hitting repeated window-closed errors accumulates chromedriver (and, with `use_subprocess=True`, Chrome) processes for the lifetime of the process.
 - **Suggested fix**: replace `browser = None` at :410 with `close_browser()`.
 
 ### F43. [Low] `browser.headers` is the same object as `browser.basic_headers` until the first login — src/pyutilz/web/browser.py:96
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `headers = dict(basic_headers)`, so mutating `browser.headers` no longer rewrites the shared neutral default, src/pyutilz/web/browser.py:96; test `test_f43_headers_is_not_the_same_object_as_basic_headers`.
 - **Category**: shared-state
 - **Problem**: F21 fixed the WRITE inside `LoginAndGetCookies` (:563 now copies), but the module still binds `headers = basic_headers` at :96, so `browser.headers is browser.basic_headers` is `True` at import and stays so whenever `LoginAndGetCookies(default_headers=False)` is used or is never reached.
 - **Failure scenario**: any caller mutating `browser.headers` (adding a cookie or an `authorization` of its own) silently rewrites the documented neutral `basic_headers` default for every other consumer in the process.
 - **Suggested fix**: `headers = dict(basic_headers)` at :96.
 
 ### F44. [Low] `get_external_ip()` shuffles the shared `IP_PROVIDERS` global in place — src/pyutilz/web/web/ipinfo.py:51-52
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `get_external_ip()` shuffles a local copy of `IP_PROVIDERS`, src/pyutilz/web/web/ipinfo.py:51-53; test `test_f44_ip_providers_global_is_not_permuted`.
 - **Category**: shared-state
 - **Problem**: `providers = _facade.IP_PROVIDERS` binds the module-level list itself, and `shuffle(providers)` reorders that object. Every consumer of `pyutilz.web.web.IP_PROVIDERS` observes the permuted list, and `random.shuffle` is not atomic with respect to another thread iterating the same list.
 - **Failure scenario**: a caller that inspects, asserts on, or logs `IP_PROVIDERS` sees an order changing on every fetch, and a concurrent `get_external_ip()` from another thread can iterate a list being permuted underneath it, retrying or skipping a provider.
 - **Suggested fix**: `providers = list(_facade.IP_PROVIDERS)` before the shuffle.
 
 ### F45. [Low] `curl_session`/`requests_session` yield a session with no timeout and never reveal the auto-picked port — src/pyutilz/web/proxy/session.py:40, 63-64
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - both session helpers take a `timeout` (default `DEFAULT_SESSION_TIMEOUT = 30.0`, `None` restores blocking) and expose the resolved port as `session.proxy_port_offset`, src/pyutilz/web/proxy/session.py:19-110; four tests.
 - **Category**: http-timeout
 - **Problem**: neither context manager configures any request timeout (`requests.Session` has no session-level timeout at all), so `with requests_session(p) as s: s.get(url)` blocks indefinitely on a stalled proxy. Separately, with `port_offset=None` the port is chosen inside `provider.proxy_url()` / `provider.proxies()` (proxy/base.py:319-322, proxy/decodo.py:275) and never returned, so the caller cannot call `provider.report_error(offset)` / `report_success(offset)` for the port actually used.
 - **Failure scenario**: a scraper using these helpers with default arguments hangs forever on one bad exit IP, and no port is ever banned because no outcome can be attributed to a port — the health tracker these helpers exist to feed stays empty.
 - **Suggested fix**: resolve the offset in the context manager and yield it alongside the session; add a `timeout` parameter applied via curl_cffi's session `timeout=` and a `requests` adapter or `functools.partial` wrapper.
 
 ### F46. [Low] `download_to_file()` returns `None` for success and for total failure alike — src/pyutilz/web/web/downloads.py:104, 117, 132, 144
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `download_to_file()` returns `True` on success (including the exists-and-skipped case) and `False` on a fatal status or exhausted attempts, src/pyutilz/web/web/downloads.py:94-148; three tests.
 - **Category**: error-handling
 - **Problem**: all four exits return `None` — skip-because-exists, fatal `exit_codes` status, successful write, and "all `max_attempts` failed". Only the last logs at ERROR and removes the file.
 - **Failure scenario**: a caller cannot branch on the outcome without stat-ing the file itself, so a batch driver silently treats a wholly failed download as done.
 - **Suggested fix**: return `True`/`False` (or the path/`None`), documented in the docstring.
 
 ### F47. [Low] `get_from_s3_or_cache()` can busy-loop when the archive does not unpack to `local_object_path` — src/pyutilz/cloud/cloud.py:132, 167, 183-184
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - when the archive unpacks without producing `local_object_path`, a `FileNotFoundError` naming the archive, temp dir and expected path is raised instead of re-entering the download loop forever, src/pyutilz/cloud/cloud.py:185-195; test at tests/test_domain_db_web_cloud_llm_text_audit_20260903_web.py:402.
 - **Category**: control-flow
 - **Problem**: the loop condition is `while not exists(local_object_path)`, but the archive is extracted to `temp_dir` (:167) and the zip is then deleted (:183-184) with no check that `local_object_path` now exists. Nothing on the success path sleeps.
 - **Failure scenario**: an archive whose internal layout puts the object somewhere other than `local_object_path` (or a `temp_dir` that is not its parent) is downloaded, unpacked, deleted and re-downloaded on the next iteration — an unbounded download/unpack loop against S3 with no backoff, incurring real transfer charges.
 - **Suggested fix**: after a successful `unpack_archive`, verify `exists(local_object_path)` and raise (or log and sleep) when it is still missing, instead of falling through to another download round.
 
 ### F48. [Low] `default_timestamp` is spliced into the generated SQL unvalidated and undocumented — src/pyutilz/database/db/upsert.py:322, 327
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `default_timestamp` is documented in the parameter list and covered by the function's raw-SQL-fragment WARNING alongside `custom_onconflict` and `on_conflict_update_values`, src/pyutilz/database/db/upsert.py:40-49; test `test_default_timestamp_is_documented_as_a_raw_fragment`.
 - **Category**: sql-building
 - **Problem**: every identifier reaching the query is validated at :268-292, and the comment at :266-267 enumerates exactly which arguments are "accepted as raw SQL fragments by design" — `custom_onconflict` and `on_conflict_update_values`. `default_timestamp` is on neither list, yet it goes verbatim into the `select` list at :327 and steers `conversion_clause` by substring match at :322. The docstring's Params section (:228-230) does not mention it at all.
 - **Failure scenario**: a caller passing a computed timestamp expression injects arbitrary SQL into the insert's select list, and nothing in the signature, docstring or comments flags the argument as a raw fragment — the same gap F42 closed for `suggest_json_optimization`'s `path`.
 - **Suggested fix**: validate against a small allow-list/regex of accepted timestamp expressions, or add it to the :266-267 raw-fragment comment plus an explicit docstring warning.
 
 ### F49. [Low] `read_table_into_dict` splices `condition` raw but, unlike its `_reversed` twin, carries no trusted-input warning — src/pyutilz/database/db/schema.py:94
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `read_table_into_dict` now carries the same trusted-input WARNING its `_reversed` twin has, src/pyutilz/database/db/schema.py:92-97; test `test_read_table_into_dict_documents_the_raw_condition`.
 - **Category**: documentation
 - **Problem**: `read_table_into_dict_reversed` has an explicit four-line WARNING block about `condition` (:113-116), added because the parameter is spliced verbatim. `read_table_into_dict` has the identical `condition: Optional[str] = ""` parameter and the identical splice at :94, and its docstring (:83-88) says nothing. The deprecated `ReadTableIntoDic` alias (legacy.py:239-255) forwards it too.
 - **Failure scenario**: a caller reads the safe-looking `read_table_into_dict` docstring, passes a filter built from request data, and gets the injection its sibling function explicitly warns about.
 - **Suggested fix**: copy the WARNING paragraph from `read_table_into_dict_reversed`'s docstring.
 
 ### F50. [Low] `ensure_pg_table_exists` always probes the `public` schema, ignoring the connection's configured `db_schema` — src/pyutilz/database/db/schema.py:56
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the existence probe uses the connection's configured `db_schema`, falling back to `public` only when none is set, src/pyutilz/database/db/schema.py:57-60; tests for the configured-schema and fallback cases.
 - **Category**: schema-handling
 - **Problem**: `check_if_pg_table_exists(table_name, schema_name="public")` (:25) is called with only the table name at :56, so the existence check queries `information_schema.tables where table_schema='public'`. `connect_to_db` supports an `m_db_schema` that sets the `search_path` (db/connection.py:122-123) and stores it on the facade as `db_schema`, which this function never consults.
 - **Failure scenario**: connected with `m_db_schema="myschema"`, a table already existing as `myschema.enums` is reported absent; with `autocreate_id_type_name` set, the `CREATE TABLE` at :70-72 then fails with `DuplicateTable`, which `basic_db_execute` swallows as a warning and returns `None` (db/execution.py:123-126), making the DDL failure invisible. Without `autocreate_id_type_name` nothing is created and the subsequent `select` fails instead.
 - **Suggested fix**: pass `schema_name=_facade.db_schema or "public"` at :56.
 
 ### F51. [Low] `fetch_db_elements(fields="*")` raises an opaque `TypeError` when the thread's cursor has no description — src/pyutilz/database/db/execution.py:219-221
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a cursor with no description raises a `ValueError` naming the cause and the remedy instead of an opaque `TypeError`, src/pyutilz/database/db/execution.py:241-248; test `test_fetch_db_elements_star_without_a_description_reports_the_cause`.
 - **Category**: input-validation
 - **Problem**: the `assert local_cur is not None` at :220 guards against a missing connection, but the next line does `[col.name for col in local_cur.description]`. `get_cursor` returns a freshly created cursor whenever the calling thread has no cached one (db/connection.py:200-207), and a cursor that has not executed a result-returning statement has `description is None`, so the comprehension raises `TypeError: 'NoneType' object is not iterable` — the same class of opaque failure the assert exists to prevent. `fetch_db_elements` is public API, re-exported at db/__init__.py:134.
 - **Failure scenario**: calling `fetch_db_elements(obj, rows, "*")` from a worker thread that has not itself run a query through `safe_execute` (rows fetched on another thread and handed over) fails with a `NoneType` error pointing at neither the connection nor the missing query.
 - **Suggested fix**: check `local_cur.description is not None` and raise or log a message naming the cause, or have `db_command` pass the executed cursor's description through explicitly.
 
 ### F52. [Low] `db_command(fetch_into=...)` creates attribute names with embedded whitespace from a spaced `returning` list — src/pyutilz/database/db/execution.py:319, 215, 226
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - field names are stripped, and a name that is not a valid identifier is logged and skipped while index alignment is preserved, src/pyutilz/database/db/execution.py:231, 253-262; two tests.
 - **Category**: input-validation
 - **Problem**: `db_command` forwards `returning` unchanged as `fields` to `fetch_db_elements` (:319), which splits on `","` only (:215) and then does `setattr(self, prefix + field, ...)` (:226). `returning` is documented as a raw fragment and `"id, name"` is its natural spelling, so the second attribute is created with a leading space — reachable only via `getattr`.
 - **Failure scenario**: `db_command("insert", "orders", set_fields=[...], returning="id, status", fetch_into=o)` silently sets `o.order_id` and an attribute named with a leading space; `o.order_status` raises `AttributeError` with nothing indicating the whitespace as the cause. A `returning` containing an expression or an `AS` alias fails the same way.
 - **Suggested fix**: `fields = [f.strip() for f in fields.split(",")]` in `fetch_db_elements`, and skip or warn on any resulting name that is not a valid identifier.
 
 ### F53. [Low] `basic_db_execute(max_retries<=0)` returns `None` without executing anything — src/pyutilz/database/db/execution.py:82
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `basic_db_execute` raises `ValueError` for `max_retries < 1` instead of silently returning `None` without executing, src/pyutilz/database/db/execution.py:71-76; test `test_basic_db_execute_rejects_non_positive_max_retries`.
 - **Category**: silent-failure
 - **Problem**: the loop is `while retry_count < max_retries:`; every error branch either raises or continues, so the only way to exit by condition is `max_retries <= 0`, in which case the body never runs. The function falls off the end returning `None` — the same value a statement with no result set produces via `return []`, except it is `None`, and no log line is emitted.
 - **Failure scenario**: a caller threading a configured retry budget through (`basic_db_execute(..., max_retries=cfg.retries)` with `retries=0` meaning "do not retry") gets a silent no-op: the statement never reaches the database, and the return value is indistinguishable from a failed lookup.
 - **Suggested fix**: validate at entry (`if max_retries < 1: raise ValueError(...)`), matching `get_connection`'s own guard at psycopg2_pool.py:150-151.
 
 ### F54. [Low] `execute_alchemy(max_retries<=0)` logs "giving up" and returns `None` without executing — src/pyutilz/database/db/execution.py:502, 517-519
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - same treatment for `execute_alchemy`, src/pyutilz/database/db/execution.py:549-554; test `test_execute_alchemy_rejects_non_positive_max_retries`.
 - **Category**: silent-failure
 - **Problem**: same shape as F53. With `max_retries <= 0` the `while n < max_retries` body never runs, `last_exc` stays `None`, so the `raise last_exc` at :519 is skipped and the function returns `None` after logging `"execute_alchemy: giving up after 0 attempts"` — the exact outcome the regression comment at :513-516 was written to eliminate for the exhausted-retries case.
 - **Failure scenario**: a DDL statement is never sent, and since this function returns `None` on success too, the caller has no way to tell.
 - **Suggested fix**: `if max_retries < 1: raise ValueError(...)` at entry, or raise `RuntimeError` when the loop exits with `last_exc is None`.
 
 ### F55. [Low] The named-cursor-collision retry clears a cache entry that is never populated, so it retries the identical failing name — src/pyutilz/database/db/execution.py:156
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the collision retry now actually CLOSEs the colliding server-side cursor (identifier-validated) before retrying, instead of clearing a cache entry that was never populated, via the identifier-validated `_close_colliding_named_cursor()` helper, src/pyutilz/database/db/execution.py:68-84, 199; test `test_named_cursor_collision_closes_the_colliding_cursor`.
 - **Category**: retry-logic
 - **Problem**: the branch triggers on `"cursor" in str(e) and "already exists"`, i.e. a NAMED (server-side) cursor collision, so `cursor_type` ends in `"_named"` (db/connection.py:186). Its recovery is `_facade._get_thread_cursors().pop(cursor_type, None)` — but `get_cursor` never stores named cursors (`if "_named" not in cursor_type` guards both the read at :198 and the write at :207), so the `pop` is unconditionally a no-op. The loop then sleeps 1s and re-issues `DECLARE <same name> CURSOR`, which collides again.
 - **Failure scenario**: a server-side cursor left open by a prior failed operation makes every call with that `cursor_name` burn 5 attempts and 5 seconds before raising, with a recovery step that does nothing.
 - **Suggested fix**: close the colliding server-side cursor explicitly (`CLOSE <name>`) before retrying, or drop the retry for this branch and raise immediately with a message naming the colliding cursor.
 
 ### F56. [Low] `rconnect`'s `redis_db_name` is a numeric index, and a non-numeric value raises `ValueError` from inside the constructor — src/pyutilz/database/redislib.py:42
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - `redis_db_name` is coerced with a clear `ValueError` before any global state is touched, and its documentation says it is a database INDEX, src/pyutilz/database/redislib.py:33-52; two tests.
 - **Category**: input-validation
 - **Problem**: the parameter is typed and named `redis_db_name: str` and the docstring calls it a credential, but the body does `db=int(redis_db_name)`. Redis databases are numbered, not named. A caller passing `"cache"` gets `ValueError: invalid literal for int() with base 10: 'cache'` raised from the `redis.Redis(...)` line, after `old_rc` has been read but before the new `rc` is bound — leaving the previous connection in place, un-closed and still installed as the global.
 - **Failure scenario**: a config file with `redis_db: "sessions"` produces a `ValueError` naming neither the parameter nor the fact that a Redis DB must be an integer index.
 - **Suggested fix**: rename to `redis_db` / accept `Union[int, str]`, convert inside an explicit `try/except ValueError` raising a message that names the argument, and do the conversion before touching `old_rc`.
 
 ### F57. [Low] `redact_secrets` matches across a newline and destroys the next line's first token — src/pyutilz/text/secrets_scrub.py:82
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - separator padding is `[ \t]*`, not `\s*`, so a match cannot span a line break and eat the next line's first token, src/pyutilz/text/secrets_scrub.py:91-93; tests `test_f57_redaction_does_not_span_a_line_break` and the same-line control.
 - **Category**: regex-correctness
 - **Problem**: `SECRET_KEY_VALUE_RE`'s whitespace separators match `\n`, and the value class then consumes the first token of the following line. Verified: `redact_secrets("Missing password:\nTraceback (most recent call last):")` returns `'Missing password=*** (most recent call last):'` — the word `Traceback` and the line break are both gone.
 - **Failure scenario**: a multi-line exception message whose first line ends in a bare `password:` label has the first frame of its traceback replaced by the redaction marker, hiding diagnostic information and misleadingly implying a secret was present.
 - **Suggested fix**: use `[ \t]*` instead of `\s*` on both sides of the separator so the pattern cannot span lines.
 
 ### F58. [Low] `fix_broken_sentences` scans backwards from the END of the string when the match is at index 0 — src/pyutilz/text/strings/webtext.py:173
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the backwards scan starts at `p - 1` (and is skipped for `p == 0`) rather than defaulting to the end of the string, src/pyutilz/text/strings/webtext.py:173, 188, 215; test `test_f58_leading_linebreak_result_does_not_depend_on_the_final_character`.
 - **Category**: off-by-one
 - **Problem**: at :173, :189 and :216, `i = p - 1` becomes `-1` when the whitespace token is found at position 0. The `while` loop at :174-179 then reads `text[-1]` (the LAST character) and can walk `-2, -3, ...`; its `if i == 0: break` guard is unreachable from a negative start. The subsequent `if i >= 0` guard suppresses the wrong result, so the "previous symbol" check is silently skipped rather than evaluated.
 - **Failure scenario**: `fix_broken_sentences("\nA")` returns `'\nA.'` — the leading linebreak before a capital, precisely the case the branch exists to repair, is left in place because the backward scan landed on a negative index instead of short-circuiting.
 - **Suggested fix**: guard the loop entry with `if p > 0:`, or skip the block when `i < 0`.
 
 ### F59. [Low] `read_config_file` writes an unprefixed key when a variable lookup fails in all-sections mode — src/pyutilz/text/strings/configfiles.py:71
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the prefixed `target_key` is computed once and used on both the success and the lookup-failure branch, src/pyutilz/text/strings/configfiles.py:51, 66-73; test `test_f59_missing_variable_uses_the_prefixed_key_in_all_sections_mode`.
 - **Category**: correctness
 - **Problem**: the success path (:66-69) writes `object[next_section.lower() + "_" + var]` when `prepend_section_names` is true, but the per-variable `except` handler at :71 writes the bare `object[var] = None`. Verified: with a file containing only `[S1] a = 1`, `read_config_file(f, out, section=None, variables=["a", "missing"], encryption=None)` yields `{'s1_a': 1, 'missing': None}` — an inconsistent key shape, and two sections both missing the same variable collide on one key.
 - **Failure scenario**: a caller reading two sections that share variable names gets one section's failure silently overwriting the other's, under a key that does not match the documented prefixed shape.
 - **Suggested fix**: compute the target key once before the `try` and use it in both branches.
 
 ### F60. [Low] `find_between` ignores `idx2` when `end` is empty, and returns `None` for a negative `idx1` with an empty `start` — src/pyutilz/text/strings/basics.py:36, 30
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - a negative `idx1` with an empty `start` is resolved with Python slice semantics, and `idx2` is honoured when `end` is empty, src/pyutilz/text/strings/basics.py:30-43; two tests.
 - **Category**: off-by-one
 - **Problem**: :36 sets `p2 = len(s)` for an empty `end`, discarding the caller's window upper bound. Verified: `find_between("abcXdefYghi", "X", "", 0, 8)` returns `'defYghi'` — 7 characters from a window declared to end at index 8. Separately, :30's `p1 = idx1 or 0` accepts a negative `idx1`, which then fails the `if p1 >= 0` test: `find_between("abcdef", "", "d", -3)` returns `None` rather than applying Python negative-index semantics or raising. Distinct from the prior wave's F60 (`idx2=0` and the empty-`start` case), which is verified fixed.
 - **Failure scenario**: a caller windowing a large document with `find_between(doc, marker, "", start, end)` silently receives everything to the end of the document instead of the requested slice.
 - **Suggested fix**: :36 becomes `p2 = idx2`; normalize a negative `idx1` or reject it explicitly.
 
 ### F61. [Low] Entropy helpers return `-0.0` for zero-entropy input — src/pyutilz/text/strings/textentropy.py:88, 132
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - both entropy helpers wrap the sum in `abs()`, so zero-entropy input returns `0.0`, not `-0.0`, src/pyutilz/text/strings/textentropy.py:88, 134; tests for the zero and non-zero cases.
 - **Category**: silent-numeric-coercion
 - **Problem**: `entropy()` returns `-sum(...)`, so a single-symbol distribution (`p == 1.0`, `log2(1) == 0.0`) yields `-0.0`. Verified: `compute_entropy_stats("a")` returns `(-0.0, 0.0)` and `naive_entropy_rate("aaaa")` returns `-0.0`, despite the comment at :108 calling this "a non-negative quantity" and `naive_entropy_rate`'s docstring at :21 explicitly stating `-0.0` is what it exists to avoid. Distinct from the prior wave's F13 (large negative entropy), which is verified fixed.
 - **Failure scenario**: `-0.0` serializes as `"-0.0"` in JSON/CSV and fails a naive `repr` or string comparison in a downstream test or report, even though `-0.0 == 0.0`.
 - **Suggested fix**: return `abs(...)` (or `0.0 + ...`) from `entropy` at :88 and from `naive_entropy_rate` at :132.
 
 ### F62. [Low] `strip_emojis` deletes ordinary dingbats such as check marks while leaving flag emoji intact — src/pyutilz/text/humanizer.py:160
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - U+2713/U+2714 check marks are excluded from the dingbat ranges and the regional-indicator (flag) block is now covered, src/pyutilz/text/humanizer.py:201-210; three tests.
 - **Category**: regex-correctness
 - **Problem**: the class member `"\U00002600-\U000027bf"` covers the whole Miscellaneous Symbols + Dingbats block, which includes U+2713 CHECK MARK and U+2714 HEAVY CHECK MARK. Verified: `strip_emojis("check \u2713 ok \u2714")` returns `'check  ok'`. Conversely, regional-indicator flag pairs (U+1F1E6-U+1F1FF) and keycap sequences are not in the class at all, so those emoji survive.
 - **Failure scenario**: a checklist-style cover letter loses its check-mark bullets while an actual flag emoji remains — the opposite of what `humanize` intends.
 - **Suggested fix**: narrow to the emoji subranges actually wanted (e.g. `\U00002702-\U000027b0`, which the class already lists at :163) and add `\U0001F1E6-\U0001F1FF`.
 
 ### F63. [Low] Single-word sentences are never counted in `NUM_LASTWORD_INSENTENCE` — src/pyutilz/text/tokenizers.py:172
-- **Disposition**: OPEN
+- **Disposition**: COMPLETED - the last word of a sentence is counted for single-word sentences too (`if w == k - 1`), src/pyutilz/text/tokenizers.py:172, 208; test `test_f63_single_word_sentence_counts_as_last_word`.
 - **Category**: off-by-one
 - **Problem**: the branch is `if w == 0: ... elif w == k - 1: ...` (:170-174, mirrored at :204-207). For a one-word sentence `w == 0 == k - 1`, so the `elif` never runs and the word is recorded as first-word-in-sentence only. Distinct from the prior wave's F63 (mid-word capitals), which is verified fixed.
 - **Failure scenario**: a corpus of short headline or title rows (each a single token) yields `NUM_LASTWORD_INSENTENCE` counts of zero, systematically biasing any embedding feature derived from that counter against short sentences.
 - **Suggested fix**: make the second test an independent `if w == k - 1:` rather than an `elif`.
+
+### F64. [Medium] `strip_ai_patterns` strips neither hedging openers nor parenthetical self-justifications, though both are documented AI markers - src/pyutilz/text/humanizer.py:115
+- **Disposition**: COMPLETED - added `_AI_HEDGING_OPENER_RE` and `_AI_JUSTIFICATION_PARENTHETICAL_RE` and wired both into `strip_ai_patterns`, src/pyutilz/text/humanizer.py:118-150; tests `test_f64_*` in tests/test_domain_db_web_cloud_llm_text_audit_20260903_text.py. README.md and docs/modules.md still say the function does NOT do this and need their pre-correction wording restored - deferred cross-domain, those files are owned by the concurrent documentation pass.
+- **Category**: documented-behaviour-gap
+- **Problem**: found by the documentation direction rather than the code read, and not filed as F01-F63. README.md:170-174 and docs/modules.md:31 originally advertised removal of hedging openers ("Certainly!") and parenthetical justifications; `_AI_PATTERNS` contains neither, so `strip_ai_patterns("Certainly! Here is the code.")` returned its input unchanged. The docs were corrected to describe the narrower actual behaviour, leaving the question of which side was wrong.
+- **Failure scenario**: the function's stated purpose is removing the assistant-voice fingerprint, and a leading "Certainly!" / "Great question!" is the single most recognisable marker of it. A caller cleaning LLM output for adversarial dataset augmentation kept the strongest signal in the text while the vocabulary downgrades removed far weaker ones.
+- **Decision**: fix the CODE, not the docs. The openers are positional, so they are kept OUT of `_AI_PATTERNS` (the words are ordinary English mid-sentence): `_AI_HEDGING_OPENER_RE` matches only at start-of-text, start-of-line or straight after a sentence end, capturing and restoring the leading context because Python's `re` rejects a variable-width lookbehind. `_AI_JUSTIFICATION_PARENTHETICAL_RE` uses a CLOSED adjective vocabulary and requires it to be the WHOLE parenthetical, so an ordinary aside containing one of those words survives. A removed opener promotes the following clause to first position, so the sentence capital is restored - but only when an opener was actually removed and the input itself opened with a capital, which keeps deliberately lowercase input and plain vocabulary downgrades untouched.

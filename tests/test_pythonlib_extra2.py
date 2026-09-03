@@ -549,17 +549,19 @@ def test_float_distinct_digits_percent_negative_matches_positive():
     assert positive == negative
 
 
-def test_float_distinct_digits_percent_rounding_carry_stays_within_precision():
-    """Regression: round(0.99999996, 5) rounds up to exactly 1.0, and frac_part*10**precision
-    then produced 10**precision (a precision+1-digit number: 100000, digits {0,1}), silently
-    inflating ntotal to 6 and yielding 2/6 = 0.3333... The fix clamps frac_part to
-    1 - 10**-precision (0.99999 here), so frac_digits stays a precision-digit number (99999,
-    digit {9} only): ntotal=5, unique_digits={9}, giving exactly 1/5 = 0.2. A weak
-    `0.0 <= result <= 1.0` bound (as this test used to assert) passes for BOTH the buggy 0.3333...
-    and the correct 0.2, so it would not catch a regression back to the unclamped carry bug --
-    this asserts the exact expected value instead."""
+def test_float_distinct_digits_percent_rounding_carry_counts_the_rendered_digits():
+    """A rounding carry must be counted as the digits the value ACTUALLY shows at `precision`.
+
+    The function now derives both counts from the decimal rendering (`format(x, f".{precision}f")`)
+    rather than from arithmetic on the binary float, because the arithmetic form truncated
+    (`0.05063 * 100000` -> 5062) and could not see a fractional part's leading zeros at all. Under
+    that definition `0.99999996` at precision 5 renders as `1.00000`: six digits, two distinct
+    ({'1','0'}), i.e. exactly 2/6. The older expectation of 1/5 = 0.2 came from clamping the carry
+    away so the rendering was never `1.00000` -- an artefact of the arithmetic path, not a property
+    of the value. This asserts the exact expected value (a weak `0.0 <= result <= 1.0` bound would
+    pass for any implementation at all)."""
     result = float_distinct_digits_percent(0.99999996, precision=5)
-    assert result == pytest.approx(0.2), f"expected exactly 1/5 = 0.2 (clamped carry), got {result} -- 0.3333... would indicate the unclamped-carry bug is back"
+    assert result == pytest.approx(2 / 6), f"expected 2/6 for the rendered '1.00000', got {result}"
 
 
 def test_hashable_dict_mixed_key_types_does_not_crash():

@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- resource-acquisition calls not wrapped in `with` ----------------------
 
@@ -16,6 +16,9 @@ def _is_resource_call(call: ast.Call) -> bool:
     * ``tempfile.NamedTemporaryFile(...)`` / ``tempfile.TemporaryFile(...)`` /
       ``tempfile.SpooledTemporaryFile(...)``
     * ``subprocess.Popen(...)``
+    * any attribute-form ``.open(...)`` -- ``Path(p).open()`` (the spelling this codebase prefers),
+      ``io.open``, ``gzip.open``, ``codecs.open``: each leaks a handle exactly as bare ``open`` does
+    * ``socket.socket(...)``
     """
     func = call.func
     if isinstance(func, ast.Name):
@@ -23,7 +26,10 @@ def _is_resource_call(call: ast.Call) -> bool:
     if isinstance(func, ast.Attribute):
         if func.attr in {"NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile"}:
             return True
-        if func.attr == "Popen":
+        if func.attr in {"Popen", "open"}:
+            return True
+        # `socket.socket(...)` only -- a bare `socket(...)` name is too ambiguous to claim.
+        if func.attr == "socket" and isinstance(func.value, ast.Name) and func.value.id == "socket":
             return True
     return False
 
@@ -83,7 +89,7 @@ def scan_resource_handle_safety(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_map(tree)
         for node in ast.walk(tree):

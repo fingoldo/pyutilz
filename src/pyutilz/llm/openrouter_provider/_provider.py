@@ -40,6 +40,7 @@ from pyutilz.llm.base import PerCallAttr
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider
 from pyutilz.llm.openrouter_provider._catalogue import (
     _per_token_cost_pair,
+    _per_token_cost_pair_or_none,
     _resolve_model_limits,
     _fetch_models_catalogue,
     _ensure_catalogue_warm_async,
@@ -198,28 +199,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         self._routing_404_max_attempts = max(1, int(routing_404_max_attempts))
         self._routing_404_pause_sec = max(0.0, float(routing_404_pause_sec))
 
-    def _reset_per_call_state(self) -> None:
-        """Clear per-call ``last_*`` state at the start of every generate().
-
-        Without this, a failed or partial call would leave stale metadata
-        from the previous successful call — ``last_call_summary()`` would
-        report fields from the wrong call, silently misleading callers.
-        Cumulative ``total_*`` counters are NOT reset.
-        """
-        super()._reset_per_call_state()
-        self.last_actual_cost_usd = 0.0
-        self.last_cache_write_tokens = 0
-        self.last_cache_hit_tokens = 0
-        self.last_audio_tokens = 0
-        self.last_upstream_inference_cost_usd = None
-        self.last_generation_id = None
-        self.last_upstream_provider = None
-        self.last_upstream_model = None
-        self.last_native_finish_reason = None
-        self.last_cache_discount_usd = None
-        self.last_is_byok = None
-        self.last_response_cache_source_id = None
-        self.last_web_search_citations = []
+    # No ``_reset_per_call_state`` override: LLMProvider's derives the reset from
+    # ``_PERCALL_METADATA_ATTRS`` (extended above with every OR-specific attribute), so the
+    # hand-maintained copy that used to live here can no longer drift out of sync with it.
 
     async def generate(self, *args: Any, **kwargs: Any) -> str:
         """OR-specific bounded retry on routing 404/405.
@@ -787,6 +769,17 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         gives you the bare upstream price, separate from any OR markup.
         """
         base = super().get_session_cost()
+        if _per_token_cost_pair_or_none(self.model_name) is None:
+            # Null, not a confident 0: the per-token estimate is unavailable (catalogue outage, or
+            # a model absent from /models), and a dashboard summing total_cost_usd across
+            # providers used to show this whole process as free (2026-09-03 audit F37).
+            # ``actual_cost_usd`` below stays truthful either way.
+            base["input_cost_usd"] = None
+            base["output_cost_usd"] = None
+            base["total_cost_usd"] = None
+            base["pricing_available"] = False
+        else:
+            base["pricing_available"] = True
         base["actual_cost_usd"] = self.total_actual_cost_usd
         base["last_actual_cost_usd"] = self.last_actual_cost_usd
         base["upstream_inference_cost_usd"] = self.total_upstream_inference_cost_usd

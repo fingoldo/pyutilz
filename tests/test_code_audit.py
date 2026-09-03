@@ -2327,9 +2327,11 @@ def test_facade_reexports_are_same_objects():
     # The mutable registry itself is NOT part of the facade -- only the read-only accessor is.
     assert not hasattr(facade, "SCANNERS")
     assert facade.main is _main
-    # Every scanner in the registry is the facade-level attribute of the same name.
+    # Every scanner in the registry is the facade-level attribute of the same name -- see
+    # test_registry_and_facade_are_in_bijection for the full both-ways invariant.
     for fn in facade.get_scanners().values():
         assert callable(fn)
+        assert getattr(facade, _scanner_function(fn).__name__, None) is _scanner_function(fn)
 
 
 def test_cli_json_output(tmp_path: Path, capsys):
@@ -2891,7 +2893,7 @@ class LLMTruncationError(Exception):
 """)
     findings = scan_unraised_exceptions(tmp_path)
     assert len(findings) == 1
-    assert findings[0].severity == "Medium"
+    assert findings[0].severity == "P2"
 
 
 def test_unraised_exception_class_raised_in_different_file_is_clean(tmp_path: Path):
@@ -3525,15 +3527,24 @@ def test_foo():
 
 
 def test_stale_test_spy_arity_attribute_call_form_matched(tmp_path: Path):
-    """A production call site using attribute form (obj.build_rows(...)) must be matched by
-    short name the same as a bare-Name call site."""
+    """A production call site in attribute form (`prod_module.build_rows(...)`) must be matched
+    the same as a bare-Name call site.
+
+    The receiver has to RESOLVE TO THE PATCHED MODULE. A same-named method on an unrelated object
+    is not the patched function, and counting it made the scanner contradict its own documented
+    "false negatives are the safe failure mode here, not false positives" -- see the sibling
+    `..._ignores_a_same_named_method_on_another_class` test.
+    """
     _write(tmp_path, "prod_module.py", """
 def build_rows(tables, cid, node, memo=None):
     pass
+""")
+    _write(tmp_path, "caller.py", """
+import prod_module
 
 class Caller:
     def run(self):
-        self.build_rows(1, 2, 3, 4)
+        prod_module.build_rows(1, 2, 3, 4)
 """)
     _write(tmp_path, "test_prod_module.py", """
 from unittest.mock import patch
@@ -7424,9 +7435,14 @@ except ImportError:
     assert len(scan_unreachable_import_fallback(tmp_path)) == 1
 
 
-def test_unreachable_import_fallback_does_not_exempt_a_compound_condition(tmp_path: Path):
-    """``if TYPE_CHECKING or X:`` can execute at runtime, so treating it as
-    type-only would hide the dead handler this rule exists to find."""
+def test_unreachable_import_fallback_ignores_a_branch_import(tmp_path: Path):
+    """An import inside ANY branch is conditional, so it cannot make a handler dead.
+
+    ``if TYPE_CHECKING or X:`` may well execute at runtime -- but it may equally not, so the
+    ``except ImportError`` below it is reachable and must not be reported as dead code. The rule
+    only claims a handler is unreachable when the module is imported at the module body's top
+    level, which is the only place an import is genuinely unconditional.
+    """
     _write(tmp_path, "mod.py", '''
 from typing import TYPE_CHECKING
 
@@ -7440,7 +7456,7 @@ try:
 except ImportError:
     tiktoken = None
 ''')
-    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+    assert scan_unreachable_import_fallback(tmp_path) == []
 
 
 def test_unreachable_import_fallback_ignores_an_import_guarded_everywhere(tmp_path: Path):
@@ -8676,3 +8692,2054 @@ CREATE TABLE IF NOT EXISTS new_upwork.scraper_runs (
     )
     _write(tmp_path, "dashboard.py", _DASHBOARD)
     assert scan_column_no_write_path(tmp_path) == []
+
+
+# --- 2026-09-03 audit: code_audit infrastructure invariants ----------------
+#
+# The class these pin: a scanner could be registered, exported and unit-tested yet never actually
+# run (F04, F09, F10, F199, F200, F207, F210). The registry is the single source of truth; every
+# assertion below is derived from it rather than from a hand-maintained list.
+
+
+def _scanner_function(fn):
+    """The underlying function of a registered scanner, unwrapping functools.partial."""
+    import functools
+
+    while isinstance(fn, functools.partial):
+        fn = fn.func
+    return fn
+
+
+def test_registry_and_facade_are_in_bijection():
+    """F10/F207 regression: registered scanners and the package's public ``scan_*`` surface must be
+    the SAME set. Before the fix two scanners were exported but unregistered (so run_all/--check
+    could never reach them) and 21 were registered but not importable from the package."""
+    import pyutilz.dev.code_audit as facade
+
+    registered = {_scanner_function(fn).__name__ for fn in facade.get_scanners().values()}
+    exported = {name for name in facade.__all__ if name.startswith("scan_")}
+    assert registered - exported == set(), "registered but not exported"
+    assert exported - registered == set(), "exported but not registered"
+    for name in exported:
+        assert callable(getattr(facade, name, None)), name
+
+
+def test_every_emitted_check_id_is_selectable():
+    """F199 regression: an id printed in ``Finding.check`` must be runnable via ``--check``/``checks=``.
+    Nine emitted ids (e.g. ``unbounded_retry_loop``) resolved to nothing, so a reader handed one
+    could not re-run it and a baseline keyed on it could not be mapped back to a scanner."""
+    import ast
+
+    from pyutilz.dev.code_audit import registry as _registry
+
+    pkg = Path(_registry.__file__).parent
+    emitted = set()
+    for module in sorted(pkg.glob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8", errors="replace"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Finding"):
+                continue
+            for kw in node.keywords:
+                if kw.arg == "check" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    emitted.add(kw.value.value)
+    assert emitted, "no literal Finding(check=...) ids found - the harvest broke, not the invariant"
+    unresolvable = sorted(cid for cid in emitted if _registry.resolve_check(cid) is None)
+    assert unresolvable == []
+
+
+def test_finding_rejects_a_severity_outside_the_vocabulary():
+    """F210 regression: the P0/P1/P2/Low contract was documented in a docstring and enforced nowhere,
+    which is how a ``severity="Medium"`` made one scanner's entire output invisible (F09)."""
+    from pyutilz.dev.code_audit._base import SEVERITIES
+
+    for severity in SEVERITIES:
+        assert Finding(check="c", severity=severity, file="f.py", line=1, snippet="", detail="d").severity == severity
+    with pytest.raises(ValueError):
+        Finding(check="c", severity="Medium", file="f.py", line=1, snippet="", detail="d")
+
+
+def test_no_scanner_emits_a_severity_outside_the_vocabulary(tmp_path: Path):
+    """F09 regression: running the whole registry over a corpus that trips many rules must not
+    produce a severity the CLI's filter cannot see."""
+    from pyutilz.dev.code_audit._base import SEVERITIES
+
+    _write(tmp_path, "bad.py", """
+class NeverRaisedError(Exception):
+    pass
+
+def g(items=[]):
+    items.append(1)
+    try:
+        pass
+    except:
+        pass
+""")
+    findings = run_all(tmp_path, parallel=False)
+    assert findings
+    assert {f.severity for f in findings} <= set(SEVERITIES)
+
+
+def test_cli_renders_and_gates_on_an_unknown_severity(tmp_path: Path, capsys, monkeypatch):
+    """F200 regression: ``sev_order.get(f.severity, 99) <= cutoff`` deleted an unrecognised severity
+    at EVERY --min-severity setting and the exit code ignored it too."""
+    from pyutilz.dev.code_audit import cli as _cli
+    from pyutilz.dev.code_audit import main as cli_main
+
+    stray = Finding.__new__(Finding)
+    object.__setattr__(stray, "check", "stray")
+    object.__setattr__(stray, "severity", "Medium")
+    object.__setattr__(stray, "file", "x.py")
+    object.__setattr__(stray, "line", 1)
+    object.__setattr__(stray, "snippet", "x = 1")
+    object.__setattr__(stray, "detail", "d")
+    monkeypatch.setattr(_cli, "run_all", lambda *a, **k: [stray])
+
+    assert cli_main([str(tmp_path), "--min-severity", "P0"]) == 1
+    assert "stray" in capsys.readouterr().out
+
+
+def test_run_all_parallel_runs_a_runtime_registered_scanner(tmp_path: Path):
+    """F04 regression: the parallel path (the default) looked every scanner up by name in the
+    WORKER's registry, which holds only the built-ins, so any scanner added through the public
+    register_scanner() died with KeyError and took the whole run's output with it."""
+    import functools
+
+    from pyutilz.dev.code_audit import register_scanner
+    from pyutilz.dev.code_audit.registry import _SCANNERS
+
+    _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
+    name = "runtime_registered_probe"
+    register_scanner(name, functools.partial(scan_mutable_defaults), allow_override=True)
+    try:
+        checks = [name, "mutable_default", "bare_except", "nan_equality", "console_unicode"]
+        findings = run_all(tmp_path, checks=checks, parallel=True)
+    finally:
+        _SCANNERS.pop(name, None)
+    assert any(f.check == "mutable_default" for f in findings)
+
+
+def test_run_all_parallel_keeps_an_unpicklable_runtime_scanner(tmp_path: Path):
+    """A locally-defined scanner cannot cross a process boundary at all; it must still run, in-process."""
+    from pyutilz.dev.code_audit import register_scanner
+    from pyutilz.dev.code_audit.registry import _SCANNERS
+
+    _write(tmp_path, "ok.py", "x = 1\n")
+    name = "unpicklable_probe"
+    marker = Finding(check="unpicklable_probe", severity="Low", file="ok.py", line=1, snippet="x = 1", detail="d")
+    register_scanner(name, lambda root, exclude_dirs=None: [marker], allow_override=True)
+    try:
+        checks = [name, "mutable_default", "bare_except", "nan_equality", "console_unicode"]
+        findings = run_all(tmp_path, checks=checks, parallel=True)
+    finally:
+        _SCANNERS.pop(name, None)
+    assert marker in findings
+
+
+def test_run_all_survives_one_failing_scanner(tmp_path: Path):
+    """F216 regression: an exception in one scanner aborted pool.map (and the sequential loop),
+    discarding every other scanner's findings."""
+    from pyutilz.dev.code_audit import register_scanner
+    from pyutilz.dev.code_audit.registry import _SCANNERS
+
+    _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
+
+    def _boom(root, exclude_dirs=None):
+        raise RuntimeError("pathological file")
+
+    register_scanner("boom_probe", _boom, allow_override=True)
+    try:
+        findings = run_all(tmp_path, checks=["boom_probe", "mutable_default"], parallel=False)
+    finally:
+        _SCANNERS.pop("boom_probe", None)
+    assert [f.check for f in findings] == ["mutable_default"]
+
+
+def test_snippet_is_correct_after_a_form_feed(tmp_path: Path):
+    """F61 regression: str.splitlines() also breaks on the form feed a Python file may use as a
+    section separator, which the tokenizer does not count -- every snippet after one was the
+    following line's text while Finding.line stayed right."""
+    _write(tmp_path, "ff.py", "x = 1\n\x0c\ndef f():\n    try:\n        pass\n    except:\n        pass\n")
+    findings = [f for f in run_all(tmp_path, checks=["bare_except"], parallel=False)]
+    assert findings
+    assert findings[0].line == 6
+    assert findings[0].snippet == "except:"
+
+
+def test_parse_cache_is_bounded_and_clearable(tmp_path: Path):
+    """F208 regression: an unbounded process-global retained one full AST per version of every file
+    ever parsed, with no eviction and no way to release it."""
+    from pyutilz.dev.code_audit import _base
+
+    _base.clear_parse_cache()
+    assert len(_base._PARSE_CACHE) == 0
+    monkey = _base._PARSE_CACHE_MAX_ENTRIES
+    _base._PARSE_CACHE_MAX_ENTRIES = 3
+    try:
+        for i in range(10):
+            f = tmp_path / f"m{i}.py"
+            f.write_text(f"x = {i}\n", encoding="utf-8")
+            _base._safe_parse(f)
+        assert len(_base._PARSE_CACHE) <= 3
+    finally:
+        _base._PARSE_CACHE_MAX_ENTRIES = monkey
+        _base.clear_parse_cache()
+
+
+def test_iter_py_files_resolves_the_root_once(tmp_path: Path, monkeypatch):
+    """F209 regression: Path.resolve() ran on the CONSTANT root once per candidate file, a
+    syscall-bound call repeated ~111k times on a 1500-file tree with 74 scanners."""
+    from pyutilz.dev.code_audit import _base
+
+    for i in range(8):
+        (tmp_path / f"m{i}.py").write_text("x = 1\n", encoding="utf-8")
+
+    calls = {"n": 0}
+    real = Path.resolve
+
+    def counting(self, *a, **kw):
+        if str(self) == str(tmp_path):
+            calls["n"] += 1
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "resolve", counting)
+    files = list(_base._iter_py_files(tmp_path, _base._DEFAULT_EXCLUDE_DIRS))
+    assert len(files) == 8
+    assert calls["n"] == 1
+
+
+def test_module_sql_constants_sees_class_body_constants():
+    """F215 regression: only tree.body was scanned, so a repository keeping its SQL in a
+    ``class Queries:`` got no findings from any constant-resolving scanner."""
+    import ast
+
+    from pyutilz.dev.code_audit._base import _module_sql_constants, _sql_text
+
+    tree = ast.parse('class Queries:\n    SELECT_ALL = "SELECT * FROM t"\n\nq = Queries.SELECT_ALL\n')
+    constants = _module_sql_constants(tree)
+    assert constants["Queries.SELECT_ALL"] == "SELECT * FROM t"
+    assert constants["SELECT_ALL"] == "SELECT * FROM t"
+    attribute = tree.body[-1].value
+    assert _sql_text(attribute, constants) == "SELECT * FROM t"
+
+
+# ==== audit 2026-09-03 / 07-domain-core-dev-system: scanner logic fixes (a-l) ==================
+#
+# One positive (must flag) and one negative (must not) per repaired rule. Kept together at the end
+# of the file rather than spread through it because the whole set lands in a single pass and each
+# case names the finding it pins.
+
+
+def test_bare_except_does_not_flag_an_immediate_bare_reraise(tmp_path: Path):
+    """F66: the docstring promises a bare re-raise is not flagged; that exemption applied only to
+    the `except BaseException:` spelling."""
+    _write(tmp_path, "a.py", "try:\n    pass\nexcept:\n    raise\n")
+    assert scan_bare_except(tmp_path) == []
+    _write(tmp_path, "b.py", "try:\n    pass\nexcept:\n    pass\n")
+    assert [f.line for f in scan_bare_except(tmp_path)] == [3]
+
+
+def test_broad_except_accepts_a_handler_returning_a_structured_error(tmp_path: Path):
+    """F65: `return {"ok": False, "error": str(e)}` IS the escalation the detail text asks for."""
+    from pyutilz.dev.code_audit.broad_except import scan_broad_except_swallows
+
+    _write(tmp_path, "a.py", 'def f():\n    try:\n        g()\n    except Exception as e:\n        return {"ok": False, "error": str(e)}\n')
+    assert scan_broad_except_swallows(tmp_path) == []
+    _write(tmp_path, "b.py", "def f():\n    try:\n        g()\n    except Exception:\n        return None\n")
+    assert [f.line for f in scan_broad_except_swallows(tmp_path)] == [4]
+
+
+def test_additive_epsilon_scans_module_scope_and_annotated_and_chained_bindings(tmp_path: Path):
+    """F16 / F78 / F79: module scope was skipped whenever the file had a function; AnnAssign and
+    chained targets were not recorded; two padded divisions on one line collapsed to one."""
+    from pyutilz.dev.code_audit.additive_epsilon_denominator import scan_additive_epsilon_denominator
+
+    _write(tmp_path, "m.py", "def f():\n    return 1\n\nRATIO = 5.0 / (SCALE + 1e-12)\n")
+    assert [f.line for f in scan_additive_epsilon_denominator(tmp_path)] == [4]
+
+    _write(tmp_path, "m.py", "def f(d, x):\n    denom: float = d + 1e-12\n    return x / denom\n")
+    assert len(scan_additive_epsilon_denominator(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "def f(d, x):\n    a = denom = d + 1e-12\n    return x / denom\n")
+    assert len(scan_additive_epsilon_denominator(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "def f(x, d, e):\n    return (x / (d + 1e-12), x / (e + 1e-12))\n")
+    assert len(scan_additive_epsilon_denominator(tmp_path)) == 2
+
+    _write(tmp_path, "m.py", "def f(x, d):\n    return x / d\n")
+    assert scan_additive_epsilon_denominator(tmp_path) == []
+
+
+def test_additive_epsilon_detail_has_no_stray_comma(tmp_path: Path):
+    """F153: rendered as `...an epsilon-padded sum,. Adding a constant...`."""
+    from pyutilz.dev.code_audit.additive_epsilon_denominator import scan_additive_epsilon_denominator
+
+    _write(tmp_path, "m.py", "def f(d, x):\n    denom = d + 1e-12\n    return x / denom\n")
+    assert ",." not in scan_additive_epsilon_denominator(tmp_path)[0].detail
+
+
+def test_effect_flag_does_not_treat_an_integer_one_as_a_true_flag(tmp_path: Path):
+    """F17 / F163: `1 == True` in Python, so a plain counter assignment was reported; and the
+    annotated spelling of a real True flag was missed."""
+    _write(tmp_path, "m.py", "def f(rows, counts):\n    if rows:\n        write_parquet(rows)\n    counts['rows'] = 1\n")
+    assert scan_effect_flag_outside_its_effect(tmp_path) == []
+    _write(tmp_path, "m.py", "def f(rows, counts):\n    if rows:\n        write_parquet(rows)\n    counts['rows'] = True\n")
+    assert [f.line for f in scan_effect_flag_outside_its_effect(tmp_path)] == [4]
+    _write(tmp_path, "m.py", "def f(rows, ok):\n    if rows:\n        write_parquet(rows)\n    ok['rows']: bool = True\n")
+    assert [f.line for f in scan_effect_flag_outside_its_effect(tmp_path)] == [4]
+
+
+def test_count_then_fetch_dedupes_and_reads_both_orders_and_outer_pagination(tmp_path: Path):
+    """F70 / F71 / F162: one finding per site, either statement order, and a subquery LIMIT does
+    not bound the outer statement."""
+    _write(tmp_path, "n.py", "def outer(cur):\n    def inner(cur):\n        cur.execute('SELECT COUNT(*) FROM jobs')\n        cur.execute('SELECT id FROM jobs')\n    return inner\n")
+    assert len(scan_count_then_fetch_same_table(tmp_path)) == 1
+
+    _write(tmp_path, "n.py", "def f(cur):\n    cur.execute('SELECT id FROM jobs')\n    cur.execute('SELECT COUNT(*) FROM jobs')\n")
+    assert len(scan_count_then_fetch_same_table(tmp_path)) == 1
+
+    _write(tmp_path, "n.py", "def f(cur):\n    cur.execute('SELECT COUNT(*) FROM t')\n    cur.execute('SELECT * FROM (SELECT id FROM t LIMIT 10) x')\n")
+    assert len(scan_count_then_fetch_same_table(tmp_path)) == 1
+
+    _write(tmp_path, "n.py", "def f(cur):\n    cur.execute('SELECT COUNT(*) FROM t')\n    cur.execute('SELECT id FROM t LIMIT 10')\n")
+    assert scan_count_then_fetch_same_table(tmp_path) == []
+
+
+def test_async_primitive_reinit_tuple_defaults_and_import_spellings(tmp_path: Path):
+    """F24 / F80 / F81: tuple-assigned `self.x`, default-argument primitives, and the
+    `from asyncio import Lock` / `import asyncio as aio` spellings."""
+    from pyutilz.dev.code_audit.async_primitive_reinit import scan_async_primitive_reinit_per_call
+
+    # One directory per case: `_safe_parse` caches on (path, mtime, size), so rewriting one name
+    # with same-sized content inside a single filesystem clock tick can be served the stale tree.
+    def scan(case: str, source: str):
+        """Write `source` as the only module of its own subdirectory, and scan just that."""
+        directory = tmp_path / case
+        directory.mkdir()
+        (directory / "e.py").write_text(source, encoding="utf-8")
+        return scan_async_primitive_reinit_per_call(directory)
+
+    assert scan("tuple_init", "import asyncio\nclass C:\n    def __init__(self):\n        self.a, self.b = asyncio.Lock(), asyncio.Event()\n") == []
+    assert scan("default_arg", "import asyncio\nasync def handler(x, lock=asyncio.Lock()):\n    return x\n") == []
+    assert [f.line for f in scan("from_import", "from asyncio import Lock\nasync def f():\n    lk = Lock()\n    return lk\n")] == [3]
+    assert [f.line for f in scan("module_alias", "import asyncio as aio\nasync def f():\n    lk = aio.Lock()\n    return lk\n")] == [3]
+
+
+def test_accumulator_helper_bypassed_setup_names_match_whole_segments(tmp_path: Path):
+    """F25: `load`/`copy`/`init` as substrings exempted `upload_batch`, `recopy` and friends."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    for name in ("upload_batch", "download_page", "reload_rows", "payload_scan", "recopy"):
+        _write(tmp_path, "parallel_mixin.py", "\nclass Parallel:\n    def %s(self, ids):\n        self.stats['total_paginated'] += len(ids)\n" % name)
+        assert len(scan_accumulator_helper_bypassed(tmp_path)) == 1, name
+    _write(tmp_path, "parallel_mixin.py", "\nclass Parallel:\n    def reset_stats(self, ids):\n        self.stats['total_paginated'] += len(ids)\n")
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_lock_exemption_needs_a_lock(tmp_path: Path):
+    """F26: `block`, `clock` and `unblocked` all contain "lock" as a substring."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    for ctx in ("self._block_reader", "blocking_section()", "unblocked_ctx", "clock_timer"):
+        _write(tmp_path, "parallel_mixin.py", "\nclass Parallel:\n    def handle_dup(self, ids):\n        with %s:\n            self.stats['total_paginated'] += len(ids)\n" % ctx)
+        assert len(scan_accumulator_helper_bypassed(tmp_path)) == 1, ctx
+    _write(tmp_path, "parallel_mixin.py", "\nclass Parallel:\n    def handle_dup(self, ids):\n        with self._ids_lock:\n            self.stats['total_paginated'] += len(ids)\n")
+    assert scan_accumulator_helper_bypassed(tmp_path) == []
+
+
+def test_accumulator_helper_bypassed_owner_suppression_is_per_file(tmp_path: Path):
+    """F151 / F152: a same-named helper elsewhere suppressed a real bypass, and the single-owner
+    detail read `... own it -- they are what key ...`."""
+    _write(tmp_path, "stats_mixin.py", HELPER)
+    _write(tmp_path, "other.py", "\nclass Other:\n    def _inc_stat(self, ids):\n        self.stats['total_paginated'] += len(ids)\n")
+    findings = scan_accumulator_helper_bypassed(tmp_path)
+    assert [f.file for f in findings] == ["other.py"]
+    assert "owns it -- it is what keys" in findings[0].detail
+
+
+def test_assert_in_loop_detail_stays_per_site_without_ast_unparse(tmp_path: Path):
+    """F62: on the 3.8 fallback both sweeps rendered `for <item> in <source>`, so one baseline
+    entry silenced the whole file."""
+    import ast as _ast
+
+    from pyutilz.dev.code_audit.assert_in_loop import scan_assert_in_loop_reports_only_the_first
+
+    _write(tmp_path, "t.py", "def test_x():\n    for r in load_rows():\n        assert r\n    for q in load_rows():\n        assert q\n")
+    unparse = _ast.unparse
+    del _ast.unparse
+    try:
+        details = [f.detail for f in scan_assert_in_loop_reports_only_the_first(tmp_path)]
+    finally:
+        _ast.unparse = unparse
+    assert len(details) == 2
+    assert len(set(details)) == 2
+
+
+def test_getattr_literal_on_known_dataclass_honours_bases_and_methods(tmp_path: Path):
+    """F64: inherited fields and the class's own methods were not in the field set."""
+    from pyutilz.dev.code_audit.getattr_literal_on_known_dataclass import scan_getattr_literal_on_known_dataclass
+
+    _write(tmp_path, "m.py", (
+        "from dataclasses import dataclass\n\n@dataclass\nclass Base:\n    shared: int = 0\n\n"
+        "@dataclass\nclass Child(Base):\n    own: int = 0\n\n    def helper(self):\n        return 1\n\n"
+        'def use(c: Child):\n    return getattr(c, "shared", None), getattr(c, "helper", None)\n'
+    ))
+    assert scan_getattr_literal_on_known_dataclass(tmp_path) == []
+    _write(tmp_path, "m.py", (
+        "from dataclasses import dataclass\n\n@dataclass\nclass Child:\n    own: int = 0\n\n"
+        'def use(c: Child):\n    return getattr(c, "missing", None)\n'
+    ))
+    assert len(scan_getattr_literal_on_known_dataclass(tmp_path)) == 1
+
+
+def test_import_cycles_sees_package_init_relative_imports(tmp_path: Path):
+    """F11 / F202: `pkg/__init__.py` resolved `from .a import f` one component too far up, and the
+    reported file for a package member was `pkg.py`."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path, "pkg/__init__.py", "from .a import f\n")
+    _write(tmp_path, "pkg/a.py", "from pkg import f\n")
+    findings = scan_import_cycles(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].file == "pkg/__init__.py"
+    assert findings[0].snippet == "pkg -> pkg.a -> pkg"
+
+
+def test_import_cycles_finds_a_cycle_under_a_source_tree_root(tmp_path: Path):
+    """F12: the CLI documents `root` as a source-tree root (`./src`), where `root.name` matched no
+    import target and the whole scan returned nothing."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/a.py", "from pkg import b\n")
+    _write(tmp_path, "pkg/b.py", "from pkg import a\n")
+    assert [f.snippet for f in scan_import_cycles(tmp_path)] == ["pkg.a -> pkg.b -> pkg.a"]
+
+
+def test_import_cycles_does_not_fabricate_one_from_a_from_dot_import(tmp_path: Path):
+    """F213: `from . import other` used to add an edge to the base package."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path, "pkg/__init__.py", "from pkg.mod import a\n")
+    _write(tmp_path, "pkg/mod.py", "from . import other\n")
+    _write(tmp_path, "pkg/other.py", "b = 2\n")
+    assert scan_import_cycles(tmp_path) == []
+
+
+def test_column_no_write_path_line_survives_a_block_comment(tmp_path: Path):
+    """F27 / F212: stripping `/*...*/` swallowed its newlines, and single-line DDL never matched."""
+    _write(tmp_path, "m.py", "def r(cur):\n    cur.execute('SELECT payload FROM t')\n")
+    (tmp_path / "sql").mkdir(exist_ok=True)
+    (tmp_path / "sql" / "a.sql").write_text("/* a block\ncomment\nspanning lines */\nCREATE TABLE t (\n    payload text NOT NULL\n);\n", encoding="utf-8")
+    findings = scan_column_no_write_path(tmp_path)
+    assert [(f.line, f.snippet.strip()) for f in findings] == [(5, "payload text NOT NULL")]
+
+    (tmp_path / "sql" / "a.sql").write_text("CREATE TABLE t (payload text NOT NULL);\n", encoding="utf-8")
+    assert len(scan_column_no_write_path(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "def r(cur):\n    cur.execute('SELECT payload FROM t')\n    cur.execute('INSERT INTO t (payload) VALUES (%s)')\n")
+    assert scan_column_no_write_path(tmp_path) == []
+
+
+def test_comment_citation_line_numbers_and_positions(tmp_path: Path):
+    """F157 / F158 / F159: single-digit line numbers, every citation in one comment, and a
+    docstring citation reported at its own line."""
+    _write(tmp_path, "m.py", "# see line 7 of foo\nx = 1\n")
+    assert len(scan_comment_cites_absolute_line(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "# see line 42 and line 99\nx = 1\n")
+    assert len(scan_comment_cites_absolute_line(tmp_path)) == 2
+
+    _write(tmp_path, "m.py", '"""Doc first line.\n\nSee line 42 here.\n"""\nx = 1\n')
+    assert [f.line for f in scan_comment_cites_absolute_line(tmp_path)] == [3]
+
+    _write(tmp_path, "m.py", "# nothing cited here\nx = 1\n")
+    assert scan_comment_cites_absolute_line(tmp_path) == []
+
+
+def test_comment_names_missing_symbol_bails_out_on_an_empty_symbol_table(tmp_path: Path):
+    """F156: a dead builtin allowlist was unioned into `known`, making it never empty."""
+    _write(tmp_path, "m.py", "# cites `_gone()`\n")
+    assert scan_comment_names_missing_symbol(tmp_path) == []
+    _write(tmp_path, "m.py", "# cites `_gone()`\ndef f():\n    pass\n")
+    assert len(scan_comment_names_missing_symbol(tmp_path)) == 1
+
+
+def test_constructor_param_overwritten_positional_only_dedup_and_reachability(tmp_path: Path):
+    """F102 / F160 / F161: PEP 570 params were invisible, sites were reported once per
+    config-reading method, and a method merely LOGGING `self.config` counted."""
+    _write(tmp_path, "a.py", 'class A:\n    def __init__(self, rate, /):\n        self._rate = rate\n\n    def refresh(self):\n        self._rate = cfg("rate")\n')
+    assert len(scan_constructor_param_overwritten(tmp_path)) == 1
+
+    _write(tmp_path, "a.py", (
+        'class A:\n    def __init__(self, rate):\n        self._rate = rate\n\n'
+        '    def refresh(self):\n        self._rate = cfg("rate")\n\n'
+        '    def other(self):\n        return settings.get("x")\n\n'
+        '    def third(self):\n        return config.get("y")\n'
+    ))
+    assert len(scan_constructor_param_overwritten(tmp_path)) == 1
+
+    _write(tmp_path, "a.py", (
+        'class A:\n    def __init__(self, rate):\n        self._rate = rate\n\n'
+        '    def log_and_set(self, value):\n        log.info("cfg=%s", self.config)\n        self._rate = value\n'
+    ))
+    assert scan_constructor_param_overwritten(tmp_path) == []
+
+
+def test_credential_logging_matches_snake_case_and_attribute_loggers(tmp_path: Path):
+    """F29 / F198: a word-boundary regex never matched inside `db_password`, and only bare
+    `logger`/`log`/`logging` receivers were recognised."""
+    _write(tmp_path, "m.py", "def f(db_password, proxy_url, auth_token):\n    log.info('connecting %s %s %s', db_password, proxy_url, auth_token)\n")
+    assert len(scan_credential_shaped_log_args(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "class C:\n    def f(self, password):\n        self.logger.info('p %s', password)\n")
+    assert len(scan_credential_shaped_log_args(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", "def f(bypass, count):\n    log.info('x %s %s', bypass, count)\n")
+    assert scan_credential_shaped_log_args(tmp_path) == []
+
+
+def test_docstring_numbers_ignores_prose_abbreviations_and_reads_environ_subscripts(tmp_path: Path):
+    """F28 / F187: `e.g.`, `i.e.` and `run.py` discarded the whole line, and `os.environ["X"]` was
+    not recognised as a configuration read."""
+    template = 'def f():\n    """%s"""\n    return cfg("limit")\n'
+    for doc in (
+        "Prunes at a limit of 10 hits, 5 for rare sources.",
+        "Prunes at a limit of 10 hits, e.g. rare sources.",
+        "Prunes at a limit of 10 hits, i.e. aggressively.",
+        "Prunes at a limit of 10 hits, per run.py invocation.",
+    ):
+        _write(tmp_path, "m.py", template % doc)
+        assert len(scan_docstring_numbers_moved_to_config(tmp_path)) == 1, doc
+
+    _write(tmp_path, "m.py", 'def f():\n    """Prunes at a limit of 10 hits, 5 for rare sources."""\n    return os.environ["PRUNE"]\n')
+    assert len(scan_docstring_numbers_moved_to_config(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", template % "Prunes at a limit of MAX_HITS hits.")
+    assert scan_docstring_numbers_moved_to_config(tmp_path) == []
+
+
+def test_dead_wiring_does_not_seed_from_another_audited_file(tmp_path: Path):
+    """F31: a callee merely NAMED in a sibling audited file was seeded live, so "called only by
+    another dead public function is dead too" never held."""
+    from pyutilz.dev.code_audit.dead_wiring import scan_dead_public_callables
+
+    _write(tmp_path, "m1.py", "def dead_leaf():\n    return 1\n")
+    _write(tmp_path, "m2.py", "def also_dead():\n    return dead_leaf()\n")
+    assert sorted(f.file for f in scan_dead_public_callables(tmp_path)) == ["m1.py", "m2.py"]
+
+    _write(tmp_path, "m1.py", "def alive():\n    return 1\n")
+    _write(tmp_path, "m2.py", "HANDLERS = [alive]\n")
+    assert scan_dead_public_callables(tmp_path) == []
+
+
+def test_default_via_or_examines_a_chain_of_more_than_two_operands(tmp_path: Path):
+    """F201: `arg or fallback or 5` was skipped outright."""
+    from pyutilz.dev.code_audit.default_via_or import scan_default_via_or_trap
+
+    _write(tmp_path, "m.py", "def f(arg, fallback):\n    x = arg or fallback or 5\n    return x\n")
+    assert len(scan_default_via_or_trap(tmp_path)) == 2
+
+    _write(tmp_path, "m.py", "def f(a, b):\n    if a or b:\n        return 1\n    return 0\n")
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_field_text_agreement_rejects_a_cue_that_normalises_to_nothing():
+    """F191: such a cue compiled to a double word boundary and matched every record."""
+    from pyutilz.dev.code_audit.field_text_agreement import FieldTextRule, cues_in_text
+
+    rule = FieldTextRule(name="x", field="f", text_fields=("t",), cues={"postmortem": ["_"]})
+    assert cues_in_text(rule, "vital hanging") == {}
+    rule = FieldTextRule(name="x", field="f", text_fields=("t",), cues={"postmortem": ["postmortem"]})
+    assert cues_in_text(rule, "a post-mortem was held") == {"postmortem": "postmortem"}
+
+
+def test_field_text_agreement_tiebreak_prefers_the_longest_cue():
+    """F197: the alphabetically-first value won, so a rename changed the verdict."""
+    from pyutilz.dev.code_audit.field_text_agreement import FieldTextRule, check_record
+
+    rule = FieldTextRule(name="x", field="f", text_fields=("t",), cues={"alpha": ["one"], "zeta": ["a much longer phrase"]})
+    verdict = check_record(rule, {"f": "", "t": "a much longer phrase and one"})
+    assert verdict.supported == "zeta"
+    assert verdict.alternatives == ("alpha",)
+
+
+def test_guard_decidable_keyword_arguments_and_subscript_scope_and_ifexp_line(tmp_path: Path):
+    """F72 / F164 / F165: any keyword name counted as an external write, a string-key store in an
+    unrelated file suppressed the constant, and an `IfExp` reported the value's line."""
+    _write(tmp_path, "m.py", "_ENABLED = False\n\ndef go():\n    helper(_ENABLED=1)\n    if _ENABLED:\n        recover()\n")
+    assert [f.line for f in scan_guard_decidable_from_constants(tmp_path)] == [5]
+
+    _write(tmp_path, "m.py", "_ENABLED = False\n\ndef go():\n    if _ENABLED:\n        recover()\n")
+    _write(tmp_path, "other.py", "d = {}\nd['_ENABLED'] = 1\n")
+    assert [(f.file, f.line) for f in scan_guard_decidable_from_constants(tmp_path)] == [("m.py", 4)]
+
+    (tmp_path / "other.py").unlink()
+    _write(tmp_path, "m.py", "_FLAG = False\n\ndef go():\n    return (\n        'a'\n        if _FLAG\n        else 'b'\n    )\n")
+    assert [(f.line, f.snippet.strip()) for f in scan_guard_decidable_from_constants(tmp_path)] == [(6, "if _FLAG")]
+
+    _write(tmp_path, "m.py", "_ENABLED = False\n\ndef go():\n    setattr(mod, '_ENABLED', 1)\n    if _ENABLED:\n        recover()\n")
+    assert scan_guard_decidable_from_constants(tmp_path) == []
+
+
+def test_hardcoded_test_path_judges_the_path_below_the_root(tmp_path: Path):
+    """F94: a `"tests" in path.parts` test counted ancestors ABOVE the scan root."""
+    from pyutilz.dev.code_audit.hardcoded_test_path import scan_hardcoded_absolute_path_in_test
+
+    root = tmp_path / "tests" / "myproj"
+    root.mkdir(parents=True)
+    (root / "prod.py").write_text('DATA = "C:/Users/alice/data.csv"\n', encoding="utf-8")
+    assert scan_hardcoded_absolute_path_in_test(root) == []
+    (root / "test_x.py").write_text('DATA = "C:/Users/alice/data.csv"\n', encoding="utf-8")
+    assert [f.file for f in scan_hardcoded_absolute_path_in_test(root)] == ["test_x.py"]
+
+
+def test_lazy_log_assertion_reads_logger_log_formats_and_unittest_assertions(tmp_path: Path):
+    """F73 / F166: `logger.log(LEVEL, fmt, ...)` had its LEVEL harvested as the format, and only
+    the bare `assert` statement was scanned."""
+    from pyutilz.dev.code_audit.lazy_log_assertion import scan_lazy_log_assertion
+
+    _write(tmp_path, "prod.py", "import logging\ndef go(log, x):\n    log.log(logging.WARNING, 'Retried 3 times for %s', x)\n")
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a(log):\n    assert 'Retried 3 times for' in str(log.log.call_args)\n", encoding="utf-8")
+    assert scan_lazy_log_assertion(tmp_path) == []
+
+    _write(tmp_path, "prod.py", "def go(log, n):\n    log.warning('reached only %s/3 items', n)\n")
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "import unittest\nclass T(unittest.TestCase):\n    def test_b(self):\n" "        self.assertIn('reached only 0/3 items', str(log.warning.call_args))\n",
+        encoding="utf-8",
+    )
+    assert len(scan_lazy_log_assertion(tmp_path)) == 1
+
+
+def test_llm_max_tokens_cap_does_not_read_false_as_a_zero_literal(tmp_path: Path):
+    """F193: an `== 0` test is true for `False`."""
+    from pyutilz.dev.code_audit.llm_max_tokens_cap import scan_llm_call_missing_max_tokens_cap
+
+    source = "from pyutilz.llm import get_llm_provider\n\ndef go():\n    p = get_llm_provider()\n    return p.generate('prompt', max_tokens=%s)\n"
+    _write(tmp_path, "m.py", source % "False")
+    assert scan_llm_call_missing_max_tokens_cap(tmp_path) == []
+    _write(tmp_path, "m.py", source % "0")
+    assert len(scan_llm_call_missing_max_tokens_cap(tmp_path)) == 1
+
+
+def test_log_throttle_does_not_count_a_for_loops_own_iter_as_in_loop(tmp_path: Path):
+    """F190: the iter expression evaluates once, not per iteration."""
+    from pyutilz.dev.code_audit.log_throttle import scan_unthrottled_hot_loop_log
+
+    _write(tmp_path, "m.py", "def f(items, logger):\n    for x in (logger.error('boom') or items):\n        pass\n")
+    assert scan_unthrottled_hot_loop_log(tmp_path) == []
+    _write(tmp_path, "m.py", "def f(items, logger):\n    for x in items:\n        logger.error('boom')\n")
+    assert [f.line for f in scan_unthrottled_hot_loop_log(tmp_path)] == [3]
+
+
+def test_asymmetric_except_siblings_needs_two_methods_and_a_compatible_inner_guard(tmp_path: Path):
+    """F76 / F77 / F154 / F155: one method was reported as its own sibling, methods nested in a
+    class-body `if` were invisible, the finding pointed at the `except` line, and any enclosing
+    `try` counted as a guard."""
+    pair = (
+        "class Db:\n"
+        "    def a(self):\n        try:\n            work()\n        except OSError:\n"
+        "            try:\n                self.rollback()\n            except OSError:\n                pass\n\n"
+        "    def b(self):\n        try:\n            work()\n        except OSError:\n            self.rollback()\n"
+    )
+    _write(tmp_path, "m.py", pair)
+    findings = scan_asymmetric_except_siblings(tmp_path)
+    assert [(f.line, f.snippet.strip()) for f in findings] == [(15, "self.rollback()")]
+
+    nested = "class Db:\n    if True:\n" + "".join(("    " + line + "\n") if line.strip() else "\n" for line in pair.splitlines()[1:])
+    _write(tmp_path, "m.py", nested)
+    assert len(scan_asymmetric_except_siblings(tmp_path)) == 1
+
+    _write(tmp_path, "m.py", (
+        "class Db:\n"
+        "    def run(self):\n        try:\n            work()\n        except OSError:\n"
+        "            try:\n                self.rollback()\n            except OSError:\n                pass\n"
+        "        try:\n            work()\n        except OSError:\n            self.rollback()\n"
+    ))
+    assert scan_asymmetric_except_siblings(tmp_path) == []
+
+    incompatible = pair.replace(
+        "        except OSError:\n            self.rollback()\n",
+        "        except OSError:\n            try:\n                self.rollback()\n            except ValueError:\n                pass\n",
+    )
+    _write(tmp_path, "m.py", incompatible)
+    assert len(scan_asymmetric_except_siblings(tmp_path)) == 1
+
+
+def test_asymmetric_resource_guard_downgrades_an_in_memory_container(tmp_path: Path):
+    """F195: P0 is the crash tier; a plain dict under a lock is a deliberate asymmetry."""
+    from pyutilz.dev.code_audit.asymmetric_resource_guard import scan_asymmetric_resource_guard
+
+    body = 'class C:\n    def a(self):\n        with self._lock:\n            self.%s.update({"k": 1})\n\n    def b(self):\n        self.%s.update({"j": 2})\n'
+    _write(tmp_path, "m.py", body % ("_cache", "_cache"))
+    assert [f.severity for f in scan_asymmetric_resource_guard(tmp_path)] == ["P2"]
+    _write(tmp_path, "m.py", body % ("_db_conn", "_db_conn"))
+    assert [f.severity for f in scan_asymmetric_resource_guard(tmp_path)] == ["P0"]
+
+
+def test_console_unicode_scans_every_positional_argument(tmp_path: Path):
+    """F205: only args[0] was inspected, though a later argument reaches the same console."""
+    from pyutilz.dev.code_audit.console_unicode import scan_console_unicode
+
+    _write(tmp_path, "m.py", "print('done', '\u2192')\n")
+    assert len(scan_console_unicode(tmp_path)) == 1
+    _write(tmp_path, "m.py", "logger.info('x %s', '\u2192')\n")
+    assert len(scan_console_unicode(tmp_path)) == 1
+    _write(tmp_path, "m.py", "print('ok', 'fine')\n")
+    assert scan_console_unicode(tmp_path) == []
+
+
+# =====================================================================================
+# Regression tests for audit 2026-09-03 / 07-domain-core-dev-system, scanner modules m-z.
+# Each test names the finding it pins; every one fails on the pre-fix scanner.
+# =====================================================================================
+
+from pyutilz.dev.code_audit.uncached_constant_cost_probe import scan_uncached_constant_cost_probe
+from pyutilz.dev.code_audit.per_call_state_on_shared_instance import scan_per_call_state_on_shared_instance
+from pyutilz.dev.code_audit.non_neutral_except_fallback import scan_non_neutral_except_fallback
+from pyutilz.dev.code_audit.nondiscriminating_test import scan_nondiscriminating_test_functions
+
+# ---- F59: mutable default built with arguments --------------------------------------
+
+
+def test_mutable_defaults_flags_a_call_form_with_arguments(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def m(x=dict(a=1)):
+    x.update({"b": 2})
+    return x
+""")
+    assert len(scan_mutable_defaults(tmp_path)) == 1
+
+
+def test_mutable_defaults_ignores_the_none_sentinel_idiom(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def m(x=None):
+    x = x if x is not None else {}
+    return x
+""")
+    assert scan_mutable_defaults(tmp_path) == []
+
+
+# ---- F206: missed await at module scope ---------------------------------------------
+
+
+def test_missed_await_sees_a_module_level_call(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+async def main():
+    pass
+
+if __name__ == "__main__":
+    main()
+""")
+    findings = scan_missed_await(tmp_path)
+    assert len(findings) == 1 and findings[0].line == 5
+
+
+def test_missed_await_accepts_an_awaited_module_level_call(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import asyncio
+
+async def main():
+    pass
+
+if __name__ == "__main__":
+    asyncio.run(main())
+""")
+    assert scan_missed_await(tmp_path) == []
+
+
+# ---- F214: an undecodable file is the strongest mojibake signal ----------------------
+
+
+def test_mojibake_reports_a_file_that_is_not_utf8(tmp_path: Path):
+    (tmp_path / "bad.py").write_bytes(b"x = 1  # \xef\xf0\xe8\xe2\xe5\xf2\n")
+    findings = scan_mojibake(tmp_path)
+    assert len(findings) == 1 and "not valid UTF-8" in findings[0].detail
+
+
+def test_mojibake_accepts_a_clean_utf8_file(tmp_path: Path):
+    _write(tmp_path, "ok.py", "x = 1\n")
+    assert scan_mojibake(tmp_path) == []
+
+
+# ---- F194: a directly imported urlopen ----------------------------------------------
+
+
+def test_network_timeout_sees_a_directly_imported_urlopen(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+from urllib.request import urlopen
+
+def f(u):
+    return urlopen(u).read()
+""")
+    assert len(scan_missing_network_timeout(tmp_path)) == 1
+
+
+def test_network_timeout_ignores_a_local_function_named_get(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def get(u):
+    return u
+
+def f(u):
+    return get(u)
+""")
+    assert scan_missing_network_timeout(tmp_path) == []
+
+
+# ---- F95: the documented threshold is compared against ASSERT bounds only -----------
+
+
+def test_thresholds_below_documented_result_ignores_a_loop_guard(tmp_path: Path):
+    _write(tmp_path, "test_x.py", '''
+def test_cards(values):
+    """Recovers 7 of 8 demonstration cards."""
+    for i in range(3):
+        if i > 0:
+            pass
+    assert len(values) >= 7
+''')
+    assert scan_thresholds_below_documented_result(tmp_path) == []
+
+
+def test_thresholds_below_documented_result_still_flags_a_weak_assert(tmp_path: Path):
+    _write(tmp_path, "test_x.py", '''
+def test_cards(values):
+    """Recovers 7 of 8 demonstration cards."""
+    assert len(values) >= 3
+''')
+    findings = scan_thresholds_below_documented_result(tmp_path)
+    assert len(findings) == 1 and findings[0].line == 3
+
+
+# ---- F19/F75/F167: non-neutral except fallback --------------------------------------
+
+
+def test_non_neutral_except_fallback_ignores_a_nested_callback(tmp_path: Path):
+    _write(tmp_path, "m.py", """
+def f():
+    try:
+        g()
+    except ValueError:
+        def cb():
+            return 0.0
+        register(cb)
+        raise
+""")
+    assert scan_non_neutral_except_fallback(tmp_path) == []
+
+
+def test_non_neutral_except_fallback_sees_annotated_and_tuple_fallbacks(tmp_path: Path):
+    _write(tmp_path, "m.py", """
+def a():
+    try:
+        g()
+    except ValueError:
+        v: float = 0.0
+    return v
+
+
+def b():
+    try:
+        g()
+    except ValueError:
+        p, q = 0.0, 0.0
+    return p
+""")
+    assert len(scan_non_neutral_except_fallback(tmp_path)) == 2
+
+
+def test_non_neutral_except_fallback_names_the_first_substitution(tmp_path: Path):
+    _write(tmp_path, "m.py", """
+def f(k):
+    try:
+        g()
+    except ValueError:
+        if k:
+            return 1.0
+        return 2.0
+""")
+    findings = scan_non_neutral_except_fallback(tmp_path)
+    assert len(findings) == 1 and "returns 1.0" in findings[0].detail
+
+
+# ---- F18/F74/F168: nondiscriminating test -------------------------------------------
+
+
+def test_nondiscriminating_test_accepts_the_declarative_xfail_marker(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import pytest
+
+@pytest.mark.xfail(reason="known")
+def test_thing():
+    assert 1 + 1 == 2
+""")
+    assert scan_nondiscriminating_test_functions(tmp_path) == []
+
+
+def test_nondiscriminating_test_still_flags_an_imperative_xfail(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import pytest
+
+def test_thing():
+    assert 1 + 1 == 2
+    pytest.xfail("gap")
+""")
+    assert len(scan_nondiscriminating_test_functions(tmp_path)) == 1
+
+
+def test_nondiscriminating_test_accepts_a_handler_that_calls_pytest_fail(tmp_path: Path):
+    _write(tmp_path, "test_c.py", """
+import pytest
+
+def test_x():
+    try:
+        assert compute() == 3
+    except Exception as e:
+        pytest.fail(str(e))
+""")
+    assert scan_nondiscriminating_test_functions(tmp_path) == []
+
+
+def test_nondiscriminating_test_reads_the_suffix_naming_convention(tmp_path: Path):
+    _write(tmp_path, "widget_test.py", """
+def test_x():
+    do_work()
+""")
+    assert len(scan_nondiscriminating_test_functions(tmp_path)) == 1
+
+
+# ---- F20/F169: patch target is a re-export ------------------------------------------
+
+
+def _reexport_package(tmp_path: Path) -> None:
+    (tmp_path / "pkg").mkdir(exist_ok=True)
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/_impl.py", """
+def fetch():
+    return 1
+
+
+def run():
+    return fetch()
+""")
+    _write(tmp_path, "pkg/facade.py", "from ._impl import fetch\n")
+
+
+def test_patch_target_is_a_reexport_resolves_a_relative_import_in_a_plain_module(tmp_path: Path):
+    _reexport_package(tmp_path)
+    _write(tmp_path, "test_a.py", """
+from unittest.mock import patch
+
+def test_x():
+    with patch("pkg.facade.fetch"):
+        pass
+""")
+    assert len(scan_patch_target_is_a_reexport(tmp_path)) == 1
+
+
+def test_patch_target_is_a_reexport_matches_patch_object(tmp_path: Path):
+    _reexport_package(tmp_path)
+    _write(tmp_path, "test_a.py", """
+from unittest.mock import patch
+from pkg import facade
+
+def test_x():
+    with patch.object(facade, "fetch"):
+        pass
+""")
+    assert len(scan_patch_target_is_a_reexport(tmp_path)) == 1
+
+
+def test_patch_target_is_a_reexport_stays_silent_when_the_facade_calls_it(tmp_path: Path):
+    (tmp_path / "pkg").mkdir(exist_ok=True)
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/_impl.py", "def fetch():\n    return 1\n")
+    _write(tmp_path, "pkg/facade.py", """
+from ._impl import fetch
+
+
+def go():
+    return fetch()
+""")
+    _write(tmp_path, "test_a.py", """
+from unittest.mock import patch
+
+def test_x():
+    with patch("pkg.facade.fetch"):
+        pass
+""")
+    assert scan_patch_target_is_a_reexport(tmp_path) == []
+
+
+# ---- F103/F104/F105: per-call state on a shared instance ----------------------------
+
+
+def test_per_call_state_needs_a_module_level_registry(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def labels():
+    labels = ["Worker", "Other"]
+    return labels
+
+
+class Worker:
+    async def run(self):
+        self.last_usage = 1
+""")
+    assert scan_per_call_state_on_shared_instance(tmp_path) == []
+
+
+def test_per_call_state_does_not_take_blocking_io_for_a_lock(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+_PROVIDERS = ["Worker"]
+
+
+class Worker:
+    async def run(self):
+        with self.blocking_io:
+            self.last_usage = 1
+""")
+    assert len(scan_per_call_state_on_shared_instance(tmp_path)) == 1
+
+
+def test_per_call_state_accepts_a_real_lock(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+_PROVIDERS = ["Worker"]
+
+
+class Worker:
+    async def run(self):
+        with self._lock:
+            self.last_usage = 1
+""")
+    assert scan_per_call_state_on_shared_instance(tmp_path) == []
+
+
+def test_per_call_state_ignores_an_annotation_only_attribute(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+_PROVIDERS = ["Worker"]
+
+
+class Worker:
+    async def run(self):
+        self.last_usage: int
+""")
+    assert scan_per_call_state_on_shared_instance(tmp_path) == []
+
+
+# ---- F22/F170/F171: provenance flow -------------------------------------------------
+
+
+def test_record_field_flow_ignores_a_read_without_a_default(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def w():
+    return {"modality_source": 1}
+
+
+def r(d):
+    return d["modality_sources"]
+""")
+    assert scan_record_field_flow(tmp_path) == []
+
+
+def test_record_field_flow_still_flags_a_defaulted_read(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def w():
+    return {"modality_source": 1}
+
+
+def r(d):
+    return d.get("modality_sources", 0)
+""")
+    assert len(scan_record_field_flow(tmp_path)) == 1
+
+
+def test_record_field_flow_reports_a_dict_key_at_its_own_line(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def w():
+    return {
+        "modality_source": 1,
+        "quote_tier": 2,
+    }
+""")
+    findings = scan_record_field_flow(tmp_path, report_written_never_read=True)
+    assert sorted(f.line for f in findings) == [3, 4]
+
+
+def test_record_field_flow_skips_a_private_key():
+    from pyutilz.dev.code_audit.provenance_flow import _is_field_like
+
+    assert _is_field_like("modality_source") is True
+    assert _is_field_like("_secret") is False
+
+
+# ---- F13: raising stub swallowed, under a tests ancestor directory ------------------
+
+
+def _raising_stub_tree(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    _write(root, "prod.py", """
+def probe():
+    return 1
+
+
+def run():
+    try:
+        return probe()
+    except Exception:
+        return None
+""")
+    _write(root, "test_x.py", """
+from unittest.mock import patch
+import prod
+
+
+def test_never_called():
+    def boom(*a):
+        raise AssertionError("no")
+
+    with patch("prod.probe", boom):
+        prod.run()
+    assert not boom.called
+""")
+
+
+def test_raising_stub_swallowed_survives_a_tests_ancestor_directory(tmp_path: Path):
+    root = tmp_path / "tests" / "proj"
+    _raising_stub_tree(root)
+    assert len(scan_raising_stub_swallowed(root)) == 1
+
+
+def test_raising_stub_swallowed_ignores_a_production_only_tree(tmp_path: Path):
+    _write(tmp_path, "prod.py", """
+def probe():
+    return 1
+
+
+def run():
+    try:
+        return probe()
+    except Exception:
+        return None
+""")
+    assert scan_raising_stub_swallowed(tmp_path) == []
+
+
+# ---- F96: readonly to_numpy mutation, scoped per function ---------------------------
+
+
+def test_readonly_to_numpy_mutation_reports_a_nested_def_once(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import numpy as np
+
+
+def outer(df):
+    def inner():
+        A = df.to_numpy()
+        np.fill_diagonal(A, 0.0)
+
+    inner()
+""")
+    assert len(scan_readonly_to_numpy_mutation(tmp_path)) == 1
+
+
+def test_readonly_to_numpy_mutation_does_not_leak_a_name_out_of_a_nested_scope(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import numpy as np
+
+
+def outer(df):
+    def helper():
+        C = df.to_numpy()
+        return C
+
+    C = 1
+    np.fill_diagonal(C, 0.0)
+""")
+    assert scan_readonly_to_numpy_mutation(tmp_path) == []
+
+
+# ---- F63: redundant test fit, on the 3.8 floor --------------------------------------
+
+
+def test_redundant_test_fit_calls_works_without_ast_unparse(tmp_path: Path, monkeypatch):
+    """python 3.8 has no ast.unparse; the scanner must not degrade to a silent no-op there."""
+    import ast as _ast
+
+    _write(tmp_path, "test_a.py", """
+def _build_data(n, seed=0):
+    return compute(n, seed)
+
+
+def test_a():
+    d = _build_data(100, seed=0)
+    assert d
+
+
+def test_b():
+    d = _build_data(100, seed=0)
+    assert d
+""")
+    monkeypatch.delattr(_ast, "unparse", raising=False)
+    assert len(scan_redundant_test_fit_calls(tmp_path)) == 1
+
+
+def test_redundant_test_fit_calls_ignores_different_arguments(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+def _build_data(n):
+    return compute(n)
+
+
+def test_a():
+    assert _build_data(1)
+
+
+def test_b():
+    assert _build_data(2)
+""")
+    assert scan_redundant_test_fit_calls(tmp_path) == []
+
+
+# ---- F204: resource handle safety, attribute-form open ------------------------------
+
+
+def test_resource_handle_safety_sees_path_open(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+from pathlib import Path
+
+
+def f(p):
+    fh = Path(p).open()
+    return fh.read()
+""")
+    assert len(scan_resource_handle_safety(tmp_path)) == 1
+
+
+def test_resource_handle_safety_accepts_path_open_in_a_with(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+from pathlib import Path
+
+
+def f(p):
+    with Path(p).open() as fh:
+        return fh.read()
+""")
+    assert scan_resource_handle_safety(tmp_path) == []
+
+
+# ---- F60: retry loops, a break belonging to a NESTED loop ---------------------------
+
+
+def test_retry_loops_ignores_a_break_in_a_nested_loop(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import time
+
+
+def go():
+    while True:
+        try:
+            for x in range(3):
+                if x:
+                    break
+            work()
+        except Exception:
+            time.sleep(1)
+""")
+    assert len(scan_retry_loops(tmp_path)) == 1
+
+
+def test_retry_loops_accepts_the_loops_own_break(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import time
+
+
+def go():
+    while True:
+        try:
+            work()
+            break
+        except Exception:
+            time.sleep(1)
+""")
+    assert scan_retry_loops(tmp_path) == []
+
+
+# ---- F83/F174: sentinel cached as answer --------------------------------------------
+
+
+def test_sentinel_cached_as_answer_sees_the_fallback_arm(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+cache = {}
+
+
+def g(k):
+    try:
+        v = lookup(k)
+    except Exception:
+        v = None
+    if v is None:
+        cache[k] = None
+    return v
+""")
+    assert len(scan_sentinel_cached_as_answer(tmp_path)) == 1
+
+
+def test_sentinel_cached_as_answer_sees_a_returned_cache_write(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def g(k, cache):
+    try:
+        return lookup(k)
+    except Exception:
+        return cache.set(k, None)
+""")
+    assert len(scan_sentinel_cached_as_answer(tmp_path)) == 1
+
+
+def test_sentinel_cached_as_answer_ignores_a_successful_cache_write(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+cache = {}
+
+
+def g(k):
+    try:
+        cache[k] = lookup(k)
+    except Exception:
+        raise
+""")
+    assert scan_sentinel_cached_as_answer(tmp_path) == []
+
+
+# ---- F21: the minus-one sentinel ----------------------------------------------------
+
+
+def test_sentinel_guard_mismatch_sees_a_negative_one_sentinel(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def get_count(c):
+    try:
+        return c.fetch()
+    except Exception:
+        return -1
+
+
+def use(c):
+    n = get_count(c)
+    if n is None:
+        return 0
+    return n
+""")
+    assert len(scan_sentinel_guard_mismatch(tmp_path)) == 1
+
+
+def test_sentinel_guard_mismatch_accepts_a_matching_guard(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def get_count(c):
+    try:
+        return c.fetch()
+    except Exception:
+        return -1
+
+
+def use(c):
+    n = get_count(c)
+    if n < 0:
+        return 0
+    return n
+""")
+    assert scan_sentinel_guard_mismatch(tmp_path) == []
+
+
+# ---- F189: skip_masking_except reads the suffix naming convention -------------------
+
+
+def test_except_skip_masks_call_under_test_reads_the_suffix_convention(tmp_path: Path):
+    _write(tmp_path, "widget_test.py", """
+import pytest
+
+
+def test_x():
+    try:
+        result = do_work(1)
+    except TypeError:
+        pytest.skip("not supported")
+""")
+    assert len(scan_except_skip_masks_call_under_test(tmp_path)) == 1
+
+
+def test_except_skip_masks_call_under_test_ignores_a_production_module(tmp_path: Path):
+    _write(tmp_path, "widget.py", """
+import pytest
+
+
+def check_x():
+    try:
+        result = do_work(1)
+    except TypeError:
+        pytest.skip("not supported")
+""")
+    assert scan_except_skip_masks_call_under_test(tmp_path) == []
+
+
+# ---- F14/F85/F86/F175/F176: source-text assertions ----------------------------------
+
+
+def test_source_text_assertions_uses_the_relative_path_for_the_tests_check(tmp_path: Path):
+    root = tmp_path / "tests" / "proj"
+    root.mkdir(parents=True)
+    _write(root, "prod.py", """
+import inspect
+
+
+def check():
+    src = inspect.getsource(g)
+    assert "x" in src
+""")
+    assert scan_source_text_assertions(root) == []
+
+
+def test_source_text_assertions_scopes_siblings_independently(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import inspect
+
+
+def test_outer():
+    def check_source():
+        src = inspect.getsource(g)
+        assert "x" in src
+
+    def check_behaviour():
+        src = build()
+        assert "x" in src
+
+    check_source()
+    check_behaviour()
+""")
+    findings = scan_source_text_assertions(tmp_path)
+    assert len(findings) == 1 and findings[0].line == 7
+
+
+def test_source_text_assertions_sees_a_pytest_fail_guard(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import inspect
+import pytest
+
+
+def test_x():
+    src = inspect.getsource(g)
+    if "x" not in src:
+        pytest.fail("missing")
+""")
+    assert len(scan_source_text_assertions(tmp_path)) == 1
+
+
+def test_source_text_assertions_sees_an_annotated_binding(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import inspect
+
+
+def test_x():
+    src: str = inspect.getsource(g)
+    assert "x" in src
+""")
+    assert len(scan_source_text_assertions(tmp_path)) == 1
+
+
+def test_source_text_assertions_resolves_a_dis_alias(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import dis as d
+
+
+def test_x():
+    out = d.dis(f)
+    assert "LOAD" in out
+""")
+    assert len(scan_source_text_assertions(tmp_path)) == 1
+
+
+# ---- F99: spy arity, cross-class short-name collision -------------------------------
+
+
+def test_stale_test_spy_arity_ignores_a_same_named_method_on_another_class(tmp_path: Path):
+    _write(tmp_path, "prod.py", "def build_rows(a):\n    return a\n")
+    _write(tmp_path, "caller.py", """
+import prod
+
+
+def go(a):
+    return prod.build_rows(a)
+""")
+    _write(tmp_path, "other.py", """
+class Other:
+    def build_rows(self, a, b, c):
+        return a
+
+
+def use(o):
+    return o.build_rows(1, 2, 3)
+""")
+    _write(tmp_path, "test_x.py", """
+from unittest.mock import patch
+
+
+def spy(a):
+    return a
+
+
+def test_it():
+    with patch("prod.build_rows", side_effect=spy):
+        pass
+""")
+    assert scan_stale_test_spy_arity(tmp_path) == []
+
+
+# ---- F101: sql_lint sees an f-string query ------------------------------------------
+
+
+def test_sql_limit_without_order_by_sees_an_fstring_query(tmp_path: Path):
+    _write(tmp_path, "a.py", "def q(user_id):\n    sql = f'SELECT id, name FROM users WHERE owner = {user_id} LIMIT 50'\n    return sql\n")
+    assert len(scan_sql_limit_without_order_by(tmp_path)) == 1
+
+
+def test_sql_limit_without_order_by_accepts_an_ordered_fstring_query(tmp_path: Path):
+    _write(tmp_path, "a.py", "def q(user_id):\n    sql = f'SELECT id, name FROM users WHERE owner = {user_id} ORDER BY id LIMIT 50'\n    return sql\n")
+    assert scan_sql_limit_without_order_by(tmp_path) == []
+
+
+# ---- F30/F100: sql migrations -------------------------------------------------------
+
+
+def test_sql_migration_idempotency_survives_an_excluded_ancestor_directory(tmp_path: Path):
+    root = tmp_path / "build" / "proj"
+    root.mkdir(parents=True)
+    (root / "001.sql").write_text("ALTER TABLE t DROP COLUMN c;\n", encoding="utf-8")
+    assert len(scan_sql_migration_idempotency(root)) == 1
+
+
+def test_sql_migration_idempotency_ignores_a_commented_out_statement(tmp_path: Path):
+    (tmp_path / "002.sql").write_text("-- DROP TABLE legacy_users;  (removed in v2)\nSELECT 1;\n", encoding="utf-8")
+    assert scan_sql_migration_idempotency(tmp_path) == []
+
+
+# ---- F82: sql_selects_unread_column needs a cursor link -----------------------------
+
+
+def test_sql_selects_unread_column_ignores_an_unrelated_unpacking(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def q(cur):
+    cur.execute("SELECT id, name FROM t")
+    lo, hi = compute()
+    return lo
+""")
+    assert scan_sql_selects_unread_column(tmp_path) == []
+
+
+def test_sql_selects_unread_column_still_flags_a_cursor_unpacking(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def q(cur):
+    cur.execute("SELECT id, name FROM t")
+    rows = cur.fetchall()
+    for a, b in rows:
+        print(a)
+""")
+    assert len(scan_sql_selects_unread_column(tmp_path)) == 1
+
+
+# ---- F23/F84: stats key coverage ----------------------------------------------------
+
+
+def test_stats_key_coverage_reads_an_annotated_reset(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+class C:
+    def _reset(self):
+        self.stats: dict = {"a": 0}
+
+    def bump(self):
+        self.stats["zz"] += 1
+""")
+    assert len(scan_stats_key_coverage(tmp_path)) == 1
+
+
+def test_stats_key_coverage_does_not_count_a_bare_get_as_a_write(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+class C:
+    def _reset(self):
+        self.stats = {"a": 0}
+
+    def peek(self):
+        return self.stats.get("never_written_key", 0)
+""")
+    assert scan_stats_key_coverage(tmp_path) == []
+
+
+# ---- F98: table drift, per writer variable ------------------------------------------
+
+
+def test_table_header_row_drift_keys_the_header_by_writer(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import csv
+
+
+def go(f1, f2):
+    w1 = csv.DictWriter(f1, fieldnames=["a", "b"])
+    w1.writerow({"a": 1, "b": 2})
+    w2 = csv.DictWriter(f2, fieldnames=["x", "y"])
+    w2.writerow({"x": 1, "y": 2})
+""")
+    assert scan_table_header_row_drift(tmp_path) == []
+
+
+def test_table_header_row_drift_still_flags_a_real_drift(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import csv
+
+
+def go(f1):
+    w1 = csv.DictWriter(f1, fieldnames=["a", "b"])
+    w1.writerow({"a": 1, "c": 2})
+""")
+    assert len(scan_table_header_row_drift(tmp_path)) == 1
+
+
+# ---- F32: tautological guard, the pin must fix the thresholded value ----------------
+
+
+def test_tautological_guards_ignores_a_pin_on_a_different_attribute(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def go(item):
+    if item.score > 0.5 and item.label == "ok":
+        return 1
+    return 0
+""")
+    assert scan_tautological_guards(tmp_path) == []
+
+
+def test_tautological_guards_still_flags_a_pin_on_the_whole_object(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+GOLD = object()
+
+
+def go(item):
+    if item.score > 0.5 and item == GOLD:
+        return 1
+    return 0
+""")
+    assert len(scan_tautological_guards(tmp_path)) == 1
+
+
+# ---- F87/F88/F177/F178/F179: asserts against a production constant ------------------
+
+
+def test_asserts_against_production_constant_accepts_an_fstring_path_segment(tmp_path: Path):
+    _write(tmp_path, "test_a.py", "from prod import CHECKPOINT_DIR\n\n\ndef test_p(name, p):\n    assert p == CHECKPOINT_DIR / f'{name}.jsonl'\n")
+    assert scan_test_asserts_against_production_constant(tmp_path) == []
+
+
+def test_asserts_against_production_constant_accepts_a_variable_path_segment(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+from prod import CHECKPOINT_DIR
+
+
+def test_p(sub, p):
+    assert p == CHECKPOINT_DIR / sub
+""")
+    assert scan_test_asserts_against_production_constant(tmp_path) == []
+
+
+def test_asserts_against_production_constant_looks_through_pytest_approx(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import pytest
+
+from prod import BASE_DELAY
+
+
+def test_b():
+    assert backoff(3) == pytest.approx(BASE_DELAY * 2)
+""")
+    assert len(scan_test_asserts_against_production_constant(tmp_path)) == 1
+
+
+def test_asserts_against_production_constant_ignores_a_non_test_helper_receiver(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+from prod import BASE_DELAY
+
+
+def helper(recorder, x):
+    recorder.assertEqual(BASE_DELAY * 2, x)
+""")
+    assert scan_test_asserts_against_production_constant(tmp_path) == []
+
+
+def test_asserts_against_production_constant_sees_a_negated_rederivation(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+from prod import BASE_DELAY
+
+
+def test_b():
+    assert backoff(3) == -BASE_DELAY
+""")
+    assert len(scan_test_asserts_against_production_constant(tmp_path)) == 1
+
+
+def test_asserts_against_production_constant_reports_the_offending_argument_line(tmp_path: Path):
+    _write(tmp_path, "test_a.py", """
+import unittest
+
+from prod import BASE_DELAY
+
+
+class T(unittest.TestCase):
+    def test_b(self):
+        self.assertEqual(
+            backoff(3),
+            BASE_DELAY * 2,
+        )
+""")
+    findings = scan_test_asserts_against_production_constant(tmp_path)
+    assert len(findings) == 1 and findings[0].line == 10
+
+
+# ---- F89/F90/F180/F181/F182/F188: uncached constant-cost probe ----------------------
+
+
+def test_uncached_constant_cost_probe_sees_the_path_mkdir_spelling(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+from pathlib import Path
+
+
+def ensure(p=Path("x")):
+    p.mkdir(parents=True, exist_ok=True)
+""")
+    assert len(scan_uncached_constant_cost_probe(tmp_path)) == 1
+
+
+def test_uncached_constant_cost_probe_reports_a_nested_def_once(tmp_path: Path):
+    _write(tmp_path, "b.py", """
+import subprocess
+
+
+def outer():
+    def inner():
+        return subprocess.run(["x"])
+
+    return inner
+""")
+    assert len(scan_uncached_constant_cost_probe(tmp_path)) == 1
+
+
+def test_uncached_constant_cost_probe_matches_decorators_structurally(tmp_path: Path):
+    _write(tmp_path, "c.py", """
+import subprocess
+
+
+@app.route("/cache")
+def probe():
+    return subprocess.run(["x"])
+""")
+    assert len(scan_uncached_constant_cost_probe(tmp_path)) == 1
+
+
+def test_uncached_constant_cost_probe_ignores_a_local_function_named_run(tmp_path: Path):
+    _write(tmp_path, "d.py", """
+def run():
+    return 1
+
+
+def probe():
+    return run()
+""")
+    assert scan_uncached_constant_cost_probe(tmp_path) == []
+
+
+def test_uncached_constant_cost_probe_needs_the_global_to_be_written(tmp_path: Path):
+    _write(tmp_path, "g.py", """
+import subprocess
+
+counter = 0
+
+
+def probe():
+    global counter
+    return subprocess.run(["x"])
+""")
+    assert len(scan_uncached_constant_cost_probe(tmp_path)) == 1
+
+
+def test_uncached_constant_cost_probe_accepts_a_hand_rolled_memo(tmp_path: Path):
+    _write(tmp_path, "h.py", """
+import subprocess
+
+_memo = None
+
+
+def probe():
+    global _memo
+    if _memo is None:
+        _memo = subprocess.run(["x"])
+    return _memo
+""")
+    assert scan_uncached_constant_cost_probe(tmp_path) == []
+
+
+def test_uncached_constant_cost_probe_still_honours_lru_cache(tmp_path: Path):
+    _write(tmp_path, "i.py", """
+import subprocess
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def probe():
+    return subprocess.run(["x"])
+""")
+    assert scan_uncached_constant_cost_probe(tmp_path) == []
+
+
+# ---- F97: star export resolves ImportFrom.level -------------------------------------
+
+
+def test_uncurated_star_exports_honours_the_import_level(tmp_path: Path):
+    (tmp_path / "outer" / "inner").mkdir(parents=True)
+    _write(tmp_path, "outer/__init__.py", "")
+    _write(tmp_path, "outer/shared.py", "def a():\n    pass\n")
+    _write(tmp_path, "outer/inner/__init__.py", "from ..shared import *\n")
+    _write(tmp_path, "outer/inner/shared.py", '__all__ = ["b"]\n\n\ndef b():\n    pass\n')
+    assert len(scan_uncurated_star_exports(tmp_path)) == 1
+
+
+def test_uncurated_star_exports_accepts_a_curated_parent_module(tmp_path: Path):
+    (tmp_path / "outer" / "inner").mkdir(parents=True)
+    _write(tmp_path, "outer/__init__.py", "")
+    _write(tmp_path, "outer/shared.py", '__all__ = ["a"]\n\n\ndef a():\n    pass\n')
+    _write(tmp_path, "outer/inner/__init__.py", "from ..shared import *\n")
+    _write(tmp_path, "outer/inner/shared.py", "def b():\n    pass\n")
+    assert scan_uncurated_star_exports(tmp_path) == []
+
+
+# ---- F69: domains are matched on path segments --------------------------------------
+
+
+def test_undeclared_imports_domain_matching_respects_path_boundaries():
+    from pyutilz.dev.code_audit.undeclared_imports import _domain_for
+
+    assert _domain_for("web/x.py") == "web"
+    assert _domain_for("webhooks.py") is None
+    assert _domain_for("dev/y.py") == "dev"
+    assert _domain_for("developer_notes.py") is None
+
+
+# ---- F91/F92/F183/F184: unit suffix mismatch ----------------------------------------
+
+
+def test_unit_suffix_mismatch_covers_an_annotated_assignment(tmp_path: Path):
+    _write(tmp_path, "obs.py", """
+def record(totals):
+    work_s: float = totals["minutes"]
+    return work_s
+""")
+    assert len(scan_unit_suffix_mismatch(tmp_path)) == 1
+
+
+def test_unit_suffix_mismatch_covers_an_augmented_assignment(tmp_path: Path):
+    _write(tmp_path, "obs.py", """
+def record(totals, work_s):
+    work_s += totals["minutes"]
+    return work_s
+""")
+    assert len(scan_unit_suffix_mismatch(tmp_path)) == 1
+
+
+def test_unit_suffix_mismatch_does_not_read_min_as_minutes(tmp_path: Path):
+    _write(tmp_path, "obs.py", """
+def record(bucket_hours):
+    window_min = bucket_hours
+    return window_min
+""")
+    assert scan_unit_suffix_mismatch(tmp_path) == []
+
+
+def test_unit_suffix_mismatch_ignores_a_bare_one_letter_keyword(tmp_path: Path):
+    _write(tmp_path, "plot.py", """
+def draw(ax, x, y, sizes_pct):
+    ax.scatter(x, y, s=sizes_pct)
+""")
+    assert scan_unit_suffix_mismatch(tmp_path) == []
+
+
+def test_unit_suffix_mismatch_reports_a_keyword_at_its_own_line(tmp_path: Path):
+    _write(tmp_path, "obs.py", """
+def record(cfg):
+    schedule(
+        1,
+        timeout_seconds=cfg["ms"],
+    )
+""")
+    findings = scan_unit_suffix_mismatch(tmp_path)
+    assert len(findings) == 1 and findings[0].line == 4
+
+
+# ---- F68: unpicklable resource state needs an unambiguous constructor ---------------
+
+
+def test_unpicklable_resource_state_ignores_a_domain_pool(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import catboost
+
+
+class C:
+    def __init__(self, X, y):
+        self.train_pool = catboost.Pool(X, y)
+""")
+    assert scan_unpicklable_resource_state(tmp_path) == []
+
+
+def test_unpicklable_resource_state_still_flags_a_multiprocessing_pool(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import multiprocessing
+
+
+class C:
+    def __init__(self):
+        self.p = multiprocessing.Pool(4)
+""")
+    assert len(scan_unpicklable_resource_state(tmp_path)) == 1
+
+
+def test_unpicklable_resource_state_follows_a_from_import(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+from threading import Event
+
+
+class C:
+    def __init__(self):
+        self.ev = Event()
+""")
+    assert len(scan_unpicklable_resource_state(tmp_path)) == 1
+
+
+# ---- F192: same-named exception classes in different files -------------------------
+
+
+def test_unraised_exceptions_keys_classes_per_file(tmp_path: Path):
+    _write(tmp_path, "e1.py", "class DupError(Exception):\n    pass\n")
+    _write(tmp_path, "e2.py", "class DupError(Exception):\n    pass\n")
+    findings = scan_unraised_exceptions(tmp_path)
+    assert sorted(f.file for f in findings) == ["e1.py", "e2.py"]
+
+
+def test_unraised_exceptions_accepts_a_raised_class(tmp_path: Path):
+    _write(tmp_path, "e1.py", """
+class DupError(Exception):
+    pass
+
+
+def go():
+    raise DupError()
+""")
+    assert scan_unraised_exceptions(tmp_path) == []
+
+
+# ---- F15/F93/F185/F186: unreachable import fallback ---------------------------------
+
+
+def test_unreachable_import_fallback_ignores_a_function_local_import(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def load():
+    import numpy
+
+    return numpy
+
+
+try:
+    import numpy
+except ImportError:
+    numpy = None
+""")
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_ignores_a_platform_conditional_import(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import sys
+
+if sys.platform == "win32":
+    import winreg
+else:
+    winreg = None
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
+""")
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_walks_the_whole_try_body(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+import numpy
+
+try:
+    if True:
+        import numpy
+except ImportError:
+    numpy = None
+""")
+    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+
+
+def test_unreachable_import_fallback_resolves_a_relative_import(tmp_path: Path):
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/util.py", "x = 1\n")
+    _write(tmp_path, "pkg/m.py", """
+from . import util
+
+try:
+    from . import util
+except ImportError:
+    util = None
+""")
+    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+
+
+# ---- F203: the test_glob parameter is a glob ----------------------------------------
+
+
+def test_vacuous_assertions_uses_test_glob_as_a_glob(tmp_path: Path):
+    _write(tmp_path, "check_a.py", "def test_x():\n    assert True\n")
+    _write(tmp_path, "prod.py", "def test_y():\n    assert True\n")
+    findings = scan_vacuous_assertions(tmp_path, test_glob="check_*.py")
+    assert [f.file for f in findings] == ["check_a.py"]
+
+
+def test_vacuous_assertions_default_glob_skips_production_modules(tmp_path: Path):
+    _write(tmp_path, "prod.py", "def test_y():\n    assert True\n")
+    assert scan_vacuous_assertions(tmp_path) == []
+
+
+# ---- F67: guard matching is word-bounded --------------------------------------------
+
+
+def test_vacuous_empty_pattern_match_does_not_take_xs_as_a_guard_for_x(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def f(x, xs):
+    if xs:
+        pass
+    return all(i in "abc" for i in x)
+""")
+    assert len(scan_vacuous_empty_pattern_match(tmp_path)) == 1
+
+
+def test_partial_guard_across_siblings_word_bounds_the_parameter(tmp_path: Path):
+    _write(tmp_path, "a.py", """
+def score_triples(pred_triples, pred_triples_raw):
+    if pred_triples:
+        return 1
+    return 0
+
+
+def score_junk(pred_triples, pred_triples_raw):
+    if pred_triples:
+        return 1
+    return 0
+
+
+def score_grounding(pred_triples, pred_triples_raw):
+    if pred_triples_raw:
+        return 1
+    return 0
+""")
+    findings = scan_partial_guard_across_siblings(tmp_path)
+    assert len(findings) == 1 and "score_grounding" in findings[0].detail

@@ -151,8 +151,8 @@ class UtilizationMonitor:
         # GPU
         gpu_stats = get_nvidia_smi_info(include_stats=True)
 
-        self.n_samples += 1
         if gpu_stats is None:
+            self.n_samples += 1
             return
 
         total_gpu_ram_free = 0.0
@@ -211,6 +211,11 @@ class UtilizationMonitor:
             self.mean_gpu_power_draw.append(total_gpu_power_draw / n)
             self.mean_gpu_temp.append(total_gpu_temp / n)
 
+        # Counted at the END, not before the parse loop above: the loop can raise (a card
+        # reporting "N/A"), and the caller then increments n_sampling_errors for the SAME sample --
+        # 100 consecutively-failing samples used to be reported as "100 of 200 failed".
+        self.n_samples += 1
+
     def start(self) -> None:
         """Start the background monitoring thread.
 
@@ -229,7 +234,10 @@ class UtilizationMonitor:
     def stop(self, timeout: Optional[float] = None) -> None:
         """Stop the background monitoring thread and wait for it to finish."""
         self.stop_flag.set()
-        if self.thread is not None:
+        # ``is_alive()``, not just ``is not None``: __init__ already assigns an UNSTARTED Thread, so
+        # stop() on a never-started monitor raised "cannot join thread before it is started" --
+        # which, from a try/finally, masked the caller's real exception.
+        if self.thread is not None and self.thread.is_alive():
             self.thread.join(timeout)
         logger.info("Hardware utilization monitoring stopped")
 
@@ -263,9 +271,11 @@ class UtilizationMonitor:
                 unavailable_metrics=missing_psutil_functions(psutil),
                 cpu_utilizaton_percent=round(np.mean(self.cpu_utilizaton), ndigits),
                 cpu_clocks_mhz=round(np.mean(self.cpu_clocks), ndigits) if self.cpu_clocks else None,
-                own_ram_used_gb=round(np.mean(self.own_ram_used), ndigits),
-                total_ram_used_gb=round(np.mean(self.total_ram_used) / 1024**3, ndigits),
-                total_ram_free_gb=round(np.mean(self.total_ram_free) / 1024**3, ndigits),
+                # ``if <series> else None``, like every sibling field below: np.mean([]) is nan,
+                # and a consumer skipping None-valued metrics silently averaged that nan in.
+                own_ram_used_gb=round(np.mean(self.own_ram_used), ndigits) if self.own_ram_used else None,
+                total_ram_used_gb=round(np.mean(self.total_ram_used) / 1024**3, ndigits) if self.total_ram_used else None,
+                total_ram_free_gb=round(np.mean(self.total_ram_free) / 1024**3, ndigits) if self.total_ram_free else None,
                 gpu_ram_free_gb=round(np.mean(self.mean_gpu_ram_free) / 1024, ndigits) if self.mean_gpu_ram_free else None,
                 gpu_ram_used_gb=round(np.mean(self.mean_gpu_ram_used) / 1024, ndigits) if self.mean_gpu_ram_used else None,
                 gpu_clocks_mhz=round(np.mean(self.mean_gpu_clocks), ndigits) if self.mean_gpu_clocks else None,

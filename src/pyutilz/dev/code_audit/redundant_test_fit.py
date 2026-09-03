@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _line_text, _is_excluded
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _read_src_lines, _safe_parse
 
 # --- redundant test computation (expensive fit re-run across test functions) -----
 #
@@ -106,9 +106,11 @@ def _call_signature(call: ast.Call) -> str | None:
     those are method calls, not the module-level helper pattern this scanner targets)."""
     if not isinstance(call.func, ast.Name) or not call.func.id.startswith("_"):
         return None
-    _unparse = getattr(ast, "unparse", None)  # ast.unparse needs python>=3.9; degrade to a no-op scan on 3.8
-    if _unparse is None:
-        return None
+    # ast.unparse needs python>=3.9. On the supported 3.8 floor fall back to ast.dump, which is a
+    # drop-in here: the signature is only ever compared for EQUALITY, and ast.dump() omits
+    # positions by default, so two syntactically identical calls still normalise to one key.
+    # Returning None there instead made the whole scanner a silent no-op on one CI leg.
+    _unparse = getattr(ast, "unparse", None) or (lambda node: ast.dump(node))
     try:
         args_repr = ", ".join(_unparse(a) for a in call.args)
         kwargs_repr = ", ".join(f"{kw.arg}={_unparse(kw.value)}" for kw in call.keywords)
@@ -149,7 +151,7 @@ def scan_redundant_test_fit_calls(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
         cached_names = {

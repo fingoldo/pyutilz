@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- additive-epsilon denominators ---------------------------------------
 #
@@ -46,8 +46,17 @@ def _epsilon_padded_names(scope: ast.AST, epsilon_max: float) -> set[str]:
     """Names bound in ``scope`` to an epsilon-padded sum -- ``denom = var + 1e-12`` followed by ``x / denom``."""
     names: set[str] = set()
     for node in ast.walk(scope):
-        if isinstance(node, ast.Assign) and node.targets and isinstance(node.targets[0], ast.Name) and _is_epsilon_sum(node.value, epsilon_max):
-            names.add(node.targets[0].id)
+        # `AnnAssign` (`denom: float = d + 1e-12`) binds the name exactly as a plain assignment does,
+        # and a chained `a = denom = d + 1e-12` binds EVERY target, not just the first.
+        if isinstance(node, ast.Assign) and _is_epsilon_sum(node.value, epsilon_max):
+            targets: list[ast.expr] = list(node.targets)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None and _is_epsilon_sum(node.value, epsilon_max):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                names.add(target.id)
     return names
 
 
@@ -71,28 +80,34 @@ def scan_additive_epsilon_denominator(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         functions: list[ast.AST] = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         # A module with no functions still has module-level divisions worth scanning, so fall back to the
         # whole tree as a single scope. Written as an explicit emptiness test rather than `... or [tree]`,
         # which `default_via_or` rightly flags: `or` cannot distinguish 'no functions' from any other falsy
         # value the comprehension might one day produce.
-        scopes: list[ast.AST] = functions if functions else [tree]
-        seen: set[int] = set()
+        # The module scope always carries divisions worth scanning, whether or not the file also
+        # defines functions; `seen` de-dupes the overlap.
+        scopes: list[ast.AST] = [*functions, tree]
+        seen: set[tuple[int, int]] = set()
         for scope in scopes:
             padded = _epsilon_padded_names(scope, epsilon_max)
             for node in ast.walk(scope):
-                if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div) or node.lineno in seen:
+                if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+                    continue
+                # Keyed on (line, column): two padded divisions can share one line.
+                key = (node.lineno, node.col_offset)
+                if key in seen:
                     continue
                 rhs = node.right
                 if isinstance(rhs, ast.Name) and rhs.id in padded:
-                    where = f"the name `{rhs.id}`, bound above to an epsilon-padded sum,"
+                    where = f"the name `{rhs.id}`, bound above to an epsilon-padded sum"
                 elif _is_epsilon_sum(rhs, epsilon_max):
                     where = "an inline `+ <epsilon>` pad"
                 else:
                     continue
-                seen.add(node.lineno)
+                seen.add(key)
                 findings.append(
                     Finding(
                         check="additive_epsilon_denominator",

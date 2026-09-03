@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse, _line_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- default-via-or trap (wave 14) --------------------------------------
 
@@ -401,13 +401,11 @@ def scan_default_via_or_trap(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_field_map(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
-                continue
-            if len(node.values) != 2:
                 continue
             # Skip ordinary logical-OR control flow (if/while/assert/ternary
             # tests, comprehension filters) -- the result is consumed only
@@ -420,84 +418,88 @@ def scan_default_via_or_trap(root: Path,
             # intermediate value is unobservable regardless of what either side evaluates to.
             if _is_wrapped_in_bool_call(node, parent_map):
                 continue
-            rhs = node.values[-1]
-            # Skip when RHS is itself "trivial" (None/empty/falsy).
-            if _is_trivial_default(rhs):
-                continue
-            # Skip documented-safe LHS callables (cpu_count, std/var, len).
-            lhs = node.values[0]
-            if _lhs_is_documented_safe(lhs):
-                continue
-            # Skip alias-key dual reads: d.get("notes") or d.get("note").
-            if _is_alias_key_fallback(lhs, rhs):
-                continue
-            # Skip getattr-alias dispatch: getattr(m, "predict_proba", None) or getattr(m, "predict", None).
-            if _is_getattr_alias_fallback(lhs, rhs):
-                continue
-            # Skip getattr(obj, "name", D) or D / d.get("key", D) or D -- the SAME default
-            # declared twice, provably a no-op widening (explicit-None coalesce), not a new
-            # fallback value.
-            if _lhs_default_matches_rhs(lhs, rhs):
-                continue
-            # Also skip when the LHS is wrapped in a non-mutating expression
-            # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
-            # `max(1, os.cpu_count() or 1)`). The BoolOp here is the `or`
-            # node, so check whether its left operand is wrapped in such a
-            # call-chain back up the tree.
-            sev = "Low"
-            detail = "default-via-or trap candidate"
-            lhs_inner = _unwrap_lhs(lhs)
-            if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
-                if _is_env_get_call(lhs_inner):
+            # Adjacent operand pairs, so a chain of any length is covered: `arg or fallback or 5`
+            # carries the flagged trap on its FIRST pair (a falsy-but-valid `arg` silently becomes
+            # `fallback`) and used to be skipped outright.
+            for position in range(len(node.values) - 1):
+                rhs = node.values[position + 1]
+                # Skip when RHS is itself "trivial" (None/empty/falsy).
+                if _is_trivial_default(rhs):
+                    continue
+                # Skip documented-safe LHS callables (cpu_count, std/var, len).
+                lhs = node.values[position]
+                if _lhs_is_documented_safe(lhs):
+                    continue
+                # Skip alias-key dual reads: d.get("notes") or d.get("note").
+                if _is_alias_key_fallback(lhs, rhs):
+                    continue
+                # Skip getattr-alias dispatch: getattr(m, "predict_proba", None) or getattr(m, "predict", None).
+                if _is_getattr_alias_fallback(lhs, rhs):
+                    continue
+                # Skip getattr(obj, "name", D) or D / d.get("key", D) or D -- the SAME default
+                # declared twice, provably a no-op widening (explicit-None coalesce), not a new
+                # fallback value.
+                if _lhs_default_matches_rhs(lhs, rhs):
+                    continue
+                # Also skip when the LHS is wrapped in a non-mutating expression
+                # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,
+                # `max(1, os.cpu_count() or 1)`). The BoolOp here is the `or`
+                # node, so check whether its left operand is wrapped in such a
+                # call-chain back up the tree.
+                sev = "Low"
+                detail = "default-via-or trap candidate"
+                lhs_inner = _unwrap_lhs(lhs)
+                if isinstance(rhs, ast.Constant) and isinstance(rhs.value, int) and rhs.value != 0:
+                    if _is_env_get_call(lhs_inner):
+                        sev = "Low"
+                        detail = (
+                            f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                            f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                            f"var, not a legitimate numeric 0."
+                        )
+                    else:
+                        sev = "P1"
+                        detail = (
+                            f"`or {rhs.value}`: caller passing the legitimate sentinel "
+                            f"0 is silently rewritten to {rhs.value}. Use "
+                            f"`x if x is not None else {rhs.value}` for None-only "
+                            f"defaulting."
+                        )
+                elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, float) and rhs.value != 0.0:
+                    if _is_env_get_call(lhs_inner):
+                        sev = "Low"
+                        detail = (
+                            f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
+                            f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
+                            f"var, not a legitimate numeric 0.0."
+                        )
+                    else:
+                        sev = "P1"
+                        detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
+                elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
+                    sev = "Low"
+                    detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."
+                elif isinstance(rhs, ast.Call) and _is_constructor_call(rhs):
                     sev = "Low"
                     detail = (
-                        f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
-                        f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
-                        f"var, not a legitimate numeric 0."
+                        "`or ClassName(...)`: constructor default -- LHS is "
+                        "almost certainly an `X | None` parameter and instances "
+                        "are always truthy, so only None triggers the fallback. "
+                        "Verify the class has no custom __bool__/__len__."
                     )
-                else:
-                    sev = "P1"
+                elif isinstance(rhs, ast.Call):
+                    sev = "P2"
                     detail = (
-                        f"`or {rhs.value}`: caller passing the legitimate sentinel "
-                        f"0 is silently rewritten to {rhs.value}. Use "
-                        f"`x if x is not None else {rhs.value}` for None-only "
-                        f"defaulting."
+                        "`or <call>(...)`: callable RHS runs the default-compute "
+                        "branch when caller passed a legitimate falsy value "
+                        "(empty list/df/array). Confirm semantics."
                     )
-            elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, float) and rhs.value != 0.0:
-                if _is_env_get_call(lhs_inner):
-                    sev = "Low"
-                    detail = (
-                        f"`or {rhs.value}`: LHS is os.environ.get()/os.getenv(), which returns a "
-                        f"string -- '0' is truthy, so this only fires on an empty-string/unset env "
-                        f"var, not a legitimate numeric 0.0."
-                    )
-                else:
-                    sev = "P1"
-                    detail = f"`or {rhs.value}`: caller passing 0.0 is silently rewritten."
-            elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, str) and rhs.value:
-                sev = "Low"
-                detail = f"`or {rhs.value!r}`: caller passing '' is rewritten. Often intentional."
-            elif isinstance(rhs, ast.Call) and _is_constructor_call(rhs):
-                sev = "Low"
-                detail = (
-                    "`or ClassName(...)`: constructor default -- LHS is "
-                    "almost certainly an `X | None` parameter and instances "
-                    "are always truthy, so only None triggers the fallback. "
-                    "Verify the class has no custom __bool__/__len__."
-                )
-            elif isinstance(rhs, ast.Call):
-                sev = "P2"
-                detail = (
-                    "`or <call>(...)`: callable RHS runs the default-compute "
-                    "branch when caller passed a legitimate falsy value "
-                    "(empty list/df/array). Confirm semantics."
-                )
-            findings.append(Finding(
-                check="default_via_or",
-                severity=sev,
-                file=rel,
-                line=node.lineno,
-                snippet=_line_text(src_lines, node.lineno),
-                detail=detail,
-            ))
+                findings.append(Finding(
+                    check="default_via_or",
+                    severity=sev,
+                    file=rel,
+                    line=node.lineno,
+                    snippet=_line_text(src_lines, node.lineno),
+                    detail=detail,
+                ))
     return findings

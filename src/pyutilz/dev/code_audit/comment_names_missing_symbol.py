@@ -8,7 +8,7 @@ import re
 import tokenize
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- prose that points at a symbol which does not exist ----------------------------------------
 #
@@ -33,10 +33,11 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 # either -- `is_nan()`, `to_plotly_json()` and `model_dump()` are library methods too. The
 # canonical case, a renamed private helper cited by its old private name, still matches.
 _BACKTICKED_CALL = re.compile(r"`(_[A-Za-z0-9_]+)\(\)`")
-_LINE_CITATION = re.compile(r"\b(?:at |on )?line[s]? (\d{2,5})\b", re.IGNORECASE)
+_LINE_CITATION = re.compile(r"\b(?:at |on )?line[s]? (\d+)\b", re.IGNORECASE)
 
-# Words that look like a call but name a language builtin or a convention, not a local symbol.
-_NOT_LOCAL = {"len", "int", "str", "dict", "list", "set", "print", "open", "range", "type"}
+# No builtin allowlist is needed: `_BACKTICKED_CALL` matches only `_`-prefixed names, and no
+# builtin has one. A list of bare builtin names was carried here and unioned into `known`, where it
+# matched nothing and, being non-empty, also made the empty-symbol-table bail-out unreachable.
 
 
 def _defined_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
@@ -59,7 +60,7 @@ def _defined_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
 
 
 def _comment_texts(py: Path) -> list[tuple[str, int]]:
-    """(text, line) for every comment and docstring in the file."""
+    """(text, first line of the text) for every comment and docstring in the file."""
     out: list[tuple[str, int]] = []
     try:
         source = py.read_text(encoding="utf-8", errors="replace")
@@ -77,8 +78,16 @@ def _comment_texts(py: Path) -> list[tuple[str, int]]:
             if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:
-                    out.append((doc, getattr(node, "lineno", 1)))
+                    # The docstring's OWN first line, not the `def`/`class` header's: a citation
+                    # twenty lines into a docstring must not be reported at the definition line
+                    # (and a module docstring's, at line 1 always).
+                    out.append((doc, getattr(node.body[0], "lineno", getattr(node, "lineno", 1))))
     return out
+
+
+def _citation_line(base_line: int, text: str, offset: int) -> int:
+    """The absolute line of the citation at ``offset`` inside a comment/docstring starting at ``base_line``."""
+    return base_line + text.count(chr(10), 0, offset)
 
 
 def scan_comment_names_missing_symbol(
@@ -97,24 +106,28 @@ def scan_comment_names_missing_symbol(
     helper from another module without being flagged.
     """
     findings: list[Finding] = []
-    known = _defined_names(root, exclude_dirs) | _NOT_LOCAL
+    known = _defined_names(root, exclude_dirs)
     if not known:
         return findings
 
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         for text, line in _comment_texts(py):
-            for name in dict.fromkeys(_BACKTICKED_CALL.findall(text)):
-                if name in known:
+            reported: set[str] = set()
+            for match in _BACKTICKED_CALL.finditer(text):
+                name = match.group(1)
+                if name in known or name in reported:
                     continue
+                reported.add(name)
+                cite_line = _citation_line(line, text, match.start())
                 findings.append(
                     Finding(
                         check="comment_names_missing_symbol",
                         severity="Low",
                         file=rel,
-                        line=line,
-                        snippet=_line_text(src_lines, line),
+                        line=cite_line,
+                        snippet=_line_text(src_lines, cite_line),
                         detail=(
                             f"prose here cites `{name}()`, which is defined nowhere in this tree. "
                             "A pointer that has rotted still reads as authoritative -- one such "
@@ -143,23 +156,29 @@ def scan_comment_cites_absolute_line(
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
-        src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
+        src_lines = _read_src_lines(py)
         for text, line in _comment_texts(py):
-            match = _LINE_CITATION.search(text)
-            if not match:
-                continue
-            findings.append(
-                Finding(
-                    check="comment_cites_absolute_line",
-                    severity="Low",
-                    file=rel,
-                    line=line,
-                    snippet=_line_text(src_lines, line),
-                    detail=(
-                        f"prose here cites absolute line {match.group(1)}. That is wrong as soon as "
-                        "anything is inserted above the target and no tool can check it -- one such "
-                        "citation was found 92 lines stale, itself a recurrence. Cite the symbol."
-                    ),
+            # Every citation in the comment, not just the first: `# see line 42 and line 99` names
+            # two rotting pointers and must report both.
+            seen: set[tuple[int, str]] = set()
+            for match in _LINE_CITATION.finditer(text):
+                cite_line = _citation_line(line, text, match.start())
+                key = (cite_line, match.group(1))
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append(
+                    Finding(
+                        check="comment_cites_absolute_line",
+                        severity="Low",
+                        file=rel,
+                        line=cite_line,
+                        snippet=_line_text(src_lines, cite_line),
+                        detail=(
+                            f"prose here cites absolute line {match.group(1)}. That is wrong as soon as "
+                            "anything is inserted above the target and no tool can check it -- one such "
+                            "citation was found 92 lines stale, itself a recurrence. Cite the symbol."
+                        ),
+                    )
                 )
-            )
     return findings

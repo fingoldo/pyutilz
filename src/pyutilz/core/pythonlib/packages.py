@@ -21,7 +21,20 @@ def ensure_installed(packages, sep: str = " ") -> None:
                 packages = packages.split(sep)
             else:
                 packages = [packages]
-        missing_packages = [pkg for pkg in packages if not importlib.util.find_spec(known_abbreviations.get(pkg, pkg))]
+        missing_packages = []
+        for pkg in packages:
+            import_name = known_abbreviations.get(pkg, pkg)
+            try:
+                found = importlib.util.find_spec(import_name) is not None
+            except Exception as e:
+                # find_spec raises ModuleNotFoundError for a DOTTED name whose parent is missing
+                # ("nosuch.child"). Outside the try that aborted the whole call at the CHECK stage,
+                # so none of the earlier packages got installed -- against this function's
+                # documented "failures are logged, not raised" contract.
+                logger.debug("Failed to check presence of package %s: %s", pkg, e)
+                found = False
+            if not found:
+                missing_packages.append(pkg)
         if missing_packages:
             mes = f"Installing missing packages: {missing_packages}"
             logger.info(mes)

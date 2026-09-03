@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from random import shuffle
 from typing import Any, Optional, Sequence
 
+from ..url_guard import _CheckedRedirectHandler, urlopen_checked
 from ._common import _ensure_http_scheme, logger
 
 # PROJECT IDIOM for a re-export package's submodules: `import <parent> as _facade` is ALLOWED and
@@ -22,6 +23,17 @@ from ._common import _ensure_http_scheme, logger
 # ``pyutilz.web.web.timeout`` / ``.IP_PROVIDERS`` / ``.get_ipinfo`` is seen here, where a from-import
 # would have snapshotted the original value).
 import pyutilz.web.web as _facade
+
+
+def _direct_urlopen(url: str, timeout: Optional[float] = None) -> Any:
+    """Non-proxied fetch for this module, with the http(s) allow-list applied to the URL AND to
+    every redirect hop.
+
+    A bare ``urllib.request.urlopen`` was used here before: its stock redirect handler follows a
+    hop to ``http``, ``https`` OR ``ftp``, so the caller-/config-supplied provider URL was checked
+    only at hop 0 and a 302 to ``ftp://internal-host/...`` was followed and its body parsed.
+    """
+    return urlopen_checked(url, timeout=timeout if timeout is not None else 30)
 
 
 def _proxy_opener(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_server: Optional[str], proxy_port: Optional[int]) -> Optional[Any]:
@@ -36,7 +48,11 @@ def _proxy_opener(proxy_user: Optional[str], proxy_pass: Optional[str], proxy_se
     # silently rewritten to http -- the same reasoning as the timeout guard below.
     proxy_type = _facade.proxy_type if _facade.proxy_type is not None else "http"
     proxies = _facade.make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port if proxy_port is not None else 80, proxy_type=proxy_type)
-    return _facade.urllib.request.build_opener(_facade.urllib.request.ProxyHandler(proxies))
+    # _CheckedRedirectHandler, not urllib's stock one: the stock handler follows a redirect to
+    # http, https OR ftp, so _ensure_http_scheme()'s allow-list held for hop 0 only and a provider
+    # (or a hijacked/expired provider domain) answering 302 -> ftp://internal-host/... was followed
+    # and its body parsed as geolocation data. Same guard cached_client.py already routes through.
+    return _facade.urllib.request.build_opener(_facade.urllib.request.ProxyHandler(proxies), _CheckedRedirectHandler())
 
 
 def get_external_ip(
@@ -48,10 +64,15 @@ def get_external_ip(
     address - the only reason a caller hands proxy credentials to an external-IP lookup at all. With no
     proxy_server the request goes out directly, as before.
     """
-    providers = _facade.IP_PROVIDERS
+    # list(), not the module-level object itself: shuffle() permutes IN PLACE, so every consumer
+    # of pyutilz.web.web.IP_PROVIDERS saw the order change on each call, and a concurrent
+    # get_external_ip() in another thread could iterate the list mid-permutation.
+    providers = list(_facade.IP_PROVIDERS)
     shuffle(providers)
     opener = _proxy_opener(proxy_user, proxy_pass, proxy_server, proxy_port)
-    urlopen = opener.open if opener is not None else _facade.urllib.request.urlopen
+    # urlopen_checked (not bare urllib.request.urlopen) on the direct path: it re-applies the
+    # scheme allow-list to every redirect hop, matching the proxied opener built above.
+    urlopen = opener.open if opener is not None else _direct_urlopen
 
     for source in providers:
         try:
@@ -157,7 +178,7 @@ def get_ipinfo(use_urllib: bool = False, url: str = "https://api.ipify.org?forma
 
     if use_urllib:
         try:
-            resp = _facade.urllib.request.urlopen(  # nosec B310 - scheme validated above; timeout= avoids blocking forever, see get_external_ip's identical fix -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
+            resp = _direct_urlopen(  # nosec B310 - scheme validated here AND on every redirect hop by _direct_urlopen; timeout= avoids blocking forever, see get_external_ip's identical fix -- `is not None`, not `or`: a caller-set timeout=0 must not be silently rewritten to 10
                 _ensure_http_scheme(url), timeout=_facade.timeout if _facade.timeout is not None else 10
             )
         except Exception as e:

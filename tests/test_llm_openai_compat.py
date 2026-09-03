@@ -134,20 +134,41 @@ class TestGenerate:
         assert p._last_usage["reasoning_tokens"] == 1
 
     @pytest.mark.asyncio
-    async def test_a_length_capped_empty_answer_is_a_truncation_not_an_empty_completion(self):
+    async def test_a_length_capped_empty_answer_under_response_format_is_re_issued_before_being_called_truncation(self):
         """Live 2026-09-02: z-ai/glm-4.7-flash spent all 15,775 output tokens on reasoning and returned no
-        text. Reported as an empty completion it reads as a broken model; it is a spent budget, and the
-        caller's documented move is to double max_tokens - so the truncation error must win the race."""
+        text - and the SAME prompt without ``response_format`` answered. Reframed 2026-09-03 (audit F38):
+        an EMPTY length-capped answer under response_format is the empty-completion failure wearing a
+        different finish_reason, so the one no-response_format re-issue must be taken first; a caller whose
+        truncation handler only doubles max_tokens otherwise re-buys the identical broken shape. Truncation
+        is still what the caller sees when that re-issue also comes back empty, and a truncation carrying
+        partial text (a genuine budget cutoff) is never re-issued at all - both asserted below."""
         from pyutilz.llm.exceptions import LLMTruncationError
 
+        empty_length_capped = _mock_response(body={"choices": [{"message": {"content": None}, "finish_reason": "length"}], "usage": {}})
         p = _make_provider()
         p._client = AsyncMock()
-        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": None}, "finish_reason": "length"}], "usage": {}}))
+        p._client.post = AsyncMock(return_value=empty_length_capped)
 
         with pytest.raises(LLMTruncationError) as caught:
             await p.generate("q", json_mode=True)
         assert caught.value.partial_text == ""
-        assert p._client.post.call_count == 1, "dropping response_format cannot buy back an exhausted budget"
+        assert p._client.post.call_count == 2, "the one response_format-free re-issue must be attempted"
+        assert "response_format" not in p._client.post.call_args_list[1].kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_a_length_capped_answer_with_partial_text_is_never_re_issued(self):
+        """A genuine budget cutoff that produced text is a truncation, full stop - re-issuing it would pay
+        twice for output the caller can already salvage from ``partial_text``."""
+        from pyutilz.llm.exceptions import LLMTruncationError
+
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"choices": [{"message": {"content": "half"}, "finish_reason": "length"}], "usage": {}}))
+
+        with pytest.raises(LLMTruncationError) as caught:
+            await p.generate("q", json_mode=True)
+        assert caught.value.partial_text == "half"
+        assert p._client.post.call_count == 1
 
     @pytest.mark.asyncio
     async def test_a_rejected_parameter_is_repaired_once_and_only_once(self):
