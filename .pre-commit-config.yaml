@@ -270,7 +270,7 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 241 source files as of 2026-09-03), so mypy-full.yml's reusable workflow now sets
+  # verified clean (0 errors; 242 source files as of 2026-09-03), so mypy-full.yml's reusable workflow now sets
   # `advisory: false` in CI (a real blocking gate there, matching mlframe's posture) -- this hook
   # mirrors that exactly, same pattern as black-filtered-blocking above. Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
