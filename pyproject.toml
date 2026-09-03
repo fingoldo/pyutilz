@@ -654,7 +654,7 @@ verbose = 1
 # node name, which codespell reads as a misspelling of "not in";
 # the sole confirmed false positive as of the 2026-07-05 codespell setup.
 [tool.codespell]
-ignore-words-list = "coo,caf,re-uses,re-using,unparseable,notin"
+ignore-words-list = "coo,caf,re-uses,re-using,unparseable,notin,pre-empt,pre-empts,nd"
 
 # MyPy type checker
 [tool.mypy]
