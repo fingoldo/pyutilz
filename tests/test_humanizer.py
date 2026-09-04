@@ -1,7 +1,9 @@
 """Tests for pyutilz.text.humanizer."""
 
-import re
 import random
+import re
+
+import pytest
 
 from pyutilz.text.humanizer import (
     strip_ai_patterns,
@@ -108,7 +110,11 @@ class TestStripAIPatterns:
         assert "new" in strip_ai_patterns("An innovative approach.")
 
     def test_cutting_edge(self):
-        assert "modern" in strip_ai_patterns("Cutting-edge technology.")
+        """Asserted whole rather than as a substring: the downgrade replaces the FIRST word, so
+        the sentence's capital is part of the correct result. This read
+        `assert "modern" in ...`, which passed against the lowercase `"modern technology."` the
+        capital-restore guard used to ship (see TestTheFirstCharacterKeepsItsCapital)."""
+        assert strip_ai_patterns("Cutting-edge technology.") == "Modern technology."
 
     def test_consequently(self):
         result = strip_ai_patterns("Consequently, we decided to proceed.")
@@ -442,4 +448,51 @@ class TestRemovalsDoNotStrandASpaceBeforePunctuation:
         """Scoped to `.` and `,` on purpose: French typography puts a space before `;` `:` `!` `?`,
         and this module runs on non-English text elsewhere."""
         text = "The question is this : who pays?"
+        assert strip_ai_patterns(text) == text
+
+
+class TestTheFirstCharacterKeepsItsCapital:
+    """Removing an opener promotes the next clause to first position, so the capital has to come
+    back -- whichever rule did the removing.
+
+    The guard used to also require `opener_removals`, which counts only the two opener-shaped
+    regexes. Four entries in `_AI_PATTERNS` remove an opener too and are not counted, so a
+    sentence could ship starting lowercase. That is the same defect the module already records for
+    `_FILLER_ADVERB_OPENER_RE` ("Counting only the hedging removals shipped 'Specifically, we need
+    X' as 'we need X'"): the counter has to be updated for every new rule, and forgetting is silent.
+    """
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("It is worth noting that we shipped it in three weeks.", "We shipped it in three weeks."),
+            ("It's worth noting that we shipped it in three weeks.", "We shipped it in three weeks."),
+            ("In conclusion, the approach works.", "The approach works."),
+            ("To summarize, the approach works.", "The approach works."),
+        ],
+    )
+    def test_an_uncounted_opener_removal_still_restores_the_capital(self, text, expected):
+        assert strip_ai_patterns(text) == expected
+
+    def test_a_counted_opener_removal_still_works(self):
+        """The rule that always worked, asserted alongside so a future refactor cannot fix one and
+        break the other."""
+        assert strip_ai_patterns("Certainly! I can help with that.") == "I can help with that."
+
+    def test_a_vocabulary_downgrade_at_the_start_is_recapitalised(self):
+        """A behaviour CHANGE, and a deliberate one. The old comment listed this as something the
+        `opener_removals` condition existed to prevent, but "solid pipelines matter." is the same
+        defect as any other lowercase opening -- restoring the capital is the fix, not a regression.
+        """
+        assert strip_ai_patterns("Robust pipelines matter.") == "Solid pipelines matter."
+
+    def test_a_deliberately_lowercase_input_is_left_alone(self):
+        """The counterweight, and the reason the guard keeps `started_capitalised`: this module runs
+        on text that is lowercase on purpose, and capitalising it would be an edit nobody asked for.
+        """
+        text = "we already write lowercase on purpose here."
+        assert strip_ai_patterns(text) == text
+
+    def test_an_untouched_sentence_is_returned_unchanged(self):
+        text = "Normal sentence, nothing to strip."
         assert strip_ai_patterns(text) == text
