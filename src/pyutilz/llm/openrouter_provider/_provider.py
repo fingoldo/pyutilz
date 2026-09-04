@@ -453,7 +453,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             logger.warning(
                 "OpenRouter account out of credits (HTTP 402). "
                 "Top up at https://openrouter.ai/credits - "
-                "retrying indefinitely until balance is restored..."
+                "retrying for a short grace window in case the balance is being topped up, "
+                "then giving up (PYUTILZ_LLM_BILLING_GRACE_SECONDS)..."
             )
 
     def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:

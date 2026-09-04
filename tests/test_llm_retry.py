@@ -179,3 +179,86 @@ class TestParseRetryAfter:
     def test_none_response_returns_none(self):
         from pyutilz.llm.openai_compat import parse_retry_after
         assert parse_retry_after(None) is None
+
+
+class TestBillingPausesGetAGraceWindow:
+    """HTTP 402 is retryable on purpose, but not for hours.
+
+    Measured against a live OpenRouter account with an empty balance: the shared policy retried a
+    402 fifty times with waits of 5, 10, 20, 40, 80, 160 and then 300s each -- about 3.8 hours of
+    wall clock for ONE call. A consumer running five concurrent workers wedges all five for most of
+    a working day, on a condition no amount of waiting resolves.
+
+    Keeping it retryable is right: a balance topped up mid-batch should resume rather than drop the
+    batch. Only the tail is wrong -- the first six attempts already span five minutes, and if the
+    balance was going to be restored it was restored long before attempt seven.
+    """
+
+    @staticmethod
+    def _state(status_code, elapsed, attempt=1):
+        class _Response:
+            def __init__(self, code):
+                self.status_code = code
+
+        class _HttpError(Exception):
+            def __init__(self, code):
+                self.response = _Response(code)
+
+        state = MagicMock()
+        state.outcome.exception.return_value = _HttpError(status_code)
+        state.seconds_since_start = elapsed
+        state.attempt_number = attempt
+        return state
+
+    def test_a_402_inside_the_window_keeps_retrying(self):
+        """The half of the old behaviour that was right: a top-up arriving in the first few minutes
+        must resume the call, not find it already abandoned."""
+        from pyutilz.llm._retry import _STOP, BILLING_GRACE_SECONDS
+
+        assert _STOP(self._state(402, elapsed=BILLING_GRACE_SECONDS - 1, attempt=6)) is False
+
+    def test_a_402_past_the_window_gives_up(self):
+        from pyutilz.llm._retry import _STOP, BILLING_GRACE_SECONDS
+
+        assert _STOP(self._state(402, elapsed=BILLING_GRACE_SECONDS + 1, attempt=7)) is True
+
+    def test_the_old_behaviour_would_still_be_retrying_an_hour_later(self):
+        """Pins the size of the problem, not just its direction. An hour into a billing pause the
+        previous policy had 30+ attempts left."""
+        from pyutilz.llm._retry import _STOP
+
+        assert _STOP(self._state(402, elapsed=3600, attempt=20)) is True
+
+    @pytest.mark.parametrize("status_code", [429, 500, 502, 503])
+    def test_other_retryable_statuses_keep_the_full_schedule(self, status_code):
+        """The counterweight, and the reason this is a window rather than a reclassification. A
+        rate-limit window or a provider outage genuinely can outlast five minutes, and the long
+        schedule exists for exactly those -- cutting them short would drop work that would have
+        succeeded."""
+        from pyutilz.llm._retry import _STOP
+
+        assert _STOP(self._state(status_code, elapsed=3600, attempt=20)) is False
+
+    def test_the_global_attempt_cap_still_applies_to_everything(self):
+        """The window only ever makes the policy stop EARLIER. A 429 that exhausts the attempt cap
+        must still stop, or this change would have turned a bounded retry into an unbounded one."""
+        from pyutilz.llm._retry import _STOP, MAX_RETRY_ATTEMPTS
+
+        if MAX_RETRY_ATTEMPTS == 0:
+            pytest.skip("attempts are configured as infinite; there is no cap to assert")
+        assert _STOP(self._state(429, elapsed=10, attempt=MAX_RETRY_ATTEMPTS + 1)) is True
+
+    def test_a_non_http_exception_is_not_mistaken_for_a_billing_pause(self):
+        """The predicate is duck-typed through `getattr` so this module keeps no httpx dependency.
+        That makes it worth asserting that an ordinary exception -- no `.response` at all -- does
+        not accidentally match."""
+        from pyutilz.llm._retry import _is_billing_pause
+
+        assert _is_billing_pause(ValueError("nothing to do with HTTP")) is False
+        assert _is_billing_pause(None) is False
+
+    def test_the_grace_window_is_configurable_and_defaults_sanely(self):
+        from pyutilz.llm._retry import BILLING_GRACE_SECONDS
+
+        assert BILLING_GRACE_SECONDS > 0
+        assert BILLING_GRACE_SECONDS <= 3600, "a grace window longer than an hour is the tail this fix removed"
