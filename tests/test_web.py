@@ -6,6 +6,11 @@ Tests cover web utility functions for HTTP operations.
 import pytest
 from unittest.mock import patch
 
+# pyutilz.web.web imports requests unconditionally, and requests belongs to the [web] extra that
+# CI's install line does not include -- it happens to arrive transitively today. State the
+# precondition rather than rely on that (tests/test_meta/test_optional_dep_preconditions.py).
+pytest.importorskip("requests")
+
 
 class TestWebUtilities:
     """Test web utility functions"""

@@ -684,13 +684,17 @@ ignore-private = true
 exclude = ["tests", "scripts", "docs", "build", "dist"]
 verbose = 1
 
-# Codespell. Moved from the CI/pre-commit CLI --ignore-words-list flag into structured config
-# (mirrors mlframe) so the ignore list lives in one place instead of being duplicated across
-# .pre-commit-config.yaml and ci.yml. "coo" = coordinate sparse-matrix format (core/matrix.py); "notin" = the ast.NotIn
-# node name, which codespell reads as a misspelling of "not in";
-# the sole confirmed false positive as of the 2026-07-05 codespell setup.
+# Codespell. THE single source of truth for the ignore list: CI runs `codespell --toml pyproject.toml`
+# and the pre-commit hook now passes that same `--toml` instead of repeating the list on its command
+# line. It used to carry its own, longer `--ignore-words-list=...`, and the two drifted -- words only
+# the hook knew about ("re-declared", "ser", "utilizaton", "statics") passed the local gate and failed
+# CI (2026-09-03). Never re-add an --ignore-words-list flag anywhere; extend this list instead.
+# "coo" = coordinate sparse-matrix format (core/matrix.py); "notin" = the ast.NotIn node name, which
+# codespell reads as a misspelling of "not in"; "re-declare"/"re-declared" are the deliberate hyphenated
+# prose spelling; "utilizaton" is a long-standing public attribute name on UtilizationMonitor; "ser" is
+# the conventional pandas Series abbreviation; "statics" is used as a noun for static assets.
 [tool.codespell]
-ignore-words-list = "coo,caf,re-uses,re-using,unparseable,notin,pre-empt,pre-empts,nd"
+ignore-words-list = "coo,caf,ser,statics,utilizaton,re-declare,re-declared,re-uses,re-using,unparseable,notin,pre-empt,pre-empts,nd"
 
 # MyPy type checker
 [tool.mypy]

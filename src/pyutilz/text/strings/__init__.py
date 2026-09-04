@@ -131,6 +131,10 @@ from .textentropy import (
 
 _LAZY_WEBTEXT_GLOBALS = frozenset({"inflect_engine", "nlp", "ascii_emojies", "unicode_emojies"})
 
+# The same set under the name the API-stability snapshot looks for (see webtext.py's declaration):
+# this facade forwards these names live, so it inherits their order-dependent binding too.
+__lazy_globals__ = _LAZY_WEBTEXT_GLOBALS
+
 # Explicit public surface: makes this facade's re-export intent self-documenting (rather than
 # relying on nothing but "this is __init__.py") and gives the self-scan code-audit
 # possibly_dead_import check an authoritative usage signal for names only ever consumed by

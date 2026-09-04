@@ -108,7 +108,7 @@ _PERMITTED_SYS_MODULES_WRITE_SITES: dict[str, str] = {
     "missing package) under pyutilz.<alias>, which is exactly what the production __init__ "
     "installs there anyway -- the key is occupied by an equivalent proxy before and after, so "
     "nothing later can observe a difference.",
-    "tests/test_system_audit_fixes.py:343": "the prefect_helpers fixture's stub install; its "
+    "tests/test_system_audit_fixes.py:352": "the prefect_helpers fixture's stub install; its "
     "finally block pops both the stub key and (when the fixture built it) "
     "pyutilz.system.scheduling.prefect plus the parent-package attribute.",
     "tests/test_web_extra.py:465": "a grequests stub inside a try/finally whose finally does " '`del sys.modules["grequests"]` before the assertions run.',

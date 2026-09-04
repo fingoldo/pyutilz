@@ -322,6 +322,9 @@ def test_f62_ordinary_emoji_still_removed() -> None:
 
 def test_f63_single_word_sentence_counts_as_last_word() -> None:
     pytest.importorskip("nltk")
+    # AdvancedTokenizer raises "AdvancedTokenizer requires spacy" at construction; nltk alone is
+    # not enough of a precondition, and CI installs neither.
+    pytest.importorskip("spacy")
     from pyutilz.text.tokenizers import AdvancedTokenizer
 
     tok = AdvancedTokenizer()

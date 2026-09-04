@@ -26,10 +26,25 @@ def test_every_subpackage_all_entry_is_attribute_reachable(subpackage):
     Six subpackages promised submodule names their package had no attribute for, so the three
     spellings of one import disagreed: `from pyutilz.data import pandaslib` and `import *` bound it,
     `pyutilz.data.pandaslib` raised AttributeError with no import-time warning.
+
+    The contract is that the PEP 562 hook BINDS the name, not that the name's optional third-party
+    dependency happens to be installed: `pyutilz.dev.dashlib` needs the `dash` extra (flask, dash),
+    which no CI leg installs, and `hasattr` swallowed nothing -- the ModuleNotFoundError propagated
+    out of the test. A missing THIRD-PARTY dep therefore counts as reachable; a missing
+    `pyutilz.*` submodule (exc.name inside our own package) is still the defect this test pins.
     """
     module = importlib.import_module(f"pyutilz.{subpackage}")
-    missing = sorted(name for name in getattr(module, "__all__", ()) if not hasattr(module, name))
-    assert not missing, f"pyutilz.{subpackage}.__all__ names unreachable as attributes: {missing}"
+    missing = []
+    for name in getattr(module, "__all__", ()):
+        try:
+            getattr(module, name)
+        except AttributeError:
+            missing.append(name)
+        except ImportError as exc:
+            failed = getattr(exc, "name", "") or ""
+            if failed == "pyutilz" or failed.startswith("pyutilz."):
+                missing.append(f"{name} (own submodule {failed} does not import: {exc})")
+    assert not sorted(missing), f"pyutilz.{subpackage}.__all__ names unreachable as attributes: {sorted(missing)}"
 
 
 @pytest.mark.parametrize("subpackage", ("data", "dev", "text", "database", "core"))

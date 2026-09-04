@@ -195,19 +195,28 @@ def test_empty_section_in_file_is_honoured_over_defaults(tmp_path):
 
 
 def test_monitor_survives_a_failing_sample(monkeypatch):
-    m = UtilizationMonitor(sleep_interval_seconds=0.01)
+    """The sampling thread must survive one raising sample and keep going.
+
+    The stub replaces ``_collect_sample`` OUTRIGHT rather than delegating to the real one after the
+    first call: the real sampler reaches psutil and nvidia-smi, and on a GPU-less CI runner it can
+    raise on every call, so ``n_sampling_errors`` counted whatever number of intervals happened to
+    elapse (32, 41, 54 on different legs) instead of the one injected failure. Waiting on an Event
+    for the second call, rather than sleeping a wall-clock 1.5s, also removes the timing race.
+    """
+    m = UtilizationMonitor(sleep_interval_seconds=0.001)
     calls = {"n": 0}
-    real = m._collect_sample
+    second_call_seen = threading.Event()
 
     def flaky():
         calls["n"] += 1
         if calls["n"] == 1:
             raise ValueError("bad nvidia-smi field")
-        return real()
+        m.n_samples += 1
+        second_call_seen.set()
 
     monkeypatch.setattr(m, "_collect_sample", flaky)
     m.start()
-    time.sleep(1.5)
+    assert second_call_seen.wait(30), "the sampling thread died on the failing sample"
     m.stop(timeout=10)
     assert calls["n"] >= 2, calls  # the thread survived the failing sample
     assert m.n_sampling_errors == 1

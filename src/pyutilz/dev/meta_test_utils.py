@@ -275,8 +275,19 @@ def capture_module_surface(mod: object) -> dict[str, str]:
     than crashing the snapshot.
     """
     out: dict[str, str] = {}
+    # Names the module itself declares as lazily-populated caches (``__lazy_globals__``). Whether
+    # one still holds its ``None`` placeholder or the real object depends on whether some earlier
+    # test in the same process happened to trigger the lazy init, so their captured kind is pinned
+    # to "value" regardless -- see the comment on the plain-value branch below for the full
+    # rationale. Without this, ``webtext.nlp`` flipped from "value" to a spaCy Language
+    # ``callable(text, ...)`` (a CALLABLE, so the value-branch narrowing did not cover it) on
+    # whichever CI leg both installs spaCy and runs a sentencizing test first (2026-09-03).
+    lazy_globals = frozenset(getattr(mod, "__lazy_globals__", ()))
     for name in dir(mod):
         if name.startswith("_"):
+            continue
+        if name in lazy_globals:
+            out[name] = "value"
             continue
         try:
             obj = getattr(mod, name)

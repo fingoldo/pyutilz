@@ -401,7 +401,11 @@ class TestCliToolUseTripwire:
         provider = claude_code_provider.ClaudeCodeProvider.__new__(claude_code_provider.ClaudeCodeProvider)
         provider.model = "test-model"
         provider.timeout = 5
-        provider.semaphore = asyncio.Semaphore(1)
+        # Set _max_concurrent and let base.LazySemaphore build the Semaphore on first access,
+        # inside the running loop. Constructing asyncio.Semaphore(1) here instead defeated exactly
+        # the lazy-bind the descriptor exists for: on 3.8/3.9 Semaphore.__init__ eagerly calls
+        # get_event_loop(), which raises "There is no current event loop" in a sync test body.
+        provider._max_concurrent = 1
         provider._claude_path = "claude"
         provider._reset_per_call_state = lambda: None
         with patch.object(claude_code_provider.subprocess, "Popen", lambda *a, **k: _FakeProc(events)):

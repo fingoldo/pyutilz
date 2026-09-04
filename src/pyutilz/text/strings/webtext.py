@@ -17,6 +17,11 @@ inflect_engine = None
 nlp = None  # Spacy language model, loaded lazily
 ascii_emojies, unicode_emojies = None, None
 
+# Declared for the API-stability snapshot (``pyutilz.dev.meta_test_utils.capture_module_surface``):
+# these four are lazily-populated caches, so whether one currently holds ``None`` or the real object
+# depends on what ran earlier in the same process. Their captured kind is pinned, not observed.
+__lazy_globals__ = frozenset({"inflect_engine", "nlp", "ascii_emojies", "unicode_emojies"})
+
 punctuation, eos = string.punctuation, ("!", ".", "?")
 
 

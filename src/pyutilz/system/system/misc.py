@@ -457,8 +457,12 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
     :param str locale_name: Desired locale name, or empty string for OS default locale.
     :param tuple only_fields: Desired locale fields, or None for all fields.
 
-    >>> get_locale_settings(locale_name="en_US.utf8", only_fields=("decimal_point", "thousands_sep"))
-    {'decimal_point': '.', 'thousands_sep': ','}
+    The example queries the "C" locale because it is the one locale name the C library is required
+    to provide everywhere; a named locale such as "en_US.utf8" is only present if the OS has that
+    locale generated, which the Linux CI images do not -- so the previous example failed there.
+
+    >>> get_locale_settings(locale_name="C", only_fields=("decimal_point", "thousands_sep"))
+    {'decimal_point': '.', 'thousands_sep': ''}
 
     WARNING: ``locale.setlocale`` mutates PROCESS-WIDE C-library locale state (not thread-local)
     and the CPython ``locale`` module is documented upstream as not thread-safe for concurrent

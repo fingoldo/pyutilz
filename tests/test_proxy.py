@@ -6,6 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# The proxy helpers import requests unconditionally, and requests belongs to the [web] extra that
+# CI's install line does not include -- it happens to arrive transitively today. State the
+# precondition rather than rely on that (tests/test_meta/test_optional_dep_preconditions.py).
+pytest.importorskip("requests")
+
 from pyutilz.web.proxy import (
     DecodoProvider,
     DecodoSubscription,

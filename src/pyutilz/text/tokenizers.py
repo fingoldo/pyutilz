@@ -45,6 +45,10 @@ from collections import defaultdict
 spacy = None
 nlp = None
 
+# See webtext.py: pinned for the API-stability snapshot because ``nlp`` is bound lazily, so its
+# observed kind depends on whether spaCy is installed and on what ran earlier in the process.
+__lazy_globals__ = frozenset({"nlp"})
+
 try:
     import spacy as _spacy
     spacy = _spacy
