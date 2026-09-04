@@ -63,7 +63,62 @@ def log_retry(retry_state) -> None:
 # (5 min), plus random jitter to avoid thundering herd.
 RETRY_WAIT = wait_exponential(multiplier=2, min=5, max=300) + wait_random(0, 5)
 
-_STOP = stop_never if MAX_RETRY_ATTEMPTS == 0 else stop_after_attempt(MAX_RETRY_ATTEMPTS)
+_STOP_ATTEMPTS = stop_never if MAX_RETRY_ATTEMPTS == 0 else stop_after_attempt(MAX_RETRY_ATTEMPTS)
+
+# ── Billing pauses get a grace window, not the full schedule ────────────────────────────────────
+#
+# HTTP 402 is retryable on purpose: a balance that runs out mid-batch is often topped up within
+# minutes, and dropping the batch would be worse than pausing it. The tail is what was wrong.
+#
+# Measured on a live run against an empty OpenRouter balance: the shared policy retried a 402 fifty
+# times with waits of 5, 10, 20, 40, 80, 160 and then 300s each -- about 3.8 HOURS of wall clock for
+# one call. A consumer with five concurrent workers wedges all five for most of a working day, on a
+# condition no amount of waiting resolves. The first six attempts already span five minutes; if the
+# balance was going to be restored, it was restored long before attempt seven.
+#
+# A window in ELAPSED TIME rather than an attempt count, because "wait five minutes for a top-up" is
+# the actual intent: it stays true if anyone retunes the backoff curve, while an attempt count
+# silently changes meaning the moment the waits change.
+try:
+    BILLING_GRACE_SECONDS: float = float(os.environ.get("PYUTILZ_LLM_BILLING_GRACE_SECONDS", "300"))
+except ValueError:
+    logger.warning(
+        "PYUTILZ_LLM_BILLING_GRACE_SECONDS=%r is not a number; falling back to 300.",
+        os.environ.get("PYUTILZ_LLM_BILLING_GRACE_SECONDS"),
+    )
+    BILLING_GRACE_SECONDS = 300.0
+if BILLING_GRACE_SECONDS < 0:
+    logger.warning("PYUTILZ_LLM_BILLING_GRACE_SECONDS=%s is negative; falling back to 300.", BILLING_GRACE_SECONDS)
+    BILLING_GRACE_SECONDS = 300.0
+
+
+def _is_billing_pause(exc: BaseException | None) -> bool:
+    """True for an HTTP 402 from any provider.
+
+    Duck-typed through ``getattr`` rather than importing httpx: this module is imported by every
+    provider, including ones with no HTTP client at all, and a hard dependency here would be a new
+    import edge for the sake of one status code.
+    """
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 402
+
+
+def _stop_policy(retry_state) -> bool:
+    """The shared attempt cap, plus an earlier cut-off for billing pauses."""
+    if _is_billing_pause(retry_state.outcome.exception() if retry_state.outcome else None):
+        elapsed = retry_state.seconds_since_start or 0.0
+        if elapsed >= BILLING_GRACE_SECONDS:
+            logger.error(
+                "Giving up after %.0fs of HTTP 402 (account out of credits). "
+                "Retrying further cannot help: top up the balance and re-run. "
+                "Set PYUTILZ_LLM_BILLING_GRACE_SECONDS to change the wait.",
+                elapsed,
+            )
+            return True
+    return _STOP_ATTEMPTS(retry_state)
+
+
+_STOP = _stop_policy
 
 # Common tenacity kwargs for retry on transient errors.
 # Each provider supplies its own `retry=` predicate.
