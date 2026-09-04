@@ -63,9 +63,9 @@ class TestTimeoutWrapper:
             return "should not reach here"
 
         # Should return None when timeout occurs (decorator catches TimeoutError)
-        start = time.time()
+        start = time.perf_counter()
         result = slow_function()
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
 
         assert result is None, "Should return None on timeout"
         assert elapsed < 2.0, f"Should timeout around 1s, took {elapsed:.2f}s"
@@ -79,9 +79,9 @@ class TestTimeoutWrapper:
             time.sleep(0.1)
             return "completed"
 
-        start = time.time()
+        start = time.perf_counter()
         result = fast_function()
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
 
         assert result == "completed"
         assert elapsed < 1.0  # Should complete quickly, not wait for full timeout

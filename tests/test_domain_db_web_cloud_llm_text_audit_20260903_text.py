@@ -122,10 +122,21 @@ def test_f07_high_entropy_patterns_do_not_backtrack_catastrophically() -> None:
     """A long non-matching run must stay linear (each alternative is prefix + one bounded class)."""
     import time
 
-    payload = "sk-" + "A" * 20000 + " "
-    t0 = time.perf_counter()
-    redact_secrets(payload + "x" * 20000)
-    assert time.perf_counter() - t0 < 2.0
+    # The bound is a RATIO against a baseline measured on the same box, not an absolute 2.0s: what
+    # the test means is "cost grows with input length, it does not explode", and an absolute second
+    # count is a statement about the runner (a cold container, a shared runner, an emulated arch).
+    def _redaction_seconds(run_length: int) -> float:
+        payload = "sk-" + "A" * run_length + " " + "x" * run_length
+        t0 = time.perf_counter()
+        redact_secrets(payload)
+        return time.perf_counter() - t0
+
+    small = _redaction_seconds(2500)
+    large = _redaction_seconds(20000)
+    # Eight times the input. Linear (or even quadratic) stays far under this; catastrophic
+    # backtracking on the same alternatives is exponential in the run length and cannot.
+    budget = max(small, 0.001) * 200
+    assert large < budget, f"redaction of an 8x longer run took {large:.4f}s against a {budget:.4f}s budget scaled from {small:.4f}s - the alternatives are backtracking"
 
 
 def test_f07_ordinary_prose_still_not_redacted() -> None:
