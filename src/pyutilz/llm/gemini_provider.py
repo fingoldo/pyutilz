@@ -175,6 +175,7 @@ class GeminiProvider(LLMProvider):
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 0,
+        images: list[str] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output, using Gemini's NATIVE JSON mode.
 
@@ -183,6 +184,14 @@ class GeminiProvider(LLMProvider):
         branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
         output that extract_json then mis-parsed looked like a model failure.
         """
+        # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
+        # this provider's own JSON path builds a text-only request, so accepting the argument and dropping it would answer a question the caller asked
+        # about a picture the model never saw -- wrong, and with nothing in the output to show it.
+        if images:
+            raise NotImplementedError(
+                f"{type(self).__name__} has no vision path; pass images to an OpenAI-compatible " "provider (e.g. OpenRouter) or send the document as text."
+            )
+
         return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True)
 
     def get_session_cost(self) -> dict[str, Any]:

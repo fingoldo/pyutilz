@@ -702,6 +702,7 @@ class LLMProvider(ABC):
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 0,
+        images: list[str] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
@@ -709,7 +710,11 @@ class LLMProvider(ABC):
         calls ``generate``, then parses via ``extract_json``. Providers with a
         hard JSON-mode toggle (OpenAI-compat) override to pass it through.
         """
-        return await self._generate_json_via(prompt, system, temperature, max_tokens)
+        # `images` is forwarded ONLY when non-empty. A provider that does not implement vision has
+        # no `images` parameter on its `generate`, and passing `images=None` to it would be a
+        # TypeError on every ordinary text call -- so the default path must not mention it at all.
+        extra = {"images": images} if images else {}
+        return await self._generate_json_via(prompt, system, temperature, max_tokens, **extra)
 
     async def generate_batch(
         self,

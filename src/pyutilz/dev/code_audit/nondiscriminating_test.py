@@ -68,7 +68,12 @@ def _has_any_check(func: ast.AST, asserting_calls: frozenset[str]) -> bool:
         if isinstance(node, ast.Call):
             fn = node.func
             name = fn.attr if isinstance(fn, ast.Attribute) else (fn.id if isinstance(fn, ast.Name) else "")
-            if name in asserting_calls or name.startswith("assert"):
+            # lstrip("_") so a PRIVATE assertion helper counts. Test suites name their shared
+            # checkers _assert_traceback_preserved / _assert_np_state_equal as often as they
+            # name them assert_..., and matching only the public spelling flagged a whole file of
+            # single-line tests that delegate to one such helper -- the exact refactor this scanner
+            # should encourage, reported as the defect it is the cure for.
+            if name in asserting_calls or name.lstrip("_").startswith("assert"):
                 return True
     return False
 

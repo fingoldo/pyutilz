@@ -7,7 +7,7 @@ name: MyPy
 # `speedups` was missing here until 2026-09-03, which type-checked every orjson call site in
 # the orjson-ABSENT branch while ci.yml ran the tests in the orjson-present one).
 # A real blocking gate (no continue-on-error) since 2026-07-13: `mypy src/pyutilz` verified
-# clean (0 errors, 248 source files as of 2026-09-03, with warn_unreachable now on) -- the
+# clean (0 errors, 249 source files as of 2026-09-03, with warn_unreachable now on) -- the
 # backlog is closed, same posture as mlframe's mypy-full.yml.
 #
 # Run inline rather than through fingoldo/py-ci-shared's reusable mypy-full.yml (which it used

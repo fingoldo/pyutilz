@@ -204,10 +204,26 @@ def strip_ai_patterns(text: str) -> str:
     # Fix sentence starts that lost their capital after a removal.
     text = re.sub(r"(?<=\.\s)([a-zа-яё])", lambda m: m.group(1).upper(), text)
     text = text.strip()
-    # Removing an opener promotes the following clause to first position; restore the capital only
-    # when an opener was actually removed AND the input itself opened with one, so neither a
-    # deliberately lowercase input nor a plain vocabulary downgrade gets recapitalised.
-    if opener_removals and started_capitalised and text[:1].islower():
+    # Removing an opener promotes the following clause to first position, so the capital has to be
+    # restored. The condition is deliberately about the RESULT, not about which rule fired.
+    #
+    # 2026-09-04: it used to also require `opener_removals`, which counts only the two
+    # opener-shaped regexes. Four entries in `_AI_PATTERNS` remove an opener as well and are not
+    # counted, so they shipped a lowercase first character::
+    #
+    #     'It is worth noting that we shipped it.' -> 'we shipped it.'
+    #     'In conclusion, the approach works.'     -> 'the approach works.'
+    #
+    # This is the same defect the `_FILLER_ADVERB_OPENER_RE` comment above records for a third
+    # rule ("Counting only the hedging removals shipped 'Specifically, we need X' as 'we need X'").
+    # That fix added one more rule to the count; the count itself was the wrong thing to condition
+    # on, because it has to be updated every time a rule is added and the omission is silent.
+    #
+    # The two concerns the old comment raised still hold. A deliberately lowercase input is
+    # excluded by `started_capitalised`. A vocabulary downgrade at position 0 ("Robust pipelines
+    # matter." -> "solid pipelines matter.") is now recapitalised too, and that is a fix rather
+    # than a regression -- shipping a sentence that starts lowercase is the same defect either way.
+    if started_capitalised and text[:1].islower():
         text = text[:1].upper() + text[1:]
     return text
 
