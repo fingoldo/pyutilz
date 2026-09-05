@@ -265,9 +265,9 @@ class TestTimeoutWrapperExceptions:
             assert hangs() is None
 
         # An unrelated fast call must still return its real result promptly, not None.
-        start = time.time()
+        start = time.perf_counter()
         result = quick()
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
         assert result == 42, f"quick() should return 42 despite 15 outstanding leaked timeout threads, got {result!r}"
         assert elapsed < 1.0, f"quick() should complete almost immediately, took {elapsed:.2f}s"
 

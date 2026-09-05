@@ -35,8 +35,15 @@ from typing import Any as _Any, List as _List, Optional, Union
 from ._common import remove_nas, summarize_devices, dict_to_tuple
 from pyutilz.system.psutil_compat import has_psutil_function as _has_psutil_function  # private alias: keeps the facade's public surface unchanged
 
-class _BinaryNotFoundError(OSError):
-    """Raised by :func:`_resolve_binary` when a probe's executable is not on PATH."""
+class _BinaryNotFoundError(FileNotFoundError):
+    """Raised by :func:`_resolve_binary` when a probe's executable is not on PATH.
+
+    Subclasses FileNotFoundError, not OSError: "the binary is not there" is exactly what the
+    stdlib raises when subprocess cannot find it, and every caller here was already written
+    against that shape. Widening it to a bare OSError silently bypassed those handlers - GPU
+    probing on a machine without nvidia-smi went from a clean None to an exception on every
+    call, so hardware monitoring collected nothing at all on any GPU-less host.
+    """
 
 
 def _resolve_binary(name: str) -> str:

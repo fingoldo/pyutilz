@@ -182,14 +182,26 @@ class TestRedactSecretsQuotedKeys:
 # ---------------------------------------------------------------------------
 
 
-class TestSafeParseRecursionError:
-    def test_deeply_nested_file_is_skipped_not_fatal(self, tmp_path):
-        from pyutilz.dev.code_audit._base import _safe_parse, clear_parse_cache
+def _raise_recursion_error(*_args, **_kwargs):
+    """Stands in for ast.parse on input too deeply nested for this interpreter's stack."""
+    raise RecursionError("maximum recursion depth exceeded during compilation")
 
-        deep = tmp_path / "generated.py"
-        deep.write_text("x = " + " + ".join(["a"] * 20000) + "\n", encoding="utf-8")
-        clear_parse_cache()
-        assert _safe_parse(deep) is None
+
+class TestSafeParseRecursionError:
+    def test_a_recursionerror_is_skipped_not_fatal(self, tmp_path, monkeypatch):
+        """The contract is that RecursionError is caught, not that some file triggers it.
+
+        How deep an expression the parser survives varies by interpreter version and platform, so an
+        input tuned to blow the stack on one leg parses fine on another - the old form asserted the
+        parser's limits rather than the handler, and failed on twelve of the matrix's legs.
+        """
+        from pyutilz.dev.code_audit import _base
+
+        src = tmp_path / "generated.py"
+        src.write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(_base.ast, "parse", _raise_recursion_error)
+        _base.clear_parse_cache()
+        assert _base._safe_parse(src) is None
 
     def test_a_valid_file_still_parses(self, tmp_path):
         from pyutilz.dev.code_audit._base import _safe_parse, clear_parse_cache

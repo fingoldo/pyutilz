@@ -448,6 +448,18 @@ decision a project takes rather than inherits on upgrade. Name them in
 - ``scan_thresholds_below_documented_result``: a ``test_*`` function
   whose docstring states "7 of 8" while its assertion accepts ``>= 6``.
 
+- ``scan_wall_clock_assertion``, ``scan_sleep_then_assert``,
+  ``scan_deleted_attribute_read_unconditionally``: a test whose PASS/FAIL is a
+  property of the machine rather than of the code - an assertion on an elapsed
+  duration, a real sleep followed by an assertion on what a background worker
+  managed in it, and an attribute read unguarded before being deleted to
+  exercise its absence. Drawn from four rounds of CI-only failures that were
+  green on the dev box. Two neighbouring shapes were measured on this repo's
+  ~4900 tests and REJECTED: an oversized generated input whose expected outcome
+  is failure fired twice and both were caps the test itself configured, not the
+  interpreter's limits; and an assertion whose expected value comes from
+  ``sys.version_info``/``platform``/``__version__`` fired zero times.
+
 - ``scan_docstring_numbers_moved_to_config`` (OPT-IN): a docstring still
   spelling out threshold values the body no longer contains, because they
   were made configurable and the prose was not updated. The prose is then
@@ -551,6 +563,7 @@ from .provenance_flow import scan_record_field_flow
 from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .machine_dependent_test import scan_deleted_attribute_read_unconditionally, scan_sleep_then_assert, scan_wall_clock_assertion
 from .domain_boundary import BoundarySymbol, scan_domain_vocabulary_leak
 from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
 from .bare_except import scan_bare_except
@@ -676,6 +689,9 @@ __all__ = [
     "scan_inconsistent_filter",
     "scan_regex_integer_parse",
     "scan_thresholds_below_documented_result",
+    "scan_wall_clock_assertion",
+    "scan_sleep_then_assert",
+    "scan_deleted_attribute_read_unconditionally",
     "scan_domain_vocabulary_leak",
     "BoundarySymbol",
     "scan_readonly_to_numpy_mutation",

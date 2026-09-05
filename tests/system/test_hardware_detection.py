@@ -462,9 +462,16 @@ class TestHardwareMonitor:
 
         monitor = UtilizationMonitor(sleep_interval_seconds=0.5, gpu_ids=[])
         monitor.start()
-        time.sleep(2)  # Let it collect some samples
+        # Poll for the first sample rather than sleeping a fixed 2s: how many samples land in a
+        # fixed interval is set by how much of it the sampling thread was scheduled for, so a
+        # wall-clock wait makes the assertions below a statement about the runner. The ceiling is
+        # a diagnostic bound; a working monitor satisfies this on its first pass.
+        deadline = time.monotonic() + 30.0
+        while monitor.n_samples < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
         monitor.stop()
 
+        assert monitor.n_samples >= 1, "the sampling thread collected nothing in 30s"
         avg_util = monitor.get_average_utilization()
         assert isinstance(avg_util, dict)
         assert "cpu_utilizaton_percent" in avg_util

@@ -113,7 +113,7 @@ def compute_concentrations(
 
 
 def add_weighted_aggregates(
-    columns_selector: cs.Selector,
+    columns_selector: "cs.Selector",  # quoted: older polars has no cs.Selector, and this annotation is evaluated at import
     weighting_columns: Iterable,
     fpref: str = "",
     fields_remap: Optional[dict] = None,

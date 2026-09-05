@@ -53,6 +53,7 @@ from .provenance_flow import scan_record_field_flow
 from .claimed_invariants import scan_unenforced_docstring_invariants
 from .partial_fix import scan_partial_guard_across_siblings, scan_inconsistent_filter
 from .measurement_hygiene import scan_regex_integer_parse, scan_thresholds_below_documented_result
+from .machine_dependent_test import scan_deleted_attribute_read_unconditionally, scan_sleep_then_assert, scan_wall_clock_assertion
 from .domain_boundary import scan_domain_vocabulary_leak
 from .readonly_to_numpy_mutation import scan_readonly_to_numpy_mutation
 from .hardcoded_test_path import scan_hardcoded_absolute_path_in_test
@@ -216,6 +217,9 @@ register_scanner("partial_guard_across_siblings", scan_partial_guard_across_sibl
 register_scanner("inconsistent_filter", scan_inconsistent_filter)
 register_scanner("regex_integer_parse_truncation", scan_regex_integer_parse)
 register_scanner("threshold_below_documented_result", scan_thresholds_below_documented_result)
+register_scanner("wall_clock_assertion", scan_wall_clock_assertion)
+register_scanner("sleep_then_assert", scan_sleep_then_assert)
+register_scanner("deleted_attribute_read_unconditionally", scan_deleted_attribute_read_unconditionally)
 register_scanner("domain_vocabulary_leak", scan_domain_vocabulary_leak)
 register_scanner("readonly_to_numpy_mutation", scan_readonly_to_numpy_mutation)
 register_scanner("source_text_assertion", scan_source_text_assertions)

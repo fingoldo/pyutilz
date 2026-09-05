@@ -541,9 +541,11 @@ class TestDelayFunctions:
         from pyutilz.pythonlib import imitate_delay
         import time
 
-        start = time.time()
+        # perf_counter, not time(): the wall clock is not monotonic and can step under NTP, and on
+        # Windows its tick has historically been ~15.6ms - coarser than the intervals timed here.
+        start = time.perf_counter()
         imitate_delay(min_delay_seconds=0, max_delay_seconds=0)
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
 
         # Upper bound raised from 0.5s to 5s: the meaningful contract is "a zero delay does not
         # sleep for a nonzero interval", and 5s still catches any real regression (e.g. a
@@ -556,9 +558,11 @@ class TestDelayFunctions:
         from pyutilz.pythonlib import imitate_delay
         import time
 
-        start = time.time()
+        # perf_counter, not time(): the 0.01s lower bound below is finer than the wall clock's tick
+        # on Windows, so measuring it with time() made the assertion the clock's granularity.
+        start = time.perf_counter()
         imitate_delay(min_delay_seconds=0.01, max_delay_seconds=0.02)
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
 
         # The LOWER bound is the real contract (the delay actually happened) and stays tight.
         # The upper bound is loosened to 5s for the same flakiness reason as the zero-delay case

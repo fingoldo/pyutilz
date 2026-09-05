@@ -79,6 +79,23 @@ by 2026-09-03 (audit F10):
   only when ``tests/test_code_audit.py`` was split into ``tests/code_audit/``: ``_guarded`` accepts
   a guard anywhere in the MODULE, and in an 11306-line file an unrelated test's ``len(findings) ==``
   was covering them. The split is what made the check honest here, not what broke these tests.
+* ``wall_clock_assertion`` x9, and ``sleep_then_assert`` / ``deleted_attribute_read_unconditionally``
+  at ZERO -- the three machine-dependence checks, wired after a fourth round of CI-only failures
+  that were green on the dev box. The two at zero were DRAINED by that change (three monitor tests
+  that slept a fixed 0.5-2s and then asserted on what a sampling thread had managed meanwhile now
+  poll for the sample itself) and must stay there; a new entry under either is a real defect, not a
+  refresh. The nine under ``wall_clock_assertion`` are deliberate performance smoke tests, each
+  already carrying its own in-code justification, and each bounded far above the regression it
+  guards: ``test_cache_concurrency``'s 50 lock-free lookups, ``test_monitoring`` /
+  ``test_monitoring_extra``'s three timeout-wrapper bounds, ``test_pythonlib``'s two
+  ``imitate_delay`` pairs, ``test_similarity_coverage_gate_batch_kernel``'s 3000-candidate batch
+  query and ``test_tokenizers_extra``'s cubic-tokenizer repro. They are baselined rather than
+  deleted because each does pin a real regression, and rather than exempted because there is no
+  spelling of "took under N seconds" that is a statement about the code -- the value of the check
+  is the ratchet on the NEXT one. The two genuinely fragile members of the nine were fixed instead:
+  the tightest bound in the suite (a 2.0s absolute cap on regex backtracking) is now a ratio
+  against a baseline measured on the same box, and every ``elapsed`` here is measured with
+  ``perf_counter`` rather than the non-monotonic, ~15.6ms-ticking ``time.time()``.
 * ``hardcoded_absolute_path_in_test`` x4 -- ``is_local_path``'s whole job is classifying
   absolute Windows paths, and the ``psutil`` disk-partition mocks must carry a real mountpoint
   string; neither touches the filesystem.
@@ -99,8 +116,10 @@ TESTS_DIR = Path(__file__).resolve().parent.parent
 _BASELINE_PATH = Path(__file__).resolve().parent / "_code_audit_tests_baseline.json"
 
 _TEST_QUALITY_CHECKS = [
+    "deleted_attribute_read_unconditionally",
     "except_skip_masks_call_under_test",
     "hardcoded_absolute_path_in_test",
+    "sleep_then_assert",
     "nondiscriminating_test",
     "source_text_assertion",
     "stale_test_spy_arity",
@@ -108,6 +127,7 @@ _TEST_QUALITY_CHECKS = [
     "unenforced_docstring_invariant",
     "vacuous_assertion",
     "vacuous_empty_pattern_match",
+    "wall_clock_assertion",
 ]
 
 

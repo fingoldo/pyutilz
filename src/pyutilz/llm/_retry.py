@@ -8,6 +8,8 @@ By default retries up to ``MAX_RETRY_ATTEMPTS`` times (configurable via the
 ``PYUTILZ_LLM_MAX_RETRIES`` environment variable, 0 = infinite).
 """
 
+from __future__ import annotations  # PEP 604 in a runtime-evaluated annotation below; the floor is 3.8
+
 import logging
 import os
 
