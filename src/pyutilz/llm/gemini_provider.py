@@ -10,6 +10,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._messages import build_gemini_parts
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
 
 logger = logging.getLogger(__name__)
@@ -184,15 +185,11 @@ class GeminiProvider(LLMProvider):
         branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
         output that extract_json then mis-parsed looked like a model failure.
         """
-        # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
-        # this provider's own JSON path builds a text-only request, so accepting the argument and dropping it would answer a question the caller asked
-        # about a picture the model never saw -- wrong, and with nothing in the output to show it.
-        if images:
-            raise NotImplementedError(
-                f"{type(self).__name__} has no vision path; pass images to an OpenAI-compatible " "provider (e.g. OpenRouter) or send the document as text."
-            )
-
-        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True)
+        # Gemini IS a vision model, and since 2026-09-04 this provider inlines pictures properly
+        # rather than refusing them. Forwarded only when non-empty, so a text-only call reaches
+        # `generate` with the identical argument list it always did.
+        extra = {"images": images} if images else {}
+        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True, **extra)
 
     def get_session_cost(self) -> dict[str, Any]:
         """Return cumulative token usage and cost breakdown for this session.
@@ -233,14 +230,27 @@ class GeminiProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
+        images: list[str] | None = None,
     ) -> str:
-        """Generate text using Gemini."""
+        """Generate text using Gemini.
+
+        Args:
+            prompt: The user message to send.
+            system: Optional system instruction.
+            temperature: Sampling temperature.
+            max_tokens: Output-token ceiling; 0 uses the model's own maximum.
+            json_mode: Ask for `application/json` back.
+            images: ``data:`` URIs to show the model, inlined as google-genai ``Part`` objects --
+                neither the OpenAI ``image_url`` shape nor Anthropic's ``source`` block, both of
+                which this SDK rejects. Absent or empty, ``contents`` stays the plain string it has
+                always been and the request body is unchanged.
+        """
         self._reset_per_call_state()
         if max_tokens <= 0:
             max_tokens = self.max_output_tokens
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
-            contents = prompt
+            contents = build_gemini_parts(prompt, images)
 
             config_kwargs: dict[str, Any] = {
                 "temperature": temperature,

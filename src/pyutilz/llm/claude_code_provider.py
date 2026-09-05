@@ -22,6 +22,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
+from pyutilz.llm._messages import images_on_disk
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
@@ -446,8 +447,26 @@ class ClaudeCodeProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
+        images: list[str] | None = None,
     ) -> str:
-        """Generate text using Claude Code SDK (preferred) or CLI fallback."""
+        """Generate text using Claude Code SDK (preferred) or CLI fallback.
+
+        Args:
+            prompt: The user message to send.
+            system: Optional system prompt.
+            temperature: Sampling temperature.
+            max_tokens: Output-token ceiling; 0 derives one.
+            json_mode: Append a "respond with JSON only" steer to the prompt.
+            images: ``data:`` URIs, written to temporary files whose paths are appended to the
+                prompt -- see `pyutilz.llm._messages.images_on_disk`. The CLI has no image
+                argument, but the agent behind it can open files.
+        """
+        if images:
+            # Recursed rather than inlined so the temporary files stay on disk for the WHOLE call:
+            # the `with` block must still be open when the CLI reads them, and closing it around a
+            # prompt-building line would delete every picture before the subprocess started.
+            with images_on_disk(images) as (image_prompt, _paths):
+                return await self.generate(prompt + image_prompt, system, temperature, max_tokens, json_mode)
         if json_mode:
             json_hint = "\n\nRespond with valid JSON only. No markdown, no explanation. Start with { and end with }."
             system = (system or "") + json_hint
@@ -824,15 +843,15 @@ class ClaudeCodeProvider(LLMProvider):
         max_tokens: int = 0,
         images: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Generate structured JSON output."""
-        # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
-        # the Claude Code CLI takes a prompt string and no image parts, so accepting the argument and dropping it would answer a question the caller asked
-        # about a picture the model never saw -- wrong, and with nothing in the output to show it.
-        if images:
-            raise NotImplementedError(
-                f"{type(self).__name__} has no vision path; pass images to an OpenAI-compatible " "provider (e.g. OpenRouter) or send the document as text."
-            )
+        """Generate structured JSON output.
 
+        Args:
+            prompt: The user message to send.
+            system: Optional system prompt; the JSON steer is appended to it.
+            temperature: Sampling temperature.
+            max_tokens: Output-token ceiling; 0 derives one.
+            images: ``data:`` URIs to show the model, forwarded to `generate`.
+        """
         json_system = (system or "") + "\n\nRespond with valid JSON only. No markdown, no explanation."
 
         text = await self.generate(
@@ -840,6 +859,7 @@ class ClaudeCodeProvider(LLMProvider):
             system=json_system,
             temperature=temperature,
             max_tokens=max_tokens,
+            images=images,
         )
 
         # Delegates to the shared parser (as base._generate_json_via does) instead of

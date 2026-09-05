@@ -9,6 +9,7 @@ import anthropic
 from tenacity import retry, retry_if_exception, retry_if_exception_type
 
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.llm._messages import build_anthropic_content
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
@@ -234,6 +235,7 @@ class AnthropicProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 0,
         thinking: bool | str = False,
+        images: list[str] | None = None,
     ) -> str:
         """Generate text using Claude.
 
@@ -243,6 +245,16 @@ class AnthropicProvider(LLMProvider):
             temperature: Sampling temperature passed straight through to the API.
             max_tokens: Output-token ceiling; 0 means "derive it", and any value is clamped
                 to what the model's context leaves after the prompt.
+            images: URLs or ``data:`` URIs to show the model, in Anthropic's own block shape --
+                NOT the OpenAI ``image_url`` form, which this API rejects with a 400. Absent or
+                empty, the request body is byte-identical to the text-only one it has always sent.
+
+                This parameter was missing while `LLMProvider.generate_json` already forwarded
+                `images` to `generate`, so on any deployment configured for Anthropic a posting
+                with a picture attachment raised ``TypeError: generate() got an unexpected keyword
+                argument 'images'`` -- the whole evaluation, not just the picture. Found by a live
+                integration test on 2026-09-04; no unit test could see it, because the parameter's
+                absence is exactly what the mocks were modelled on.
             thinking: Extended-thinking toggle. ``False`` (default) keeps the
                 previous behaviour exactly. ``True`` uses the medium budget; an
                 effort string ("minimal"/"low"/"medium"/"high") selects one
@@ -257,7 +269,10 @@ class AnthropicProvider(LLMProvider):
             max_tokens = min(self.max_output_tokens, 21000)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
-            messages = [{"role": "user", "content": prompt}]
+            # A plain string when there are no images, so a text-only request body is byte-identical
+            # to the one this provider has always sent. See `build_anthropic_content`: Anthropic's
+            # image blocks are its own shape, and the OpenAI `image_url` part is rejected outright.
+            messages = [{"role": "user", "content": build_anthropic_content(prompt, images)}]
 
             kwargs = {
                 "model": self.model,

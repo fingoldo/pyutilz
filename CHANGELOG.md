@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Vision support on EVERY provider, not only the OpenAI-compatible ones. `images=` already reached
+  `LLMProvider.generate_json`, and `base.generate_json` forwards it to `generate` -- so on Anthropic
+  it raised `TypeError: generate() got an unexpected keyword argument 'images'`, taking the whole
+  call down rather than only the picture, and Gemini and Claude Code raised `NotImplementedError` by
+  design. Each API wants a different envelope for the same two pieces, which is why forwarding the
+  OpenAI shape could never have worked: Anthropic takes
+  `{"type": "image", "source": {"type": "base64", "media_type": ..., "data": ...}}`, google-genai
+  takes `types.Part.from_bytes(...)`, and the Claude Code CLI takes no image argument at all -- but
+  the agent behind it can open files, so each picture is written to a temporary file whose path the
+  prompt names, and the files are removed when the call returns. `_messages.build_anthropic_content`,
+  `_messages.build_gemini_parts` and `claude_code_provider._images_on_disk` hold the three shapes;
+  `_messages.split_data_uri` is shared, so "malformed" means one thing rather than three. With no
+  images every one of them returns the plain string it always did, so a text-only request body is
+  byte-identical. A malformed or un-inlinable entry is DROPPED with a warning rather than sent: one
+  bad attachment must not fail an evaluation that is still worth completing without that picture.
+  Found by a live integration test in a downstream project, not by a unit test -- the mocks were
+  modelled on the same absent parameter.
 - Ten further `code_audit` scanners, shipped in five batches: `column_no_write_path` (a table column that is read but never written by any code path); `patch_target_is_a_reexport` (a `mock.patch` aimed at a re-exported name, which leaves the real definition unpatched); `test_asserts_against_production_constant` and `source_text_assertion` (test-quality defects -- an assertion that restates the production constant it should pin, and an assertion made against source TEXT rather than behaviour); `sentinel_cached_as_answer` and `shielded_resource_release_race` (state that outlives the failure that made it); `count_then_fetch_same_table`, `sql_selects_unread_column` and `sql_aggregate_before_cast` (work the database does twice or not at all); and `docstring_numbers_moved_to_config` (a docstring still naming a number whose home is now a config value).
 - `pyutilz[speedups]` (orjson), included in `[all]` and installed by CI. Nothing imports orjson unconditionally - every use site falls back to the stdlib encoder - so the group only ever makes an existing path faster, and it was previously undeclared, meaning the measured 25-32x `json_pg_dumps` win reached only the environments that happened to have it.
 - CI now runs on Windows and macOS, not just Linux: `ci.yml`'s test matrix is ubuntu-latest x windows-latest x macos-latest across all seven supported Python versions (3.8 and 3.9 on macos-15-intel, since setup-python publishes no arm64 build for them). The library has real platform-specific code - wmi/pywin32 probes, a cp1251 console path, POSIX permission bits, portalocker file locking - and a Linux-only matrix could never exercise the other two thirds of those branches. Every `run:` block in that job is pinned to bash so the Windows leg parses them the same way. `py-ci-shared`'s own self-ci.yml got the same three-OS matrix.
