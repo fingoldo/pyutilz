@@ -91,3 +91,16 @@ def test_the_window_is_measured_on_a_monotonic_clock(monkeypatch):
     assert log_throttle("k", 60.0) is False
     fake["now"] += 2.0
     assert log_throttle("k", 60.0) is True
+
+def test_the_first_call_passes_on_a_freshly_booted_machine(monkeypatch):
+    """`time.monotonic()` is time since boot on some platforms, so a small value is normal.
+
+    Encoding "never logged" as 0.0 made the very first call compare `now - 0.0` against the
+    interval: on a runner up for less than a minute the first log was throttled away, and only
+    there - the macOS legs failed while every other leg, on a long-lived host, passed.
+    """
+    import pyutilz.dev.logginglib as logginglib
+
+    monkeypatch.setattr(logginglib.time, "monotonic", lambda: 12.0)
+    assert log_throttle("fresh-boot", min_interval=60.0) is True
+    assert log_throttle("fresh-boot", min_interval=60.0) is False

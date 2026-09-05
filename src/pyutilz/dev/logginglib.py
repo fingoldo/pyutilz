@@ -595,8 +595,11 @@ def log_throttle(key: str, min_interval: float = 60.0) -> bool:
     """
     with _log_throttle_lock:
         now = time.monotonic()
-        last = _log_throttle_last.get(key, 0.0)
-        if now - last >= min_interval:
+        # Absence, not 0.0, marks "never logged": time.monotonic() is time since boot on some
+        # platforms, so on a freshly started machine `now - 0.0` is smaller than any sensible
+        # interval and the FIRST call would be throttled - silently, and only there.
+        last = _log_throttle_last.get(key)
+        if last is None or now - last >= min_interval:
             _log_throttle_last[key] = now
             return True
         return False
