@@ -48,26 +48,61 @@ class TestLogRetry:
 class TestMaxRetryAttemptsEnvFallback:
     """Malformed PYUTILZ_LLM_MAX_RETRIES must fall back to the default (50), not crash."""
 
-    def _reload_retry_module(self):
-        import importlib
-        import pyutilz.llm._retry as retry_module
+    def _fresh_retry_module(self):
+        """A separate, UNREGISTERED copy of ``pyutilz.llm._retry``, executed from its own spec.
 
-        return importlib.reload(retry_module)
+        This used to call ``importlib.reload``, which re-executes the module IN PLACE. The env var it
+        re-reads does not only set ``MAX_RETRY_ATTEMPTS``: the module derives ``_STOP_ATTEMPTS =
+        stop_after_attempt(MAX_RETRY_ATTEMPTS)`` (and ``_STOP`` over it) from it at import time. So
+        re-executing under ``PYUTILZ_LLM_MAX_RETRIES=7`` left the SHARED module capped at 7 attempts
+        after monkeypatch had put the environment back, and every later test asserting the full
+        50-attempt schedule saw a stop policy that gives up at attempt 7 -- order-dependent, hence a
+        single reddening leg under pytest-randomly. Same remedy as
+        ``test_meta/test_api_stability.py::_fresh_module_copy``: read the env-driven constants off a
+        throwaway copy and leave the shared one alone.
+        """
+        import importlib.util
+
+        spec = importlib.util.find_spec("pyutilz.llm._retry")
+        assert spec is not None and spec.loader is not None
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+        return fresh
 
     def test_invalid_env_value_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("PYUTILZ_LLM_MAX_RETRIES", "not-a-number")
-        retry_module = self._reload_retry_module()
+        retry_module = self._fresh_retry_module()
         assert retry_module.MAX_RETRY_ATTEMPTS == 50
 
     def test_valid_env_value_is_respected(self, monkeypatch):
         monkeypatch.setenv("PYUTILZ_LLM_MAX_RETRIES", "7")
-        retry_module = self._reload_retry_module()
+        retry_module = self._fresh_retry_module()
         assert retry_module.MAX_RETRY_ATTEMPTS == 7
 
     def test_missing_env_value_defaults_to_50(self, monkeypatch):
         monkeypatch.delenv("PYUTILZ_LLM_MAX_RETRIES", raising=False)
-        retry_module = self._reload_retry_module()
+        retry_module = self._fresh_retry_module()
         assert retry_module.MAX_RETRY_ATTEMPTS == 50
+
+    def test_reading_the_env_var_leaves_the_shared_stop_policy_alone(self, monkeypatch):
+        """The env-var tests above must not reconfigure the module every other test imports.
+
+        `MAX_RETRY_ATTEMPTS` is not the only thing the env var decides: `_STOP_ATTEMPTS`, and `_STOP`
+        over it, are built from it at import time. Re-executing the SHARED module under a smaller cap
+        therefore made `_STOP` give up at attempt 7 for the remainder of the session, so whether
+        `test_other_retryable_statuses_keep_the_full_schedule` (attempt 20, expecting False) passed
+        depended on pytest-randomly's ordering.
+        """
+        import pyutilz.llm._retry as shared
+
+        monkeypatch.setenv("PYUTILZ_LLM_MAX_RETRIES", "7")
+        assert self._fresh_retry_module().MAX_RETRY_ATTEMPTS == 7
+        assert shared.MAX_RETRY_ATTEMPTS == 50
+        state = MagicMock()
+        state.outcome.exception.return_value = ValueError("transient")
+        state.seconds_since_start = 3600
+        state.attempt_number = 20
+        assert shared._STOP(state) is False
 
 
 class TestRetryConfiguration:

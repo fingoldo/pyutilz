@@ -262,6 +262,35 @@ class TestDecimalColumnsBinF06:
         assert "d" in bins.columns
         assert bins["d"].null_count() == 0
 
+    def test_decimal_column_is_cast_before_floor_on_every_polars_version(self, monkeypatch):
+        """`.floor()` on a Decimal expression raises InvalidOperationError ("floor can only be used on
+        numeric types") on the polars releases installable on the 3.8 floor, and silently works on the
+        newer one this box has - so passing here proves nothing about the version that fails. What is
+        version-independent is WHAT floor is applied to: capture the receiver expression and read its
+        output dtype against the input frame. It must be Float64, never Decimal, whichever polars is
+        installed."""
+        df = _decimal_frame()
+        receivers = []
+        original_floor = pl.Expr.floor
+
+        def recording_floor(self):
+            receivers.append(self)
+            return original_floor(self)
+
+        monkeypatch.setattr(pl.Expr, "floor", recording_floor)
+        bin_numerical_columns(df, target_columns=["t"], num_bins=4)
+
+        assert receivers, "binning built no floor() at all - the capture would pass vacuously"
+        assert [df.select(expr).dtypes[0] for expr in receivers] == [pl.Float64] * len(receivers)
+
+    def test_decimal_column_bins_exactly_like_the_same_values_as_float(self):
+        """The cast is only admissible if it changes nothing: the same numbers typed as Float64 must
+        land in the same bins."""
+        decimal_bins, _, _, _, _ = bin_numerical_columns(_decimal_frame(), target_columns=["t"], num_bins=4)
+        float_frame = _decimal_frame().with_columns(pl.col("d").cast(pl.Float64))
+        float_bins, _, _, _, _ = bin_numerical_columns(float_frame, target_columns=["t"], num_bins=4)
+        assert decimal_bins["d"].to_list() == float_bins["d"].to_list()
+
 
 # F07 -------------------------------------------------------------------------------------------
 
