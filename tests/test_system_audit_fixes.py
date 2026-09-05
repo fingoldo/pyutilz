@@ -239,6 +239,30 @@ def _wait_for_samples(monitor: UtilizationMonitor, minimum: int = 1, timeout: fl
     return monitor.n_samples >= minimum
 
 
+def test_a_gpuless_host_still_collects_samples(monkeypatch):
+    """A missing nvidia-smi is an absence, not a per-sample failure.
+
+    The hardened `_resolve_binary` raised a plain OSError, which slipped past the
+    `except FileNotFoundError` every probe was written against: GPU-less hosts - most CI
+    runners among them - went from a clean None to an exception on every single sample, so
+    the monitor recorded nothing at all while stop() still returned cleanly.
+    """
+    from pyutilz.system import hardware_monitor
+    from pyutilz.system.system import probing
+
+    def _absent(name: str) -> str:
+        raise probing._BinaryNotFoundError(f"{name!r} not found on PATH")
+
+    monkeypatch.setattr(probing, "_resolve_binary", _absent)
+    assert probing.get_nvidia_smi_info(include_stats=True) is None
+
+    m = UtilizationMonitor(sleep_interval_seconds=0.01)
+    monkeypatch.setattr(hardware_monitor, "get_nvidia_smi_info", probing.get_nvidia_smi_info)
+    with m:
+        assert _wait_for_samples(m), "a GPU-less host collected no samples"
+    assert m.n_sampling_errors == 0
+
+
 def test_monitor_is_restartable_as_a_context_manager():
     m = UtilizationMonitor(sleep_interval_seconds=0.01)
     with m:
