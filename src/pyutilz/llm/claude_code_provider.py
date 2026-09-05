@@ -823,8 +823,15 @@ class ClaudeCodeProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output."""
+        # Accepted for Liskov (the base class offers it) and NOT honoured: the Claude Code CLI exposes no reasoning-effort control,
+        # so an effort request is logged rather than dropped in silence -- a caller who asked for a
+        # harder think and got the ordinary one has somewhere to look.
+        if thinking is not None:
+            logger.info("%s ignores thinking=%r: no reasoning-effort control on this provider", type(self).__name__, thinking)
+
         # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
         # the Claude Code CLI takes a prompt string and no image parts, so accepting the argument and dropping it would answer a question the caller asked
         # about a picture the model never saw -- wrong, and with nothing in the output to show it.

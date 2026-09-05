@@ -19,7 +19,8 @@ from tenacity import retry, retry_if_exception
 from ._messages import build_chat_messages
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
-from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
+from pyutilz.llm._thinking import ThinkingControlMixin
+from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
     _NON_RETRYABLE_STATUSES,
     _JSONDecodeError,
@@ -53,7 +54,7 @@ class Pricing(NamedTuple):
     cache_hit: Optional[float] = None
 
 
-class OpenAICompatibleProvider(LLMProvider):
+class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
     """Base for providers exposing an OpenAI-compatible chat/completions API.
 
     Subclasses MUST define:
@@ -386,35 +387,6 @@ class OpenAICompatibleProvider(LLMProvider):
         Defaults to empty so callers see vanilla OpenAI-compatible behavior.
         """
         return {}
-
-    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:
-        """Return the request-body fragment that toggles thinking mode.
-
-        ``thinking`` accepts BOTH a plain bool (legacy) AND an effort
-        string (``"low"`` / ``"medium"`` / ``"high"`` / ``"minimal"``).
-        Subclasses normalise to the upstream's actual schema:
-
-          * Effort-string upstreams (OpenRouter's unified ``reasoning``
-            field, OpenAI ``reasoning_effort``) consume the literal
-            string; ``True`` is mapped to a sensible default
-            (``"medium"``).
-          * Boolean-flag upstreams (DeepSeek V4 ``thinking.type``)
-            coerce a non-empty effort string to ``True`` so
-            ``thinking="high"`` still enables on those models.
-
-        Provider-specific. Default returns ``None`` so callers see
-        vanilla OpenAI-compatible behavior (no thinking control).
-        DeepSeek V4 overrides to return ``{"thinking": {"type": ...}}``;
-        OpenRouter overrides to return
-        ``{"reasoning": {"effort": ...}}``.
-        """
-        return None
-
-    @staticmethod
-    def _normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
-        """Delegates to :func:`pyutilz.llm.base.normalize_thinking` -- kept as a
-        method so existing subclass overrides and call sites keep working."""
-        return normalize_thinking(thinking)
 
     async def generate_stream(
         self,
@@ -943,6 +915,7 @@ class OpenAICompatibleProvider(LLMProvider):
         # FIFTH, matching `LLMProvider.generate_json`: after this override's own extra parameters it
         # would be a Liskov violation, and the same position would mean different things per provider.
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
         force_json_mode: bool = True,
         json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -954,7 +927,12 @@ class OpenAICompatibleProvider(LLMProvider):
         LLM must be able to emit non-JSON sentinels like ``[REFUSE]``:
         falls back to prompt-only JSON steering plus ``extract_json``.
         """
-        return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=force_json_mode, json_schema=json_schema, images=images)
+        # `thinking` only when asked for: this provider's `generate` defaults it to None and a
+        # model with no reasoning control must not receive the field at all.
+        extra: dict[str, Any] = {} if thinking is None else {"thinking": thinking}
+        return await self._generate_json_via(
+            prompt, system, temperature, max_tokens, json_mode=force_json_mode, json_schema=json_schema, images=images, **extra
+        )
 
     # 2026-08-02 near-duplicate-function-body finding: generate_batch/process_request used to be
     # duplicated here near-verbatim from LLMProvider.generate_batch, EXCEPT the duplicate's except

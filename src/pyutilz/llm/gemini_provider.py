@@ -176,6 +176,7 @@ class GeminiProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output, using Gemini's NATIVE JSON mode.
 
@@ -184,6 +185,12 @@ class GeminiProvider(LLMProvider):
         branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
         output that extract_json then mis-parsed looked like a model failure.
         """
+        # Accepted for Liskov (the base class offers it) and NOT honoured: this provider's JSON path sends no reasoning-effort field,
+        # so an effort request is logged rather than dropped in silence -- a caller who asked for a
+        # harder think and got the ordinary one has somewhere to look.
+        if thinking is not None:
+            logger.info("%s ignores thinking=%r: no reasoning-effort control on this provider", type(self).__name__, thinking)
+
         # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
         # this provider's own JSON path builds a text-only request, so accepting the argument and dropping it would answer a question the caller asked
         # about a picture the model never saw -- wrong, and with nothing in the output to show it.

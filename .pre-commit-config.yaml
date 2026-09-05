@@ -297,7 +297,7 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 250 source files as of 2026-09-03), and CI's mypy-full.yml is a
+  # verified clean (0 errors; 251 source files as of 2026-09-05), and CI's mypy-full.yml is a
   # real blocking gate too (matching mlframe's posture) -- this hook mirrors it exactly, same
   # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
   # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate

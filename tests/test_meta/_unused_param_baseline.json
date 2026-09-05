@@ -18,7 +18,6 @@
     "llm/openai_compat.py::OpenAICompatibleProvider._compute_billed_output::reasoning_tokens": "Base-class hook: the OpenAI-family default is reasoning-included-in-completion, so only completion_tokens is billed; xAI's override adds reasoning_tokens.",
     "llm/openai_compat.py::OpenAICompatibleProvider._extra_request_body::model": "Base-class hook returning vanilla OpenAI-compatible behaviour (no extra fields); OpenRouter's override uses model for routing options.",
     "llm/openai_compat.py::OpenAICompatibleProvider._get_timeout::model": "Base-class hook returning a flat 120s default; per-model timeouts are an override's job (OpenRouter keys off model).",
-    "llm/openai_compat.py::OpenAICompatibleProvider._thinking_request_field::thinking": "Base-class hook: vanilla OpenAI-compatible upstreams have no thinking-mode field, so the default returns None; subclasses normalise thinking to their own schema.",
     "llm/openai_compat.py::OpenAICompatibleProvider._track_provider_specific_response::data": "Documented no-op hook; OpenRouter's override reads data for generation id / upstream provider / resolved model.",
     "llm/openai_compat.py::OpenAICompatibleProvider._track_provider_specific_usage::usage": "Documented no-op hook; OpenRouter's override reads usage.cost.",
     "llm/openai_provider.py::OpenAIProvider._compute_billed_output::reasoning_tokens": "Override kept explicit for the same base-class hook signature: OpenAI bills reasoning inside completion_tokens, so the extra count must NOT be added.",
@@ -32,6 +31,7 @@
     "text/similarity/basics.py::normalize_sentence::bSports": "Superseded public parameter, now documented in the docstring as ignored: sports club-suffix handling moved to the caller-supplied abbreviations list. Kept so positional callers keep working.",
     "text/strings/jsonutils.py::_PreSerializedJson.dumps::obj": "psycopg2 Json adapter interface: psycopg2 calls dumps(obj), but this adapter wraps text that was already serialised, so obj is what adapted parses FROM. Documented in the docstring.",
     "text/tokenizers.py::AdvancedTokenizer.tokenize_db_reviews::tokens": "Legacy signature, now documented in the docstring as ignored: corpus statistics accumulate onto this instance's own counters via tokenize(), never into a caller-supplied dict.",
-    "web/web/config.py::connect::kwargs": "Deliberate **kwargs sink so a caller forwarding a wider settings dict is not rejected; only the m_* names are configuration this function owns."
+    "web/web/config.py::connect::kwargs": "Deliberate **kwargs sink so a caller forwarding a wider settings dict is not rejected; only the m_* names are configuration this function owns.",
+    "llm/_thinking.py::ThinkingControlMixin._thinking_request_field::thinking": "Base-class hook: vanilla OpenAI-compatible upstreams have no thinking-mode field, so the default returns None; subclasses normalise thinking to their own schema."
   }
 }
