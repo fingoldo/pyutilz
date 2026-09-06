@@ -433,10 +433,32 @@ class TestNormalizeThinking:
             ("HIGH", (True, "high")),
             ("low", (True, "low")),
             (0, (False, None)),
+            # 2026-09-06: the words that MEAN off used to fall through to the effort branch,
+            # producing (True, "off") -- reasoning enabled at an effort level no upstream
+            # defines. OpenRouter answers that with 400 reasoning.effort: Invalid option, and
+            # "off" is exactly what a caller reaches for (glossum's validation_thinking
+            # documents it as the way to disable reasoning). Verified against the live API.
+            ("off", (False, None)),
+            ("OFF", (False, None)),
+            (" Off ", (False, None)),
+            ("none", (False, None)),
+            ("false", (False, None)),
+            ("no", (False, None)),
+            ("disabled", (False, None)),
+            # Negative control: a real effort level must still get through untouched.
+            ("minimal", (True, "minimal")),
+            ("medium", (True, "medium")),
         ],
     )
     def test_normalize(self, value, expected):
         assert OpenAICompatibleProvider._normalize_thinking(value) == expected
+
+    def test_the_shared_helper_agrees_with_the_provider_method(self):
+        """Two copies of one contract is how the halves drift; this pins them together."""
+        from pyutilz.llm.base import normalize_thinking
+
+        for value in (False, True, "", "off", "none", "medium", "HIGH", 0, 1):
+            assert normalize_thinking(value) == OpenAICompatibleProvider._normalize_thinking(value), value
 
 
 class TestThinkingRequestField:

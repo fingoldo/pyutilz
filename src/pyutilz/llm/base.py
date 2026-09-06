@@ -250,12 +250,23 @@ _REFUSAL_PATTERNS = [
 ]
 
 
+# Spellings that mean "no reasoning", as opposed to an effort level. The empty string is
+# here because a config value left blank means the same thing as absent.
+_THINKING_OFF = frozenset({"", "off", "none", "false", "no", "disabled"})
+
 def normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
     """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
 
-    - ``False`` / empty string -> ``(False, None)`` (explicitly off)
+    - ``False`` / empty string / ``"off"`` / ``"none"`` / ``"disabled"`` -> ``(False, None)``
     - ``True`` -> ``(True, None)`` (on, provider picks its default effort)
-    - non-empty str -> ``(True, str.lower())`` (on with an explicit effort)
+    - any other non-empty str -> ``(True, str.lower())`` (on with an explicit effort)
+
+    2026-09-06: the words meaning "off" used to fall through to the effort branch, so
+    ``thinking="off"`` produced ``(True, "off")`` -- reasoning ENABLED, at an effort level no
+    upstream defines. OpenRouter answers that with ``400 reasoning.effort: Invalid option``,
+    and "off" is exactly the spelling a caller reaches for: glossum's ``validation_thinking``
+    documents it as the way to disable reasoning. Measured against the live API before and
+    after.
 
     Lives here rather than on one provider class because every provider that
     supports reasoning has to agree on what the caller's argument MEANS, even
@@ -264,7 +275,7 @@ def normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
     ``thinking.budget_tokens``). A second copy of this contract is how the two
     halves drift apart.
     """
-    if thinking is False or thinking == "":
+    if thinking is False or (isinstance(thinking, str) and thinking.strip().lower() in _THINKING_OFF):
         return (False, None)
     if thinking is True:
         return (True, None)
@@ -703,29 +714,17 @@ class LLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
-        thinking: bool | str | int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
         Appends a "respond with valid JSON only" steer to the system prompt,
         calls ``generate``, then parses via ``extract_json``. Providers with a
         hard JSON-mode toggle (OpenAI-compat) override to pass it through.
-
-        ``thinking`` is the same argument ``generate`` takes -- ``True``, or an effort string
-        ("minimal"/"low"/"medium"/"high") -- and reaches the provider by the same route. It is here
-        because a caller who wants a harder think does not thereby want unstructured output: a
-        structured task is often the one that most deserves the reasoning budget. Forwarded only
-        when set, so a provider whose ``generate`` has no such parameter is unaffected.
         """
         # `images` is forwarded ONLY when non-empty. A provider that does not implement vision has
         # no `images` parameter on its `generate`, and passing `images=None` to it would be a
         # TypeError on every ordinary text call -- so the default path must not mention it at all.
-        # `thinking` follows the same rule for the same reason.
-        extra: dict[str, Any] = {}
-        if images:
-            extra["images"] = images
-        if thinking is not None:
-            extra["thinking"] = thinking
+        extra = {"images": images} if images else {}
         return await self._generate_json_via(prompt, system, temperature, max_tokens, **extra)
 
     async def generate_batch(

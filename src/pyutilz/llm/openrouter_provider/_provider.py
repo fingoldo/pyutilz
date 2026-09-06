@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -80,6 +80,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     _base_url = "https://openrouter.ai/api/v1"
     _provider_name = "OpenRouter"
     _default_max_tokens = 8192
+    # Models whose ceiling has already been reported as falling back, so the warning in
+    # max_output_tokens fires once per model rather than on every read.
+    _warned_default_ceiling: ClassVar[set[str]] = set()
     _default_context_window = 128_000
 
     # Per-call OpenRouter metadata -- contextvar-backed for the same reason as the parent's
@@ -271,9 +274,27 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         Pulls ``top_provider.max_completion_tokens`` from the catalogue when
         available — ignored by some upstreams but a hard cap on others.
         Falls back to ``_default_max_tokens`` if absent.
+
+        2026-09-06: the fallback is now logged, once per model. A transient failure of the
+        single catalogue request silently turned a 131072-token ceiling into 8192 for
+        several current models — a 16x cut, mid-run, with nothing in the log to say so.
+        Downstream that reads as a truncated response and a failed pipeline whose cause is
+        invisible; it cost two full pipeline runs to find. The fallback itself is correct
+        behaviour, so this warns rather than raising.
         """
         _, max_out = _resolve_model_limits(self.model_name)
-        return max_out if max_out is not None else self._default_max_tokens
+        if max_out is not None:
+            return max_out
+        if self.model_name not in self._warned_default_ceiling:
+            self._warned_default_ceiling.add(self.model_name)
+            logger.warning(
+                "OpenRouter catalogue gave no max_completion_tokens for %r, so its output "
+                "ceiling falls back to %d. If the catalogue is merely unreachable right now, "
+                "that is far below what the model actually allows and long generations will "
+                "come back truncated.",
+                self.model_name, self._default_max_tokens,
+            )
+        return self._default_max_tokens
 
     def supports_json_mode(self) -> bool:
         """Per-model JSON-mode support: consult the OR catalogue's
