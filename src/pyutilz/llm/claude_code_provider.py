@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
+import tempfile
 import random
 import threading
 import time
@@ -711,8 +712,24 @@ class ClaudeCodeProvider(LLMProvider):
             if "--tools" not in cmd:
                 cmd.extend(["--tools", ""])
 
+            # The system prompt goes in a FILE, not in argv.
+            #
+            # 2026-09-06: Windows caps a whole command line at 32767 characters
+            # (CreateProcess), and a real system prompt blows past that on its own -- the
+            # measured case was 48378 characters, which failed with WinError 206 "the
+            # filename or extension is too long" on every attempt, was retried thirteen
+            # times as though it were transient, and burned a 40-minute budget before the
+            # caller gave up. There is no size threshold to pick here and no need for one:
+            # the CLI takes --system-prompt-file, so the file path is what argv carries
+            # whatever the prompt's length. The prompt itself already goes through stdin.
+            system_prompt_file: str | None = None
             if system:
-                cmd.extend(["--system-prompt", system])
+                # delete=False, because the subprocess has to be able to open it after this
+                # block closes the handle; the finally below removes it.
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", prefix="claude-system-", delete=False) as handle:
+                    handle.write(system)
+                    system_prompt_file = handle.name
+                cmd.extend(["--system-prompt-file", system_prompt_file])
 
             cmd.append("-")
 
@@ -808,7 +825,14 @@ class ClaudeCodeProvider(LLMProvider):
                 return 0, result_text, stderr_data
 
             loop = asyncio.get_event_loop()
-            returncode, stdout, stderr = await loop.run_in_executor(None, run_cli)
+            try:
+                returncode, stdout, stderr = await loop.run_in_executor(None, run_cli)
+            finally:
+                if system_prompt_file:
+                    try:
+                        os.unlink(system_prompt_file)
+                    except OSError:  # pragma: no cover -- best-effort cleanup
+                        logger.debug("Could not remove the temporary system-prompt file %s", system_prompt_file)
 
             if returncode != 0:
                 error_msg = stderr or stdout or "Unknown error"
