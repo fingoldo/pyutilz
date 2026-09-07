@@ -259,3 +259,15 @@ def test_no_drifted_duplicate_functions():
     from py_ci_shared.drifted_duplicate_functions import assert_no_drifted_duplicate_functions
 
     assert_no_drifted_duplicate_functions([REPO_ROOT / "src"], allow=_DUPLICATE_FUNCTION_ALLOW)
+
+
+# NOT WIRED YET, and named here rather than forgotten: the effect-assertion parity gate.
+# This repo is at zero -- the five effects it reported are asserted in
+# tests/test_db_execution_effects_reach_the_cursor.py and
+# tests/test_pool_commits_and_probes_reach_the_connection.py -- and the gate passes against
+# py-ci-shared master. What is missing is the dependency: resolving a src layout at all (so the scan
+# is not vacuous) landed in py-ci-shared after the editable checkout this environment imports, so the
+# gate's own population assertion fires locally while CI, which installs from git, would be green.
+# Wire it with an empty `accepted` and a `len(import_map) > 100` population guard once the checkout is
+# current. The guard is not optional: an empty map is exactly how this check passes while measuring
+# nothing, which is how this repo read as clean until today.
