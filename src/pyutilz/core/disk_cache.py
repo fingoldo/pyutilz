@@ -107,6 +107,26 @@ def _hasher() -> Any:
     return hashlib.blake2b(digest_size=_HASH_DIGEST_BYTES)
 
 
+def _buffer(arr: np.ndarray) -> memoryview:
+    """The bytes of *arr* in C order, WITHOUT copying them.
+
+    ``arr.tobytes()`` allocates a second full copy of the array purely to feed a hash. This is the
+    cache-KEY computation, so that copy is paid on every lookup including the hits -- on the frames
+    this library is used with, it can cost more than the work being cached.
+
+    The digest is unchanged: ``tobytes()`` serialises in C order, which is exactly what
+    ``ascontiguousarray`` guarantees, and every dtype in the suite is pinned to its pre-existing
+    hex digest in the tests.
+
+    The ``uint8`` view is not decoration. ``.data`` on a datetime64 or timedelta64 array raises
+    ``ValueError: cannot include dtype 'M' in a buffer`` -- those dtypes have no buffer-protocol
+    format -- so the plain copy-free form breaks on exactly the two dtypes this function goes out of
+    its way to reduce correctly. Viewing the contiguous buffer as raw bytes first works for every
+    dtype including 0-d, empty, structured and fixed-width string arrays.
+    """
+    return np.ascontiguousarray(arr).view(np.uint8).data
+
+
 def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_ROWS) -> str:
     """Stable content hash of an ndarray from a sub-O(N) summary.
 
@@ -148,14 +168,14 @@ def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_R
         # Fixed-width string / bytes / structured dtypes have no numeric reduction below, so
         # head/tail bytes would be the ONLY content-bearing input and every middle-row difference
         # would collide. Feed the full buffer.
-        h.update(np.ascontiguousarray(arr).tobytes())
+        h.update(_buffer(arr))
     elif arr.ndim == 0:
-        h.update(arr.tobytes())
+        h.update(_buffer(arr))
     else:
         head_n = min(n_summary_rows, arr.shape[0])
         tail_n = min(n_summary_rows, arr.shape[0])
-        h.update(np.ascontiguousarray(arr[:head_n]).tobytes())
-        h.update(np.ascontiguousarray(arr[-tail_n:]).tobytes())
+        h.update(_buffer(arr[:head_n]))
+        h.update(_buffer(arr[-tail_n:]))
     if kind in "bMm":
         # bool / datetime64 / timedelta64 are not ``np.number`` subtypes, so the reductions below
         # used to be skipped entirely and only head/tail rows discriminated. View them through
@@ -163,23 +183,23 @@ def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_R
         # low bits of nanosecond timestamps).
         red = arr.view(np.int8) if kind == "b" else arr.view(np.int64)
         axis = 0 if red.ndim >= 2 else None
-        h.update(np.asarray(red.sum(axis=axis, dtype=np.int64)).tobytes())
-        h.update(np.asarray(red.min(axis=axis)).astype(np.int64).tobytes())
-        h.update(np.asarray(red.max(axis=axis)).astype(np.int64).tobytes())
+        h.update(_buffer(np.asarray(red.sum(axis=axis, dtype=np.int64))))
+        h.update(_buffer(np.asarray(red.min(axis=axis)).astype(np.int64)))
+        h.update(_buffer(np.asarray(red.max(axis=axis)).astype(np.int64)))
     elif arr.ndim >= 2 and np.issubdtype(arr.dtype, np.number):
         # One fused pass instead of three full strided numpy reductions -- measured 175 ms -> 5.4 ms
         # on a (2_000_000, 4) float64 array. This is the cache-KEY computation, so on a cache HIT it
         # used to be able to cost more than the work being cached.
         col_sum, col_min, col_max = column_sum_min_max(arr)
-        h.update(col_sum.tobytes())
-        h.update(col_min.tobytes())
-        h.update(col_max.tobytes())
+        h.update(_buffer(col_sum))
+        h.update(_buffer(col_min))
+        h.update(_buffer(col_max))
     elif arr.ndim == 1 and np.issubdtype(arr.dtype, np.number):
         triplet = np.array(
             [float(arr.sum(dtype=np.float64)), float(arr.min()), float(arr.max())],
             dtype=np.float64,
         )
-        h.update(triplet.tobytes())
+        h.update(_buffer(triplet))
     return str(h.hexdigest())
 
 
