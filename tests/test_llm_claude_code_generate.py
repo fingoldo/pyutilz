@@ -227,6 +227,18 @@ class TestSystemPromptGoesInAFile:
         captured = {}
 
         class _FakeProc:
+            def poll(self):
+                """The process has already produced its whole transcript, so it is never still running."""
+                return self.returncode
+
+            def __enter__(self):
+                """`run_cli` uses `with Popen(...)`; a fake that is not a context manager fails there and nowhere else."""
+                return self
+
+            def __exit__(self, *_exc):
+                """Nothing to release - the streams are in-memory."""
+                return False
+
             returncode = 0
             stdin = SimpleNamespace(write=lambda _s: None, close=lambda: None)
             stdout = SimpleNamespace(readline=lambda: "")

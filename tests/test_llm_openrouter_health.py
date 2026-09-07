@@ -15,12 +15,6 @@ pytest.importorskip("pydantic")
 from pyutilz.llm.openrouter_provider import (
     OpenRouterProvider,
     list_openrouter_models,
-    _fetch_models_catalogue,
-    _per_token_cost_pair,
-    _resolve_model_limits,
-    _summarize_endpoints,
-    _normalize_uptime,
-    _resolve_or_api_key,
 )
 import pyutilz.llm.openrouter_provider as openrouter_module
 

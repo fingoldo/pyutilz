@@ -93,6 +93,10 @@ def fake_cli(monkeypatch):
         return proc
 
     monkeypatch.setattr(ccp.subprocess, "Popen", _popen)
+    # Pin the CLI path. generate() picks the SDK whenever claude_code_sdk is importable, so on a
+    # machine that has it these tests silently exercised the SDK branch instead of the one they
+    # are named for - and reported zero usage because the fake transcript was never read.
+    monkeypatch.setattr(ccp, "_HAS_SDK", False)
     return made
 
 
