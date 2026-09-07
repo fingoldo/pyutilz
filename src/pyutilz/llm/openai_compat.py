@@ -143,9 +143,17 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
         return 120.0
 
     #: Seconds of headroom to allow per requested output token. A 30 tok/s floor is deliberately
-    #: pessimistic: the cost of guessing high is a request that hangs a little longer before it is
-    #: retried, and the cost of guessing low is every long generation dying at the same wall.
+    #: pessimistic: the cost of guessing low is every long generation dying at the same wall.
     _seconds_per_output_token: float = 1.0 / 30.0
+
+    #: Hard ceiling on the DERIVED half of the timeout. `max_tokens` is a ceiling, not a target, and
+    #: deriving a timeout from it as though the model will use all of it was measured 2026-09-08 to cost
+    #: 71 minutes per stalled attempt on a 128,000-token cap - with ten retries behind it. The answers this
+    #: is used for run 25,000-70,000 tokens, so 20 minutes is generous for the generation that IS coming
+    #: and short enough that a route which has gone quiet is retried the same hour. Raise it on a subclass
+    #: for a caller that genuinely expects to fill a six-figure cap; the model-name floor below is never
+    #: clamped, so a slow-tier model keeps whatever `_get_timeout` grants it.
+    _max_derived_timeout_s: float = 1200.0
 
     def _timeout_for(self, body: dict[str, Any]) -> float:
         """Request timeout in seconds, taking the LARGER of the model heuristic and what this body asks for.
@@ -155,6 +163,11 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
         default, so every one of nine captures died in a ReadTimeout storm while the model was still
         generating - 35,185 tokens on the one that finished, which no 240 s budget could ever cover. The
         floor stays: a small request on a slow-tier model keeps its long allowance.
+
+        The DERIVED half is capped by `_max_derived_timeout_s`, because a ceiling is not a target: pinning
+        an arena to one upstream route asks for that route's full cap, and deriving 71 minutes per attempt
+        from a 128,000-token cap turned one quiet route into an hours-long stall. Only the derived half is
+        clamped - `_get_timeout`'s own answer still wins outright when it is larger.
         """
         base = self._get_timeout(self.model_name)
         requested = body.get("max_tokens") or body.get("max_completion_tokens") or 0
@@ -162,7 +175,7 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
             needed = float(requested) * self._seconds_per_output_token
         except (TypeError, ValueError):
             return base
-        return max(base, needed)
+        return max(base, min(needed, self._max_derived_timeout_s))
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
         """Raise on provider-specific non-retryable HTTP status codes.

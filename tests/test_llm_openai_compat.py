@@ -711,13 +711,29 @@ def test_the_request_timeout_scales_with_the_output_the_body_asks_for():
     probe = _Probe.__new__(_Probe)
     probe.model_name = "z-ai/glm-5.3-flash"
 
-    # 54,853 tokens at the pessimistic 30 tok/s floor is ~1,828 s, which must win over the 240 s default.
-    assert probe._timeout_for({"max_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
+    # 54,853 tokens at the pessimistic 30 tok/s floor is ~1,828 s, which must win over the 240 s default -
+    # and is then held to `_max_derived_timeout_s`, see the cap's own assertions below.
+    assert probe._timeout_for({"max_tokens": 54_853}) == 1200.0
     # The name heuristic stays a FLOOR: a small request on a slow-tier model keeps its long allowance,
     # because the reason that model is slow has nothing to do with how much it was asked to write.
     assert probe._timeout_for({"max_tokens": 500}) == 240.0
     # `max_completion_tokens` is the same request under the newer field name.
-    assert probe._timeout_for({"max_completion_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
+    assert probe._timeout_for({"max_completion_tokens": 54_853}) == 1200.0
+    # A ceiling is NOT a target, so the derived half is capped. Measured 2026-09-08: pinning an arena to
+    # one upstream route asks for that route's full 128,000-token cap, and 1/30 s per token makes a stalled
+    # attempt wait 71 minutes before retrying - with ten retries behind it, an hours-long stall on a route
+    # that had simply gone quiet. The answers this budget is sized for run 25,000-70,000 tokens.
+    assert probe._timeout_for({"max_tokens": 128_000}) == 1200.0
+    assert probe._timeout_for({"max_tokens": 30_000}) == pytest.approx(1000.0), "below the cap, nothing is clamped"
+    # Only the DERIVED half is clamped: a slow-tier model keeps whatever the name heuristic grants it.
+    class _SlowTier(type(probe)):  # type: ignore[misc]
+        def _get_timeout(self, model: str) -> float:
+            return 1800.0
+
+    slow = _SlowTier.__new__(_SlowTier)
+    slow.model_name = "openai/o3-pro"
+    assert slow._timeout_for({"max_tokens": 128_000}) == 1800.0
+
     # A body that names no budget at all falls back to the heuristic rather than to zero.
     assert probe._timeout_for({}) == 240.0
     assert probe._timeout_for({"max_tokens": None}) == 240.0
@@ -748,5 +764,5 @@ def test_the_post_passes_that_timeout_rather_than_the_clients_construction_time_
     probe._client = _Client()
 
     with pytest.raises(RuntimeError):
-        asyncio.run(probe._post_and_unwrap({"max_tokens": 54_853}))
-    assert seen["timeout"] == pytest.approx(54_853 / 30.0)
+        asyncio.run(probe._post_and_unwrap({"max_tokens": 30_000}))
+    assert seen["timeout"] == pytest.approx(1000.0)
