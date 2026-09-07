@@ -53,6 +53,7 @@ class _FakePipe:
 class _FakeProc:
     def __init__(self, stdout_lines):
         self.args = ["claude"]
+        self.pid = 999999
         self.stdin = _FakePipe()
         self.stdout = _FakePipe(stdout_lines)
         self.stderr = _FakePipe([])
@@ -61,6 +62,11 @@ class _FakeProc:
 
     def kill(self):
         self.killed = True
+
+    def poll(self):
+        # Already exited: the canned transcript is fully written by the time the unwind runs, and
+        # the tree-kill helper checks this first, so no taskkill is spawned against a fake PID.
+        return 0
 
     def wait(self, timeout=None):
         return 0

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import queue
+import signal
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
@@ -222,6 +223,40 @@ class _CliResultMessage:
         self.duration_ms = event.get("duration_ms")
 
 
+def _kill_process_tree(proc: "subprocess.Popen") -> None:
+    """End ``proc`` and everything it spawned.
+
+    ``proc.kill()`` alone is TerminateProcess (Windows) or SIGKILL (POSIX) on a single PID. The
+    CLI is a node process that may have children of its own, and a surviving grandchild keeps the
+    inherited stdout/stderr handles open -- so the reader threads never reach EOF and the call
+    leaks a thread and a pipe per abandonment.
+
+    Never raises: this runs on the unwind path, where the caller has a result (or an exception)
+    that matters more than the manner of the kill.
+    """
+    if proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(  # nosec B603 B607 - fixed argv, no shell; the PID is our own child's
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass
+    # Belt and braces, and the only step on a platform where neither branch worked.
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
 
 def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeout: float, proc_holder: "list", cancel_evt: "threading.Event") -> "tuple[int, str, str, dict | None]":
     """Spawn the ``claude`` CLI as a subprocess, stream its stdout via a background reader thread, and parse the stream-json events until a ``result`` event, timeout, or EOF; returns ``(returncode, result_text, stderr_text, result_event)``."""
@@ -240,6 +275,9 @@ def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeou
         # catches it; the call then fails as "produced no result", naming neither the
         # decode nor the byte.
         errors="replace",
+        # POSIX only: give the child its own process group so the whole tree can be signalled.
+        # Windows has no equivalent here -- taskkill /T walks the tree by PID instead.
+        start_new_session=(sys.platform != "win32"),
     ) as proc:
         proc_holder.append(proc)
         return _stream_one_call(proc, prompt, timeout, cancel_evt)
@@ -305,10 +343,7 @@ def _stream_one_call(
     try:
         result_text, error_text, timed_out, result_event = _consume_cli_stream(line_q, timeout, cancel_evt)
     finally:
-        try:
-            proc.kill()
-        except OSError:
-            pass
+        _kill_process_tree(proc)
         # Reap the process WITHOUT reading the pipes (the reader
         # owns stdout). wait() avoids the communicate() double-drain.
         try:

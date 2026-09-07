@@ -8,20 +8,14 @@ Supports two backends:
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-import errno
-import json
 import logging
 import os
-import queue
 import re
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
-import sys
 import tempfile
 import random
 import threading
-import time
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
@@ -38,13 +32,14 @@ logger = logging.getLogger(__name__)
 
 # Carved out 2026-09-07 (see claude_code_cli's docstring); re-exported here so existing importers
 # of these names keep working.
-from pyutilz.llm.claude_code_cli import (  # noqa: E402 -- re-export, placed after the logger it shares
+from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger it shares
     MAX_TIMEOUT_RETRIES,
     _CliResultMessage,
-    _consume_cli_stream,
+    _consume_cli_stream,  # noqa: F401 -- re-export: imported from this module by existing callers and tests
     _find_claude_executable,
+    _kill_process_tree,
     _is_transient_subprocess_error,
-    _raise_on_cli_tool_use,
+    _raise_on_cli_tool_use,  # noqa: F401 -- re-export, as above
     run_cli,
 )
 
@@ -720,7 +715,11 @@ class ClaudeCodeProvider(LLMProvider):
             if system:
                 # delete=False, because the subprocess has to be able to open it after this
                 # block closes the handle; the finally below removes it.
-                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", prefix="claude-system-", delete=False) as handle:
+                # newline="": text mode on Windows rewrites every \n as \r\n, so the file the
+                # CLI reads would not be the prompt we built, hashed and stored -- different
+                # bytes, a different cached prefix, and an archived system prompt that does not
+                # match what the model was actually sent.
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", suffix=".txt", prefix="claude-system-", delete=False) as handle:
                     # Bound before the write, not after: the write can fail (a full disk, an
                     # encoding error) and the cleanup in the finally is keyed on this variable,
                     # so binding it afterwards left the file on disk on exactly the path that
@@ -769,10 +768,10 @@ class ClaudeCodeProvider(LLMProvider):
                 # the consumer returns within its one-second poll.
                 cancel_evt.set()
                 for child in proc_holder:
-                    try:
-                        child.kill()
-                    except OSError:  # pragma: no cover -- already reaped
-                        pass
+                    # The tree, not the PID: a surviving grandchild holds the inherited pipes
+                    # open, so the reader threads never reach EOF and the cancelled call leaks
+                    # one of each.
+                    _kill_process_tree(child)
                 raise
             finally:
                 if system_prompt_file:
