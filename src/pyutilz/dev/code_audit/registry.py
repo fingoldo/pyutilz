@@ -71,6 +71,7 @@ from .count_then_fetch_same_table import scan_count_then_fetch_same_table
 from .accumulator_helper_bypassed import scan_accumulator_helper_bypassed
 from .column_no_write_path import scan_column_no_write_path
 from .sibling_guard_missing import scan_sibling_guard_missing
+from .override_signature_drift import scan_override_signature_drift
 from .sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
 from .docstring_names_a_caller_that_does_not_call import scan_docstring_names_a_caller_that_does_not_call
 from .vacuous_loop_assertion import scan_vacuous_loop_assertion
@@ -255,6 +256,7 @@ register_scanner("test_asserts_against_production_constant", scan_test_asserts_a
 register_scanner("patch_target_is_a_reexport", scan_patch_target_is_a_reexport)
 register_scanner("column_no_write_path", scan_column_no_write_path)
 register_scanner("sibling_guard_missing", scan_sibling_guard_missing)
+register_scanner("override_signature_drift", scan_override_signature_drift)
 register_scanner("sql_sibling_missing_time_bound", scan_sql_sibling_missing_time_bound)
 register_scanner("vacuous_loop_assertion", scan_vacuous_loop_assertion)
 register_scanner("docstring_names_a_caller_that_does_not_call", scan_docstring_names_a_caller_that_does_not_call)

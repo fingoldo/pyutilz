@@ -163,6 +163,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
     "patch_target_is_a_reexport": "code_audit scanner; covered by tests/code_audit/test_patch_target_is_a_reexport.py",
     "column_no_write_path": "code_audit scanner; covered by tests/code_audit/test_column_no_write_path.py",
     "sibling_guard_missing": "code_audit scanner; covered by tests/code_audit/test_sibling_guard_missing.py",
+    "override_signature_drift": "code_audit scanner; covered by tests/code_audit/test_override_signature_drift.py",
     "sql_sibling_missing_time_bound": "code_audit scanner; covered by tests/code_audit/test_sql_sibling_missing_time_bound.py",
     "vacuous_loop_assertion": "code_audit scanner; covered by tests/code_audit/test_vacuous_loop_assertion.py",
     "docstring_names_a_caller_that_does_not_call": "code_audit scanner; covered by tests/code_audit/test_docstring_names_a_caller_that_does_not_call.py",

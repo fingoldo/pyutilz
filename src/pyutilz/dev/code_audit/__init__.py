@@ -609,6 +609,7 @@ from .raising_stub_swallowed import scan_raising_stub_swallowed
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
 from .sentinel_guard_mismatch import scan_sentinel_guard_mismatch
 from .sibling_guard_missing import scan_sibling_guard_missing
+from .override_signature_drift import scan_override_signature_drift
 from .source_text_assertions import scan_source_text_assertions
 from .sql_selects_unread_column import scan_sql_selects_unread_column
 from .sql_sibling_missing_time_bound import scan_sql_sibling_missing_time_bound
@@ -738,6 +739,7 @@ __all__ = [
     "scan_sentinel_cached_as_answer",
     "scan_sentinel_guard_mismatch",
     "scan_sibling_guard_missing",
+    "scan_override_signature_drift",
     "scan_source_text_assertions",
     "scan_sql_selects_unread_column",
     "scan_sql_sibling_missing_time_bound",

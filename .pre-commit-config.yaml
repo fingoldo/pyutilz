@@ -297,7 +297,7 @@ repos:
         args: ['src/pyutilz']
 
   # Whole-project mypy, BLOCKING, runs on every commit. Flipped 2026-07-13: `mypy src/pyutilz`
-  # verified clean (0 errors; 251 source files as of 2026-09-05), and CI's mypy-full.yml is a
+  # verified clean (0 errors; 252 source files as of 2026-09-05), and CI's mypy-full.yml is a
   # real blocking gate too (matching mlframe's posture) -- this hook mirrors it exactly, same
   # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
   # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate
@@ -323,3 +323,22 @@ repos:
         types: [python]
         pass_filenames: false
         stages: [pre-commit]
+
+  # The WHOLE suite, on push only. The per-commit hook above runs tests/test_meta/ alone, which is
+  # what keeps committing fast - but it means a functional break reaches CI untouched, and one did:
+  # generate_json gained a `thinking` parameter on three providers and not on their base, and the
+  # test that caught it lives in tests/llm/, which no hook was running (fixed in e5efc40).
+  #
+  # Be clear about what this buys. It catches the "test nobody ran" class only. It cannot catch a
+  # difference between this machine and a CI leg - a 3.8-only AST shape, an older polars refusing an
+  # operation, a macOS clock, an extra this box happens to have installed - and most of the recent CI
+  # failures were exactly that. Roughly twelve minutes; `git push --no-verify` skips it.
+  - repo: local
+    hooks:
+      - id: pytest-full-on-push
+        name: "full test suite (push only)"
+        entry: pytest --no-cov -q -p no:randomly -x
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
