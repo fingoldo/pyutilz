@@ -46,12 +46,12 @@ def utc_ts_2_locstr(
     utc_dt = datetime.strptime(inp_dt, input_date_format)  # inp_dt has no tz component (input_date_format has no %z); result is treated as naive-UTC by utc_to_local() below
     res = f"{utc_to_local(utc_dt).strftime(output_date_format)}"
 
-    if dst:
-        if isinstance(dst, int):
-            if dst > 0:
-                if dst in dst_names:
-                    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)  # must stay naive to subtract against utc_dt (naive-UTC from strptime above); switching to an aware value would raise offset-naive/-aware TypeError
-                    res += f" ({(utc_now - utc_dt).total_seconds() // dst:.0f} {dst_names.get(dst)}. тому назад)"
+    # `dst > 0` already excludes 0 and the isinstance guard already excludes every other falsy
+    # value, so the outer truthiness test decided nothing -- it only made the intent read as
+    # "when dst is set" when what is meant is "when dst is a positive number of seconds".
+    if isinstance(dst, int) and dst > 0 and dst in dst_names:
+        utc_now = datetime.now(timezone.utc).replace(tzinfo=None)  # must stay naive to subtract against utc_dt (naive-UTC from strptime above); switching to an aware value would raise offset-naive/-aware TypeError
+        res += f" ({(utc_now - utc_dt).total_seconds() // dst:.0f} {dst_names.get(dst)}. тому назад)"
     return res
 
 
@@ -112,10 +112,11 @@ def imitate_delay(
 
     if last_call_ts or b_force:
         random_delay = uniform(min_delay_seconds, max_delay_seconds)  # nosec B311 - non-cryptographic use: picks a human-facing sleep delay to imitate pacing, not a security token
-        if big_delay_prob:
-            if big_delay_prob > 0:
-                if random() < big_delay_prob:  # nosec B311 - non-cryptographic use: coin-flip to decide whether to lengthen the imitated delay, not security-sensitive
-                    random_delay = random_delay * (big_delay_multiplier if big_delay_multiplier is not None else 10)
+        # One test, not two: `> 0` already excludes both None and a probability of 0, and the
+        # outer truthiness check made the intent read as "when a probability was supplied".
+        if big_delay_prob is not None and big_delay_prob > 0:
+            if random() < big_delay_prob:  # nosec B311 - non-cryptographic use: coin-flip to decide whether to lengthen the imitated delay, not security-sensitive
+                random_delay = random_delay * (big_delay_multiplier if big_delay_multiplier is not None else 10)
         if b_force and (last_call_ts is None):
             cur_delay = 0.0
         else:

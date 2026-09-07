@@ -147,3 +147,86 @@ def test_every_test_subdir_is_reachable_from_ci():
         workflows_dir=WORKFLOWS_DIR,
         intentionally_unreached=_INTENTIONALLY_UNREACHED_TEST_DIRS,
     )
+
+
+# ── 2026-09-07: seven more shared checks, measured on this tree before wiring ──────────────
+#
+# Five reported nothing and are wired bare. Two reported, and what they reported is recorded
+# below rather than hidden behind an allowlist with no reason.
+
+
+def test_no_latched_availability_flags():
+    """An optional dependency's availability must not be decided once and cached forever.
+
+    A module-level `HAS_X = _probe()` latches whatever was true at import time, so a dependency
+    that arrives (or a device that appears) later in the process is invisible until a restart --
+    and the symptom is a silent fallback path, not an error.
+    """
+    from py_ci_shared.latched_availability_flags import assert_no_latched_availability_flags
+
+    assert_no_latched_availability_flags([REPO_ROOT / "src"])
+
+
+def test_no_epsilon_padded_power_denominators():
+    """`x / (y + eps)` inside a power changes the result rather than guarding it.
+
+    The padding is added to stop a division by zero and silently shifts every non-zero case too,
+    which in an exponent compounds. Nothing here does it today; this keeps it that way.
+    """
+    from py_ci_shared.epsilon_padded_denominators import assert_no_epsilon_padded_power_denominators
+
+    assert_no_epsilon_padded_power_denominators([REPO_ROOT / "src"])
+
+
+def test_no_hash_fed_by_a_full_array_copy():
+    """`h.update(a.tobytes())` allocates a second copy of the array purely to feed the hash.
+
+    disk_cache is the reason this is gated here rather than left to review: it is the cache-KEY
+    computation, so the copy is paid on every lookup including the hits, on arrays this library is
+    pointed at in the tens of gigabytes. The eleven sites it had were rewritten to feed the buffer
+    (`_buffer`), with every digest pinned unchanged in
+    tests/test_disk_cache_digests_are_a_compatibility_contract.py.
+    """
+    from py_ci_shared.hash_fed_by_array_copy import assert_no_hash_fed_by_array_copy
+
+    assert_no_hash_fed_by_array_copy([REPO_ROOT / "src"])
+
+
+def test_no_stale_todos():
+    """A TODO older than 30 days is a decision nobody made, wearing the clothes of one that was."""
+    from py_ci_shared.stale_comment_age import assert_no_stale_todos
+
+    assert_no_stale_todos(REPO_ROOT, ["src"])
+
+
+def test_no_tracked_generated_files():
+    """A committed `__pycache__` or `.pyc` shadows the source it was built from."""
+    from py_ci_shared.repo_hygiene import find_tracked_generated_files
+
+    tracked = find_tracked_generated_files(REPO_ROOT)
+    assert tracked == [], f"generated files are tracked: {tracked}"
+
+
+# NOT WIRED YET, and deliberately named here rather than forgotten: `py_ci_shared.optional_truthiness`.
+# The check is correct and this repo is ready for it -- six sites were reported when it was first run,
+# three were redundant double-guards that are now simplified, and the remaining three are deliberate
+# (psycopg2 rejects an itersize of 0; a group-by-provider count of 0 requests an empty result no caller
+# can mean; a falsy base64 variant is the documented "give me hex"). What is missing is the dependency:
+# the module landed in py-ci-shared on 2026-09-05 and the editable checkout this environment imports
+# from predates it, so wiring the test now would fail every local commit while passing in CI, which
+# installs from git. Wire it -- baseline those three with the reasons above -- once the checkout is current.
+
+# `__dir__` and `__getattr__` are the PEP 562 lazy-module pattern, which every package __init__ in
+# this repo implements. The five `__getattr__` variants were read side by side: they differ in what
+# they resolve (submodules, a typed exception, a module-alias table) and each carries its own
+# docstring saying why. The one real difference is that pyutilz/data caches the resolved module into
+# globals() and the others re-enter import_module, which after the first call is a sys.modules dict
+# lookup -- not worth converging five deliberate implementations over.
+_DUPLICATE_FUNCTION_ALLOW = ("__dir__", "__getattr__")
+
+
+def test_no_drifted_duplicate_functions():
+    """One function copied into several files, then edited in some of them and not others."""
+    from py_ci_shared.drifted_duplicate_functions import assert_no_drifted_duplicate_functions
+
+    assert_no_drifted_duplicate_functions([REPO_ROOT / "src"], allow=_DUPLICATE_FUNCTION_ALLOW)

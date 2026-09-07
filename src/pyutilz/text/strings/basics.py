@@ -29,7 +29,10 @@ def find_between(s: str, start: str, end: str, idx1: Optional[int] = 0, idx2: Op
         # exactly what the window argument was meant to exclude.
         # A negative idx1 gets Python slice semantics (resolved against len(s)) instead of
         # falling through to the `p1 >= 0` test below and silently returning None.
-        p1 = idx1 or 0
+        # `is None`, not `or 0`: the two agree for every value idx1 can take, but the `or` form
+        # reads as "0 means unset" next to the idx2 branch above, where treating 0 as unset was a
+        # real bug that searched the whole string instead of an empty window.
+        p1 = idx1 if idx1 is not None else 0
         if p1 < 0:
             p1 = max(0, len(s) + p1)
     else:
