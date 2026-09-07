@@ -676,9 +676,14 @@ class ClaudeCodeProvider(LLMProvider):
 
             cmd = [
                 self._claude_path,
-                '--print',
-                '--verbose',
-                '--include-partial-messages',
+                "--print",
+                # --verbose is REQUIRED alongside --print --output-format stream-json.
+                "--verbose",
+                # 2026-09-07: --include-partial-messages was here. Probed with and without on CLI
+                # 2.1.263: it adds seven stream_event lines and a second system event per short
+                # call and changes the answer not at all. _consume_cli_stream handles result,
+                # assistant, rate_limit_event and system-init, and ignores stream_event entirely,
+                # so every one of those lines was parsed and thrown away.
                 '--model', self.model,
                 '--output-format', 'stream-json',
                 # 2026-09-07: was --dangerously-skip-permissions, which auto-approves whatever
@@ -693,12 +698,17 @@ class ClaudeCodeProvider(LLMProvider):
                 '--restricted',
                 '--permission-prompts', 'none',
                 '--no-session-persistence',
-                '--tools', '',
                 # Use ONLY MCP servers given via --mcp-config (none are), so the invoking user's
                 # global/project MCP servers are not loaded. `--tools ""` scopes the BUILT-IN tool
                 # set only, and with --dangerously-skip-permissions any loaded MCP tool would be
                 # auto-approved -- reachable from untrusted text passed in as the prompt.
                 "--strict-mcp-config",
+                # LAST, immediately before the `-` positional: --tools is variadic, so it eats
+                # following arguments until the next flag. It parses correctly today with flags
+                # after it, but nothing pins that, and a variadic that swallowed the next flag
+                # would fail OPEN -- the tool restriction would silently not apply. With nothing
+                # after it there is nothing to swallow.
+                "--tools", "",
             ]
 
             # The system prompt goes in a FILE, not in argv.
@@ -729,6 +739,19 @@ class ClaudeCodeProvider(LLMProvider):
                 cmd.extend(["--system-prompt-file", system_prompt_file])
 
             cmd.append("-")
+
+            # On Windows the resolved executable may be `claude.cmd`, which CreateProcess runs
+            # through the shell parser whatever `shell=False` says -- so the nosec below depends
+            # on argv carrying no untrusted text, not on shell=False alone. That property holds
+            # by construction (the prompt goes through stdin, the system prompt through a file),
+            # and is checked here so a future argument cannot quietly break it.
+            _UNSAFE_ARGV = set('&|<>^"')
+            for _arg in cmd[1:]:
+                if _UNSAFE_ARGV & set(_arg):
+                    raise ValueError(
+                        f"refusing to spawn the CLI with a shell-significant character in argv: {_arg!r}. "
+                        "Prompt content belongs on stdin and the system prompt in a file."
+                    )
 
             logger.debug("Running Claude CLI: %s...", cmd[0])
 
