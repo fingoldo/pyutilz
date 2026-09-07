@@ -261,13 +261,26 @@ def test_no_drifted_duplicate_functions():
     assert_no_drifted_duplicate_functions([REPO_ROOT / "src"], allow=_DUPLICATE_FUNCTION_ALLOW)
 
 
-# NOT WIRED YET, and named here rather than forgotten: the effect-assertion parity gate.
-# This repo is at zero -- the five effects it reported are asserted in
-# tests/test_db_execution_effects_reach_the_cursor.py and
-# tests/test_pool_commits_and_probes_reach_the_connection.py -- and the gate passes against
-# py-ci-shared master. What is missing is the dependency: resolving a src layout at all (so the scan
-# is not vacuous) landed in py-ci-shared after the editable checkout this environment imports, so the
-# gate's own population assertion fires locally while CI, which installs from git, would be green.
-# Wire it with an empty `accepted` and a `len(import_map) > 100` population guard once the checkout is
-# current. The guard is not optional: an empty map is exactly how this check passes while measuring
-# nothing, which is how this repo read as clean until today.
+def test_every_database_effect_is_asserted_by_an_importing_test():
+    """A module that commits or executes, whose importing tests never look at that call.
+
+    Five were found when this first ran, all returning None or a row list so nothing observable
+    changes when the write disappears: `managed_connection`'s commit -- the only thing between a
+    block's writes and `release_connection`'s unconditional rollback -- the pool's liveness probe,
+    `execute_alchemy`'s commit on the raw-SQL escape hatch, and the execute/execute_values dispatch
+    in `basic_db_execute`, where the wrong branch is invisible in the result and shows up only in how
+    long a bulk load takes. They are asserted in tests/test_db_execution_effects_reach_the_cursor.py
+    and tests/test_pool_commits_and_probes_reach_the_connection.py.
+
+    Zero now, so `accepted` is empty on purpose.
+
+    The population assertion is not decoration: on a src layout this scan resolved no modules at all
+    until a fix landed upstream, so it passed having measured nothing -- and this repo was reported
+    clean on that basis. A count is the cheapest way to notice.
+    """
+    from py_ci_shared.effect_assertion_parity import assert_effects_are_asserted, build_import_map
+
+    import_map = build_import_map(REPO_ROOT)
+    assert len(import_map) > 100, f"only {len(import_map)} modules resolved -- the scan lost its subject and this gate would pass vacuously"
+
+    assert_effects_are_asserted(REPO_ROOT, import_map, ())
