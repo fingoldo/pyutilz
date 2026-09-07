@@ -1,11 +1,15 @@
 """Scanner tests for default_via_or, split verbatim out of the former tests/test_code_audit.py."""
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+
+import pytest
 
 from pyutilz.dev.code_audit import (
     scan_default_via_or_trap,
 )
+from pyutilz.dev.code_audit.default_via_or import _expr_repr
 
 from ._helpers import _write
 
@@ -435,3 +439,61 @@ def alpha(cache_dir=None):
     after = {f.detail for f in scan_default_via_or_trap(tmp_path)}
 
     assert before == after, f"the detail moved with the line number: {before} -> {after}"
+
+# ---- 3.8 parity: the exemptions must not depend on ``ast.unparse`` ----------------------
+
+
+SAME_KEY_OTHER_RECEIVER = """
+def f(top, entry):
+    return top.get("k") or entry.get("k")
+"""
+SAME_COMPUTED_KEY = """
+def f(qwerty, ycuken, ch):
+    return qwerty.get(ch) or ycuken.get(ch)
+"""
+GETTER_DEFAULT_REPEATED = """
+def f(cfg, D):
+    return cfg.get("k", D) or D
+"""
+GETATTR_ALIAS_FALLBACK = """
+def f(m):
+    return getattr(m, "a", 7) or getattr(m, "b", 7)
+"""
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(SAME_KEY_OTHER_RECEIVER, id="same-key-other-receiver"),
+        pytest.param(SAME_COMPUTED_KEY, id="same-computed-key"),
+        pytest.param(GETTER_DEFAULT_REPEATED, id="getter-default-repeated"),
+        pytest.param(GETATTR_ALIAS_FALLBACK, id="getattr-alias-fallback"),
+    ],
+)
+def test_default_via_or_exemptions_hold_without_ast_unparse(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str):
+    """`ast.unparse` is stdlib only from 3.9. Every exemption that compares two operands used it and
+    returned "not exempt" when it was absent, so on the 3.8 floor these four shapes were reported as
+    findings while every other leg stayed silent. `monkeypatch.delattr(..., raising=False)` states the
+    precondition rather than reading the attribute first, so the test itself also runs on 3.8."""
+    monkeypatch.delattr(ast, "unparse", raising=False)
+    _write(tmp_path, "ok.py", source)
+    assert scan_default_via_or_trap(tmp_path) == []
+
+
+def test_default_via_or_expr_repr_survives_the_pre_3_9_subscript_shape(monkeypatch: pytest.MonkeyPatch):
+    """Up to 3.8 the parser wrapped `d["k"]` in an `ast.Index` node (bpo-34822), and the renderer
+    `_expr_repr` falls back to on 3.8 is `ast.dump`, which walks that extra node. Two operands built the
+    same way must still render equal, and a different key must still render differently - otherwise the
+    fallback would answer "not the same expression" for every subscripted operand. Both halves of 3.8 are
+    reproduced here: the legacy node shape is built by hand (the interpreter running this test builds the
+    modern one) and `ast.unparse` is removed so the dump renderer is the one under test."""
+    monkeypatch.delattr(ast, "unparse", raising=False)
+
+    class Index(ast.AST):  # the node class python<=3.8 actually produced, named exactly as it was
+        _fields = ("value",)
+
+    def legacy(key: str) -> ast.Subscript:
+        return ast.Subscript(value=ast.Name(id="cfg", ctx=ast.Load()), slice=Index(value=ast.Constant(value=key)), ctx=ast.Load())
+
+    assert _expr_repr(legacy("k")) == _expr_repr(legacy("k"))
+    assert _expr_repr(legacy("k")) != _expr_repr(legacy("other"))

@@ -31,6 +31,11 @@ from .columns import clean_numeric
 # where a from-import would have snapshotted the original function.
 import pyutilz.data.polarslib as _facade  # patchable-name indirection for clean_ram/is_cuda_available/check_cpu_flag
 
+# Decimal is a comparatively late addition to polars, and the oldest release installable on the 3.8 floor
+# predates it; read via getattr so this module keeps importing where the dtype does not exist (there being
+# no Decimal column to special-case in that case).
+_DECIMAL_DTYPE = getattr(pl, "Decimal", None)
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # FS in polars
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -104,6 +109,30 @@ _BIN_DTYPE_MAX: Dict[Any, int] = {
     pl.UInt32: 4294967295,
     pl.UInt64: 18446744073709551615,
 }
+
+
+def _decimal_columns(df: pl.DataFrame) -> set:
+    """Names of ``df``'s Decimal columns (empty where the installed polars has no Decimal dtype)."""
+    if _DECIMAL_DTYPE is None:
+        return set()
+    return {name for name, dtype in df.head().schema.items() if dtype == _DECIMAL_DTYPE}
+
+
+def _float_binning_inputs(col_expr: pl.Expr, min_val: Any, max_val: Any, is_decimal: bool) -> Tuple[pl.Expr, Any, Any]:
+    """The binning expression and its bounds, with a Decimal column cast to Float64.
+
+    Same reason as the ``n_unique`` cast further up, one operation over: polars refuses ``.floor()`` on a
+    Decimal column ("floor can only be used on numeric types") on the versions installable on the 3.8
+    floor, and a SQL NUMERIC read via ``pl.read_database`` arrives as exactly that. The cast is
+    value-preserving for these widths, so every step below (subtract the minimum, divide by the bin width,
+    floor) takes the identical path a float column takes and a value lands in the same bin. The bounds are
+    floated with it: they were read off the Decimal column, and a ``decimal.Decimal`` mixed into an
+    expression over a Float64 column is what raises next. A non-Decimal column passes through untouched,
+    keeping its own dtype rather than being widened by a blanket cast.
+    """
+    if not is_decimal:
+        return col_expr, min_val, max_val
+    return col_expr.cast(pl.Float64), float(min_val), float(max_val)
 
 
 def bin_numerical_columns(
@@ -318,6 +347,8 @@ def bin_numerical_columns(
     # NaN predicate (is_nan/is_not_nan, and therefore fill_nan) raises InvalidOperationError -- a
     # Decimal column is what pl.read_database returns for a SQL NUMERIC, i.e. an entirely ordinary input.
     cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
+    # Decimal is likewise unusable with `.floor()` below -- see `_float_binning_inputs`.
+    cols_with_decimals = _decimal_columns(df)
 
     for col in cs.expand_selector(df.head(), all_num_cols):
         if binned_targets is not None:
@@ -334,8 +365,8 @@ def bin_numerical_columns(
         else:
 
             # Define the binning expression
+            col_expr, min_val, max_val = _float_binning_inputs(clips.get(col, pl.col(col)), min_val, max_val, col in cols_with_decimals)
             bin_width = (max_val - min_val) / num_bins
-            col_expr = clips.get(col, pl.col(col))
             if fill_nulls and (col in cols_with_nulls):
                 col_expr = col_expr.fill_null(min_val)
             if fill_nans and (col in cols_with_floats):

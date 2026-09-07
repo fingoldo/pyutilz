@@ -35,7 +35,7 @@ _RESULT = {
 class _FakePipe:
     """Just enough of a text pipe: iterable, closeable, writable."""
 
-    def __init__(self, lines: "list[str]" = None):
+    def __init__(self, lines: "list[str] | None" = None):
         self._lines = list(lines or [])
         self.closed = False
         self.written: "list[str]" = []
@@ -57,12 +57,21 @@ class _FakeProc:
         self.stdout = _FakePipe(stdout_lines)
         self.stderr = _FakePipe([])
         self.killed = False
+        self.exited = False
 
     def kill(self):
         self.killed = True
 
     def wait(self, timeout=None):
         return 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        # The real Popen closes its pipes here; the fake records that it was asked to.
+        self.exited = True
+        return False
 
 
 @pytest.fixture
@@ -155,6 +164,14 @@ class TestTheSpawnIsConfinedAndPermissionless:
         _run(provider)
 
         assert fake_cli[0].kwargs.get("cwd"), "no cwd: --restricted would confine file tools to the caller's repo"
+
+    def test_the_process_is_context_managed(self, fake_cli):
+        """A `with` closes stdin, stdout and stderr; the old try/finally closed none of them."""
+        provider = ccp.ClaudeCodeProvider(model="sonnet")
+        provider._claude_path = "claude"
+        _run(provider)
+
+        assert fake_cli[0].exited is True
 
     def test_a_long_system_prompt_goes_to_a_file_not_argv(self, fake_cli):
         provider = ccp.ClaudeCodeProvider(model="sonnet")

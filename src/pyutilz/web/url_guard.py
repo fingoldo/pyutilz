@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import urllib.parse
 import urllib.request
-from typing import Any, FrozenSet, Union
+from typing import Any, Dict, FrozenSet, Optional, Union
 
 # Deliberately narrow: not a denylist of known-bad schemes (which a new one walks around) but the
 # complete list of schemes a typical HTTP-fetch pipeline has a reason to speak.
@@ -92,18 +92,40 @@ class _CheckedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return new_req
 
 
-def urlopen_checked(target: Union[str, urllib.request.Request], timeout: float = 30, allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES) -> Any:
+def urlopen_checked(
+    target: Union[str, urllib.request.Request],
+    timeout: float = 30,
+    allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES,
+    *,
+    proxies: Optional[Dict[str, str]] = None,
+) -> Any:
     """``urllib.request.urlopen`` with the scheme validated first -- on the supplied URL AND on every
     redirect hop. Accepts a URL string or a prepared ``Request``.
 
     Returns the raw ``urlopen`` context manager, so an existing ``with urlopen(...) as resp:``
     call site keeps working unchanged once swapped to call this instead.
+
+    ``proxies`` controls the ROUTE, which for a metered pool is a billing decision rather than a
+    connectivity one:
+
+    * ``None`` (default) -- unchanged behaviour: urllib's usual ``ProxyHandler`` reads
+      ``http_proxy``/``https_proxy`` from the environment.
+    * ``{}`` -- NO proxy, whatever the environment says. This is urllib's equivalent of
+      ``requests``' ``proxies={}, trust_env=False``, and it is the only way a caller can make
+      "direct" a property of the call rather than of the machine it happens to run on.
+    * a mapping -- exactly those proxies, environment ignored.
     """
     url = target if isinstance(target, str) else target.full_url
     require_http_url(url, allowed_schemes)
     # A dedicated opener (not the module-level default) so the redirect check applies here without
     # mutating global urllib state that other libraries in the process share.
-    opener = urllib.request.build_opener(_CheckedRedirectHandler(allowed_schemes))
+    handlers: list = [_CheckedRedirectHandler(allowed_schemes)]
+    if proxies is not None:
+        # FIRST in the chain and explicit: `build_opener` adds a default `ProxyHandler` only when
+        # the caller supplies none, so passing one -- including an empty one -- is what suppresses
+        # the environment lookup.
+        handlers.insert(0, urllib.request.ProxyHandler(proxies))
+    opener = urllib.request.build_opener(*handlers)
     # nosec B310 - the call above raises UnsafeURLError unless the scheme is allowed, and the opener
     # re-checks each redirect target; this is the one audited urlopen call bandit cannot see the
     # guard through.

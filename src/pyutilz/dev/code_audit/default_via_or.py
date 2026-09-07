@@ -185,6 +185,22 @@ def _site(lhs: ast.AST, rhs: ast.AST, symbol: str = "") -> str:
     return f"{symbol}: {expression}" if symbol else expression
 
 
+def _expr_repr(node: ast.AST) -> "str | None":
+    """A version-stable textual key for one expression, used to decide whether two operands are the
+    SAME expression. ``ast.unparse`` is stdlib only from 3.9; on the supported 3.8 floor ``ast.dump``
+    is the fallback. Both sides of every comparison are rendered by the same renderer within one
+    interpreter, so the pair is always comparable -- what matters is that a 3.8 run reaches the same
+    verdict as a 3.9+ one, NOT that the two renderers agree on the text. Returning ``None`` on an
+    unrenderable node (the caller then declines to claim equality) keeps that failure explicit
+    instead of silently reading as "different".
+    """
+    _unparse = getattr(ast, "unparse", None) or ast.dump
+    try:
+        return " ".join(_unparse(node).split())
+    except (ValueError, RecursionError):
+        return None
+
+
 def _lhs_default_is_also_the_or_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     """True for ``d.get("key", D) or D`` / ``getattr(obj, "name", D) or D`` -- the SAME literal/
     expression ``D`` supplied as both the getter's own missing-key default AND the outer ``or``
@@ -214,13 +230,8 @@ def _lhs_default_is_also_the_or_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
                     break
     if default_arg is None:
         return False
-    _unparse = getattr(ast, "unparse", None)
-    if _unparse is None:
-        return False
-    try:
-        return bool(_unparse(default_arg) == _unparse(rhs))
-    except (ValueError, RecursionError):
-        return False
+    default_repr, rhs_repr = _expr_repr(default_arg), _expr_repr(rhs)
+    return default_repr is not None and default_repr == rhs_repr
 
 
 def _is_constructor_call(node: ast.AST) -> bool:
@@ -561,13 +572,11 @@ def _is_same_key_on_other_receiver(lhs: ast.AST, rhs: ast.AST) -> bool:
     lhs_parts, rhs_parts = _get_parts(lhs), _get_parts(rhs)
     if lhs_parts is None or rhs_parts is None:
         return False
-    _unparse = getattr(ast, "unparse", None)
-    if _unparse is None:
+    lhs_key, rhs_key = _expr_repr(lhs_parts[1]), _expr_repr(rhs_parts[1])
+    lhs_recv, rhs_recv = _expr_repr(lhs_parts[0]), _expr_repr(rhs_parts[0])
+    if lhs_key is None or rhs_key is None or lhs_recv is None or rhs_recv is None:
         return False
-    try:
-        return bool(_unparse(lhs_parts[1]) == _unparse(rhs_parts[1]) and _unparse(lhs_parts[0]) != _unparse(rhs_parts[0]))
-    except (ValueError, RecursionError):
-        return False
+    return lhs_key == rhs_key and lhs_recv != rhs_recv
 
 
 def _get_getattr_call(node: ast.AST) -> "tuple[str, ast.AST] | None":
@@ -601,13 +610,8 @@ def _is_getattr_alias_fallback(lhs: ast.AST, rhs: ast.AST) -> bool:
     rhs_name, rhs_default = rhs_pair
     if lhs_name == rhs_name:
         return False
-    _unparse = getattr(ast, "unparse", None)
-    if _unparse is None:
-        return False
-    try:
-        return bool(_unparse(lhs_default) == _unparse(rhs_default))
-    except (ValueError, RecursionError):
-        return False
+    lhs_repr, rhs_repr = _expr_repr(lhs_default), _expr_repr(rhs_default)
+    return lhs_repr is not None and lhs_repr == rhs_repr
 
 
 def _is_wrapped_in_bool_call(node: ast.AST, parent_map: dict[int, tuple[ast.AST, str]]) -> bool:

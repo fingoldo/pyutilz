@@ -1,4 +1,11 @@
-"""The CLI ``result`` event carries real usage and cost; none of it was being kept.
+"""``claude_code_cli``: the stream consumer, the result adapter, and the error predicate.
+
+Named for the module it covers (the test-source-parity gate wants one file per production
+module); the subprocess-level behaviour of ``run_cli`` is covered by
+``test_claude_cli_usage_end_to_end.py``, which drives it through the provider against a fake
+spawn.
+
+The CLI ``result`` event carries real usage and cost; none of it was being kept.
 
 ``_consume_cli_stream`` read the event's ``result`` field and returned the text alone, so on the
 CLI path -- the path actually in use, the SDK being optional -- ``generate()`` found no
@@ -13,7 +20,7 @@ import queue
 
 import pytest
 
-from pyutilz.llm.claude_code_provider import _CliResultMessage, _consume_cli_stream
+from pyutilz.llm.claude_code_cli import _CliResultMessage, _consume_cli_stream, _is_transient_subprocess_error
 
 _EVENT = {
     "type": "result",
@@ -92,3 +99,39 @@ class TestTheAdapterReadsLikeAResultMessage:
 
         assert rm.usage.input_tokens == 0
         assert rm.total_cost_usd == 0.0
+
+
+class TestOnlyARetryableFailureIsRetried:
+    """WinError 206 was retried thirteen times and burned 2457 seconds on a permanent failure."""
+
+    def test_a_missing_binary_is_permanent(self):
+        assert _is_transient_subprocess_error(FileNotFoundError("Claude CLI not found. Install with: npm install -g ...")) is False
+
+    def test_a_command_line_over_the_windows_limit_is_permanent(self):
+        exc = OSError("The filename or extension is too long")
+        exc.winerror = 206
+
+        assert _is_transient_subprocess_error(exc) is False
+
+    def test_access_denied_is_permanent(self):
+        exc = OSError("Access is denied")
+        exc.winerror = 5
+
+        assert _is_transient_subprocess_error(exc) is False
+
+    def test_a_timeout_is_transient(self):
+        import subprocess
+
+        assert _is_transient_subprocess_error(subprocess.TimeoutExpired("claude", 2400)) is True
+
+    def test_a_connection_error_is_transient_whatever_its_errno(self):
+        assert _is_transient_subprocess_error(ConnectionResetError(104, "Connection reset by peer")) is True
+
+    def test_an_unrecognised_oserror_is_transient(self):
+        """Unknown means "might work next time"; the permanent list is the closed set."""
+        exc = OSError(99, "something new")
+
+        assert _is_transient_subprocess_error(exc) is True
+
+    def test_a_non_os_error_is_not_this_predicate_business(self):
+        assert _is_transient_subprocess_error(ValueError("nonsense")) is False

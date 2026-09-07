@@ -177,6 +177,7 @@ class GeminiProvider(LLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output, using Gemini's NATIVE JSON mode.
 
@@ -185,9 +186,17 @@ class GeminiProvider(LLMProvider):
         branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
         output that extract_json then mis-parsed looked like a model failure.
         """
+        # Accepted for Liskov (the base class offers it) and NOT honoured: this provider's JSON path sends no reasoning-effort field,
+        # so an effort request is logged rather than dropped in silence -- a caller who asked for a
+        # harder think and got the ordinary one has somewhere to look.
+        if thinking is not None:
+            logger.info("%s ignores thinking=%r: no reasoning-effort control on this provider", type(self).__name__, thinking)
+
         # Gemini IS a vision model, and since 2026-09-04 this provider inlines pictures properly
         # rather than refusing them. Forwarded only when non-empty, so a text-only call reaches
-        # `generate` with the identical argument list it always did.
+        # `generate` with the identical argument list it always did. The images NotImplementedError
+        # that origin/master added here alongside `thinking` is deliberately NOT taken: it predates
+        # the vision path and would re-refuse what this provider now supports.
         extra = {"images": images} if images else {}
         return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True, **extra)
 

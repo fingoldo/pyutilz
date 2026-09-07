@@ -714,6 +714,7 @@ class LLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
@@ -724,7 +725,11 @@ class LLMProvider(ABC):
         # `images` is forwarded ONLY when non-empty. A provider that does not implement vision has
         # no `images` parameter on its `generate`, and passing `images=None` to it would be a
         # TypeError on every ordinary text call -- so the default path must not mention it at all.
-        extra = {"images": images} if images else {}
+        extra: dict[str, Any] = {"images": images} if images else {}
+        # Same rule for `thinking`: a provider whose generate() has no such parameter must not
+        # receive it, so it is forwarded only when the caller actually asked for reasoning.
+        if thinking is not None:
+            extra["thinking"] = thinking
         return await self._generate_json_via(prompt, system, temperature, max_tokens, **extra)
 
     async def generate_batch(

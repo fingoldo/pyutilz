@@ -322,6 +322,11 @@ class TestF31ResetCalledByEveryProvider:
     @pytest.mark.asyncio
     async def test_gemini_generate_resets_before_the_call(self, monkeypatch):
         gemini_provider = pytest.importorskip("pyutilz.llm.gemini_provider")
+        # This test drives the real ``generate`` body, which builds a ``types.GenerateContentConfig``.
+        # google-genai is marker-gated to python_version >= "3.9" in pyproject, so on the 3.8 floor the
+        # module-level ``types`` handle is None and the call is an AttributeError, not a test failure.
+        # The wrapper module imports either way, so only the SDK itself states this precondition.
+        pytest.importorskip("google.genai")
         provider = gemini_provider.GeminiProvider.__new__(gemini_provider.GeminiProvider)
         provider.model_name = "gemini-2.5-flash"
         provider._max_concurrent = 1
@@ -692,6 +697,11 @@ class TestF34GeminiTruncationPartialText:
     @pytest.mark.asyncio
     async def test_generate_raises_truncation_with_partial_text(self, monkeypatch):
         gemini_provider = pytest.importorskip("pyutilz.llm.gemini_provider")
+        # This test drives the real ``generate`` body, which builds a ``types.GenerateContentConfig``.
+        # google-genai is marker-gated to python_version >= "3.9" in pyproject, so on the 3.8 floor the
+        # module-level ``types`` handle is None and the call is an AttributeError, not a test failure.
+        # The wrapper module imports either way, so only the SDK itself states this precondition.
+        pytest.importorskip("google.genai")
         provider = gemini_provider.GeminiProvider.__new__(gemini_provider.GeminiProvider)
         provider.model_name = "gemini-2.5-flash"
         provider._max_concurrent = 1
