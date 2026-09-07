@@ -218,7 +218,9 @@ class TestClaudeCodeProvider:
     async def test_generate_json_parses_code_block(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
         p = ClaudeCodeProvider()
-        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False):
+        # **kwargs: generate_json forwards `images=` too, and a mock pinned to the older
+        # signature failed with an unexpected-keyword TypeError rather than testing anything.
+        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False, **kwargs):
             return '```json\n{"key": "value"}\n```'
         p.generate = mock_gen
         result = await p.generate_json("give me json")
@@ -228,7 +230,9 @@ class TestClaudeCodeProvider:
     async def test_generate_json_raw_json(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
         p = ClaudeCodeProvider()
-        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False):
+        # **kwargs: generate_json forwards `images=` too, and a mock pinned to the older
+        # signature failed with an unexpected-keyword TypeError rather than testing anything.
+        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False, **kwargs):
             return '{"key": "value"}'
         p.generate = mock_gen
         result = await p.generate_json("give me json")
@@ -238,7 +242,9 @@ class TestClaudeCodeProvider:
     async def test_generate_json_invalid_raises(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
         p = ClaudeCodeProvider()
-        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False):
+        # **kwargs: generate_json forwards `images=` too, and a mock pinned to the older
+        # signature failed with an unexpected-keyword TypeError rather than testing anything.
+        async def mock_gen(prompt, system=None, temperature=0.7, max_tokens=0, json_mode=False, **kwargs):
             return "not json at all"
         p.generate = mock_gen
         with pytest.raises(ValueError, match="Invalid JSON"):

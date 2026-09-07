@@ -6,6 +6,7 @@ zero-cost accessors were exercised (test_llm_providers.py), leaving generate()'s
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -201,3 +202,83 @@ class TestCountTokens:
             out = await p.count_tokens("hello")
         assert isinstance(out, int)
         assert out > 0
+
+
+class TestSystemPromptGoesInAFile:
+    """2026-09-06: a real system prompt does not fit in a Windows command line.
+
+    ``_generate_cli`` used to pass ``--system-prompt <text>`` as an argv element. Windows
+    caps a whole command line at 32767 characters (CreateProcess), and the measured case --
+    glossum's English enrichment prompt -- is 48378 characters on its own. Every attempt
+    failed with ``WinError 206, the filename or extension is too long``; the retry loop
+    treated that permanent error as transient and spent thirteen attempts and forty minutes
+    on it before the caller's budget expired.
+
+    The CLI accepts ``--system-prompt-file``, so the path is what argv carries, whatever the
+    prompt's length. No size threshold to pick, and none to get wrong.
+    """
+
+    def _captured_cmd(self, system: str):
+        """Run _generate_cli far enough to capture argv, with the subprocess stubbed out."""
+        import asyncio
+
+        p = _provider()
+        p._claude_path = "claude"
+        captured = {}
+
+        class _FakeProc:
+            returncode = 0
+            stdin = SimpleNamespace(write=lambda _s: None, close=lambda: None)
+            stdout = SimpleNamespace(readline=lambda: "")
+            stderr = SimpleNamespace(read=lambda: "")
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            captured["system_file"] = None
+            if "--system-prompt-file" in cmd:
+                path = cmd[cmd.index("--system-prompt-file") + 1]
+                captured["system_file"] = path
+                captured["file_contents"] = Path(path).read_text(encoding="utf-8")
+            return _FakeProc()
+
+        with patch.object(subprocess, "Popen", fake_popen):
+            try:
+                asyncio.run(p._generate_cli(prompt="hi", system=system))
+            except Exception:
+                pass  # the fake process yields no result event; argv is what this asserts on
+        return captured
+
+    def test_the_system_prompt_is_not_an_argv_element(self):
+        system = "You are terse.\n" + ("filler line to blow past the OS limit\n" * 1200)
+        assert len(system) > 32767, "the fixture must exceed the Windows command-line cap"
+
+        captured = self._captured_cmd(system)
+
+        assert "--system-prompt" not in captured["cmd"], "the prompt is back on the command line"
+        assert "--system-prompt-file" in captured["cmd"]
+        assert sum(len(a) for a in captured["cmd"]) < 32767, "the command line still exceeds the OS cap"
+
+    def test_the_file_holds_exactly_the_prompt(self):
+        system = "You are a terse assistant. Reply with one word."
+
+        captured = self._captured_cmd(system)
+
+        assert captured["file_contents"] == system
+
+    def test_the_temporary_file_is_removed(self):
+        captured = self._captured_cmd("You are terse.")
+
+        assert not Path(captured["system_file"]).exists(), "the temporary system-prompt file leaked"
+
+    def test_no_system_prompt_means_no_flag(self):
+        """Negative control: a call without a system prompt must not grow a file or a flag."""
+        captured = self._captured_cmd("")
+
+        assert "--system-prompt-file" not in captured["cmd"]
+        assert captured["system_file"] is None

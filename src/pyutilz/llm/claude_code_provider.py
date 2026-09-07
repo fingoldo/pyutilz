@@ -8,6 +8,8 @@ Supports two backends:
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+import errno
 import json
 import logging
 import os
@@ -16,6 +18,7 @@ import re
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
+import tempfile
 import random
 import threading
 import time
@@ -266,6 +269,64 @@ def _find_claude_executable() -> str:
     raise FileNotFoundError("Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code")
 
 
+# Windows and POSIX error codes that say "this call will fail identically every time": the binary
+# or a path is missing, an argument is malformed, the command line is too long. Retrying any of
+# these buys nothing and costs the full backoff schedule.
+#
+# 2026-09-07: the retry arm below caught OSError wholesale. A 48378-character system prompt in argv
+# raised WinError 206 ("the filename or extension is too long") on every attempt; it was retried
+# thirteen times with growing backoff and burned 2457 seconds before the caller gave up. WinError
+# 206 is fixed (the system prompt goes in a file now), the predicate is the general case: a missing
+# `claude` binary would have run the schedule to its 50-attempt end, roughly four hours of sleeping.
+_PERMANENT_WINERRORS = frozenset({
+    2,    # ERROR_FILE_NOT_FOUND -- no claude binary
+    3,    # ERROR_PATH_NOT_FOUND
+    5,    # ERROR_ACCESS_DENIED
+    8,    # ERROR_NOT_ENOUGH_MEMORY on spawn
+    87,   # ERROR_INVALID_PARAMETER -- a malformed argument
+    206,  # ERROR_FILENAME_EXCED_RANGE -- the command line is over 32767 characters
+    267,  # ERROR_DIRECTORY -- a bad cwd
+})
+_PERMANENT_ERRNOS = frozenset({
+    errno.ENOENT,
+    errno.EACCES,
+    errno.EPERM,
+    errno.E2BIG,
+    errno.ENAMETOOLONG,
+    errno.EINVAL,
+    errno.ENOEXEC,
+    errno.EISDIR,
+    errno.ENOTDIR,
+})
+
+# A CLI hang is transient in kind, but self.timeout is measured in tens of minutes: fifty of them
+# is more than a day of wall clock spent on a run nobody is watching. Three is enough to ride out a
+# genuine stall and short enough to fail while the failure still means something.
+MAX_TIMEOUT_RETRIES = 3
+
+
+def _is_transient_subprocess_error(exc: BaseException) -> bool:
+    """Is ``exc`` worth retrying, or will the next attempt fail exactly as this one did?
+
+    ``ConnectionError`` and ``TimeoutError`` are ``OSError`` subclasses, so the retry arm's tuple
+    was in effect ``(OSError, subprocess.TimeoutExpired)`` -- everything a spawn can raise.
+    """
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return True
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True  # a genuine network blip, whatever its errno
+    if isinstance(exc, OSError):
+        winerror = getattr(exc, "winerror", None)
+        if winerror is not None:
+            return winerror not in _PERMANENT_WINERRORS
+        if exc.errno is not None:
+            return exc.errno not in _PERMANENT_ERRNOS
+        # FileNotFoundError from _find_claude_executable carries neither: it is constructed with a
+        # message alone, and a missing binary never becomes present by waiting.
+        return not isinstance(exc, FileNotFoundError)
+    return False
+
+
 def _raise_on_cli_tool_use(event: dict) -> None:
     """Raise :class:`ClaudeCodeToolUseError` if a CLI ``assistant`` event carries a tool-use block.
 
@@ -283,19 +344,33 @@ def _raise_on_cli_tool_use(event: dict) -> None:
             raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({block.get('name', '?')!r}); this provider is text-generation-only")
 
 
-def _consume_cli_stream(line_q: "queue.Queue[str | None]", timeout: float) -> "tuple[str | None, str | None, bool]":
+def _consume_cli_stream(
+    line_q: "queue.Queue[str | None]",
+    timeout: float,
+    cancel_evt: "threading.Event | None" = None,
+) -> "tuple[str | None, str | None, bool, dict | None]":
     """Read stream-json events off ``line_q`` until a ``result`` event, the reader's EOF sentinel, or ``timeout``.
 
-    Returns ``(result_text, error_text, timed_out)``: exactly one of the first two is set unless the
-    deadline expired first, in which case ``timed_out`` is True and both are None. Split out of
+    Returns ``(result_text, error_text, timed_out, result_event)``: exactly one of the first two is
+    set unless the deadline expired first, in which case ``timed_out`` is True and both are None.
+
+    ``result_event`` is the raw ``result`` event dict. The CLI puts real ``usage`` (input, output
+    and BOTH cache-token counts) and a real ``total_cost_usd`` on it even on a subscription plan,
+    and this function used to read only its ``result`` field and drop the rest -- so every CLI-path
+    call fell through to the tiktoken estimate in ``generate()``, reported zero cache tokens and
+    added nothing to ``total_cost_usd``. The SDK path has always captured this; the CLI path is the
+    one actually in use. Split out of
     ``ClaudeCodeProvider._generate_cli`` -- this event dispatch is the whole of that function's
     branching, and inlining it kept the enclosing coroutine at the top of the C901 budget where any
     further edit (this one included) pushed it over.
     """
     result_text: "str | None" = None
     error_text: "str | None" = None
+    result_event: "dict | None" = None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if cancel_evt is not None and cancel_evt.is_set():
+            return None, None, False, None
         try:
             raw = line_q.get(timeout=1.0)
         except queue.Empty:
@@ -312,6 +387,7 @@ def _consume_cli_stream(line_q: "queue.Queue[str | None]", timeout: float) -> "t
 
         etype = event.get("type")
         if etype == "result":
+            result_event = event
             subtype = event.get("subtype", "")
             if subtype == "success":
                 result_text = event.get("result", "")
@@ -325,8 +401,32 @@ def _consume_cli_stream(line_q: "queue.Queue[str | None]", timeout: float) -> "t
         elif etype == "system" and event.get("subtype") == "init":
             logger.debug("Claude CLI initialized")
     else:
-        return None, None, True
-    return result_text, error_text, False
+        return None, None, True, None
+    return result_text, error_text, False, result_event
+
+
+class _CliResultMessage:
+    """The CLI's ``result`` event in the shape ``generate()`` already reads off the SDK's
+    ``ResultMessage``: a ``.usage`` object with the four token counts and a ``.total_cost_usd``.
+
+    One consumer, two producers -- the alternative was a second usage-extraction branch in
+    ``generate()`` reading the same four fields out of a dict.
+    """
+
+    __slots__ = ("usage", "total_cost_usd", "session_id", "num_turns", "duration_ms")
+
+    def __init__(self, event: dict) -> None:
+        raw = event.get("usage") or {}
+        self.usage = SimpleNamespace(
+            input_tokens=int(raw.get("input_tokens", 0) or 0),
+            output_tokens=int(raw.get("output_tokens", 0) or 0),
+            cache_creation_input_tokens=int(raw.get("cache_creation_input_tokens", 0) or 0),
+            cache_read_input_tokens=int(raw.get("cache_read_input_tokens", 0) or 0),
+        )
+        self.total_cost_usd = float(event.get("total_cost_usd", 0.0) or 0.0)
+        self.session_id = event.get("session_id")
+        self.num_turns = event.get("num_turns")
+        self.duration_ms = event.get("duration_ms")
 
 
 class ClaudeCodeProvider(LLMProvider):
@@ -494,6 +594,7 @@ class ClaudeCodeProvider(LLMProvider):
         # default provider_name is "claude-code", this is the retry behavior most callers get.
         # 0 means infinite (mirrors _retry.MAX_RETRY_ATTEMPTS semantics).
         max_attempts = MAX_RETRY_ATTEMPTS
+        timeout_attempts = 0
         while True:
             attempt += 1
             if max_attempts != 0 and attempt > max_attempts:
@@ -550,7 +651,24 @@ class ClaudeCodeProvider(LLMProvider):
                 self.total_prompt_tokens += in_tok
                 self.total_completion_tokens += out_tok
                 return result
-            except (ConnectionError, TimeoutError, OSError, subprocess.TimeoutExpired) as e:
+            except (OSError, subprocess.TimeoutExpired) as e:
+                # ConnectionError and TimeoutError are OSError subclasses; naming them here too
+                # only made the tuple look narrower than it is. _is_transient_subprocess_error
+                # is what actually narrows it.
+                if not _is_transient_subprocess_error(e):
+                    logger.error(
+                        "Claude Code call failed permanently (%s: %s); not retrying.",
+                        type(e).__name__, str(e)[:200],
+                    )
+                    raise
+                if isinstance(e, subprocess.TimeoutExpired):
+                    timeout_attempts += 1
+                    if timeout_attempts >= MAX_TIMEOUT_RETRIES:
+                        logger.error(
+                            "Claude CLI timed out %d times at %ss; giving up rather than spending another %s seconds.",
+                            timeout_attempts, self.timeout, self.timeout * (max_attempts or 0),
+                        )
+                        raise
                 # subprocess.TimeoutExpired (raised by run_cli() on a CLI hang past self.timeout)
                 # is a SubprocessError subclass, NOT a TimeoutError/OSError/ConnectionError
                 # subclass -- it previously fell through to the generic `except Exception` below,
@@ -717,7 +835,17 @@ class ClaudeCodeProvider(LLMProvider):
                 '--include-partial-messages',
                 '--model', self.model,
                 '--output-format', 'stream-json',
-                '--dangerously-skip-permissions',
+                # 2026-09-07: was --dangerously-skip-permissions, which auto-approves whatever
+                # reaches a permission check -- on a call whose entire input is untrusted text and
+                # which wants no tools at all. --restricted is its opposite: the built-in tools
+                # that run commands or code and WebFetch are removed unless --tools names them
+                # (it names nothing), file tools are confined to the working directories, and
+                # bypassPermissions is refused outright. --permission-prompts none denies any
+                # prompt immediately rather than waiting on an answer a --print subprocess has no
+                # way to give. Probed against CLI 2.1.263 with this exact flag set: is_error
+                # false, num_turns 1, answer returned.
+                '--restricted',
+                '--permission-prompts', 'none',
                 '--no-session-persistence',
                 '--tools', '',
                 # Use ONLY MCP servers given via --mcp-config (none are), so the invoking user's
@@ -730,8 +858,30 @@ class ClaudeCodeProvider(LLMProvider):
             if "--tools" not in cmd:
                 cmd.extend(["--tools", ""])
 
+            # The system prompt goes in a FILE, not in argv.
+            #
+            # 2026-09-06: Windows caps a whole command line at 32767 characters
+            # (CreateProcess), and a real system prompt blows past that on its own -- the
+            # measured case was 48378 characters, which failed with WinError 206 "the
+            # filename or extension is too long" on every attempt, was retried thirteen
+            # times as though it were transient, and burned a 40-minute budget before the
+            # caller gave up. There is no size threshold to pick here and no need for one:
+            # the CLI takes --system-prompt-file, so the file path is what argv carries
+            # whatever the prompt's length. The prompt itself already goes through stdin.
+            system_prompt_file: str | None = None
             if system:
-                cmd.extend(["--system-prompt", system])
+                handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 -- closed below, deleted in the finally
+                    mode="w", encoding="utf-8", suffix=".txt", prefix="claude-system-", delete=False
+                )
+                # Bound to the name first: the write below can fail (a full disk, an encoding
+                # error) and the cleanup in the finally is keyed on this variable, so setting it
+                # afterwards left the file on disk on exactly the path that created it.
+                system_prompt_file = handle.name
+                try:
+                    handle.write(system)
+                finally:
+                    handle.close()
+                cmd.extend(["--system-prompt-file", system_prompt_file])
 
             cmd.append("-")
 
@@ -739,8 +889,24 @@ class ClaudeCodeProvider(LLMProvider):
 
             sub_env = {k: v for k, v in os.environ.items() if k not in self._NESTED_BLOCK_VARS}
 
+            # The child inherited the caller's working directory, which for the pipeline that uses
+            # this provider is a source repository: --restricted confines file tools to the working
+            # directories, so what those are matters. An empty temporary directory is the smallest
+            # thing to confine them to.
+            child_cwd = tempfile.mkdtemp(prefix="claude-cwd-")
+
+            # Cancelling the future returned by run_in_executor does NOT stop the thread running
+            # in it, and nothing else in this coroutine held a handle on the child: a cancelled
+            # call (Ctrl-C, a task group tearing down, an outer timeout) left a `claude` process
+            # running for up to self.timeout seconds, released the semaphore so the concurrency
+            # cap was quietly exceeded, and unlinked the system-prompt file out from under a live
+            # reader. The holder gives the coroutine the handle; the event gets the consumer out
+            # of its own wait rather than leaving it to notice the killed pipe.
+            proc_holder: "list[subprocess.Popen]" = []
+            cancel_evt = threading.Event()
+
             def run_cli():
-                """Spawn the ``claude`` CLI as a subprocess, stream its stdout via a background reader thread, and parse the stream-json events until a ``result`` event, timeout, or EOF; returns ``(returncode, result_text, stderr_text)``."""
+                """Spawn the ``claude`` CLI as a subprocess, stream its stdout via a background reader thread, and parse the stream-json events until a ``result`` event, timeout, or EOF; returns ``(returncode, result_text, stderr_text, result_event)``."""
                 # NOTE: This Popen is NOT wrapped in a ``with`` block
                 # because the surrounding logic already has a ``try /
                 # finally`` (line below) that runs ``proc.kill()`` +
@@ -757,7 +923,14 @@ class ClaudeCodeProvider(LLMProvider):
                     encoding="utf-8",
                     shell=False,  # nosec B603 - cmd is a fixed argv list: self._claude_path is resolved via shutil.which/known install paths (never attacker-controlled), remaining args are literal flags plus self.model/system (config/prompt content passed as discrete argv elements, not shell-interpreted)
                     env=sub_env,
+                    cwd=child_cwd,
+                    # Without errors=, one stray byte from a CLI writing in the console codepage
+                    # raises UnicodeDecodeError inside the daemon reader thread, where nothing
+                    # catches it; the call then fails as "produced no result", naming neither the
+                    # decode nor the byte.
+                    errors="replace",
                 )
+                proc_holder.append(proc)
 
                 try:
                     assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
@@ -780,13 +953,32 @@ class ClaudeCodeProvider(LLMProvider):
                 reader_thread = threading.Thread(target=_reader, daemon=True)
                 reader_thread.start()
 
+                # stderr used to be read only after the run, with a single blocking read(500) and
+                # no timeout. Nothing consumed it meanwhile, so a CLI that wrote more than one
+                # pipe buffer's worth of warnings blocked on its own stderr write and hung until
+                # the timeout -- which then looked transient and was retried. Draining it in
+                # parallel also means the message is intact when a failure needs explaining.
+                stderr_chunks: "list[str]" = []
+
+                def _stderr_reader():
+                    """Drain ``proc.stderr`` so the child never blocks writing to it."""
+                    try:
+                        if proc.stderr is not None:
+                            for line in proc.stderr:
+                                stderr_chunks.append(line)
+                    except (ValueError, OSError):  # pragma: no cover -- pipe closed under us
+                        pass
+
+                stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
+                stderr_thread.start()
+
                 # The _reader thread is the SOLE consumer of stdout. Do NOT
                 # call proc.communicate() here -- it would race the reader on
                 # the same pipe (ValueError: I/O operation on closed file, or
                 # partial reads). For reaping we kill + wait; stderr is read
                 # directly (the reader never touches it).
                 try:
-                    result_text, error_text, timed_out = _consume_cli_stream(line_q, self.timeout)
+                    result_text, error_text, timed_out, result_event = _consume_cli_stream(line_q, self.timeout, cancel_evt)
                 finally:
                     try:
                         proc.kill()
@@ -801,13 +993,12 @@ class ClaudeCodeProvider(LLMProvider):
                     # Join the reader so stdout is fully drained/closed before
                     # we read stderr below -- prevents a half-open-pipe race.
                     reader_thread.join(timeout=5)
+                    stderr_thread.join(timeout=5)
 
-                # Read stderr now that the reader thread has finished (it never
-                # consumed stderr). proc.stderr is still ours to read.
-                try:
-                    stderr_data = proc.stderr.read(500) if proc.stderr and not proc.stderr.closed else ""
-                except (ValueError, OSError):
-                    stderr_data = ""
+                stderr_data = "".join(stderr_chunks)[-2000:]
+
+                if cancel_evt.is_set():
+                    raise asyncio.CancelledError
 
                 if timed_out:
                     raise subprocess.TimeoutExpired(proc.args, self.timeout)
@@ -824,10 +1015,33 @@ class ClaudeCodeProvider(LLMProvider):
                 # genuine failures already raised above; the downstream
                 # ``if returncode != 0`` guard is intentionally kept as
                 # belt-and-braces for any future non-success return path.
-                return 0, result_text, stderr_data
+                return 0, result_text, stderr_data, result_event
 
             loop = asyncio.get_event_loop()
-            returncode, stdout, stderr = await loop.run_in_executor(None, run_cli)
+            try:
+                returncode, stdout, stderr, result_event = await loop.run_in_executor(None, run_cli)
+                # Set here rather than inside ``run_cli``: that runs in an executor thread with its
+                # own (empty) context, so a PerCallAttr write there would be invisible to the caller.
+                if result_event is not None:
+                    self._last_result_message = _CliResultMessage(result_event)
+            except asyncio.CancelledError:
+                # Reach into the thread's process and end it. The executor thread itself cannot be
+                # cancelled, but with the child dead its stdout closes, the reader hits EOF and
+                # the consumer returns within its one-second poll.
+                cancel_evt.set()
+                for child in proc_holder:
+                    try:
+                        child.kill()
+                    except OSError:  # pragma: no cover -- already reaped
+                        pass
+                raise
+            finally:
+                if system_prompt_file:
+                    try:
+                        os.unlink(system_prompt_file)
+                    except OSError:  # pragma: no cover -- best-effort cleanup
+                        logger.debug("Could not remove the temporary system-prompt file %s", system_prompt_file)
+                shutil.rmtree(child_cwd, ignore_errors=True)
 
             if returncode != 0:
                 error_msg = stderr or stdout or "Unknown error"
