@@ -207,14 +207,43 @@ def test_no_tracked_generated_files():
     assert tracked == [], f"generated files are tracked: {tracked}"
 
 
-# NOT WIRED YET, and deliberately named here rather than forgotten: `py_ci_shared.optional_truthiness`.
-# The check is correct and this repo is ready for it -- six sites were reported when it was first run,
-# three were redundant double-guards that are now simplified, and the remaining three are deliberate
-# (psycopg2 rejects an itersize of 0; a group-by-provider count of 0 requests an empty result no caller
-# can mean; a falsy base64 variant is the documented "give me hex"). What is missing is the dependency:
-# the module landed in py-ci-shared on 2026-09-05 and the editable checkout this environment imports
-# from predates it, so wiring the test now would fail every local commit while passing in CI, which
-# installs from git. Wire it -- baseline those three with the reasons above -- once the checkout is current.
+# Three optional numbers are tested for truth rather than for None, and all three are deliberate.
+# Listed verbatim with the reason rather than left out of the check: the point of a baseline is that
+# a FOURTH one has to be argued for here instead of appearing silently.
+#
+#   connection.py  `itersize`  -- psycopg2 rejects a named-cursor itersize of 0, so 0 and None both
+#                                 correctly mean "leave the driver default alone".
+#   _health.py     `group_by_provider` -- the count of rows to keep per provider. 0 requests an empty
+#                                 result, which no caller can mean; "no grouping" is the documented
+#                                 behaviour.
+#   basics.py      `base`      -- the base64 variant (16/32/64). The docstring states that a falsy
+#                                 base returns the hex digest, so 0 is the documented "off" value.
+#
+# Six were reported when this first ran. The other three were redundant double-guards whose inner
+# `> 0` already excluded zero, so the outer truthiness test decided nothing and only made the intent
+# read wrong; those are simplified in the source.
+_TRUTHINESS_BASELINE = (
+    "connection.py:203: `itersize` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `itersize is not None`.",
+    "_health.py:578: `group_by_provider` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `group_by_provider is not None`.",
+    "basics.py:128: `base` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `base is not None`.",
+)
+
+
+def test_optional_numbers_are_tested_for_none():
+    """`if x:` on an optional number reads 0 as absent, and 0 is a value callers mean.
+
+    The three that remain are deliberate and carry their reasons above. The value of the gate is the
+    fourth: a new `if limit:` or `if seed:` on a parameter whose 0 is meaningful now has to be
+    argued for in this file rather than landing unnoticed.
+    """
+    from py_ci_shared.optional_truthiness import assert_optionals_test_for_none
+
+    assert_optionals_test_for_none(
+        files=_production_py_files(),
+        repo_root=REPO_ROOT,
+        baseline=_TRUTHINESS_BASELINE,
+        min_subjects=50,
+    )
 
 # `__dir__` and `__getattr__` are the PEP 562 lazy-module pattern, which every package __init__ in
 # this repo implements. The five `__getattr__` variants were read side by side: they differ in what
