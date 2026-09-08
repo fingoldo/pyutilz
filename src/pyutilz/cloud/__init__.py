@@ -8,4 +8,9 @@ from .cloud import *
 # under static analysis and lazy-import edge cases).
 from . import cloud
 
-__all__ = ["cloud"]
+# mail.ru Cloud public folders: a credential-free way to publish and restore bulk build inputs. Kept a
+# SUBMODULE rather than star-exported, because its names (`download_host`, `weblink_of`) are meaningful
+# only in that context and would read as generic cloud helpers on the package.
+from . import mailru
+
+__all__ = ["cloud", "mailru"]

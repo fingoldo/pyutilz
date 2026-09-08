@@ -87,8 +87,21 @@ class TestTheWholeTreeIsEnded:
 
         assert proc.killed is True
 
-    def test_a_failing_direct_kill_still_leaves_the_tree_walked(self, taskkill_calls):
-        """The fallback raising must not skip -- or undo -- the tree kill that ran before it."""
+    @pytest.mark.parametrize("platform", ["win32", "linux"])
+    def test_a_failing_direct_kill_still_leaves_the_tree_walked(self, taskkill_calls, monkeypatch, platform):
+        """The fallback raising must not skip -- or undo -- the tree kill that ran before it.
+
+        Both branches run on every machine: the platform is patched rather than read, because
+        asserting only the taskkill list made this pass on Windows and fail on all fourteen
+        POSIX legs, where the tree kill had in fact run - through killpg.
+        """
+        killpg_calls: "list[int]" = []
+        monkeypatch.setattr(cli.sys, "platform", platform)
+        # SIGKILL is absent on Windows, so without this the POSIX branch dies on the signal lookup
+        # and its except swallows it - the simulation would prove nothing.
+        monkeypatch.setattr(cli.signal, "SIGKILL", 9, raising=False)
+        monkeypatch.setattr(cli.os, "getpgid", lambda pid: pid, raising=False)
+        monkeypatch.setattr(cli.os, "killpg", lambda pgid, sig: killpg_calls.append(pgid), raising=False)
 
         class _Stubborn(_Proc):
             def kill(self):
@@ -96,8 +109,9 @@ class TestTheWholeTreeIsEnded:
 
         cli._kill_process_tree(_Stubborn(pid=777))
 
-        assert taskkill_calls, "the tree kill was skipped"
-        assert taskkill_calls[0][-1] == "777"
+        recorded = taskkill_calls if platform == "win32" else killpg_calls
+        assert recorded, "the tree kill was skipped"
+        assert "777" in str(recorded[0]), "the tree kill did not aim at the child"
 
 
 class TestTheChildGetsItsOwnGroupWhereThatIsMeaningful:

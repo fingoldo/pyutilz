@@ -711,13 +711,30 @@ def test_the_request_timeout_scales_with_the_output_the_body_asks_for():
     probe = _Probe.__new__(_Probe)
     probe.model_name = "z-ai/glm-5.3-flash"
 
-    # 54,853 tokens at the pessimistic 30 tok/s floor is ~1,828 s, which must win over the 240 s default.
+    # 54,853 tokens at the pessimistic 30 tok/s floor is ~1,828 s, which must win over the 240 s default -
+    # and is then held to `_max_derived_timeout_s`, see the cap's own assertions below.
     assert probe._timeout_for({"max_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
     # The name heuristic stays a FLOOR: a small request on a slow-tier model keeps its long allowance,
     # because the reason that model is slow has nothing to do with how much it was asked to write.
     assert probe._timeout_for({"max_tokens": 500}) == 240.0
     # `max_completion_tokens` is the same request under the newer field name.
     assert probe._timeout_for({"max_completion_tokens": 54_853}) == pytest.approx(54_853 / 30.0)
+    # A ceiling is NOT a target, so the derived half is capped - but the cap has to clear the largest
+    # answer that actually ARRIVES. Measured 2026-09-08: a 128,000-token request derives 71 minutes, while
+    # the largest clean emission across a 19-model fleet is 85,694 tokens and needs 48. A first attempt at
+    # 20 minutes killed every capture from the one model that emits 70,783.
+    assert probe._timeout_for({"max_tokens": 128_000}) == 3000.0
+    assert probe._timeout_for({"max_tokens": 85_694}) == pytest.approx(85_694 / 30.0), "the largest measured answer is not clamped"
+    assert probe._timeout_for({"max_tokens": 30_000}) == pytest.approx(1000.0), "below the cap, nothing is clamped"
+    # Only the DERIVED half is clamped: a slow-tier model keeps whatever the name heuristic grants it.
+    class _SlowTier(type(probe)):  # type: ignore[misc]
+        def _get_timeout(self, model: str) -> float:
+            return 1800.0
+
+    slow = _SlowTier.__new__(_SlowTier)
+    slow.model_name = "openai/o3-pro"
+    assert slow._timeout_for({"max_tokens": 128_000}) == 3000.0, "the derived half still wins when it is larger than the name heuristic"
+
     # A body that names no budget at all falls back to the heuristic rather than to zero.
     assert probe._timeout_for({}) == 240.0
     assert probe._timeout_for({"max_tokens": None}) == 240.0
@@ -748,5 +765,5 @@ def test_the_post_passes_that_timeout_rather_than_the_clients_construction_time_
     probe._client = _Client()
 
     with pytest.raises(RuntimeError):
-        asyncio.run(probe._post_and_unwrap({"max_tokens": 54_853}))
-    assert seen["timeout"] == pytest.approx(54_853 / 30.0)
+        asyncio.run(probe._post_and_unwrap({"max_tokens": 30_000}))
+    assert seen["timeout"] == pytest.approx(1000.0)
