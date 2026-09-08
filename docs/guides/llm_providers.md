@@ -89,6 +89,24 @@ of their caps) rather than to one host — the requirement is that every call ru
 that every call reach the same machine. Record `last_upstream_provider` on every row regardless, so a pin
 that has quietly stopped applying is visible in the results rather than assumed from the request.
 
+**Choosing the pin by ADVERTISED cap is a heuristic; verify it from the rows you already keep.** The point
+above is that advertised is not enforced, so picking the smallest advertised cap that clears your need
+inherits exactly that unreliability — a pin that had landed on Reka would look right everywhere except in
+the output. The verification is cheap: a row with `finish_reason == "length"` whose output sits well below
+the cap its pinned route advertises is that route enforcing less than it claims. Checking WHICH provider
+served (route drift) is a different check and does not imply this one; keep both.
+
+**Do not pin a model whose qualifying endpoints number one.** The pin cannot improve reproducibility —
+there is nothing to choose between — while `allow_fallbacks=False` still switches off OpenRouter's own
+retry. Measured: `qwen/qwen3.8-flash` has a single endpoint and emitted 50,466 and 70,783 tokens cleanly
+while unpinned, then failed on `429` as soon as it was pinned to that same endpoint. Pin only where there
+is a choice to constrain.
+
+**Never round a measured need to a comfortable number.** Keep the figure the captured rows show, per model.
+Rounding 57,646 up to 64,000 feels harmless, and it is the same move as capping a timeout at 20 minutes
+while the measured range in the very same comment reads 25,000-70,000 tokens — which killed every capture
+from the model that needed 39. A round number is not evidence, and this is the failure that recurs most.
+
 **Size the request timeout from what arrives, not from the ceiling.** `_timeout_for` derives a per-request
 timeout from `max_tokens` at a pessimistic 30 tok/s, which is right in direction: a name-based heuristic
 cannot see how much output was asked for, and a `z-ai/glm-5.3-flash` asked for 54,853 tokens once got the
