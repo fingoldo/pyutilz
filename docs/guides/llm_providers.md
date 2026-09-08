@@ -52,6 +52,74 @@ print(top["id"], top["health"]["best_uptime_30m"], top["health"]["best_latency_p
 
 Stage 2 is auth-gated (needs an API key) but not billed — it queries endpoint metadata, not generation.
 
+## OpenRouter: a model id is not a route, and a ceiling is not a target
+
+Everything below was measured on 2026-09-07/08 against a live account while benchmarking a fleet of 19
+models. Each item cost a wave of captures to learn, and each one fails in a way that points at the wrong
+place, so they are recorded with the symptom that misled first.
+
+**One model id is served by many providers, and they are not interchangeable.** `z-ai/glm-5.3-flash` had 20
+endpoints one hour and 24 the next, with advertised `max_completion_tokens` from 128,000 to 1,179,648.
+OpenRouter picks per request, so two consecutive calls to the same id run under different ceilings and an
+unpinned benchmark measures the route lottery while reporting it as a model difference.
+
+**The advertised cap is not the enforced one.** A call asking for 131,072 tokens was routed to Reka, which
+advertises 235,929, and stopped at exactly 15,000 with `finish_reason="length"`. Confirmed against
+OpenRouter's own record: `GET /api/v1/generation?id=<generation_id>` returned `native_tokens_completion:
+15000`, `provider_name: "Reka"`. Neither the model's catalogue entry nor its endpoint list predicts the
+ceiling a given call actually gets — only the generation record says what happened.
+
+**Pin with `provider_order` + `provider_allow_fallbacks=False`, and pin to SLUGS.** The order entries are
+routing slugs — the part before the `/` in an endpoint's `tag` (`deepinfra/fp8` → `deepinfra`) — never the
+`provider_name` display string (`"DeepInfra"`). A display name is not rejected as malformed; it matches no
+route, and with fallbacks off the call returns **`ModelNotFound`**, which reads as if the model itself were
+gone.
+
+**Once pinned, the ROUTE's cap binds, not the model's.** `z-ai/glm-5.3-flash` advertises 131,072 as a
+model while its `nextbit` endpoint advertises 128,000. Asking a pinned route for more than it serves leaves
+OpenRouter with nothing matching the request, and it answers `404 No endpoints found for <model>` — again
+reading as "this model does not exist" rather than "your ceiling and your pin disagree". Take the cap from
+the same endpoint you took the slug from.
+
+**One pinned route cannot carry a concurrent run.** With fallbacks off, a `429` has nowhere to go, so it
+retries into the same wall until the attempts are spent: three 429s on a preflight ping alone, then a
+timeout, and a whole wave produced zero captures while the same call issued on its own succeeded in 221 s.
+Pin to a short ORDERED LIST (three routes that all clear the output you need, budget held to the smallest
+of their caps) rather than to one host — the requirement is that every call run under a KNOWN ceiling, not
+that every call reach the same machine. Record `last_upstream_provider` on every row regardless, so a pin
+that has quietly stopped applying is visible in the results rather than assumed from the request.
+
+**Size the request timeout from what arrives, not from the ceiling.** `_timeout_for` derives a per-request
+timeout from `max_tokens` at a pessimistic 30 tok/s, which is right in direction: a name-based heuristic
+cannot see how much output was asked for, and a `z-ai/glm-5.3-flash` asked for 54,853 tokens once got the
+240 s default and died in a ReadTimeout storm on every capture. But `max_tokens` is a ceiling, and deriving
+a WAIT from it treats it as a prediction of how much the model will say. A 128,000-token request derives
+71 minutes per stalled attempt, with the retry count behind it. Hence `_max_derived_timeout_s`, and hence
+the way it is sized: the cap must clear the largest answer that actually ARRIVES. Set to 20 minutes on
+first writing, it killed every capture from the one model that emits 70,783 tokens and needs 39. The
+largest clean emission across the fleet is 85,694 (`finish_reason="stop"`), needing 2,856 s, so the cap is
+3,000 s. Only the derived half is clamped — a slow-tier model keeps whatever `_get_timeout` grants it.
+
+**A per-model figure, never one number for the fleet.** The same mistake recurs at three levels — the
+output ceiling, the route pin, and the expected emission — and it fails identically each time. A single
+fleet-wide "largest output this task needs" is either too small for the biggest arm (34,000 was, by 2.5x,
+cutting the model that emits 85,694) or too demanding for the rest (requiring 85,694 of every route drops a
+model whose own largest clean answer is 36,561 and whose endpoints cap at 64,000). Keep a measured figure
+per model, defaulting an unmeasured one to the fleet maximum: admitting a route that then truncates costs
+the capture, while demanding too much room only narrows the fleet, and that is the cheaper error.
+
+**Some routes return no `finish_reason` at all.** A completed generation via Phala reported
+`finish_reason: None`, `native_finish_reason: None` and `total_cost: 0` in OpenRouter's own generation
+record, with real token counts. On such a route the usual "was this answer complete or cut off" test is
+simply unavailable, so a short answer cannot be distinguished from a truncated one — worth knowing before
+scoring a model low on a route that will not say.
+
+**Telemetry to keep on failures too.** A truncated or errored call has already burned its input and
+reasoning tokens and has already been billed. Discarding its telemetry records it at zero, so a wave that
+fails a lot reads as CHEAPER than one that works: measured, 142 of 253 captures were failures and every one
+carried cost 0, while one error message itself reported 5,741 reasoning tokens spent on the call it was
+reporting. Any spend cap comparing accumulated cost against a limit goes quiet in exactly that case.
+
 ## Adding a new provider
 
 Each provider is a `(module_path, class_name)` entry in `_PROVIDER_MODULES` (`factory.py`), lazily imported so a project that only uses one provider doesn't pay import cost for the other six's SDKs. A new provider implements the `LLMProvider` interface in `base.py` and registers itself the same way — see `anthropic_provider.py` as the reference implementation.

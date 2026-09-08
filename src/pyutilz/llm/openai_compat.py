@@ -148,12 +148,19 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
 
     #: Hard ceiling on the DERIVED half of the timeout. `max_tokens` is a ceiling, not a target, and
     #: deriving a timeout from it as though the model will use all of it was measured 2026-09-08 to cost
-    #: 71 minutes per stalled attempt on a 128,000-token cap - with ten retries behind it. The answers this
-    #: is used for run 25,000-70,000 tokens, so 20 minutes is generous for the generation that IS coming
-    #: and short enough that a route which has gone quiet is retried the same hour. Raise it on a subclass
-    #: for a caller that genuinely expects to fill a six-figure cap; the model-name floor below is never
-    #: clamped, so a slow-tier model keeps whatever `_get_timeout` grants it.
-    _max_derived_timeout_s: float = 1200.0
+    #: 71 minutes per stalled attempt on a 128,000-token cap, with ten retries behind it.
+    #:
+    #: The value must clear the largest answer that actually ARRIVES, or it cuts real work: set to 20
+    #: minutes on first writing, it killed every `qwen/qwen3.8-flash` capture, because that model emits
+    #: 70,783 tokens and needs 39 of them. The largest clean emission measured across a 19-model fleet is
+    #: 85,694 (`z-ai/glm-5.3-flash`, `finish_reason="stop"`), which needs 2,856 s at the pessimistic
+    #: 30 tok/s floor - so 3,000 s, sized from that measurement rather than from what feels patient.
+    #:
+    #: The trade is stated rather than hidden: a route that has gone silent now holds an attempt for up to
+    #: 50 minutes. That is the wrong side to economise on, because a truncated answer is indistinguishable
+    #: from a model that cannot do the task, while a slow one merely costs wall-clock. The model-name floor
+    #: below is never clamped, so a slow-tier model keeps whatever `_get_timeout` grants it.
+    _max_derived_timeout_s: float = 3000.0
 
     def _timeout_for(self, body: dict[str, Any]) -> float:
         """Request timeout in seconds, taking the LARGER of the model heuristic and what this body asks for.
