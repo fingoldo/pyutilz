@@ -1,6 +1,6 @@
 """PyUtilz dev subpackage."""
 
-__all__ = ["logginglib", "benchmarking", "dashlib", "notebook_init", "code_audit", "freevar_analysis"]
+__all__ = ["logginglib", "benchmarking", "dashlib", "notebook_init", "code_audit", "freevar_analysis", "persistence_sweep"]
 
 
 def __getattr__(name):
