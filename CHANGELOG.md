@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `pyutilz.dev.attempt_archive`: keep every paid LLM attempt, with its raw text stored before anything
+  parses it. `AttemptRecord` holds raw or partial text, outcome, tokens, reasoning tokens, cost (`None`
+  when the provider reports none, never 0.0), generation id, upstream provider, finish reasons, duration
+  and error. The content-addressed store takes a pluggable backend -- `DirectoryContentStore` writes
+  `<sha256>.txt` atomically, `CallableContentStore` adapts a caller's writer such as a SQL insert -- and
+  every backend returns `None`, never the digest, when the write failed. `archive_provider()` wraps a
+  provider's `generate` (and `generate_stream`) on the instance, so `generate_json` and `generate_batch`
+  go through it too; failed and cut-off attempts are recorded with their partial text. Metadata comes from
+  `last_call_summary()` where the provider has one, else the individual `last_*` attributes. Written for
+  glossum and autopsia, which both lost paid answers to retry loops, truncation and rollbacks.
+- `pyutilz.dev.blast_radius`: assert that one write changes exactly the rows and columns it declares.
+  Snapshot a SQL store (`sql_snapshot`) or keyed records (`records_snapshot`) before and after, then
+  `assert_only_target_changed` fails for a changed row outside the targets, a column outside the declared
+  set, a value that became NULL, an undeclared insert or delete, or a write that changed nothing. Every
+  one of glossum's 2026-09-10 verdict data defects -- a verdict reaching sibling rows through an
+  unbracketed OR, an UPDATE not scoped to its synset, a stored False reset to NULL, a fix writing over the
+  producer's columns -- passed every persistence gate, because none compared what ELSE changed.
+- `pyutilz.dev.persistence_sweep`, file-backed half: `written_files`, `file_sentinel_locations` (searches
+  JSONL/JSON text in raw and decoded form, so escaped non-ASCII is found), `jsonl_records` and
+  `records_holding` (typed values only on the records about one key; `True` never matches `1`, floats
+  within a tolerance) -- the same sweep for a store made of files rather than a database.
 - Vision support on EVERY provider, not only the OpenAI-compatible ones. `images=` already reached
   `LLMProvider.generate_json`, and `base.generate_json` forwards it to `generate` -- so on Anthropic
   it raised `TypeError: generate() got an unexpected keyword argument 'images'`, taking the whole
