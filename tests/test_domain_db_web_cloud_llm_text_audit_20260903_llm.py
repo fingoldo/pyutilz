@@ -502,6 +502,31 @@ class TestF36StreamingFirstChunkMetadata:
 
         assert any(chunk.get("id") == "gen-abc" for chunk in seen), "first chunk's response-level metadata was skipped"
 
+    @pytest.mark.asyncio
+    async def test_a_stream_that_dies_mid_answer_still_records_its_generation_id(self):
+        """Without the id, a stream cut off by a read timeout cannot be reconciled against /generation, so the
+        tokens it did generate show as cost 0. Measured on deepseek-v3.2: two streams stalled after 1,316 and
+        44,598 characters and both rows carried no generation id."""
+
+        class _DiesMidStream(_StubStream):
+            async def aiter_lines(self):
+                yield _sse({"id": "gen-cut", "provider": "Phala", "choices": [{"delta": {"content": "partial"}}]})
+                raise httpx.ReadTimeout("stalled", request=self.request)
+
+        provider = _make_stub()
+        seen: list[dict] = []
+        provider._track_provider_specific_response = lambda data: seen.append(data)  # type: ignore[method-assign]
+        provider._client = AsyncMock()
+        provider._client.stream = MagicMock(return_value=_DiesMidStream())
+
+        received: list[str] = []
+        with pytest.raises(httpx.ReadTimeout):
+            async for chunk in provider.generate_stream("prompt"):
+                received.append(chunk)
+
+        assert received == ["partial"]
+        assert any(chunk.get("id") == "gen-cut" for chunk in seen), "the id of a stream that broke mid-answer was lost"
+
 
 # ── F12: null token fields ────────────────────────────────────────────────
 

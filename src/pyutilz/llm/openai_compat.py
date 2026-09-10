@@ -487,6 +487,8 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
                                 continue
                             if first_chunk is None:
                                 first_chunk = chunk
+                                # Now, not only after the loop: a stream dying mid-answer never gets there, and without its id its cost reads 0.
+                                self._track_provider_specific_response(chunk)
                             last_chunk = chunk
                             # Usage block tends to arrive on a chunk with empty
                             # choices AFTER the last content delta; track it
