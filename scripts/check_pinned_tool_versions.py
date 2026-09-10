@@ -10,9 +10,12 @@ went unnoticed. mypy already has an equivalent assertion via `py_ci_shared.mypy_
 ruff's. Keeping it as a `repo: local` hook preserves the "one resolved config, no --select"
 property the ruff hook's own comment is careful about.
 
-Reads the pin straight out of `pyproject.toml` so there is one source of truth: bumping the pin
-there is all a version upgrade needs. Exits non-zero, naming both versions and the fix, when they
-differ. Python 3.8 compatible (no tomllib): the pin is read with a regex, not a TOML parser.
+Reads the pin straight out of `pyproject.toml` and, where py-ci-shared is installed, also checks it
+against `py_ci_shared.tool_versions.RUFF_VERSION` -- the one place the version CI runs is defined,
+read by `ruff-blocking.yml` itself. The local pin and CI's version used to be kept in step by hand,
+and mlframe's drifted. Exits non-zero, naming both versions and the fix, when any two differ.
+Python 3.8 compatible (no tomllib; the pin is read with a regex), and the shared comparison is
+skipped on an interpreter without py-ci-shared, which requires 3.9, so the 3.8 legs still run this.
 """
 
 import re
@@ -47,6 +50,17 @@ def _installed_version(module_name):
     return tokens[-1] if tokens else None
 
 
+def _shared_version(dist_name):
+    """The version py-ci-shared's workflows run for `dist_name`, or None where py-ci-shared is absent."""
+    if dist_name != "ruff":
+        return None
+    try:
+        from py_ci_shared.tool_versions import RUFF_VERSION
+    except ImportError:
+        return None
+    return RUFF_VERSION
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     pyproject_text = (root / "pyproject.toml").read_text(encoding="utf-8")
@@ -56,6 +70,9 @@ def main():
         if pinned is None:
             problems.append(f"{dist_name}: no exact pin ({dist_name}==<version>) found in pyproject.toml")
             continue
+        shared = _shared_version(dist_name)
+        if shared is not None and shared != pinned:
+            problems.append(f"{dist_name}: pyproject.toml pins {pinned} while py-ci-shared's workflows run {shared}. " f"Set the pin to {dist_name}=={shared}")
         installed = _installed_version(module_name)
         if installed is None:
             problems.append(f"{dist_name}: pinned at {pinned} but not importable as `python -m {module_name}` in this interpreter")

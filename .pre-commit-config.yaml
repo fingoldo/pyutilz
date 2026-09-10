@@ -82,11 +82,13 @@ repos:
   # 06/F06): this box had 0.15.9 against a pinned 0.15.22, thirteen patch releases of rule changes
   # in already-selected families, with nothing anywhere reporting the mismatch. This gate is ruff's
   # equivalent of the mypy_gate assertion, and runs first so a stale ruff is named rather than
-  # producing a misleading "All checks passed!".
+  # producing a misleading "All checks passed!". Since 2026-09-10 it also compares the pin with
+  # py-ci-shared's RUFF_VERSION (tool_versions.py), which ruff-blocking.yml reads, so the local pin
+  # cannot drift from CI the way mlframe's did.
   - repo: local
     hooks:
       - id: pinned-tool-versions
-        name: "pinned tool versions (ruff) match pyproject.toml"
+        name: "pinned tool versions (ruff) match pyproject.toml and py-ci-shared"
         entry: python scripts/check_pinned_tool_versions.py
         language: system
         pass_filenames: false

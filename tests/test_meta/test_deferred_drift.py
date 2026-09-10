@@ -66,7 +66,7 @@ def test_user_deferred_lists_havent_grown():
     if grown or new_keys:
         diff_total = sum(current.values()) - sum(baseline.values())
         sign = "+" if diff_total > 0 else ""
-        msg_parts = [f"Tech-debt whitelist(s) GREW since baseline " f"(net {sign}{diff_total} entries):"]
+        msg_parts = [f"Tech-debt whitelist(s) GREW since baseline (net {sign}{diff_total} entries):"]
         if grown:
             msg_parts.append("  GROWN:\n    " + "\n    ".join(grown))
         if new_keys:

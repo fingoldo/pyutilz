@@ -14,19 +14,19 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, split_src_lines
 _UNGUARDED_PATTERNS: list[tuple[re.Pattern, str]] = [
     (
         re.compile(r"\bDROP\s+CONSTRAINT\s+(?!IF\s+EXISTS\b)", re.IGNORECASE),
-        "DROP CONSTRAINT without IF EXISTS -- fails with " '"constraint ... does not exist" on a second run once the ' "constraint has already been dropped.",
+        'DROP CONSTRAINT without IF EXISTS -- fails with "constraint ... does not exist" on a second run once the constraint has already been dropped.',
     ),
     (
         re.compile(r"\bDROP\s+COLUMN\s+(?!IF\s+EXISTS\b)", re.IGNORECASE),
-        "DROP COLUMN without IF EXISTS -- fails on a second run once " "the column is already gone.",
+        "DROP COLUMN without IF EXISTS -- fails on a second run once the column is already gone.",
     ),
     (
         re.compile(r"\bDROP\s+TABLE\s+(?!IF\s+EXISTS\b)", re.IGNORECASE),
-        "DROP TABLE without IF EXISTS -- fails on a second run once " "the table is already gone.",
+        "DROP TABLE without IF EXISTS -- fails on a second run once the table is already gone.",
     ),
     (
         re.compile(r"\bADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS\b)", re.IGNORECASE),
-        "ADD COLUMN without IF NOT EXISTS -- fails with a duplicate-column " "error on a second run.",
+        "ADD COLUMN without IF NOT EXISTS -- fails with a duplicate-column error on a second run.",
     ),
 ]
 
