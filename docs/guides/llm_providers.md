@@ -96,11 +96,18 @@ the output. The verification is cheap: a row with `finish_reason == "length"` wh
 the cap its pinned route advertises is that route enforcing less than it claims. Checking WHICH provider
 served (route drift) is a different check and does not imply this one; keep both.
 
-**Do not pin a model whose qualifying endpoints number one.** The pin cannot improve reproducibility —
-there is nothing to choose between — while `allow_fallbacks=False` still switches off OpenRouter's own
-retry. Measured: `qwen/qwen3.8-flash` has a single endpoint and emitted 50,466 and 70,783 tokens cleanly
-while unpinned, then failed on `429` as soon as it was pinned to that same endpoint. Pin only where there
-is a choice to constrain.
+**Do not pin a model served from ONE endpoint in total.** The pin cannot improve reproducibility — there
+is nothing to choose between — while `allow_fallbacks=False` still switches off OpenRouter's own retry.
+Measured: `qwen/qwen3.8-flash` has a single endpoint and emitted 50,466 and 70,783 tokens cleanly while
+unpinned, then failed on `429` as soon as it was pinned to that same endpoint. Still hold the budget to that
+endpoint's cap, which is the one that binds. The opposite case — one QUALIFYING endpoint among several —
+must stay pinned: unpinned, the call can land on a route too small to hold the answer.
+
+**Match a served row to its route by display name, not by lower-casing the slug.** `provider.order` takes
+the slug (`sail-research`) while a served row records the display name (`Sail Research`), so comparing the
+two by case-folding happens to work for `NextBit`/`nextbit` and reports drift for every provider whose name
+carries a space or a hyphen. Record the slug → display-name pairs from the same `/endpoints` response the
+pin came from.
 
 **Never round a measured need to a comfortable number.** Keep the figure the captured rows show, per model.
 Rounding 57,646 up to 64,000 feels harmless, and it is the same move as capping a timeout at 20 minutes
