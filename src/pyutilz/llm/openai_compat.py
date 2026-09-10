@@ -11,7 +11,7 @@ import asyncio
 import logging
 import random
 from abc import abstractmethod
-from typing import Any, NamedTuple, Optional
+from typing import Any
 
 import httpx
 from tenacity import retry, retry_if_exception
@@ -32,26 +32,10 @@ from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: thi
     parse_retry_after,
 )
 
+# Also the public home the providers import `Pricing` from; it lives in `_pricing.py` for the line budget.
+from pyutilz.llm._pricing import Pricing
+
 logger = logging.getLogger(__name__)
-
-
-class Pricing(NamedTuple):
-    """One provider-independent pricing record, USD per 1M tokens.
-
-    The ONE tuple contract every provider's ``_resolve_pricing`` returns. It exists because the
-    same private method name used to carry two different shapes in sibling providers -- xAI's
-    ``(input, output)`` and DeepSeek's ``(input, cache_hit, output)`` -- so the accessors indexed
-    ``[1]`` and ``[2]`` for the same quantity. Nothing raises when those shapes get copied across:
-    both positions hold a float, and the only symptom is a silently wrong USD figure. Named fields
-    make the mix-up unrepresentable.
-
-    ``cache_hit`` is None when the provider publishes no cached-input rate; the base
-    ``_cache_hit_cost_per_1m`` then falls back to the uncached input rate.
-    """
-
-    input: float
-    output: float
-    cache_hit: Optional[float] = None
 
 
 class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
@@ -87,6 +71,9 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
     # ``await provider.generate(...)`` is unaffected -- no task boundary is crossed between the
     # write and the caller's immediately-following read.
     _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    # The reasoning tokens of the MOST RECENT POST alone. `_last_usage` sums a call's POSTs (a re-issue
+    # is billed too), and a diagnostic about one empty completion must name that completion's own count.
+    _last_post_reasoning_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
     last_tool_calls: PerCallAttr = PerCallAttr(list)
     last_citations: PerCallAttr = PerCallAttr(list)
@@ -687,10 +674,18 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
         self.total_reasoning_tokens += reasoning_tok
         self._call_count += 1
 
+        # ACCUMULATED within one call (realtime_applications audit 2026-09-10, LLM-7): a re-issued
+        # POST inside the same `generate()` is billed too, and assigning kept only the last one.
+        # `_last_usage` is a `PerCallAttr` reset at the start of every call, so the sum is per call.
+        # `cached_tokens` is carried here as well (LLM-5): the dict is what callers read, and cache
+        # hits used to be reachable only through a provider-specific attribute.
+        self._last_post_reasoning_tokens = reasoning_tok
+        prev = self._last_usage if isinstance(self._last_usage, dict) else {}
         self._last_usage = {
-            "input_tokens": prompt_tok,
-            "output_tokens": self._compute_billed_output(compl_tok, reasoning_tok),
-            "reasoning_tokens": reasoning_tok,
+            "input_tokens": int(prev.get("input_tokens") or 0) + prompt_tok,
+            "output_tokens": int(prev.get("output_tokens") or 0) + self._compute_billed_output(compl_tok, reasoning_tok),
+            "reasoning_tokens": int(prev.get("reasoning_tokens") or 0) + reasoning_tok,
+            "cached_tokens": int(prev.get("cached_tokens") or 0) + cache_hit,
         }
 
         self._track_provider_specific_usage(usage)
@@ -824,7 +819,8 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
                 )
                 content = await self._post_and_unwrap({k: v for k, v in body.items() if k != "response_format"})
             if content is None:
-                reasoning = (self._last_usage or {}).get("reasoning_tokens")
+                # This completion's own count, not the call's sum across POSTs (see `_record_usage`).
+                reasoning = self._last_post_reasoning_tokens
                 sent = "dropped" if self.last_json_mode_fallback else ("sent" if rf is not None else "not sent")
                 raise LLMProviderError(
                     f"{self._provider_name}/{self.model_name} returned an empty completion "

@@ -164,11 +164,43 @@ class TestCostTracking:
     # B13 dedup: covered by integration test_usage_cost_recorded_after_generate.
 
     def test_track_usage_accumulates(self):
+        """Two calls: the session total sums both, and each call's own figure starts from zero.
+
+        Re-framed (realtime_applications audit 2026-09-10, LLM-7): this used to assert that a second
+        POST OVERWROTE the first, without the per-call reset in between -- which is the defect when the
+        two POSTs belong to one call. The reset between calls is what `generate()` does."""
         p = _provider()
         p._track_provider_specific_usage({"cost": 0.01})
+        p._reset_per_call_state()
         p._track_provider_specific_usage({"cost": 0.02})
         assert p.total_actual_cost_usd == pytest.approx(0.03)
         assert p.last_actual_cost_usd == pytest.approx(0.02)
+
+    def test_a_reissued_post_within_one_call_is_counted_too(self):
+        """LLM-7: `generate()` re-issues without `response_format` (or with a repaired parameter), and
+        both POSTs are billed. The call's own cost is their sum, not the second alone."""
+        p = _provider()
+        p._reset_per_call_state()
+        p._track_provider_specific_usage({"cost": 0.01})
+        p._track_provider_specific_usage({"cost": 0.01})
+        assert p.last_actual_cost_usd == pytest.approx(0.02)
+
+    def test_a_post_that_reports_no_cost_does_not_erase_an_earlier_one(self):
+        p = _provider()
+        p._reset_per_call_state()
+        p._track_provider_specific_usage({"cost": 0.01})
+        p._track_provider_specific_usage({"prompt_tokens": 10})
+        assert p.last_actual_cost_usd == pytest.approx(0.01)
+
+    def test_a_reissued_posts_tokens_are_summed_and_cache_hits_are_carried(self):
+        """LLM-7 / LLM-5: `_last_usage` sums the call's POSTs and carries `cached_tokens`."""
+        p = _provider()
+        p._reset_per_call_state()
+        p._record_usage({"prompt_tokens": 100, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 80}})
+        p._record_usage({"prompt_tokens": 100, "completion_tokens": 20, "prompt_tokens_details": {"cached_tokens": 80}})
+        assert p._last_usage["input_tokens"] == 200
+        assert p._last_usage["cached_tokens"] == 160
+        assert p._last_usage["output_tokens"] >= 30
 
     def test_track_usage_missing_cost_no_op(self):
         p = _provider()

@@ -490,12 +490,16 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 if upstream uses the legacy field)
           * ``usage.prompt_tokens_details.audio_tokens``       → audio_tokens
         """
+        # ACCUMULATED within one call, not assigned (realtime_applications audit 2026-09-10, LLM-7).
+        # `generate()` can make a second billed POST -- the re-issue without `response_format`, or
+        # with a repaired parameter -- and each POST reaches this hook. Assigning kept only the last
+        # POST's cost, so a call billed twice was recorded once. `last_actual_cost_usd` is a
+        # `PerCallAttr` reset to 0.0 at the start of every `generate()`, so summing here is exact
+        # per call; a POST that reports no cost adds nothing rather than wiping an earlier one.
         cost = usage.get("cost")
         if isinstance(cost, (int, float)):
-            self.last_actual_cost_usd = float(cost)
+            self.last_actual_cost_usd = float(self.last_actual_cost_usd or 0.0) + float(cost)
             self.total_actual_cost_usd += float(cost)
-        else:
-            self.last_actual_cost_usd = 0.0
 
         cost_details = usage.get("cost_details") or {}
         upstream_cost = cost_details.get("upstream_inference_cost")
