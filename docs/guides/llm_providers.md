@@ -98,9 +98,10 @@ served (route drift) is a different check and does not imply this one; keep both
 
 **Do not pin a model served from ONE endpoint in total.** The pin cannot improve reproducibility — there
 is nothing to choose between — while `allow_fallbacks=False` still switches off OpenRouter's own retry.
-Measured: `qwen/qwen3.8-flash` has a single endpoint and emitted 50,466 and 70,783 tokens cleanly while
+Measured: `qwen/qwen3.8-flash` had a single endpoint and emitted 50,466 and 70,783 tokens cleanly while
 unpinned, then failed on `429` as soon as it was pinned to that same endpoint. Still hold the budget to that
-endpoint's cap, which is the one that binds. The opposite case — one QUALIFYING endpoint among several —
+endpoint's cap, which is the one that binds. Decide from the endpoint list as it stands at run time, never
+from a note like this one: two days later the same model listed two endpoints (alibaba, makora). The opposite case — one QUALIFYING endpoint among several —
 must stay pinned: unpinned, the call can land on a route too small to hold the answer.
 
 **Match a served row to its route by display name, not by lower-casing the slug.** `provider.order` takes
@@ -124,6 +125,19 @@ the way it is sized: the cap must clear the largest answer that actually ARRIVES
 first writing, it killed every capture from the one model that emits 70,783 tokens and needs 39. The
 largest clean emission across the fleet is 85,694 (`finish_reason="stop"`), needing 2,856 s, so the cap is
 3,000 s. Only the derived half is clamped — a slow-tier model keeps whatever `_get_timeout` grants it.
+
+**Stream a long generation: `generate_stream`, not `generate`.** A non-streamed call receives its answer only
+at the end, so its read timeout has to cover the whole generation, and no sizing of that timeout rescues a
+route that is merely slow. Measured: `qwen/qwen3.8-flash` pinned to alibaba spent three non-streamed attempts
+of 50 to 60 minutes each and got nothing back (one ran past the 3,000 s cap, so something kept the
+connection alive); streamed, the same model on the same route answered both articles cleanly, 61,686 and
+89,240 output tokens. The timeout then bounds only the silence between deltas, and reasoning deltas keep
+arriving while the model thinks. A stream also keeps what arrived when it dies — `deepseek/deepseek-v3.2` on
+phala/streamlake/alibaba stalled mid-answer twice, after 1,316 and 44,598 characters. Accumulate the chunks in
+a plain loop (a comprehension, as ruff's PERF401 suggests, loses every chunk already received when the stream
+raises) and store them apart from the complete response, so a cut-off answer is archived without being scored
+as a whole one. `generate_stream` records usage and `generation_id` after the stream closes, and raises
+`LLMTruncationError` carrying `partial_text` on `finish_reason="length"`.
 
 **A per-model figure, never one number for the fleet.** The same mistake recurs at three levels — the
 output ceiling, the route pin, and the expected emission — and it fails identically each time. A single
