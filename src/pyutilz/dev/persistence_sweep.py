@@ -35,6 +35,10 @@ __all__ = [
     "text_columns",
     "sentinel_locations",
     "rows_holding",
+    "written_files",
+    "file_sentinel_locations",
+    "jsonl_records",
+    "records_holding",
 ]
 
 #: ``information_schema.columns.data_type`` values a string sentinel can land in.
@@ -64,6 +68,129 @@ def unaccounted_fields(cls: type, accounted: Iterable[str]) -> Set[str]:
     Assert this is empty so a field added to the dataclass later cannot be silently skipped.
     """
     return {f.name for f in dataclasses.fields(cls)} - set(accounted)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# File-backed stores: the same sweep when storage is JSONL rows and JSON documents rather than a database.
+#
+# The recipe is unchanged -- unique sentinels, the production writer, then a search of everything written --
+# only "every text column" becomes "every file under the store's roots". Keep the negative control: search for
+# a sentinel nothing wrote and assert it is found nowhere, or a search that matches everything passes having
+# checked nothing.
+# ---------------------------------------------------------------------------------------------------------
+
+#: File suffixes a file-backed store writes text into.
+TEXT_FILE_SUFFIXES: Tuple[str, ...] = (".jsonl", ".json", ".txt", ".ndjson", ".csv", ".md")
+
+
+def written_files(roots: Iterable[Any], suffixes: Sequence[str] = TEXT_FILE_SUFFIXES) -> List[Any]:
+    """Every file with one of ``suffixes`` under each root (a directory or a single file), sorted."""
+    from pathlib import Path
+
+    out: List[Path] = []
+    for root in roots:
+        path = Path(root)
+        if path.is_file():
+            out.append(path)
+        elif path.is_dir():
+            out.extend(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in suffixes)
+    return sorted(set(out))
+
+
+def _decoded_json(text: str) -> Optional[str]:
+    """``text`` re-serialised with non-ASCII left literal when it parses as JSON, else ``None``."""
+    import json
+
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False)
+    except ValueError:
+        return None
+
+
+def file_sentinel_locations(sentinels: Mapping[str, str], files: Iterable[Any]) -> Dict[str, List[str]]:
+    """``{name: [file, ...]}`` for every sentinel, empty where no file holds it.
+
+    Each file is read once and every sentinel tested against it. JSON escapes non-ASCII characters by default
+    (``\\u00e9``), so a file is also searched in its decoded form when it parses as JSON or JSONL; the
+    ``ZZSENT`` sentinels are ASCII either way, but a caller's own sentinels need not be.
+    """
+    found: Dict[str, List[str]] = {name: [] for name in sentinels}
+    for f in files:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                raw = fh.read()
+        except OSError:
+            continue
+        haystacks = [raw]
+        whole = _decoded_json(raw)
+        if whole is not None:
+            haystacks.append(whole)
+        else:
+            decoded = [d for d in (_decoded_json(line) for line in raw.splitlines()) if d is not None]
+            if decoded:
+                haystacks.append("\n".join(decoded))
+        for name, sentinel in sentinels.items():
+            if any(sentinel in h for h in haystacks):
+                found[name].append(str(f))
+    return found
+
+
+def jsonl_records(path: Any) -> List[Dict[str, Any]]:
+    """Every JSON object in a JSONL file, skipping blank lines; a missing file is no records."""
+    import json
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        return []
+    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _walk_values(obj: Any, field: str) -> List[Any]:
+    """Values under key ``field`` anywhere inside ``obj`` (nested dicts and lists included)."""
+    out: List[Any] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == field:
+                out.append(v)
+            out.extend(_walk_values(v, field))
+    elif isinstance(obj, list):
+        for item in obj:
+            out.extend(_walk_values(item, field))
+    return out
+
+
+def records_holding(
+    records: Iterable[Mapping[str, Any]],
+    value: Any,
+    *,
+    fields: Sequence[str],
+    key_field: Optional[str] = None,
+    key_value: Any = None,
+    tolerance: float = 1e-9,
+) -> List[str]:
+    """``"#index.field"`` for every record (optionally only those with ``key_field == key_value``) holding
+    ``value`` under one of ``fields``, at any nesting depth.
+
+    The file-store twin of :func:`rows_holding`: typed values (booleans, numbers, enum strings) cannot be made
+    unique the way a string sentinel can, so they are looked for only on the records about the item under
+    test, never anywhere in the store. Floats compare within ``tolerance``; ``True`` never matches ``1``.
+    """
+    hits: List[str] = []
+    for i, record in enumerate(records):
+        if key_field is not None and record.get(key_field) != key_value:
+            continue
+        for field in fields:
+            for held in _walk_values(record, field):
+                same_kind = isinstance(held, bool) == isinstance(value, bool)
+                if isinstance(value, float) and isinstance(held, (int, float)) and same_kind:
+                    match = abs(float(held) - value) <= tolerance
+                else:
+                    match = same_kind and held == value
+                if match:
+                    hits.append(f"#{i}.{field}")
+                    break
+    return hits
 
 
 def _quote(identifier: str) -> str:
