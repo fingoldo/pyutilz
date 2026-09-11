@@ -80,6 +80,12 @@ list[Finding]):
   ``file:line`` where the file resolves to nothing in the tree, or the line
   is past the end of the file it resolves to.
 
+- ``scan_signature_gated_kwarg_drops``: an argument forwarded only when
+  the callee's signature names it and dropped in silence when it does
+  not, so the call runs with the callee's default and the caller is
+  never told. A signature taking ``**kwargs`` names nothing of its own,
+  so a forwarding subclass reads as accepting no parameters at all.
+
 - ``scan_write_counted_from_input``: a rows-written counter set from
   ``len()`` of the rows handed to an insert that can skip some (``ON
   CONFLICT DO NOTHING``, ``DO UPDATE ... WHERE``, ``INSERT IGNORE``), so a
@@ -543,6 +549,7 @@ from .settings_container_nodecode import scan_settings_container_field_needs_nod
 from .dead_endpoint_params import scan_dead_endpoint_parameters
 from .stale_source_citations import scan_stale_source_citations
 from .write_count_from_input import scan_write_counted_from_input
+from .signature_gated_kwargs import scan_signature_gated_kwarg_drops
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -667,6 +674,7 @@ __all__ = [
     "scan_dead_endpoint_parameters",
     "scan_stale_source_citations",
     "scan_write_counted_from_input",
+    "scan_signature_gated_kwarg_drops",
     "scan_log_only_except",
     "DEFAULT_ESCALATION_ATTRS",
     "scan_sql_migration_idempotency",

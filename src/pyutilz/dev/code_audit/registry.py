@@ -23,6 +23,7 @@ from .settings_container_nodecode import scan_settings_container_field_needs_nod
 from .dead_endpoint_params import scan_dead_endpoint_parameters
 from .stale_source_citations import scan_stale_source_citations
 from .write_count_from_input import scan_write_counted_from_input
+from .signature_gated_kwargs import scan_signature_gated_kwarg_drops
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -160,6 +161,7 @@ register_scanner("settings_container_field_needs_nodecode", scan_settings_contai
 register_scanner("dead_endpoint_parameter", scan_dead_endpoint_parameters)
 register_scanner("stale_source_citation", scan_stale_source_citations)
 register_scanner("write_counted_from_input", scan_write_counted_from_input)
+register_scanner("signature_gated_kwarg_drop", scan_signature_gated_kwarg_drops)
 register_scanner("log_only_except", scan_log_only_except)
 register_scanner("sql_migration_not_idempotent", scan_sql_migration_idempotency)
 register_scanner("duplicate_condition", scan_duplicate_conditions)
@@ -312,6 +314,11 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     # skips duplicates), 0 in glossum after it fixed its OEWN importer, and 0 in mlframe, pyutilz, py-ci-shared,
     # llm_bench and noema_app. On by default it would fail autopsia's baseline the moment it upgrades.
     "write_counted_from_input",
+    # Opt-in because two consumers hold live hits, measured 2026-09-12: 2 in glossum (the LLM client's json_mode
+    # gate, and a constructor timeout gate in a script) and 2 in mlframe (a scikit-learn KBinsDiscretizer keyword
+    # and a test helper), with 0 in pyutilz, py-ci-shared, autopsia, noema_app and llm_bench. Each is the real
+    # shape, but on by default it would fail two committed baselines on upgrade.
+    "signature_gated_kwarg_drop",
     # Opt-in because its precision is not good enough to run unattended, and that was measured rather than
     # guessed. Against four repos it produced three hits, ALL false: two docstrings naming a threshold that
     # belongs to a DIFFERENT function, and one reading "12-permutation" as a tunable because "per-call"
