@@ -12,7 +12,8 @@ production code worth policing. These tests catch:
       police. The whole point of a meta-test is to cover the public
       contract — if the test imports ``_foo`` from a production module,
       it's testing implementation, not behaviour. Whitelist via
-      ``_PERMITTED_PRIVATE_IMPORTS`` for legitimate cases (e.g. the
+      ``_PERMITTED_PRIVATE_IMPORTS`` for legitimate cases, checked by ``py_ci_shared.meta_private_imports``,
+      where a permitted entry nothing imports fails (e.g. the
       lazy-proxy meta-test must touch ``_create_lazy_module`` because
       that IS the surface under test).
 
@@ -25,10 +26,10 @@ production code worth policing. These tests catch:
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import pytest
+from py_ci_shared.meta_private_imports import assert_no_private_meta_imports
 from py_ci_shared.fail_message_quality import assert_fail_messages_actionable
 
 _TEST_META_DIR = Path(__file__).resolve().parent
@@ -36,21 +37,12 @@ _TEST_META_DIR = Path(__file__).resolve().parent
 # Imports of a production private symbol from a meta-test that are
 # legitimate. Each entry is "test_meta_filename::imported_dotted_name".
 _PERMITTED_PRIVATE_IMPORTS: set[str] = {
-    "test_lazy_import_safety::pyutilz._create_lazy_module",
-    "test_lazy_import_safety::pyutilz._MODULE_ALIASES",
-    "test_module_alias_integrity::pyutilz._MODULE_ALIASES",
-    "test_provider_registration::pyutilz.llm.factory._PROVIDER_MODULES",
     # The facade-integrity check asks whether the FACADE agrees with the registry, so the private
     # registry is the fact under test -- reading its public mirror instead would compare the facade to itself.
     "test_facade_and_exception_root_integrity::pyutilz.llm.factory._PROVIDER_MODULES",
     # The README/docs claim "across N providers"; the registry is what N counts, so the
     # check must read the registry itself rather than a public mirror that could drift with it.
     "test_prose_numeric_claims::pyutilz.llm.factory._PROVIDER_MODULES",
-    "test_provider_registration::pyutilz.llm.factory._ALIASES",
-    "test_provider_cache_concurrency::pyutilz.llm.factory._provider_cache",
-    "test_provider_cache_concurrency::pyutilz.llm.factory._provider_lock",
-    "test_provider_cache_concurrency::pyutilz.llm.factory._PROVIDER_MODULES",
-    "test_provider_cache_concurrency::pyutilz.llm.factory._ALIASES",
     "test_retry_predicate_matches_sdk_hierarchy::pyutilz.llm.gemini_provider._is_retryable_genai_error",
 }
 
@@ -62,24 +54,6 @@ def _meta_test_files() -> list[Path]:
             continue
         out.append(py)
     return sorted(out)
-
-
-def _imports(tree: ast.AST) -> list[str]:
-    """Yield fully-qualified imported names from ``import X`` and
-    ``from X import Y`` (where Y joins the dotted base)."""
-    out: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                out.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            for alias in node.names:
-                if base:
-                    out.append(f"{base}.{alias.name}")
-                else:
-                    out.append(alias.name)
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -98,35 +72,10 @@ def test_every_pytest_fail_call_has_actionable_text():
 
 
 def test_meta_tests_dont_reach_private_internals():
-    bad: list[str] = []
-    for py in _meta_test_files():
-        stem = py.stem
-        try:
-            src = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            continue
-        for imp in _imports(tree):
-            # Only audit our own package imports.
-            if not (imp.startswith("pyutilz") or imp.startswith("mlframe")):
-                continue
-            # Last segment with a single leading underscore is "private".
-            last = imp.rsplit(".", 1)[-1]
-            if not last.startswith("_") or last.startswith("__"):
-                continue
-            entry = f"{stem}::{imp}"
-            if entry in _PERMITTED_PRIVATE_IMPORTS:
-                continue
-            bad.append(entry)
-    if bad:
-        pytest.fail(
-            f"{len(bad)} meta-test(s) import a private symbol without "
-            f"justification. Either use the public API instead, OR "
-            f"whitelist via _PERMITTED_PRIVATE_IMPORTS with reasoning:\n  " + "\n  ".join(sorted(set(bad)))
-        )
+    """F2: a private import from a meta-test needs a permitted entry with its reason, and a permitted entry nothing imports fails."""
+    assert_no_private_meta_imports(
+        _TEST_META_DIR, ("pyutilz", "mlframe"), permitted=_PERMITTED_PRIVATE_IMPORTS, exclude=(Path(__file__).name,), any_segment=False, min_files=20
+    )
 
 
 # ---------------------------------------------------------------------------
