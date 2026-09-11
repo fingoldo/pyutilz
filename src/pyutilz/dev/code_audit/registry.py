@@ -19,6 +19,7 @@ from .getattr_unknown_attribute import scan_getattr_unknown_attribute
 from .getattr_literal_on_known_dataclass import scan_getattr_literal_on_known_dataclass
 from .locals_get import scan_locals_get_fragile_lookup
 from .dead_cli_flags import scan_dead_cli_flags
+from .settings_container_nodecode import scan_settings_container_field_needs_nodecode
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -152,6 +153,7 @@ register_scanner("mutation_during_iteration", scan_mutation_during_iteration)
 register_scanner("sql_limit_without_order_by", scan_sql_limit_without_order_by)
 register_scanner("sql_offset_pagination", scan_sql_offset_pagination)
 register_scanner("dead_cli_flag", scan_dead_cli_flags)
+register_scanner("settings_container_field_needs_nodecode", scan_settings_container_field_needs_nodecode)
 register_scanner("log_only_except", scan_log_only_except)
 register_scanner("sql_migration_not_idempotent", scan_sql_migration_idempotency)
 register_scanner("duplicate_condition", scan_duplicate_conditions)

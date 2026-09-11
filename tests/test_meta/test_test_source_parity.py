@@ -242,6 +242,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_gate_integrity": "meta-test over .pre-commit-config.yaml / .github/workflows / pyproject.toml -- no production module to pair with",
     "test_optional_dep_preconditions": "meta-test over the TEST suite itself -- pins that a test states the optional extra it needs; no production module to pair with",
+    "test_markers_registered": "meta-test over the TEST suite and pyproject -- every pytest marker used is registered, via py_ci_shared.pytest_markers; no production module to pair with",
     "test_llm_factory": "covers pyutilz.llm.factory",
     "test_llm_base": "covers pyutilz.llm.base",
     "test_llm_providers": "cross-cutting — covers ALL provider modules together",

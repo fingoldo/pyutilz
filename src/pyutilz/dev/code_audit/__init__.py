@@ -67,6 +67,11 @@ list[Finding]):
   bound attribute (``args.<name>``) is never referenced anywhere in the
   scanned tree -- either dead code or a flag that silently does nothing.
 
+- ``scan_settings_container_field_needs_nodecode``: a container-typed
+  ``BaseSettings`` field parsed by a ``mode="before"`` validator without
+  ``NoDecode`` -- pydantic-settings JSON-decodes it from the environment
+  first, so the validator only ever runs for direct construction.
+
 - ``scan_sql_migration_idempotency``: raw ``.sql`` file scan (not
   Python) for statements that fail on a second run instead of no-op'ing
   -- ``DROP CONSTRAINT``/``DROP COLUMN``/``DROP TABLE`` without
@@ -521,6 +526,7 @@ from .nan_equality import scan_nan_equality
 from .mutation_during_iteration import scan_mutation_during_iteration
 from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_pagination, scan_sql_aggregate_before_cast
 from .dead_cli_flags import scan_dead_cli_flags
+from .settings_container_nodecode import scan_settings_container_field_needs_nodecode
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -641,6 +647,7 @@ __all__ = [
     "scan_sql_limit_without_order_by",
     "scan_sql_offset_pagination",
     "scan_dead_cli_flags",
+    "scan_settings_container_field_needs_nodecode",
     "scan_log_only_except",
     "DEFAULT_ESCALATION_ATTRS",
     "scan_sql_migration_idempotency",
