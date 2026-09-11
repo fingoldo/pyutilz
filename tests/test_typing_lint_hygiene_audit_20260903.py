@@ -5,7 +5,8 @@ finding described as broken, so a revert fails here rather than silently reappea
 """
 
 import ast
-import subprocess  # nosec B404 - runs the repo's own pin-check script with a fixed argv, no shell
+import re
+import subprocess  # nosec B404 - runs py_ci_shared's pin check with a fixed argv, no shell
 import sys
 from pathlib import Path
 
@@ -178,21 +179,32 @@ def test_f05_add_weighted_aggregates_declares_a_selector():
 # ---- F06: the blocking ruff gate is pinned in practice, not just on paper -----------------------
 
 
-def test_f06_pin_check_script_reports_a_mismatch():
+def test_f06_pin_check_reports_a_mismatch():
     """`language: system` means the hook runs whatever ruff is installed; this gate is what says so."""
-    script = REPO_ROOT / "scripts" / "check_pinned_tool_versions.py"
-    assert script.is_file()
-    out = subprocess.run(  # nosec B603 - fixed argv (sys.executable plus a repo path), shell=False
-        [sys.executable, str(script)], capture_output=True, text=True, check=False, cwd=str(REPO_ROOT)
+    out = subprocess.run(  # nosec B603 - fixed argv (sys.executable plus literal flags), shell=False
+        [sys.executable, "-m", "py_ci_shared.pinned_tool_versions"], capture_output=True, text=True, check=False, cwd=str(REPO_ROOT)
     )
-    # Either the box matches the pin (exit 0, no output) or it does not and the mismatch is NAMED.
-    if out.returncode != 0:
-        assert "pinned-tool-version mismatch" in out.stdout
+    # Either the box matches the pin (exit 0) or it does not and the mismatch is NAMED; anything else, a crash
+    # included, fails.
+    assert out.returncode == 0 or "pinned-tool-version mismatch" in out.stdout, (out.returncode, out.stdout, out.stderr)
+
+
+def test_f06_pin_check_fails_on_a_different_pin(tmp_path):
+    """The gate has teeth: a pyproject pinning another ruff than the shared version fails it."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    bad = re.sub(r'"ruff==[0-9][^";\s]*', '"ruff==0.0.1', text, count=1)
+    assert bad != text, "pyproject.toml has no exact ruff pin to alter"
+    (tmp_path / "pyproject.toml").write_text(bad, encoding="utf-8")
+    out = subprocess.run(  # nosec B603 - fixed argv (sys.executable plus a tmp path), shell=False
+        [sys.executable, "-m", "py_ci_shared.pinned_tool_versions", "--pyproject", str(tmp_path / "pyproject.toml")],
+        capture_output=True, text=True, check=False, cwd=str(REPO_ROOT),
+    )
+    assert out.returncode == 1 and "0.0.1" in out.stdout, out.stdout
 
 
 def test_f06_pin_check_is_wired_as_a_hook():
     text = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
-    assert "check_pinned_tool_versions.py" in text
+    assert "py_ci_shared.pinned_tool_versions" in text
 
 
 # ---- F07: the strict-mode beachhead grew --------------------------------------------------------

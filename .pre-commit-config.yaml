@@ -89,7 +89,7 @@ repos:
     hooks:
       - id: pinned-tool-versions
         name: "pinned tool versions (ruff) match pyproject.toml and py-ci-shared"
-        entry: python scripts/check_pinned_tool_versions.py
+        entry: python -m py_ci_shared.pinned_tool_versions
         language: system
         pass_filenames: false
         always_run: true

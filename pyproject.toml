@@ -575,7 +575,6 @@ max-complexity = 20
 "scripts/vulture_whitelist.py" = ["F821", "B018"]  # the file's ENTIRE content is bare name references, so vulture counts those names as used -- undefined names and useless expressions are the file working exactly as designed
 "scripts/auto_refactor.py" = ["T201"]  # a CLI script whose output to stdout is its user interface
 "scripts/prove_meta_checks.py" = ["T201"]  # a CLI script whose CAUGHT/MISSED report to stdout is its user interface
-"scripts/check_pinned_tool_versions.py" = ["T201"]  # a pre-commit gate whose mismatch report to stdout is what the developer reads when it blocks
 
 # Deptry: unused / missing / transitive dependency scan. Made blocking 2026-07-09 after a real
 # triage pass (run with the [all,dev] extras actually installed -- deptry's DEP001/DEP002 are
