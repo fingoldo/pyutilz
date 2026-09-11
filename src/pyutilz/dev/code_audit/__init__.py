@@ -76,6 +76,10 @@ list[Finding]):
   request (``Query``/``Path``/``Header``/``Cookie``/``Body``/``Form``/``File``)
   that the handler never reads -- ``dead_cli_flag`` for the HTTP surface.
 
+- ``scan_stale_source_citations``: a comment or docstring citing
+  ``file:line`` where the file resolves to nothing in the tree, or the line
+  is past the end of the file it resolves to.
+
 - ``scan_sql_migration_idempotency``: raw ``.sql`` file scan (not
   Python) for statements that fail on a second run instead of no-op'ing
   -- ``DROP CONSTRAINT``/``DROP COLUMN``/``DROP TABLE`` without
@@ -532,6 +536,7 @@ from .sql_lint import scan_sql_limit_without_order_by, scan_sql_offset_paginatio
 from .dead_cli_flags import scan_dead_cli_flags
 from .settings_container_nodecode import scan_settings_container_field_needs_nodecode
 from .dead_endpoint_params import scan_dead_endpoint_parameters
+from .stale_source_citations import scan_stale_source_citations
 from .silent_escalation import scan_log_only_except, DEFAULT_ESCALATION_ATTRS
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -654,6 +659,7 @@ __all__ = [
     "scan_dead_cli_flags",
     "scan_settings_container_field_needs_nodecode",
     "scan_dead_endpoint_parameters",
+    "scan_stale_source_citations",
     "scan_log_only_except",
     "DEFAULT_ESCALATION_ATTRS",
     "scan_sql_migration_idempotency",
