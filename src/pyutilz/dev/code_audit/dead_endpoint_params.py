@@ -99,7 +99,9 @@ def scan_dead_endpoint_parameters(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines: list[str] | None = None
+        # Read once per file rather than lazily: _read_src_lines returns an empty list on a read failure, not
+        # None, so a "have I read it yet" guard could not tell the two apart.
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or not _is_route(fn):
@@ -111,8 +113,6 @@ def scan_dead_endpoint_parameters(
             for arg, source in params:
                 if arg.arg in loaded:
                     continue
-                if src_lines is None:
-                    src_lines = _read_src_lines(py)
                 findings.append(Finding(
                     check="dead_endpoint_parameter",
                     severity="P2",

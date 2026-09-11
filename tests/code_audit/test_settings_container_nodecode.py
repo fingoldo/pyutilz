@@ -1,4 +1,9 @@
-"""Scanner tests for settings_container_field_needs_nodecode: the 12-H1 shape, and each exclusion."""
+"""Scanner tests for settings_container_field_needs_nodecode: the 12-H1 shape, and each exclusion.
+
+Every test calls ``scan_settings_container_field_needs_nodecode`` by name and asserts on what it returned: the
+polarity gate in ``tests/test_meta/test_scanner_positive_and_negative_cases.py`` reads those assertions out of
+this source, and a call hidden behind a local helper is invisible to it.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,14 +19,9 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 """
 
 
-def _scan(tmp_path: Path, body: str) -> list:
-    _write(tmp_path, "config.py", _HEAD + body)
-    return scan_settings_container_field_needs_nodecode(tmp_path)
-
-
 def test_the_12_h1_precedent_is_flagged(tmp_path: Path):
     """A set field with a comma-splitting before-validator and no NoDecode: the validator never sees the env."""
-    findings = _scan(tmp_path, """
+    _write(tmp_path, "config.py", _HEAD + """
 class Settings(BaseSettings):
     supported_languages: set[str] = {"en"}
 
@@ -30,13 +30,17 @@ class Settings(BaseSettings):
     def _split(cls, v):
         return set(v.split(",")) if isinstance(v, str) else v
 """)
+
+    findings = scan_settings_container_field_needs_nodecode(tmp_path)
+
     assert [(f.check, f.severity) for f in findings] == [("settings_container_field_needs_nodecode", "P1")]
     assert "Settings.supported_languages" in findings[0].detail
     assert findings[0].snippet.startswith("supported_languages: set[str]")
 
 
 def test_nodecode_clears_it(tmp_path: Path):
-    assert _scan(tmp_path, """
+    """The annotated marker is the fix, so the same field carrying it is clean."""
+    _write(tmp_path, "config.py", _HEAD + """
 class Settings(BaseSettings):
     origins: Annotated[list[str], NoDecode] = []
 
@@ -44,11 +48,13 @@ class Settings(BaseSettings):
     @classmethod
     def _split(cls, v):
         return v.split(",") if isinstance(v, str) else v
-""") == []
+""")
+
+    assert scan_settings_container_field_needs_nodecode(tmp_path) == []
 
 
 def test_an_optional_or_union_container_is_still_a_container(tmp_path: Path):
-    findings = _scan(tmp_path, """
+    _write(tmp_path, "config.py", _HEAD + """
 class Settings(BaseSettings):
     hosts: list[str] | None = None
     proxies: Optional[list[str]] = None
@@ -58,11 +64,14 @@ class Settings(BaseSettings):
     def _split(cls, v):
         return v.split(",") if isinstance(v, str) else v
 """)
+
+    findings = scan_settings_container_field_needs_nodecode(tmp_path)
+
     assert sorted(f.line for f in findings) == [6, 7]
 
 
 def test_an_indirect_settings_subclass_is_scanned(tmp_path: Path):
-    findings = _scan(tmp_path, """
+    _write(tmp_path, "config.py", _HEAD + """
 class Base(BaseSettings):
     pass
 
@@ -74,12 +83,15 @@ class Settings(Base):
     def _split(cls, v):
         return v.split(",") if isinstance(v, str) else v
 """)
+
+    findings = scan_settings_container_field_needs_nodecode(tmp_path)
+
     assert len(findings) == 1
 
 
 def test_what_is_not_flagged(tmp_path: Path):
     """An after-validator, a scalar field, an excluded field, decoding switched off, and a plain BaseModel."""
-    assert _scan(tmp_path, """
+    _write(tmp_path, "config.py", _HEAD + """
 class AfterOnly(BaseSettings):
     hosts: list[str] = []
 
@@ -120,11 +132,13 @@ class Payload(BaseModel):
     @classmethod
     def _split(cls, v):
         return v.split(",") if isinstance(v, str) else v
-""") == []
+""")
+
+    assert scan_settings_container_field_needs_nodecode(tmp_path) == []
 
 
 def test_a_v1_pre_validator_counts_as_before(tmp_path: Path):
-    findings = _scan(tmp_path, """
+    _write(tmp_path, "config.py", _HEAD + """
 from pydantic import validator
 
 class Settings(BaseSettings):
@@ -134,4 +148,7 @@ class Settings(BaseSettings):
     def _split(cls, v):
         return v.split(",") if isinstance(v, str) else v
 """)
+
+    findings = scan_settings_container_field_needs_nodecode(tmp_path)
+
     assert len(findings) == 1

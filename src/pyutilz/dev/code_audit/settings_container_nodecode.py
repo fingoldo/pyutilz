@@ -150,7 +150,9 @@ def scan_settings_container_field_needs_nodecode(
         tree = _safe_parse(py)
         if tree is None:
             continue
-        src_lines: list[str] | None = None
+        # Read once per file rather than lazily: _read_src_lines returns an empty list on a read failure, not
+        # None, so a "have I read it yet" guard could not tell the two apart.
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for cls in _settings_classes(tree):
             if _decoding_disabled(cls):
@@ -166,8 +168,6 @@ def scan_settings_container_field_needs_nodecode(
                     continue
                 if isinstance(item.value, ast.Call) and _name_of(item.value.func) == "Field" and _is_true(_keyword(item.value, "exclude")):
                     continue
-                if src_lines is None:
-                    src_lines = _read_src_lines(py)
                 findings.append(Finding(
                     check="settings_container_field_needs_nodecode",
                     severity="P1",

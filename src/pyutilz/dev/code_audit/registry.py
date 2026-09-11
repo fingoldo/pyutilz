@@ -22,6 +22,7 @@ from .dead_cli_flags import scan_dead_cli_flags
 from .settings_container_nodecode import scan_settings_container_field_needs_nodecode
 from .dead_endpoint_params import scan_dead_endpoint_parameters
 from .stale_source_citations import scan_stale_source_citations
+from .write_count_from_input import scan_write_counted_from_input
 from .silent_escalation import scan_log_only_except
 from .sql_migrations import scan_sql_migration_idempotency
 from .duplicate_conditions import scan_duplicate_conditions
@@ -158,6 +159,7 @@ register_scanner("dead_cli_flag", scan_dead_cli_flags)
 register_scanner("settings_container_field_needs_nodecode", scan_settings_container_field_needs_nodecode)
 register_scanner("dead_endpoint_parameter", scan_dead_endpoint_parameters)
 register_scanner("stale_source_citation", scan_stale_source_citations)
+register_scanner("write_counted_from_input", scan_write_counted_from_input)
 register_scanner("log_only_except", scan_log_only_except)
 register_scanner("sql_migration_not_idempotent", scan_sql_migration_idempotency)
 register_scanner("duplicate_condition", scan_duplicate_conditions)
@@ -305,6 +307,11 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
     # file is gone or whose line is past the end -- exact, not heuristic -- but on by default it would fail
     # mlframe's and autopsia's baselines the moment they upgrade. A project opts in once its citations are clean.
     "stale_source_citation",
+    # Opt-in because a consumer holds real instances of the class, measured 2026-09-12: 3 in autopsia (two
+    # UMLS loaders and the local vocabulary install, each reporting the rows it was given after an insert that
+    # skips duplicates), 0 in glossum after it fixed its OEWN importer, and 0 in mlframe, pyutilz, py-ci-shared,
+    # llm_bench and noema_app. On by default it would fail autopsia's baseline the moment it upgrades.
+    "write_counted_from_input",
     # Opt-in because its precision is not good enough to run unattended, and that was measured rather than
     # guessed. Against four repos it produced three hits, ALL false: two docstrings naming a threshold that
     # belongs to a DIFFERENT function, and one reading "12-permutation" as a tunable because "per-call"

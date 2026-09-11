@@ -130,7 +130,9 @@ def scan_stale_source_citations(
         # is the whole cost of this scan (8 of 9 s on a 1,500-file tree; most files cite nothing).
         if not _CITATION.search(src):
             continue
-        src_lines: list[str] | None = None
+        # Read once per file rather than lazily: _read_src_lines returns an empty list on a read failure, not
+        # None, so a "have I read it yet" guard could not tell the two apart.
+        src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for lineno, text in _comment_and_docstring_tokens(src):
             for m in _CITATION.finditer(text):
@@ -144,12 +146,11 @@ def scan_stale_source_citations(
                 if target is None:
                     problem = f"cites `{ref}:{m.group(2)}`, and no file in the tree resolves to `{ref}`"
                 else:
-                    length = sum(1 for _ in target.open(encoding="utf-8", errors="replace"))
+                    with target.open(encoding="utf-8", errors="replace") as handle:
+                        length = sum(1 for _ in handle)
                     if cited_line <= length:
                         continue
                     problem = f"cites `{ref}:{cited_line}`, and `{target.relative_to(root).as_posix()}` has {length} lines"
-                if src_lines is None:
-                    src_lines = _read_src_lines(py)
                 findings.append(Finding(
                     check="stale_source_citation",
                     severity="P2",
