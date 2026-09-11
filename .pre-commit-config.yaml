@@ -56,7 +56,7 @@ repos:
   # CHANGELOG, CONTRIBUTING, TESTING, mkdocs site) -- proportionally more prose surface
   # here than mlframe since docstrings are the primary documentation, not inline comments.
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         # No --ignore-words-list here on purpose: pyproject.toml's [tool.codespell] is the single
@@ -293,7 +293,7 @@ repos:
   # moving `@v1` tag CI's reusable workflows resolve to, so a hook run could behave differently
   # from CI (packaging audit 03/F05).
   - repo: https://github.com/fingoldo/py-ci-shared
-    rev: v1.3.5
+    rev: v1.3.6
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']
