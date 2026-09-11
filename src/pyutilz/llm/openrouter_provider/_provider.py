@@ -91,6 +91,10 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     # request zeroed the previous one's in-flight cost/generation-id, so a cost-accounting loop
     # attributed the wrong billed USD and the wrong upstream provider to each request id.
     last_actual_cost_usd: PerCallAttr = PerCallAttr(lambda: 0.0)
+    # Whether ANY POST of the last call carried `usage.cost`. `last_actual_cost_usd` is 0.0 both for a genuinely free
+    # call and for a response with no cost field, and a caller cannot tell a $0 bill from a missing one without this
+    # (realtime_applications re-audit 2026-09-11, RA2-C11-8).
+    last_actual_cost_reported: PerCallAttr = PerCallAttr(lambda: False)
     last_cache_write_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_cache_hit_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_audio_tokens: PerCallAttr = PerCallAttr(lambda: 0)
@@ -109,6 +113,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     _PERCALL_METADATA_ATTRS: tuple[str, ...] = (
         *OpenAICompatibleProvider._PERCALL_METADATA_ATTRS,
         "last_actual_cost_usd",
+        "last_actual_cost_reported",
         "last_cache_write_tokens",
         "last_cache_hit_tokens",
         "last_audio_tokens",
@@ -497,8 +502,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         # `PerCallAttr` reset to 0.0 at the start of every `generate()`, so summing here is exact
         # per call; a POST that reports no cost adds nothing rather than wiping an earlier one.
         cost = usage.get("cost")
-        if isinstance(cost, (int, float)):
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
             self.last_actual_cost_usd = float(self.last_actual_cost_usd or 0.0) + float(cost)
+            self.last_actual_cost_reported = True
             self.total_actual_cost_usd += float(cost)
 
         cost_details = usage.get("cost_details") or {}
