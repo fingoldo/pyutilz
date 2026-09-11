@@ -127,7 +127,6 @@ def pytest_addoption(parser):
         "--refresh-bare-except-baseline",
         "--refresh-console-unicode-baseline",
         "--refresh-debt-baseline",
-        "--refresh-mutable-defaults-baseline",
         "--refresh-resource-handle-baseline",
         "--refresh-lock-discipline-baseline",
         "--refresh-param-naming-baseline",

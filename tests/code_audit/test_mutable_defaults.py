@@ -196,6 +196,33 @@ def m(x=None):
     assert scan_mutable_defaults(tmp_path) == []
 
 
+def test_mutable_defaults_flags_chainmap_and_numpy_pandas_containers(tmp_path: Path):
+    """The four names mlframe's, production_scrapers', realtime_applications', glossum's and pyutilz's own
+    copies of this check flagged and the shared scanner did not; `tuple()` and `frozenset()` stay clean."""
+    _write(tmp_path, "a.py", """
+import collections
+import numpy as np
+import pandas as pd
+
+def a(x=collections.ChainMap()):
+    return x
+
+def b(x=np.ndarray(3)):
+    return x
+
+def c(x=pd.DataFrame()):
+    return x
+
+def d(x=pd.Series(dtype=float)):
+    return x
+
+def e(x=tuple(), y=frozenset()):
+    return x, y
+""")
+    flagged = sorted(f.detail.split("(")[0] for f in scan_mutable_defaults(tmp_path))
+    assert flagged == ["def a", "def b", "def c", "def d"], flagged
+
+
 # ---- parameter_aliasing_mutation: 2026-09-03 downstream-scan precision round ----
 #
 # A scan of two fresh repos produced 11 findings from this check - the suite's only P0s - and all

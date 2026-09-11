@@ -1,6 +1,8 @@
 """Meta-test: run pyutilz.dev.code_audit's own scanners against pyutilz's
 own source (self-scan), baseline-driven per this directory's snapshot-style
-meta-test convention (see test_no_bare_except.py / test_no_mutable_defaults.py).
+meta-test convention (see test_no_bare_except.py). Mutable default arguments are this self-scan's
+``mutable_default`` check alone: it flags every constructor the retired hand-rolled
+test_no_mutable_defaults.py did, ChainMap and the numpy/pandas containers included.
 
 Findings are baselined together (keyed by ``check::file:line``) so
 pre-existing debt doesn't block adoption -- only a NEW finding fails the

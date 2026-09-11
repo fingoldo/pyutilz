@@ -18,8 +18,13 @@ _MUTATING_METHODS = frozenset({
 
 _MUTABLE_LITERAL_TYPES = (ast.List, ast.Dict, ast.Set)
 _MUTABLE_CALLS = frozenset({"list", "dict", "set"})
-# collections factories that likewise build one shared mutable object at def time.
-_MUTABLE_FACTORIES = {"defaultdict": "dict", "OrderedDict": "dict", "Counter": "dict", "deque": "list"}
+# collections factories that likewise build one shared mutable object at def time, and the numpy/pandas
+# containers five downstream repos' own copies of this check flagged and this one did not: an array or a
+# frame built as a default is one object every call writes into.
+_MUTABLE_FACTORIES = {
+    "defaultdict": "dict", "OrderedDict": "dict", "Counter": "dict", "ChainMap": "dict", "deque": "list",
+    "ndarray": "ndarray", "DataFrame": "DataFrame", "Series": "Series",
+}
 
 
 def _is_mutable_default(default: ast.AST) -> Optional[str]:
