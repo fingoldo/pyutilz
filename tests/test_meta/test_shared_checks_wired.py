@@ -284,3 +284,13 @@ def test_every_database_effect_is_asserted_by_an_importing_test():
     assert len(import_map) > 100, f"only {len(import_map)} modules resolved -- the scan lost its subject and this gate would pass vacuously"
 
     assert_effects_are_asserted(REPO_ROOT, import_map, ())
+
+
+def test_no_bare_double_reaches_the_attempt_archive():
+    """`archive_provider` returns a provider unwrapped when `getattr(provider, "_pyutilz_attempt_archive_installed",
+    False)` is truthy, and a bare mock answers every attribute truthily: it would come back unwrapped and archive
+    nothing. No test passes one today (audits/2026-09-11_spec-bound-doubles.md); this keeps it so."""
+    from py_ci_shared.spec_bound_doubles import assert_doubles_are_spec_bound
+
+    files = sorted(p for p in (REPO_ROOT / "tests").rglob("test_*.py") if "__pycache__" not in p.parts)
+    assert_doubles_are_spec_bound(files=files, entry_points={"archive_provider", "metadata_from_provider"}, name_hints=(), repo_root=REPO_ROOT, min_subjects=1)
