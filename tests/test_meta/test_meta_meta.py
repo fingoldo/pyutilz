@@ -3,13 +3,10 @@
 When the suite grows past 10 files, the suite ITSELF becomes a piece of
 production code worth policing. These tests catch:
 
-  F1. Failure messages without actionable detail.
-      ``pytest.fail("broken")`` is useless; ``pytest.fail(f"{n} fields
-      have no consumer:\n  {names}")`` lets the reviewer act. Audit
-      every ``pytest.fail`` call in the meta-test directory; each must
-      contain at least one of: a colon, a path separator, an angle-
-      bracket placeholder, or a fix-prompt verb (``Add``, ``Either``,
-      ``Refresh``, ``Whitelist``).
+  F1. Failure messages without actionable detail, via ``py_ci_shared.fail_message_quality``.
+      ``pytest.fail("broken")`` is useless; a message must name a fix verb (``Add``, ``Either``, ``Refresh``,
+      ``Remove``, ...) or carry a ``<placeholder>``. A colon or a path no longer counts: every static message
+      contains one, so the looser rule passed all of them without reading a word.
 
   F2. Meta-tests reaching into private internals of the code they
       police. The whole point of a meta-test is to cover the public
@@ -29,20 +26,12 @@ production code worth policing. These tests catch:
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
+from py_ci_shared.fail_message_quality import assert_fail_messages_actionable
 
 _TEST_META_DIR = Path(__file__).resolve().parent
-
-# Words / characters that indicate an actionable failure message.
-# Match a colon (file:line, key: value), a slash (path), an angle (template
-# placeholder), or any of the fix-prompt verbs.
-_ACTIONABLE_RE = re.compile(
-    r"[:/<>]|\b(Add|Either|Refresh|Whitelist|Fix|Run|Update|Remove|Document|" r"Check|See|Catches|Replace|OR)\b",
-    re.IGNORECASE,
-)
 
 # Imports of a production private symbol from a meta-test that are
 # legitimate. Each entry is "test_meta_filename::imported_dotted_name".
@@ -75,48 +64,6 @@ def _meta_test_files() -> list[Path]:
     return sorted(out)
 
 
-def _pytest_fail_strings(tree: ast.AST) -> list[tuple[int, str, bool]]:
-    """Yield ``(lineno, joined_static_text, has_dynamic)`` for every
-    ``pytest.fail(...)`` call.
-
-    ``joined_static_text`` concatenates every ``ast.Constant`` string
-    chunk of the first arg, and ``has_dynamic`` is True when the message
-    is built from an f-string / ``%``-format / ``+`` concat with a
-    non-constant operand — the rich detail then comes from the
-    dynamic substitution and the joined statics alone won't reflect
-    that.
-    """
-    out: list[tuple[int, str, bool]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr == "fail"):
-            continue
-        if not (isinstance(func.value, ast.Name) and func.value.id == "pytest"):
-            continue
-        if not node.args:
-            continue
-        first = node.args[0]
-        chunks: list[str] = []
-        has_dynamic = False
-        # ``pytest.fail(msg)`` where ``msg`` is a bare Name / Attribute /
-        # Subscript / Call: the message is built entirely outside this
-        # expression — definitively dynamic.
-        if not isinstance(first, ast.Constant):
-            has_dynamic = True
-        for sub in ast.walk(first):
-            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                chunks.append(sub.value)
-            elif isinstance(sub, ast.FormattedValue):
-                has_dynamic = True
-            elif isinstance(sub, (ast.Name, ast.Attribute, ast.Subscript, ast.Call)) and sub is not first:
-                # A non-string-constant inside the message expression.
-                has_dynamic = True
-        out.append((node.lineno, " ".join(chunks), has_dynamic))
-    return out
-
-
 def _imports(tree: ast.AST) -> list[str]:
     """Yield fully-qualified imported names from ``import X`` and
     ``from X import Y`` (where Y joins the dotted base)."""
@@ -141,39 +88,8 @@ def _imports(tree: ast.AST) -> list[str]:
 
 
 def test_every_pytest_fail_call_has_actionable_text():
-    bad: list[str] = []
-    audited = 0
-    for py in _meta_test_files():
-        try:
-            src = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            continue
-        for lineno, text, has_dynamic in _pytest_fail_strings(tree):
-            audited += 1
-            # A dynamic message (f-string, "...".join(parts), etc.) is
-            # presumed actionable — the rich content lives in the
-            # runtime substitutions which the static walker can't see.
-            if has_dynamic:
-                continue
-            if not text:
-                bad.append(f"{py.name}:{lineno} (empty message)")
-                continue
-            if not _ACTIONABLE_RE.search(text):
-                bad.append(f"{py.name}:{lineno} → {text[:80]!r}")
-
-    if audited == 0:
-        pytest.skip("no pytest.fail calls found in meta-test directory")
-    if bad:
-        pytest.fail(
-            f"{len(bad)} pytest.fail message(s) lack actionable detail "
-            f"(file paths, fix verbs, or template placeholders). The "
-            f"reviewer will need to read the test source to figure out "
-            f"what to do — improve the message:\n  " + "\n  ".join(bad[:20])
-        )
+    """F1: every static ``pytest.fail(...)`` message in the meta-test directory names a fix verb or a placeholder."""
+    assert_fail_messages_actionable(_TEST_META_DIR, exclude=(Path(__file__).name,), min_audited=10)
 
 
 # ---------------------------------------------------------------------------
