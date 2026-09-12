@@ -21,14 +21,20 @@ def _is_zero_literal(node: ast.expr) -> bool:
 
 
 def _provider_var_names(tree: ast.AST) -> set[str]:
-    """Every simple name assigned directly from a ``get_llm_provider(...)`` call,
-    anywhere in the module (function-local or module-level assignment)."""
+    """Every simple name assigned from a ``get_llm_provider(...)`` call, directly or through a wrapper.
+
+    The assigned value is searched rather than matched: a call site that wraps the factory -
+    ``provider = archived(get_llm_provider(...))``, a decorator-style helper, a retry shim - is the same
+    provider, and matching only the bare form made this scanner blind to every wrapped one. Found 2026-09-13
+    in autopsia, where wrapping nine call sites for an attempt archive silently retired a live finding: the
+    baselined uncapped call in ``parse.py`` stopped being reported, and nothing about the call had changed.
+    """
     names: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
         value = node.value
-        if not (isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "get_llm_provider"):
+        if not any(isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "get_llm_provider" for inner in ast.walk(value)):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):

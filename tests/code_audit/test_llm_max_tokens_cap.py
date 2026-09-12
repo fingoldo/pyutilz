@@ -23,6 +23,21 @@ provider.generate("hello")
     assert findings[0].severity == "P2"
 
 
+def test_llm_max_tokens_cap_sees_through_a_wrapper(tmp_path: Path):
+    """Wrapping the factory must not retire the finding: the call is the same call.
+
+    Found 2026-09-13 in autopsia, where `provider = archived(get_llm_provider(...))` - an attempt archive
+    added around nine call sites - silently stopped this scanner reporting a baselined uncapped call, with
+    nothing about that call changed.
+    """
+    _write(tmp_path, "mod.py", '''
+provider = archived(get_llm_provider("anthropic"))
+provider.generate("hello")
+''')
+    findings = scan_llm_call_missing_max_tokens_cap(tmp_path)
+    assert len(findings) == 1
+
+
 def test_llm_max_tokens_cap_zero_literal_flagged(tmp_path: Path):
     """An explicit max_tokens=0 is the same as omitting it -- still flagged."""
     _write(tmp_path, "mod.py", '''
