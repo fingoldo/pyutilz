@@ -182,6 +182,19 @@ class TestTheWrapperIsSafeToApply:
         with pytest.raises(ValueError):
             AttemptRecord(attempt_number=1, outcome="fine")
 
+    def test_a_stand_in_that_cannot_take_attributes_is_returned_unwrapped(self, tmp_path: Path) -> None:
+        """A production call site that starts archiving must not break every test that stubs its factory.
+
+        Found 2026-09-13 in autopsia: nine tests replace the provider factory with a bare `object()`, which has
+        no instance dict, and wrapping raised `AttributeError` from the flag assignment - a failure about the
+        double's shape, in tests about lay synonyms and overlays. A real provider always has a `__dict__`.
+        """
+        double = object()
+
+        returned = archive_provider(double, DirectoryContentStore(tmp_path / "t"), JsonlAttemptSink(tmp_path / "a.jsonl"))
+
+        assert returned is double
+
 
 class TestTheMetadataReader:
     def test_last_call_summary_wins_and_attributes_fill_the_gaps(self) -> None:

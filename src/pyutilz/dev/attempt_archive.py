@@ -323,6 +323,13 @@ def archive_provider(
     """
     if provider is None or getattr(provider, _ARCHIVED_FLAG, False):
         return provider
+    if not hasattr(provider, "__dict__"):
+        # A stand-in with no instance dict - `object()`, a slotted double - cannot be wrapped, and crashing on
+        # it would make every test that stubs the factory fail for a reason that has nothing to do with what it
+        # tests. Found 2026-09-13: nine autopsia tests broke exactly this way the moment their production call
+        # site started archiving. A real provider always has one, so this only ever declines a double.
+        logger.warning("%s cannot take attributes, so its calls are not archived", type(provider).__name__)
+        return provider
     archiver = _Archiver(provider, store, sink, is_truncated)
     generate = getattr(provider, "generate", None)
     if callable(generate):
