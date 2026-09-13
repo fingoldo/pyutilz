@@ -90,3 +90,23 @@ class TestTheStreamingPath:
             provider._apply_stream_chunk(_chunk(reasoning="step. "), {})
 
         assert len(provider.last_reasoning_text) == 5000 * len("step. ")
+
+    def test_fragments_are_kept_apart_rather_than_concatenated(self) -> None:
+        """The observable difference between the linear implementation and the quadratic one.
+
+        Building the text by `text = text + fragment` copies the whole accumulation on every delta,
+        and a reasoning model sends tens of thousands of them: measured on the live pipeline
+        2026-09-13, that dropped throughput from ~300 characters per second to ~60 and turned a call
+        that answers in 538 s into one still unfinished when a 2,999 s budget cancelled it.
+
+        Asserted as a shape rather than a duration: N deltas leave N fragments, which a concatenating
+        implementation cannot satisfy however fast the machine running this happens to be.
+        """
+        provider = _bare_provider()
+        chunk = _chunk(reasoning="x" * 200)
+
+        for _ in range(1_000):
+            provider._apply_stream_chunk(chunk, {})
+
+        assert len(provider._reasoning_fragments) == 1_000, "the deltas were merged instead of kept"
+        assert provider.last_reasoning_text == "x" * 200 * 1_000

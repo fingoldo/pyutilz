@@ -261,7 +261,7 @@ def _is_rate_limit_error(error: BaseException) -> bool:
 _JSON_STEER = "\n\nRespond with valid JSON only. No markdown, no explanation. Start with { and end with }."
 
 
-class ClaudeCodeProvider(LLMProvider):
+class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
     """LLM provider that uses Claude Code for LLM calls (your Max subscription).
 
     Two backends: SDK (preferred, via `claude-code-sdk`) or CLI fallback.
@@ -281,11 +281,6 @@ class ClaudeCodeProvider(LLMProvider):
     # ResultMessage and its cost/cache figures leaked between in-flight calls, so a call could
     # bill another call's cost twice or fall back to tiktoken estimates for its own.
     _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
-    # The thinking this call was billed for. The SDK returns it as ThinkingBlocks beside the text
-    # ones, and `_generate_sdk` correctly keeps them out of the answer -- it used to drop them
-    # entirely as well, so nothing could say how much of an output-token bill bought thinking rather
-    # than content. None on the CLI path, which surfaces no thinking blocks at all.
-    last_reasoning_text: PerCallAttr = PerCallAttr(lambda: None)
     _last_result_message: PerCallAttr = PerCallAttr(lambda: None)
     last_cost_usd: PerCallAttr = PerCallAttr(lambda: 0.0)
     last_cache_creation_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
@@ -659,7 +654,7 @@ class ClaudeCodeProvider(LLMProvider):
                                     # Kept out of the ANSWER, as before, but no longer thrown away:
                                     # Anthropic bills thinking as output tokens, and a caller that
                                     # cannot see it is comparing models on a number it cannot split.
-                                    self.last_reasoning_text = _reasoning.appended(self.last_reasoning_text, block.text)
+                                    self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, block.text)
                         if parts:
                             text = "\n".join(parts)
                             if result_text is None:

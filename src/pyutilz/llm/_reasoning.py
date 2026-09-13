@@ -16,20 +16,56 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["appended", "from_message", "estimate_tokens"]
+from pyutilz.llm.base import PerCallAttr
+
+__all__ = ["ReasoningCaptureMixin", "collect", "estimate_tokens", "from_message", "joined"]
 
 
-def appended(existing: str | None, fragment: Any) -> str | None:
-    """Add one streamed reasoning fragment to what has arrived so far.
+class ReasoningCaptureMixin:
+    """Holds this call's reasoning fragments and serves them joined.
 
-    Returns ``existing`` unchanged for anything that is not a non-empty string, so an upstream that
-    sends the key with nothing in it cannot manufacture an empty record. Nothing is capped: a model
-    can emit tens of thousands of fragments before its first content byte, and a truncated record
-    would silently become a sample.
+    Both providers need the same two members and the scanner is right that two copies drift; the
+    storage is fragments rather than a growing string because appending is O(1) and concatenating is
+    not -- see ``collect``.
     """
-    if not isinstance(fragment, str) or not fragment:
-        return existing
-    return (existing or "") + fragment
+
+    #: Fragments of THIS call's reasoning. PerCallAttr, so a `generate_batch` sibling cannot read
+    #: another call's thoughts, and assigned rather than mutated for the reason `collect` gives.
+    _reasoning_fragments: PerCallAttr = PerCallAttr(list)
+
+    @property
+    def last_reasoning_text(self) -> str | None:
+        """The reasoning of the most recent call, or None when the model emitted none."""
+        return joined(self._reasoning_fragments)
+
+
+def collect(fragments: list[str], fragment: Any) -> list[str]:
+    """Keep one streamed reasoning fragment, in O(1), for joining once at the end.
+
+    Appends rather than concatenating, because concatenating is quadratic and this runs on every
+    delta of a stream that can carry tens of thousands of them before the first content byte.
+    Measured 2026-09-13, z-ai/glm-5.3-flash on the enrichment prompt: building the text by
+    `text = text + fragment` dropped throughput from ~300 to ~60 characters per second -- the copying
+    blocked the event loop while the model was waiting, and a call that answers in 538 s was still
+    unfinished at 2,999 s. The model was not slow; we were.
+
+    Returns the list so the caller can ASSIGN it back. The providers hold it in a ``PerCallAttr``,
+    whose ``__get__`` builds a fresh default on every read when nothing has been stored yet, so an
+    in-place append to what that read returned would vanish -- the same reason every other PerCallAttr
+    beside it (``last_tool_calls``, ``last_citations``) is assigned rather than mutated.
+
+    Anything that is not a non-empty string is ignored, so an upstream sending the key with nothing
+    in it cannot manufacture an empty record. Nothing is capped: a truncated record would silently
+    become a sample.
+    """
+    if isinstance(fragment, str) and fragment:
+        fragments.append(fragment)
+    return fragments
+
+
+def joined(fragments: list[str]) -> str | None:
+    """The whole reasoning, or None when the model emitted none."""
+    return "".join(fragments) if fragments else None
 
 
 def from_message(message: dict[str, Any]) -> str | None:
