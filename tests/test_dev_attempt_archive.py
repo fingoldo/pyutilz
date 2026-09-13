@@ -57,6 +57,19 @@ class _FakeProvider:
             raise ConnectionError("stream reset")
 
 
+class _ThinkingProvider(_FakeProvider):
+    """A provider that thinks before it answers, and says so through `last_reasoning_text`."""
+
+    def __init__(self, answers: List[Any], reasoning: str) -> None:
+        super().__init__(answers)
+        self.last_reasoning_text: Optional[str] = None
+        self._reasoning = reasoning
+
+    async def generate(self, prompt: str, system: Optional[str] = None, temperature: float = 0.7, max_tokens: int = 0) -> str:
+        self.last_reasoning_text = self._reasoning
+        return await super().generate(prompt, system=system, temperature=temperature, max_tokens=max_tokens)
+
+
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
@@ -158,6 +171,35 @@ class TestTheStoreNeverClaimsTextItDidNotWrite:
         first, second = _run(store.put("same")), _run(store.put("same"))
 
         assert first == second and [p.name for p in tmp_path.iterdir()] == [f"{first}.txt"]
+
+
+class TestTheThinkingIsKeptToo:
+    def test_reasoning_is_stored_by_digest_and_measured(self, tmp_path: Path) -> None:
+        """Thinking is billed as output tokens, so an archive that keeps only the answer cannot say what was paid for.
+
+        Stored like the answer rather than inline: one glm-5.3-flash call produced 118,004 characters of
+        reasoning, and a log line carrying that is not a log line. The digest and the length are what make it
+        findable; the text itself sits in the content store beside the answer.
+        """
+        provider = _ThinkingProvider(["the answer"], "first I consider the denominator, then the cohort")
+        wrapped, store, sink = _wrapped(tmp_path, provider)
+
+        _run(wrapped.generate("p"))
+
+        attempt = sink.read()[0]
+        assert attempt["reasoning_chars"] == len("first I consider the denominator, then the cohort")
+        assert store.get(attempt["reasoning_sha256"]) == "first I consider the denominator, then the cohort"
+        assert attempt["response_sha256"] != attempt["reasoning_sha256"], "the answer and the thinking are two different texts"
+
+    def test_a_provider_that_does_not_think_records_no_reasoning(self, tmp_path: Path) -> None:
+        """Absent, not empty: zero characters of reasoning would read as "it thought about nothing"."""
+        wrapped, _store, sink = _wrapped(tmp_path, _FakeProvider(["plain"]))
+
+        _run(wrapped.generate("p"))
+
+        attempt = sink.read()[0]
+        assert attempt["reasoning_sha256"] is None
+        assert attempt["reasoning_chars"] is None
 
 
 class TestTheWrapperIsSafeToApply:

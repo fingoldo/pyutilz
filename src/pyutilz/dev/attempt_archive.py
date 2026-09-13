@@ -10,7 +10,8 @@ extraction path saved no raw text at all and kept no cost or partial text for a 
 
 WHAT
 ----
-* :class:`AttemptRecord` -- one attempt: raw or partial text, outcome, tokens, reasoning tokens, cost
+* :class:`AttemptRecord` -- one attempt: raw or partial text, the reasoning stored beside it by digest,
+  outcome, tokens, reasoning tokens, cost
   (``None`` when unknown, never 0.0), generation id, upstream provider, finish reasons, duration, error.
 * A content-addressed text store with a pluggable backend. :class:`DirectoryContentStore` writes
   ``<sha256>.txt`` files; :class:`CallableContentStore` adapts any callable (a SQL insert, say). The rule
@@ -75,6 +76,12 @@ class AttemptRecord:
     outcome: str
     raw_text: Optional[str] = None
     response_sha256: Optional[str] = None
+    # The thinking the caller was billed for, stored like the answer and referenced by digest: one glm-5.3-flash
+    # call spent 39,641 of 65,577 output tokens on 118,004 characters of reasoning, which would bloat this log
+    # line by line. Kept because a model that thinks for 393 seconds before its first content byte is
+    # indistinguishable from a dead route until someone can read what it was doing.
+    reasoning_sha256: Optional[str] = None
+    reasoning_chars: Optional[int] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     reasoning_tokens: Optional[int] = None
@@ -280,6 +287,8 @@ class _Archiver:
         self.attempts += 1
         meta = metadata_from_provider(self.provider)
         digest = await self.store.put(text) if text else None
+        reasoning = getattr(self.provider, "last_reasoning_text", None)
+        reasoning_digest = await self.store.put(reasoning) if isinstance(reasoning, str) and reasoning else None
         if error is not None:
             outcome = "truncated" if text else "error"
         else:
@@ -289,6 +298,8 @@ class _Archiver:
             outcome=outcome,
             raw_text=text,
             response_sha256=digest,
+            reasoning_sha256=reasoning_digest,
+            reasoning_chars=len(reasoning) if isinstance(reasoning, str) and reasoning else None,
             provider=type(self.provider).__name__,
             duration_seconds=round(time.monotonic() - started, 3),
             error=_error_text(error) if error is not None else None,
