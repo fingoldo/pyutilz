@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator, List, Optional
 
+import httpx
 import pytest
 
 from pyutilz.dev.attempt_archive import (
@@ -200,6 +201,78 @@ class TestTheThinkingIsKeptToo:
         attempt = sink.read()[0]
         assert attempt["reasoning_sha256"] is None
         assert attempt["reasoning_chars"] is None
+
+
+class TestTheTimingsThatSeparateThinkingFromDead:
+    def test_time_to_first_token_is_measured_on_a_stream(self, tmp_path: Path) -> None:
+        """The wrapper sees the first chunk, so nobody has to ask the upstream what it cost to start."""
+        wrapped, _store, sink = _wrapped(tmp_path, _FakeProvider([], stream_chunks=["a", "b"]))
+
+        async def _drain() -> None:
+            async for _ in wrapped.generate_stream("p"):
+                pass
+
+        _run(_drain())
+
+        attempt = sink.read()[0]
+        assert attempt["time_to_first_token_s"] is not None
+        assert attempt["time_to_first_token_s"] <= attempt["duration_seconds"]
+
+    def test_a_buffered_call_has_no_first_token_time(self, tmp_path: Path) -> None:
+        """Absent rather than zero: a buffered answer arrives all at once, so there is nothing to time."""
+        wrapped, _store, sink = _wrapped(tmp_path, _FakeProvider(["whole answer"]))
+
+        _run(wrapped.generate("p"))
+
+        assert sink.read()[0]["time_to_first_token_s"] is None
+
+    def test_upstream_timings_are_recorded_when_asked_for(self, tmp_path: Path) -> None:
+        """`latency` is the upstream's own time to first token, `generation_time` the whole run."""
+
+        class _WithStats(_FakeProvider):
+            async def fetch_generation_stats(self, generation_id: str) -> dict:
+                return {"latency": 1892, "generation_time": 564147, "cancelled": False}
+
+        store, sink = DirectoryContentStore(tmp_path / "t"), JsonlAttemptSink(tmp_path / "a.jsonl")
+        wrapped = archive_provider(_WithStats(["answer"]), store, sink, fetch_stats=True)
+
+        _run(wrapped.generate("p"))
+
+        attempt = sink.read()[0]
+        assert (attempt["latency_ms"], attempt["generation_time_ms"]) == (1892, 564147)
+        assert attempt["cancelled"] is False
+        assert attempt["generation_record_missing"] is False
+
+    def test_a_missing_generation_record_is_recorded_as_such(self, tmp_path: Path) -> None:
+        """404 from the upstream means the generation never finished - the one fact no local telemetry has."""
+
+        class _Gone(_FakeProvider):
+            async def fetch_generation_stats(self, generation_id: str) -> dict:
+                raise httpx.HTTPStatusError("no record", request=httpx.Request("GET", "https://x"), response=httpx.Response(404))
+
+        store, sink = DirectoryContentStore(tmp_path / "t"), JsonlAttemptSink(tmp_path / "a.jsonl")
+        wrapped = archive_provider(_Gone(["answer"]), store, sink, fetch_stats=True)
+
+        _run(wrapped.generate("p"))
+
+        assert sink.read()[0]["generation_record_missing"] is True
+
+    def test_stats_are_not_fetched_unless_asked(self, tmp_path: Path) -> None:
+        """Opt-in, because it is a round trip per attempt on a path whose whole point is to be cheap."""
+
+        class _Counting(_FakeProvider):
+            calls = 0
+
+            async def fetch_generation_stats(self, generation_id: str) -> dict:
+                type(self).calls += 1
+                return {}
+
+        wrapped, _store, sink = _wrapped(tmp_path, _Counting(["answer"]))
+
+        _run(wrapped.generate("p"))
+
+        assert _Counting.calls == 0
+        assert sink.read()[0]["latency_ms"] is None
 
 
 class TestTheWrapperIsSafeToApply:

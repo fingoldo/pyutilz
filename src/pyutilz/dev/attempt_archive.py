@@ -93,6 +93,17 @@ class AttemptRecord:
     provider: Optional[str] = None
     model: Optional[str] = None
     duration_seconds: Optional[float] = None
+    # Measured here, not asked of anyone: the wrapper sees the first chunk arrive. `None` on a buffered call,
+    # where the whole answer lands at once and there is no first token to time.
+    time_to_first_token_s: Optional[float] = None
+    # From the upstream's own record, when `archive_provider(fetch_stats=True)` asks for it. `latency_ms` is
+    # ITS time to first token and `generation_time_ms` the whole run, which together separate "the route never
+    # started" from "the model thought for nine minutes" - the question this archive exists to settle.
+    latency_ms: Optional[int] = None
+    generation_time_ms: Optional[int] = None
+    cancelled: Optional[bool] = None
+    # True when the upstream has no record of the generation at all: it never finished, so nothing was billed.
+    generation_record_missing: Optional[bool] = None
     error: Optional[str] = None
     started_at: Optional[str] = None
     extra: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -274,15 +285,43 @@ def _error_text(exc: BaseException) -> str:
 class _Archiver:
     """The state one :func:`archive_provider` installation shares between ``generate`` and ``generate_stream``."""
 
-    def __init__(self, provider: Any, store: Any, sink: Any, is_truncated: Callable[[Dict[str, Any]], bool]) -> None:
+    def __init__(self, provider: Any, store: Any, sink: Any, is_truncated: Callable[[Dict[str, Any]], bool], fetch_stats: bool = False) -> None:
         """Share one attempt counter between a provider's ``generate`` and ``generate_stream``."""
         self.provider = provider
         self.store = store
         self.sink = sink
+        self.fetch_stats = fetch_stats
         self.is_truncated = is_truncated
         self.attempts = 0
 
-    async def keep(self, text: Optional[str], started: float, started_at: str, error: Optional[BaseException] = None) -> None:
+    async def _upstream_timings(self, generation_id: Optional[str]) -> Dict[str, Any]:
+        """The upstream's own record for this call, or the fact that it has none.
+
+        Opt-in because it costs a round trip per attempt. A 404 is not an error to swallow: the upstream
+        writes the record when a generation finishes, so a missing one says the generation never did -
+        measured 2026-09-13 against a route that streamed 13,957 characters and then went silent.
+        """
+        fetch = getattr(self.provider, "fetch_generation_stats", None)
+        if not (self.fetch_stats and generation_id and callable(fetch)):
+            return {}
+        try:
+            stats = await fetch(generation_id)
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                return {"generation_record_missing": True}
+            logger.warning("could not fetch generation stats for %s: %s: %s", generation_id, type(exc).__name__, exc)
+            return {}
+        if not isinstance(stats, dict):
+            return {}
+        return {
+            "latency_ms": _int_or_none(stats.get("latency")),
+            "generation_time_ms": _int_or_none(stats.get("generation_time")),
+            "cancelled": stats.get("cancelled") if isinstance(stats.get("cancelled"), bool) else None,
+            "generation_record_missing": False,
+        }
+
+    async def keep(self, text: Optional[str], started: float, started_at: str, error: Optional[BaseException] = None, first_token_at: Optional[float] = None) -> None:
         """Store the attempt's text, then record the attempt with the provider's metadata for this call."""
         self.attempts += 1
         meta = metadata_from_provider(self.provider)
@@ -302,6 +341,8 @@ class _Archiver:
             reasoning_chars=len(reasoning) if isinstance(reasoning, str) and reasoning else None,
             provider=type(self.provider).__name__,
             duration_seconds=round(time.monotonic() - started, 3),
+            time_to_first_token_s=round(first_token_at - started, 3) if first_token_at is not None else None,
+            **(await self._upstream_timings(meta.get("generation_id"))),
             error=_error_text(error) if error is not None else None,
             started_at=started_at,
             **meta,
@@ -323,6 +364,7 @@ def archive_provider(
     sink: Any,
     *,
     is_truncated: Callable[[Dict[str, Any]], bool] = _default_is_truncated,
+    fetch_stats: bool = False,
 ) -> Any:
     """Make every call through ``provider`` keep its raw text and an attempt record; returns the same object.
 
@@ -341,7 +383,7 @@ def archive_provider(
         # site started archiving. A real provider always has one, so this only ever declines a double.
         logger.warning("%s cannot take attributes, so its calls are not archived", type(provider).__name__)
         return provider
-    archiver = _Archiver(provider, store, sink, is_truncated)
+    archiver = _Archiver(provider, store, sink, is_truncated, fetch_stats=fetch_stats)
     generate = getattr(provider, "generate", None)
     if callable(generate):
 
@@ -368,16 +410,21 @@ def archive_provider(
             started, started_at = time.monotonic(), datetime.now(timezone.utc).isoformat()
             parts: List[str] = []
             failure: Optional[BaseException] = None
+            first_token_at: Optional[float] = None
             try:
                 async for chunk in stream(*args, **kwargs):
                     if isinstance(chunk, str):
+                        if first_token_at is None:
+                            # Time to first token, measured rather than asked for: a route that never starts
+                            # and a model that thinks for minutes both look like silence until this is on the row.
+                            first_token_at = time.monotonic()
                         parts.append(chunk)
                     yield chunk
             except BaseException as exc:
                 failure = exc
                 raise
             finally:
-                await archiver.keep("".join(parts) or None, started, started_at, error=failure)
+                await archiver.keep("".join(parts) or None, started, started_at, error=failure, first_token_at=first_token_at)
 
         provider.generate_stream = archived_stream
     setattr(provider, _ARCHIVED_FLAG, True)
