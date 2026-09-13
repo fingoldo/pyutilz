@@ -71,6 +71,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+        # The meta-suite imports py_ci_shared directly (value_bearing_asserts, deferred_drift,
+        # gate_integrity, ...). It is deliberately NOT in [dev] - a git+https requirement in project
+        # metadata makes the distribution unpublishable - so without this line those tests fail at
+        # collection and every leg goes red. Pinned to a tag, and a meta-test fails if this repo
+        # starts importing something the pin does not carry.
+        pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.16.1"
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
