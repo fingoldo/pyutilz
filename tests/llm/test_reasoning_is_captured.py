@@ -1,0 +1,92 @@
+"""Reasoning text is billed output and must reach the caller, not be dropped on the floor.
+
+Both extraction points read the answer and walked past the thinking beside it: the buffered unwrap
+took ``message.content`` and ignored ``message.reasoning``, and the streaming chunk handler yielded
+``delta.content`` and ignored ``delta.reasoning``. Upstreams bill reasoning as output tokens -- and
+OpenRouter counts them INSIDE ``completion_tokens`` -- so a caller holding only that sum cannot say
+what it paid for thinking rather than for an answer.
+
+Measured 2026-09-13 on one ``z-ai/glm-5.3-flash`` enrichment call: 39,641 of 65,577 output tokens
+were reasoning, 118,004 characters of it, and every character was discarded. The same call also
+spent its first 393 seconds thinking before emitting any content, which three separate runs misread
+as a hung request.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+
+
+class _Concrete(OpenAICompatibleProvider):
+    """The abstract pricing hooks filled in; nothing here reads them."""
+
+    def _input_cost_per_1m(self, model: str) -> float:
+        return 0.0
+
+    def _output_cost_per_1m(self, model: str) -> float:
+        return 0.0
+
+
+def _bare_provider() -> OpenAICompatibleProvider:
+    """An instance without __init__: no API key or HTTP client is needed to fold one SSE chunk."""
+    return object.__new__(_Concrete)
+
+
+def _chunk(**delta: object) -> dict:
+    return {"choices": [{"delta": delta}]}
+
+
+class TestTheStreamingPath:
+    def test_a_reasoning_delta_is_accumulated(self) -> None:
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(_chunk(reasoning="first "), {})
+        provider._apply_stream_chunk(_chunk(reasoning="second"), {})
+
+        assert provider.last_reasoning_text == "first second"
+
+    def test_reasoning_is_not_yielded_as_content(self) -> None:
+        """`generate_stream` is a stream of the ANSWER; reasoning must not be spliced into it."""
+        provider = _bare_provider()
+
+        assert provider._apply_stream_chunk(_chunk(reasoning="thinking"), {}) is None
+
+    def test_content_still_comes_back(self) -> None:
+        provider = _bare_provider()
+
+        assert provider._apply_stream_chunk(_chunk(content="Paris"), {}) == "Paris"
+
+    def test_a_chunk_carrying_both_keeps_them_apart(self) -> None:
+        provider = _bare_provider()
+
+        content = provider._apply_stream_chunk(_chunk(reasoning="because France", content="Paris"), {})
+
+        assert content == "Paris"
+        assert provider.last_reasoning_text == "because France"
+
+    def test_a_model_that_never_reasons_records_nothing(self) -> None:
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(_chunk(content="Paris"), {})
+
+        assert provider.last_reasoning_text is None
+
+    @pytest.mark.parametrize("value", [None, "", 0, [], {}])
+    def test_a_non_string_or_empty_reasoning_is_ignored(self, value: object) -> None:
+        """An upstream that sends the key with nothing in it must not create an empty record."""
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(_chunk(reasoning=value), {})
+
+        assert provider.last_reasoning_text is None
+
+    def test_nothing_is_truncated(self) -> None:
+        """The measured call arrived in tens of thousands of deltas; a cap would make it a sample."""
+        provider = _bare_provider()
+
+        for _ in range(5000):
+            provider._apply_stream_chunk(_chunk(reasoning="step. "), {})
+
+        assert len(provider.last_reasoning_text) == 5000 * len("step. ")

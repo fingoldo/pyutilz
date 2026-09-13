@@ -20,6 +20,7 @@ from ._messages import build_chat_messages
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm._thinking import ThinkingControlMixin
+from pyutilz.llm import _reasoning
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
     _NON_RETRYABLE_STATUSES,
@@ -75,6 +76,7 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
     # is billed too), and a diagnostic about one empty completion must name that completion's own count.
     _last_post_reasoning_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     _last_finish_reason: PerCallAttr = PerCallAttr(lambda: None)
+    last_reasoning_text: PerCallAttr = PerCallAttr(lambda: None)  # see `_reasoning` for why it is kept
     last_tool_calls: PerCallAttr = PerCallAttr(list)
     last_citations: PerCallAttr = PerCallAttr(list)
     # Same treatment: as a plain attribute this flag reported another concurrent call's
@@ -615,6 +617,8 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
             self.last_citations = list(chunk_citations)
         delta = choice.get("delta") or {}
         _accumulate_stream_tool_calls(tool_call_fragments, delta.get("tool_calls"))
+        # Not yielded: `generate_stream` streams the ANSWER; this is read from `last_reasoning_text`.
+        self.last_reasoning_text = _reasoning.appended(self.last_reasoning_text, delta.get("reasoning"))
         content = delta.get("content")
         return content if isinstance(content, str) else None
 
@@ -899,6 +903,7 @@ class OpenAICompatibleProvider(ThinkingControlMixin, LLMProvider):
             self.last_citations = citations
         else:
             self.last_citations = []
+        self.last_reasoning_text = _reasoning.from_message(message) or self.last_reasoning_text
         content = message.get("content")
         if content is None and self.last_tool_calls:
             # Tool-call-only response (no assistant text). Return empty

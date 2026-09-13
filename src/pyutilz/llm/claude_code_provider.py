@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
 from pyutilz.llm._messages import images_on_disk
+from pyutilz.llm import _reasoning
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
@@ -280,6 +281,11 @@ class ClaudeCodeProvider(LLMProvider):
     # ResultMessage and its cost/cache figures leaked between in-flight calls, so a call could
     # bill another call's cost twice or fall back to tiktoken estimates for its own.
     _last_usage: PerCallAttr = PerCallAttr(lambda: {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+    # The thinking this call was billed for. The SDK returns it as ThinkingBlocks beside the text
+    # ones, and `_generate_sdk` correctly keeps them out of the answer -- it used to drop them
+    # entirely as well, so nothing could say how much of an output-token bill bought thinking rather
+    # than content. None on the CLI path, which surfaces no thinking blocks at all.
+    last_reasoning_text: PerCallAttr = PerCallAttr(lambda: None)
     _last_result_message: PerCallAttr = PerCallAttr(lambda: None)
     last_cost_usd: PerCallAttr = PerCallAttr(lambda: 0.0)
     last_cache_creation_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
@@ -314,6 +320,8 @@ class ClaudeCodeProvider(LLMProvider):
         self._successful_call_count = 0
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        # Part of total_completion_tokens, not additional to it: Anthropic bills thinking as output.
+        self.total_reasoning_tokens = 0
         # Real per-call accounting from ResultMessage when SDK path runs.
         # Max-subscription users don't get billed per call, but the SDK
         # reports the underlying API cost as if they were -- useful for
@@ -340,7 +348,7 @@ class ClaudeCodeProvider(LLMProvider):
             "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
             "cache_read_input_tokens": self.total_cache_read_input_tokens,
             "completion_tokens": self.total_completion_tokens,
-            "reasoning_tokens": 0,
+            "reasoning_tokens": self.total_reasoning_tokens,
             "input_cost_usd": 0.0,
             "output_cost_usd": 0.0,
             "total_cost_usd": self.total_cost_usd,
@@ -482,15 +490,17 @@ class ClaudeCodeProvider(LLMProvider):
                     out_tok = _count_tok(result)
                     self.last_cache_creation_input_tokens = 0
                     self.last_cache_read_input_tokens = 0
+                reasoning_tok = _reasoning.estimate_tokens(self.last_reasoning_text)
                 self._last_usage = {
                     "input_tokens": in_tok,
                     "output_tokens": out_tok,
-                    "reasoning_tokens": 0,
+                    "reasoning_tokens": reasoning_tok,
                     "cache_creation_input_tokens": self.last_cache_creation_input_tokens,
                     "cache_read_input_tokens": self.last_cache_read_input_tokens,
                 }
                 self.total_prompt_tokens += in_tok
                 self.total_completion_tokens += out_tok
+                self.total_reasoning_tokens += reasoning_tok
                 self._successful_call_count += 1
                 return result
             except (OSError, subprocess.TimeoutExpired) as e:
@@ -645,6 +655,11 @@ class ClaudeCodeProvider(LLMProvider):
                             elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
                                 if bt != "ThinkingBlock":
                                     parts.append(block.text)
+                                else:
+                                    # Kept out of the ANSWER, as before, but no longer thrown away:
+                                    # Anthropic bills thinking as output tokens, and a caller that
+                                    # cannot see it is comparing models on a number it cannot split.
+                                    self.last_reasoning_text = _reasoning.appended(self.last_reasoning_text, block.text)
                         if parts:
                             text = "\n".join(parts)
                             if result_text is None:
