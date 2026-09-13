@@ -133,7 +133,11 @@ of 50 to 60 minutes each and got nothing back (one ran past the 3,000 s cap, so 
 connection alive); streamed, the same model on the same route answered both articles cleanly, 61,686 and
 89,240 output tokens. The timeout then bounds only the silence between deltas, and reasoning deltas keep
 arriving while the model thinks. A stream also keeps what arrived when it dies — `deepseek/deepseek-v3.2` on
-phala/streamlake/alibaba stalled mid-answer twice, after 1,316 and 44,598 characters. Accumulate the chunks in
+phala/streamlake/alibaba stalled mid-answer twice, after 1,316 and 44,598 characters. Those two measurements
+were taken before `5969eff` passed the derived timeout to the streaming path, so they were confounded with the
+240 s name-derived default; re-measured afterwards with 3,348 s of patience, Phala streamed 13,957 characters,
+went silent, and left no generation record for `/api/v1/generation` to return — a real route-side stall, this
+time with evidence that separates it from a model still thinking. Accumulate the chunks in
 a plain loop (a comprehension, as ruff's PERF401 suggests, loses every chunk already received when the stream
 raises) and store them apart from the complete response, so a cut-off answer is archived without being scored
 as a whole one. `generate_stream` records usage and `generation_id` after the stream closes, and raises
