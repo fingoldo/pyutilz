@@ -97,7 +97,7 @@ jobs:
         pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
-      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@51d618ad318e5ae1022bed214f91584953381113  # v1.3.5
+      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@7b47386c5a4c49cbc819e80cd851cd98f6de9a14  # v1.3.6
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
