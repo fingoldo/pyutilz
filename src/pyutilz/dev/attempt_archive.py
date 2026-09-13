@@ -40,7 +40,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterable, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ __all__ = [
     "DirectoryContentStore",
     "JsonlAttemptSink",
     "archive_provider",
+    "attempts_missing_generation_stats",
+    "fetch_missing_generation_stats",
     "metadata_from_provider",
     "sha256_text",
 ]
@@ -102,7 +104,9 @@ class AttemptRecord:
     latency_ms: Optional[int] = None
     generation_time_ms: Optional[int] = None
     cancelled: Optional[bool] = None
-    # True when the upstream has no record of the generation at all: it never finished, so nothing was billed.
+    # True when the upstream had no record of the generation WHEN ASKED, which is moments after the call. The
+    # record is written asynchronously, so this is also True for a call that succeeded and simply has not been
+    # filed yet; only a 404 that persists later means the generation never finished.
     generation_record_missing: Optional[bool] = None
     error: Optional[str] = None
     started_at: Optional[str] = None
@@ -277,6 +281,55 @@ def metadata_from_provider(provider: Any) -> Dict[str, Any]:
     }
 
 
+def attempts_missing_generation_stats(attempts: Iterable[Dict[str, Any]]) -> List[str]:
+    """Generation ids whose attempt row has no upstream timings yet, oldest first, de-duplicated.
+
+    The record is written asynchronously, so the archive's own query - made moments after the call - comes back
+    empty for anything short. Measured 2026-09-14: a call that returned 61 parsed rows and billed $0.031 was
+    filed minutes later, and the same id then answered in full. So the timings are BACKFILLED rather than
+    retried at the call, and this names what to ask for.
+    """
+    seen: Dict[str, None] = {}
+    for attempt in attempts:
+        gid = attempt.get("generation_id")
+        if not gid or attempt.get("latency_ms") is not None:
+            continue
+        seen.setdefault(str(gid), None)
+    return list(seen)
+
+
+async def fetch_missing_generation_stats(provider: Any, attempts: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """`{generation_id: record}` for every attempt still missing its timings, skipping the ones still absent.
+
+    Returns rather than writes: an attempt log is append-only, and rewriting a line in place to enrich it would
+    trade the one property that makes it trustworthy for a column. The caller decides where the answers live.
+    """
+    fetch = getattr(provider, "fetch_generation_stats", None)
+    if not callable(fetch):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    unfiled, failed = 0, []
+    for gid in attempts_missing_generation_stats(attempts):
+        try:
+            record = await fetch(gid)
+        except Exception as exc:
+            # Counted here and reported ONCE below: a backfill over a long log asks for hundreds of ids, and a
+            # per-id warning turns one upstream outage into a wall of identical lines.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                unfiled += 1
+            else:
+                failed.append(f"{gid} ({type(exc).__name__}: {exc})")
+            continue
+        if isinstance(record, dict) and record:
+            out[gid] = record
+    if failed:
+        logger.warning("could not backfill %d generation record(s): %s", len(failed), "; ".join(failed[:5]))
+    if unfiled:
+        logger.info("%d generation record(s) not filed upstream yet; ask again later", unfiled)
+    return out
+
+
 def _error_text(exc: BaseException) -> str:
     """``Type: message`` for an exception, capped so a huge message cannot bloat the record."""
     return f"{type(exc).__name__}: {exc}"[:2000]
@@ -297,9 +350,11 @@ class _Archiver:
     async def _upstream_timings(self, generation_id: Optional[str]) -> Dict[str, Any]:
         """The upstream's own record for this call, or the fact that it has none.
 
-        Opt-in because it costs a round trip per attempt. A 404 is not an error to swallow: the upstream
-        writes the record when a generation finishes, so a missing one says the generation never did -
-        measured 2026-09-13 against a route that streamed 13,957 characters and then went silent.
+        Opt-in because it costs a round trip per attempt. A 404 is recorded rather than swallowed, but read it
+        carefully: the record is written asynchronously, so asking THIS soon after the call also returns 404
+        for a generation that succeeded - measured 2026-09-14 on a call that had just returned 61 parsed rows
+        and billed $0.031. A 404 that still holds minutes later is the real "it never finished" signal; this
+        field is the timestamped observation, not the verdict.
         """
         fetch = getattr(self.provider, "fetch_generation_stats", None)
         if not (self.fetch_stats and generation_id and callable(fetch)):

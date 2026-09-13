@@ -16,6 +16,8 @@ from pyutilz.dev.attempt_archive import (
     DirectoryContentStore,
     JsonlAttemptSink,
     archive_provider,
+    attempts_missing_generation_stats,
+    fetch_missing_generation_stats,
     metadata_from_provider,
     sha256_text,
 )
@@ -273,6 +275,42 @@ class TestTheTimingsThatSeparateThinkingFromDead:
 
         assert _Counting.calls == 0
         assert sink.read()[0]["latency_ms"] is None
+
+
+class TestBackfillingTheUpstreamRecord:
+    def test_only_rows_without_timings_are_asked_for(self) -> None:
+        """Asked once per id, never for a row already carrying its timings, never for a row with no id."""
+        attempts = [
+            {"generation_id": "gen-a"},
+            {"generation_id": "gen-a"},
+            {"generation_id": "gen-b", "latency_ms": 1892},
+            {"generation_id": None},
+            {"generation_id": "gen-c", "latency_ms": None},
+        ]
+
+        assert attempts_missing_generation_stats(attempts) == ["gen-a", "gen-c"]
+
+    def test_a_record_that_is_still_unfiled_is_skipped_not_raised(self) -> None:
+        """A 404 here means "not written yet", which is the normal answer for anything short."""
+
+        class _Partial:
+            async def fetch_generation_stats(self, generation_id: str) -> dict:
+                if generation_id == "gen-late":
+                    raise httpx.HTTPStatusError("nope", request=httpx.Request("GET", "https://x"), response=httpx.Response(404))
+                return {"latency": 4095, "generation_time": 359270}
+
+            def __init__(self) -> None:
+                self.asked: list[str] = []
+
+        provider = _Partial()
+        got = _run(fetch_missing_generation_stats(provider, [{"generation_id": "gen-late"}, {"generation_id": "gen-here"}]))
+
+        assert list(got) == ["gen-here"]
+        assert got["gen-here"]["latency"] == 4095
+
+    def test_a_provider_without_the_endpoint_asks_nothing(self) -> None:
+        """Every provider archives; only some can be asked about a generation afterwards."""
+        assert _run(fetch_missing_generation_stats(_FakeProvider([]), [{"generation_id": "gen-a"}])) == {}
 
 
 class TestTheWrapperIsSafeToApply:
