@@ -767,3 +767,45 @@ def test_the_post_passes_that_timeout_rather_than_the_clients_construction_time_
     with pytest.raises(RuntimeError):
         asyncio.run(probe._post_and_unwrap({"max_tokens": 30_000}))
     assert seen["timeout"] == pytest.approx(1000.0)
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_call_gets_the_same_derived_timeout_as_a_buffered_one():
+    """The stream used to inherit the client's constructor timeout, and died mid-thought because of it.
+
+    `_timeout_for` was written for exactly this model after a ReadTimeout storm, and only the buffered
+    path passed it. A name heuristic cannot see TIME TO FIRST TOKEN any more than it can see output
+    size: z-ai/glm-5.3-flash thinks for 393 s before emitting content (measured 2026-09-13), so a
+    streamed enrichment call on the 240 s default was cut off while the model was working normally.
+    """
+    from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+
+    class _Probe(OpenAICompatibleProvider):
+        _base_url = "https://example.invalid"
+        _provider_name = "probe"
+        _input_cost_per_1m = 0.0
+        _output_cost_per_1m = 0.0
+
+        def _get_timeout(self, model: str) -> float:
+            return 240.0
+
+    probe = _Probe.__new__(_Probe)
+    probe.model_name = "z-ai/glm-5.3-flash"
+    probe._max_concurrent = 1
+
+    seen: dict = {}
+
+    class _Client:
+        def stream(self, method, url, json=None, timeout=None):
+            seen["timeout"] = timeout
+            raise RuntimeError("stop here: the timeout is all this test needs")
+
+    probe._client = _Client()
+    body = {"max_tokens": 54_853}
+
+    with pytest.raises(RuntimeError):
+        async for _ in probe.generate_stream("p", max_tokens=54_853):
+            pass
+
+    assert seen["timeout"] == probe._timeout_for(body), "the stream must not fall back to the client default"
+    assert seen["timeout"] > 240.0
