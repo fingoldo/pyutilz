@@ -174,7 +174,7 @@ class GeminiProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
@@ -236,7 +236,7 @@ class GeminiProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
         images: list[str] | None = None,
@@ -262,7 +262,7 @@ class GeminiProvider(LLMProvider):
             contents = build_gemini_parts(prompt, images)
 
             config_kwargs: dict[str, Any] = {
-                "temperature": temperature,
+                **({} if temperature is None else {"temperature": temperature}),  # `None` lets Gemini apply its own
                 "max_output_tokens": max_tokens,
                 "system_instruction": system if system else None,
                 "response_mime_type": "application/json" if json_mode else None,

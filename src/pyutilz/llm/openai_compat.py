@@ -360,7 +360,7 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
         thinking: bool | str | None = None,
@@ -513,7 +513,7 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
         self,
         prompt: str,
         system: str | None,
-        temperature: float,
+        temperature: float | None,
         max_tokens: int,
         json_mode: bool,
         thinking: bool | str | None,
@@ -540,7 +540,9 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
         body: dict[str, Any] = {
             "model": self.model_name,
             "messages": self._messages_for(prompt, system, images),
-            "temperature": temperature,
+            # `None` means DO NOT SEND the field, so the upstream applies its own default. `0.0` is a real
+            # temperature and the most deterministic one, which a truthiness test would silently turn off.
+            **({} if temperature is None else {"temperature": temperature}),
             "max_tokens": max_tokens,
             "stream": True,
         }
@@ -686,7 +688,7 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
         thinking: bool | str | None = None,
@@ -740,7 +742,7 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
             body: dict[str, Any] = {
                 "model": self.model_name,
                 "messages": self._messages_for(prompt, system, images),
-                "temperature": temperature,
+                **({} if temperature is None else {"temperature": temperature}),  # `None` omits it; see `_build_stream_body`
                 "max_tokens": max_tokens,
             }
             if rf is not None:
@@ -895,7 +897,7 @@ class OpenAICompatibleProvider(DerivedTimeoutMixin, ThinkingControlMixin, LLMPro
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
         max_tokens: int = 0,
         # FIFTH, matching `LLMProvider.generate_json`: after this override's own extra parameters it
         # would be a Liskov violation, and the same position would mean different things per provider.

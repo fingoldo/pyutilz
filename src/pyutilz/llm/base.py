@@ -534,7 +534,7 @@ class LLMProvider(ABC):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
     ) -> str:
         """Generate text from a prompt.
@@ -686,7 +686,7 @@ class LLMProvider(ABC):
         """
         return None
 
-    async def _generate_json_via(self, prompt: str, system: str | None, temperature: float, max_tokens: int, **generate_kwargs: Any) -> dict[str, Any]:
+    async def _generate_json_via(self, prompt: str, system: str | None, temperature: float | None, max_tokens: int, **generate_kwargs: Any) -> dict[str, Any]:
         """Shared ``generate_json`` body: steer the system prompt toward JSON-only output, call
         ``self.generate`` (forwarding any provider-specific kwargs, e.g. OpenAI-compat's
         ``json_mode``/``json_schema``), then parse via ``extract_json``.
@@ -711,7 +711,7 @@ class LLMProvider(ABC):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,

@@ -107,6 +107,46 @@ class TestProperties:
         assert msgs == [{"role": "user", "content": "hello"}]
 
 
+class TestTemperature:
+    """`None` omits the field; `0.0` is a real temperature and must survive every guard on the way out.
+
+    Both halves matter. A hardcoded temperature silently overrides whatever the caller configured, and a
+    measurement in a sibling project found 0.3 doubling the reasoning a model emits for the same answer - big
+    enough on a long prompt to push the first content byte past any sane timeout, which reads as a dead route.
+    And `if temperature:` would drop exactly 0.0, the most deterministic setting there is, while looking right.
+    """
+
+    def test_none_omits_the_field_from_a_streamed_body(self):
+        body = _make_provider()._build_stream_body("p", None, None, 100, False, None, None, None)
+
+        assert "temperature" not in body
+
+    def test_zero_is_sent_on_a_streamed_body(self):
+        body = _make_provider()._build_stream_body("p", None, 0.0, 100, False, None, None, None)
+
+        assert body["temperature"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_none_omits_the_field_from_a_buffered_call(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+
+        await p.generate("test prompt", temperature=None)
+
+        assert "temperature" not in p._client.post.call_args.kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_zero_is_sent_on_a_buffered_call(self):
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response())
+
+        await p.generate("test prompt", temperature=0.0)
+
+        assert p._client.post.call_args.kwargs["json"]["temperature"] == 0.0
+
+
 class TestGenerate:
     @pytest.mark.asyncio
     async def test_successful_generation(self):

@@ -393,7 +393,7 @@ class ClaudeCodeProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
         json_mode: bool = False,
         images: list[str] | None = None,
@@ -434,7 +434,7 @@ class ClaudeCodeProvider(LLMProvider):
         # used to sit inside an ``if _HAS_SDK:`` block, leaving the CLI fallback silent.
         if max_tokens > 0:
             self._warn_unsupported_param_once("max_tokens")
-        if abs(temperature - 0.7) > 1e-9:
+        if temperature is not None and abs(temperature - 0.7) > 1e-9:
             self._warn_unsupported_param_once("temperature")
         attempt = 0
         # Regression fix (2026-07-21 audit): read the same PYUTILZ_LLM_MAX_RETRIES-configurable
@@ -829,7 +829,7 @@ class ClaudeCodeProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
