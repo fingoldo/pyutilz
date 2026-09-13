@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from ._common import _CacheState, _facade, logger
 from .cache_base import (
+    _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS,
     _INVALIDATION_LOGGED_THIS_PROCESS,
     _TUNED_THIS_PROCESS,
     _async_sweep_idle_max_wait,
@@ -28,6 +29,16 @@ class _CacheTuningMixin(_CacheState):
     """The ``get_or_tune`` orchestration path and the sweep helpers it drives."""
 
     # ----- equiv-tol gate (used by update) -----
+
+    @staticmethod
+    def _warn_default_cache_fallback_once(guard_key, branch: str, msg: str, *args, **kwargs) -> None:
+        """Log one ``_fb()`` DEFAULT-cache-fallback branch at most once per (guard_key, branch) per
+        process. A FIT-TIME dispatcher re-enters the same branch on every call until the background
+        sweep lands, which for a per-iteration monitor metric can be hundreds of calls per fit."""
+        log_key = (guard_key, branch)
+        if log_key not in _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS:
+            _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS.add(log_key)
+            logger.warning(msg, *args, **kwargs)
 
     def _apply_equiv_gate(self, kernel_name, regions, equiv_tol, hooks=None):
         """Drop (with a loud warning) any region whose recorded ``max_abs_diff``
@@ -109,15 +120,19 @@ class _CacheTuningMixin(_CacheState):
             # execution as far as static reading can show). Logging exactly which branch was taken
             # (rather than only the previous DEBUG-level swallow) turns the next occurrence into a
             # one-line diagnosis instead of another blind investigation.
+            # Each distinct (kernel_name, branch) logs at most once per process (guard_key already
+            # identifies kernel+cache-path uniquely) -- see _warn_default_cache_fallback_once.
+            _wf = self._warn_default_cache_fallback_once
             dc = _facade()._DEFAULT_CACHE
             if dc is None:
-                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
+                _wf(guard_key, "none", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
             elif dc is self:
-                logger.warning("DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
+                _wf(guard_key, "self", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
             else:
                 try:
                     if dc._code_version_stale(kernel_name, code_version):
-                        logger.warning(
+                        _wf(
+                            guard_key, "stale",
                             "DEFAULT-cache consult for kernel %s: code_version stale (requested=%r, stored=%r), falling back",
                             kernel_name, code_version, dc._ensure_loaded().get("kernels", {}).get(kernel_name, {}).get("code_version"),
                         )
@@ -125,9 +140,9 @@ class _CacheTuningMixin(_CacheState):
                         d = dc.lookup(kernel_name, **dims)
                         if d is not None:
                             return d
-                        logger.warning("DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
+                        _wf(guard_key, "no_match", "DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
                 except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
-                    logger.warning("DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
+                    _wf(guard_key, "raised", "DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
             return fallback() if callable(fallback) else fallback
 
         with _tuned_guard_lock:

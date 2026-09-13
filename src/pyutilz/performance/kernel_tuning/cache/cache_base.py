@@ -514,3 +514,14 @@ _tuned_guard_lock = threading.Lock()
 # INFO "invalidated...will re-tune" log on every single call. Log it at most once per kernel
 # per process instead; the staleness re-check itself stays unconditional (a cheap dict lookup).
 _INVALIDATION_LOGGED_THIS_PROCESS: set = set()
+
+# Process-scoped "already logged a DEFAULT-cache fallback for this kernel" guard, keyed like
+# _TUNED_THIS_PROCESS on (kernel_name, cache_path). _fb() (the get_or_tune fallback path) runs
+# on EVERY call once the local per-host lookup misses -- for a FIT-TIME dispatcher (async_sweep=True)
+# that is every single caller invocation until the background sweep lands (a boosting round's
+# per-iteration monitor metric can call this hundreds of times per fit), and each of those iterations
+# hits one of the same handful of DEFAULT-cache branches (None / same-instance / stale / no-match /
+# raised) for the SAME (kernel_name, dims-shape) reason. Log each distinct (kernel_name, branch) at
+# most once per process instead of once per call; the fallback VALUE returned is unaffected, only the
+# warning volume is throttled.
+_DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS: set = set()

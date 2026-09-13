@@ -662,3 +662,33 @@ class TestAsyncSweepNoStarvation:
         # And the result is now cached -> a subsequent lookup hits (no starvation).
         cache.reset()
         assert cache.lookup("kstarve", n_samples=1000) == {"variant": "v1", "block_size": 64}
+
+
+class TestDefaultCacheFallbackLogThrottling:
+    """Regression: a FIT-TIME dispatcher (async_sweep=True) re-enters get_or_tune's ``_fb()`` fallback
+    on EVERY call until the background sweep lands -- a per-iteration monitor metric (e.g. an
+    early-stopping callback) can call this hundreds of times per fit. Before the throttle, ``_fb()``'s
+    "DEFAULT-cache consult ... no matching region, falling back" WARNING fired on every single one of
+    those calls (observed: hundreds of near-identical lines in a real ~11-minute CatBoost fit log). Each
+    distinct (kernel, branch) must now log at most once per process."""
+
+    def test_no_matching_region_warns_once_per_kernel_across_many_calls(self, tmp_cache_dir, monkeypatch, caplog):
+        # A DEFAULT cache that IS registered but holds no entry for our kernel -> the "no_match" branch.
+        default_path = os.path.join(tmp_cache_dir, "default.json")
+        with open(default_path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": ktc.SCHEMA_VERSION, "kernels": {"other_kernel": {"axes": ["n"], "regions": [{"n_max": None, "variant": "x"}]}}}, f)
+        assert ktc.register_default_cache(default_path) is True
+
+        cache = ktc.KernelTuningCache()
+        monkeypatch.setenv("PYUTILZ_KERNEL_DISABLE_SWEEP", "1")  # keep this test synchronous and offline
+
+        with caplog.at_level(logging.WARNING, logger="pyutilz.performance.kernel_tuning.cache.cache_class"):
+            for i in range(50):
+                got = cache.get_or_tune(
+                    "spammy_kernel", dims={"n": 1000 + i}, tuner=lambda: None, axes=["n"],
+                    fallback="serial", code_version="1", async_sweep=False,
+                )
+                assert got == "serial"
+
+        no_match_warnings = [r for r in caplog.records if "no matching region" in r.getMessage()]
+        assert len(no_match_warnings) == 1, f"expected exactly one throttled warning across 50 calls, got {len(no_match_warnings)}"
