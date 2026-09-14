@@ -188,6 +188,17 @@ def _per_token_cost_pair(model: str) -> tuple[float, float]:
     return (0.0, 0.0)
 
 
+def _catalogue_is_loaded() -> bool:
+    """Has a catalogue fetch ever SUCCEEDED in this process?
+
+    Separates "the catalogue answered and this model lists no cap" from "nobody has managed to read
+    the catalogue yet", which look identical at every call site and are opposite facts: the first is
+    knowledge, the second is ignorance. A caller that treats ignorance as a small number silently
+    truncates long generations - see ``max_output_tokens``.
+    """
+    return bool(_pkg()._MODELS_CATALOGUE)
+
+
 def _resolve_model_limits(model: str) -> tuple[int | None, int | None]:
     """Return (context_length, max_completion_tokens) for ``model``.
 

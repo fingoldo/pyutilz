@@ -607,9 +607,11 @@ class TestModelLimitsLookup:
         assert p.max_output_tokens == 8_192
 
     def test_max_output_tokens_fallback_when_unknown(self):
+        """An unknown ceiling is the context window, never 8192: a small round fallback truncated
+        every long answer a corpus wave paid for on 2026-09-14."""
         openrouter_module._MODELS_CATALOGUE = {}
         p = _provider(model="vendor/unknown")
-        assert p.max_output_tokens == OpenRouterProvider._default_max_tokens
+        assert p.max_output_tokens == p.context_window > OpenRouterProvider._default_max_tokens
 
 
 class TestSummarizeEndpoints:
@@ -1702,60 +1704,6 @@ class TestThinkingOffMeansNotBilledForThinking:
         assert p._body_after_rejected_request({"temperature": 5}, 400, "reasoning is mandatory") is None
 
 
-class TestCeilingFallbackIsAnnounced:
-    """2026-09-06: a silent fallback to _default_max_tokens cost two full pipeline runs.
-
-    ``max_output_tokens`` reads ``top_provider.max_completion_tokens`` from the catalogue.
-    The catalogue is fetched lazily and DELIBERATELY refuses to fetch from the event-loop
-    thread, so a read before any warm returns nothing and the ceiling silently becomes 8192
-    -- against models whose real limit is 131072. Downstream that shows up only as a
-    truncated response, with nothing anywhere naming the cause.
-
-    The fallback itself is correct behaviour, so this warns rather than raising.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _forget_previous_warnings(self):
-        OpenRouterProvider._warned_default_ceiling.clear()
-        yield
-        OpenRouterProvider._warned_default_ceiling.clear()
-
-    def test_a_missing_catalogue_entry_is_reported(self, caplog):
-        provider = _provider(model="some/unlisted-model")
-
-        with patch(
-            "pyutilz.llm.openrouter_provider._provider._resolve_model_limits",
-            return_value=(None, None),
-        ), caplog.at_level(logging.WARNING):
-            ceiling = provider.max_output_tokens
-
-        assert ceiling == OpenRouterProvider._default_max_tokens
-        assert any("some/unlisted-model" in r.getMessage() for r in caplog.records)
-        assert any("truncated" in r.getMessage() for r in caplog.records)
-
-    def test_it_says_so_only_once_per_model(self, caplog):
-        """A per-read warning would drown the log on the hot path."""
-        provider = _provider(model="some/unlisted-model")
-
-        with patch(
-            "pyutilz.llm.openrouter_provider._provider._resolve_model_limits",
-            return_value=(None, None),
-        ), caplog.at_level(logging.WARNING):
-            provider.max_output_tokens
-            provider.max_output_tokens
-            provider.max_output_tokens
-
-        assert len([r for r in caplog.records if "unlisted-model" in r.getMessage()]) == 1
-
-    def test_a_known_ceiling_is_returned_silently(self, caplog):
-        """Negative control: the ordinary path must stay quiet."""
-        provider = _provider(model="openai/gpt-4o-mini")
-
-        with patch(
-            "pyutilz.llm.openrouter_provider._provider._resolve_model_limits",
-            return_value=(1_000_000, 131_072),
-        ), caplog.at_level(logging.WARNING):
-            ceiling = provider.max_output_tokens
-
-        assert ceiling == 131_072
-        assert not [r for r in caplog.records if "falls back" in r.getMessage()]
+# `TestCeilingFallbackIsAnnounced` lived here as a byte-for-byte copy of the class in
+# `test_llm_openrouter_ceiling.py`, whose own docstring says it exists because THIS file is at its LOC
+# budget with no slack. Two copies of one guard drift apart and read as two independent confirmations.
