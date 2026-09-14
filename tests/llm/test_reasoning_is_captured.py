@@ -165,3 +165,44 @@ class TestEveryFieldAnUpstreamMayUse:
         assert _reasoning.from_message({"reasoning_content": "buffered"}) == "buffered"
         assert _reasoning.from_message({"reasoning_details": [{"text": "structured"}]}) == "structured"
         assert _reasoning.from_message({"content": "answer only"}) is None
+
+
+class TestTheClaudeCodeCliPath:
+    """The CLI returns the FACT of thinking and withholds the text; record the fact.
+
+    Measured 2026-09-14 against opus through `claude --print - --output-format stream-json`: the
+    assistant event carries a block of type "thinking" whose `thinking` field is an empty string
+    beside an opaque `signature`. The model reasoned; the tool did not hand the reasoning over.
+
+    Counting the blocks distinguishes "did not reason" from "reasoned and was not shared", which is
+    otherwise indistinguishable from the caller's side -- and that indistinguishability cost one
+    session an afternoon of confident wrong conclusions about a validator that was thinking all
+    along.
+    """
+
+    def test_a_withheld_thinking_block_is_still_counted(self) -> None:
+        from pyutilz.llm.claude_code_cli import _count_thinking_blocks
+
+        event = {"message": {"content": [{"type": "thinking", "thinking": "", "signature": "CAISqAIK…"}, {"type": "text", "text": "Yes."}]}}
+
+        assert _count_thinking_blocks(event) == 1
+
+    def test_an_answer_with_no_thinking_counts_zero(self) -> None:
+        from pyutilz.llm.claude_code_cli import _count_thinking_blocks
+
+        assert _count_thinking_blocks({"message": {"content": [{"type": "text", "text": "Yes."}]}}) == 0
+
+    def test_several_blocks_are_all_counted(self) -> None:
+        from pyutilz.llm.claude_code_cli import _count_thinking_blocks
+
+        event = {"message": {"content": [{"type": "thinking", "thinking": ""}, {"type": "text", "text": "a"}, {"type": "thinking", "thinking": ""}]}}
+
+        assert _count_thinking_blocks(event) == 2
+
+    def test_a_malformed_event_counts_zero_rather_than_raising(self) -> None:
+        """Stream shapes change; a counter must never be the thing that breaks a call."""
+        from pyutilz.llm.claude_code_cli import _count_thinking_blocks
+
+        assert _count_thinking_blocks({}) == 0
+        assert _count_thinking_blocks({"message": {"content": "not a list"}}) == 0
+        assert _count_thinking_blocks({"message": {}}) == 0

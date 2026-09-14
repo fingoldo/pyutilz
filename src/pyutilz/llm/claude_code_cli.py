@@ -108,6 +108,21 @@ def _is_transient_subprocess_error(exc: BaseException) -> bool:
     return False
 
 
+def _count_thinking_blocks(event: dict) -> int:
+    """How many thinking blocks this ``assistant`` event carries.
+
+    The COUNT, not the text: the CLI returns a thinking block whose ``thinking`` field is an empty
+    string plus an opaque ``signature``, so the reasoning itself is withheld on this path. Measured
+    2026-09-14 against opus. Counting them is still worth doing -- it distinguishes "the model did
+    not reason" from "the model reasoned and the tool did not hand it over", which is otherwise
+    indistinguishable from the caller's side and cost one session an afternoon of wrong conclusions.
+    """
+    content = (event.get("message") or {}).get("content") or []
+    if not isinstance(content, list):
+        return 0
+    return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "thinking")
+
+
 def _raise_on_cli_tool_use(event: dict) -> None:
     """Raise :class:`ClaudeCodeToolUseError` if a CLI ``assistant`` event carries a tool-use block.
 
@@ -148,6 +163,8 @@ def _consume_cli_stream(
     result_text: "str | None" = None
     error_text: "str | None" = None
     result_event: "dict | None" = None
+    # Counted, not read: the CLI withholds the thinking TEXT (see _count_thinking_blocks).
+    thinking_blocks = 0
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if cancel_evt is not None and cancel_evt.is_set():
@@ -190,12 +207,17 @@ def _consume_cli_stream(
             break
         elif etype == "assistant":
             _raise_on_cli_tool_use(event)
+            thinking_blocks += _count_thinking_blocks(event)
         elif etype == "rate_limit_event":
             logger.debug("Claude CLI rate_limit_event (continuing)")
         elif etype == "system" and event.get("subtype") == "init":
             logger.debug("Claude CLI initialized")
     else:
         return None, None, True, None
+    if isinstance(result_event, dict):
+        # Carried on the result event rather than as a fifth return value, so every existing caller
+        # of this four-tuple keeps working; `_CliResultMessage` exposes it to the provider.
+        result_event["thinking_blocks"] = thinking_blocks
     return result_text, error_text, False, result_event
 
 
