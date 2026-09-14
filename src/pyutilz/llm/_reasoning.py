@@ -18,7 +18,7 @@ from typing import Any
 
 from pyutilz.llm.base import PerCallAttr
 
-__all__ = ["ReasoningCaptureMixin", "collect", "estimate_tokens", "from_message", "joined"]
+__all__ = ["ReasoningCaptureMixin", "collect", "estimate_tokens", "from_message", "from_payload", "joined"]
 
 
 class ReasoningCaptureMixin:
@@ -68,6 +68,36 @@ def joined(fragments: list[str]) -> str | None:
     return "".join(fragments) if fragments else None
 
 
+#: The fields an upstream may put reasoning in, in the order they are trusted. OpenRouter normalises
+#: most routes to ``reasoning``, but ``reasoning_content`` is the DeepSeek-style spelling and some
+#: routes send only the structured ``reasoning_details``. Reading one field means a route that uses
+#: another is captured as nothing at all, with no error -- the same silence this module exists to end.
+_TEXT_FIELDS = ("reasoning", "reasoning_content")
+_DETAIL_FIELD = "reasoning_details"
+
+
+def from_payload(payload: dict[str, Any]) -> str | None:
+    """The reasoning in one delta or one message, whichever field this upstream uses.
+
+    The fields are alternatives, not additions: a route that sends both ``reasoning`` and
+    ``reasoning_details`` sends the SAME text twice, so taking both would double every such record.
+    The first field that carries text wins, and ``reasoning_details`` is read only when neither plain
+    field does.
+    """
+    for field in _TEXT_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str) and value:
+            return value
+    details = payload.get(_DETAIL_FIELD)
+    if isinstance(details, list):
+        # Each entry is shaped {"type": "reasoning.text", "text": "...", "index": 0}; entries without
+        # text (an encrypted or redacted block, say) contribute nothing rather than a stray "None".
+        parts = [str(d.get("text")) for d in details if isinstance(d, dict) and isinstance(d.get("text"), str) and d.get("text")]
+        if parts:
+            return "".join(parts)
+    return None
+
+
 def from_message(message: dict[str, Any]) -> str | None:
     """The reasoning of a buffered OpenAI-compatible reply, or ``None`` when it carries none.
 
@@ -75,8 +105,7 @@ def from_message(message: dict[str, Any]) -> str | None:
     mid-thought is precisely the one whose reasoning explains where the budget went, and raising
     first threw it away.
     """
-    reasoning = message.get("reasoning")
-    return reasoning if isinstance(reasoning, str) and reasoning else None
+    return from_payload(message)
 
 
 def estimate_tokens(text: str | None) -> int:

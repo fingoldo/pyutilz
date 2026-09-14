@@ -581,7 +581,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         delta = choice.get("delta") or {}
         _accumulate_stream_tool_calls(tool_call_fragments, delta.get("tool_calls"))
         # Not yielded: `generate_stream` streams the ANSWER; this is read from `last_reasoning_text`.
-        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, delta.get("reasoning"))
+        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, _reasoning.from_payload(delta))
         content = delta.get("content")
         return content if isinstance(content, str) else None
 

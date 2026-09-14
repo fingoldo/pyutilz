@@ -110,3 +110,58 @@ class TestTheStreamingPath:
 
         assert len(provider._reasoning_fragments) == 1_000, "the deltas were merged instead of kept"
         assert provider.last_reasoning_text == "x" * 200 * 1_000
+
+
+class TestEveryFieldAnUpstreamMayUse:
+    """One spelling is not enough: a route using another is captured as nothing, with no error.
+
+    OpenRouter normalises most routes to `reasoning`; `reasoning_content` is the DeepSeek-style
+    spelling, and some routes send only the structured `reasoning_details`. Reading one field would
+    reproduce, on the next model we try, exactly the silence this capture was written to end.
+    """
+
+    def test_the_deepseek_spelling_is_read(self) -> None:
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(_chunk(reasoning_content="thinking in another field"), {})
+
+        assert provider.last_reasoning_text == "thinking in another field"
+
+    def test_structured_details_are_read(self) -> None:
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(
+            _chunk(reasoning_details=[{"type": "reasoning.text", "text": "first "}, {"type": "reasoning.text", "text": "second"}]),
+            {},
+        )
+
+        assert provider.last_reasoning_text == "first second"
+
+    def test_a_route_sending_both_records_the_text_once(self) -> None:
+        """`reasoning` and `reasoning_details` are the same thought twice; adding them doubles it."""
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(
+            _chunk(reasoning="the thought", reasoning_details=[{"type": "reasoning.text", "text": "the thought"}]),
+            {},
+        )
+
+        assert provider.last_reasoning_text == "the thought"
+
+    def test_a_detail_entry_without_text_contributes_nothing(self) -> None:
+        """An encrypted or redacted block must not become the string 'None' in the record."""
+        provider = _bare_provider()
+
+        provider._apply_stream_chunk(
+            _chunk(reasoning_details=[{"type": "reasoning.encrypted", "data": "…"}, {"type": "reasoning.text", "text": "kept"}]),
+            {},
+        )
+
+        assert provider.last_reasoning_text == "kept"
+
+    def test_the_buffered_path_reads_the_same_fields(self) -> None:
+        from pyutilz.llm import _reasoning
+
+        assert _reasoning.from_message({"reasoning_content": "buffered"}) == "buffered"
+        assert _reasoning.from_message({"reasoning_details": [{"text": "structured"}]}) == "structured"
+        assert _reasoning.from_message({"content": "answer only"}) is None
