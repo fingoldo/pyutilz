@@ -267,7 +267,12 @@ def metadata_from_provider(provider: Any) -> Dict[str, Any]:
                 return value
         return None
 
-    cost = pick("cost_usd", getattr(provider, "last_actual_cost_usd", None), getattr(provider, "last_cost_usd", None))
+    # A provider that reports no cost leaves `last_actual_cost_usd` at its 0.0 default, and 0.0 recorded as a
+    # cost says the call was free - so a wave of unpriced calls reads as cheaper than one that works. Where the
+    # provider says whether it actually reported one (`last_actual_cost_reported`), an unreported cost stays
+    # unknown. Missing attribute means "no opinion", and the value is taken as before.
+    reported = getattr(provider, "last_actual_cost_reported", None)
+    cost = pick("cost_usd", getattr(provider, "last_actual_cost_usd", None), getattr(provider, "last_cost_usd", None)) if reported is not False else None
     return {
         "prompt_tokens": _int_or_none(pick("input_tokens", usage.get("input_tokens"), usage.get("prompt_tokens"))),
         "completion_tokens": _int_or_none(pick("output_tokens", usage.get("output_tokens"), usage.get("completion_tokens"))),
@@ -449,7 +454,13 @@ def archive_provider(
             try:
                 result = await generate(*args, **kwargs)
             except BaseException as exc:
-                partial = getattr(provider, "last_partial_text", None)
+                # The partial answer lives on the EXCEPTION: `LLMTruncationError` carries `partial_text`, and
+                # a buffered call that stops on the output limit raises it with everything it had written. The
+                # first version of this line read `provider.last_partial_text`, an attribute no provider in
+                # pyutilz defines - so the branch was dead and a truncated buffered call archived the
+                # reasoning it was billed for while dropping the answer it was billed for, which is the exact
+                # loss this module's own docstring opens with. Found by a reviewer, 2026-09-14.
+                partial = getattr(exc, "partial_text", None) or getattr(provider, "last_partial_text", None)
                 await archiver.keep(partial if isinstance(partial, str) else None, started, started_at, error=exc)
                 raise
             await archiver.keep(result if isinstance(result, str) else None, started, started_at)

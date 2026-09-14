@@ -117,6 +117,27 @@ class TestFailedAndCutOffAttemptsAreKept:
         (row,) = sink.read()
         assert row["outcome"] == "error" and row["error"] == "TimeoutError: upstream timed out" and row["raw_text"] is None
 
+    def test_a_truncated_buffered_call_keeps_the_answer_it_had_written(self, tmp_path: Path) -> None:
+        """The partial answer rides on the exception, not on the provider.
+
+        The first version read a provider attribute that exists nowhere in pyutilz, so this branch was dead:
+        a buffered call cut off at the output limit archived its reasoning and dropped its answer - the loss
+        this module was written to end.
+        """
+
+        class _TruncatedError(Exception):
+            partial_text = '{"kb_triples": [{"subject":'
+
+        provider, store, sink = _wrapped(tmp_path, _FakeProvider([_TruncatedError("stopped at max_tokens")]))
+
+        with pytest.raises(_TruncatedError):
+            _run(provider.generate("p"))
+
+        (row,) = sink.read()
+        assert row["raw_text"] == '{"kb_triples": [{"subject":'
+        assert store.get(row["response_sha256"]) == '{"kb_triples": [{"subject":'
+        assert row["outcome"] == "truncated", "text plus an error is a cut-off answer, not a bare failure"
+
     def test_a_length_stop_is_recorded_as_truncated(self, tmp_path: Path) -> None:
         provider, _, sink = _wrapped(tmp_path, _FakeProvider(['{"partial": '], finish="length"))
 
@@ -144,6 +165,30 @@ class TestFailedAndCutOffAttemptsAreKept:
             _run(provider.generate("p"))
 
         assert [r["attempt_number"] for r in sink.read()] == [1, 2, 3]
+
+
+class TestAnUnreportedCostStaysUnknown:
+    def test_a_provider_that_says_it_reported_nothing_records_no_cost(self) -> None:
+        """0.0 recorded as a cost makes a wave of unpriced calls read as cheaper than one that works."""
+
+        class _Silent(_FakeProvider):
+            last_actual_cost_reported = False
+
+        provider = _Silent([])
+        provider.last_actual_cost_usd = 0.0
+
+        assert metadata_from_provider(provider)["cost_usd"] is None
+
+    def test_a_reported_zero_is_still_a_cost(self) -> None:
+        """Some routes really are free; that is a measurement, not a missing one."""
+
+        class _Free(_FakeProvider):
+            last_actual_cost_reported = True
+
+        provider = _Free([])
+        provider.last_actual_cost_usd = 0.0
+
+        assert metadata_from_provider(provider)["cost_usd"] == 0.0
 
 
 class TestTheStoreNeverClaimsTextItDidNotWrite:
