@@ -120,12 +120,20 @@ class TestGetText:
 
 class TestThrottle:
     def test_per_host_throttle_delays_second_call_to_same_host(self, tmp_path):
-        client = CachedHttpClient(cache_dir=tmp_path, min_interval=0.05)
+        # 60 s, not 50 ms: a slow runner spent more than 50 ms between stamping _last_call and _throttle
+        # reading the clock, so no wait was left and nothing slept. The fake sleep then lets the interval
+        # "elapse" by forgetting the host, since _throttle loops until a real wait would have passed.
+        client = CachedHttpClient(cache_dir=tmp_path, min_interval=60.0)
         client._last_call["example.org"] = __import__("time").monotonic()
         slept = []
-        with patch("time.sleep", side_effect=slept.append):
+
+        def fake_sleep(seconds):
+            slept.append(seconds)
+            client._last_call.pop("example.org", None)
+
+        with patch("time.sleep", side_effect=fake_sleep):
             client._throttle("https://example.org/y")
-        assert slept and slept[0] > 0
+        assert len(slept) == 1 and 59.0 < slept[0] <= 60.0
 
     def test_different_hosts_do_not_throttle_each_other(self, tmp_path):
         client = CachedHttpClient(cache_dir=tmp_path, min_interval=10.0)
