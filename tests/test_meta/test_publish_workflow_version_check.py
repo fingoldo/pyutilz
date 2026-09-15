@@ -51,7 +51,10 @@ def _bash_can_read_repo() -> bool:
     load-bearing -- caching a function that itself raises `Skipped` would memoise nothing, since the
     exception escapes before a result is ever stored.
     """
-    probe = subprocess.run(["bash", "-c", 'V=$(echo ok); test -f pyproject.toml && test "$V" = ok'], cwd=str(_REPO_ROOT), capture_output=True, timeout=30)
+    try:
+        probe = subprocess.run(["bash", "-c", 'V=$(echo ok); test -f pyproject.toml && test "$V" = ok'], cwd=str(_REPO_ROOT), capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return False  # a bash that cannot answer `echo ok` in 30 s (cold WSL, host under load) is not usable here
     return probe.returncode == 0
 
 

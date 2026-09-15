@@ -71,3 +71,21 @@ def test_an_ambiguous_basename_is_not_this_scanners_call(tmp_path: Path):
     (tmp_path / "b" / "utils.py").write_text("x = 1\n", encoding="utf-8")
     _write(tmp_path, "user.py", "# utils.py:500\n")
     assert scan_stale_source_citations(tmp_path) == []
+
+
+def test_a_url_or_absolute_ref_never_reaches_the_filesystem(tmp_path: Path, monkeypatch):
+    """An absolute ref replaces the root when joined, and on Windows `//host/share` is a UNC path.
+
+    Joining and calling is_file() on such a ref sent the scan to the network: 56 s per URL-shaped
+    string locally, WinError 64 on a runner with no such host. Rejected before any file lookup now.
+    """
+    from pyutilz.dev.code_audit import stale_source_citations as ssc
+
+    touched: "list[Path]" = []
+    real_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda self: touched.append(self) or real_is_file(self))
+    index = ssc._index_tree(tmp_path, frozenset())
+    citing = tmp_path / "m.py"
+    for ref in ("//example.com/raw/x.py", "https://example.com/x.py", "/etc/x.py", "Q" + ":/x.py", r"\\host\share\x.py"):
+        assert ssc._resolve(ref, citing, tmp_path, index) == (None, False), ref
+    assert touched == [], f"filesystem consulted for non-repository refs: {touched}"

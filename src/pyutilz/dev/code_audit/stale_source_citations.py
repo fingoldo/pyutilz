@@ -5,7 +5,7 @@ import ast
 import io
 import re
 import tokenize
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterator
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines
@@ -76,6 +76,11 @@ def _resolve(ref: str, citing: Path, root: Path, index: tuple[dict[str, list[Pat
     missing. (Anywhere, not only at the root: ``db_saver/helpers.py`` is cited from far away from
     ``glossum/llm/db_saver``, and after that module became a package it is exactly the stale case to report.)
     """
+    if "://" in ref or PurePosixPath(ref).is_absolute() or PureWindowsPath(ref).anchor:
+        # Not a path inside this repository. Joining it anyway is worse than wrong: an absolute ref
+        # replaces the root outright, and on Windows `//host/share/...` is a UNC path, so is_file()
+        # went to the network - 56 s per URL-shaped string, then WinError 64 on a runner without one.
+        return None, False
     for candidate in (root / ref, citing.parent / ref):
         if candidate.is_file():
             return candidate, True

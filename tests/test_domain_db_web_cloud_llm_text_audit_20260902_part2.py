@@ -138,21 +138,10 @@ def test_f10_repeated_usage_blocks_are_recorded_once():
 
 
 def _claude_code_provider_for_generate(monkeypatch, result_message=None):
-    p = ccmod.ClaudeCodeProvider.__new__(ccmod.ClaudeCodeProvider)
-    p.model = "sonnet"
-    p._call_count = 0
-    p.total_cost_usd = 0.0
-    p.last_cost_usd = 0.0
-    p.total_cache_creation_input_tokens = 0
-    p.total_cache_read_input_tokens = 0
-    p.last_cache_creation_input_tokens = 0
-    p.last_cache_read_input_tokens = 0
-    p.total_input_tokens = 0
-    p.total_output_tokens = 0
-    p.total_prompt_tokens = 0
-    p.total_completion_tokens = 0
-    p.last_session_id = None
-    p.last_num_turns = None
+    # The real constructor, not __new__ plus a hand-kept attribute list: __init__ does no I/O, and the
+    # copied list silently fell behind it the moment a counter was added (total_reasoning_tokens),
+    # failing every leg with an AttributeError unrelated to what these tests check.
+    p = ccmod.ClaudeCodeProvider(model="sonnet")
     p._last_result_message = result_message
 
     async def fake_sdk(prompt, system=None):
