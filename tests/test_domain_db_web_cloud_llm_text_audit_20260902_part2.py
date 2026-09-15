@@ -97,6 +97,7 @@ def test_f10_repeated_usage_blocks_are_recorded_once():
     class _Resp:
         headers: dict = {}
         status_code = 200
+        request = None  # the stream loop hands it to _raise_for_error_in_body, which reads it only for an error chunk
 
         def raise_for_status(self):
             return None

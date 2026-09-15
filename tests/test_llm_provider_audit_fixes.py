@@ -338,6 +338,7 @@ class _OneFailThenOkStream:
         self._fail_first = fail_first
         self.headers = {}
         self.status_code = 200
+        self.request = None  # read by the stream loop for _raise_for_error_in_body; used only on an error chunk
 
     async def __aenter__(self):
         return self
