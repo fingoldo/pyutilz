@@ -902,3 +902,47 @@ class TestAnErrorInsideA200EnvelopeIsTheStatusItNames:
                 await p.generate("q")
         finally:
             p.generate.retry.stop, p.generate.retry.wait = original
+
+
+class TestAnErrorChunkInAStreamIsNotSkipped:
+    """The streamed form of an error inside a 200 envelope. `_apply_stream_chunk` returns None for a chunk without
+    choices, so an `{"error": ...}` chunk was skipped and the stream ended empty or cut short with no exception -
+    which a caller that caches before parsing stores as the model's answer."""
+
+    @pytest.mark.asyncio
+    async def test_an_error_before_any_content_reopens_the_stream(self, monkeypatch):
+        import pyutilz.llm.openai_compat as openai_compat_mod
+
+        async def _no_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
+        monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", _no_sleep)
+        error_line = f"data: {json.dumps({'id': 'gen-1', 'error': {'code': 429, 'message': 'temporarily rate-limited upstream'}})}"
+        answer_lines = [f"data: {json.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}", "data: [DONE]"]
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(side_effect=[_MockStreamResponse(lines=[error_line]), _MockStreamResponse(lines=answer_lines)])
+
+        out = [chunk async for chunk in p.generate_stream("q")]
+
+        assert out == ["ok"]
+        assert p._client.stream.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_error_after_content_raises_instead_of_returning_a_cut_answer(self):
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'content': 'partial answer text'}}]})}",
+            f"data: {json.dumps({'error': {'code': 502, 'message': 'upstream connection lost'}})}",
+            "data: [DONE]",
+        ]
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.stream = MagicMock(return_value=_MockStreamResponse(lines=lines))
+        received = []
+
+        with pytest.raises(httpx.HTTPStatusError, match="upstream connection lost"):
+            async for chunk in p.generate_stream("q"):
+                received.append(chunk)
+
+        assert received == ["partial answer text"]

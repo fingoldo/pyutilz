@@ -439,6 +439,9 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                                 first_chunk = chunk
                                 # Now, not only after the loop: a stream dying mid-answer never gets there, and without its id its cost reads 0.
                                 self._track_provider_specific_response(chunk)
+                            # `_apply_stream_chunk` returns None for a chunk without choices, so an error chunk used to be
+                            # skipped: the stream ended empty or cut short with no exception.
+                            self._raise_for_error_in_body(chunk, resp.request)
                             last_chunk = chunk
                             # Usage block tends to arrive on a chunk with empty
                             # choices AFTER the last content delta; track it
@@ -560,6 +563,30 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         # leaving streaming callers with zero cost / token tracking.
         body.setdefault("stream_options", {"include_usage": True})
         return body
+
+    def _raise_for_error_in_body(self, payload: dict[str, Any], request: httpx.Request) -> None:
+        """Raise the error an HTTP 200 body or stream chunk carries in place of choices; return if it carries none.
+
+        Measured on OpenRouter 2026-09-15: `{"error": {"code": 429, "message": "openai/gpt-5.6-luna is temporarily
+        rate-limited upstream"}}` arrived with status 200 and no choices. The buffered path reported it as "returned no
+        choices", which the retry predicate does not match, and the stream path skipped the chunk and ended empty - so a
+        transient rate limit was neither retried nor readable, and looked like a dead route. A numeric code of 400 or above
+        is raised as `httpx.HTTPStatusError` with that status, so the shared policy retries 429/5xx and refuses 400/404 at
+        once; anything else is an `LLMProviderError` naming the message.
+        """
+        error = payload.get("error")
+        if not isinstance(error, dict) or payload.get("choices"):
+            return
+        raw_code = error.get("code")
+        code = int(raw_code) if isinstance(raw_code, (int, str)) and str(raw_code).isdigit() else 0
+        error_message = str(error.get("message") or error)
+        if code >= 400:
+            raise httpx.HTTPStatusError(
+                f"{self._provider_name} returned error {code} in place of choices: {error_message}",
+                request=request,
+                response=httpx.Response(code, request=request, text=error_message),
+            )
+        raise LLMProviderError(f"{self._provider_name} returned no choices; error in body: {error_message}")
 
     def _apply_stream_chunk(self, chunk: dict[str, Any], tool_call_fragments: dict[int, dict[str, Any]]) -> str | None:
         """Fold one SSE chunk's choice into per-call metadata, returning its content delta if any.
@@ -847,22 +874,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
 
         choices = data.get("choices", [])
         if not choices:
-            error = data.get("error")
-            if isinstance(error, dict):
-                # An upstream failure delivered inside an HTTP 200 envelope. Measured on OpenRouter 2026-09-15:
-                # `{"error": {"code": 429, "message": "openai/gpt-5.6-luna is temporarily rate-limited upstream"}}`
-                # with status 200. Reported as "returned no choices" it was neither retried nor readable, and
-                # looked like a dead route. Raised as the status it names, so the shared retry policy applies.
-                raw_code = error.get("code")
-                code = int(raw_code) if isinstance(raw_code, (int, str)) and str(raw_code).isdigit() else 0
-                error_message = str(error.get("message") or error)
-                if code >= 400:
-                    raise httpx.HTTPStatusError(
-                        f"{self._provider_name} returned HTTP 200 carrying error {code}: {error_message}",
-                        request=resp.request,
-                        response=httpx.Response(code, request=resp.request, text=error_message),
-                    )
-                raise LLMProviderError(f"{self._provider_name} returned no choices; error in body: {error_message}")
+            self._raise_for_error_in_body(data, resp.request)
             raise LLMProviderError(f"{self._provider_name} returned no choices")
 
         self._last_finish_reason = choices[0].get("finish_reason", "unknown")
