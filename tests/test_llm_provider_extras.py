@@ -206,21 +206,8 @@ class TestClaudeCodeRealUsage:
     def _make(self):
         sdk = pytest.importorskip("claude_code_sdk")  # noqa: F841
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
-        p = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
-        p.model = "claude-sonnet-4-6"
-        p._call_count = 0
-        p.total_prompt_tokens = 0
-        p.total_completion_tokens = 0
-        p.total_cost_usd = 0.0
-        p.last_cost_usd = 0.0
-        p.total_cache_creation_input_tokens = 0
-        p.total_cache_read_input_tokens = 0
-        p.last_cache_creation_input_tokens = 0
-        p.last_cache_read_input_tokens = 0
-        p.last_session_id = None
-        p.last_num_turns = None
-        p._last_usage = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0}
-        return p
+        # The real constructor (no I/O), not __new__ plus a hand-kept attribute list that falls behind every new counter.
+        return ClaudeCodeProvider(model="claude-sonnet-4-6")
 
     def test_get_session_cost_uses_real_total(self):
         p = self._make()
