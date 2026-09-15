@@ -237,6 +237,17 @@ class TestProvenance:
         assert ktc.provenance_changed(None, {"x": 1}) is False
         assert ktc.provenance_changed({"x": 1}, None) is False
 
+    def test_a_gpu_field_one_side_could_not_read_does_not_invalidate(self):
+        # A worker whose slower GPU-name probe lost a race under load saved name=None with cc intact; the reader,
+        # which did get the name, discarded that valid tuning as stale. Unknown is not different.
+        full = {"gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "NVIDIA GeForce GTX 1050 Ti"}}
+        partial = {"gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": None}}
+        assert ktc.provenance_changed(partial, full) is False
+        assert ktc.provenance_changed(full, partial) is False
+        # A name both sides read, and that differs, still invalidates.
+        other = {"gpu_summary": {"cc_major": 6, "cc_minor": 1, "name": "NVIDIA GeForce GTX 1060"}}
+        assert ktc.provenance_changed(full, other) is True
+
     def _read_kernel_record(self, cache, kernel_name):
         """Read the single immutable per-kernel record file (v3 storage)."""
         import glob as _glob

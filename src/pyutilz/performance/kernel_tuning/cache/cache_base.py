@@ -444,7 +444,10 @@ def provenance_changed(old: Optional[dict], new: Optional[dict]) -> bool:
     old_gpu = old.get("gpu_summary") or {}
     new_gpu = new.get("gpu_summary") or {}
     for k in ("cc_major", "cc_minor", "name"):
-        if old_gpu.get(k) != new_gpu.get(k):
+        a, b = old_gpu.get(k), new_gpu.get(k)
+        # A field one side could not read is unknown, not different: the GPU name comes from a slower probe than cc,
+        # and a process that lost that race under load saved name=None, so every reader discarded a valid tuning.
+        if a is not None and b is not None and a != b:
             return True
     return False
 
