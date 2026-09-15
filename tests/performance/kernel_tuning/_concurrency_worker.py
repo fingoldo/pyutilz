@@ -51,6 +51,13 @@ def main():
     patcher_gpu = mock.patch.object(ktc, "_gpu_slug_and_cc", lambda: ("no-gpu", ""))
     patcher_cpu.start()
     patcher_gpu.start()
+    # Provenance pinned too, identical to the test fixture's: the real one queries cupy's CUDA runtime and the GPU
+    # summary probe, which this file-claim test has no use for. Five workers doing that at once lost the GPU-name
+    # race under load (a record silently rejected) and once died in native code with heap corruption, no traceback.
+    mock.patch(
+        "pyutilz.performance.kernel_tuning.cache.cache_base._build_provenance_cached",
+        lambda: {"python_version": "test", "numpy_version": "test", "numba_version": None, "cupy_version": None},
+    ).start()
 
     ran_sweep = {"v": False}
 

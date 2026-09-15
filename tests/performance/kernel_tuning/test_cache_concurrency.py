@@ -39,6 +39,11 @@ def host_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("PYUTILZ_KERNEL_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(ktc, "_cpu_model_slug", lambda: "testcpu")
     monkeypatch.setattr(ktc, "_gpu_slug_and_cc", lambda: ("no-gpu", ""))
+    # Identical to _concurrency_worker.py's pin: a record whose provenance differs from the reader's is discarded.
+    monkeypatch.setattr(
+        "pyutilz.performance.kernel_tuning.cache.cache_base._build_provenance_cached",
+        lambda: {"python_version": "test", "numpy_version": "test", "numba_version": None, "cupy_version": None},
+    )
     ktc.hw_fingerprint.cache_clear()
     ktc._TUNED_THIS_PROCESS.clear()
     yield str(tmp_path)
