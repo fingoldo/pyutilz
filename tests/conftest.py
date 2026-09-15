@@ -6,6 +6,20 @@ import pytest
 import pandas as pd
 import numpy as np
 
+try:
+    import py_ci_shared  # noqa: F401
+except ImportError:
+    # py-ci-shared requires python>=3.9 and CI does not install it on the 3.8 legs. These meta-tests import it at
+    # module level, so without this they fail collection there instead of simply not running.
+    collect_ignore = [
+        "test_meta/test_deferred_drift.py",
+        "test_meta/test_markers_registered.py",
+        "test_meta/test_meta_meta.py",
+        "test_meta/test_no_import_time_env_mutation.py",
+        "test_meta/test_no_value_bearing_asserts.py",
+        "test_meta/test_no_top_level_side_effects.py",
+    ]
+
 # ===========================================================================
 # Warning policy (F12, 2026-09-02)
 # ===========================================================================

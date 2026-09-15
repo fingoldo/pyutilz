@@ -76,7 +76,11 @@ jobs:
         # metadata makes the distribution unpublishable - so without this line those tests fail at
         # collection and every leg goes red. Pinned to a tag, and a meta-test fails if this repo
         # starts importing something the pin does not carry.
-        pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.16.1"
+        # py-ci-shared requires python>=3.9, so the 3.8 legs run without it; conftest skips the
+        # meta-tests that import it there.
+        if python -c "import sys; sys.exit(sys.version_info < (3, 9))"; then
+          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.16.1"
+        fi
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
