@@ -33,7 +33,8 @@ def test_the_py38_subscript_shape_neither_recurses_nor_misses(tmp_path: Path, mo
     def parse_as_py38(*args, **kwargs):
         tree = real_parse(*args, **kwargs)
         for node in ast.walk(tree) if tree is not None else ():
-            if isinstance(node, ast.Subscript) and not isinstance(node.slice, Index):
+            # By class name, as _subscript_index checks: on a real 3.8 the parser already wrapped it in ast.Index.
+            if isinstance(node, ast.Subscript) and node.slice.__class__.__name__ != "Index":
                 node.slice = Index(value=node.slice)
         return tree
 
