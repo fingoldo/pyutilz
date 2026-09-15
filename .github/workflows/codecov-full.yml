@@ -165,7 +165,7 @@ jobs:
           coverage report
 
       - name: Upload combined coverage to Codecov
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@7b47386c5a4c49cbc819e80cd851cd98f6de9a14  # v1.3.6
         with:
           files: ./coverage-full.xml
           flags: combined
