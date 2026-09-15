@@ -849,3 +849,56 @@ async def test_a_streamed_call_gets_the_same_derived_timeout_as_a_buffered_one()
 
     assert seen["timeout"] == probe._timeout_for(body), "the stream must not fall back to the client default"
     assert seen["timeout"] > 240.0
+
+
+class TestAnErrorInsideA200EnvelopeIsTheStatusItNames:
+    """OpenRouter delivers some upstream failures as HTTP 200 with `{"error": {...}}` and no choices. Measured 2026-09-15:
+    a 429 "temporarily rate-limited upstream" for openai/gpt-5.6-luna arrived that way and was reported as "returned no
+    choices" - not retried, and indistinguishable from a dead route."""
+
+    @staticmethod
+    def _fast_retries(p, attempts):
+        original = (p.generate.retry.stop, p.generate.retry.wait)
+        p.generate.retry.stop = stop_after_attempt(attempts)
+        p.generate.retry.wait = wait_none()
+        return original
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limit_in_the_body_is_retried_and_the_next_answer_used(self):
+        p = _make_provider()
+        rate_limited = _mock_response(body={"id": "gen-1", "error": {"code": 429, "message": "temporarily rate-limited upstream"}})
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(side_effect=[rate_limited, _mock_response()])
+        original = self._fast_retries(p, 3)
+        try:
+            assert await p.generate("q") == "hello"
+        finally:
+            p.generate.retry.stop, p.generate.retry.wait = original
+        assert p._client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_client_error_in_the_body_is_raised_once_with_its_message(self):
+        p = _make_provider()
+        rejected = _mock_response(body={"error": {"code": 400, "message": "Invalid schema for response_format"}})
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=rejected)
+        original = self._fast_retries(p, 3)
+        try:
+            with pytest.raises(httpx.HTTPStatusError, match="Invalid schema"):
+                await p.generate("q")
+        finally:
+            p.generate.retry.stop, p.generate.retry.wait = original
+        assert p._client.post.call_count == 1, "a 400 must not be retried"
+
+    @pytest.mark.asyncio
+    async def test_a_body_with_neither_choices_nor_error_still_says_no_choices(self):
+        """Negative control: the old message stays for the shape it actually describes."""
+        p = _make_provider()
+        p._client = AsyncMock()
+        p._client.post = AsyncMock(return_value=_mock_response(body={"id": "gen-2"}))
+        original = self._fast_retries(p, 3)
+        try:
+            with pytest.raises(LLMProviderError, match="no choices"):
+                await p.generate("q")
+        finally:
+            p.generate.retry.stop, p.generate.retry.wait = original

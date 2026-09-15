@@ -847,6 +847,22 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
 
         choices = data.get("choices", [])
         if not choices:
+            error = data.get("error")
+            if isinstance(error, dict):
+                # An upstream failure delivered inside an HTTP 200 envelope. Measured on OpenRouter 2026-09-15:
+                # `{"error": {"code": 429, "message": "openai/gpt-5.6-luna is temporarily rate-limited upstream"}}`
+                # with status 200. Reported as "returned no choices" it was neither retried nor readable, and
+                # looked like a dead route. Raised as the status it names, so the shared retry policy applies.
+                raw_code = error.get("code")
+                code = int(raw_code) if isinstance(raw_code, (int, str)) and str(raw_code).isdigit() else 0
+                error_message = str(error.get("message") or error)
+                if code >= 400:
+                    raise httpx.HTTPStatusError(
+                        f"{self._provider_name} returned HTTP 200 carrying error {code}: {error_message}",
+                        request=resp.request,
+                        response=httpx.Response(code, request=resp.request, text=error_message),
+                    )
+                raise LLMProviderError(f"{self._provider_name} returned no choices; error in body: {error_message}")
             raise LLMProviderError(f"{self._provider_name} returned no choices")
 
         self._last_finish_reason = choices[0].get("finish_reason", "unknown")
