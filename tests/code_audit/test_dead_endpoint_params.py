@@ -6,11 +6,46 @@ call hidden behind a local helper is invisible to it.
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from pyutilz.dev.code_audit import scan_dead_endpoint_parameters
 
 from ._helpers import _write
+
+
+class Index(ast.AST):
+    """Stand-in for python 3.8's ``ast.Index``: the wrapper the 3.8 parser puts around every subscript's contents."""
+
+    _fields = ("value",)
+
+
+def test_the_py38_subscript_shape_still_finds_an_annotated_marker(tmp_path: Path, monkeypatch):
+    """On 3.8 the tuple of ``Annotated[str, Query()]`` sits inside an Index, and reading ``.slice`` found no marker.
+
+    The parse is rewritten into the 3.8 shape here so every leg covers it, not only the 3.8 one.
+    """
+    from pyutilz.dev.code_audit import dead_endpoint_params as mod
+
+    real_parse = mod._safe_parse
+
+    def parse_as_py38(*args, **kwargs):
+        tree = real_parse(*args, **kwargs)
+        for node in ast.walk(tree) if tree is not None else ():
+            if isinstance(node, ast.Subscript) and not isinstance(node.slice, Index):
+                node.slice = Index(value=node.slice)
+        return tree
+
+    monkeypatch.setattr(mod, "_safe_parse", parse_as_py38)
+    _write(tmp_path, "api.py", _HEAD + '''
+@router.get("/items")
+async def list_items(q: Annotated[str, Query()] = ""):
+    return []
+''')
+
+    findings = scan_dead_endpoint_parameters(tmp_path)
+
+    assert [("q" in f.detail) for f in findings] == [True]
 
 _HEAD = """
 from typing import Annotated, Literal

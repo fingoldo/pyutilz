@@ -6,11 +6,52 @@ this source, and a call hidden behind a local helper is invisible to it.
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from pyutilz.dev.code_audit import scan_settings_container_field_needs_nodecode
 
 from ._helpers import _write
+
+
+class Index(ast.AST):
+    """Stand-in for python 3.8's ``ast.Index``: the wrapper the 3.8 parser puts around every subscript's contents."""
+
+    _fields = ("value",)
+
+
+def test_the_py38_subscript_shape_neither_recurses_nor_misses(tmp_path: Path, monkeypatch):
+    """On 3.8 ``Annotated[list[str], NoDecode]`` parses with its tuple inside an Index; reading ``.slice`` never saw it.
+
+    Result there: an Annotated field that could not be opened recursed on itself until RecursionError, and an
+    Optional container went unreported. The parse is rewritten into the 3.8 shape here so every leg covers it.
+    """
+    from pyutilz.dev.code_audit import settings_container_nodecode as mod
+
+    real_parse = mod._safe_parse
+
+    def parse_as_py38(*args, **kwargs):
+        tree = real_parse(*args, **kwargs)
+        for node in ast.walk(tree) if tree is not None else ():
+            if isinstance(node, ast.Subscript) and not isinstance(node.slice, Index):
+                node.slice = Index(value=node.slice)
+        return tree
+
+    monkeypatch.setattr(mod, "_safe_parse", parse_as_py38)
+    _write(tmp_path, "settings.py", _HEAD + '''
+class S(BaseSettings):
+    tags: Annotated[list[str], NoDecode] = []
+    names: Optional[list[str]] = None
+
+    @field_validator("tags", "names", mode="before")
+    @classmethod
+    def split(cls, v):
+        return v.split(",") if isinstance(v, str) else v
+''')
+
+    findings = scan_settings_container_field_needs_nodecode(tmp_path)
+
+    assert [f.snippet.strip().split(":")[0] for f in findings] == ["names"]
 
 _HEAD = """
 from typing import Annotated, Optional

@@ -15,6 +15,22 @@ from pyutilz.dev.code_audit import scan_write_counted_from_input
 from ._helpers import _write
 
 
+def test_a_finding_is_still_reported_without_ast_unparse(tmp_path: Path, monkeypatch):
+    """``ast.unparse`` is stdlib only from 3.9; the finding's detail used it unconditionally, so every hit crashed on 3.8."""
+    import ast
+
+    monkeypatch.delattr(ast, "unparse", raising=False)
+    _write(tmp_path, "importer.py", '''
+def stage(session, rows, stats):
+    session.execute(text("INSERT INTO t (id) VALUES (:id) ON CONFLICT (id) DO NOTHING"), rows)
+    stats["t"] = len(rows)
+''')
+
+    findings = scan_write_counted_from_input(tmp_path)
+
+    assert [f.line for f in findings] == [3]
+
+
 def test_the_oewn_stage_shape_is_flagged(tmp_path: Path):
     """08-M15: a batched DO NOTHING insert, then the stage reports len() of what it was given."""
     _write(tmp_path, "importer.py", '''

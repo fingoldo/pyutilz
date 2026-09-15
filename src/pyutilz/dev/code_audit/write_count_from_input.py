@@ -9,6 +9,7 @@ from typing import Union
 from ._base import (
     Finding,
     _DEFAULT_EXCLUDE_DIRS,
+    _subscript_index,
     _iter_py_files,
     _line_text,
     _module_sql_constants,
@@ -138,7 +139,7 @@ def _counter_label(target: ast.expr) -> str:
     """What a counter assignment writes to, lower-cased: ``stats`` plus its key for ``self.stats["x"]``."""
     key = ""
     if isinstance(target, ast.Subscript):
-        index = target.slice
+        index = _subscript_index(target)  # 3.8 wraps the key in ast.Index; `.slice` alone never matched a Constant there
         if isinstance(index, ast.Constant) and isinstance(index.value, str):
             key = index.value
         elif isinstance(index, ast.JoinedStr):
@@ -281,7 +282,7 @@ def scan_write_counted_from_input(
                     line=stmt.lineno,
                     snippet=_line_text(src_lines, stmt.lineno),
                     detail=(
-                        f"`{ast.unparse(target)}` counts len({name}), the rows handed to an insert that can skip "
+                        f"`{getattr(ast, 'unparse', ast.dump)(target)}` counts len({name}), the rows handed to an insert that can skip "
                         f"rows (ON CONFLICT DO NOTHING / DO UPDATE ... WHERE / INSERT IGNORE); a re-run reports them "
                         f"all again while writing none. Count what the statement wrote (rowcount, RETURNING, or the "
                         f"table before and after), or name the counter for what it holds (`..._read`)."

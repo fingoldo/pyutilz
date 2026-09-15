@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator, Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- Class A: mutable defaults ------------------------------------------
 
@@ -241,7 +241,7 @@ def _augassign_target_is_a_scalar_counter(func: ast.AST, local_name: str, node: 
         return False
     for other in ast.walk(func):
         if isinstance(other, ast.Subscript):
-            index = other.slice
+            index = _subscript_index(other)  # 3.8 wraps the index in ast.Index; `.slice` alone never matched a Name there
             if isinstance(index, ast.Name) and index.id == local_name:
                 return True
         elif isinstance(other, (ast.While, ast.If)) and isinstance(other.test, ast.Compare):

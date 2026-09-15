@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a settings container field whose before-validator never sees the environment ----------------
 
@@ -23,8 +23,10 @@ def _name_of(node: ast.expr) -> str:
 
 def _split_annotated(ann: ast.expr) -> tuple[ast.expr, list[ast.expr]]:
     """``Annotated[X, m1, m2]`` -> (X, [m1, m2]); anything else -> (ann, [])."""
-    if isinstance(ann, ast.Subscript) and _name_of(ann.value) == "Annotated" and isinstance(ann.slice, ast.Tuple) and ann.slice.elts:
-        return ann.slice.elts[0], list(ann.slice.elts[1:])
+    if isinstance(ann, ast.Subscript) and _name_of(ann.value) == "Annotated":
+        index = _subscript_index(ann)  # 3.8 wraps the tuple in ast.Index; reading .slice directly never saw it
+        if isinstance(index, ast.Tuple) and index.elts:
+            return index.elts[0], list(index.elts[1:])
     return ann, []
 
 
@@ -37,10 +39,13 @@ def _is_container(ann: ast.expr) -> bool:
         if head in _CONTAINERS:
             return True
         if head in ("Optional", "Union"):
-            parts = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
+            index = _subscript_index(ann)
+            parts = index.elts if isinstance(index, ast.Tuple) else [index]
             return any(_is_container(p) for p in parts)
         if head == "Annotated":
-            return _is_container(_split_annotated(ann)[0])
+            inner = _split_annotated(ann)[0]
+            # A shape _split_annotated cannot open comes back unchanged; recursing on it again never terminated.
+            return inner is not ann and _is_container(inner)
         return False
     return _name_of(ann) in _CONTAINERS
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- an HTTP endpoint parameter the handler never reads ------------------------------------------
 
@@ -37,13 +37,16 @@ def _is_route(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 def _annotated_source(annotation: ast.expr | None) -> str:
     """The request source named in ``Annotated[T, Query(...)]`` metadata, else ``""``."""
-    if not (isinstance(annotation, ast.Subscript) and isinstance(annotation.slice, ast.Tuple)):
+    if not isinstance(annotation, ast.Subscript):
+        return ""
+    index = _subscript_index(annotation)  # 3.8 wraps the tuple in ast.Index; reading .slice directly never saw it
+    if not isinstance(index, ast.Tuple):
         return ""
     head = annotation.value
     head_name = head.id if isinstance(head, ast.Name) else head.attr if isinstance(head, ast.Attribute) else ""
     if head_name != "Annotated":
         return ""
-    return next((_call_name(m) for m in annotation.slice.elts[1:] if _call_name(m) in _REQUEST_SOURCES), "")
+    return next((_call_name(m) for m in index.elts[1:] if _call_name(m) in _REQUEST_SOURCES), "")
 
 
 def _request_bound_params(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[ast.arg, str]]:
