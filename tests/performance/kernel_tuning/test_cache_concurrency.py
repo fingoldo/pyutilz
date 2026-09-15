@@ -116,8 +116,9 @@ def test_different_kernels_no_lost_update_D1(host_dir, tmp_path):
     # A FRESH cache in THIS process must now see ALL n kernels (none lost).
     ktc.hw_fingerprint.cache_clear()
     fresh = ktc.KernelTuningCache()
+    on_disk = sorted(os.path.relpath(os.path.join(d, n), host_dir) for d, _, files in os.walk(host_dir) for n in files)
     for k in kernels:
-        assert fresh.has(k), f"D1 lost update: kernel {k} missing from cache"
+        assert fresh.has(k), f"D1 lost update: kernel {k} missing from cache; parent host dir {ktc.host_cache_dir()!r}, files on disk: {on_disk}"
         assert fresh.lookup(k, n=1)["backend"] == "measured"
 
 
