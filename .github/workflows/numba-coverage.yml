@@ -105,7 +105,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload coverage to Codecov (numba-disabled flag)
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@845334a2e8afba37881d8ff5b1df4811fa18ef87  # v1.4.2
         if: success()
         with:
           files: ./coverage.xml
