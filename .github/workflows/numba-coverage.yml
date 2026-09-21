@@ -72,10 +72,42 @@ jobs:
           python -c "import numba; print('numba', numba.__version__)"
           python -c "import os; print('NUMBA_DISABLE_JIT =', os.environ.get('NUMBA_DISABLE_JIT'))"
 
+      # This run measures a NARROW subset (four numba-touching suites) purely to see inside
+      # @njit bodies for the merged report; it is not the coverage ratchet. pyproject's
+      # [tool.coverage.report] fail_under=85 is written for the WHOLE suite, and pytest-cov
+      # applies it here too, so this run reported 7.22% and exited 1 every night (2026-09-20
+      # run 35501523765), which in turn starved codecov-full.yml of the raw data it chains on.
+      # Derive the same coverage config from pyproject with the floor dropped, rather than
+      # restating source/omit/exclude_lines here where they would drift apart.
+      - name: Build a gate-free coverage config from pyproject (this run is not the ratchet)
+        run: |
+          python - <<'PYEOF'
+          import pathlib
+          import tomllib
+
+          NL = chr(10)
+          cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]
+          cfg.get("report", {}).pop("fail_under", None)
+          out = []
+          for section, body in cfg.items():
+              out.append("[" + section + "]")
+              for key, value in body.items():
+                  if isinstance(value, list):
+                      out.append(key + " =" + NL + "    " + (NL + "    ").join(str(v) for v in value))
+                  elif isinstance(value, bool):
+                      out.append(key + " = " + str(value).lower())
+                  else:
+                      out.append(key + " = " + str(value))
+              out.append("")
+          pathlib.Path(".coveragerc-numba").write_text(NL.join(out), encoding="utf-8")
+          print(pathlib.Path(".coveragerc-numba").read_text(encoding="utf-8"))
+          PYEOF
+
       - name: Run numba-kernel-touching suites with NUMBA_DISABLE_JIT=1
         run: |
           pytest -p no:randomly \
             --cov=src/pyutilz \
+            --cov-config=.coveragerc-numba \
             --cov-report=xml \
             --cov-report=term-missing \
             --timeout=120 \

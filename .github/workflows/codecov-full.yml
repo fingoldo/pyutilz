@@ -78,11 +78,15 @@ jobs:
           # run 32923232739 picked exactly such a cancelled run and failed with "No raw coverage
           # data downloaded"). Walk back through the last 10 completed runs and pick the first
           # that actually has the artifact, instead of trusting "latest" blindly.
+          # `.expired == false`: GitHub keeps an expired artifact LISTED in the API long after
+          # its bytes are gone, so a run can pass this existence check and then fail the download
+          # with "Artifact has expired" (2026-09-20 run 35514581159). Only a downloadable artifact
+          # counts as real data.
           run_id=""
           for candidate in $(gh run list --repo "${{ github.repository }}" --workflow numba-coverage.yml \
               --status completed --limit 10 --json databaseId --jq '.[].databaseId'); do
             count=$(gh api "repos/${{ github.repository }}/actions/runs/$candidate/artifacts" \
-              --jq '[.artifacts[] | select(.name == "raw-coverage-numba")] | length')
+              --jq '[.artifacts[] | select(.name == "raw-coverage-numba" and .expired == false)] | length')
             if [ "$count" -gt 0 ]; then
               run_id="$candidate"
               echo "Using run $run_id"
@@ -121,7 +125,7 @@ jobs:
           for candidate in $(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch master \
               --status completed --limit 10 --json databaseId --jq '.[].databaseId'); do
             count=$(gh api "repos/${{ github.repository }}/actions/runs/$candidate/artifacts" \
-              --jq '[.artifacts[] | select(.name == "raw-coverage-ci")] | length')
+              --jq '[.artifacts[] | select(.name == "raw-coverage-ci" and .expired == false)] | length')
             if [ "$count" -gt 0 ]; then
               run_id="$candidate"
               echo "Using run $run_id"
