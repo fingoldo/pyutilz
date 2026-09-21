@@ -133,3 +133,32 @@ class TestGenerateRequestBody:
         kwargs = await self._captured_kwargs(temperature=0.7)
         assert "thinking" not in kwargs
         assert kwargs["temperature"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_temperature_none_sends_no_temperature_field(self) -> None:
+        """``None`` is the caller asking for the upstream default. Sending this library's 0.7 in its place
+        would make a "same sampling on every provider" comparison measure our default argument instead."""
+        kwargs = await self._captured_kwargs(temperature=None)
+        assert "temperature" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_temperature_none_with_thinking_stays_absent(self) -> None:
+        """An omitted temperature already is the API's 1; forcing a field in would contradict the caller's None."""
+        kwargs = await self._captured_kwargs(temperature=None, thinking="low")
+        assert "temperature" not in kwargs
+        assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+
+
+class TestModuleLevelThinkingField:
+    """A client that calls the SDK directly maps effort to budget through the same function as the provider."""
+
+    def test_matches_the_provider_method(self) -> None:
+        from pyutilz.llm.anthropic_provider import anthropic_thinking_field
+
+        for effort in ("minimal", "low", "medium", "high", True, False, "off"):
+            assert anthropic_thinking_field(effort, 20_000) == _provider()._thinking_request_field(effort, 20_000), effort
+
+    def test_none_means_no_field(self) -> None:
+        from pyutilz.llm.anthropic_provider import anthropic_thinking_field
+
+        assert anthropic_thinking_field(None, 20_000) is None

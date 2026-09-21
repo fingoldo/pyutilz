@@ -246,9 +246,9 @@ class AnthropicProvider(LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int = 0,
-        thinking: bool | str = False,
+        thinking: bool | str | None = False,
         images: list[str] | None = None,
     ) -> str:
         """Generate text using Claude.
@@ -256,7 +256,9 @@ class AnthropicProvider(LLMProvider):
         Args:
             prompt: The user message to send.
             system: Optional system prompt; omitted from the request when None.
-            temperature: Sampling temperature passed straight through to the API.
+            temperature: Sampling temperature passed straight through to the API. ``None`` sends no
+                ``temperature`` field, so the API applies its own default: a caller comparing providers
+                must be able to ask for "no temperature" and get it, rather than this library's 0.7.
             max_tokens: Output-token ceiling; 0 means "derive it", and any value is clamped
                 to what the model's context leaves after the prompt.
             images: URLs or ``data:`` URIs to show the model, in Anthropic's own block shape --
@@ -288,12 +290,14 @@ class AnthropicProvider(LLMProvider):
             # image blocks are its own shape, and the OpenAI `image_url` part is rejected outright.
             messages = [{"role": "user", "content": build_anthropic_content(prompt, images)}]
 
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "messages": messages,
             }
+            # `None` means DO NOT SEND the field; `0.0` is a real temperature, so this is not a truthiness test.
+            if temperature is not None:
+                kwargs["temperature"] = temperature
             thinking_field = self._thinking_request_field(thinking, max_tokens)
             if thinking_field is not None:
                 kwargs["thinking"] = thinking_field
@@ -301,8 +305,9 @@ class AnthropicProvider(LLMProvider):
                 # thinking is on. Callers pass a low temperature for determinism
                 # (validation runners use 0.1), so honouring both is impossible:
                 # override and say so, rather than letting the API 400 on a
-                # combination the caller had no way to know was illegal.
-                if temperature != 1:
+                # combination the caller had no way to know was illegal. An omitted
+                # temperature already means the API default of 1.
+                if temperature is not None and temperature != 1:
                     logger.debug(
                         "Extended thinking requires temperature=1; overriding the requested %.2f",
                         temperature,

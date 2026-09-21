@@ -22,6 +22,7 @@ from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm._thinking import ThinkingControlMixin
 from pyutilz.llm._timeouts import DerivedTimeoutMixin
 from pyutilz.llm import _reasoning
+from pyutilz.llm._progress import note_stream_progress
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
     _NON_RETRYABLE_STATUSES,
@@ -608,9 +609,13 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         delta = choice.get("delta") or {}
         _accumulate_stream_tool_calls(tool_call_fragments, delta.get("tool_calls"))
         # Not yielded: `generate_stream` streams the ANSWER; this is read from `last_reasoning_text`.
-        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, _reasoning.from_payload(delta))
+        reasoning_piece = _reasoning.from_payload(delta)
+        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, reasoning_piece)
         content = delta.get("content")
-        return content if isinstance(content, str) else None
+        content = content if isinstance(content, str) else None
+        # The fragments above are invisible to a watchdog task (see `_progress`); this counter is not.
+        note_stream_progress(reasoning_piece, content)
+        return content
 
     async def _repaired_stream_body(self, exc: Exception, body: dict[str, Any]) -> dict[str, Any] | None:
         """Return a repaired request body for a STREAM the upstream refused over a parameter, else ``None``.
