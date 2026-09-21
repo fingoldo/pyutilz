@@ -35,6 +35,55 @@ def _is_temperature_rejection(exc: Exception) -> bool:
     return "temperature" in str(exc).lower() and ("deprecated" in str(exc).lower() or "not supported" in str(exc).lower() or "unsupported" in str(exc).lower())
 
 
+#: Extended-thinking budget per effort level of the shared vocabulary (see ``pyutilz.llm.base.normalize_thinking``).
+#: Anthropic takes a token BUDGET where the rest of this package takes an effort string. ``True`` means "on, provider
+#: default", which normalises to medium.
+THINKING_BUDGETS: dict[str, int] = {
+    "minimal": 1024,
+    "low": 2048,
+    "medium": 4096,
+    "high": 8192,
+}
+#: Anthropic's minimum accepted budget; the answer needs at least as much again.
+MIN_THINKING_BUDGET = 1024
+
+
+def anthropic_thinking_field(thinking: bool | str, max_tokens: int, *, model: str = "") -> dict[str, Any] | None:
+    """The ``thinking`` fragment for a Messages request, or None when reasoning is off or cannot fit.
+
+    Free-standing because the rule is the same whoever asks: ``AnthropicProvider._thinking_request_field`` delegates
+    to it, and a caller that drives the SDK directly imports it rather than reimplementing the arithmetic and
+    drifting from it.
+
+    Returns None for an effort the budget table does not know, rather than guessing: silently substituting a
+    different budget than the caller asked for is worse than leaving reasoning off, because the cost shows up on the
+    bill either way while the caller believes their setting took effect. The budget is carved OUT of ``max_tokens``,
+    so one at or above it would leave no room for the answer and the API would reject the request; ``model`` only
+    names the request in the warnings.
+    """
+    enabled, effort = normalize_thinking(thinking)
+    if not enabled:
+        return None
+    budget = THINKING_BUDGETS.get("medium" if not effort else effort)
+    if budget is None:
+        logger.warning(
+            "Unknown thinking effort %r for %s; leaving extended thinking off. Known: %s",
+            effort,
+            model if model else "the request",
+            sorted(THINKING_BUDGETS),
+        )
+        return None
+    headroom = max_tokens - MIN_THINKING_BUDGET
+    if headroom < MIN_THINKING_BUDGET:
+        logger.warning(
+            "max_tokens=%d leaves no room for an extended-thinking budget (minimum %d plus an equal allowance for the answer); leaving it off",
+            max_tokens,
+            MIN_THINKING_BUDGET,
+        )
+        return None
+    return {"type": "enabled", "budget_tokens": min(budget, headroom)}
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
 
@@ -150,49 +199,14 @@ class AnthropicProvider(LLMProvider):
         "claude-opus-3-20240229": 32000,
     }
 
-    # Extended-thinking budgets per effort level. Anthropic takes a token
-    # budget rather than an effort string, so the shared effort vocabulary
-    # (minimal/low/medium/high, see pyutilz.llm.base.normalize_thinking) is
-    # mapped here. ``True`` means "on, provider default" -> medium.
-    _THINKING_BUDGETS: ClassVar[dict[str, int]] = {
-        "minimal": 1024,
-        "low": 2048,
-        "medium": 4096,
-        "high": 8192,
-    }
-    # Anthropic's minimum accepted budget.
-    _MIN_THINKING_BUDGET = 1024
+    # Kept as class attributes for subclasses and tests that read them; the table itself lives at module level
+    # beside anthropic_thinking_field, which is where the rule is implemented.
+    _THINKING_BUDGETS: ClassVar[dict[str, int]] = THINKING_BUDGETS
+    _MIN_THINKING_BUDGET = MIN_THINKING_BUDGET
 
     def _thinking_request_field(self, thinking: bool | str, max_tokens: int) -> dict[str, Any] | None:
-        """The ``thinking`` request fragment, or None when reasoning is off.
-
-        Returns None for an effort the budget table does not know, rather than
-        guessing: silently substituting a different budget than the caller asked
-        for is worse than leaving reasoning off, because the cost shows up on the
-        bill either way while the caller believes their setting took effect.
-        """
-        enabled, effort = normalize_thinking(thinking)
-        if not enabled:
-            return None
-        budget = self._THINKING_BUDGETS.get(effort or "medium")
-        if budget is None:
-            logger.warning(
-                "Unknown thinking effort %r for %s; leaving extended thinking off. Known: %s",
-                effort, self.model, sorted(self._THINKING_BUDGETS),
-            )
-            return None
-        # Anthropic requires max_tokens > budget_tokens: the budget is carved OUT
-        # of the output allowance, so a budget at or above it leaves no room for
-        # the answer and the API rejects the request.
-        headroom = max_tokens - self._MIN_THINKING_BUDGET
-        if headroom < self._MIN_THINKING_BUDGET:
-            logger.warning(
-                "max_tokens=%d leaves no room for an extended-thinking budget " "(minimum %d plus an equal allowance for the answer); leaving it off",
-                max_tokens,
-                self._MIN_THINKING_BUDGET,
-            )
-            return None
-        return {"type": "enabled", "budget_tokens": min(budget, headroom)}
+        """The ``thinking`` request fragment for this provider's model, or None when reasoning is off or cannot fit."""
+        return anthropic_thinking_field(thinking, max_tokens, model=self.model)
 
     @property
     def max_output_tokens(self) -> int:

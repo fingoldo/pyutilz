@@ -24,7 +24,6 @@
   "default_via_or::dev/logginglib.py::fa2fbee22fd2",
   "default_via_or::llm/_timeouts.py::4ce6690abba0",
   "default_via_or::llm/anthropic_provider.py::c9bad38c4f05",
-  "default_via_or::llm/anthropic_provider.py::d39c8406d82d",
   "default_via_or::llm/base.py::8a4d0e84a46f",
   "default_via_or::llm/claude_code_cli.py::266050b63bb0",
   "default_via_or::llm/claude_code_provider.py::fc3759893954",
