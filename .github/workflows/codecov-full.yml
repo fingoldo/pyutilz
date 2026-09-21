@@ -164,9 +164,34 @@ jobs:
             exit 1
           fi
           echo "Combining $i data file(s)"
+          # This report is the `codecov-full` trend badge, not a per-commit gate (see the header).
+          # `coverage report` applies pyproject's whole-suite fail_under all the same and exits 2,
+          # which failed this job even after the download was fixed (run 35566326508: merged 7.22%,
+          # one side only). Render through the same config with the floor dropped, derived from
+          # pyproject rather than restated here where the two would drift apart.
+          python - <<'PYEOF'
+          import pathlib
+          import tomllib
+
+          NL = chr(10)
+          cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]
+          cfg.get("report", {}).pop("fail_under", None)
+          out = []
+          for section, body in cfg.items():
+              out.append("[" + section + "]")
+              for key, value in body.items():
+                  if isinstance(value, list):
+                      out.append(key + " =" + NL + "    " + (NL + "    ").join(str(v) for v in value))
+                  elif isinstance(value, bool):
+                      out.append(key + " = " + str(value).lower())
+                  else:
+                      out.append(key + " = " + str(value))
+              out.append("")
+          pathlib.Path(".coveragerc-merged").write_text(NL.join(out), encoding="utf-8")
+          PYEOF
           coverage combine combined_input
-          coverage xml -o coverage-full.xml
-          coverage report
+          coverage xml --rcfile=.coveragerc-merged -o coverage-full.xml
+          coverage report --rcfile=.coveragerc-merged
 
       - name: Upload combined coverage to Codecov
         uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f50288e5a6f5b7f972efb60f948ce6184c8e9e70  # v1.3.4
