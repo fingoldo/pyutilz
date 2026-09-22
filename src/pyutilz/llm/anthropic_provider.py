@@ -48,7 +48,7 @@ THINKING_BUDGETS: dict[str, int] = {
 MIN_THINKING_BUDGET = 1024
 
 
-def anthropic_thinking_field(thinking: bool | str, max_tokens: int, *, model: str = "") -> dict[str, Any] | None:
+def anthropic_thinking_field(thinking: bool | str | None, max_tokens: int, *, model: str = "") -> dict[str, Any] | None:
     """The ``thinking`` fragment for a Messages request, or None when reasoning is off or cannot fit.
 
     Free-standing because the rule is the same whoever asks: ``AnthropicProvider._thinking_request_field`` delegates
@@ -204,7 +204,7 @@ class AnthropicProvider(LLMProvider):
     _THINKING_BUDGETS: ClassVar[dict[str, int]] = THINKING_BUDGETS
     _MIN_THINKING_BUDGET = MIN_THINKING_BUDGET
 
-    def _thinking_request_field(self, thinking: bool | str, max_tokens: int) -> dict[str, Any] | None:
+    def _thinking_request_field(self, thinking: bool | str | None, max_tokens: int) -> dict[str, Any] | None:
         """The ``thinking`` request fragment for this provider's model, or None when reasoning is off or cannot fit."""
         return anthropic_thinking_field(thinking, max_tokens, model=self.model)
 

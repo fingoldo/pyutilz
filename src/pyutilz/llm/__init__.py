@@ -52,12 +52,13 @@ def __getattr__(name: str):
 
 # Re-exported because its consumer is a DOWNSTREAM project: the runaway-decoder check is a public API of
 # this package, and a helper whose only in-repo reference is its test reads as dead to the meta-test.
-from pyutilz.llm.degeneracy import DegeneracyReport, DegeneracyThresholds, degeneracy_report
+from pyutilz.llm.degeneracy import DegeneracyReport, DegeneracyThresholds, degeneracy_report, repetition_loop
 
 __all__ = [
     "DegeneracyReport",
     "DegeneracyThresholds",
     "degeneracy_report",
+    "repetition_loop",
     "LLMProvider",
     "AnthropicProvider",
     "GeminiProvider",

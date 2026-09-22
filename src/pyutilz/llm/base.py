@@ -254,7 +254,7 @@ _REFUSAL_PATTERNS = [
 # here because a config value left blank means the same thing as absent.
 _THINKING_OFF = frozenset({"", "off", "none", "false", "no", "disabled"})
 
-def normalize_thinking(thinking: bool | str | int) -> tuple[bool, str | None]:
+def normalize_thinking(thinking: bool | str | int | None) -> tuple[bool, str | None]:
     """Normalise a ``thinking=`` argument into ``(enabled, effort)``.
 
     - ``False`` / empty string / ``"off"`` / ``"none"`` / ``"disabled"`` -> ``(False, None)``

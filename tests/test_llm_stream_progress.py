@@ -69,3 +69,16 @@ def test_counter_is_uninstalled_after_the_block() -> None:
     assert (inner.reasoning_chars, inner.answer_chars) == (2, 0)
     assert (outer.reasoning_chars, outer.answer_chars) == (0, 3)
     assert outer.total_chars == 3
+
+
+def test_the_progress_keeps_a_bounded_tail_of_each_stream() -> None:
+    """A watcher needs the latest text to recognise a loop, but the tail must not grow with the stream."""
+    from pyutilz.llm._progress import TAIL_CHARS
+
+    progress = StreamProgress()
+    with track_stream_progress(progress):
+        for i in range(2000):
+            note_stream_progress(reasoning=f"r{i:04d} ", answer=f"a{i:04d} ")
+    assert progress.reasoning_chars == 2000 * 6 and progress.answer_chars == 2000 * 6
+    assert len(progress.reasoning_tail) == TAIL_CHARS and progress.reasoning_tail.endswith("r1999 ")
+    assert len(progress.answer_tail) == TAIL_CHARS and progress.answer_tail.endswith("a1999 ")

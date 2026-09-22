@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pyutilz.llm.degeneracy import DegeneracyThresholds, degeneracy_report
+from pyutilz.llm.degeneracy import DegeneracyThresholds, degeneracy_report, repetition_loop
 
 
 def test_an_honest_extraction_is_not_flagged_and_the_report_says_what_it_measured() -> None:
@@ -38,3 +38,26 @@ def test_a_caller_may_raise_the_bound_without_silencing_the_check() -> None:
     assert degeneracy_report(many).degenerate is True
     generous = degeneracy_report(many, DegeneracyThresholds(max_records=500))
     assert generous.degenerate is False and generous.n_records == 200
+
+
+def test_a_decoder_repeating_one_short_unit_to_the_end_is_a_loop() -> None:
+    """The measured collapse: thousands of characters of "Hmm." back to back, whitespace varying."""
+    text = "Let me check example 3 against the IPA. " * 5 + "Hmm.\nHmm. " * 400
+    assert (repetition_loop(text) or "").strip() == "Hmm."
+
+
+def test_repetition_that_the_stream_moved_past_is_not_a_loop() -> None:
+    """A loop is something the decoder is still doing; one that ended and was followed by prose is not stuck."""
+    text = "Hmm. " * 400 + " ".join(f"Example {i} is fine, the IPA matches the sentence." for i in range(60))
+    assert repetition_loop(text) is None
+
+
+def test_structured_but_varied_output_is_not_a_loop() -> None:
+    """Verdict lists repeat structure, never one unit verbatim, so they must not trip the check."""
+    text = "".join(f'{{"sense_id": "s{i}", "example_idx": {i % 7}, "status": "ok"}},' for i in range(300))
+    assert repetition_loop(text) is None
+
+
+def test_short_text_is_never_a_loop() -> None:
+    assert repetition_loop("Hmm. " * 10) is None
+    assert repetition_loop("") is None

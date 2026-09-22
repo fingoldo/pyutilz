@@ -102,3 +102,24 @@ def degeneracy_report(records: Iterable[tuple[Hashable, str]], thresholds: Degen
         max_quote_reuse=top_reuse,
         thresholds={"max_records": th.max_records, "max_duplicate_share": th.max_duplicate_share, "max_quote_reuse": th.max_quote_reuse},
     )
+
+
+#: A unit of at most this many characters, repeated back to back to the end of the text, is a loop when the
+#: repetition covers at least ``min_span`` characters. Generous on purpose: a list of IPA transcriptions or a
+#: table repeats structure, but not one short unit hundreds of times in a row.
+_LOOP_AT_END = re.compile(r"(.{1,80}?)(?:\1){12,}\Z", re.DOTALL)
+
+
+def repetition_loop(text: str, *, min_span: int = 1_200) -> str | None:
+    """The unit a decoder is repeating at the end of ``text``, or None when it is not looping.
+
+    Reads only the end of the text, since a loop is something a stream is still doing: a model that repeated
+    itself once and moved on is not stuck. Whitespace is normalised, so "Hmm.\nHmm. Hmm." is one unit repeated.
+    """
+    if not text or len(text) < min_span:
+        return None
+    tail = _WS.sub(" ", text[-(min_span * 2) :]).strip()
+    match = _LOOP_AT_END.search(tail)
+    if match is None or match.end() - match.start() < min_span:
+        return None
+    return match.group(1)

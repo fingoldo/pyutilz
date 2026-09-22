@@ -23,12 +23,24 @@ from dataclasses import dataclass
 __all__ = ["StreamProgress", "note_stream_progress", "track_stream_progress"]
 
 
+#: How much of the most recent reasoning and answer text a StreamProgress keeps. Enough for a watcher to see a
+#: repeating loop (see ``degeneracy.repetition_loop``), small enough to cost nothing per delta.
+TAIL_CHARS = 4096
+
+
 @dataclass
 class StreamProgress:
-    """Characters received on one streamed call, split into reasoning and answer."""
+    """Characters received on one streamed call, split into reasoning and answer, plus the latest text of each.
+
+    The tails let a watcher in another task recognise a decoder that has collapsed into repeating itself
+    ("Hmm. Hmm. Hmm." for 30,000 tokens, measured 2026-09-22 on deepseek-v4.1-flash) while it is still being
+    billed for, instead of after the whole output budget is spent.
+    """
 
     reasoning_chars: int = 0
     answer_chars: int = 0
+    reasoning_tail: str = ""
+    answer_tail: str = ""
 
     @property
     def total_chars(self) -> int:
@@ -57,5 +69,7 @@ def note_stream_progress(reasoning: str | None, answer: str | None) -> None:
         return
     if isinstance(reasoning, str):
         progress.reasoning_chars += len(reasoning)
+        progress.reasoning_tail = (progress.reasoning_tail + reasoning)[-TAIL_CHARS:]
     if isinstance(answer, str):
         progress.answer_chars += len(answer)
+        progress.answer_tail = (progress.answer_tail + answer)[-TAIL_CHARS:]

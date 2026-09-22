@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- `pyutilz.llm.degeneracy.repetition_loop(text)`: the unit a decoder is repeating back to back at the end of the text (a "Hmm. Hmm. Hmm." collapse), or None. `StreamProgress` now also keeps `reasoning_tail` / `answer_tail` (last `TAIL_CHARS` = 4096 characters) so a watchdog task can detect a loop while the call is still streaming.
 - `pyutilz.dev.attempt_archive`: keep every paid LLM attempt, with its raw text stored before anything
   parses it. `AttemptRecord` holds raw or partial text, outcome, tokens, reasoning tokens, cost (`None`
   when the provider reports none, never 0.0), generation id, upstream provider, finish reasons, duration
