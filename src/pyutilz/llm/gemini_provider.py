@@ -12,6 +12,7 @@ from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm._messages import build_gemini_parts
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
+from pyutilz.llm._thinking import gemini_thinking_budget  # re-exported: callers import it from here
 
 logger = logging.getLogger(__name__)
 
@@ -186,18 +187,14 @@ class GeminiProvider(LLMProvider):
         branching on ``supports_json_mode()`` got prompt-steering only, and any prose-wrapped
         output that extract_json then mis-parsed looked like a model failure.
         """
-        # Accepted for Liskov (the base class offers it) and NOT honoured: this provider's JSON path sends no reasoning-effort field,
-        # so an effort request is logged rather than dropped in silence -- a caller who asked for a
-        # harder think and got the ordinary one has somewhere to look.
-        if thinking is not None:
-            logger.info("%s ignores thinking=%r: no reasoning-effort control on this provider", type(self).__name__, thinking)
-
         # Gemini IS a vision model, and since 2026-09-04 this provider inlines pictures properly
         # rather than refusing them. Forwarded only when non-empty, so a text-only call reaches
         # `generate` with the identical argument list it always did. The images NotImplementedError
         # that origin/master added here alongside `thinking` is deliberately NOT taken: it predates
         # the vision path and would re-refuse what this provider now supports.
-        extra = {"images": images} if images else {}
+        extra: dict[str, Any] = {"images": images} if images else {}
+        if thinking is not None:
+            extra["thinking"] = thinking
         return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True, **extra)
 
     def get_session_cost(self) -> dict[str, Any]:
@@ -240,6 +237,7 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 0,
         json_mode: bool = False,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> str:
         """Generate text using Gemini.
 
@@ -253,6 +251,8 @@ class GeminiProvider(LLMProvider):
                 neither the OpenAI ``image_url`` shape nor Anthropic's ``source`` block, both of
                 which this SDK rejects. Absent or empty, ``contents`` stays the plain string it has
                 always been and the request body is unchanged.
+            thinking: Extended-thinking request (see `normalize_thinking`), sent as ``thinking_config.thinking_budget``
+                with the budgets the Claude providers use; None leaves the model's default. See `gemini_thinking_budget`.
         """
         self._reset_per_call_state()
         if max_tokens <= 0:
@@ -274,6 +274,9 @@ class GeminiProvider(LLMProvider):
                 config_kwargs["candidate_count"] = self._candidate_count
             if self._cached_content:
                 config_kwargs["cached_content"] = self._cached_content
+            budget = gemini_thinking_budget(thinking, self.model_name)
+            if budget is not None:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
             config = types.GenerateContentConfig(**config_kwargs)
 
             # Native async client (google-genai's own .aio surface) instead of offloading the

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ClaudeCodeProvider.generate` and `GeminiProvider.generate` take `thinking=` like every other provider. Claude Code sends the effort budget as MAX_THINKING_TOKENS in the CLI environment (0 for off); Gemini sends `thinking_config.thinking_budget` (a Pro model, which cannot stop thinking, is sent nothing for off). Both `generate_json` methods forward it instead of logging that it is ignored. The budgets (`THINKING_BUDGETS`) moved to `pyutilz.llm._thinking`, still importable from `anthropic_provider`.
+
 - `pyutilz.llm.degeneracy.repetition_loop(text)`: the unit a decoder is repeating back to back at the end of the text (a "Hmm. Hmm. Hmm." collapse), or None. `StreamProgress` now also keeps `reasoning_tail` / `answer_tail` (last `TAIL_CHARS` = 4096 characters) so a watchdog task can detect a loop while the call is still streaming.
 - `pyutilz.dev.attempt_archive`: keep every paid LLM attempt, with its raw text stored before anything
   parses it. `AttemptRecord` holds raw or partial text, outcome, tokens, reasoning tokens, cost (`None`

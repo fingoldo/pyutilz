@@ -22,6 +22,7 @@ from typing import Any, AsyncIterator
 from pyutilz.llm._messages import images_on_disk
 from pyutilz.llm import _reasoning
 from pyutilz.llm.base import LLMProvider, PerCallAttr
+from pyutilz.llm._thinking import claude_code_thinking_tokens  # re-exported: callers import it from here
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
 # Defined in the domain's exceptions module (so `except LLMProviderError` catches it) and re-exported
@@ -392,6 +393,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         max_tokens: int = 0,
         json_mode: bool = False,
         images: list[str] | None = None,
+        thinking: bool | str | int | None = None,
     ) -> str:
         """Generate text using Claude Code SDK (preferred) or CLI fallback.
 
@@ -404,16 +406,22 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             images: ``data:`` URIs, written to temporary files whose paths are appended to the
                 prompt -- see `pyutilz.llm._messages.images_on_disk`. The CLI has no image
                 argument, but the agent behind it can open files.
+            thinking: Extended-thinking request, as for every provider (see `normalize_thinking`). The CLI takes
+                no flag for it but reads MAX_THINKING_TOKENS from its environment, so the effort is sent there
+                with the same budgets the Anthropic API provider uses; False sends 0. None leaves the CLI default.
         """
         if images:
             # Recursed rather than inlined so the temporary files stay on disk for the WHOLE call:
             # the `with` block must still be open when the CLI reads them, and closing it around a
             # prompt-building line would delete every picture before the subprocess started.
             with images_on_disk(images) as (image_prompt, _paths):
-                return await self.generate(prompt + image_prompt, system, temperature, max_tokens, json_mode)
+                return await self.generate(prompt + image_prompt, system, temperature, max_tokens, json_mode, thinking=thinking)
         if json_mode:
             json_hint = _JSON_STEER
             system = (system or "") + json_hint
+        thinking_tokens = claude_code_thinking_tokens(thinking)
+        # Passed only when there is a budget to send, so a call without a thinking request reaches the transport exactly as before.
+        transport_kwargs = {} if thinking_tokens is None else {"thinking_tokens": thinking_tokens}
 
         self._call_count += 1
         # The per-call reset lives INSIDE the semaphore, at the top of _generate_sdk/_generate_cli
@@ -445,9 +453,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
             try:
                 if _HAS_SDK:
-                    result = await self._generate_sdk(prompt, system)
+                    result = await self._generate_sdk(prompt, system, **transport_kwargs)
                 else:
-                    result = await self._generate_cli(prompt, system)
+                    result = await self._generate_cli(prompt, system, **transport_kwargs)
                 if json_mode and result:
                     stripped = result.strip()
                     fence_match = re.search(
@@ -566,11 +574,14 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
+        thinking_tokens: int | None = None,
     ) -> str:
-        """Generate text using claude-code-sdk."""
+        """Generate text using claude-code-sdk; ``thinking_tokens`` goes to the CLI as MAX_THINKING_TOKENS."""
         async with self.semaphore:
             self._reset_per_call_state()
             override_env = {k: "" for k in self._NESTED_BLOCK_VARS if k in os.environ}
+            if thinking_tokens is not None:
+                override_env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
             # The system prompt stays where it belongs. 2026-09-07: this used to fold it into
             # the user message above 6000 combined characters -- so on every real call, the
@@ -673,8 +684,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         self,
         prompt: str,
         system: str | None = None,
+        thinking_tokens: int | None = None,
     ) -> str:
-        """Generate text using Claude Code CLI (fallback).
+        """Generate text using Claude Code CLI (fallback); ``thinking_tokens`` goes to it as MAX_THINKING_TOKENS.
 
         Takes no temperature/max_tokens: the CLI exposes no flag for either, so accepting them here
         only made the drop look deliberate. ``generate()`` warns about them once instead.
@@ -766,6 +778,8 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             logger.debug("Running Claude CLI: %s...", cmd[0])
 
             sub_env = {k: v for k, v in os.environ.items() if k not in self._NESTED_BLOCK_VARS}
+            if thinking_tokens is not None:
+                sub_env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
             # The child inherited the caller's working directory, which for the pipeline that uses
             # this provider is a source repository: --restricted confines file tools to the working
@@ -837,14 +851,8 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             temperature: Sampling temperature.
             max_tokens: Output-token ceiling; 0 derives one.
             images: refused, not forwarded -- this provider has no vision path.
-            thinking: accepted for Liskov and not honoured; logged.
+            thinking: forwarded to ``generate``, which sends it to the CLI as MAX_THINKING_TOKENS.
         """
-        # Accepted for Liskov (the base class offers it) and NOT honoured: the Claude Code CLI exposes no reasoning-effort control,
-        # so an effort request is logged rather than dropped in silence -- a caller who asked for a
-        # harder think and got the ordinary one has somewhere to look.
-        if thinking is not None:
-            logger.info("%s ignores thinking=%r: no reasoning-effort control on this provider", type(self).__name__, thinking)
-
         # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
         # the Claude Code CLI takes a prompt string and no image parts, so accepting the argument and dropping it would answer a question the caller asked
         # about a picture the model never saw -- wrong, and with nothing in the output to show it.
@@ -863,6 +871,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             system=json_system,
             temperature=temperature,
             max_tokens=max_tokens,
+            thinking=thinking,
         )
 
         # Delegates to the shared parser (as base._generate_json_via does) instead of

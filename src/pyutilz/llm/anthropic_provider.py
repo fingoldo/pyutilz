@@ -12,6 +12,7 @@ from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._messages import build_anthropic_content
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup, normalize_thinking
+from pyutilz.llm._thinking import MIN_THINKING_BUDGET, THINKING_BUDGETS  # re-exported: callers import them from here
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 
 logger = logging.getLogger(__name__)
@@ -35,17 +36,7 @@ def _is_temperature_rejection(exc: Exception) -> bool:
     return "temperature" in str(exc).lower() and ("deprecated" in str(exc).lower() or "not supported" in str(exc).lower() or "unsupported" in str(exc).lower())
 
 
-#: Extended-thinking budget per effort level of the shared vocabulary (see ``pyutilz.llm.base.normalize_thinking``).
-#: Anthropic takes a token BUDGET where the rest of this package takes an effort string. ``True`` means "on, provider
-#: default", which normalises to medium.
-THINKING_BUDGETS: dict[str, int] = {
-    "minimal": 1024,
-    "low": 2048,
-    "medium": 4096,
-    "high": 8192,
-}
-#: Anthropic's minimum accepted budget; the answer needs at least as much again.
-MIN_THINKING_BUDGET = 1024
+# The budget table lives in _thinking, where the Claude Code provider reads it without importing the anthropic SDK.
 
 
 def anthropic_thinking_field(thinking: bool | str | None, max_tokens: int, *, model: str = "") -> dict[str, Any] | None:
