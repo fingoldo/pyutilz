@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-# ensure_installed("dash dash_bootstrap_components flask flask_login dash_html_components")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -348,8 +346,6 @@ def create_tabs(
         session[varName] = prefix + (tabsList[0][1] or tabsList[0][0])
 
     active_tab = session[varName]
-    # print('active_tab=%s' % active_tab)
-
     tabs = []
     tooltips = []
     for tab in tabsList:

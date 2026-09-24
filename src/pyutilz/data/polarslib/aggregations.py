@@ -93,7 +93,8 @@ def compute_concentrations(
         .group_by(*groupby_columns, entity_name)
         .agg(total_by=pl.sum(by))
         .with_columns(rel_total_by=pl.col("total_by") / pl.sum("total_by").over(groupby_columns))
-        # .group_by(groupby_columns).agg(pl.col(entity,rel_total_by).top_k_by(rel_total_by,top_n))
+        # A single group_by(...).agg(top_k_by(rel_total_by, top_n)) could replace the sort + head below, but head() on a
+        # maintain_order group_by is what keeps the per-group rows in the requested order.
         .sort(*groupby_columns, "rel_total_by" if sort_by_concentration else entity_name, descending=([False] * len(groupby_columns) + [sort_by_concentration]))
         .group_by(groupby_columns, maintain_order=True)
         .head(top_n)
@@ -142,9 +143,8 @@ def add_weighted_aggregates(
             raw_weighted_mean = afilter(all_other_num_cols * pl.col(wcol)).sum() / afilter(pl.col(wcol)).sum()
             weighted_mean = clean_numeric(raw_weighted_mean, nans_filler=nans_filler).name.suffix(f"_{fpref}wmeanby_{fields_remap.get(wcol,wcol)}")
             wcols.append(weighted_mean)
-            # !TODO causes error for now
-            # weighted_std = ((pl.col(wcol) * (all_other_num_cols - weighted_mean) ** 2).sum() / pl.col(wcol).sum()).sqrt().name.suffix(f"_wstdby_{wcol}")
-            # wcols.append(weighted_std)
+            # A weighted standard deviation (square root of the weight-averaged squared deviation from weighted_mean, suffixed
+            # _wstdby_<wcol>) is not emitted: the multi-column polars expression for it raised an error when it was tried.
     return wcols
 
 
@@ -208,8 +208,7 @@ def build_aggregate_features_polars(
     assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
 
     if engine == "gpu" and not _facade.is_cuda_available():
-        # logger.warning(f"GPU FE path chosen, but Cuda seems to be unavailable on this system!")
-        pass
+        logger.warning("GPU FE path chosen, but CUDA seems to be unavailable on this system")
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits

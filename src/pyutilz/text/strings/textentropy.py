@@ -112,8 +112,6 @@ def compute_entropy_stats(text: str, order: int = 0) -> tuple:
     # makes each "probability" larger than 1, so the log2 term flips sign and the function
     # returned a large negative value for what is by definition a non-negative quantity.
     sample_raw_entropy = entropy(stats, sum(stats.values()))
-    # print(stats)
-    # print(f"Entropy: {sample_raw_entropy}, Entropy rate: {sample_entropy_rate}")
     return sample_raw_entropy, sample_entropy_rate
 
 

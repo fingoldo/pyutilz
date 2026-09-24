@@ -168,7 +168,6 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                         j = p + len(token)
                         if j < text_len:
                             next_symbol = text[j]
-                            # print('next_symbol %d=%s' % (j,next_symbol))
                             # next symbol is space
                             if next_symbol == " ":
                                 if j + 1 < text_len:
@@ -186,7 +185,6 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                                             # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace)
                                             prev_symb = text[i]
                                             if prev_symb not in eos:
-                                                # print('adding dot at position %d: %s' % (p,text[s:p]))
                                                 new_text = new_text + text[s:p] + "."
                                                 s = p + len(token)
                             # next symbol is a capital or number
@@ -205,15 +203,12 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                                         if i >= 1:
                                             prev_prev_symb = text[i - 1]
                                             if prev_prev_symb in eos:
-                                                # print('removing newline at position %d: %s' % (p,text[s:p]))
                                                 new_text = new_text + text[s:p]
                                                 s = p + len(token)
                                     elif prev_symb not in eos:
-                                        # print('inserting EOS at position %d: %s' % (p,text[s:p]))
                                         new_text = new_text + text[s:p] + ". "
                                         s = p + len(token)
                                     else:
-                                        # print('inserting whitespace at position %d: %s' % (p,text[s:p]))
                                         new_text = new_text + text[s:p] + " "
                                         s = p + len(token)
                             elif next_symbol.isalpha():
@@ -228,7 +223,6 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
                                 if i >= 0:
                                     prev_symb = text[i]
                                     if prev_symb not in punctuation and prev_symb not in string.whitespace:
-                                        # print('inserting whitespace at position %d: %s' % (p,text[s:p]))
                                         new_text = new_text + text[s:p] + " "
                                         s = p + len(token)
 

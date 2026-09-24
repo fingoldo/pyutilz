@@ -366,6 +366,27 @@ class TestTrimWindowsProcessMemory:
         result = trim_windows_process_memory(pid=1234)
         assert result is True
 
+    @patch("pyutilz.system.system.memory.ctypes")
+    def test_explicit_zero_pid_is_passed_through_not_replaced(self, mock_ctypes):
+        """pid=0 is an explicit value, so it must reach the API instead of being swapped for the current process."""
+        from pyutilz.system.system import trim_windows_process_memory
+        mock_ctypes.sizeof.return_value = 8
+        mock_ctypes.c_void_p = MagicMock()
+        mock_ctypes.windll.kernel32.GetCurrentProcess.return_value = 42
+        mock_ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.return_value = 1
+        trim_windows_process_memory(pid=0)
+        mock_ctypes.windll.kernel32.GetCurrentProcess.assert_not_called()
+        assert mock_ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.call_args.args[0] == 0
+
+    @patch("pyutilz.system.system.memory.ctypes")
+    def test_default_pid_resolves_current_process(self, mock_ctypes):
+        from pyutilz.system.system import trim_windows_process_memory
+        mock_ctypes.sizeof.return_value = 8
+        mock_ctypes.c_void_p = MagicMock()
+        mock_ctypes.windll.kernel32.GetCurrentProcess.return_value = 42
+        mock_ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.return_value = 1
+        trim_windows_process_memory()
+        assert mock_ctypes.windll.kernel32.SetProcessWorkingSetSizeEx.call_args.args[0] == 42
 
 # ── clean_ram (lines 976-983) ──
 
@@ -408,7 +429,7 @@ class TestShowBiggestSessionObjects:
     def test_returns_dataframe(self, mock_mem, mock_clean):
         from pyutilz.system.system import show_biggest_session_objects
         import pandas as pd
-        session = {"a": [1]*1000, "b": "hello"}
+        session = {"a": [1] * 1000, "b": "hello"}
         result = show_biggest_session_objects(session, N=2, min_size_bytes=1)
         assert isinstance(result, pd.DataFrame)
         assert not result.empty

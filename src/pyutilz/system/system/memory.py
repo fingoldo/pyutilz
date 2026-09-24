@@ -16,8 +16,6 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-# ensure_installed("pympler psutil numba tqdm gpu-info")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -124,7 +122,7 @@ def trim_windows_process_memory(pid: Optional[int] = None) -> bool:
         SIZE_T = ctypes.c_uint64
 
     # Get a handle to the current process
-    if not pid:
+    if pid is None:
         pid = ctypes.windll.kernel32.GetCurrentProcess()  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
 
     # Define argument and return types for SetProcessWorkingSetSizeEx
@@ -208,9 +206,6 @@ def show_biggest_session_objects(session: dict, N: int = 5, min_size_bytes: int 
         logger.info("Own process RAM usage: unavailable")
     else:
         logger.info("Own process RAM usage: %.2f GB", own_ram)
-
-    # Start tracing memory allocations
-    # tracemalloc.start()
 
     # Retrieve all objects from the current Python session
     res = []

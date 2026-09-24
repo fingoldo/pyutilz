@@ -195,8 +195,6 @@ def build_upsert_query(
                     update_values.append(field + "=" + on_conflict_update_values[field])
                 elif field in fields_types:
                     update_values.append(field + "=excluded." + field + "::" + fields_types[field])
-                # elif field in timestamp_check_fields:
-                #    update_values.append(field + "=" + default_timestamp)
                 else:
                     update_values.append(field + "=excluded." + field)
 

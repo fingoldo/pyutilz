@@ -16,8 +16,6 @@ logger = logging.getLogger("pyutilz.data.pandaslib")
 
 from pyutilz.core.pythonlib import ensure_installed  # noqa: F401
 
-# ensure_installed("pandas numpy pyarrow")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports -- this module is a shared-imports hub: every name below is unused HERE but re-exported for
 # ``benchmarks.py`` / ``dtypes.py`` / ``frames.py`` / ``io_ops.py`` / ``__init__.py`` to import explicitly from

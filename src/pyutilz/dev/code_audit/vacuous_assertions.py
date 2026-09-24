@@ -49,12 +49,12 @@ def _looks_like_full_domain_or(node: ast.BoolOp) -> bool:
                 targets.add(target_src)
                 shapes += 1
                 continue
-        # isinstance(X, T)
+        # Shape: an isinstance call on some subject X with a type T.
         if isinstance(operand, ast.Call) and isinstance(operand.func, ast.Name) and operand.func.id == "isinstance" and len(operand.args) == 2:
             targets.add(ast.dump(operand.args[0]))
             shapes += 1
             continue
-        # len(X) > 0  (paired with X == {} elsewhere -- tautology for any Sized)
+        # Shape: the length of X compared as greater than zero (paired with X == {} elsewhere -- tautology for any Sized)
         if (
             isinstance(operand, ast.Compare)
             and len(operand.ops) == 1

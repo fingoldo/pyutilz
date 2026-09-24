@@ -65,7 +65,6 @@ def get_categorical_columns_indices(df: pd.DataFrame) -> tuple:
     unique_categorical_values = dict()
     for i, (col, thetype) in enumerate(df.dtypes.items()):
         if isinstance(thetype, pd.CategoricalDtype):
-            # print(i,col,thetype,type(thetype))
             categorical_features_indices.append(i)
             unique_categorical_values[col] = list(df[col].cat.categories.values)
         else:

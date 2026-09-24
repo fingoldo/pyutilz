@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-# ensure_installed("pympler psutil numba tqdm gpu-info")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -73,7 +71,6 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
             cumulative_disks_usage_total += du.total
             cumulative_disks_usage_free += du.free
             if du.free > max_singledisk_free_space:
-                # print(disk.mountpoint,free)
                 max_singledisk_free_space, best_disk = du.free, disk.mountpoint
                 percent = du.free / du.total if du.total else 0.0
 
@@ -87,8 +84,6 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
 
 def list_linux_devices() -> Optional[dict]:
     """List PCI devices on Linux via the ``pylspci`` CLI tool, stripping default/empty fields from each entry. Return None on any error (e.g. tool missing, non-Linux host)."""
-    # ensure_installed("pylspci")
-
     try:
         devices = json.loads(subprocess.check_output([_resolve_binary("pylspci"), "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
         for device in devices:

@@ -1,7 +1,5 @@
 """Morpheme/word-frequency tokenizer built on spacy/nltk, with helpers to build its stats from a DB-backed corpus and persist them."""
 
-# tokenize_dataset(sql="select id,details->>'title' as title,details->>'text' as body from amazon_users_reviews limit 400 --where added_at<='2020-03-06 19:58:34.422863'",name='amazon_users_reviews_till_2020-03-06 19_58_34.422863',size=1000,exp_length=19_400_000)
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -142,7 +140,6 @@ class AdvancedTokenizer:
         last_sentence_word = None
         for _s, sent in enumerate(cur_sentences):
             stext = sent.strip()
-            # print(stext)
             words = merge_punctuation_signs(nltk.word_tokenize(stext))
             k = len(words)
             last_word = None
@@ -177,7 +174,6 @@ class AdvancedTokenizer:
                         # the elif made every such word first-word-only, so NUM_LASTWORD_INSENTENCE
                         # stayed at zero for a corpus of headlines/titles.
                         if w == k - 1:
-                            # print(word,base_morpheme)
                             self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
 
                         if FIRSTLETTER_CAPITAL:
@@ -287,12 +283,10 @@ class AdvancedTokenizer:
 
                             text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
                             if text is not None and len(text) > 1:
-                                # print(text)
                                 res += ("" if len(res) == 0 else " ") + sentencize_text(text)
 
                         if len(res) > 0:
                             res = ensure_space_after_comma(res)
-                            # print(res)
                             self.tokenize(res)
 
                     # --------------------------------------------------------------------------------------------------------------------------------------------------------------------

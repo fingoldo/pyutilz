@@ -131,12 +131,25 @@ def test_pyproject_declares_no_git_dependency_at_all():
     assert_all_git_dependencies_pinned(PYPROJECT)
 
 
-def test_dev_requirements_git_dependencies_are_pinned_or_first_party():
+def test_dev_requirements_git_dependencies_are_pinned_or_first_party(tmp_path):
     """Any THIRD-PARTY git dependency added to requirements-dev.txt must carry a full
-    commit SHA; only the maintainer's own upstreams may float."""
+    commit SHA; only the maintainer's own upstreams may float.
+
+    The shared gate parses its input as pyproject TOML since py-ci-shared 1.17, so each requirement line is carried
+    into a synthetic ``[project] dependencies`` array and checked by the gate's own matcher. The count assertion keeps
+    the check from passing on an empty array if the file's layout changes.
+    """
+    import json
+
     from py_ci_shared.git_dependency_pins import assert_all_git_dependencies_pinned
 
-    assert_all_git_dependencies_pinned(REPO_ROOT / "requirements-dev.txt", allow_unpinned_url_prefixes=_FIRST_PARTY_GIT_PREFIXES)
+    lines = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+    requirements = [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+    assert sum("git+" in r for r in requirements) >= 1, "requirements-dev.txt no longer declares a git dependency; the check has no subject"
+    synthetic = tmp_path / "pyproject.toml"
+    body = "".join(f"  {json.dumps(r)},\n" for r in requirements)
+    synthetic.write_bytes(("[project]\ndependencies = [\n" + body + "]\n").encode("utf-8"))
+    assert_all_git_dependencies_pinned(synthetic, allow_unpinned_url_prefixes=_FIRST_PARTY_GIT_PREFIXES)
 
 
 def test_every_test_subdir_is_reachable_from_ci():
@@ -224,9 +237,9 @@ def test_no_tracked_generated_files():
 # `> 0` already excluded zero, so the outer truthiness test decided nothing and only made the intent
 # read wrong; those are simplified in the source.
 _TRUTHINESS_BASELINE = (
-    "connection.py:203: `itersize` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `itersize is not None`.",
-    "_health.py:578: `group_by_provider` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `group_by_provider is not None`.",
-    "basics.py:128: `base` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `base is not None`.",
+    "src/pyutilz/database/db/connection.py:203: `itersize` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `itersize is not None`.",
+    "src/pyutilz/llm/openrouter_provider/_health.py:578: `group_by_provider` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `group_by_provider is not None`.",
+    "src/pyutilz/text/strings/basics.py:128: `base` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `base is not None`.",
 )
 
 

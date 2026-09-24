@@ -510,7 +510,6 @@ def LoginAndGetCookies(
             break
     res = False
 
-    # print(browser.title)
     from selenium.webdriver.common.keys import Keys
 
     Ret = Keys.RETURN

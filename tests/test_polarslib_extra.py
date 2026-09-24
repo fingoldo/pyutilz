@@ -490,6 +490,18 @@ class TestBuildAggregateFeatures:
         assert isinstance(result, tuple)
         assert len(result) == 3
 
+    @pytest.mark.parametrize("cuda_available, expect_warning", [(False, True), (True, False)])
+    def test_gpu_engine_without_cuda_warns(self, caplog, cuda_available, expect_warning):
+        import logging
+        import pyutilz.data.polarslib as facade
+
+        df = pl.DataFrame({"a": [1.0, 2.0, 3.0]})
+        with patch.object(facade, "is_cuda_available", return_value=cuda_available):
+            with caplog.at_level(logging.WARNING, logger="pyutilz.data.polarslib.aggregations"):
+                build_aggregate_features_polars(df, engine="gpu")
+        warned = [r for r in caplog.records if "CUDA seems to be unavailable" in r.getMessage()]
+        assert len(warned) == (1 if expect_warning else 0)
+
     def test_expressions_are_list(self):
         df = pl.DataFrame({"a": [1.0, 2.0, 3.0]})
         exprs, unnest_cols, unnest_rules = build_aggregate_features_polars(df, engine="cpu")
