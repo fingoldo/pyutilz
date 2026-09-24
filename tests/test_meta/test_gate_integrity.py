@@ -57,7 +57,7 @@ _DECLARED_NARROWINGS = {
         "measured threshold of 20 and each is a judgement call about a dispatch function's "
         "shape. Surfaced by the full-select advisory pass instead."
     ),
-    "ci.yml::with::ignore=C901": "The CI half of the same decision; the two venues must stay in step, which is why both keys are listed.",
+    "ci.yml::ruff-blocking::with::ignore=C901": "The CI half of the same decision; the two venues must stay in step, which is why both keys are listed.",
     "pyproject::[tool.ruff]::exclude": "VCS/build artifact dirs only. tests/ and scripts/ were REMOVED from this list 2026-09-02 and _benchmarks/ on 2026-09-03 (audit 06/F09), along with the pre-commit hook's mirror of it; all three are linted, with their idiomatic codes exempted per-file instead.",
     "pyproject::[tool.ruff.lint]::per-file-ignores": "Each entry carries its own inline reason at the call site in pyproject.toml; the exemptions are per-file and per-code, never whole-directory.",
     # -- mypy -------------------------------------------------------------------------
@@ -68,7 +68,7 @@ _DECLARED_NARROWINGS = {
     ),
     # -- interrogate ------------------------------------------------------------------
     "pre-commit::interrogate-blocking::--fail-under=100": "A ceiling, not a narrowing: 100% is the maximum the tool can demand.",
-    "ci.yml::with::interrogate-fail-under=100": "The CI half of the same 100% requirement.",
+    "ci.yml::lint-blocking::with::interrogate-fail-under=100": "The CI half of the same 100% requirement.",
     "pyproject::[tool.interrogate]::exclude": "Docstring coverage is scoped to shipped code (src/pyutilz); tests and scripts document themselves through their names and assertions.",
     "pyproject::[tool.interrogate]::ignore-init-module": (
         "KNOWN GAP, not a clean decision: a module docstring on any __init__.py is unenforced, so "
@@ -76,6 +76,8 @@ _DECLARED_NARROWINGS = {
         "flipping it would demand a docstring on every re-export shim in one pass."
     ),
     # -- other blocking gates ---------------------------------------------------------
+    "pre-commit::bandit-blocking::-ll=": "Bandit at medium severity and up; its low-severity class is mostly assert and subprocess-import notices that the blocking gate would turn into noise.",
+    "pyproject::[tool.mypy]::ignore_missing_imports": "Several optional extras ship without type stubs; a missing stub is not a type error in pyutilz, and the whole-tree mypy gate still checks every pyutilz call site against the stubs that do exist.",
     "pre-commit::vulture-blocking::--min-confidence=80": "Vulture below 80% confidence is dominated by false positives on dynamically-referenced names; 80 is the value CI's lint-blocking job uses too.",
     "pre-commit::detect-secrets::exclude=\\.secrets\\.baseline$|tests/test_meta/_api_snapshot\\.json$": (
         "The API snapshot holds symbol NAMES, not values, and trips the keyword heuristic; the " "baseline file is the scanner's own state."
@@ -85,7 +87,8 @@ _DECLARED_NARROWINGS = {
     "pyproject::[tool.deptry]::exclude": "Dependency drift is a question about shipped imports; tests/scripts may import dev-only tooling. .claude excludes nested agent worktrees whose duplicate source trees deptry's non-git-aware scan would misattribute.",
     # -- coverage ---------------------------------------------------------------------
     "pyproject::[tool.coverage.report]::fail_under": "The coverage ratchet, measured 84.87% on 2026-09-02 and set at 82 to absorb the Windows/Linux platform delta. Raise it when coverage rises.",
-    "ci.yml::run::--cov-fail-under=85": "The CI half of the same ratchet; test_ci_coverage_gate_matches_pyproject below asserts the two numbers stay equal rather than trusting this note.",
+    "ci.yml::test::Run tests with coverage::run::-m=not gpu": "CI runners have no GPU; the gpu-marked tests run on the local GPU machine instead.",
+    "ci.yml::test::Run tests with coverage::run::--cov-fail-under=85": "The CI half of the same ratchet; test_ci_coverage_gate_matches_pyproject below asserts the two numbers stay equal rather than trusting this note.",
 }
 
 # Tools whose exit code alone cannot certify that they ran to completion, mapped to the

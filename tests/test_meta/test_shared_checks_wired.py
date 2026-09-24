@@ -110,7 +110,8 @@ def test_declared_entry_points_resolve():
     """Every console script / entry point imports and exposes its named attribute."""
     from py_ci_shared.entry_points_resolvable import assert_all_entry_points_resolvable
 
-    assert_all_entry_points_resolvable(PYPROJECT)
+    # pyutilz is a library and declares no console scripts or entry points, so zero declared is the expected count.
+    assert_all_entry_points_resolvable(PYPROJECT, min_entries=0)
 
 
 def test_no_phantom_markdown_links():

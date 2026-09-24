@@ -173,8 +173,11 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
     thing: the stored object itself was ``None``.
     """
     if compression is not None:
-        assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard mirroring serialize()'s compression arg check, not a security boundary
-        assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
+        # API-misuse guard mirroring serialize()'s compression arg check; zlib accepts levels -1..9.
+        if not isinstance(compression, int):
+            raise TypeError(f"compression must be an int, got {type(compression).__name__}")
+        if not -1 <= compression <= 9:
+            raise ValueError(f"compression must be in -1..9 (zlib's accepted levels), got {compression}")
     try:
         if isinstance(obj, str):
             if not os.path.isfile(obj):

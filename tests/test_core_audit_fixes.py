@@ -188,3 +188,11 @@ def test_csr_rowcol_constructor_is_reusable_after_clear_source():
     assert c.build_matrix(dtype=np.int32, clear_source=True).toarray().tolist() == [[3]]
     c.add_element(4, row=0, col=0)
     assert c.build_matrix(dtype=np.int32).toarray().tolist() == [[4]]
+
+
+@pytest.mark.parametrize(("compression", "error"), [("9", TypeError), (10, ValueError), (-2, ValueError)])
+def test_unserialize_rejects_a_bad_compression_level_even_under_python_O(tmp_path, compression, error):
+    path = tmp_path / "obj.bin"
+    serialize({"a": 1}, str(path))
+    with pytest.raises(error):
+        unserialize(str(path), compression=compression)

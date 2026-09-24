@@ -244,7 +244,8 @@ def _visit_if_aware(
     shot = single_shot.get(id(node))
     single_shot_here = shot == "hard" or (shot == "break" and loop_depth == 1)
     if method is not None and loop_depth > 0 and not guarded and not single_shot_here:
-        assert isinstance(node, ast.Call)  # guaranteed by _is_log_call returning non-None
+        if not isinstance(node, ast.Call):  # guaranteed by _is_log_call returning non-None
+            raise TypeError(f"_is_log_call matched a {type(node).__name__}, not an ast.Call")
         findings.append(Finding(
             check="unthrottled_hot_loop_log",
             severity="P2",
