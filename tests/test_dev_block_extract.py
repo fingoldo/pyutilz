@@ -218,3 +218,74 @@ def test_rename_refuses_closures_fstrings_and_params(tmp_path):
     for mapping in ({"a": "st.a"}, {"b": "st.b"}):
         with pytest.raises(ValueError):
             rename_in_function(p, "f", mapping)
+
+
+def test_lazy_imported_names_are_reimported_in_the_helper_not_passed(tmp_path, monkeypatch):
+    """A name the function binds only through a function-level import is imported again inside the helper (lazily), unless
+    that import is guarded by ``try`` (an optional dependency), which stays a parameter."""
+    monkeypatch.syspath_prepend(str(tmp_path))
+    pkg = tmp_path / "pz"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    core = _write(pkg, "core.py", """\
+        def f(values):
+            from math import floor
+            try:
+                from json import dumps
+            except ImportError:
+                dumps = None
+            total = sum(floor(v) for v in values)
+            text = dumps(total)
+            return text
+        """)
+    plan = plan_extraction(core, "f", 7, 8)
+    assert plan.inputs == ["values", "dumps"] and plan.lazy_imports == ["from math import floor"]
+    result = apply_extraction(plan, "_summarise", pkg / "stages.py", "pz.stages", core_module="pz.core")
+    assert "from math import floor" in result.helper_source.splitlines()[2]
+    assert _import(core, "pz.core", monkeypatch).f([1.5, 2.7]) == "3"
+
+
+def test_a_nested_def_in_the_block_may_return(tmp_path):
+    """A helper defined inside the range moves whole: its own ``return`` is not an early return of the block."""
+    p = _write(tmp_path, "m.py", """\
+        def f(xs):
+            def keep(v):
+                if v > 0:
+                    return True
+                return False
+            kept = [x for x in xs if keep(x)]
+            return kept
+        """)
+    plan = plan_extraction(p, "f", 2, 6)
+    assert not plan.problems and plan.outputs == ["kept"]
+
+
+def test_a_later_independent_use_of_a_conditional_name_is_not_an_output(tmp_path):
+    """Names the block binds on some paths are fine when later code rebinds them first, only reads them inside loops that
+    rebind them, or binds them on both arms of an if/else; a genuine later read still refuses the block."""
+    p = _write(tmp_path, "m.py", """\
+        def f(xs, flag):
+            for g in xs:
+                s = g
+            if flag:
+                n = 1
+            else:
+                n = 2
+            import gc as g
+            for s in xs:
+                print(s)
+            return g, n
+        """)
+    plan = plan_extraction(p, "f", 2, 7)
+    assert not plan.problems and plan.outputs == ["n"]
+    q = _write(tmp_path, "q.py", """\
+        def f(xs):
+            for g in xs:
+                s = g
+            for s in xs:
+                pass
+            else:
+                print(s)
+            return 1
+        """)
+    assert any("only on some paths" in m for m in plan_extraction(q, "f", 2, 3).problems)

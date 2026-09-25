@@ -222,6 +222,7 @@ class ExtractionPlan:
     inputs: list = field(default_factory=list)
     outputs: list = field(default_factory=list)
     module_names: list = field(default_factory=list)
+    lazy_imports: list = field(default_factory=list)
     problems: list = field(default_factory=list)
     in_loop: bool = False
 
@@ -276,10 +277,47 @@ def _control_problems(block: list) -> list:
             walk(child, in_loop or isinstance(child, _LOOPS))
 
     for st in block:
+        if isinstance(st, _SCOPES):  # a nested def/class moves whole; its own returns are its business
+            continue
         if isinstance(st, ast.Return):
             problems.append(f"Return at line {st.lineno}")
         walk(st, isinstance(st, _LOOPS))
     return problems
+
+
+def _definitely_bound(stmts: list) -> set:
+    """Names every path through ``stmts`` binds: plain statements, both arms of an if/else, a with-body."""
+    out: set = set()
+    for st in stmts:
+        if isinstance(st, ast.If):
+            out |= _definitely_bound(st.body) & _definitely_bound(st.orelse) if st.orelse else set()
+        elif isinstance(st, (ast.With, ast.AsyncWith)):
+            out |= _definitely_bound(st.body)
+        elif isinstance(st, (ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match)):
+            continue
+        else:
+            out |= {n for _, k, n in name_events([st]) if k == "store"}
+    return out
+
+
+def _never_reads_prior_binding(later: list, name: str) -> bool:
+    """True when the statements after the block cannot read the value the block bound to ``name``: a top-level statement
+    rebinds it before any read, or every read of it sits inside a ``for`` loop whose own target rebinds it."""
+    for st in later:
+        mentions = [e for e in name_events([st]) if e[2] == name]
+        if not mentions:
+            continue
+        if not isinstance(st, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)) and mentions[0][1] == "store":
+            return True  # rebound unconditionally before this statement reads it
+        break
+    rebinding_loops = [n for st in later for n in ast.walk(st) if isinstance(n, (ast.For, ast.AsyncFor))
+                       and any(isinstance(t, ast.Name) and t.id == name for t in ast.walk(n.target))]
+    # the body only: a loop's ``else`` also runs after zero iterations, when the name still holds the block's value
+    inside = {id(x) for loop in rebinding_loops for body_st in loop.body for x in ast.walk(body_st)}
+    reads = [x for st in later for x in ast.walk(st) if isinstance(x, ast.Name) and x.id == name and isinstance(x.ctx, ast.Load)]
+    if not reads:
+        return True
+    return all(id(r) in inside for r in reads)
 
 
 def _module_names(tree: ast.Module) -> set:
@@ -295,7 +333,8 @@ def _module_names(tree: ast.Module) -> set:
 def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> ExtractionPlan:
     """Plan lifting the statements of ``func`` spanning lines ``[start, end]`` (one body, whole statements) into a helper."""
     path = Path(path)
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    src_text = path.read_text(encoding="utf-8")
+    tree = ast.parse(src_text, filename=str(path))
     fn = _find_function(tree, func)
     stmts, in_loop = _container(fn, start, end)
     plan = ExtractionPlan(path=path, func=func, start=start, end=end, in_loop=in_loop)
@@ -321,14 +360,12 @@ def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> 
     for n in plan.outputs:
         if n in defined_before and n not in plan.inputs:
             plan.inputs.append(n)
-    # a NEW name bound only on some paths (not by a statement at the block's own level) cannot be returned safely
-    top = {
-        n
-        for st in block
-        if not isinstance(st, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match))
-        for _, k, n in name_events([st])
-        if k == "store"
-    }
+    # a NEW name bound only on some paths cannot be returned safely - unless the rest of the function never reads the
+    # block's binding (it rebinds first, or only reads it inside loops that rebind it)
+    top = _definitely_bound(block)
+    later = [s for s in fn.body if s.lineno > end] if not in_loop else []
+    unread = {n for n in plan.outputs if n not in defined_before and n not in top and later and _never_reads_prior_binding(later, n)}
+    plan.outputs = [n for n in plan.outputs if n not in unread]
     risky = [n for n in plan.outputs if n not in defined_before and n not in top]
     if risky:
         plan.problems.append(f"new names bound only on some paths and read later: {risky}")
@@ -337,7 +374,28 @@ def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> 
     fn_bound = {n for _, k, n in events if k == "store"} | params
     loads = {n for _, k, n in block_ev if k == "load"}
     plan.module_names = sorted(n for n in loads - bound - set(plan.inputs) if n in module and not hasattr(builtins, n))
-    unknown = sorted(n for n in loads - bound - set(plan.inputs) if n in fn_bound and n not in module)
+    # An input the function binds ONLY through a function-level (lazy) import is re-imported inside the helper, lazily,
+    # instead of becoming a parameter: the lazy import usually exists to break a cycle, and a helper should get its own.
+    imports: dict = {}
+    other_binding: set = set()
+    guarded: set = set()  # imports inside ``try:`` (optional dependencies) stay parameters: re-importing them unguarded could raise
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Try):
+            for sub in node.body:
+                guarded |= {id(n) for n in ast.walk(sub) if isinstance(n, (ast.Import, ast.ImportFrom))}
+    for st in ast.walk(fn):
+        if isinstance(st, (ast.Import, ast.ImportFrom)) and id(st) not in guarded:
+            for alias in st.names:
+                imports.setdefault((alias.asname or alias.name).split(".")[0], ast.get_source_segment(src_text, st))
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            other_binding.add(node.id)
+    for n in list(plan.inputs):
+        if n in imports and n not in other_binding and n not in params:
+            plan.inputs.remove(n)
+            if imports[n] not in plan.lazy_imports:
+                plan.lazy_imports.append(imports[n])
+    unknown = sorted(n for n in loads - bound - set(plan.inputs) if n in fn_bound and n not in module and n not in imports)
     if unknown:
         plan.problems.append(f"reads names of {func} not available at the block: {unknown}")
     return plan
@@ -474,8 +532,12 @@ def apply_extraction(
     lines = src.splitlines(keepends=True)
     text = absolutise_relative_imports("".join(lines[plan.start - 1 : plan.end]), core_module)
     body = textwrap.dedent(text)
+    if plan.lazy_imports:
+        lazy = "".join(absolutise_relative_imports(imp, core_module) + chr(10) for imp in plan.lazy_imports)
+        body = lazy + chr(10) + body
     state = set(state_names or ())
     ins = [n for n in plan.inputs if n not in state]
+    ins = [n for n in ("self", "cls") if n in ins] + [n for n in ins if n not in ("self", "cls")]  # the receiver reads first
     outs = [n for n in plan.outputs if n not in state]
     uses_state = bool(state & (set(plan.inputs) | set(plan.outputs) | {n for _, k, n in name_events(ast.parse(body).body) if k == "store"}))
     if uses_state:
