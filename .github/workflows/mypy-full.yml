@@ -15,7 +15,7 @@ name: MyPy
 # exit code alone cannot distinguish "checked everything, found nothing" from "aborted partway
 # through with an INTERNAL ERROR inside a third-party stub". The local
 # .pre-commit-config.yaml mypy-full-blocking hook has required mypy's own
-# `Success: no issues found in N source files` terminator plus `--min-files 200` since it was
+# `Success: no issues found in N source files` terminator plus `--min-files` since it was
 # flipped blocking, so the reusable workflow made the MERGE gate strictly looser than the local
 # hook that claims to mirror it. Same wrapper, same threshold, same argument here. Fold this
 # back into the reusable workflow once it grows a completion-asserted mode.
@@ -53,18 +53,18 @@ jobs:
       # mypy itself comes from the [dev] extra's `mypy==2.3.1` pin, so this workflow cannot
       # drift from pyproject.toml and .pre-commit-config.yaml's mirrors-mypy rev the way a
       # separately-declared `mypy-version:` input could. py-ci-shared supplies the mypy_gate
-      # wrapper only; it is pinned to a release tag, not the moving @v1 the reusable workflows use.
+      # wrapper only; it comes from requirements-dev.txt, at the same SHA the reusable workflows use.
       - name: Install project + the mypy gate wrapper
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
-          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.16.1"
+          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]" -r requirements-dev.txt
 
       - name: Show mypy version
         run: mypy --version
 
-      # --min-files 200 against a tree of 248 source files: fails a run whose scope has silently
-      # narrowed (a mistyped path, an over-eager exclude) as well as one that aborted midway.
+      # --min-files 250 against the 266 files mypy checked on 2026-09-25 (floor = 94% of the measured count, held there
+      # by tests/test_meta/test_mypy_gate_floor.py): fails a run whose scope has silently narrowed (a mistyped path, an
+      # over-eager exclude) as well as one that aborted midway.
       # Identical invocation to .pre-commit-config.yaml's mypy-full-blocking hook.
       - name: MyPy (whole project, completion-asserted)
-        run: python -m py_ci_shared.mypy_gate --min-files 200 src/pyutilz
+        run: python -m py_ci_shared.mypy_gate --min-files 250 src/pyutilz

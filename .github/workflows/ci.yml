@@ -73,14 +73,12 @@ jobs:
         pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
         # The meta-suite imports py_ci_shared directly (value_bearing_asserts, deferred_drift,
         # gate_integrity, ...). It is deliberately NOT in [dev] - a git+https requirement in project
-        # metadata makes the distribution unpublishable - so without this line those tests fail at
-        # collection and every leg goes red. Pinned to a tag, and a meta-test fails if this repo
-        # starts importing something the pin does not carry.
-        # py-ci-shared requires python>=3.9, so the 3.8 legs run without it; conftest skips the
-        # meta-tests that import it there.
-        if python -c "import sys; sys.exit(sys.version_info < (3, 9))"; then
-          pip install "py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git@v1.16.1"
-        fi
+        # metadata makes the distribution unpublishable - so it is installed from the declared
+        # requirement in requirements-dev.txt, which carries the one SHA pin; installing it inline here
+        # let CI and the declared dependency name different commits.
+        # py-ci-shared requires python>=3.9: the requirement's marker skips it on the 3.8 legs, where
+        # conftest ignores the meta-tests that import it; on every other leg a missing install fails.
+        pip install -r requirements-dev.txt
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
@@ -101,7 +99,7 @@ jobs:
         pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
-      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@51d618ad318e5ae1022bed214f91584953381113  # v1.3.5
+      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
@@ -130,13 +128,14 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@v1
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
     with:
+      py-ci-shared-ref: 6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
       ignore: "C901"
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@v1
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -148,8 +147,9 @@ jobs:
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@v1
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
     with:
+      py-ci-shared-ref: 6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
       source-path: src/pyutilz
 
   build:

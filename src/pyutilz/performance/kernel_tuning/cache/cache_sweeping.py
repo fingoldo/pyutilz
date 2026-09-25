@@ -81,7 +81,7 @@ class _CacheSweepClaimMixin(_CacheState):
             return True  # can't stage -> behave as owner (degrade to no-singleton, never wedge)
         try:
             os.write(fd, payload)
-        except OSError:
+        except OSError:  # swallow-ok: the marker file's existence is the claim; its payload is informational
             pass
         finally:
             os.close(fd)
@@ -104,7 +104,7 @@ class _CacheSweepClaimMixin(_CacheState):
                 return True
             try:
                 os.write(fd2, payload)
-            except OSError:
+            except OSError:  # swallow-ok: the marker file's existence is the claim; its payload is informational
                 pass
             finally:
                 os.close(fd2)

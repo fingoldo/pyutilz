@@ -101,7 +101,7 @@ def main() -> int:
         # ---- MT-2 rule 2 (static) : the hook invoking mypy directly again
         precommit = root / ".pre-commit-config.yaml"
         original_precommit = precommit.read_text(encoding="utf-8")
-        precommit.write_text(original_precommit.replace("python -m py_ci_shared.mypy_gate --min-files 200 src/pyutilz", "python -m mypy src/pyutilz"), encoding="utf-8")
+        precommit.write_text(original_precommit.replace("python -m py_ci_shared.mypy_gate --min-files 250 src/pyutilz", "python -m mypy src/pyutilz"), encoding="utf-8")
         direct = gate_integrity.find_gates_without_completion_assertion(precommit, {"python -m mypy": "py_ci_shared.mypy_gate"})
         record("MT-2 completion (static)", "a blocking hook reverting to a bare `python -m mypy`", bool(direct), direct[0][:110] if direct else "")
         precommit.write_text(original_precommit, encoding="utf-8")

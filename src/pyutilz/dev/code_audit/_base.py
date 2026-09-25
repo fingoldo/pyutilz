@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import threading
 from fnmatch import fnmatch
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -34,11 +35,16 @@ _PARSE_CACHE_MAX_ENTRIES = 20000
 # a snippet re-read and re-split the whole corpus itself.
 _SRC_LINES_CACHE: "OrderedDict[tuple[str, int, int], list[str]]" = OrderedDict()
 
+# Guards both caches: a hit is move_to_end-then-read and a miss is insert-then-evict, and a scan run from a thread
+# pool interleaves them (a popitem between another thread's membership test and its read raised KeyError).
+_CACHE_LOCK = threading.Lock()
+
 
 def clear_parse_cache() -> None:
     """Drop every cached parse tree and cached source text. Call it when a long-lived process is done with a scan."""
-    _PARSE_CACHE.clear()
-    _SRC_LINES_CACHE.clear()
+    with _CACHE_LOCK:
+        _PARSE_CACHE.clear()
+        _SRC_LINES_CACHE.clear()
 
 # --- public types --------------------------------------------------------
 
@@ -280,9 +286,10 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
     except OSError:
         return None
     cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if cache_key in _PARSE_CACHE:
-        _PARSE_CACHE.move_to_end(cache_key)
-        return _PARSE_CACHE[cache_key]
+    with _CACHE_LOCK:
+        if cache_key in _PARSE_CACHE:
+            _PARSE_CACHE.move_to_end(cache_key)
+            return _PARSE_CACHE[cache_key]
 
     try:
         src = path.read_text(encoding="utf-8")
@@ -301,9 +308,10 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
             # parser-resource failures on one input, handled exactly like an unparseable file.
             tree = None
 
-    _PARSE_CACHE[cache_key] = tree
-    while len(_PARSE_CACHE) > _PARSE_CACHE_MAX_ENTRIES:
-        _PARSE_CACHE.popitem(last=False)
+    with _CACHE_LOCK:
+        _PARSE_CACHE[cache_key] = tree
+        while len(_PARSE_CACHE) > _PARSE_CACHE_MAX_ENTRIES:
+            _PARSE_CACHE.popitem(last=False)
     return tree
 
 
@@ -327,18 +335,20 @@ def _read_src_lines(path: Path) -> list[str]:
     except OSError:
         return []
     cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
-    cached = _SRC_LINES_CACHE.get(cache_key)
-    if cached is not None:
-        _SRC_LINES_CACHE.move_to_end(cache_key)
-        return cached
+    with _CACHE_LOCK:
+        cached = _SRC_LINES_CACHE.get(cache_key)
+        if cached is not None:
+            _SRC_LINES_CACHE.move_to_end(cache_key)
+            return cached
     try:
         src = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
     lines = split_src_lines(src)
-    _SRC_LINES_CACHE[cache_key] = lines
-    while len(_SRC_LINES_CACHE) > _PARSE_CACHE_MAX_ENTRIES:
-        _SRC_LINES_CACHE.popitem(last=False)
+    with _CACHE_LOCK:
+        _SRC_LINES_CACHE[cache_key] = lines
+        while len(_SRC_LINES_CACHE) > _PARSE_CACHE_MAX_ENTRIES:
+            _SRC_LINES_CACHE.popitem(last=False)
     return lines
 
 

@@ -240,6 +240,9 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_shared_gates_adopted": "meta-test running py_ci_shared gates over src/ and tests/ -- no single production module to pair with",
+    "test_mypy_gate_floor": "meta-test over .pre-commit-config.yaml and mypy-full.yml -- the mypy_gate floor tracks the source-file count; no production module to pair with",
+    "test_audit_rounds_countable": "meta-test over audits/ -- every finding has a disposition and rounds are filed by state, via py_ci_shared.audit_round_format; no production module to pair with",
     "test_gate_integrity": "meta-test over .pre-commit-config.yaml / .github/workflows / pyproject.toml -- no production module to pair with",
     "test_optional_dep_preconditions": "meta-test over the TEST suite itself -- pins that a test states the optional extra it needs; no production module to pair with",
     "test_markers_registered": "meta-test over the TEST suite and pyproject -- every pytest marker used is registered, via py_ci_shared.pytest_markers; no production module to pair with",
@@ -298,14 +301,11 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_public_docstrings": "meta-test (E1) — docstring coverage snapshot",
     "test_public_annotations": "meta-test (E2) — type annotation snapshot",
     "test_version_consistency": "meta-test (E3) — version source-of-truth parity",
-    "test_no_import_cycles": "meta-test (E4) — import cycle detector",
-    "test_no_unicode_in_console_output": "meta-test (E5) — non-ASCII console output",
     "test_meta_meta": "meta-test (F1+F2+F3) — meta-tests on meta-tests",
     "test_logger_lazy_formatting": "meta-test (H1) — eager-format logger.debug/info",
     "test_resource_handle_safety": "meta-test (H2) — open/Popen outside with-block",
     "test_unused_parameter_baseline": "meta-test - ruff ARG001/ARG002 snapshot; the rule is ruff's, not one source module's",
     "test_smoke_untested_modules": "smoke suite — covers 8 untested modules under one parametrize",
-    "test_no_bare_except": "meta-test (H3) — bare except / except BaseException without re-raise",
     "test_llm_account_credits": "cross-cutting — covers OpenRouter check_account_limits across providers",
     "test_llm_supports_json_mode": "cross-cutting — pins supports_json_mode() across all providers",
     "test_capture_signature": "covers pyutilz.dev.meta_test_utils.capture_signature (a single function, not a like-named production module)",

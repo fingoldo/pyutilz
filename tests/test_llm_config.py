@@ -97,3 +97,20 @@ class TestConcurrentAccess:
         first = results[0]
         assert len(results) == 10, "every submitted caller must have returned"
         assert all(r is first for r in results)
+
+
+class TestEnvFileSentinel:
+    def test_a_path_spelled_like_the_old_sentinel_is_read_as_a_path(self, monkeypatch, tmp_path):
+        """The "omitted" default was the string "<unset>" compared with `is`; a caller's own "<unset>" string then meant
+        "omitted" when CPython interned it and a path when it did not. It is an enum member now, never equal to a str."""
+        monkeypatch.setenv("PYUTILZ_LLM_ENV_FILE", str(tmp_path / "from_env.env"))
+        built = "".join(["<un", "set>"])
+        config_module.clear_llm_settings_cache()
+        config_module.get_llm_settings(env_file=built)
+        assert config_module._cached_env_file == built, "an explicit path must be taken as given, never as the omitted default"
+        config_module.get_llm_settings(env_file="<unset>")
+        assert config_module._cached_env_file == "<unset>"
+        config_module.clear_llm_settings_cache()
+        config_module.get_llm_settings()
+        assert config_module._cached_env_file == str(tmp_path / "from_env.env"), "omitting env_file consults PYUTILZ_LLM_ENV_FILE"
+        config_module.clear_llm_settings_cache()

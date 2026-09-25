@@ -289,11 +289,9 @@ repos:
   # with no completion assertion, so it is the LOOSER of the two whole-project runs -- the
   # blocking mypy-full-blocking hook below and CI's mypy-full.yml are the gates. Still useful to
   # run on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
-  # rev bumped v1.2.1 -> v1.3.5 on 2026-09-03: it had drifted three minor releases behind the
-  # moving `@v1` tag CI's reusable workflows resolve to, so a hook run could behave differently
-  # from CI (packaging audit 03/F05).
+  # rev is the same full SHA as every workflow `uses:` ref and requirements-dev.txt, so a hook run and CI execute one release.
   - repo: https://github.com/fingoldo/py-ci-shared
-    rev: v1.3.5
+    rev: 6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']
@@ -304,7 +302,7 @@ repos:
   # pattern as black-filtered-blocking above. That parity is genuine only since 2026-09-03: CI
   # ran a bare `mypy` through py-ci-shared's reusable workflow until then, i.e. the merge gate
   # was LOOSER than this hook; mypy-full.yml now runs this same `py_ci_shared.mypy_gate
-  # --min-files 200 src/pyutilz` command inline (packaging audit 03/F03). Previously this was a
+  # --min-files 250 src/pyutilz` command inline (packaging audit 03/F03). Previously this was a
   # WARN-only hook (mypy_full_warn.py) because the backlog wasn't closed yet; now that it is, a
   # local warn-only hook would be LOOSER than CI, letting a broken commit land locally and only
   # fail later in CI.
@@ -320,7 +318,7 @@ repos:
     hooks:
       - id: mypy-full-blocking
         name: "mypy (whole project, blocking, completion-asserted)"
-        entry: python -m py_ci_shared.mypy_gate --min-files 200 src/pyutilz
+        entry: python -m py_ci_shared.mypy_gate --min-files 250 src/pyutilz
         language: system
         types: [python]
         pass_filenames: false

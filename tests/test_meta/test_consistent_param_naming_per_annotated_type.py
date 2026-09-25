@@ -26,7 +26,7 @@ input frame" that every sibling function in the same file calls ``df``); ``numpy
 ``get_topk_indices(arr)`` is); ``stats.normality``'s public ``normality_verdict(sample, ...)``
 deliberately uses a clearer, domain-specific name than its internal ``dagostino_k2(x)``/
 ``anderson_darling_normal(x)`` helpers' terser statistical convention. Baseline-JSON snapshot
-(same idiom as ``test_no_bare_except.py``), not a hand-curated whitelist -- these three are
+(same idiom as ``test_logger_lazy_formatting.py``), not a hand-curated whitelist -- these three are
 reviewed and safe, but a NEW group hitting this shape needs the same "is this really one role,
 just spelled two ways, or two genuinely different roles that happen to share a type?" review
 before being grandfathered in.

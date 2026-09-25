@@ -26,7 +26,7 @@ attribute WITHOUT its own lock, but is only ever called by callers that already 
 (e.g. ``system.config.TomlLiveConfig._reload()``, called from ``__init__`` -- no concurrency
 exposure yet -- and from ``_maybe_reload()``, which holds ``self._lock`` for the whole call) is
 lexically indistinguishable from a genuine miss without call-graph analysis this AST walk doesn't
-do. Baseline-JSON snapshot (same idiom as ``test_no_bare_except.py``), not a hand-curated
+do. Baseline-JSON snapshot (same idiom as ``test_logger_lazy_formatting.py``), not a hand-curated
 whitelist, since new instances of "helper safe only because its caller already holds the lock" are
 a legitimate, common pattern -- unlike ``test_no_module_reload.py``'s whitelist, where each new
 entry needs a specific, reasoned justification, a drained/refreshed baseline here just means "this

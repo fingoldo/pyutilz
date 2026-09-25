@@ -781,6 +781,34 @@ def test_the_request_timeout_scales_with_the_output_the_body_asks_for():
     assert probe._timeout_for({"max_tokens": "not a number"}) == 240.0
 
 
+def test_the_zero_max_tokens_sentinel_sizes_the_timeout_for_the_models_real_ceiling():
+    """`max_tokens=0` means "the model's real ceiling" (generate() resolves it to max_output_tokens), not "no budget".
+
+    Read with `or`, the 0 was treated as absent, the derived half evaluated to 0 and the timeout collapsed to the 240 s
+    name default: the recommended way to ask for the full budget was also the way that disabled the sizing meant for it.
+    """
+    from pyutilz.llm.openai_compat import OpenAICompatibleProvider
+
+    class _Probe(OpenAICompatibleProvider):
+        _base_url = "https://example.invalid"
+        _provider_name = "probe"
+        _input_cost_per_1m = 0.0
+        _output_cost_per_1m = 0.0
+        _max_tokens_map = {"z-ai/glm-5.3-flash": 60_000}
+
+        def _get_timeout(self, model: str) -> float:
+            return 240.0
+
+    probe = _Probe.__new__(_Probe)
+    probe.model_name = "z-ai/glm-5.3-flash"
+
+    assert probe._timeout_for({"max_tokens": 0}) == pytest.approx(60_000 / 30.0)
+    assert probe._timeout_for({"max_tokens": 0}) == probe._timeout_for({"max_tokens": probe.max_output_tokens}), "the sentinel and its resolution differ"
+    assert probe._timeout_for({"max_completion_tokens": 0}) == pytest.approx(60_000 / 30.0)
+    # A stated 0 is not an absent field: it must not fall through to a max_completion_tokens left over in the body.
+    assert probe._timeout_for({"max_tokens": 0, "max_completion_tokens": 900}) == pytest.approx(60_000 / 30.0)
+
+
 def test_the_post_passes_that_timeout_rather_than_the_clients_construction_time_one():
     """A timeout computed and then not sent is the same bug with a passing unit test behind it."""
     import asyncio

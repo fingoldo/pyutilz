@@ -351,7 +351,7 @@ def _stream_one_call(
             if proc.stderr is not None:
                 for line in proc.stderr:
                     stderr_chunks.append(line)
-        except (ValueError, OSError):  # pragma: no cover -- pipe closed under us
+        except (ValueError, OSError):  # pragma: no cover  # swallow-ok: the stderr pipe closed under the drain thread; what it read is kept
             pass
 
     stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)

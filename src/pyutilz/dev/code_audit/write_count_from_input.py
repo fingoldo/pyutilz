@@ -18,6 +18,9 @@ from ._base import (
     _sql_text,
     _string_constants_in_body,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- a written-rows counter taken from the rows given to an insert that can skip some -----------
 
@@ -246,10 +249,12 @@ def scan_write_counted_from_input(
     Severity: P2 -- a wrong progress figure, not lost data; but it hides a re-run that did nothing.
     """
     findings: list[Finding] = []
+    unreadable: list[str] = []
     for py in _iter_py_files(root, exclude_dirs):
         try:
             raw = py.read_text(encoding="utf-8", errors="replace").lower()
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         if "len(" not in raw or not ("conflict" in raw or "ignore" in raw):
             continue
@@ -288,4 +293,6 @@ def scan_write_counted_from_input(
                         f"table before and after), or name the counter for what it holds (`..._read`)."
                     ),
                 ))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return findings

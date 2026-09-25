@@ -42,6 +42,9 @@ import typing
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _rglob_test_files(root: Path) -> "typing.Iterator[Path]":
@@ -131,6 +134,7 @@ def consumer_corpus(
     excluded_fragments = set(_DEFAULT_EXCLUDED_FRAGMENTS) | set(extra_excludes)
     excluded_resolved = {p.resolve() for p in exclude_files}
     chunks: list[str] = []
+    unreadable: list[str] = []
     for py in package_dir.rglob("*.py"):
         if py.resolve() in excluded_resolved:
             continue
@@ -138,8 +142,11 @@ def consumer_corpus(
             continue
         try:
             chunks.append(py.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return "\n".join(chunks)
 
 
@@ -369,12 +376,14 @@ def scan_todo_markers(
     """
     excluded_fragments = set(_DEFAULT_EXCLUDED_FRAGMENTS) | set(extra_excludes)
     out: list[tuple[Path, int, str, str]] = []
+    unreadable: list[str] = []
     for py in package_dir.rglob("*.py"):
         if any(frag in py.parts for frag in excluded_fragments):
             continue
         try:
             text = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
             m = MARKER_LINE_RE.search(line)
@@ -382,6 +391,8 @@ def scan_todo_markers(
                 continue
             kw = m.group("kw").upper()
             out.append((py, lineno, kw, line.strip()))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return out
 
 
@@ -415,10 +426,12 @@ def count_user_deferred_entries(
     out: dict[str, int] = {}
     if not test_meta_dir.exists():
         return out
+    unreadable: list[str] = []
     for py in sorted(_rglob_test_files(test_meta_dir)):
         try:
             src = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         try:
             tree = ast.parse(src)
@@ -454,6 +467,8 @@ def count_user_deferred_entries(
                     # also an ast.Call, and recording it as 0 made 40 tracked entries read as none --
                     # the drift tracker reported shrinking debt in exactly the case where it grew.
                     out[key] = 0
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return out
 
 
@@ -707,12 +722,14 @@ def _repo_symbols(repo_root: Path) -> frozenset[str]:
 
     skip = {".git", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules", ".venv"}
     names: set[str] = set()
+    unreadable: list[str] = []
     for py in repo_root.rglob("*.py"):
         if skip & set(py.parts):
             continue
         try:
             tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
-        except (SyntaxError, ValueError, OSError):
+        except (SyntaxError, ValueError, OSError) as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -722,6 +739,8 @@ def _repo_symbols(repo_root: Path) -> frozenset[str]:
             elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
                 # Field names of the rows this repository writes, which audit rows cite as often as functions.
                 names.add(node.value)
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return frozenset(names)
 
 

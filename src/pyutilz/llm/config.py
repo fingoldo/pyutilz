@@ -10,7 +10,8 @@ import logging
 import os
 import threading
 import time
-from typing import Optional
+from enum import Enum
+from typing import Optional, Union
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,12 +62,19 @@ _cached_settings: Optional[LLMSettings] = None
 _cached_settings_at: float = float("-inf")
 # Sentinel distinguishing "caller said nothing" (consult PYUTILZ_LLM_ENV_FILE) from an explicit
 # ``env_file=None`` (environment variables only) -- None is a meaningful value here, so it cannot
-# double as the default.
-_UNSET_ENV_FILE = "<unset>"
-_cached_env_file: Optional[str] = _UNSET_ENV_FILE
+# double as the default. An enum member, not a string: a string sentinel compared with `is` matched only while
+# CPython happened to intern it, so a caller passing a built "<unset>" path was read as a path and a literal one as unset.
+class _Unset(Enum):
+    """The one "argument omitted" marker for ``get_llm_settings(env_file=...)``."""
+
+    ENV_FILE = 0
 
 
-def get_llm_settings(env_file: Optional[str] = _UNSET_ENV_FILE) -> LLMSettings:
+_UNSET_ENV_FILE = _Unset.ENV_FILE
+_cached_env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE
+
+
+def get_llm_settings(env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE) -> LLMSettings:
     """Get the LLM settings instance, refreshed at most once per ``_SETTINGS_TTL_SECONDS``
     (default 60s, override via ``PYUTILZ_LLM_SETTINGS_TTL_SECONDS``).
 

@@ -6,19 +6,19 @@ import pytest
 import pandas as pd
 import numpy as np
 
-try:
-    import py_ci_shared  # noqa: F401
-except ImportError:
-    # py-ci-shared requires python>=3.9 and CI does not install it on the 3.8 legs. These meta-tests import it at
-    # module level, so without this they fail collection there instead of simply not running.
-    collect_ignore = [
-        "test_meta/test_deferred_drift.py",
-        "test_meta/test_markers_registered.py",
-        "test_meta/test_meta_meta.py",
-        "test_meta/test_no_import_time_env_mutation.py",
-        "test_meta/test_no_value_bearing_asserts.py",
-        "test_meta/test_no_top_level_side_effects.py",
-    ]
+if sys.version_info < (3, 9):
+    # py-ci-shared requires python>=3.9, so requirements-dev.txt's marker skips it on the 3.8 legs. These meta-tests
+    # import it at module level, so without this they fail collection there instead of simply not running. On 3.9+
+    # nothing is ignored: a missing or broken install must fail those gates, never drop them silently.
+    # Derived rather than listed, so a new gate module is covered without editing this file.
+    import re as _re
+    from pathlib import Path as _Path
+
+    _here = _Path(__file__).resolve().parent
+    _top_level_import = _re.compile(r"^(?:from|import) py_ci_shared\b", _re.M)
+    collect_ignore = sorted(
+        p.relative_to(_here).as_posix() for p in _here.rglob("test_*.py") if _top_level_import.search(p.read_text(encoding="utf-8", errors="replace"))
+    )
 
 # ===========================================================================
 # Warning policy (F12, 2026-09-02)
@@ -138,8 +138,6 @@ def pytest_addoption(parser):
         "--refresh-logger-baseline",
         "--refresh-annotation-baseline",
         "--refresh-docstring-baseline",
-        "--refresh-bare-except-baseline",
-        "--refresh-console-unicode-baseline",
         "--refresh-debt-baseline",
         "--refresh-resource-handle-baseline",
         "--refresh-lock-discipline-baseline",
@@ -148,11 +146,10 @@ def pytest_addoption(parser):
         "--refresh-unused-param-baseline",
     ):
         parser.addoption(_flag, action="store_true", default=False, help=f"rewrite the corresponding meta-test baseline ({_flag})")
-    try:
-        # py-ci-shared itself requires python>=3.9 (see the dev-dependency marker in
-        # pyproject.toml), so it's absent on the 3.8 CI leg -- without this guard the
-        # import breaks conftest loading for the WHOLE test suite on that leg, not just
-        # the code-audit test.
+    # py-ci-shared itself requires python>=3.9 (see the marker in requirements-dev.txt), so it is absent on the 3.8 CI
+    # legs, where importing it here would break conftest loading for the WHOLE suite. On 3.9+ the import is unguarded:
+    # a missing install must fail, not quietly drop the refresh flags.
+    if sys.version_info >= (3, 9):
         from py_ci_shared.code_audit_meta import register_refresh_option
 
         register_refresh_option(parser)  # --refresh-code-audit-baseline, shared with every other consumer
@@ -160,8 +157,6 @@ def pytest_addoption(parser):
         from py_ci_shared.loc_budget import register_refresh_option as register_loc_budget_refresh_option
 
         register_loc_budget_refresh_option(parser)  # --refresh-loc-budget-baseline
-    except ImportError:
-        pass
 
 
 def pytest_collection_modifyitems(config, items):

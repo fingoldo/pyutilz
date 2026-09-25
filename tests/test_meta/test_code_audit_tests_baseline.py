@@ -105,12 +105,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-# py-ci-shared requires python>=3.9 (pyproject.toml dev-dependency marker), so it is not
-# installed on the 3.8 CI leg -- skip cleanly there instead of erroring at collection.
-py_ci_shared_code_audit_meta = pytest.importorskip("py_ci_shared.code_audit_meta")
-assert_no_new_code_audit_findings = py_ci_shared_code_audit_meta.assert_no_new_code_audit_findings
+# py-ci-shared requires python>=3.9, so tests/conftest.py ignores this module on the 3.8 legs; on every other leg a
+# missing install fails collection instead of skipping the gate.
+from py_ci_shared.code_audit_meta import assert_no_new_code_audit_findings
 
 TESTS_DIR = Path(__file__).resolve().parent.parent
 _BASELINE_PATH = Path(__file__).resolve().parent / "_code_audit_tests_baseline.json"

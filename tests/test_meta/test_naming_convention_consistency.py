@@ -16,7 +16,7 @@ Mechanism: per module, classify each public top-level function name against
 ``^[a-z_][a-z0-9_]*$``. If a module has BOTH matching and non-matching names, flag the
 non-matching ones.
 
-Baseline-JSON snapshot (same idiom as ``test_no_bare_except.py``), not an unconditional fail: the
+Baseline-JSON snapshot (same idiom as ``test_logger_lazy_formatting.py``), not an unconditional fail: the
 5 non-conforming names currently in this codebase are all DELIBERATE, reviewed exceptions --
 - ``EnsurePgTableExists``/``ReadTableIntoDic``/``ReadTableIntoDicReversed``/
   ``GetIdByKeyFieldAndInsertIfNeeded``/``MakeSetExcludedClause``: intentionally-kept, thin,

@@ -6,6 +6,9 @@ import re
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- dead argparse flags ---------------------------------------------------
 
@@ -88,15 +91,19 @@ def scan_dead_cli_flags(
 
     # Build corpus of `.attr` usages across the whole tree once, up front.
     used_attrs: set[str] = set()
+    unreadable: list[str] = []
     for py in py_files:
         try:
             src = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         used_attrs.update(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)\b", src))
         # getattr(args, "name") / vars(args)["name"] dynamic-access shapes.
         used_attrs.update(re.findall(r"""getattr\s*\([^,]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']""", src))
         used_attrs.update(re.findall(r"""vars\s*\([^)]*\)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]""", src))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
 
     for py in py_files:
         tree = _safe_parse(py)

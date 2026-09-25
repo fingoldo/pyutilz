@@ -5,6 +5,9 @@ import re
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, split_src_lines
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- non-idempotent SQL migrations ------------------------------------------
 
@@ -106,6 +109,7 @@ def scan_sql_migration_idempotency(
     """
     findings: list[Finding] = []
     excluded = set(exclude_dirs)
+    unreadable: list[str] = []
     for sql_path in root.glob(sql_glob):
         # Relative to the scan root: `sql_path.parts` is ABSOLUTE, so a repository checked out
         # below any component named `build`/`dist`/`env`/`.git`/... reported zero SQL findings.
@@ -113,7 +117,8 @@ def scan_sql_migration_idempotency(
             continue
         try:
             text = sql_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{sql_path}: {exc}")
             continue
         lines = split_src_lines(_strip_sql_comments(text))
         rel = sql_path.relative_to(root).as_posix()
@@ -151,4 +156,6 @@ def scan_sql_migration_idempotency(
                         ),
                     )
                 )
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return findings

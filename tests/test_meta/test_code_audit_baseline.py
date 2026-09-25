@@ -1,6 +1,6 @@
 """Meta-test: run pyutilz.dev.code_audit's own scanners against pyutilz's
 own source (self-scan), baseline-driven per this directory's snapshot-style
-meta-test convention (see test_no_bare_except.py). Mutable default arguments are this self-scan's
+meta-test convention (see test_logger_lazy_formatting.py). Mutable default arguments are this self-scan's
 ``mutable_default`` check alone: it flags every constructor the retired hand-rolled
 test_no_mutable_defaults.py did, ChainMap and the numpy/pandas containers included.
 
@@ -312,12 +312,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-# py-ci-shared requires python>=3.9 (pyproject.toml dev-dependency marker), so it's not
-# installed on the 3.8 CI leg -- skip cleanly there instead of erroring at collection.
-py_ci_shared_code_audit_meta = pytest.importorskip("py_ci_shared.code_audit_meta")
-assert_no_new_code_audit_findings = py_ci_shared_code_audit_meta.assert_no_new_code_audit_findings
+# py-ci-shared requires python>=3.9, so tests/conftest.py ignores this module on the 3.8 legs; on every other leg a
+# missing install fails collection instead of skipping the gate.
+from py_ci_shared.code_audit_meta import assert_no_new_code_audit_findings
 
 import pyutilz
 

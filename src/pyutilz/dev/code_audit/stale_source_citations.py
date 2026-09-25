@@ -9,6 +9,9 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterator
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- a comment citing `file:line` that no longer resolves ------------------------------------------------
 
@@ -126,10 +129,12 @@ def scan_stale_source_citations(
     """
     findings: list[Finding] = []
     index: tuple[dict[str, list[Path]], frozenset[str]] | None = None
+    unreadable: list[str] = []
     for py in _iter_py_files(root, exclude_dirs):
         try:
             src = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         # A citation in a comment is a citation in the raw text too, so a file with none skips the tokenizer, which
         # is the whole cost of this scan (8 of 9 s on a 1,500-file tree; most files cite nothing).
@@ -164,4 +169,6 @@ def scan_stale_source_citations(
                     snippet=_line_text(src_lines, lineno),
                     detail=f"{problem}. A location citation that no longer resolves reads as a precise pointer; point it at the current place, or drop the line number.",
                 ))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return findings

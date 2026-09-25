@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import FrozenSet
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _is_excluded
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- internal import-graph cycle detection ----------------------------------
 
@@ -100,7 +103,8 @@ def _package_roots(root: Path) -> list[Path]:
     try:
         # `__init__.py` is not required: PEP 420 namespace packages are importable too.
         subs.extend(d for d in sorted(root.iterdir()) if d.is_dir() and next(d.rglob("*.py"), None) is not None)
-    except OSError:
+    except OSError as exc:
+        logger.warning("cannot read %s, so it was not scanned: %s", root, exc)
         pass
     if not subs or next(root.glob("*.py"), None) is not None:
         subs.append(root)

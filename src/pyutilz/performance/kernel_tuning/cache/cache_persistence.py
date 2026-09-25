@@ -159,7 +159,7 @@ class _CachePersistenceMixin(_CacheState):
             try:
                 with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
                 continue  # os.replace is atomic; a parse failure is a foreign/partial file -> skip
             if rec.get("schema_version") != SCHEMA_VERSION:
                 continue
@@ -251,7 +251,7 @@ class _CachePersistenceMixin(_CacheState):
             try:
                 with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
                 continue
             if rec.get("schema_version") != SCHEMA_VERSION:
                 continue
@@ -375,7 +375,7 @@ class _CachePersistenceMixin(_CacheState):
                 entry = rec.get("entry")
                 if isinstance(entry, dict):
                     ts = entry.get("tuned_utc") or ""
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):  # swallow-ok: an unreadable entry sorts as oldest and is evicted first, which is the intended outcome
                 pass  # unreadable -- sorts as oldest (ts=""), evicted first
             try:
                 mtime = os.path.getmtime(p)

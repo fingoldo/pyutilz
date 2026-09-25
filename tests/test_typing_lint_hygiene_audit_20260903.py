@@ -179,9 +179,10 @@ def test_f05_add_weighted_aggregates_declares_a_selector():
 # ---- F06: the blocking ruff gate is pinned in practice, not just on paper -----------------------
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="py-ci-shared requires python>=3.9")
 def test_f06_pin_check_reports_a_mismatch():
     """`language: system` means the hook runs whatever ruff is installed; this gate is what says so."""
-    pytest.importorskip("py_ci_shared.pinned_tool_versions")  # py-ci-shared needs python>=3.9; absent on the 3.8 legs
+    import py_ci_shared.pinned_tool_versions  # noqa: F401  # a missing install fails; only the 3.8 legs skip, via the mark
     out = subprocess.run(  # nosec B603 - fixed argv (sys.executable plus literal flags), shell=False
         [sys.executable, "-m", "py_ci_shared.pinned_tool_versions"], capture_output=True, text=True, check=False, cwd=str(REPO_ROOT)
     )
@@ -190,9 +191,10 @@ def test_f06_pin_check_reports_a_mismatch():
     assert out.returncode == 0 or "pinned-tool-version mismatch" in out.stdout, (out.returncode, out.stdout, out.stderr)
 
 
+@pytest.mark.skipif(sys.version_info < (3, 9), reason="py-ci-shared requires python>=3.9")
 def test_f06_pin_check_fails_on_a_different_pin(tmp_path):
     """The gate has teeth: a pyproject pinning another ruff than the shared version fails it."""
-    pytest.importorskip("py_ci_shared.pinned_tool_versions")  # py-ci-shared needs python>=3.9; absent on the 3.8 legs
+    import py_ci_shared.pinned_tool_versions  # noqa: F401  # a missing install fails; only the 3.8 legs skip, via the mark
     text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     bad = re.sub(r'"ruff==[0-9][^";\s]*', '"ruff==0.0.1', text, count=1)
     assert bad != text, "pyproject.toml has no exact ruff pin to alter"

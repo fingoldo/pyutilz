@@ -59,9 +59,21 @@ class DerivedTimeoutMixin:
         clamped - `_get_timeout`'s own answer still wins outright when it is larger.
         """
         base = self._get_timeout(self.model_name)
-        requested = body.get("max_tokens") or body.get("max_completion_tokens") or 0
+        # Read with explicit None checks, never `or`: 0 is not an absent budget but the "model's real ceiling" sentinel
+        # that generate() resolves to max_output_tokens, and `or` used to turn it into "no size stated" and the name default.
+        requested = body.get("max_tokens")
+        if requested is None:
+            requested = body.get("max_completion_tokens")
+        if requested is None:
+            return base
         try:
-            needed = float(requested) * self._seconds_per_output_token
+            tokens = float(requested)
         except (TypeError, ValueError):
             return base
+        if tokens <= 0:
+            ceiling = getattr(self, "max_output_tokens", None)
+            if ceiling is None:
+                return base
+            tokens = float(ceiling)
+        needed = tokens * self._seconds_per_output_token
         return max(base, min(needed, self._max_derived_timeout_s))

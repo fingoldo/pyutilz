@@ -10,11 +10,13 @@
 # Provides the `python -m py_ci_shared.*` commands used by .pre-commit-config.yaml's local hooks
 # (format_warn, black_filtered_apply, advisory_warn). py-ci-shared itself requires Python >=3.9;
 # the marker keeps this file usable on a py3.8 interpreter, where those hooks are not needed.
-py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared.git ; python_version >= '3.9'
+# Pinned to one full SHA shared with every workflow `uses:` ref, the reusable workflows' py-ci-shared-ref input and the
+# pre-commit rev: an unpinned install tracked master, so any py-ci-shared push could change this repo's gates unreviewed.
+py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared@6a8e3829678dab35e21d380292f7b34ae84c8d14 ; python_version >= '3.9'  # v1.17.0  # pragma: allowlist secret
 
 # pytest-randomly moved to pyproject.toml's [dev] extra on 2026-09-03 (packaging audit 03/F02).
-# It was declared here alone, and NO workflow installs this file -- `grep -rn requirements-dev
-# .github/` finds only prose -- so the test-order randomisation the suite is designed around
+# It was declared here alone, and no workflow installed this file then (ci.yml and mypy-full.yml do
+# now, for py-ci-shared) -- so the test-order randomisation the suite is designed around
 # (and the thinc seed-overflow compat shim in tests/conftest.py that exists only for it) ran on
 # none of the 21 CI legs. Unlike py-ci-shared above it is an ordinary PyPI package with no direct
 # reference, so nothing kept it out of project metadata; every workflow's `[dev]` install now

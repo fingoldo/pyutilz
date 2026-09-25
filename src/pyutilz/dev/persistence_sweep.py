@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import dataclasses
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "TEXT_DATA_TYPES",
@@ -115,11 +118,13 @@ def file_sentinel_locations(sentinels: Mapping[str, str], files: Iterable[Any]) 
     ``ZZSENT`` sentinels are ASCII either way, but a caller's own sentinels need not be.
     """
     found: Dict[str, List[str]] = {name: [] for name in sentinels}
+    unreadable: list[str] = []
     for f in files:
         try:
             with open(f, encoding="utf-8", errors="replace") as fh:
                 raw = fh.read()
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{f}: {exc}")
             continue
         haystacks = [raw]
         whole = _decoded_json(raw)
@@ -132,6 +137,8 @@ def file_sentinel_locations(sentinels: Mapping[str, str], files: Iterable[Any]) 
         for name, sentinel in sentinels.items():
             if any(sentinel in h for h in haystacks):
                 found[name].append(str(f))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return found
 
 

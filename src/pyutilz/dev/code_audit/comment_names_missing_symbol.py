@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import io
 import re
+import threading
 import tokenize
 from collections import OrderedDict
 from pathlib import Path
@@ -67,6 +68,8 @@ def _defined_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
 # in-process edit-then-rescan (a scanner's own tmp fixture) must not get a stale answer.
 _COMMENT_TEXTS_CACHE: "OrderedDict[tuple[str, int, int], list[tuple[str, int]]]" = OrderedDict()
 _COMMENT_TEXTS_CACHE_MAX_ENTRIES = 20000
+# Hit (move_to_end-then-read) and miss (insert-then-evict) must not interleave across threads.
+_COMMENT_TEXTS_LOCK = threading.Lock()
 
 
 def _comment_texts(py: Path) -> list[tuple[str, int]]:
@@ -77,10 +80,11 @@ def _comment_texts(py: Path) -> list[tuple[str, int]]:
     except OSError:
         return out
     cache_key = (str(py), stat.st_mtime_ns, stat.st_size)
-    cached = _COMMENT_TEXTS_CACHE.get(cache_key)
-    if cached is not None:
-        _COMMENT_TEXTS_CACHE.move_to_end(cache_key)
-        return cached
+    with _COMMENT_TEXTS_LOCK:
+        cached = _COMMENT_TEXTS_CACHE.get(cache_key)
+        if cached is not None:
+            _COMMENT_TEXTS_CACHE.move_to_end(cache_key)
+            return cached
 
     try:
         source = py.read_text(encoding="utf-8", errors="replace")
@@ -102,9 +106,10 @@ def _comment_texts(py: Path) -> list[tuple[str, int]]:
                     # twenty lines into a docstring must not be reported at the definition line
                     # (and a module docstring's, at line 1 always).
                     out.append((doc, getattr(node.body[0], "lineno", getattr(node, "lineno", 1))))
-    _COMMENT_TEXTS_CACHE[cache_key] = out
-    while len(_COMMENT_TEXTS_CACHE) > _COMMENT_TEXTS_CACHE_MAX_ENTRIES:
-        _COMMENT_TEXTS_CACHE.popitem(last=False)
+    with _COMMENT_TEXTS_LOCK:
+        _COMMENT_TEXTS_CACHE[cache_key] = out
+        while len(_COMMENT_TEXTS_CACHE) > _COMMENT_TEXTS_CACHE_MAX_ENTRIES:
+            _COMMENT_TEXTS_CACHE.popitem(last=False)
     return out
 
 

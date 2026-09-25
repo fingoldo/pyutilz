@@ -1,28 +1,110 @@
-[
-  "data/pandaslib/frames.py::isinstance(df, pd.DataFrame)",
-  "data/pandaslib/frames.py::max_vars >= 0",
-  "data/polarslib/aggregations.py::engine in ('cpu', 'gpu')",
-  "data/polarslib/aggregations.py::isinstance(filter_values, list)",
-  "data/polarslib/aggregations.py::num_no_filter <= 1",
-  "database/db/connection.py::db_flavor in ('postgres', 'mysql')",
-  "database/db/schema.py::partition_size in ('day', 'week', 'month', 'year')",
-  "database/db/upsert.py::field in fields_names",
-  "database/db/upsert.py::field not in fields_names",
-  "database/db/upsert.py::field not in fields_types",
-  "database/db/upsert.py::field_name in fields_names",
-  "database/db/upsert.py::hash_field in fields_names",
-  "database/db/upsert.py::len(conflict_fields) > 0",
-  "database/db/upsert.py::len(fields_names) > 0",
-  "dev/code_audit/async_primitive_reinit.py::isinstance(node, ast.Call)",
-  "dev/code_audit/credential_logging.py::isinstance(a, (ast.Name, ast.Attribute))",
-  "dev/code_audit/log_throttle.py::isinstance(node, ast.Call)",
-  "dev/code_audit/missed_await.py::isinstance(call.func, ast.Attribute)",
-  "dev/logginglib.py::isinstance(f_kwargs, dict)",
-  "dev/logginglib.py::isinstance(f_params, dict)",
-  "dev/logginglib.py::isinstance(filtered_params, dict)",
-  "dev/logginglib.py::isinstance(kwargs, dict)",
-  "dev/logginglib.py::source_type in ('db_table', 'file')",
-  "system/monitoring.py::isinstance(data, (type(None), dict))",
-  "system/parallel.py::step > 0",
-  "text/strings/configfiles.py::isinstance(variables, list)"
-]
+{
+  "entries": {
+    "data/pandaslib/frames.py::isinstance(df, pd.DataFrame)": {
+      "count": 1,
+      "note": ""
+    },
+    "data/pandaslib/frames.py::max_vars >= 0": {
+      "count": 1,
+      "note": ""
+    },
+    "data/polarslib/aggregations.py::engine in ('cpu', 'gpu')": {
+      "count": 1,
+      "note": ""
+    },
+    "data/polarslib/aggregations.py::isinstance(filter_values, list)": {
+      "count": 1,
+      "note": ""
+    },
+    "data/polarslib/aggregations.py::num_no_filter <= 1": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/connection.py::db_flavor in ('postgres', 'mysql')": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/schema.py::partition_size in ('day', 'week', 'month', 'year')": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::field in fields_names": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::field not in fields_names": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::field not in fields_types": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::field_name in fields_names": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::hash_field in fields_names": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::len(conflict_fields) > 0": {
+      "count": 1,
+      "note": ""
+    },
+    "database/db/upsert.py::len(fields_names) > 0": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/code_audit/async_primitive_reinit.py::isinstance(node, ast.Call)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/code_audit/credential_logging.py::isinstance(a, (ast.Name, ast.Attribute))": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/code_audit/log_throttle.py::isinstance(node, ast.Call)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/code_audit/missed_await.py::isinstance(call.func, ast.Attribute)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/logginglib.py::isinstance(f_kwargs, dict)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/logginglib.py::isinstance(f_params, dict)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/logginglib.py::isinstance(filtered_params, dict)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/logginglib.py::isinstance(kwargs, dict)": {
+      "count": 1,
+      "note": ""
+    },
+    "dev/logginglib.py::source_type in ('db_table', 'file')": {
+      "count": 1,
+      "note": ""
+    },
+    "system/monitoring.py::isinstance(data, (type(None), dict))": {
+      "count": 1,
+      "note": ""
+    },
+    "system/parallel.py::step > 0": {
+      "count": 1,
+      "note": ""
+    },
+    "text/strings/configfiles.py::isinstance(variables, list)": {
+      "count": 1,
+      "note": ""
+    }
+  },
+  "gate": "value-asserts",
+  "schema": 1
+}

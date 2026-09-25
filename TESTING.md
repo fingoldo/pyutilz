@@ -54,9 +54,8 @@ commit time. Selected entries:
 | `test_api_stability.py`                 | Snapshots the public surface (top-level `__all__`, alias map, public symbol set with signatures, class MROs). Renames / removals fail.               |
 | `test_resource_handle_safety.py`        | Every `open()` / `Popen()` / `NamedTemporaryFile()` call is context-managed.                                                                         |
 | `test_encoding_consistency.py`          | Every builtin `open(...)` in production code passes `encoding=` (Windows cp1251 safety).                                                             |
-| `test_no_unicode_in_console_output.py`  | Snapshot-based check for non-ASCII string literals in `print(...)` / `logger.*(...)` calls (Windows stdout safety).                                  |
 | `test_provider_cache_concurrency.py`    | 20 concurrent `get_llm_provider()` callers share one instance; constructor runs exactly once.                                                        |
-| `test_no_import_cycles.py`              | Tarjan's SCC over the AST-built import graph; flags multi-node cycles.                                                                               |
+| `test_shared_gates_adopted.py`          | py-ci-shared gates, zero-tolerance: import cycles and import order, seed range, sentinel reads, stale citations, cache locks, swallowed failures. |
 | `test_logger_lazy_formatting.py`        | Logger calls use `%`-style formatting (lazy) instead of f-strings (eager) so messages aren't formatted when level is disabled.                       |
 | `test_deferred_drift.py`                | Counts every `_USER_DEFERRED_*` whitelist across the meta-test suite. Fails when a whitelist grows; refresh via `--refresh-debt-baseline`.           |
 | `test_shared_checks_wired.py`           | Runs the cross-project checks py-ci-shared already ships: 1000-LOC module budget over `src/` **and** `tests/`, per-job CI `timeout-minutes`, reviewed `continue-on-error`, entry-point resolvability, markdown-link targets, git-dependency pinning, CI reachability of every `tests/` subdir. |

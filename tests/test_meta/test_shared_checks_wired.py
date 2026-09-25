@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-py_ci_shared = pytest.importorskip("py_ci_shared", reason="py-ci-shared is a dev-only git dependency (requirements-dev.txt)")
+import py_ci_shared  # noqa: F401  # conftest ignores this module on python 3.8 only; elsewhere a missing install must fail
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
@@ -40,13 +40,8 @@ _JOBS_EXEMPT_FROM_TIMEOUT: frozenset[str] = frozenset()
 # "any continue-on-error appearing in a blocking workflow is a finding".
 _REVIEWED_ADVISORY_STEPS: set[str] = set()
 
-# ``py-ci-shared`` is a first-party upstream owned by this repo's own maintainer, so the
-# supply-chain threat a commit-SHA pin defends against does not apply: whoever could move
-# that ref could push here directly. It is also deliberately kept OUT of [project]
-# metadata (a git+https direct reference makes the distribution unpublishable on PyPI) --
-# hence the two separate assertions below, with the pyproject one allowing NO exemption at
-# all so a git URL reappearing there fails immediately.
-_FIRST_PARTY_GIT_PREFIXES = ("git+https://github.com/fingoldo/py-ci-shared",)
+# py-ci-shared stays OUT of [project] metadata (a git+https direct reference makes the distribution unpublishable on
+# PyPI), so the pyproject assertion below allows no exemption and a git URL reappearing there fails immediately.
 
 # ``tests/test_meta`` and the three domain subdirs are all reached by ci.yml's pathless
 # ``pytest -m "not gpu" ...`` run, which collects from rootdir. Nothing is intentionally
@@ -107,10 +102,12 @@ def test_no_undeclared_continue_on_error(workflow_name: str):
 
 
 def test_declared_entry_points_resolve():
-    """Every console script / entry point imports and exposes its named attribute."""
+    """Every console script / entry point imports and exposes its named attribute.
+
+    pyutilz is a library and declares none today (min_entries=0); the check still resolves any that are added.
+    """
     from py_ci_shared.entry_points_resolvable import assert_all_entry_points_resolvable
 
-    # pyutilz is a library and declares no console scripts or entry points, so zero declared is the expected count.
     assert_all_entry_points_resolvable(PYPROJECT, min_entries=0)
 
 
@@ -131,25 +128,12 @@ def test_pyproject_declares_no_git_dependency_at_all():
     assert_all_git_dependencies_pinned(PYPROJECT)
 
 
-def test_dev_requirements_git_dependencies_are_pinned_or_first_party(tmp_path):
-    """Any THIRD-PARTY git dependency added to requirements-dev.txt must carry a full
-    commit SHA; only the maintainer's own upstreams may float.
-
-    The shared gate parses its input as pyproject TOML since py-ci-shared 1.17, so each requirement line is carried
-    into a synthetic ``[project] dependencies`` array and checked by the gate's own matcher. The count assertion keeps
-    the check from passing on an empty array if the file's layout changes.
-    """
-    import json
-
+def test_dev_requirements_git_dependencies_are_pinned_or_first_party():
+    """Every git dependency in requirements-dev.txt, first-party included, carries a full commit SHA."""
     from py_ci_shared.git_dependency_pins import assert_all_git_dependencies_pinned
 
-    lines = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
-    requirements = [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
-    assert sum("git+" in r for r in requirements) >= 1, "requirements-dev.txt no longer declares a git dependency; the check has no subject"
-    synthetic = tmp_path / "pyproject.toml"
-    body = "".join(f"  {json.dumps(r)},\n" for r in requirements)
-    synthetic.write_bytes(("[project]\ndependencies = [\n" + body + "]\n").encode("utf-8"))
-    assert_all_git_dependencies_pinned(synthetic, allow_unpinned_url_prefixes=_FIRST_PARTY_GIT_PREFIXES)
+    # First-party upstreams are pinned too (no exemption): every py-ci-shared ref is held to one SHA by the pin test.
+    assert_all_git_dependencies_pinned(REPO_ROOT / "requirements-dev.txt")
 
 
 def test_every_test_subdir_is_reachable_from_ci():
@@ -223,7 +207,7 @@ def test_no_tracked_generated_files():
 
 # Three optional numbers are tested for truth rather than for None, and all three are deliberate.
 # Listed verbatim with the reason rather than left out of the check: the point of a baseline is that
-# a FOURTH one has to be argued for here instead of appearing silently.
+# a FOURTH one has to be argued for here instead of appearing silently. Entries carry repo-relative paths.
 #
 #   connection.py  `itersize`  -- psycopg2 rejects a named-cursor itersize of 0, so 0 and None both
 #                                 correctly mean "leave the driver default alone".
@@ -237,9 +221,9 @@ def test_no_tracked_generated_files():
 # `> 0` already excluded zero, so the outer truthiness test decided nothing and only made the intent
 # read wrong; those are simplified in the source.
 _TRUTHINESS_BASELINE = (
-    "src/pyutilz/database/db/connection.py:203: `itersize` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `itersize is not None`.",
-    "src/pyutilz/llm/openrouter_provider/_health.py:578: `group_by_provider` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `group_by_provider is not None`.",
-    "src/pyutilz/text/strings/basics.py:128: `base` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `base is not None`.",
+    "src/pyutilz/database/db/connection.py: `itersize` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `itersize is not None`.",
+    "src/pyutilz/llm/openrouter_provider/_health.py: `group_by_provider` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `group_by_provider is not None`.",
+    "src/pyutilz/text/strings/basics.py: `base` is an optional number tested for TRUTH; 0 is a value a caller can mean, and this reads it as absent. Use `base is not None`.",
 )
 
 

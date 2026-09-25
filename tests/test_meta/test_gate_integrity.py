@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("py_ci_shared", reason="py-ci-shared is a dev-only git dependency (requirements-dev.txt)")
+import py_ci_shared  # noqa: F401  # conftest ignores this module on python 3.8 only; elsewhere a missing install must fail
 pytest.importorskip("yaml", reason="PyYAML is required to parse .pre-commit-config.yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -20,11 +20,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-# py-ci-shared requires python>=3.9 (dev-dependency marker), so it's absent on the 3.8 CI leg --
-# skip cleanly there instead of erroring at collection.
-gpu_timing_sync = pytest.importorskip("py_ci_shared.gpu_timing_sync", reason="py-ci-shared is a dev-only git dependency (requirements-dev.txt)")
+# py-ci-shared requires python>=3.9, so tests/conftest.py ignores this module on the 3.8 legs; on every other leg a
+# missing install fails collection instead of skipping the gate.
+from py_ci_shared import gpu_timing_sync
 
 import pyutilz
 

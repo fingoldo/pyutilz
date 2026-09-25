@@ -5,6 +5,9 @@ import re
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _safe_parse
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- round-trip-detectable mojibake ----------------------------------------
 
@@ -53,6 +56,7 @@ def scan_mojibake(
     correctly NOT flagged.
     """
     findings: list[Finding] = []
+    unreadable: list[str] = []
     for py in _iter_py_files(root, exclude_dirs):
         rel = py.relative_to(root).as_posix()
         try:
@@ -72,7 +76,8 @@ def scan_mojibake(
                 )
             )
             continue
-        except OSError:
+        except OSError as exc:
+            unreadable.append(f"{py}: {exc}")
             continue
         # _safe_parse also validates the file is parseable Python; reuse it as the gate (it is
         # applied AFTER the decode above so an undecodable file is reported, not silently dropped).
@@ -92,4 +97,6 @@ def scan_mojibake(
                         )
                     )
                     break  # one flag per line is enough to locate it
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return findings
