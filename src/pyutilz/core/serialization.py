@@ -76,8 +76,11 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
         # handler and reported as a plain None -- the caller believed a file had been written.
         raise TypeError(f"Unsupported fname type for serialize: {type(fname)}")
     if compression is not None:
-        assert isinstance(compression, int)  # nosec B101 - internal API-misuse guard on caller's zlib compression level arg, not a security boundary
-        assert compression >= -1 and compression <= 9  # nosec B101 - validates zlib's own accepted compression-level range (-1..9), not a security boundary
+        # API-misuse guard on the caller's zlib level, raised rather than asserted so ``python -O`` keeps it (as in unserialize()).
+        if not isinstance(compression, int):
+            raise TypeError(f"compression must be an int, got {type(compression).__name__}")
+        if not -1 <= compression <= 9:
+            raise ValueError(f"compression must be in -1..9 (zlib's accepted levels), got {compression}")
     try:
         data = pickle.dumps(obj)
         if compression is not None:

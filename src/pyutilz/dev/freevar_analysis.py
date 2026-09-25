@@ -19,7 +19,12 @@ still needs an INCOMING value for its first use. This shows up constantly in acc
 (``selected = [...]``, then repeated ``selected = [x for x in selected if ...]`` filters): the naive
 check misses it entirely; ``find_names_needing_incoming_value`` catches it.
 
-Known limitation: comprehension/generator-expression loop variables (``[x for x in xs]``) get a
+A range made of whole statements is analysed with :func:`pyutilz.dev.block_extract.name_events` (scope-aware,
+evaluation-ordered), which has none of the false positives below; to go further and actually lift the range into a
+helper, see :mod:`pyutilz.dev.block_extract`. The rest of this paragraph applies only to a range that starts or ends in
+the middle of a statement, where the line-range walk is the only option.
+
+Known limitation (mid-statement ranges): comprehension/generator-expression loop variables (``[x for x in xs]``) get a
 ``Store`` context for ``x`` in the AST just like a real assignment, and a comprehension's own scope
 is invisible to this line-range-only walk -- ``find_names_needing_incoming_value`` will report such
 loop variables as false positives ("needs incoming value") when their first appearance in the range
@@ -135,6 +140,13 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
     src = Path(path).read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(path))
 
+    # Whole statements in the range: use block_extract's scope-aware, evaluation-ordered events, which know that a
+    # comprehension's loop variable, a lambda's parameter or an ``except ... as e`` name is not a dependency (the
+    # false-positive class the line-range walk below reports).
+    statements = _maximal_statements(tree, start_line, end_line)
+    if statements is not None:
+        return _report_from_events(statements)
+
     # name -> list of (stmt_lineno, is_assign_target, col_offset, lineno, is_store) occurrences within
     # the range. The first three fields are the SORT key; ordering by the Name's own (lineno, col_offset)
     # got same-line accumulator patterns exactly backwards: in ``selected = [i for i in selected if i]``
@@ -148,6 +160,7 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
         """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier."""
 
         def __init__(self) -> None:
+            """Start outside any statement and outside an assignment target."""
             self.stmt_lineno = 0
             self.in_assign_target = False
 
@@ -231,6 +244,48 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
         free_names=sorted(free_names),
         needs_incoming_value=sorted(needs_incoming, key=lambda u: u.name),
     )
+
+
+def _maximal_statements(tree: ast.Module, start_line: int, end_line: int):
+    """The outermost statements lying fully inside the range, or None when a statement straddles a range boundary
+    (then only the line-range walk is meaningful)."""
+    out: list = []
+
+    def walk(node) -> bool:
+        """Collect fully-contained statements; False when one straddles a range boundary."""
+        for child in ast.iter_child_nodes(node):
+            if not isinstance(child, ast.stmt):  # expressions, except handlers, match cases: statements may sit below
+                if not walk(child):
+                    return False
+                continue
+            s, e = child.lineno, _end_line(child)
+            if start_line <= s and e <= end_line:  # fully inside: take it whole
+                out.append(child)
+            elif e < start_line or s > end_line:  # disjoint
+                continue
+            elif s < start_line and e > end_line:  # encloses the whole range: look inside
+                if not walk(child):
+                    return False
+            else:  # straddles a boundary of the range
+                return False
+        return True
+
+    return out if walk(tree) and out else None
+
+
+def _report_from_events(statements: list) -> "FreeVarReport":
+    """Free names and names needing an incoming value, from evaluation-ordered events of whole statements."""
+    from pyutilz.dev.block_extract import name_events
+
+    first: dict = {}
+    stored: set = set()
+    for line, kind, name in name_events(statements):
+        first.setdefault(name, (line, kind))
+        if kind == "store":
+            stored.add(name)
+    free = sorted(n for n, (_, k) in first.items() if n not in stored)
+    incoming = sorted((IncomingNameUse(name=n, first_load_lineno=ln) for n, (ln, k) in first.items() if n in stored and k == "load"), key=lambda u: u.name)
+    return FreeVarReport(free_names=free, needs_incoming_value=incoming)
 
 
 def format_report(report: FreeVarReport, path: Union[str, Path], start_line: int, end_line: int) -> str:

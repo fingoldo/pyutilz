@@ -1,6 +1,4 @@
 [
-  "core/serialization.py::compression >= -1 and compression <= 9",
-  "core/serialization.py::isinstance(compression, int)",
   "data/pandaslib/frames.py::isinstance(df, pd.DataFrame)",
   "data/pandaslib/frames.py::max_vars >= 0",
   "data/polarslib/aggregations.py::engine in ('cpu', 'gpu')",

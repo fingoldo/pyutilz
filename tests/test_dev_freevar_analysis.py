@@ -344,3 +344,18 @@ def test_the_back_imported_module_actually_loads_and_runs(tmp_path, monkeypatch)
     monkeypatch.syspath_prepend(str(tmp_path))
     module = importlib.import_module("backpkg.big")
     assert module.keep_me(1) == 4, "the moved function must still resolve the constant left behind"
+
+
+def test_whole_statement_range_has_no_comprehension_false_positive(tmp_path):
+    """The documented false-positive class (a comprehension loop variable reported as needing an incoming value) is gone
+    for a range of whole statements: the scope-aware events know ``x`` belongs to the comprehension."""
+    src = """\
+        def outer(xs, x):
+            ys = [x for x in xs]
+            x = len(ys)
+            return x
+    """
+    p = _write(tmp_path, src)
+    report = analyze_range(p, 2, 3)
+    assert "x" not in {u.name for u in report.needs_incoming_value}
+    assert report.free_names == ["len", "xs"]

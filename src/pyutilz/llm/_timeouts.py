@@ -16,6 +16,7 @@ class DerivedTimeoutMixin:
     model_name: str
 
     def _get_timeout(self, model: str) -> float:  # pragma: no cover - supplied by the provider
+        """The model-name timeout floor; the provider this mixes into supplies it."""
         raise NotImplementedError
 
     #: Seconds of headroom to allow per requested output token. A 30 tok/s floor is deliberately
