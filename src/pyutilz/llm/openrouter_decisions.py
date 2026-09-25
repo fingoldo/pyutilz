@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 import httpx
+
+from pyutilz.llm.exceptions import LLMProviderError
 from tenacity import AsyncRetrying, Retrying, retry_if_exception, stop_after_attempt
 from tenacity.wait import wait_base
 
@@ -45,8 +47,11 @@ DEFAULT_MAX_ATTEMPTS = 5
 RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 524, 529})
 
 
-class OpenRouterDecisionsError(RuntimeError):
-    """A failed decisions call: an HTTP error with OpenRouter's ``{"error": {"code", "message"}}`` envelope, or a bad body."""
+class OpenRouterDecisionsError(LLMProviderError, RuntimeError):
+    """A failed decisions call: an HTTP error with OpenRouter's ``{"error": {"code", "message"}}`` envelope, or a bad body.
+
+    Rooted at ``LLMProviderError`` (with ``RuntimeError`` kept for existing callers) so the domain root catches it.
+    """
 
     def __init__(self, message: str, *, status_code: Optional[int] = None, code: Any = None, raw: Any = None) -> None:
         """Keep the HTTP status, the envelope's ``code`` and the raw body next to the message."""

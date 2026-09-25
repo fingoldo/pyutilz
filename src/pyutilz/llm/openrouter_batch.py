@@ -31,6 +31,8 @@ from typing import Any
 
 import httpx
 
+from pyutilz.llm.exceptions import LLMProviderError
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://openrouter.ai/api/v1"
@@ -38,8 +40,12 @@ TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 CHAT_ENDPOINT = "/v1/chat/completions"
 
 
-class OpenRouterBatchError(RuntimeError):
-    """A batch-level failure: rejected submit, terminal non-completed status, or deadline hit."""
+class OpenRouterBatchError(LLMProviderError, RuntimeError):
+    """A batch-level failure: rejected submit, terminal non-completed status, or deadline hit.
+
+    Rooted at ``LLMProviderError`` so ``except LLMProviderError`` catches it like every other provider failure; the
+    ``RuntimeError`` base keeps existing ``except RuntimeError`` callers working.
+    """
 
 
 @dataclass(frozen=True)
