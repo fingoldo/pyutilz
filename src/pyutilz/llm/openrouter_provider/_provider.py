@@ -469,6 +469,20 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         mandatory for this endpoint and cannot be disabled" and fail the WHOLE call. Neither the catalogue's
         ``supported_parameters`` nor its reasoning block distinguishes them from the six, so the fallback is
         keyed on that refusal (`_body_after_rejected_request`) and remembered per model id for the process.
+
+        Re-measured 2026-09-25 on pinned upstreams, one short JSON question, ``max_tokens`` 2000, billed reasoning
+        tokens per setting (upstream default / ``enabled: False`` / minimal / low / medium / high):
+
+        z-ai/glm-5.3-flash @morph: 1607 / HTTP 400 "Reasoning is mandatory" / 0 / 93 / 87 / 30. Its off switch
+        is therefore the minimal-effort fallback above, which here does reach 0 tokens.
+        deepseek/deepseek-v4.1-flash @morph: 1046 / 0 / 789 / 1273 / 2000 (all of max_tokens, no answer) / 774.
+        ``enabled: False`` is the real off; the efforts are not monotone, and medium ran away to the cap on a
+        one-word question, so a caller that enables reasoning must bound ``max_tokens`` for the answer it needs.
+        google/gemini-3-flash-preview @google-ai-studio: 0 / 0 / 0 / 220 / 151 / 181. Off works; its default is
+        already no reasoning.
+
+        By then the catalogue did expose the difference: glm's entry carries ``reasoning.mandatory: true`` with
+        efforts max/high/low only. The refusal-keyed fallback stays, since older entries lack the field.
         """
         enabled, effort = self._normalize_thinking(thinking)
         if not enabled:
