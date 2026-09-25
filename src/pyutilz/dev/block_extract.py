@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
-__all__ = ["ExtractionPlan", "ExtractionResult", "name_events", "plan_extraction", "apply_extraction", "import_lines", "absolutise_relative_imports"]
+__all__ = ["ExtractionPlan", "ExtractionResult", "rename_in_function", "name_events", "plan_extraction", "apply_extraction", "import_lines", "absolutise_relative_imports"]
 
 _LOOPS = (ast.For, ast.AsyncFor, ast.While)
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -376,13 +376,53 @@ def import_lines(path: Union[str, Path], module: str, names: Iterable[str]) -> l
     return [origin.get(n, f"from {module} import {n}") for n in names]
 
 
-def _to_state(text: str, names: set, state: str) -> str:
-    """``name`` -> ``state.name`` for the given names, token by token (comments and layout untouched). Attribute names
-    (``obj.name``) and keyword-argument names (``f(name=...)``) are left alone."""
+def rename_in_function(path: Union[str, Path], func: str, mapping: dict) -> int:
+    """Rewrite every use of the local names in ``mapping`` inside ``func`` to the mapped expression (e.g.
+    ``{"_hybrid_orth_pre_recipes": "recipes.hybrid_orth"}``), at token level so comments and layout survive.
+
+    Refuses (``ValueError``) when a name is a parameter of ``func``, is read by a nested scope (a closure would still
+    see the old name), appears inside an f-string, or ``func`` calls ``locals``/``vars``/``eval``/``exec``. After the
+    rewrite the function is re-parsed and must contain no ``Name`` node for any mapped name. Returns the number of
+    occurrences rewritten.
+    """
+    path = Path(path)
+    raw = path.read_bytes().decode("utf-8")
+    nl = "\r\n" if "\r\n" in raw else "\n"
+    src = raw.replace("\r\n", "\n")
+    fn = _find_function(ast.parse(src), func)
+    names = set(mapping)
+    if names & _Events._params(fn.args):
+        raise ValueError(f"parameters cannot be renamed: {sorted(names & _Events._params(fn.args))}")
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("locals", "vars", "eval", "exec"):
+            raise ValueError(f"{func} calls {node.func.id}() at line {node.lineno}; renaming locals would change what it sees")
+        if isinstance(node, ast.JoinedStr) and any(isinstance(s, ast.Name) and s.id in names for s in ast.walk(node)):
+            raise ValueError(f"a renamed name is used inside an f-string at line {node.lineno}")
+        if isinstance(node, _SCOPES) and node is not fn and any(isinstance(s, ast.Name) and s.id in names for s in ast.walk(node)):
+            raise ValueError(f"a renamed name is used by a nested scope at line {node.lineno}")
+    lines = src.splitlines(keepends=True)
+    start, end = fn.body[0].lineno, fn.end_lineno
+    body = "".join(lines[start - 1 : end])
+    edits = _name_token_positions(body, names)
+    for row, col, name in sorted(edits, reverse=True):
+        ln = lines[start - 1 + row - 1]
+        lines[start - 1 + row - 1] = ln[:col] + mapping[name] + ln[col + len(name) :]
+    new_src = "".join(lines)
+    fn2 = _find_function(ast.parse(new_src), func)
+    left = sorted({s.id for s in ast.walk(fn2) if isinstance(s, ast.Name) and s.id in names})
+    if left:
+        raise ValueError(f"rename left uses of {left}")
+    path.write_text(new_src.replace("\n", nl), encoding="utf-8", newline="")
+    return len(edits)
+
+
+def _name_token_positions(text: str, names: set) -> list:
+    """``(row, col, name)`` of every NAME token in ``text`` that is one of ``names`` used as a variable (not an attribute
+    ``obj.name`` and not a keyword argument ``f(name=...)``)."""
     toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    lines = text.splitlines(keepends=True)
-    edits: list = []
+    out = []
     depth = 0
+    skip = (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT)
     for i, tok in enumerate(toks):
         if tok.type == tokenize.OP and tok.string in "([{":
             depth += 1
@@ -390,16 +430,22 @@ def _to_state(text: str, names: set, state: str) -> str:
             depth -= 1
         if tok.type != tokenize.NAME or tok.string not in names:
             continue
-        prev = next((t for t in reversed(toks[:i]) if t.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT)), None)
-        nxt = next((t for t in toks[i + 1 :] if t.type not in (tokenize.NL, tokenize.COMMENT)), None)
+        prev = next((t for t in reversed(toks[:i]) if t.type not in skip), None)
+        nxt = next((t for t in toks[i + 1 :] if t.type not in skip), None)
         if prev is not None and prev.string == ".":
             continue
         if depth > 0 and nxt is not None and nxt.string == "=" and prev is not None and prev.string in ("(", ","):
-            continue  # keyword argument name
-        edits.append(tok.start)
-    for row, col in sorted(edits, reverse=True):
-        ln = lines[row - 1]
-        lines[row - 1] = ln[:col] + f"{state}." + ln[col:]
+            continue
+        out.append((tok.start[0], tok.start[1], tok.string))
+    return out
+
+
+def _to_state(text: str, names: set, state: str) -> str:
+    """``name`` -> ``state.name`` for the given names, token by token (comments and layout untouched). Attribute names
+    (``obj.name``) and keyword-argument names (``f(name=...)``) are left alone."""
+    lines = text.splitlines(keepends=True)
+    for row, col, _name in sorted(_name_token_positions(text, names), reverse=True):
+        lines[row - 1] = lines[row - 1][:col] + f"{state}." + lines[row - 1][col:]
     return "".join(lines)
 
 

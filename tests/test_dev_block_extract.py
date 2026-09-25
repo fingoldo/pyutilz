@@ -183,3 +183,38 @@ def test_apply_refuses_a_plan_with_problems(tmp_path):
     p = _write(tmp_path, "m.py", "def f(x):\n    if x:\n        return 1\n    return 2\n")
     with pytest.raises(ValueError):
         apply_extraction(plan_extraction(p, "f", 2, 3), "_h", tmp_path / "s.py", "s", core_module="m")
+
+
+def test_rename_in_function_rewrites_locals_to_attributes(tmp_path, monkeypatch):
+    from pyutilz.dev.block_extract import rename_in_function
+
+    p = _write(tmp_path, "m.py", """\
+        from types import SimpleNamespace
+
+
+        def f(n):
+            recipes = SimpleNamespace()
+            _a_pre_recipes = {}  # registry of family a
+            for i in range(n):
+                _a_pre_recipes[i] = dict(_a_pre_recipes=i)
+            total = len(_a_pre_recipes)
+            return total, other(_a_pre_recipes)
+
+
+        def other(_a_pre_recipes):
+            return _a_pre_recipes
+        """)
+    n = rename_in_function(p, "f", {"_a_pre_recipes": "recipes.a"})
+    src = p.read_text()
+    assert n == 4 and "recipes.a = {}  # registry of family a" in src and "dict(_a_pre_recipes=i)" in src
+    assert "def other(_a_pre_recipes):" in src  # other functions untouched
+    assert _import(p, "renamed_m", monkeypatch).f(3) == (3, {0: {"_a_pre_recipes": 0}, 1: {"_a_pre_recipes": 1}, 2: {"_a_pre_recipes": 2}})
+
+
+def test_rename_refuses_closures_fstrings_and_params(tmp_path):
+    from pyutilz.dev.block_extract import rename_in_function
+
+    p = _write(tmp_path, "m.py", "def f(a):\n    b = 1\n    g = lambda: b\n    s = f'{b}'\n    return g, s\n")
+    for mapping in ({"a": "st.a"}, {"b": "st.b"}):
+        with pytest.raises(ValueError):
+            rename_in_function(p, "f", mapping)
