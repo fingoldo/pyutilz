@@ -18,7 +18,9 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _
 
 _ARGS_HEADER_RE = re.compile(r"^\s*Args:\s*$", re.MULTILINE)
 _NEXT_SECTION_RE = re.compile(r"^\s*(Returns|Raises|Yields|Examples|Note|Notes|Attributes):\s*$", re.MULTILINE)
-_ARG_NAME_RE = re.compile(r"^\s{4,8}(\*{0,2}[A-Za-z_][A-Za-z0-9_]*)\s*(?:\(.*?\))?:", re.MULTILINE)
+# Indent is spaces/tabs only (``\s`` would cross a newline and start the match on the previous line, hiding the entry
+# there), and the name is followed directly by ``:`` or `` (type):`` -- ``see :func:`x``` inside a description is prose.
+_ARG_NAME_RE = re.compile(r"^[ \t]{4,8}(\*{0,2}[A-Za-z_][A-Za-z0-9_]*)(?: \(.*?\))?:", re.MULTILINE)
 
 _IGNORED_PARAM_NAMES = frozenset({"self", "cls"})
 

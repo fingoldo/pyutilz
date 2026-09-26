@@ -51,3 +51,19 @@ def f(a, b):
 ''')
     findings = scan_docstring_args_completeness(tmp_path)
     assert findings == []
+
+
+def test_a_prose_colon_in_a_description_is_not_an_argument():
+    """``see :func:`other``` inside a description must not be read as a documented argument named ``see``."""
+    from pyutilz.dev.code_audit.docstring_args import _documented_arg_names
+
+    doc = "Do it.\n\nArgs:\n    a: the first one --\n        see :func:`other`.\n    b: the second one.\n\nReturns:\n    x."
+    assert _documented_arg_names(doc) == {"a", "b"}
+
+
+def test_every_entry_after_a_wrapped_description_is_read():
+    """An entry right after a wrapped description line is still found: the indent may not start on the previous line."""
+    from pyutilz.dev.code_audit.docstring_args import _documented_arg_names
+
+    doc = "Do it.\n\nArgs:\n    a: long\n        wrapped text.\n    _b: private but documented.\n\nReturns:\n    x."
+    assert _documented_arg_names(doc) == {"a", "_b"}
