@@ -39,7 +39,7 @@ _PERMITTED_RELOAD_SITES: dict[str, str] = {
     "tests/test_llm_config.py:30": "reloads pyutilz.llm.config only, to re-read env-var-driven "
     "_SETTINGS_TTL_SECONDS after monkeypatch.setenv; config.py defines no sentinel objects "
     "(verified via grep for '= object()'); teardown_method reloads again to restore state.",
-    "tests/test_llm_config.py:44": "teardown_method's restore-reload, paired with the entry above.",
+    "tests/test_llm_config.py:59": "teardown_method's restore-reload, paired with the entry above.",
     "tests/test_meta/test_lazy_import_safety.py:135": "reloads the top-level pyutilz package "
     "__init__ only (lazy-alias plumbing) -- reload only re-executes the ONE module passed to "
     "it, so this does not cascade-reload already-imported submodules like "

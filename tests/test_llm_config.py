@@ -39,6 +39,21 @@ class TestSettingsTTLEnvVar:
         reloaded = self._reload()
         assert reloaded._SETTINGS_TTL_SECONDS == 5.0
 
+    def test_a_function_bound_before_a_reload_still_recognises_the_omitted_marker(self, monkeypatch):
+        """factory.py binds ``get_llm_settings`` by name at import; a later reload must not orphan its default.
+
+        The enum marker used to be re-minted by each reload, so the pre-reload function's default no longer matched
+        the module-level ``_UNSET_ENV_FILE`` its ``is`` test reads, and the marker reached ``os.path.isfile``.
+        """
+        monkeypatch.delenv("PYUTILZ_LLM_ENV_FILE", raising=False)
+        bound_before = config_module.get_llm_settings
+        marker_before = config_module._UNSET_ENV_FILE
+        reloaded = self._reload()
+        assert reloaded._UNSET_ENV_FILE is marker_before
+        settings = bound_before()
+        assert isinstance(settings, reloaded.LLMSettings)
+        assert reloaded._cached_env_file is None
+
     def teardown_method(self):
         # Restore the un-monkeypatched module state for subsequent test files.
         importlib.reload(config_module)

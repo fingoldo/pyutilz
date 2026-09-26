@@ -10,11 +10,12 @@ import logging
 import os
 import threading
 import time
-from enum import Enum
 from typing import Optional, Union
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from pyutilz.llm._unset import UNSET_ENV_FILE, _Unset
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +65,7 @@ _cached_settings_at: float = float("-inf")
 # ``env_file=None`` (environment variables only) -- None is a meaningful value here, so it cannot
 # double as the default. An enum member, not a string: a string sentinel compared with `is` matched only while
 # CPython happened to intern it, so a caller passing a built "<unset>" path was read as a path and a literal one as unset.
-class _Unset(Enum):
-    """The one "argument omitted" marker for ``get_llm_settings(env_file=...)``."""
-
-    ENV_FILE = 0
-
-
-_UNSET_ENV_FILE = _Unset.ENV_FILE
+_UNSET_ENV_FILE = UNSET_ENV_FILE
 _cached_env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE
 
 
