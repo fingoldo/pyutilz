@@ -258,11 +258,12 @@ nlp = [
 # LLM providers
 llm = [
     "anthropic>=0.40",
-    # google-genai declares Requires-Python >=3.9 (true since its first release), so an
-    # unmarked entry made `pip install pyutilz[llm]` fail outright on 3.8. The gemini-specific
-    # tests already guard with pytest.importorskip("google.genai"), and factory.py imports the
-    # provider lazily, so a 3.8 install just loses the Gemini provider rather than the group.
-    "google-genai>=1.0 ; python_version >= '3.9'",
+    # The Gemini provider sends ThinkingConfig.thinking_level, which google-genai added in 1.51.0 (older
+    # versions reject the field as an extra input); 1.51 declares Requires-Python >=3.10. An unmarked entry
+    # would make `pip install pyutilz[llm]` fail on older interpreters, so the marker follows the library.
+    # The gemini-specific tests guard with pytest.importorskip("google.genai"), and factory.py imports the
+    # provider lazily, so a 3.8/3.9 install just loses the Gemini provider rather than the group.
+    "google-genai>=1.51 ; python_version >= '3.10'",
     "httpx>=0.25",
     "tenacity>=8.0",
     "pydantic>=2.0",

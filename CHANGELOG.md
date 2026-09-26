@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `[llm]` requires `google-genai>=1.51` (Python 3.10+): the Gemini provider sends `ThinkingConfig.thinking_level`, which
+  older versions reject as an extra input, so the declared `>=1.0` floor installed a version that failed every Gemini 3 request.
+- `code_audit` `docstring_args`: a prose colon (`see :func:`x``) is no longer read as a documented argument, and an entry
+  after a wrapped description line is no longer hidden.
+
 ## [1.1.0] - 2026-09-26
 
 Milestone: the LLM layer after the 2026-09-26 audit wave (OpenRouter, providers, shared core, CI, general). Every
