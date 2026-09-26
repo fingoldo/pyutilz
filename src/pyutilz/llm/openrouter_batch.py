@@ -15,10 +15,22 @@ not a slow synchronous tier:
 A submitted batch is paid work, so the job id is written to ``state_path`` (atomically) the
 moment the submit returns, before anything else can fail; ``run()`` resumes an existing job from
 that file instead of submitting a second, duplicate paid batch.
+
+Two more ways a second paid batch could be submitted are closed:
+
+* **A resumed job is checked against the requests.** The state file stores :func:`request_hash`, a sha256 over the
+  whole submit payload (model, routing, every body); ``run()`` refuses (:class:`BatchStateMismatchError`) to wait on a
+  job submitted for other bodies, whose answers would otherwise be read as answers to these.
+* **A submit is idempotent across a client-side failure.** Before the POST a ``submitting`` marker with the request
+  hash is written; a POST that timed out or died on the wire may still have created the batch. A later ``run()`` that
+  finds the marker lists the recent batches and adopts the one created for this model and request count inside the
+  submit's window; when none matches it submits, when several do, or the listing cannot be read, it refuses rather
+  than pay twice. A POST the server answered with a 4xx created nothing, and its marker is removed.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +38,7 @@ import random
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +59,16 @@ class OpenRouterBatchError(LLMProviderError, RuntimeError):
     Rooted at ``LLMProviderError`` so ``except LLMProviderError`` catches it like every other provider failure; the
     ``RuntimeError`` base keeps existing ``except RuntimeError`` callers working.
     """
+
+
+class BatchStateMismatchError(OpenRouterBatchError):
+    """The persisted job was submitted for other requests (model, routing or bodies) than the ones now passed."""
+
+
+#: Seconds before the ``submitting`` marker's time a listed batch may have been created and still be this submit's
+#: (clock skew between us and the server), and after it (the POST's own timeout plus server-side queueing).
+SUBMIT_MATCH_BEFORE_S = 120.0
+SUBMIT_MATCH_AFTER_S = 900.0
 
 
 @dataclass(frozen=True)
@@ -122,6 +145,44 @@ def build_submit_payload(
         reqs.append({"custom_id": r.custom_id, "body": body})
     payload["requests"] = reqs
     return payload
+
+
+def request_hash(
+    model: str,
+    requests: Sequence[BatchRequest],
+    *,
+    endpoint: str = CHAT_ENDPOINT,
+    provider_only: Sequence[str] | None = None,
+) -> str:
+    """sha256 over the canonical submit payload: equal exactly when the same model, routing and bodies would be sent.
+
+    >>> len(request_hash("m", [BatchRequest("a", {"messages": []})]))
+    64
+    """
+    payload = build_submit_payload(model, requests, endpoint=endpoint, provider_only=provider_only)
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _created_at(batch: Mapping[str, Any]) -> float | None:
+    """A listed batch's creation time as epoch seconds (a number or an ISO-8601 string), None when absent or unreadable."""
+    raw = batch.get("created_at")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _request_total(batch: Mapping[str, Any]) -> int | None:
+    """How many requests a listed batch holds, when the listing says."""
+    counts = batch.get("request_counts")
+    total = counts.get("total") if isinstance(counts, Mapping) else None
+    return int(total) if isinstance(total, int) and not isinstance(total, bool) else None
 
 
 def _text_of(content: Any) -> str | None:
@@ -235,25 +296,80 @@ class OpenRouterBatchClient:
         state_path: str | os.PathLike[str] | None = None,
         provider_only: Sequence[str] | None = None,
         endpoint: str = CHAT_ENDPOINT,
+        extra_state: Mapping[str, Any] | None = None,
     ) -> str:
-        """Submit and return the batch id; with ``state_path`` the id is persisted before returning."""
+        """Submit and return the batch id; with ``state_path`` the id is persisted before returning.
+
+        With ``state_path`` a ``submitting`` marker (the request hash, no id) is written BEFORE the POST, so a POST that
+        fails on our side without an answer leaves the evidence that a paid batch may exist (module docstring). A 4xx
+        answer created nothing and removes it. ``extra_state`` is stored in the state file as well (a caller's own
+        identity of the job, which the caller checks on resume).
+        """
         payload = build_submit_payload(model, requests, endpoint=endpoint, provider_only=provider_only)
-        data = self._json(self._client.post("/batches", json=payload), "submit")
+        digest = request_hash(model, requests, endpoint=endpoint, provider_only=provider_only)
+        base = {**(extra_state or {}), "model": model, "custom_ids": [r.custom_id for r in requests], "request_hash": digest}
+        path = Path(state_path) if state_path is not None else None
+        if path is not None:
+            _atomic_write_json(path, {**base, "status": "submitting", "submitting_at": time.time()})
+        try:
+            resp = self._client.post("/batches", json=payload)
+        except httpx.HTTPError as exc:  # no answer: the batch may exist, so the marker stays for recover_submit
+            raise OpenRouterBatchError(f"submit of {len(requests)} request(s) for {model} got no answer ({exc}); a rerun resolves it") from exc
+        if path is not None and 400 <= resp.status_code < 500:
+            path.unlink(missing_ok=True)  # refused outright: nothing was created, so nothing can be paid twice
+        data = self._json(resp, "submit")
         batch_id = data.get("id")
         if not batch_id:
             raise OpenRouterBatchError(f"submit: no batch id in response: {str(data)[:300]}")
-        if state_path is not None:
-            _atomic_write_json(
-                Path(state_path),
-                {
-                    "batch_id": batch_id,
-                    "model": model,
-                    "custom_ids": [r.custom_id for r in requests],
-                    "submitted_at": time.time(),
-                },
-            )
+        if path is not None:
+            _atomic_write_json(path, {**base, "batch_id": batch_id, "status": "submitted", "submitted_at": time.time()})
         logger.info("OpenRouter batch %s submitted: %d requests, model=%s", batch_id, len(requests), model)
         return str(batch_id)
+
+    def list_batches(self, limit: int = 100) -> list[dict[str, Any]]:
+        """The most recent batch jobs of this key (``GET /batches``), in the server's order."""
+        data = self._json(self._client.get("/batches", params={"limit": int(limit)}), "list batches")
+        items = data.get("data", data.get("batches"))
+        return [b for b in items if isinstance(b, dict)] if isinstance(items, list) else []
+
+    def recover_submit(self, model: str, requests: Sequence[BatchRequest], state: Mapping[str, Any]) -> str | None:
+        """The id of the batch an interrupted submit (a ``submitting`` marker) created, or None when it created none.
+
+        Adopted: the one listed batch whose ``metadata.request_hash`` is this submit's, or, for a listing without
+        one, of ``model``, created inside the submit's window, with this request count when the listing gives one.
+        Several matches, or a listing that cannot be read, raise: submitting again could pay for the same requests twice.
+        """
+        try:
+            listed = self.list_batches()
+        except (httpx.HTTPError, OpenRouterBatchError) as exc:
+            raise OpenRouterBatchError(
+                f"a submit of {len(requests)} request(s) for {model} was interrupted and the batch list cannot be read ({exc}); "
+                "it may have been created: check the dashboard, then delete the state file to submit again"
+            ) from exc
+        since = float(state.get("submitting_at") or 0.0)
+        digest = state.get("request_hash")
+        matches: list[dict[str, Any]] = []
+        for batch in listed:
+            meta = batch.get("metadata")
+            listed_hash = meta.get("request_hash") if isinstance(meta, Mapping) else None
+            if listed_hash is not None:
+                if listed_hash == digest:
+                    matches.append(batch)
+                continue
+            created = _created_at(batch)
+            if batch.get("model") != model or created is None or not since - SUBMIT_MATCH_BEFORE_S <= created <= since + SUBMIT_MATCH_AFTER_S:
+                continue
+            total = _request_total(batch)
+            if total is None or total == len(requests):
+                matches.append(batch)
+        if len(matches) > 1:
+            ids = [str(b.get("id")) for b in matches]
+            raise OpenRouterBatchError(f"an interrupted submit for {model} matches {len(matches)} listed batches {ids}; resolve it by hand")
+        if matches and matches[0].get("id"):
+            logger.warning("an interrupted submit had created batch %s; adopting it instead of submitting again", matches[0]["id"])
+            return str(matches[0]["id"])
+        logger.info("an interrupted submit for %s created no batch; submitting it now", model)
+        return None
 
     def get(self, batch_id: str) -> dict[str, Any]:
         """The current state of one batch job, results included once it has finished."""
@@ -310,24 +426,38 @@ class OpenRouterBatchClient:
         initial_interval_s: float = 10.0,
         max_interval_s: float = 300.0,
         on_poll: Callable[[Mapping[str, Any]], None] | None = None,
+        extra_state: Mapping[str, Any] | None = None,
     ) -> dict[str, BatchResult]:
         """Submit (or resume the job persisted at ``state_path``), wait, and map results by custom_id.
 
+        A persisted job is resumed only for the same model, request ids and request hash (module docstring),
+        otherwise :class:`BatchStateMismatchError`; a ``submitting`` marker is resolved by :meth:`recover_submit`.
         A terminal status other than ``completed`` still returns whatever results exist, with the
         missing ids carrying an error. The state file is kept; the caller deletes it once it has
         stored the results.
         """
         state = load_job_state(state_path)
-        if state and state.get("batch_id"):
-            if state.get("model") != model or list(state.get("custom_ids") or []) != [r.custom_id for r in requests]:
-                raise OpenRouterBatchError(
-                    f"state file {state_path} holds batch {state['batch_id']} for a different model/request set; "
+        batch_id: str | None = None
+        if state and (state.get("batch_id") or state.get("status") == "submitting"):
+            stored_hash = state.get("request_hash")
+            if (
+                state.get("model") != model
+                or list(state.get("custom_ids") or []) != [r.custom_id for r in requests]
+                or (stored_hash is not None and stored_hash != request_hash(model, requests, provider_only=provider_only))
+            ):
+                raise BatchStateMismatchError(
+                    f"state file {state_path} holds batch {state.get('batch_id')} for a different model/request set; "
                     "collect or delete it before submitting a new batch"
                 )
-            batch_id = str(state["batch_id"])
-            logger.info("resuming OpenRouter batch %s from %s", batch_id, state_path)
-        else:
-            batch_id = self.submit(model, requests, state_path=state_path, provider_only=provider_only)
+            if state.get("batch_id"):
+                batch_id = str(state["batch_id"])
+                logger.info("resuming OpenRouter batch %s from %s", batch_id, state_path)
+            else:
+                batch_id = self.recover_submit(model, requests, state)
+                if batch_id is not None:
+                    _atomic_write_json(Path(state_path), {**state, "batch_id": batch_id, "status": "submitted", "submitted_at": time.time()})
+        if batch_id is None:
+            batch_id = self.submit(model, requests, state_path=state_path, provider_only=provider_only, extra_state=extra_state)
         final = self.wait(batch_id, deadline_s=deadline_s, initial_interval_s=initial_interval_s, max_interval_s=max_interval_s, on_poll=on_poll)
         if final.get("status") != "completed":
             logger.warning("batch %s ended with status=%s error=%s", batch_id, final.get("status"), final.get("error"))

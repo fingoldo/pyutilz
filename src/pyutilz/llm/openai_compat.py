@@ -21,6 +21,7 @@ from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm._thinking import ThinkingControlMixin
 from pyutilz.llm._timeouts import DerivedTimeoutMixin
+from pyutilz.llm._stream_attempts import StreamAttemptsMixin
 from pyutilz.llm import _reasoning
 from pyutilz.llm._progress import note_stream_progress
 from pyutilz.llm.base import LLMProvider, PerCallAttr
@@ -41,7 +42,7 @@ from pyutilz.llm._pricing import Pricing
 logger = logging.getLogger(__name__)
 
 
-class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutMixin, ThinkingControlMixin, LLMProvider):
+class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsMixin, DerivedTimeoutMixin, ThinkingControlMixin, LLMProvider):
     """Base for providers exposing an OpenAI-compatible chat/completions API.
 
     Subclasses MUST define:
@@ -378,8 +379,9 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         ``iscoroutinefunction``, which is False for async generators), so
         retry is implemented manually below. We retry the stream-open phase
         on transient HTTP errors (``_is_retryable_http_error``) using the
-        shared exponential+jitter wait. Once the FIRST content delta has
-        been yielded we stop retrying and let mid-stream failures propagate
+        shared exponential+jitter wait. Once the FIRST chunk carrying a choice
+        (a reasoning delta included: generating is billed) has arrived we stop
+        retrying and let mid-stream failures propagate
         — restarting a partially consumed stream would duplicate already-
         emitted tokens.
         """
@@ -391,7 +393,6 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         body = self._build_stream_body(prompt, system, temperature, max_tokens, json_mode, thinking, json_schema, images)
 
         attempt = 0
-        emitted_any = False
         # One repair re-issue, mirroring _post_and_unwrap's: an endpoint that refuses
         # ``reasoning: {enabled: false}`` used to fail 100% of STREAMING calls made with
         # thinking=False (a 400/404 is non-retryable) while the identical non-streaming call
@@ -405,6 +406,10 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         while True:
             attempt += 1
             latest_usage: dict[str, Any] | None = None
+            # Any chunk of this attempt that carried a choice (a reasoning delta included) means the upstream was generating,
+            # and generating is billed: such a stream is never re-opened. A stream dropped mid-reasoning used to be retried up
+            # to MAX_RETRY_ATTEMPTS times, each attempt paid for and none recorded (glossum refsuite audit O-P0-4).
+            attempt_state: dict[str, Any] = {"generation_id": None, "response_started": False, "generated_chunks": 0}
             try:
                 async with self.semaphore:
                     # The derived timeout, as on the buffered path: without it the stream inherits the
@@ -416,6 +421,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                         self._capture_rate_limit_headers(resp.headers)
                         self._handle_special_status(resp)
                         resp.raise_for_status()
+                        attempt_state["response_started"] = True
                         first_chunk: dict[str, Any] | None = None
                         last_chunk: dict[str, Any] | None = None
                         # Truncation / tool-call / citation state, previously never written on the
@@ -444,6 +450,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                             # skipped: the stream ended empty or cut short with no exception.
                             self._raise_for_error_in_body(chunk, resp.request)
                             last_chunk = chunk
+                            self._note_stream_chunk(attempt_state, chunk, first=chunk is first_chunk)
                             # Usage block tends to arrive on a chunk with empty
                             # choices AFTER the last content delta; track it
                             # whenever it's seen.
@@ -452,7 +459,6 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                                 latest_usage = usage
                             content = self._apply_stream_chunk(chunk, tool_call_fragments)
                             if content:
-                                emitted_any = True
                                 streamed_text.append(content)
                                 yield content
                         # Response-level metadata (id, model, provider) usually rides on the FIRST
@@ -476,13 +482,17 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                         partial_text="".join(streamed_text),
                     )
                 return
-            except Exception as exc:
+            except BaseException as exc:
                 # Only the stream-open / pre-first-token phase is safely
                 # retryable. After we've yielded content, re-raise so the
-                # caller doesn't receive duplicated tokens.
-                if isinstance(exc, LLMTruncationError):
+                # caller doesn't receive duplicated tokens. A cancellation (the caller's own timeout or stall
+                # watchdog) abandons the attempt, which may have been billed, so it is recorded and never retried.
+                self._note_aborted_stream_attempt(attempt, attempt_state, exc)
+                if isinstance(exc, LLMTruncationError) or not isinstance(exc, Exception):
                     raise
-                if not emitted_any and not body_repaired:
+                # A content delta is a chunk with a choice, so "generated" covers "already yielded tokens" too.
+                generated = attempt_state["generated_chunks"] > 0
+                if not generated and not body_repaired:
                     repaired = await self._repaired_stream_body(exc, body)
                     if repaired is not None:
                         body_repaired = True
@@ -492,7 +502,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
                             self._provider_name, self.model_name,
                         )
                         continue
-                if emitted_any or not _is_retryable_http_error(exc):
+                if generated or not _is_retryable_http_error(exc):
                     raise
                 if MAX_RETRY_ATTEMPTS != 0 and attempt >= MAX_RETRY_ATTEMPTS:
                     raise
@@ -616,26 +626,6 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, DerivedTimeoutM
         # The fragments above are invisible to a watchdog task (see `_progress`); this counter is not.
         note_stream_progress(reasoning_piece, content)
         return content
-
-    async def _repaired_stream_body(self, exc: Exception, body: dict[str, Any]) -> dict[str, Any] | None:
-        """Return a repaired request body for a STREAM the upstream refused over a parameter, else ``None``.
-
-        Streaming counterpart of the ``_body_after_rejected_request`` consultation in
-        ``_post_and_unwrap``: a streamed error response's body has not been read yet, so it is
-        pulled here before the detail is handed to the same provider hook. No delta can have been
-        yielded on a 4xx, so re-opening the stream cannot duplicate already-emitted tokens.
-        """
-        resp = getattr(exc, "response", None)
-        status = getattr(resp, "status_code", None)
-        if resp is None or status is None:
-            return None
-        detail = ""
-        try:
-            raw = await resp.aread()
-            detail = raw.decode("utf-8", errors="replace")
-        except Exception as read_exc:
-            logger.debug("Could not read the refused stream's error body: %s", read_exc)
-        return self._body_after_rejected_request(body, int(status), detail)
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
         """Shared token-usage accounting for both ``generate()`` and
