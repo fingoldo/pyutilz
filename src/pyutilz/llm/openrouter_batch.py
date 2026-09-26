@@ -44,6 +44,7 @@ from typing import Any
 
 import httpx
 
+from pyutilz.llm import _reasoning
 from pyutilz.llm.exceptions import LLMProviderError
 
 logger = logging.getLogger(__name__)
@@ -95,9 +96,14 @@ class BatchResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def truncated(self) -> bool:
+        """True when the answer was cut off by ``max_tokens`` (``finish_reason == "length"``); ``text`` is then partial."""
+        return self.finish_reason == "length"
+
+    @property
     def ok(self) -> bool:
-        """True when the request produced text and no error."""
-        return self.error is None and self.text is not None
+        """True when the request produced a COMPLETE text and no error; a truncated answer is not ok (see ``truncated``)."""
+        return self.error is None and self.text is not None and not self.truncated
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -226,7 +232,8 @@ def parse_result_item(item: Mapping[str, Any]) -> BatchResult:
     choice = choices[0]
     msg = choice.get("message") or {}
     res.text = _text_of(msg.get("content"))
-    res.reasoning = _text_of(msg.get("reasoning"))
+    # `reasoning`, `reasoning_content` or `reasoning_details`, whichever the route used (a single field read lost the rest).
+    res.reasoning = _reasoning.from_message(msg) if isinstance(msg, dict) else None
     res.finish_reason = choice.get("finish_reason")
     if res.text is None:
         res.error = f"empty content (finish_reason={res.finish_reason})"
@@ -335,8 +342,9 @@ class OpenRouterBatchClient:
     def recover_submit(self, model: str, requests: Sequence[BatchRequest], state: Mapping[str, Any]) -> str | None:
         """The id of the batch an interrupted submit (a ``submitting`` marker) created, or None when it created none.
 
-        Adopted: the one listed batch whose ``metadata.request_hash`` is this submit's, or, for a listing without
-        one, of ``model``, created inside the submit's window, with this request count when the listing gives one.
+        Adopted: the one listed batch of ``model`` created inside the submit's window, with this request count when the
+        listing gives one. (The submit carries no ``metadata``: the batch docs list only ``endpoint``, ``model``,
+        ``requests``, ``provider`` and ``completion_window``, verified 2026-09-26, so a listed hash can never be ours.)
         Several matches, or a listing that cannot be read, raise: submitting again could pay for the same requests twice.
         """
         try:
@@ -347,15 +355,8 @@ class OpenRouterBatchClient:
                 "it may have been created: check the dashboard, then delete the state file to submit again"
             ) from exc
         since = float(state.get("submitting_at") or 0.0)
-        digest = state.get("request_hash")
         matches: list[dict[str, Any]] = []
         for batch in listed:
-            meta = batch.get("metadata")
-            listed_hash = meta.get("request_hash") if isinstance(meta, Mapping) else None
-            if listed_hash is not None:
-                if listed_hash == digest:
-                    matches.append(batch)
-                continue
             created = _created_at(batch)
             if batch.get("model") != model or created is None or not since - SUBMIT_MATCH_BEFORE_S <= created <= since + SUBMIT_MATCH_AFTER_S:
                 continue

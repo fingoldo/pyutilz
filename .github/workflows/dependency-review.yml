@@ -1,0 +1,27 @@
+name: Dependency review
+
+# Blocks a PR that introduces a known-vulnerable or license-incompatible dependency, before
+# merge -- complementary to lint-advisory.yml's pip-audit (post-merge, advisory-only) and
+# Dependabot (proposes upgrades, doesn't gate incoming PRs). Added 2026-07-18 CI/CD architecture
+# review: near-zero cost, standard GitHub-native control this repo didn't have yet.
+
+on:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          fail-on-severity: high

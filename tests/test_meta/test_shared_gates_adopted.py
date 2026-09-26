@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from py_ci_shared.atomic_write_staging import assert_atomic_write_staging
+from py_ci_shared.hash_fed_by_array_copy import assert_no_hash_fed_by_array_copy
+from py_ci_shared.hash_key_determinism import assert_hash_keys_are_deterministic
 from py_ci_shared.identity_comparisons import assert_no_identity_comparisons
 from py_ci_shared.import_cycles import assert_no_import_cycles
 from py_ci_shared.module_cache_thread_safety import assert_thread_safe_module_caches
 from py_ci_shared.module_reload_safety import assert_no_reloads_in_code
+from py_ci_shared.naive_utcnow import assert_no_naive_utcnow
 from py_ci_shared.no_xfail_to_defer import assert_no_xfail_to_defer
 from py_ci_shared.numba_seed_range import assert_numba_seeds_fit_int64
 from py_ci_shared.sentinel_or_fallback import assert_no_sentinel_or_fallback
@@ -85,3 +89,27 @@ def test_every_counterpart_gate_named_by_code_audit_exists():
         except ImportError as exc:
             missing.append(f"{gate}: {exc}")
     assert missing == [], "counterpart gates that do not import: " + "; ".join(missing)
+
+
+# Adopted 2026-09-26 (audit GEN-15): the four gates below cover bug classes that audit found by hand (a cache sidecar
+# rewritten in place, a temp file shared by concurrent writers, a content hash over a summary). All at zero findings.
+
+
+def test_cache_and_baseline_files_are_written_atomically():
+    """A cache or baseline rewritten in place can be read truncated by another process; write a sibling and os.replace it."""
+    assert_atomic_write_staging(SRC, min_files=200)
+
+
+def test_json_fed_to_a_hash_sorts_its_keys():
+    """`json.dumps(d)` follows insertion order, so equal dicts built in another order hash differently and the cache misses."""
+    assert_hash_keys_are_deterministic(SRC, min_files=200)
+
+
+def test_no_array_copied_just_to_be_hashed():
+    """`h.update(a.tobytes())` allocates a full copy per cache lookup; hash the contiguous buffer instead."""
+    assert_no_hash_fed_by_array_copy([SRC], min_files=200)
+
+
+def test_no_naive_utcnow():
+    """`datetime.utcnow()` is deprecated and naive; use `datetime.now(timezone.utc)`."""
+    assert_no_naive_utcnow(SRC, min_files=200)

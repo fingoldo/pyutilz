@@ -235,7 +235,8 @@ class TestProviderStubMessages:
     async def test_openai_limits_mentions_response_headers(self):
         from pyutilz.llm.openai_provider import OpenAIProvider
         p = self._make(OpenAIProvider)
-        with pytest.raises(NotImplementedError, match="x-ratelimit"):
+        # PROV-13: OpenAI now inherits the captured-header snapshot; before any call there is none to return.
+        with pytest.raises(NotImplementedError, match="no rate-limit snapshot"):
             await p.check_account_limits()
 
     @pytest.mark.asyncio

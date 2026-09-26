@@ -37,28 +37,29 @@ class TestDeepSeekConfig:
         assert p._cache_hit_cost_per_1m("deepseek-reasoner") == 0.028
 
     def test_pricing_v4_flash(self):
+        # The legacy name is "billed at the Flash price" (api-docs.deepseek.com/quick_start/pricing, 2026-09-26, peak).
         p = DeepSeekProvider.__new__(DeepSeekProvider)
-        assert p._input_cost_per_1m("deepseek-v4-flash") == 0.14
-        assert p._output_cost_per_1m("deepseek-v4-flash") == 0.28
-        assert p._cache_hit_cost_per_1m("deepseek-v4-flash") == 0.0028
+        assert p._input_cost_per_1m("deepseek-v4-flash") == 0.30
+        assert p._output_cost_per_1m("deepseek-v4-flash") == 1.20
+        assert p._cache_hit_cost_per_1m("deepseek-v4-flash") == 0.006
 
     def test_pricing_v4_pro(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
-        assert p._input_cost_per_1m("deepseek-v4-pro") == 1.74
-        assert p._output_cost_per_1m("deepseek-v4-pro") == 3.48
-        assert p._cache_hit_cost_per_1m("deepseek-v4-pro") == 0.0145
+        assert p._input_cost_per_1m("deepseek-v4-pro") == 1.32
+        assert p._output_cost_per_1m("deepseek-v4-pro") == 3.96
+        assert p._cache_hit_cost_per_1m("deepseek-v4-pro") == 0.044
 
     def test_pricing_unknown_falls_back_to_v4_flash(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
-        # Unknown model should fall back to cheapest current default (v4-flash)
-        assert p._input_cost_per_1m("future-model") == 0.14
-        assert p._output_cost_per_1m("future-model") == 0.28
+        # Unknown model should fall back to the cheapest current default (deepseek-flash)
+        assert p._input_cost_per_1m("future-model") == 0.30
+        assert p._output_cost_per_1m("future-model") == 1.20
 
     def test_default_model_is_v4_flash(self):
         # Default model should be the cheapest current option
         from inspect import signature
         default = signature(DeepSeekProvider.__init__).parameters["model"].default
-        assert default == "deepseek-v4-flash"
+        assert default == "deepseek-flash"
 
     def test_extra_request_body_empty_by_default(self):
         # No auto-injection; callers opt in via thinking= parameter on generate()
@@ -139,6 +140,7 @@ class TestDeepSeekConfig:
         """402 is credit exhaustion; the operator's only signal must actually be emitted."""
         import httpx
         p = DeepSeekProvider.__new__(DeepSeekProvider)
+        p.wait_on_insufficient_balance = True  # the opt-in keeps the warn-and-wait behaviour; the default now fails fast (PROV-19)
         resp = httpx.Response(
             status_code=402,
             request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),

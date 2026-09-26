@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, ClassVar
 
@@ -11,9 +12,11 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._messages import build_anthropic_content
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
-from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup, normalize_thinking
+from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
 from pyutilz.llm._thinking import MIN_THINKING_BUDGET, THINKING_BUDGETS  # re-exported: callers import them from here
-from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
+from pyutilz.llm._thinking import CLAUDE_EFFORTS, claude_effort
+from pyutilz.llm._claude_models import CLAUDE_MODELS, UNKNOWN_CLAUDE_MODEL, ClaudeModelSpec, claude_model_spec
+from pyutilz.llm.exceptions import LLMProviderError, LLMRefusalError, LLMTruncationError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,42 @@ def _is_temperature_rejection(exc: Exception) -> bool:
 
 # The budget table lives in _thinking, where the Claude Code provider reads it without importing the anthropic SDK.
 
+# Models whose thinking mode was LEARNED from a 400 to differ from what the model table says: model -> True when the
+# model turned out to need adaptive thinking, False when it turned out to need the manual budget form. Process-local
+# for the same reason as ``_MODELS_REJECTING_TEMPERATURE``: a cache of an API fact, never configuration.
+_LEARNED_THINKING_MODE: dict[str, bool] = {}
+
+
+def _thinking_mode_rejection(exc: Exception) -> bool | None:
+    """The thinking mode a 400 says this model needs instead: True adaptive, False manual budget, None if not that 400.
+
+    https://platform.claude.com/docs/en/build-with-claude/extended-thinking: a model that only thinks adaptively fails
+    with a message that starts ``"thinking.type.enabled" is not supported``; a budget-only model sent ``adaptive`` also
+    400s (https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
+    """
+    if getattr(exc, "status_code", None) != 400:
+        return None
+    text = str(exc).lower()
+    if "thinking.type.enabled" in text and "not supported" in text:
+        return True
+    if "thinking.type.adaptive" in text and ("not supported" in text or "unsupported" in text):
+        return False
+    return None
+
+
+def uses_adaptive_thinking(model: str) -> bool:
+    """Does ``model`` take ``{"type": "adaptive"}`` (True) or the manual budget form (False)?
+
+    An empty model name is the legacy call shape (``anthropic_thinking_field(effort, max_tokens)`` with no model) and
+    keeps the budget form it always produced.
+    """
+    if not model:
+        return False
+    learned = _LEARNED_THINKING_MODE.get(model)
+    if learned is not None:
+        return learned
+    return claude_model_spec(model, provider_label="Anthropic").adaptive_thinking
+
 
 def anthropic_thinking_field(thinking: bool | str | None, max_tokens: int, *, model: str = "") -> dict[str, Any] | None:
     """The ``thinking`` fragment for a Messages request, or None when reasoning is off or cannot fit.
@@ -46,15 +85,25 @@ def anthropic_thinking_field(thinking: bool | str | None, max_tokens: int, *, mo
     to it, and a caller that drives the SDK directly imports it rather than reimplementing the arithmetic and
     drifting from it.
 
+    Two shapes, chosen per model. Claude 4.6 and later think ADAPTIVELY (``{"type": "adaptive"}``), and 4.7 and later
+    reject the manual ``{"type": "enabled", "budget_tokens": N}`` form with a 400, so on every current model the budget
+    form failed the whole call. The depth control for adaptive thinking is ``output_config.effort``, which
+    :func:`anthropic_thinking_request` adds alongside this fragment.
+
     Returns None for an effort the budget table does not know, rather than guessing: silently substituting a
     different budget than the caller asked for is worse than leaving reasoning off, because the cost shows up on the
     bill either way while the caller believes their setting took effect. The budget is carved OUT of ``max_tokens``,
     so one at or above it would leave no room for the answer and the API would reject the request; ``model`` only
-    names the request in the warnings.
+    names the request in the warnings and picks the shape.
     """
     enabled, effort = normalize_thinking(thinking)
     if not enabled:
         return None
+    if uses_adaptive_thinking(model):
+        if effort is not None and effort not in CLAUDE_EFFORTS:
+            claude_effort(effort, model=model)  # warns
+            return None
+        return {"type": "adaptive"}
     budget = THINKING_BUDGETS.get("medium" if not effort else effort)
     if budget is None:
         logger.warning(
@@ -75,47 +124,58 @@ def anthropic_thinking_field(thinking: bool | str | None, max_tokens: int, *, mo
     return {"type": "enabled", "budget_tokens": min(budget, headroom)}
 
 
+def anthropic_thinking_request(thinking: bool | str | None, max_tokens: int, *, model: str) -> dict[str, Any]:
+    """Every top-level request field a ``thinking=`` value maps to: ``thinking`` and, where the model takes it,
+    ``output_config.effort``. Empty when reasoning is off or cannot be sent."""
+    field = anthropic_thinking_field(thinking, max_tokens, model=model)
+    if field is None:
+        return {}
+    out: dict[str, Any] = {"thinking": field}
+    _enabled, effort = normalize_thinking(thinking)
+    level = claude_effort(effort, model=model)
+    spec = claude_model_spec(model, provider_label="Anthropic")
+    if level is not None and spec.supports_effort:
+        out["output_config"] = {"effort": level}
+    return out
+
+
+def _schema_body(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """The bare JSON schema out of either shape callers pass: OpenAI's ``{"name", "strict", "schema"}`` wrapper
+    (what ``OpenAICompatibleProvider.generate`` takes) or the schema itself."""
+    inner = json_schema.get("schema")
+    return inner if isinstance(inner, dict) and ("name" in json_schema or "strict" in json_schema) else json_schema
+
+
+def _int_field(obj: Any, name: str) -> int:
+    """An int usage field off an SDK object or dict; 0 when absent or not an int (mocks, older SDKs)."""
+    value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
 
     _provider_name = "Anthropic"
 
     # Explicit per-request timeout, mirroring OpenAICompatibleProvider._get_timeout's default, so
-    # the effective ceiling is one this package controls rather than the SDK's own default.
+    # the effective ceiling is one this package controls rather than the SDK's own default. With a
+    # streamed request (see `_STREAMING_THRESHOLD_TOKENS`) this bounds each read, not the whole answer.
     _request_timeout_seconds: float = 120.0
 
-    # Pricing per 1M tokens: (input, output)
-    # Source: https://platform.claude.com/docs/en/about-claude/pricing
-    # Verified against the official pricing table 2026-05-01.
-    # Cache write 5m = 1.25x input, cache write 1h = 2x input,
-    # cache read = 0.10x input (universal multipliers across all models).
-    # ``_get_pricing`` prefix-matches via ``key.rsplit("-", 1)[0]``, so
-    # entries WITHOUT a date suffix also match the date-suffixed
-    # ``claude-opus-4-7-YYYYMMDD`` form. Use the unsuffixed canonical ID
-    # for any model whose date is not pinned in the official pricing
-    # table; pin the suffix only when the snapshot is the public API ID.
+    # The largest `max_tokens` sent as one buffered request. The SDK refuses a non-streaming request it
+    # expects to run past ten minutes, which it estimates from `max_tokens` (about 21,333 on the installed
+    # SDK), and the docs advise streaming for long outputs. Above this the request is STREAMED and the final
+    # message assembled from the stream, so a caller can ask for the model's full 128K output.
+    _STREAMING_THRESHOLD_TOKENS = 21_000
+
+    # Pricing per 1M tokens: (input, output), DERIVED from the shared Claude model table
+    # (pyutilz.llm._claude_models, sourced from https://platform.claude.com/docs/en/about-claude/pricing).
+    # Kept as a class attribute for callers and tests that read it; `_get_pricing` resolves through the
+    # table's own matcher, which only accepts an exact ID or a snapshot suffix of one.
     _PRICING: dict[str, tuple[float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
-        # Opus 4.5+: dropped from $15/$75 to $5/$25 (3x cheaper than legacy 4/4.1).
-        "claude-opus-4-7": (5.00, 25.00),
-        "claude-opus-4-6-20250610": (5.00, 25.00),
-        "claude-opus-4-5-20250414": (5.00, 25.00),
-        # Legacy Opus 4 / 4.1 retain old $15/$75 pricing.
-        "claude-opus-4-1-20250805": (15.00, 75.00),
-        "claude-opus-4-20250514": (15.00, 75.00),
-        # Sonnet family — same $3/$15 across all 4.x variants.
-        # As of 2026-05-01 latest is Sonnet 4.6 (no Sonnet 4.7 released).
-        "claude-sonnet-4-6-20250610": (3.00, 15.00),
-        "claude-sonnet-4-5-20250414": (3.00, 15.00),
-        "claude-sonnet-4-20250514": (3.00, 15.00),
-        "claude-sonnet-3-7-20250219": (3.00, 15.00),  # deprecated
-        # Haiku 4.5: $1/$5; legacy 3.5 stays $0.80/$4; Haiku 3 = $0.25/$1.25.
-        "claude-haiku-4-5-20251001": (1.00, 5.00),
-        "claude-haiku-3-5-20241022": (0.80, 4.00),
-        "claude-haiku-3-20240307": (0.25, 1.25),
-        # Legacy Opus 3 (deprecated).
-        "claude-opus-3-20240229": (15.00, 75.00),
+        key: (spec.input_per_1m, spec.output_per_1m) for key, spec in CLAUDE_MODELS.items()
     }
-    _DEFAULT_PRICING = (3.00, 15.00)  # fallback = Sonnet pricing
+    _DEFAULT_PRICING = (UNKNOWN_CLAUDE_MODEL.input_per_1m, UNKNOWN_CLAUDE_MODEL.output_per_1m)
 
     # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
     # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): see identical
@@ -130,6 +190,8 @@ class AnthropicProvider(LLMProvider):
     last_cache_read_input_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_thinking_tokens: PerCallAttr = PerCallAttr(lambda: 0)
     last_thinking_tokens_estimated: PerCallAttr = PerCallAttr(lambda: False)
+    # The refusal details the API attaches to `stop_reason == "refusal"` (`{"type", "category"}`), else None.
+    last_stop_details: PerCallAttr = PerCallAttr(lambda: None)
     # Response-scoped, same reasoning as every attribute above (audit F32).
     last_rate_limits: PerCallAttr = PerCallAttr(dict)
     last_organization_id: PerCallAttr = PerCallAttr(lambda: None)
@@ -137,15 +199,21 @@ class AnthropicProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-5",
         max_concurrent: int = 5,
+        cache_ttl: str = "5m",
     ):
+        """``cache_ttl``: lifetime of the system-prompt cache entry, ``"5m"`` (writes billed 1.25x input) or ``"1h"``
+        (writes billed 2x input, worth it when the same system prompt is reused over more than five minutes)."""
         settings = get_llm_settings()
         self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)
         if not self.api_key:
             raise ValueError("Anthropic API key not provided. Set ANTHROPIC_API_KEY in .env or pass api_key=")
+        if cache_ttl not in ("5m", "1h"):
+            raise ValueError(f"cache_ttl must be '5m' or '1h', got {cache_ttl!r}")
 
         self.model = model
+        self.cache_ttl = cache_ttl
         # max_retries=0: _retry.py's tenacity policy is the single retry authority here. The SDK
         # default (2 internal retries) multiplied every tenacity attempt, so a sustained 529
         # produced several times the upstream calls PYUTILZ_LLM_MAX_RETRIES documents. An explicit
@@ -160,62 +228,61 @@ class AnthropicProvider(LLMProvider):
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_cache_creation_input_tokens = 0
+        # The part of total_cache_creation_input_tokens written to the 1-hour cache, billed at 2x input, not 1.25x.
+        self.total_cache_creation_1h_input_tokens = 0
         self.total_cache_read_input_tokens = 0
         self.total_thinking_tokens = 0
+        # Message Batches spend, already at the 50% batch discount: its tokens are billed at a different rate,
+        # so they are costed per batch rather than folded into the synchronous totals above.
+        self.total_batch_cost_usd = 0.0
         # Per-call usage/cache/thinking/finish_reason: PerCallAttr class-level descriptors
         # (declared above __init__) provide the defaults; nothing to initialize here.
         # ``last_rate_limits`` / ``last_organization_id`` are PerCallAttr descriptors declared
         # above, captured from each response's headers; nothing to initialize here.
-
-    # Source: https://platform.claude.com/docs/en/docs/about-claude/models
-    #   Opus 4.6+: 128K, Opus 4/4.1: 32K, Sonnet family: 64K, Haiku family: 64K.
-    # Resolved via the same longest-prefix matcher used for _PRICING (see that table's own
-    # comment) -- a bare substring test ("4-6" in self.model) has exactly the failure mode that
-    # matcher was written to avoid: any Opus release whose id doesn't literally contain "4-6"
-    # (claude-opus-4-7-..., claude-opus-4-8-..., a differently-numbered future release) would
-    # silently get the wrong (4x smaller) limit.
-    _MAX_OUTPUT_TOKENS: dict[str, int] = {  # noqa: RUF012 -- intentional shared class-level lookup table, not a per-instance mutable-default bug
-        "claude-opus-4-7": 128000,
-        "claude-opus-4-6-20250610": 128000,
-        "claude-opus-4-5-20250414": 32000,
-        "claude-opus-4-1-20250805": 32000,
-        "claude-opus-4-20250514": 32000,
-        "claude-sonnet-4-6-20250610": 64000,
-        "claude-sonnet-4-5-20250414": 64000,
-        "claude-sonnet-4-20250514": 64000,
-        "claude-sonnet-3-7-20250219": 64000,
-        "claude-haiku-4-5-20251001": 64000,
-        "claude-haiku-3-5-20241022": 64000,
-        "claude-haiku-3-20240307": 64000,
-        "claude-opus-3-20240229": 32000,
-    }
 
     # Kept as class attributes for subclasses and tests that read them; the table itself lives at module level
     # beside anthropic_thinking_field, which is where the rule is implemented.
     _THINKING_BUDGETS: ClassVar[dict[str, int]] = THINKING_BUDGETS
     _MIN_THINKING_BUDGET = MIN_THINKING_BUDGET
 
+    @property
+    def _spec(self) -> ClaudeModelSpec:
+        """This model's row in the shared Claude table (an unknown model gets the documented fallback and a warning)."""
+        return claude_model_spec(getattr(self, "model", "") or "", provider_label="Anthropic")
+
     def _thinking_request_field(self, thinking: bool | str | None, max_tokens: int) -> dict[str, Any] | None:
         """The ``thinking`` request fragment for this provider's model, or None when reasoning is off or cannot fit."""
         return anthropic_thinking_field(thinking, max_tokens, model=self.model)
 
+    def _get_pricing(self) -> tuple[float, float]:
+        """``(input, output)`` USD per 1M for this model, from the shared Claude table."""
+        spec = self._spec
+        return (spec.input_per_1m, spec.output_per_1m)
+
     @property
     def max_output_tokens(self) -> int:
-        """Maximum output tokens for ``self.model``, looked up from the known per-family limits (Opus/Sonnet/Haiku)."""
-        return int(longest_prefix_lookup(self.model, self._MAX_OUTPUT_TOKENS, 64000))
+        """Maximum output tokens of ``self.model`` (synchronous Messages API limit), from the shared Claude table."""
+        return self._spec.max_output
 
     @property
     def context_window(self) -> int:
-        """Total context window size (input + output tokens) of the underlying Anthropic model."""
-        return 200_000
+        """Context window of ``self.model``: 1M on Claude 4.6 and later, 200K before. It used to be 200K for every
+        model, so ``fit_max_tokens_to_context`` clamped or refused prompts a current model accepts."""
+        return self._spec.context_window
 
     def supports_json_mode(self) -> bool:
         """Anthropic Messages API has NO native JSON-mode toggle. We
-        get reliable JSON via ``generate_json()`` (assistant prefill
-        with ``{`` + parser-side ``extract_json``), not by passing a
-        kwarg to ``generate()``. Callers should branch: if False, use
-        ``generate_json()`` instead of passing ``json_mode=True``."""
+        get reliable JSON via ``generate_json()`` (the steer plus
+        ``extract_json``, or a strict schema where the model supports
+        one), not by passing a kwarg to ``generate()``. Callers should
+        branch: if False, use ``generate_json()`` instead of passing
+        ``json_mode=True``."""
         return False
+
+    def supports_json_schema(self) -> bool:
+        """True where the model takes structured outputs (``output_config.format``), which CONSTRAINS generation to
+        the schema: https://platform.claude.com/docs/en/build-with-claude/structured-outputs lists the models."""
+        return self._spec.supports_structured_output
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         # Regression fix (2026-07-21 audit): OverloadedError (529), ServiceUnavailableError (503),
@@ -241,6 +308,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int = 0,
         thinking: bool | str | None = False,
         images: list[str] | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> str:
         """Generate text using Claude.
 
@@ -251,7 +319,8 @@ class AnthropicProvider(LLMProvider):
                 ``temperature`` field, so the API applies its own default: a caller comparing providers
                 must be able to ask for "no temperature" and get it, rather than this library's 0.7.
             max_tokens: Output-token ceiling; 0 means "derive it", and any value is clamped
-                to what the model's context leaves after the prompt.
+                to what the model's context leaves after the prompt. Above
+                ``_STREAMING_THRESHOLD_TOKENS`` the request is streamed.
             images: URLs or ``data:`` URIs to show the model, in Anthropic's own block shape --
                 NOT the OpenAI ``image_url`` form, which this API rejects with a 400. Absent or
                 empty, the request body is byte-identical to the text-only one it has always sent.
@@ -262,157 +331,230 @@ class AnthropicProvider(LLMProvider):
                 argument 'images'`` -- the whole evaluation, not just the picture. Found by a live
                 integration test on 2026-09-04; no unit test could see it, because the parameter's
                 absence is exactly what the mocks were modelled on.
-            thinking: Extended-thinking toggle. ``False`` (default) keeps the
-                previous behaviour exactly. ``True`` uses the medium budget; an
-                effort string ("minimal"/"low"/"medium"/"high") selects one
-                explicitly. Until this parameter existed the caller-side
+            thinking: Reasoning toggle. ``False`` (default) keeps the
+                previous behaviour exactly. ``True`` turns it on at the model's
+                default depth; an effort string ("minimal"/"low"/"medium"/"high"/
+                "xhigh"/"max") selects one. Adaptive-thinking models get
+                ``thinking.type="adaptive"`` plus ``output_config.effort``; older ones a
+                token budget. Until this parameter existed the caller-side
                 ``thinking=`` flag was DROPPED for Anthropic: llm_client only
                 forwards it to providers whose signature declares it, so every
                 Anthropic call ran without reasoning regardless of the setting,
                 including the ones whose docstrings claimed to be disabling it.
+            json_schema: A JSON schema (bare, or OpenAI's ``{"name", "strict", "schema"}`` wrapper) the answer must
+                conform to, sent as ``output_config.format`` on models that support structured outputs. On any
+                other model it is not sent and a warning says so.
+
+        Raises:
+            LLMTruncationError: ``stop_reason`` was ``max_tokens`` or ``model_context_window_exceeded``.
+            LLMRefusalError: ``stop_reason`` was ``refusal``; ``details["stop_details"]`` carries the category.
         """
         self._reset_per_call_state()
         if max_tokens <= 0:
-            max_tokens = min(self.max_output_tokens, 21000)
+            max_tokens = min(self.max_output_tokens, self._STREAMING_THRESHOLD_TOKENS)
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
-            # A plain string when there are no images, so a text-only request body is byte-identical
-            # to the one this provider has always sent. See `build_anthropic_content`: Anthropic's
-            # image blocks are its own shape, and the OpenAI `image_url` part is rejected outright.
-            messages = [{"role": "user", "content": build_anthropic_content(prompt, images)}]
+            kwargs = self._request_kwargs(prompt, system, temperature, max_tokens, thinking, images, json_schema)
+            response = await self._create_with_learned_repairs(kwargs, thinking)
+            return self._consume_response(response)
 
-            kwargs: dict[str, Any] = {
-                "model": self.model,
-                "max_tokens": max_tokens,
-                "messages": messages,
-            }
-            # `None` means DO NOT SEND the field; `0.0` is a real temperature, so this is not a truthiness test.
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-            thinking_field = self._thinking_request_field(thinking, max_tokens)
-            if thinking_field is not None:
-                kwargs["thinking"] = thinking_field
-                # Anthropic rejects any temperature other than 1 while extended
-                # thinking is on. Callers pass a low temperature for determinism
-                # (validation runners use 0.1), so honouring both is impossible:
-                # override and say so, rather than letting the API 400 on a
-                # combination the caller had no way to know was illegal. An omitted
-                # temperature already means the API default of 1.
-                if temperature is not None and temperature != 1:
-                    logger.debug(
-                        "Extended thinking requires temperature=1; overriding the requested %.2f",
-                        temperature,
-                    )
-                    kwargs["temperature"] = 1
-            if system:
-                kwargs["system"] = [
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
+    def _request_kwargs(
+        self,
+        prompt: str,
+        system: str | None,
+        temperature: float | None,
+        max_tokens: int,
+        thinking: bool | str | None,
+        images: list[str] | None,
+        json_schema: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """The Messages ``create`` keyword arguments for one call."""
+        # A plain string when there are no images, so a text-only request body is byte-identical
+        # to the one this provider has always sent. See `build_anthropic_content`: Anthropic's
+        # image blocks are its own shape, and the OpenAI `image_url` part is rejected outright.
+        messages = [{"role": "user", "content": build_anthropic_content(prompt, images)}]
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        # `None` means DO NOT SEND the field; `0.0` is a real temperature, so this is not a truthiness test.
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        thinking_kwargs = anthropic_thinking_request(thinking, max_tokens, model=self.model)
+        if thinking_kwargs:
+            kwargs.update(thinking_kwargs)
+            # Anthropic rejects any temperature other than 1 while thinking is on. Callers pass a
+            # low temperature for determinism (validation runners use 0.1), so honouring both is
+            # impossible: override and say so, rather than letting the API 400 on a combination
+            # the caller had no way to know was illegal. An omitted temperature already means
+            # the API default of 1.
+            if temperature is not None and temperature != 1:
+                logger.debug("Thinking requires temperature=1; overriding the requested %.2f", temperature)
+                kwargs["temperature"] = 1
+        if json_schema is not None:
+            if self.supports_json_schema():
+                output_config = dict(kwargs.get("output_config") or {})
+                output_config["format"] = {"type": "json_schema", "schema": _schema_body(json_schema)}
+                kwargs["output_config"] = output_config
+            else:
+                logger.warning("%s does not support structured outputs; json_schema is not sent (shape NOT enforced)", self.model)
+        if system:
+            cache_control: dict[str, Any] = {"type": "ephemeral"}
+            if getattr(self, "cache_ttl", "5m") == "1h":
+                cache_control["ttl"] = "1h"
+            kwargs["system"] = [{"type": "text", "text": system, "cache_control": cache_control}]
 
-            # Newer models REJECT `temperature` outright -- claude-opus-5 answers
-            # `400 invalid_request_error: \`temperature\` is deprecated for this model`. The
-            # parameter is not merely ignored, so a caller that has always passed one (this
-            # library's own default is 0.7) breaks the moment a deployment moves to such a model.
-            #
-            # Discovered 2026-09-03 the expensive way: a project switched its pipeline to
-            # claude-opus-5, and every call would have 400'd in production. It surfaced only
-            # because a suite of integration tests was made runnable the same day and hit it first.
-            #
-            # LEARNED, not hardcoded. A model list here would be wrong again the next time
-            # Anthropic ships one: instead the first rejection for a given model records it in
-            # `_MODELS_REJECTING_TEMPERATURE` and the call is retried once without the parameter.
-            # Every later call for that model skips it outright, so the cost is one wasted request
-            # per model per process.
-            if self.model in _MODELS_REJECTING_TEMPERATURE:
-                kwargs.pop("temperature", None)
+        # Newer models REJECT `temperature` outright -- claude-opus-5 answers
+        # `400 invalid_request_error: \`temperature\` is deprecated for this model`. The
+        # parameter is not merely ignored, so a caller that has always passed one (this
+        # library's own default is 0.7) breaks the moment a deployment moves to such a model.
+        #
+        # Discovered 2026-09-03 the expensive way: a project switched its pipeline to
+        # claude-opus-5, and every call would have 400'd in production. It surfaced only
+        # because a suite of integration tests was made runnable the same day and hit it first.
+        #
+        # LEARNED, not hardcoded. A model list here would be wrong again the next time
+        # Anthropic ships one: instead the first rejection for a given model records it in
+        # `_MODELS_REJECTING_TEMPERATURE` and the call is retried once without the parameter.
+        # Every later call for that model skips it outright, so the cost is one wasted request
+        # per model per process.
+        if self.model in _MODELS_REJECTING_TEMPERATURE:
+            kwargs.pop("temperature", None)
+        return kwargs
 
-            # ``with_raw_response`` exposes HTTP headers (rate-limit + org id)
-            # alongside the parsed body. Without it the SDK swallows headers.
+    async def _create_with_learned_repairs(self, kwargs: dict[str, Any], thinking: bool | str | None = False) -> Any:
+        """Send the request, repairing (once each) a rejected ``temperature`` and a rejected thinking mode.
+
+        The thinking repair is the table's safety net: a model the table has in the wrong mode, or a new one it does
+        not know, answers the documented 400, the mode is learned for this process, and the request is rebuilt in
+        the other shape. Cost: one rejected request per model per process, as for ``temperature``.
+        """
+        for _ in range(2):
             try:
-                raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]  # anthropic's create() overloads can't be resolved through a **dict unpack; correct at runtime
-            except Exception as exc:
-                if "temperature" not in kwargs or not _is_temperature_rejection(exc):
+                return await self._create(kwargs)
+            except Exception as exc:  # noqa: PERF203 -- a bounded repair loop; the try/except IS the repair mechanism
+                if "temperature" in kwargs and _is_temperature_rejection(exc):
+                    logger.info("%s rejects `temperature`; retrying without it and omitting it for the rest of this process", self.model)
+                    _MODELS_REJECTING_TEMPERATURE.add(self.model)
+                    kwargs.pop("temperature", None)
+                    continue
+                wants_adaptive = _thinking_mode_rejection(exc) if "thinking" in kwargs else None
+                if wants_adaptive is None or _LEARNED_THINKING_MODE.get(self.model) == wants_adaptive:
                     raise
                 logger.info(
-                    "%s rejects `temperature`; retrying without it and omitting it for the rest of this process",
-                    self.model,
+                    "%s rejects this thinking mode; using %s thinking for the rest of this process",
+                    self.model, "adaptive" if wants_adaptive else "budgeted",
                 )
-                _MODELS_REJECTING_TEMPERATURE.add(self.model)
-                kwargs.pop("temperature", None)
-                raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]
-            response = raw.parse()
-            self._capture_response_headers(raw.headers)
+                _LEARNED_THINKING_MODE[self.model] = wants_adaptive
+                kwargs.pop("thinking", None)
+                output_config = {k: v for k, v in (kwargs.pop("output_config", None) or {}).items() if k != "effort"}
+                rebuilt = anthropic_thinking_request(thinking, kwargs["max_tokens"], model=self.model)
+                output_config.update(rebuilt.pop("output_config", {}))
+                kwargs.update(rebuilt)
+                if output_config:
+                    kwargs["output_config"] = output_config
+        return await self._create(kwargs)
 
-            self._last_finish_reason = response.stop_reason
+    async def _create(self, kwargs: dict[str, Any]) -> Any:
+        """One Messages call, buffered or (above the streaming threshold) streamed; captures the response headers.
 
-            usage = response.usage
-            cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-            cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-            # NOTE: the Anthropic usage object does not report thinking/reasoning tokens directly,
-            # so this is an APPROXIMATION (chars // 4), not an API-reported count. It is flagged via
-            # `last_thinking_tokens_estimated` and logged so callers know the reasoning-token figure
-            # is a heuristic, not billed usage.
-            # Named thinking_TOKENS: ``thinking`` is now the request-side toggle
-            # parameter, and shadowing it here would silently rebind it.
-            thinking_tokens = 0
-            for block in response.content:
+        ``with_raw_response`` exposes HTTP headers (rate-limit + org id) alongside the parsed body. Without it the
+        SDK swallows headers. The streamed form carries them on ``stream.response``.
+        """
+        if kwargs.get("max_tokens", 0) > self._STREAMING_THRESHOLD_TOKENS:
+            async with self.client.messages.stream(**kwargs) as stream:
+                message = await stream.get_final_message()
+                self._capture_response_headers(getattr(getattr(stream, "response", None), "headers", None))
+                return message
+        raw = await self.client.messages.with_raw_response.create(**kwargs)  # type: ignore[call-overload]  # anthropic's create() overloads can't be resolved through a **dict unpack; correct at runtime
+        response = raw.parse()
+        self._capture_response_headers(raw.headers)
+        return response
+
+    def _account_usage(self, usage: Any, content: Any) -> dict[str, Any]:
+        """Per-call usage from an SDK ``usage`` object, with the thinking count the API reports.
+
+        ``usage.output_tokens_details.thinking_tokens`` is the billed reasoning count
+        (https://platform.claude.com/docs/en/build-with-claude/extended-thinking). The visible thinking text is a
+        SUMMARY, so the chars//4 estimate this used to be undercounted real reasoning; it remains only as the
+        fallback for a response without the field, flagged by ``last_thinking_tokens_estimated``.
+        """
+        details = usage.get("output_tokens_details") if isinstance(usage, dict) else getattr(usage, "output_tokens_details", None)
+        reported = _int_field(details, "thinking_tokens") if details is not None else 0
+        has_reported = details is not None and isinstance(
+            details.get("thinking_tokens") if isinstance(details, dict) else getattr(details, "thinking_tokens", None), int
+        )
+        estimated = 0
+        if not has_reported:
+            for block in content or []:
                 if getattr(block, "type", None) == "thinking":
-                    text = getattr(block, "thinking", "") or ""
-                    thinking_tokens += max(1, len(text) // 4)  # rough estimate (chars // 4)
+                    estimated += max(1, len(getattr(block, "thinking", "") or "") // 4)
+        creation = usage.get("cache_creation") if isinstance(usage, dict) else getattr(usage, "cache_creation", None)
+        return {
+            "input_tokens": _int_field(usage, "input_tokens"),
+            "output_tokens": _int_field(usage, "output_tokens"),
+            "reasoning_tokens": reported if has_reported else estimated,
+            "reasoning_estimated": (not has_reported) and estimated > 0,
+            "cache_creation_input_tokens": _int_field(usage, "cache_creation_input_tokens"),
+            "cache_creation_1h_input_tokens": _int_field(creation, "ephemeral_1h_input_tokens") if creation is not None else 0,
+            "cache_read_input_tokens": _int_field(usage, "cache_read_input_tokens"),
+        }
 
-            self.last_cache_creation_input_tokens = cache_creation
-            self.last_cache_read_input_tokens = cache_read
-            self.total_cache_creation_input_tokens += cache_creation
-            self.total_cache_read_input_tokens += cache_read
-            self.last_thinking_tokens = thinking_tokens
-            self.last_thinking_tokens_estimated = thinking_tokens > 0
-            self.total_thinking_tokens += thinking_tokens
-            if thinking_tokens > 0:
-                logger.debug("Anthropic thinking tokens are estimated (chars//4=%d), not API-reported.", thinking_tokens)
+    def _consume_response(self, response: Any) -> str:
+        """Record one response's usage and turn it into the answer text, or the typed error its stop reason means."""
+        self._last_finish_reason = response.stop_reason
+        u = self._account_usage(response.usage, response.content)
+        self.last_cache_creation_input_tokens = u["cache_creation_input_tokens"]
+        self.last_cache_read_input_tokens = u["cache_read_input_tokens"]
+        self.total_cache_creation_input_tokens += u["cache_creation_input_tokens"]
+        self.total_cache_creation_1h_input_tokens = getattr(self, "total_cache_creation_1h_input_tokens", 0) + u["cache_creation_1h_input_tokens"]
+        self.total_cache_read_input_tokens += u["cache_read_input_tokens"]
+        self.last_thinking_tokens = u["reasoning_tokens"]
+        self.last_thinking_tokens_estimated = u["reasoning_estimated"]
+        self.total_thinking_tokens += u["reasoning_tokens"]
+        if u["reasoning_estimated"]:
+            logger.debug("Anthropic thinking tokens are estimated (chars//4=%d), not API-reported.", u["reasoning_tokens"])
 
-            # Cumulative session totals (for get_session_cost).
-            self._call_count += 1
-            self.total_input_tokens += usage.input_tokens
-            self.total_output_tokens += usage.output_tokens
+        # Cumulative session totals (for get_session_cost).
+        self._call_count += 1
+        self.total_input_tokens += u["input_tokens"]
+        self.total_output_tokens += u["output_tokens"]
+        self._last_usage = {k: v for k, v in u.items() if k not in ("reasoning_estimated", "cache_creation_1h_input_tokens")}
 
-            self._last_usage = {
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "reasoning_tokens": thinking_tokens,
-                "cache_creation_input_tokens": cache_creation,
-                "cache_read_input_tokens": cache_read,
-            }
+        # EVERY text block, joined: a response with citations, or with text split around other blocks, carries several,
+        # and returning the first alone silently truncated the answer.
+        texts = [block.text for block in response.content or [] if getattr(block, "type", None) == "text" and isinstance(getattr(block, "text", None), str)]
+        result_text = "".join(texts) if texts else None
+        if self._last_finish_reason in ("max_tokens", "model_context_window_exceeded"):
+            # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
+            # never actually raised anywhere -- see openai_compat.py's identical fix.
+            # partial_text carries whatever was already generated (and paid for) so a caller
+            # catching this can keep it, as exceptions.py documents the field for. A full context
+            # window is the same outcome by another route (https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons:
+            # "treat the response as truncated"), and it used to be returned as a complete answer.
+            raise LLMTruncationError(
+                f"Anthropic response truncated (stop_reason={self._last_finish_reason!r})",
+                finish_reason=self._last_finish_reason,
+                partial_text=result_text or "",
+            )
+        if self._last_finish_reason == "refusal":
+            stop_details = getattr(response, "stop_details", None)
+            if stop_details is not None and not isinstance(stop_details, dict):
+                dump = getattr(stop_details, "model_dump", None)
+                stop_details = dump() if callable(dump) else {"type": getattr(stop_details, "type", None), "category": getattr(stop_details, "category", None)}
+            self.last_stop_details = stop_details if isinstance(stop_details, dict) else None
+            raise LLMRefusalError(
+                f"{self.model} declined to respond (stop_reason='refusal', stop_details={self.last_stop_details!r})",
+                raw_text=result_text,
+                details={"stop_details": self.last_stop_details, "model": self.model},
+            )
+        if result_text is None:
+            raise LLMProviderError(f"Anthropic returned no text block (stop_reason={self._last_finish_reason!r})")
+        return result_text
 
-            # Pull text from the first text block (skip thinking blocks).
-            result_text = None
-            for block in response.content:
-                if getattr(block, "type", None) == "text":
-                    result_text = block.text
-                    break
-            if result_text is None:
-                # Fall back to the legacy single-block layout, guarded: content can be empty, and
-                # block 0 can be a thinking/tool_use block with no .text -- both reachable exactly
-                # when extended thinking consumed the whole budget, i.e. the max_tokens case
-                # handled below, where an IndexError/AttributeError would mask the typed error.
-                first = response.content[0] if response.content else None
-                result_text = getattr(first, "text", None) if first is not None else None
-            if self._last_finish_reason == "max_tokens":
-                # Regression fix (2026-07-21 audit): LLMTruncationError was fully specified but
-                # never actually raised anywhere -- see openai_compat.py's identical fix.
-                # partial_text carries whatever was already generated (and paid for) so a caller
-                # catching this can keep it, as exceptions.py documents the field for.
-                raise LLMTruncationError(
-                    "Anthropic response truncated by max_tokens (stop_reason='max_tokens')",
-                    finish_reason=self._last_finish_reason,
-                    partial_text=result_text or "",
-                )
-            if result_text is None:
-                raise LLMProviderError(f"Anthropic returned no text block (stop_reason={self._last_finish_reason!r})")
-            return result_text  # type: ignore[no-any-return]  # anthropic SDK: the text of a content block is untyped in the installed version
+    # generate_json is inherited: LLMProvider's forwards images, thinking and json_schema to generate() exactly as the
+    # override that used to live here did (the code audit flagged the two bodies as duplicates).
 
     def _capture_response_headers(self, headers: Any) -> None:
         """Snapshot rate-limit headers + org id from the latest response.
@@ -435,6 +577,8 @@ class AnthropicProvider(LLMProvider):
         org = lower.get("anthropic-organization-id")
         self.last_organization_id = org if isinstance(org, str) else None
 
+    _count_tokens_fallback_warned = False
+
     async def count_tokens(
         self,
         text: str,
@@ -447,8 +591,9 @@ class AnthropicProvider(LLMProvider):
         diverges from Claude's BPE for >5% of typical text). Cache-budget
         and prompt-fits-in-context calculations need the real number.
 
-        Falls back to tiktoken on any API failure so a transient outage
-        doesn't block calling code.
+        Falls back to tiktoken on a transient failure (connection, timeout, 429, 5xx) so an outage does not block
+        calling code, with a WARNING the first time. A permanent 4xx (bad key, unknown model, malformed request) is
+        RAISED: it used to be swallowed at DEBUG, so a wrong model ID or a revoked key read as a plausible count.
         """
         try:
             messages = [{"role": "user", "content": text}]
@@ -458,7 +603,12 @@ class AnthropicProvider(LLMProvider):
             result = await self.client.messages.count_tokens(**kwargs)
             return int(result.input_tokens)
         except Exception as exc:
-            logger.debug("Anthropic count_tokens API failed (%s); falling back to tiktoken.", exc)
+            status = getattr(exc, "status_code", None)
+            if isinstance(status, int) and 400 <= status < 500 and status not in (408, 409, 429):
+                raise
+            if not type(self)._count_tokens_fallback_warned:
+                type(self)._count_tokens_fallback_warned = True
+                logger.warning("Anthropic count_tokens API failed (%s); falling back to the tiktoken approximation.", exc)
             from pyutilz.llm.token_counter import count_tokens
             return count_tokens(text)
 
@@ -502,42 +652,106 @@ class AnthropicProvider(LLMProvider):
             out["organization_id"] = org
         return out
 
-    def get_session_cost(self) -> dict[str, Any]:
-        """Return cumulative usage including cache + thinking accounting.
+    def _cost_usd(self, input_tokens: int, output_tokens: int, cache_write_5m: int, cache_write_1h: int, cache_read: int) -> tuple[float, float]:
+        """``(input_cost, output_cost)`` in USD at this model's list rates.
 
-        Cache-aware cost: cache_read tokens billed at 0.10x input rate;
-        cache_creation tokens billed at 1.25x (5min) or 2x (1h) input rate.
-        We use 1.25x as the default (5min ephemeral) -- if you opt into
-        1h cache, multiply ``cache_creation_input_tokens`` by 2 instead.
+        Anthropic's ``usage.input_tokens`` ALREADY EXCLUDES both cache token counts (total sent = input + cache
+        creation + cache read), so they are added, never subtracted. Cache writes bill 1.25x input (5-minute) or 2x
+        (1-hour); cache reads bill the model's own multiplier: 0.1x on most models, 0.05x on Opus 5.5, 0.025x on
+        Fable/Mythos 5.1 (https://platform.claude.com/docs/en/about-claude/pricing). A flat 0.10 overstated a cached
+        Fable 5.1 session's reads fourfold.
         """
-        in_rate, out_rate = self._get_pricing()
-        # Regression fix (2026-07-21 audit): Anthropic's ``usage.input_tokens`` field ALREADY
-        # EXCLUDES both cache_creation_input_tokens AND cache_read_input_tokens (total tokens
-        # sent = input_tokens + cache_creation_input_tokens + cache_read_input_tokens -- this is
-        # Anthropic's own documented semantics). Subtracting the cumulative cache totals again
-        # here double-subtracted them from a figure that never included them in the first place,
-        # which `max(0, ...)` could clamp to 0 -- silently dropping the entire "fresh" input-cost
-        # tier for any session where cumulative cache tokens exceed cumulative fresh input_tokens
-        # (the common case for a heavily-cached agentic session).
+        spec = self._spec
+        in_rate, out_rate = spec.input_per_1m, spec.output_per_1m
+        input_cost = (
+            input_tokens * in_rate + cache_write_5m * in_rate * 1.25 + cache_write_1h * in_rate * 2.0 + cache_read * in_rate * spec.cache_read_multiplier
+        ) / 1_000_000
+        return input_cost, output_tokens * out_rate / 1_000_000
+
+    def get_session_cost(self) -> dict[str, Any]:
+        """Return cumulative usage including cache + thinking accounting (see ``_cost_usd`` for the rates)."""
         total_input = getattr(self, "total_input_tokens", 0)
         total_output = getattr(self, "total_output_tokens", 0)
-        plain_input = total_input
-        input_cost = (
-            (plain_input / 1_000_000) * in_rate
-            + (self.total_cache_creation_input_tokens / 1_000_000) * in_rate * 1.25
-            + (self.total_cache_read_input_tokens / 1_000_000) * in_rate * 0.10
-        )
-        output_cost = (total_output / 1_000_000) * out_rate
+        creation = getattr(self, "total_cache_creation_input_tokens", 0)
+        creation_1h = min(getattr(self, "total_cache_creation_1h_input_tokens", 0), creation)
+        cache_read = getattr(self, "total_cache_read_input_tokens", 0)
+        input_cost, output_cost = self._cost_usd(total_input, total_output, creation - creation_1h, creation_1h, cache_read)
+        batch_cost = getattr(self, "total_batch_cost_usd", 0.0)
         return {
             "calls": getattr(self, "_call_count", 0),
             "prompt_tokens": total_input,
             "completion_tokens": total_output,
-            "thinking_tokens": self.total_thinking_tokens,
-            "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
-            "cache_read_input_tokens": self.total_cache_read_input_tokens,
+            "thinking_tokens": getattr(self, "total_thinking_tokens", 0),
+            "cache_creation_input_tokens": creation,
+            "cache_creation_1h_input_tokens": creation_1h,
+            "cache_read_input_tokens": cache_read,
             "input_cost_usd": input_cost,
             "output_cost_usd": output_cost,
+            "batch_cost_usd": batch_cost,
             # Provider-agnostic spend reporting reads this key; every other provider's
             # get_session_cost returns it, and omitting it raised KeyError on Anthropic alone.
-            "total_cost_usd": input_cost + output_cost,
+            "total_cost_usd": input_cost + output_cost + batch_cost,
         }
+
+    async def generate_message_batch(
+        self,
+        requests: list[dict[str, Any]],
+        poll_interval: float = 30.0,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run ``requests`` through the Message Batches API: half the price of synchronous calls, asynchronous.
+
+        Each request dict takes the ``generate`` arguments (``prompt`` required; ``system``, ``temperature``,
+        ``max_tokens``, ``thinking``, ``json_schema``, ``images``) plus an optional ``id``. Returns one dict per
+        request, in request order: ``{"id", "result"}`` or ``{"id", "error"}``, with ``usage`` when the API reports it.
+        Blocks, polling every ``poll_interval`` seconds, until the batch has ended (batches finish within 24 hours) or
+        ``timeout`` seconds pass, which raises ``TimeoutError`` naming the batch id so it can be collected later.
+        Spend is added to ``total_batch_cost_usd`` at the documented 50% discount
+        (https://platform.claude.com/docs/en/build-with-claude/batch-processing).
+        """
+        ids = [str(req.get("id", i)) for i, req in enumerate(requests)]
+        if len(set(ids)) != len(ids):
+            raise ValueError("generate_message_batch: request ids must be unique")
+        batch_requests: list[Any] = []
+        for custom_id, req in zip(ids, requests):
+            requested = req.get("max_tokens")
+            # 0 / absent both mean "derive it", matching generate()'s own max_tokens <= 0 rule.
+            max_tokens = int(requested) if requested else min(self.max_output_tokens, self._STREAMING_THRESHOLD_TOKENS)
+            params = self._request_kwargs(
+                req["prompt"], req.get("system"), req.get("temperature", 0.7), max_tokens,
+                req.get("thinking", False), req.get("images"), req.get("json_schema"),
+            )
+            batch_requests.append({"custom_id": custom_id, "params": params})
+        batch = await self.client.messages.batches.create(requests=batch_requests)
+        waited = 0.0
+        while getattr(batch, "processing_status", None) != "ended":
+            if timeout is not None and waited >= timeout:
+                raise TimeoutError(f"Anthropic message batch {batch.id} still {batch.processing_status} after {waited:.0f}s")
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+            batch = await self.client.messages.batches.retrieve(batch.id)
+        by_id: dict[str, dict[str, Any]] = {}
+        async for entry in await self.client.messages.batches.results(batch.id):
+            by_id[entry.custom_id] = self._batch_entry(entry)
+        return [by_id.get(custom_id, {"id": custom_id, "error": "no result returned for this request"}) for custom_id in ids]
+
+    def _batch_entry(self, entry: Any) -> dict[str, Any]:
+        """One Message Batches result line as a ``generate_batch``-style dict, costing it at the batch discount."""
+        result = entry.result
+        rtype = getattr(result, "type", None)
+        if rtype != "succeeded":
+            error = getattr(result, "error", None)
+            return {"id": entry.custom_id, "error": f"{rtype}: {error}" if error is not None else str(rtype)}
+        message = result.message
+        u = self._account_usage(message.usage, message.content)
+        input_cost, output_cost = self._cost_usd(
+            u["input_tokens"], u["output_tokens"], u["cache_creation_input_tokens"] - u["cache_creation_1h_input_tokens"],
+            u["cache_creation_1h_input_tokens"], u["cache_read_input_tokens"],
+        )
+        self.total_batch_cost_usd = getattr(self, "total_batch_cost_usd", 0.0) + 0.5 * (input_cost + output_cost)
+        usage = {k: v for k, v in u.items() if k != "reasoning_estimated"}
+        texts = [b.text for b in message.content or [] if getattr(b, "type", None) == "text"]
+        stop = getattr(message, "stop_reason", None)
+        if stop in ("max_tokens", "model_context_window_exceeded", "refusal"):
+            return {"id": entry.custom_id, "error": f"stop_reason={stop}", "partial_text": "".join(texts), "usage": usage}
+        return {"id": entry.custom_id, "result": "".join(texts), "usage": usage, "finish_reason": stop}

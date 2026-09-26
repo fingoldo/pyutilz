@@ -138,6 +138,42 @@ class TestFailedAndCutOffAttemptsAreKept:
         assert store.get(row["response_sha256"]) == '{"kb_triples": [{"subject":'
         assert row["outcome"] == "truncated", "text plus an error is a cut-off answer, not a bare failure"
 
+    def test_a_mid_stream_upstream_failure_is_interrupted_not_truncated(self, tmp_path: Path) -> None:
+        """DS-6: an interruption with partial text used to be archived as "truncated", like a length cut-off."""
+        from pyutilz.dev.attempt_archive import OUTCOMES
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        err = LLMStreamInterruptedError("upstream server_error", code="server_error", partial_text="half an ")
+        provider, store, sink = _wrapped(tmp_path, _FakeProvider([err]))
+
+        with pytest.raises(LLMStreamInterruptedError):
+            _run(provider.generate("p"))
+
+        (row,) = sink.read()
+        assert row["outcome"] == "interrupted"
+        assert store.get(row["response_sha256"]) == "half an "
+        assert (row["error_code"], row["retryable"]) == ("server_error", True)
+        assert "interrupted" in OUTCOMES and "truncated" in OUTCOMES
+
+    def test_an_interruption_without_text_is_still_interrupted(self, tmp_path: Path) -> None:
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+
+        err = LLMStreamInterruptedError("finish_reason=error", code=400, retryable=False)
+        provider, _, sink = _wrapped(tmp_path, _FakeProvider([err]))
+        with pytest.raises(LLMStreamInterruptedError):
+            _run(provider.generate("p"))
+        (row,) = sink.read()
+        assert (row["outcome"], row["error_code"], row["retryable"]) == ("interrupted", 400, False)
+
+    def test_other_outcomes_carry_no_interruption_fields(self, tmp_path: Path) -> None:
+        provider, _, sink = _wrapped(tmp_path, _FakeProvider(["ok", TimeoutError("slow")]))
+        _run(provider.generate("p"))
+        with pytest.raises(TimeoutError):
+            _run(provider.generate("p"))
+        rows = sink.read()
+        assert [r["outcome"] for r in rows] == ["accepted", "error"]
+        assert all("error_code" not in r and "retryable" not in r for r in rows) and len(rows) == 2
+
     def test_a_length_stop_is_recorded_as_truncated(self, tmp_path: Path) -> None:
         provider, _, sink = _wrapped(tmp_path, _FakeProvider(['{"partial": '], finish="length"))
 

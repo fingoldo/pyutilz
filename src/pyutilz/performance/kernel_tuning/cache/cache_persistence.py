@@ -21,6 +21,7 @@ from .cache_base import (
     _NO_CODE_VERSION,
     _build_provenance,
     _kernel_dir,
+    _legacy_kernel_dir,
     _slug,
     cache_path,
     hw_fingerprint,
@@ -141,48 +142,6 @@ class _CachePersistenceMixin(_CacheState):
             with contextlib.suppress(OSError):
                 os.remove(claim)
 
-    def _read_kernel_newest(self, kernel_name: str) -> Optional[dict]:
-        """Resolve one kernel by globbing its directory and picking the NEWEST
-        immutable file (by embedded ``tuned_utc``, mtime as tiebreaker). Pure
-        read, NO lock. Returns the kernel ENTRY dict (axes/regions/code_version/
-        salt/tuned_utc) with a per-file provenance staleness check applied, or
-        None on miss / stale."""
-        if self._path is None:
-            return None
-        kdir = _kernel_dir(self._path, kernel_name)
-        files = [p for p in _glob.glob(os.path.join(kdir, "*.json"))]
-        if not files:
-            return None
-        live_prov = _build_provenance()
-        candidates: list[tuple] = []  # (tuned_ts, mtime, entry)
-        for p in files:
-            try:
-                with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-            except (OSError, json.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
-                continue  # os.replace is atomic; a parse failure is a foreign/partial file -> skip
-            if rec.get("schema_version") != SCHEMA_VERSION:
-                continue
-            if rec.get("hw_fingerprint") != hw_fingerprint():
-                continue
-            saved_prov = rec.get("provenance")
-            if saved_prov and provenance_changed(saved_prov, live_prov):
-                continue  # driver/cupy/numba bump since this tuning -> ignore (structural staleness)
-            entry = rec.get("entry")
-            if not isinstance(entry, dict):
-                continue
-            ts = entry.get("tuned_utc") or ""
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, entry))
-        if not candidates:
-            return None
-        # Newest by tuned_utc (ISO-8601 strings sort chronologically), then mtime.
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        return candidates[-1][2]  # type: ignore[no-any-return]  # entries come from a JSON file, so the tuple element is Any
-
     def _load(self) -> Optional[dict]:
         """Build the in-memory ``{schema_version, hw_fingerprint, kernels}`` view
         by resolving every kernel directory to its newest immutable file. Pure
@@ -200,12 +159,16 @@ class _CachePersistenceMixin(_CacheState):
                 kernel_dirs = [d for d in os.scandir(host_dir) if d.is_dir()]
             except OSError:
                 kernel_dirs = []
+            # Every record carries its canonical kernel_name. A directory may hold several kernels (the pre-2026-09-26
+            # lossy-slug layout) and one kernel may span two directories (its legacy one plus its current hashed one),
+            # so group by the stored name and keep the newest record per kernel across ALL directories.
+            best: dict = {}
             for d in kernel_dirs:
-                # Recover the kernel name from any file in the dir (the slug is
-                # lossy); the entry itself carries the canonical kernel_name.
-                entry = self._read_kernel_dir_by_path(d.path)
-                if entry is not None:
-                    kernels[entry[0]] = entry[1]
+                for name, (key, entry) in self._read_kernel_dir_all(d.path).items():
+                    if name not in best or key > best[name][0]:
+                        best[name] = (key, entry)
+            for name, (_key, entry) in best.items():
+                kernels[name] = entry
         if self._remote is not None:
             # Read-through: pull this host's payload from the shared store + cache each kernel
             # as an immutable local file, then they resolve normally. Gated PER-KERNEL (any
@@ -238,43 +201,56 @@ class _CachePersistenceMixin(_CacheState):
             "kernels": kernels,
         }
 
-    def _read_kernel_dir_by_path(self, kdir: str) -> Optional[tuple]:
-        """Like ``_read_kernel_newest`` but takes a directory path + returns
-        ``(kernel_name, entry)`` (the name is read from the winning record).
-        Used by ``_load`` which scans directories without knowing kernel names."""
+    @staticmethod
+    def _record_sort_key(entry: Optional[dict], path: str) -> tuple:
+        """``(tuned_utc, mtime)``: the ONE recency order used by the readers and by GC (ISO-8601 strings sort
+        chronologically; mtime breaks ties; an unreadable record has ``tuned_utc`` "" and sorts oldest)."""
+        ts = (entry.get("tuned_utc") or "") if isinstance(entry, dict) else ""
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = 0.0
+        return (ts, mtime)
+
+    def _read_kernel_dir_all(self, kdir: str) -> dict:
+        """Every valid kernel record in ``kdir``, grouped by the ``kernel_name`` stored IN the record:
+        ``{kernel_name: (sort_key, entry)}`` keeping the newest per name. Pure read, no lock."""
         files = _glob.glob(os.path.join(kdir, "*.json"))
+        out: dict = {}
         if not files:
-            return None
+            return out
         live_prov = _build_provenance()
-        candidates: list[tuple] = []
+        fp = hw_fingerprint()
         for p in files:
             try:
                 with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
             except (OSError, json.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
                 continue
-            if rec.get("schema_version") != SCHEMA_VERSION:
+            if not isinstance(rec, dict) or rec.get("schema_version") != SCHEMA_VERSION:
                 continue
-            if rec.get("hw_fingerprint") != hw_fingerprint():
+            if rec.get("hw_fingerprint") != fp:
                 continue
             saved_prov = rec.get("provenance")
             if saved_prov and provenance_changed(saved_prov, live_prov):
-                continue
+                continue  # driver/cupy/numba bump since this tuning -> ignore (structural staleness)
             entry = rec.get("entry")
             name = rec.get("kernel_name")
             if not isinstance(entry, dict) or not name:
                 continue
-            ts = entry.get("tuned_utc") or ""
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, name, entry))
-        if not candidates:
+            key = self._record_sort_key(entry, p)
+            if name not in out or key > out[name][0]:
+                out[name] = (key, entry)
+        return out
+
+    def _read_kernel_dir_by_path(self, kdir: str) -> Optional[tuple]:
+        """``(kernel_name, entry)`` of the newest record in ``kdir`` regardless of kernel, or None. Kept for callers
+        that expect one kernel per directory; ``_load`` uses ``_read_kernel_dir_all``, which returns every kernel."""
+        found = self._read_kernel_dir_all(kdir)
+        if not found:
             return None
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        winner = candidates[-1]
-        return (winner[2], winner[3])
+        name = max(found, key=lambda n: found[n][0])
+        return (name, found[name][1])
 
     def _persist_kernel(self, kernel_name: str, entry: dict, *, provenance: Optional[dict] = None, remote: bool = True) -> None:
         """Write ONE immutable per-kernel tuning file (no read-modify-write, no
@@ -345,7 +321,7 @@ class _CachePersistenceMixin(_CacheState):
     def _gc_kernel_dir(self, kdir: str, keep: int = 4) -> None:
         """Lazily garbage-collect a kernel directory, keeping the newest ``keep`` immutable
         files. "Newest" uses the SAME ``(tuned_utc, mtime)`` key the readers
-        (``_read_kernel_newest`` / ``_read_kernel_dir_by_path``) use to pick the current tuning
+        (``_read_kernel_dir_all`` via ``_record_sort_key``) use to pick the current tuning
         -- NOT raw mtime alone.
 
         Regression fix (2026-07-21 audit round 2, MEDIUM): GC previously sorted purely by mtime
@@ -366,24 +342,18 @@ class _CachePersistenceMixin(_CacheState):
             return
         if len(files) <= keep:
             return
-        candidates: list[tuple] = []  # (tuned_ts, mtime, path)
+        candidates: list[tuple] = []  # (sort_key, path)
         for p in files:
-            ts = ""
+            entry = None
             try:
                 with open(p, encoding="utf-8") as f:
                     rec = json.load(f)
-                entry = rec.get("entry")
-                if isinstance(entry, dict):
-                    ts = entry.get("tuned_utc") or ""
+                entry = rec.get("entry") if isinstance(rec, dict) else None
             except (OSError, json.JSONDecodeError):  # swallow-ok: an unreadable entry sorts as oldest and is evicted first, which is the intended outcome
                 pass  # unreadable -- sorts as oldest (ts=""), evicted first
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                mtime = 0.0
-            candidates.append((ts, mtime, p))
-        candidates.sort(key=lambda c: (c[0], c[1]))
-        for _ts, _mtime, p in candidates[:-keep]:
+            candidates.append((self._record_sort_key(entry, p), p))
+        candidates.sort(key=lambda c: c[0])
+        for _key, p in candidates[:-keep]:
             with contextlib.suppress(OSError):
                 os.remove(p)
 
@@ -417,3 +387,15 @@ class _CachePersistenceMixin(_CacheState):
         for p in _glob.glob(os.path.join(kdir, "*.json")):
             with contextlib.suppress(OSError):
                 os.remove(p)
+        # The pre-2026-09-26 directory may be shared with other kernels: remove only records naming THIS kernel, or
+        # the evicted tuning would be resurrected from there by the next ``_load``.
+        legacy = _legacy_kernel_dir(self._path, kernel_name)
+        for p in _glob.glob(os.path.join(legacy, "*.json")):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    rec = json.load(f)
+            except (OSError, json.JSONDecodeError):  # swallow-ok: an unreadable record is not this kernel's tuning; leave it
+                continue
+            if isinstance(rec, dict) and rec.get("kernel_name") == kernel_name:
+                with contextlib.suppress(OSError):
+                    os.remove(p)

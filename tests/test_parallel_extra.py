@@ -97,7 +97,7 @@ class TestSplitArray:
 
     def test_zero_step_raises(self):
         from pyutilz.system.parallel import split_array
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="step"):
             split_array(np.zeros(10), step=0)
 
 

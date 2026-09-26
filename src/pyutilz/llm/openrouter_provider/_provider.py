@@ -16,11 +16,14 @@ What's distinctive about a meta-provider, and how this class handles it:
    catalogue once per process, cache it, and look up the active model.
    On any failure (network, schema drift) we degrade silently to zeros.
 
-3. **Routing knobs as hashable kwargs** — ``provider_order``,
-   ``provider_sort``, ``provider_allow_fallbacks``, ``provider_ignore``,
-   ``models_fallback`` are forwarded to the request body as ``provider``
-   and ``models`` fields. Kept as tuples (not lists/dicts) so the factory's
-   ``tuple(sorted(kwargs.items()))`` cache key keeps working.
+3. **Routing knobs as hashable kwargs** — ``provider_order``, ``provider_only``,
+   ``provider_ignore``, ``provider_sort``, ``provider_allow_fallbacks``,
+   ``provider_require_parameters``, ``provider_data_collection``, ``provider_zdr``,
+   ``provider_quantizations``, ``provider_max_price``, ``provider_preferred_min_throughput``,
+   ``provider_preferred_max_latency`` and ``models_fallback`` are forwarded to the request body
+   as the ``provider`` and ``models`` fields (see ``_request.py``). Sequences are tuples and
+   mappings may be given as tuples of pairs, so the factory's ``tuple(sorted(kwargs.items()))``
+   cache key keeps working.
 
 4. **App-attribution headers** — ``app_name`` and ``site_url`` set
    ``X-Title`` and ``HTTP-Referer`` so calls show up in the openrouter.ai
@@ -38,17 +41,27 @@ import httpx
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.base import PerCallAttr
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
+from pyutilz.llm.openrouter_provider._accounting import OpenRouterAccountingMixin
+from pyutilz.llm.openrouter_provider._endpoints import OpenRouterEndpointsMixin
+from pyutilz.llm.openrouter_provider._route import _ROUTE_FINGERPRINT_ATTRS, OpenRouterRouteMixin
+from pyutilz.llm.openrouter_provider._request import (
+    OpenRouterRequestMixin,
+    as_plain,
+    url_citations,
+    build_plugins,
+    build_provider_field,
+    catalogue_id,
+)
 from pyutilz.llm.openrouter_provider._catalogue import (
     _cache_read_cost_per_1m_or_none,
+    _cache_write_cost_per_1m_or_none,
     _per_token_cost_pair,
-    _per_token_cost_pair_or_none,
     _catalogue_is_loaded,
     _resolve_model_limits,
     _fetch_models_catalogue,
     _ensure_catalogue_warm_async,
     _pkg,
 )
-from pyutilz.llm.openrouter_provider._health import _summarize_endpoints
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +71,7 @@ logger = logging.getLogger(__name__)
 _REASONING_CANNOT_BE_DISABLED: set[str] = set()
 
 
-class OpenRouterProvider(OpenAICompatibleProvider):
+class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, OpenRouterRouteMixin, OpenRouterRequestMixin, OpenAICompatibleProvider):
     """OpenRouter meta-provider via OpenAI-compatible chat/completions API.
 
     Common usage:
@@ -146,7 +159,34 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         retry_routing_404: bool = False,
         routing_404_max_attempts: int = 3,
         routing_404_pause_sec: float = 60.0,
+        provider_only: tuple[str, ...] | None = None,
+        provider_require_parameters: bool | None = None,
+        provider_data_collection: str | None = None,
+        provider_zdr: bool | None = None,
+        provider_quantizations: tuple[str, ...] | None = None,
+        provider_max_price: Any = None,
+        provider_preferred_min_throughput: Any = None,
+        provider_preferred_max_latency: Any = None,
+        web_search_engine: str | None = None,
+        web_search_max_results: int | None = None,
+        pdf_engine: str | None = None,
+        transforms: tuple[str, ...] | None = None,
+        system_cache_control: bool = False,
+        extra_body: Any = None,
     ):
+        """See the class and module docstrings; the routing/request options are documented in the README's OpenRouter section.
+
+        ``provider_require_parameters``: None (default) = automatic, True/False = always / never. Automatic sends
+        ``require_parameters: true`` when the request carries ``response_format`` or asks the model to reason AND the
+        catalogue lists every parameter in the body for the model, so the answer never silently loses the constraint
+        (``_request.auto_require_parameters``). ``provider_max_price`` / ``provider_preferred_*`` / ``extra_body`` take a
+        mapping or a tuple of pairs (hashable, for the factory cache). ``pdf_engine`` (``"mistral-ocr"``,
+        ``"cloudflare-ai"``, ``"native"``) attaches the file-parser plugin. ``transforms=("middle-out",)`` lets OpenRouter
+        compress an over-long prompt, which DROPS content. ``system_cache_control`` sends the system prompt as a
+        ``cache_control`` breakpoint. ``extra_body`` is merged into every request (``seed``, ``user``, ``stop``, ...).
+        """
+        # Captured first, before any other local exists: the inputs route_fingerprint() digests (see _route.py).
+        self._route_kwargs = {name: value for name, value in locals().items() if name in _ROUTE_FINGERPRINT_ATTRS}
         settings = _pkg().get_llm_settings()
         resolved_key = api_key or (settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None)
         if not resolved_key:
@@ -175,6 +215,31 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         #   the cheap "just cache the system prompt" lever.
         self._enable_web_search = enable_web_search
         self._anthropic_top_level_cache = anthropic_top_level_cache
+        self._provider_only = provider_only
+        self._provider_require_parameters = provider_require_parameters
+        # Built once: the routing block is the same for every request of this instance (validated here, so a typo such
+        # as data_collection="denied" fails at construction rather than as a 400 on the first paid call).
+        self._provider_field = build_provider_field(
+            order=provider_order,
+            ignore=provider_ignore,
+            only=provider_only,
+            sort=provider_sort,
+            allow_fallbacks=provider_allow_fallbacks,
+            data_collection=provider_data_collection,
+            zdr=provider_zdr,
+            quantizations=provider_quantizations,
+            max_price=provider_max_price,
+            preferred_min_throughput=provider_preferred_min_throughput,
+            preferred_max_latency=provider_preferred_max_latency,
+            require_parameters=provider_require_parameters,
+        )
+        self._plugins = build_plugins(enable_web_search, web_search_engine, web_search_max_results, pdf_engine)
+        self._transforms = transforms
+        self._system_cache_control = system_cache_control
+        self._default_extra_body = as_plain(extra_body) if extra_body else None
+        # Session token tallies per model that SERVED the call (`models` fallback can differ from `model_name`):
+        # [prompt, cache_hit, completion, reasoning, cache_write]. The estimate prices each at its own model's rates.
+        self._usage_by_model: dict[str, list[int]] = {}
 
         # Per-call usage breakdown — set after every generate(). All
         # cumulative counters mirror their last_* counterpart.
@@ -270,8 +335,27 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         max. Falls back to ``_default_context_window`` if the catalogue is
         unreachable / model isn't listed.
         """
-        ctx, _ = _resolve_model_limits(self.model_name)
+        ctx = self._smallest_known_limit(0)
         return ctx if ctx is not None else self._default_context_window
+
+    def _served_models(self) -> list[str]:
+        """Catalogue ids of every model a request may be served by: the requested one, then the ``models`` fallbacks."""
+        return [catalogue_id(m) for m in (self.model_name, *(getattr(self, "_models_fallback", None) or ()))]
+
+    def _smallest_known_limit(self, index: int) -> int | None:
+        """The smallest known ``_resolve_model_limits`` value (0 = context, 1 = output cap) across the served models.
+
+        With a ``models`` fallback list a request sized to the primary's cap is refused (HTTP 400) by a fallback with a
+        smaller one, so the limit that holds for the whole list is the minimum. Models the catalogue does not list are
+        skipped rather than turned into a guess.
+        """
+        known = [lim for lim in (_resolve_model_limits(m)[index] for m in self._served_models()) if lim is not None]
+        return min(known) if known else None
+
+    def _catalogue_entry(self) -> dict[str, Any] | None:
+        """This model's ``/models`` catalogue entry (routing suffix stripped), or None."""
+        entry = _fetch_models_catalogue().get(catalogue_id(self.model_name))
+        return entry if isinstance(entry, dict) else None
 
     @property
     def max_output_tokens(self) -> int:
@@ -304,7 +388,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         deliberate. A caller that needs the exact ceiling should pin a route and read the cap off the
         endpoint it pinned.
         """
-        _, max_out = _resolve_model_limits(self.model_name)
+        max_out = self._smallest_known_limit(1)
         if max_out is not None:
             return max_out
         cold = not _catalogue_is_loaded()
@@ -346,7 +430,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             # fail-open behavior itself is deliberate (see docstring above).
             logger.debug("supports_json_mode: unexpected catalogue-fetch error (%s), assuming supported", e)
             return True
-        entry = catalogue.get(self.model_name)
+        entry = catalogue.get(catalogue_id(self.model_name))
         if not entry:
             # Unknown model — best-effort: assume support, rely on the
             # upstream to reject if it can't handle it.
@@ -371,7 +455,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         except Exception as exc:
             logger.warning("OR catalogue unavailable (%s); treating %s as NOT supporting strict json_schema", exc, self.model_name)
             return False
-        entry = catalogue.get(self.model_name)
+        entry = catalogue.get(catalogue_id(self.model_name))
         if not entry:
             logger.warning("%s absent from the OR catalogue; treating it as NOT supporting strict json_schema", self.model_name)
             return False
@@ -393,33 +477,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             return 1200.0
         return 240.0
 
-    def _extra_request_body(self, model: str) -> dict[str, Any]:
-        """Build the OpenRouter-specific extra request-body fields (``provider`` routing options, model fallback list) for ``model``."""
-        body: dict[str, Any] = {}
-        provider_field: dict[str, Any] = {}
-        if self._provider_order:
-            provider_field["order"] = list(self._provider_order)
-        if self._provider_ignore:
-            provider_field["ignore"] = list(self._provider_ignore)
-        if self._provider_sort:
-            provider_field["sort"] = self._provider_sort
-        # Only emit allow_fallbacks when explicitly disabled; default at OR
-        # is true, so omitting keeps requests minimal.
-        if not self._provider_allow_fallbacks:
-            provider_field["allow_fallbacks"] = False
-        if provider_field:
-            body["provider"] = provider_field
-        if self._models_fallback:
-            body["models"] = list(self._models_fallback)
-        if self._enable_web_search:
-            # The "web" plugin id is the canonical OR shape; default
-            # engine = exa unless OR overrides per-account.
-            body["plugins"] = [{"id": "web"}]
-        if self._anthropic_top_level_cache:
-            body["cache_control"] = {"type": "ephemeral"}
-        return body
-
-    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:
+    def _thinking_request_field(self, thinking: bool | str | int) -> dict[str, Any] | None:
         """OpenRouter's unified ``reasoning`` field.
 
         OR auto-routes the body fragment to the correct upstream-specific
@@ -432,7 +490,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             (smallest available reasoning budget, hidden from the response too).
           * ``True`` -> ``{"reasoning": {"effort": "medium"}}``
             (provider's middle-ground default).
-          * ``"low" | "medium" | "high" | "minimal"`` (or any other str)
+          * a positive ``int`` -> ``{"reasoning": {"max_tokens": n}}`` (a reasoning budget in tokens).
+          * ``"low" | "medium" | "high" | "minimal" | "xhigh" | "max"`` (or any other str; ``"none"``
+            normalises to disabled, i.e. the ``enabled: False`` form above)
             -> ``{"reasoning": {"effort": <str>}}`` (passed through as-is;
             unknown strings are accepted by OR and forwarded to upstream
             which may reject them with a 400).
@@ -484,12 +544,29 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         By then the catalogue did expose the difference: glm's entry carries ``reasoning.mandatory: true`` with
         efforts max/high/low only. The refusal-keyed fallback stays, since older entries lack the field.
         """
+        if isinstance(thinking, int) and not isinstance(thinking, bool) and thinking > 0:
+            # A positive int is a reasoning BUDGET in tokens: the reasoning doc's `max_tokens`, the alternative to
+            # `effort` (the two are exclusive). It is the cap the 2026-09-25 deepseek-v4.1-flash runaway above needed.
+            return {"reasoning": {"max_tokens": thinking}}
         enabled, effort = self._normalize_thinking(thinking)
         if not enabled:
-            if self.model_name in _REASONING_CANNOT_BE_DISABLED:
+            if self.model_name in _REASONING_CANNOT_BE_DISABLED or self._catalogue_says_reasoning_mandatory():
                 return {"reasoning": {"effort": "minimal", "exclude": True}}
             return {"reasoning": {"enabled": False}}
         return {"reasoning": {"effort": effort or "medium"}}
+
+    def _catalogue_says_reasoning_mandatory(self) -> bool:
+        """True when the catalogue marks this model's reasoning ``mandatory`` (then the off switch is refused with a 400).
+
+        Measured live 2026-09-26 (``audits/2026-09-26/or9_live_results.json``): on all five catalogue-mandatory models
+        probed (gpt-oss-20b, gpt-5-nano, glm-5.3-flash, step-3.5-flash, gemini-3.7-flash) BOTH ``enabled: false`` and
+        ``effort: "none"`` were refused with HTTP 400 "Reasoning is mandatory", while ``effort: "minimal"`` succeeded on
+        every one (0-121 reasoning tokens). Reading the flag up front saves the refused round trip the per-process set
+        otherwise pays once per model.
+        """
+        entry = self._catalogue_entry()
+        reasoning = entry.get("reasoning") if entry else None
+        return isinstance(reasoning, dict) and reasoning.get("mandatory") is True
 
     def _body_after_rejected_request(self, body: dict[str, Any], status: int, detail: str) -> dict[str, Any] | None:
         """Re-issue a ``reasoning: {enabled: false}`` call this endpoint refuses, with the budget form instead.
@@ -502,7 +579,9 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             # the upstream never rejected on its content, and hide a retryable failure as a permanent one.
             return None
         reasoning = body.get("reasoning")
-        if not isinstance(reasoning, dict) or reasoning.get("enabled") is not False:
+        # `effort: "none"` (sent via extra_body, say) is refused exactly like `enabled: false` on a mandatory endpoint
+        # (measured 2026-09-26, or9_live_results.json), so it gets the same repair.
+        if not isinstance(reasoning, dict) or not (reasoning.get("enabled") is False or reasoning.get("effort") == "none"):
             return None
         said = detail.lower()
         if "reasoning" not in said or not ("mandatory" in said or "cannot be disabled" in said):
@@ -544,17 +623,18 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             self.last_actual_cost_reported = True
             self.total_actual_cost_usd += float(cost)
 
+        # Every other per-call field is summed the same way (2026-09-26 OR-5): they were ASSIGNED, so after a re-issue
+        # the breakdown described only the second POST while `last_actual_cost_usd` and `_last_usage` covered both, and a
+        # second POST lacking a field reset it to None or 0. A POST without a field adds nothing and never erases.
         cost_details = usage.get("cost_details") or {}
         upstream_cost = cost_details.get("upstream_inference_cost")
-        if isinstance(upstream_cost, (int, float)):
-            self.last_upstream_inference_cost_usd = float(upstream_cost)
+        if isinstance(upstream_cost, (int, float)) and not isinstance(upstream_cost, bool):
+            self.last_upstream_inference_cost_usd = float(self.last_upstream_inference_cost_usd or 0.0) + float(upstream_cost)
             self.total_upstream_inference_cost_usd += float(upstream_cost)
-        else:
-            self.last_upstream_inference_cost_usd = None
 
         prompt_details = usage.get("prompt_tokens_details") or {}
         cache_write = int(prompt_details.get("cache_write_tokens", 0) or 0)
-        self.last_cache_write_tokens = cache_write
+        self.last_cache_write_tokens = int(self.last_cache_write_tokens or 0) + cache_write
         if cache_write:
             self.total_cache_write_tokens += cache_write
 
@@ -562,21 +642,31 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         # NOTE: total_cache_hit_tokens itself is now accumulated in the shared base class's
         # _record_usage (which, as of the 2026-07-21 audit fix, also falls back to
         # prompt_tokens_details.cached_tokens) -- do NOT add it again here, that would double-count.
-        self.last_cache_hit_tokens = cached or int(usage.get("prompt_cache_hit_tokens") or 0)
+        # The OpenAI-style field wins when it reports hits; the DeepSeek-style top-level field is the fallback.
+        cache_hit = cached if cached > 0 else int(usage.get("prompt_cache_hit_tokens") or 0)
+        self.last_cache_hit_tokens = int(self.last_cache_hit_tokens or 0) + cache_hit
 
         audio = int(prompt_details.get("audio_tokens", 0) or 0)
-        self.last_audio_tokens = audio
+        self.last_audio_tokens = int(self.last_audio_tokens or 0) + audio
         if audio:
             self.total_audio_tokens += audio
 
         # Phase-4: cache_discount (OR's per-call line item showing how
         # much the cache hit saved -- positive = savings vs cold call).
         cache_discount = usage.get("cache_discount")
-        if isinstance(cache_discount, (int, float)):
-            self.last_cache_discount_usd = float(cache_discount)
+        if isinstance(cache_discount, (int, float)) and not isinstance(cache_discount, bool):
+            self.last_cache_discount_usd = float(self.last_cache_discount_usd or 0.0) + float(cache_discount)
             self.total_cache_discount_usd += float(cache_discount)
-        else:
-            self.last_cache_discount_usd = None
+
+        # Tally by the model that served this POST (set from the envelope before usage is recorded), for the estimate.
+        served = catalogue_id(self.last_upstream_model or self.model_name)
+        tally = self.__dict__.setdefault("_usage_by_model", {}).setdefault(self._pricing_model(served), [0, 0, 0, 0, 0])
+        completion_details = usage.get("completion_tokens_details") or {}
+        tally[0] += int(usage.get("prompt_tokens") or 0)
+        tally[1] += cache_hit
+        tally[2] += int(usage.get("completion_tokens") or 0)
+        tally[3] += int(completion_details.get("reasoning_tokens") or 0)
+        tally[4] += cache_write
 
     def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
         """Capture response-level metadata outside the ``usage`` block.
@@ -610,13 +700,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                 self.last_native_finish_reason = native
             # OR's web-search plugin attaches citations on the message.
             msg = choices[0].get("message") or {}
-            annotations = msg.get("annotations") or []
-            citations: list[dict[str, Any]] = []
-            for ann in annotations:
-                if not isinstance(ann, dict):
-                    continue
-                if ann.get("type") == "url_citation":
-                    citations.append(ann.get("url_citation") or {})
+            citations = url_citations(msg.get("annotations"))
             if citations:
                 self.last_web_search_citations = citations
 
@@ -630,11 +714,11 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
     def _input_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M input tokens for ``model``."""
-        return _per_token_cost_pair(model)[0]
+        return _per_token_cost_pair(catalogue_id(model))[0]
 
     def _output_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M output tokens for ``model``."""
-        return _per_token_cost_pair(model)[1]
+        return _per_token_cost_pair(catalogue_id(model))[1]
 
     def _resolve_pricing(self, model: str) -> Pricing:
         """Return the catalogue-derived :class:`Pricing` for ``model``, cached-input rate included.
@@ -645,202 +729,12 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         true cost. ``pricing.input_cache_read`` is the catalogue's own cached-input rate; when the
         catalogue does not publish one, ``cache_hit`` stays None and the base fallback (the
         uncached input rate, a known over-estimate) applies as before.
+        ``cache_write`` comes from ``pricing.input_cache_write`` the same way, so every caller of this record prices
+        cache writes at the write rate, not only the per-model session estimate.
         """
+        model = catalogue_id(model)
         in_cost, out_cost = _per_token_cost_pair(model)
-        return Pricing(in_cost, out_cost, _cache_read_cost_per_1m_or_none(model))
-
-    async def fetch_model_parameters(
-        self,
-        model: str | None = None,
-    ) -> dict[str, Any]:
-        """``GET /api/v1/parameters/{author}/{slug}`` — supported parameters
-        and their default values for a model.
-
-        Returns a dict with keys like ``temperature``, ``top_p``, ``top_k``,
-        ``max_tokens``, ``frequency_penalty``, ``presence_penalty``, plus
-        whatever the upstream supports. Useful before sending a request so
-        you can pre-populate sensible defaults and warn early on unsupported
-        kwargs.
-
-        Args:
-            model: Defaults to ``self.model_name``.
-        """
-        target = model or self.model_name
-        resp = await self._client.get(f"/parameters/{target}")
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data") if isinstance(payload, dict) else None
-        return data if isinstance(data, dict) else {}
-
-    async def check_model_health(
-        self,
-        model: str | None = None,
-    ) -> dict[str, Any]:
-        """Pre-flight check: per-upstream uptime / latency / throughput.
-
-        Calls ``GET /api/v1/models/{model}/endpoints`` — this endpoint
-        requires the API key but is NOT charged against credits. Use as
-        a "free ping" before kicking off a long batch:
-
-        >>> health = await p.check_model_health()
-        >>> print(health["best_uptime_30m"], "uptime,",
-        ...       len(health["endpoints"]), "upstreams")
-
-        Args:
-            model: Defaults to ``self.model_name``. Pass explicitly to
-                check a different model without rebuilding the provider.
-
-        Returns:
-            ``{"model", "name", "endpoints": [...], "best_uptime_30m",
-            "best_latency_p50_ms", "best_throughput_p50_tps"}`` —
-            see ``_summarize_endpoints`` for the per-endpoint shape.
-        """
-        target = model or self.model_name
-        resp = await self._client.get(f"/models/{target}/endpoints")
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data") or {}
-        return {
-            "model": target,
-            "name": data.get("name"),
-            **_summarize_endpoints(data.get("endpoints") or []),
-        }
-
-    async def is_model_healthy(
-        self,
-        model: str | None = None,
-        min_uptime: float = 0.99,
-    ) -> bool:
-        """One-shot bool guard: any upstream meeting ``min_uptime`` over 30m?
-
-        Defaults to a strict 0.99 threshold — production batches.
-        Lower (0.95 / 0.90) for tolerant pre-flights. Network errors
-        return ``False`` rather than propagate, since a guard that
-        crashes is worse than one that says "no, hold off".
-        """
-        try:
-            h = await self.check_model_health(model)
-        except Exception as exc:
-            logger.warning("is_model_healthy: health check failed (%s)", exc)
-            return False
-        uptime = h.get("best_uptime_30m")
-        return uptime is not None and uptime >= min_uptime
-
-    async def fetch_generation_stats(
-        self,
-        generation_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Look up post-hoc stats for a single generation by ID.
-
-        Calls ``GET /api/v1/generation?id=<id>``. Useful when:
-          * you streamed a response and want authoritative usage / cost
-            (the streaming usage chunk can lag or be missing on early errors)
-          * you need fields not in the inline ``usage`` block —
-            ``latency``, ``generation_time``, ``moderation_latency``,
-            ``provider_responses`` (the per-attempt log if a fallback chain
-            was traversed), ``cache_discount``, ``response_cache_source_id``
-            (was this served from a CDN-level response cache?), ``is_byok``
-          * you're auditing spend after the fact
-
-        Args:
-            generation_id: Defaults to ``self.last_generation_id``. Pass
-                explicitly when reconciling historical IDs.
-
-        Returns:
-            The raw ``data`` payload (see OR docs for the full ~30 field schema).
-            See ``OpenRouterProvider.fetch_generation_stats.__doc__`` and
-            https://openrouter.ai/docs/api/api-reference/generations/get-generation
-            for fields.
-        """
-        gid = generation_id or self.last_generation_id
-        if not gid:
-            raise ValueError("No generation_id passed and self.last_generation_id is unset — " "call generate() first or pass a known ID.")
-        resp = await self._client.get("/generation", params={"id": gid})
-        resp.raise_for_status()
-        payload = resp.json()
-        # Narrow the EXTRACTED value, not just the container: OpenRouter's `data` field is not
-        # contractually an object, so a list there would otherwise be returned under a
-        # `dict[str, Any]` annotation and blow up at the caller's first subscript.
-        data = payload.get("data", payload) if isinstance(payload, dict) else {}
-        return data if isinstance(data, dict) else {}
-
-    async def check_account_limits(self) -> dict[str, Any]:
-        """Query ``/api/v1/key`` for live quota / usage state on the active key.
-
-        Surfaces the raw fields OR returns under ``data`` (label, limit,
-        limit_remaining, limit_reset, usage, usage_daily/weekly/monthly,
-        byok_usage*, is_free_tier, rate_limit) plus the full payload under
-        ``raw`` for forward compatibility.
-        """
-        resp = await self._client.get("/key")
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data", payload) if isinstance(payload, dict) else {}
-        out = dict(data) if isinstance(data, dict) else {}
-        out["raw"] = data
-        return out
-
-    async def get_account_credits(self) -> dict[str, Any]:
-        """Query ``/api/v1/credits`` and normalize to the base schema.
-
-        Cross-checks ``/api/v1/key`` for ``is_free_tier`` so a free-tier
-        user (``balance=None`` because they never purchased credits) is
-        marked ``is_available=True`` — they can still issue calls
-        against the free-models quota. Without this cross-check, a
-        free-tier user looks "unavailable" purely because the credits
-        endpoint can't compute a balance.
-
-        Returns:
-            ``balance_usd``   — remaining credits (total_credits - total_usage)
-                                or ``None`` for free-tier users
-            ``total_granted`` — total credits ever loaded (USD)
-            ``total_used``    — lifetime spend (USD)
-            ``currency``      — always "USD" for OpenRouter
-            ``is_available``  — True if balance > 0 OR free-tier user
-            ``is_free_tier``  — never-purchased-credits flag (or None on lookup error)
-            ``raw``           — provider's full response under ``data``
-        """
-        resp = await self._client.get("/credits")
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data", payload) if isinstance(payload, dict) else {}
-
-        def _to_float(v: Any) -> float | None:
-            """Coerce ``v`` to float, returning None for None or unconvertible values."""
-            if v is None:
-                return None
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None
-
-        granted = _to_float(data.get("total_credits"))
-        used = _to_float(data.get("total_usage"))
-        balance = (granted - used) if (granted is not None and used is not None) else None
-
-        # Free-tier check: secondary GET to /key. Best-effort — if that
-        # call fails, ``is_free_tier=None`` and ``is_available`` falls
-        # back to the strict balance > 0 check.
-        is_free_tier: bool | None = None
-        try:
-            key_info = await self.check_account_limits()
-            raw_key = key_info.get("raw") or key_info
-            if isinstance(raw_key, dict) and "is_free_tier" in raw_key:
-                is_free_tier = bool(raw_key["is_free_tier"])
-        except Exception as exc:
-            logger.debug("OR /key lookup for is_free_tier failed: %s", exc)
-
-        is_available = (balance is not None and balance > 0) or is_free_tier is True
-
-        return {
-            "balance_usd": balance,
-            "total_granted": granted,
-            "total_used": used,
-            "currency": "USD",
-            "is_available": is_available,
-            "is_free_tier": is_free_tier,
-            "raw": data,
-        }
+        return Pricing(in_cost, out_cost, _cache_read_cost_per_1m_or_none(model), _cache_write_cost_per_1m_or_none(model))
 
     def get_session_cost(self) -> dict[str, Any]:
         """Return cumulative usage. Adds OR-specific fields on top of base.
@@ -852,7 +746,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         gives you the bare upstream price, separate from any OR markup.
         """
         base = super().get_session_cost()
-        if _per_token_cost_pair_or_none(self.model_name) is None:
+        estimate = self._estimate_by_served_model()
+        if estimate is None:
             # Null, not a confident 0: the per-token estimate is unavailable (catalogue outage, or
             # a model absent from /models), and a dashboard summing total_cost_usd across
             # providers used to show this whole process as free (2026-09-03 audit F37).
@@ -862,6 +757,8 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             base["total_cost_usd"] = None
             base["pricing_available"] = False
         else:
+            base["input_cost_usd"], base["output_cost_usd"] = estimate
+            base["total_cost_usd"] = estimate[0] + estimate[1]
             base["pricing_available"] = True
         base["actual_cost_usd"] = self.total_actual_cost_usd
         base["last_actual_cost_usd"] = self.last_actual_cost_usd

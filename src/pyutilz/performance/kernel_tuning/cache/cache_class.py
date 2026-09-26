@@ -36,11 +36,14 @@ from .cache_base import (
     provenance_changed,  # noqa: F401
 )
 from .cache_hooks import LoggerHooks, TuningHooks, _DEFAULT_HOOKS  # noqa: F401 (TuningHooks used in annotations)
-from .region_matching import _AXIS_SUFFIXES, _OP_EQ, _OP_MAX, _OP_MIN, _SUFFIX_OPS, _region_match_reason, _region_matches  # noqa: F401 - _OP_EQ/_region_matches are re-exported for the historical cache_class.<name> surface
+from .region_matching import _AXIS_SUFFIXES, _OP_EQ, _OP_MAX, _OP_MIN, _SUFFIX_OPS, _normalize_eq, _region_match_reason, _region_matches  # noqa: F401 - _OP_EQ/_region_matches are re-exported for the historical cache_class.<name> surface
 from ._common import _CacheState, _FACADE_NAME, _facade, logger  # noqa: F401 (re-exported: historical ``cache_class`` attribute surface)
 from .cache_persistence import _CachePersistenceMixin
 from .cache_sweeping import _CacheSweepClaimMixin
 from .cache_tuning import _CacheTuningMixin
+
+# (kernel_name, dim_name) pairs already warned about by ``_warn_unconstrained_dim`` in this process.
+_UNCONSTRAINED_DIM_WARNED: set = set()
 
 # Process-wide singleton for load_or_create() -- hot-path dispatch callers
 # (GPU/numba kernels) consult the cache on every invocation; one shared
@@ -246,22 +249,43 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
         again."""
         if not entry:
             return None
-        for constraints, payload in self._lookup_plan(kernel_name, entry):
+        plan = self._lookup_plan(kernel_name, entry)
+        known_axes = self._plan_cache[kernel_name][2]
+        for dim_name in dims:
+            if dim_name not in known_axes:
+                self._warn_unconstrained_dim(kernel_name, dim_name)
+        for constraints, payload in plan:
             for axis_name, op, bound in constraints:
                 if axis_name not in dims:
                     continue  # a region constraint on an axis the caller didn't ask about is unconstrained
                 axis_value = dims[axis_name]
                 if op == _OP_MAX:
-                    if axis_value > bound:
+                    # ``not (v <= cap)`` rather than ``v > cap``: a NaN dim fails every comparison, and must fail the
+                    # constraint instead of passing it (it used to match the first bounded region).
+                    if not axis_value <= bound:
                         break
                 elif op == _OP_MIN:
-                    if axis_value < bound:
+                    if not axis_value >= bound:
                         break
-                elif axis_value != bound:  # _OP_EQ
+                elif (_normalize_eq(axis_value) if isinstance(axis_value, tuple) else axis_value) != bound:  # _OP_EQ
                     break
             else:
                 return cast(Optional[dict], payload)
         return None
+
+    def _warn_unconstrained_dim(self, kernel_name: str, dim_name: str) -> None:
+        """Warn ONCE per (kernel, dim) that ``dim_name`` is neither a declared axis nor constrained by any region: a
+        misspelled dim is otherwise silently ignored and the first region wins."""
+        key = (kernel_name, dim_name)
+        if key in _UNCONSTRAINED_DIM_WARNED:
+            return
+        _UNCONSTRAINED_DIM_WARNED.add(key)
+        logger.warning(
+            "kernel_tuning_cache: lookup(%r) got dim %r, which no region of that kernel constrains and which is not a declared axis; "
+            "it is ignored (misspelled?)",
+            kernel_name,
+            dim_name,
+        )
 
     def _lookup_plan(self, kernel_name: str, entry: dict) -> list:
         """Compiled ``[(constraints, payload)]`` plan for one kernel entry, memoized per instance.
@@ -285,7 +309,9 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
         cached = self._plan_cache.get(kernel_name)
         if cached is not None and cached[0] is entry:
             return cached[1]  # type: ignore[no-any-return]
-        constraint_keys = {f"{ax}{suf}" for ax in (entry.get("axes") or []) for suf in _AXIS_SUFFIXES}
+        declared_axes = list(entry.get("axes") or [])
+        constraint_keys = {f"{ax}{suf}" for ax in declared_axes for suf in _AXIS_SUFFIXES}
+        known_axes = set(declared_axes)
         plan = []
         for region in entry.get("regions") or []:
             constraints = []
@@ -294,11 +320,14 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
                     continue  # an absent/None constraint is unconstrained
                 for suffix, op in _SUFFIX_OPS:
                     if key.endswith(suffix):
-                        constraints.append((key[: -len(suffix)], op, bound))
+                        axis = key[: -len(suffix)]
+                        known_axes.add(axis)
+                        # JSON reload turns tuples into lists; compare _eq on the list form on both sides.
+                        constraints.append((axis, op, _normalize_eq(bound) if op == _OP_EQ else bound))
                         break
             payload = {k: v for k, v in region.items() if k not in constraint_keys}
             plan.append((tuple(constraints), payload))
-        self._plan_cache[kernel_name] = (entry, plan)
+        self._plan_cache[kernel_name] = (entry, plan, frozenset(known_axes))
         return plan
 
     def _invalidate_plan(self, kernel_name: Optional[str] = None) -> None:

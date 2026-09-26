@@ -1308,7 +1308,7 @@ class TestExtendedUsageCapture:
         p._track_provider_specific_usage({"cost_details": {"upstream_inference_cost": 0.001}})
         p._track_provider_specific_usage({"cost_details": {"upstream_inference_cost": 0.002}})
         assert p.total_upstream_inference_cost_usd == pytest.approx(0.003)
-        assert p.last_upstream_inference_cost_usd == pytest.approx(0.002)
+        assert p.last_upstream_inference_cost_usd == pytest.approx(0.003)  # both POSTs are one call context: summed (OR-5)
 
     def test_upstream_inference_cost_none_when_not_byok(self):
         # Non-BYOK calls don't include cost_details — record explicit None

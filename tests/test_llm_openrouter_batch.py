@@ -89,7 +89,8 @@ def test_results_map_back_by_custom_id_not_position(tmp_path: Path) -> None:
     assert out["q-a"].text == "A" and out["q-a"].finish_reason == "length" and out["q-a"].cost_usd == pytest.approx(0.1)
     assert out["q-c"].text == "C" and out["q-c"].reasoning == "r-q-c" and out["q-c"].prompt_tokens == 11
     assert not out["q-b"].ok and "bad" in (out["q-b"].error or "")
-    assert out["q-a"].ok and out["q-c"].ok
+    # q-a was cut by max_tokens: its text is kept but it is not a complete answer (2026-09-26 OR-18).
+    assert out["q-a"].truncated and not out["q-a"].ok and out["q-c"].ok
 
 
 def test_missing_and_non2xx_results_surface_as_errors(tmp_path: Path) -> None:

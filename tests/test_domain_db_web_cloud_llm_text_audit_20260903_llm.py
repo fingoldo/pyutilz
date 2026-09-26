@@ -32,7 +32,6 @@ import asyncio
 import contextvars
 import json
 import sys
-import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -357,35 +356,8 @@ class TestF31ResetCalledByEveryProvider:
 # ── F10 / F41: PerCallAttr concurrency + ContextVar lifecycle ─────────────
 
 
-class TestF10PerCallAttrThreadSafety:
-    def test_concurrent_first_touch_never_loses_a_write(self):
-        class _Holder:
-            value: PerCallAttr = PerCallAttr(lambda: "DEFAULT")
-
-        switch_interval = sys.getswitchinterval()
-        sys.setswitchinterval(1e-9)
-        try:
-            for _ in range(200):
-                holder = _Holder()
-                threads_n = 16
-                barrier = threading.Barrier(threads_n)
-                results: list[str] = [""] * threads_n
-
-                # Bound as defaults, not captured: every thread is joined before the next iteration
-                # rebinds these, but a late-binding closure over a loop variable is a trap either way.
-                def worker(index: int, holder: _Holder = holder, barrier: threading.Barrier = barrier, results: list = results) -> None:
-                    barrier.wait()
-                    holder.value = "thread-%d" % index
-                    results[index] = holder.value
-
-                threads = [threading.Thread(target=worker, args=(i,)) for i in range(threads_n)]
-                for t in threads:
-                    t.start()
-                for t in threads:
-                    t.join()
-                assert results == ["thread-%d" % i for i in range(threads_n)]
-        finally:
-            sys.setswitchinterval(switch_interval)
+class TestF41PerCallAttrContextVars:
+    # F10 (concurrent first touch) lives in tests/test_llm_percallattr_first_touch_threads.py.
 
     def test_one_contextvar_per_class_attribute_not_per_instance(self):
         """F41: ContextVars are built once at class-creation time, so N instances mint none."""

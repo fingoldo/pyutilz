@@ -49,6 +49,7 @@ import pickle  # nosec B403 - this module's whole purpose is guarding pickle.loa
 import re
 import threading
 import time
+import uuid
 from os.path import isfile
 from typing import Any, Dict, Iterator, Optional
 
@@ -119,7 +120,8 @@ def _get_path_lock(path: str) -> Iterator[None]:
     holding/waiting on it -- see the module-level comment above ``_PathLockEntry`` for why this
     is refcounted rather than a plain LRU-bounded cache.
     """
-    key = os.path.abspath(path)
+    # normcase: on Windows ``C:\x\a.pkl`` and ``c:\X\A.pkl`` are the same file and must share one lock.
+    key = os.path.normcase(os.path.abspath(path))
     with _path_locks_guard:
         entry = _path_locks.get(key)
         if entry is None:
@@ -169,7 +171,22 @@ def _sha256_of_file(path: str, chunk: int = 1 << 20) -> str:
 
 
 def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_var: str = DEFAULT_ALLOW_UNVERIFIED_ENV_VAR) -> bool:
+    """Default-strict (fail-CLOSED) sha256 sidecar check of the file at ``path``; see ``_verify_sidecar``."""
+    return _verify_sidecar(path, allow_unverified=allow_unverified, env_var=env_var)
+
+
+def _verify_sidecar(
+    path: str,
+    *,
+    allow_unverified: Optional[bool] = None,
+    env_var: str = DEFAULT_ALLOW_UNVERIFIED_ENV_VAR,
+    payload: Optional[bytes] = None,
+) -> bool:
     """Default-strict (fail-CLOSED) sha256 sidecar check.
+
+    ``payload``: the bytes the caller already read from ``path`` and is about to use. When given, THOSE bytes are
+    hashed instead of re-reading the file, so what is verified is exactly what gets unpickled (a second open could see
+    a file another process ``os.replace``d in between).
 
     Contract:
 
@@ -225,7 +242,10 @@ def verify_sidecar(path: str, *, allow_unverified: Optional[bool] = None, env_va
         # function and safe_load (DiskCache.get does not catch TypeError either).
         logger.error("verify_sidecar: sidecar %s does not contain a 64-character hex sha256 digest -- refusing to verify.", sidecar)
         return False
-    actual = _sha256_of_file(path).lower()
+    if payload is None:
+        actual = _sha256_of_file(path).lower()
+    else:
+        actual = hashlib.sha256(payload).hexdigest()
     return hmac.compare_digest(expected, actual)
 
 
@@ -237,11 +257,24 @@ def write_sidecar(path: str) -> None:
     written as just the digest still parse correctly via the
     ``f.read().strip().split()[0]`` parse path in :func:`verify_sidecar`.
     """
-    digest = _sha256_of_file(path)
+    _write_sidecar_digest(path, _sha256_of_file(path))
+
+
+def _write_sidecar_digest(path: str, digest: str) -> None:
+    """Write ``<path>.sha256`` for a known digest ATOMICALLY: temp file + ``os.replace``. Truncating the sidecar in
+    place let a reader in another process see it empty or half-written and reject (and DiskCache then delete) a valid
+    entry."""
     sidecar = path + ".sha256"
     basename = os.path.basename(path)
-    with open(sidecar, "w", encoding="utf-8") as f:
-        f.write(f"{digest}  {basename}\n")
+    tmp = f"{sidecar}.tmp.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(f"{digest}  {basename}\n")
+        _replace_with_retry(tmp, sidecar)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 def safe_load(path: str, *, allow_unverified: Optional[bool] = None, env_var: str = DEFAULT_ALLOW_UNVERIFIED_ENV_VAR) -> Any:
@@ -251,13 +284,20 @@ def safe_load(path: str, *, allow_unverified: Optional[bool] = None, env_var: st
     ``allow_unverified=True`` to bypass the verification (with a WARN) without
     setting an env var -- useful in tests that exercise the legacy fallback.
     """
-    if not verify_sidecar(path, allow_unverified=allow_unverified, env_var=env_var):
+    # Read ONCE, verify those bytes, unpickle those bytes: a separate verify-then-open let another process
+    # ``os.replace`` the payload in between, so unverified bytes were unpickled, and it read every file twice.
+    payload: Optional[bytes]
+    try:
+        with open(path, "rb") as f:
+            payload = f.read()
+    except OSError:
+        payload = None  # missing / unreadable: _verify_sidecar reports it and returns False
+    if payload is None or not _verify_sidecar(path, allow_unverified=allow_unverified, env_var=env_var, payload=payload):
         raise PickleVerificationError(
             f"safe_load: refusing to unpickle {path!r}; sha256 sidecar missing or mismatch. "
             f"Run write_sidecar(path) on a trusted copy or set {env_var}=1 to bypass (loud WARN)."
         )
-    with open(path, "rb") as f:
-        return pickle.load(f)  # nosec B301 - verify_sidecar() above is this module's whole purpose; this is the necessarily-unsafe primitive it gates
+    return pickle.loads(payload)  # nosec B301 - _verify_sidecar() above is this module's whole purpose; this is the necessarily-unsafe primitive it gates
 
 
 def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -> None:
@@ -285,7 +325,8 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
             # 0o600 at creation (not open()'s default 0o666 & ~umask): os.replace carries the mode
             # onto the payload file, and a pickle payload is not something other local users should read.
             with os.fdopen(os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), "wb") as f:
-                pickle.dump(obj, f, protocol=protocol)
+                hashing = _HashingWriter(f)
+                pickle.dump(obj, hashing, protocol=protocol)
                 f.flush()
                 os.fsync(f.fileno())
             _replace_with_retry(tmp, path)
@@ -295,7 +336,28 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
             except OSError:
                 pass
             raise
-        write_sidecar(path)
+        # The digest of the bytes written, computed while dumping: no read-back of the whole payload.
+        _write_sidecar_digest(path, hashing.hexdigest())
+
+
+class _HashingWriter:
+    """File-like ``write`` wrapper feeding every byte written into a sha256 as well."""
+
+    __slots__ = ("_f", "_h")
+
+    def __init__(self, f: Any) -> None:
+        """Wrap binary file ``f``."""
+        self._f = f
+        self._h = hashlib.sha256()
+
+    def write(self, data: Any) -> int:
+        """Write ``data`` to the file and the hasher; returns the byte count like ``file.write``."""
+        self._h.update(data)
+        return int(self._f.write(data))
+
+    def hexdigest(self) -> str:
+        """Lowercase hex sha256 of everything written so far."""
+        return self._h.hexdigest()
 
 
 def _replace_with_retry(src: str, dst: str, *, attempts: int = 10, base_delay: float = 0.01) -> None:

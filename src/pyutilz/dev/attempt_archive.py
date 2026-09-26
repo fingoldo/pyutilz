@@ -56,7 +56,10 @@ __all__ = [
     "sha256_text",
 ]
 
-OUTCOMES = ("accepted", "superseded", "parse_failed", "truncated", "error")
+#: ``interrupted`` is an upstream failure AFTER generation began (``LLMStreamInterruptedError``: a mid-stream error event
+#: or ``finish_reason == "error"``). It used to be archived as ``truncated`` whenever it carried partial text, which
+#: made it indistinguishable from a length cut-off, the one failure a larger output budget fixes.
+OUTCOMES = ("accepted", "superseded", "parse_failed", "truncated", "interrupted", "error")
 _ARCHIVED_FLAG = "_pyutilz_attempt_archive_installed"
 
 
@@ -109,6 +112,11 @@ class AttemptRecord:
     # filed yet; only a 404 that persists later means the generation never finished.
     generation_record_missing: Optional[bool] = None
     error: Optional[str] = None
+    # Set only for an ``interrupted`` attempt, from the ``LLMStreamInterruptedError``: the upstream's error code and
+    # whether it names a transient fault, so a summary can tell a retryable upstream hiccup from a fatal one.
+    # Left out of ``to_dict`` for every other outcome, so existing records keep their shape.
+    error_code: Optional[Any] = None
+    retryable: Optional[bool] = None
     started_at: Optional[str] = None
     extra: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
@@ -119,7 +127,11 @@ class AttemptRecord:
 
     def to_dict(self) -> Dict[str, Any]:
         """The record as a plain dict, for a JSON line or a row."""
-        return dataclasses.asdict(self)
+        out = dataclasses.asdict(self)
+        if self.outcome != "interrupted":
+            out.pop("error_code", None)
+            out.pop("retryable", None)
+        return out
 
 
 class DirectoryContentStore:
@@ -389,7 +401,7 @@ class _Archiver:
         reasoning = getattr(self.provider, "last_reasoning_text", None)
         reasoning_digest = await self.store.put(reasoning) if isinstance(reasoning, str) and reasoning else None
         if error is not None:
-            outcome = "truncated" if text else "error"
+            outcome = "interrupted" if _is_stream_interruption(error) else ("truncated" if text else "error")
         else:
             outcome = "truncated" if self.is_truncated(meta) else "accepted"
         record = AttemptRecord(
@@ -404,6 +416,7 @@ class _Archiver:
             time_to_first_token_s=round(first_token_at - started, 3) if first_token_at is not None else None,
             **(await self._upstream_timings(meta.get("generation_id"))),
             error=_error_text(error) if error is not None else None,
+            **(_interruption_fields(error) if outcome == "interrupted" and error is not None else {}),
             started_at=started_at,
             **meta,
         )
@@ -411,6 +424,21 @@ class _Archiver:
             await self.sink.record(record)
         except Exception as exc:  # the sink contract is "never raises"; a broken one must not break the call
             logger.warning("attempt sink %s raised: %s", type(self.sink).__name__, exc)
+
+
+def _is_stream_interruption(error: BaseException) -> bool:
+    """True for ``pyutilz.llm.exceptions.LLMStreamInterruptedError``, imported lazily so this module needs no LLM stack."""
+    try:
+        from pyutilz.llm.exceptions import LLMStreamInterruptedError
+    except ImportError:  # pragma: no cover - the llm extra is not installed
+        return False
+    return isinstance(error, LLMStreamInterruptedError)
+
+
+def _interruption_fields(error: BaseException) -> Dict[str, Any]:
+    """``error_code`` and ``retryable`` from an ``LLMStreamInterruptedError`` (``retryable`` only when it is a real bool)."""
+    retryable = getattr(error, "retryable", None)
+    return {"error_code": getattr(error, "code", None), "retryable": retryable if isinstance(retryable, bool) else None}
 
 
 def _default_is_truncated(meta: Dict[str, Any]) -> bool:

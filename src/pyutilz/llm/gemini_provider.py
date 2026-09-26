@@ -12,7 +12,17 @@ from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm._messages import build_gemini_parts
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
-from pyutilz.llm._thinking import gemini_thinking_budget  # re-exported: callers import it from here
+from pyutilz.llm._thinking import gemini_thinking_budget  # noqa: F401 -- re-exported: callers import it from here
+from pyutilz.llm._thinking import gemini_thinking_config
+
+try:
+    import httpx as _httpx
+
+    # google-genai talks through httpx, whose transport errors (ConnectError, ReadTimeout, RemoteProtocolError)
+    # are NOT OSError subclasses: a network blip used to fail the call outright instead of being retried.
+    _TRANSIENT_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, TimeoutError, OSError, _httpx.TransportError)
+except ImportError:  # pragma: no cover -- httpx is a hard dependency of google-genai
+    _TRANSIENT_TRANSPORT_ERRORS = (ConnectionError, TimeoutError, OSError)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +64,11 @@ except ImportError:
         return False
 
 
+# Finish reasons that mean the response was withheld by a policy filter. PROHIBITED_CONTENT, RECITATION, SPII and
+# IMAGE_SAFETY were missed by the old "SAFETY"/"BLOCK" test and fell through to the generic empty-text error.
+_BLOCKING_FINISH_REASONS = ("SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII")
+
+
 class GeminiProvider(LLMProvider):
     """Google Gemini provider using the new google.genai SDK."""
 
@@ -69,6 +84,11 @@ class GeminiProvider(LLMProvider):
     # >200K prompts should override via ``estimate_cost`` with explicit
     # rates. Tier-2 prices documented in the comments next to each entry.
     _PRICING: dict[str, tuple[float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
+        # Re-checked 2026-09-26 against the same page. 3.7 / 3.8 Flash are priced through 2026-12-31; the page
+        # announces $1.50 / $7.50 from 2027-01-01.
+        "gemini-3.8-flash": (0.75, 3.75),
+        "gemini-3.7-flash": (0.75, 3.75),
+        "gemini-3.5-flash": (1.50, 9.00),
         # Tier-2 (>200K): ($4.00, $18.00) — 2x input, 1.5x output.
         "gemini-3.1-pro-preview": (2.00, 12.00),
         "gemini-3.1-flash-lite-preview": (0.25, 1.50),
@@ -81,6 +101,9 @@ class GeminiProvider(LLMProvider):
     # Cached input prices per 1M tokens (90% discount on input miss).
     # Plus storage at $1-4.50/hour depending on model.
     _CACHE_HIT_COST: dict[str, float] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
+        "gemini-3.8-flash": 0.075,
+        "gemini-3.7-flash": 0.075,
+        "gemini-3.5-flash": 0.15,
         "gemini-3.1-pro-preview": 0.20,
         "gemini-3.1-flash-lite-preview": 0.025,
         "gemini-3-flash-preview": 0.05,
@@ -89,6 +112,19 @@ class GeminiProvider(LLMProvider):
         "gemini-2.5-flash-lite": 0.01,
     }
     _DEFAULT_PRICING = (0.25, 1.50)
+
+    # The >200K-prompt tier of the Pro models, as multipliers on the <=200K rates (input, output, cached input):
+    # 2.5 Pro $2.50 / $15 / $0.25 against $1.25 / $10 / $0.125, 3.1 Pro $4 / $18 / $0.40 against $2 / $12 / $0.20.
+    # A request's tier is set by ITS prompt size, so it is charged per call (``_add_long_context_surcharge``).
+    _LONG_CONTEXT_MULTIPLIERS: dict[str, tuple[float, float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table
+        "gemini-2.5-pro": (2.0, 1.5, 2.0),
+        "gemini-3.1-pro-preview": (2.0, 1.5, 2.0),
+    }
+    _LONG_CONTEXT_THRESHOLD = 200_000
+
+    # Per-request timeout. google-genai's own default is none at all, so a stalled connection held its semaphore
+    # slot indefinitely; every other provider here pins one. Generous because a thinking model can think for minutes.
+    _request_timeout_seconds: float = 600.0
 
     # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
     # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): see identical
@@ -122,7 +158,8 @@ class GeminiProvider(LLMProvider):
         if not self.api_key:
             raise ValueError("Gemini API key not provided. Set GEMINI_API_KEY in .env or pass api_key=")
 
-        self.client = genai.Client(api_key=self.api_key)
+        # HttpOptions.timeout is in MILLISECONDS.
+        self.client = genai.Client(api_key=self.api_key, http_options=types.HttpOptions(timeout=int(self._request_timeout_seconds * 1000)))
         self.model_name = model
         self._max_concurrent = max_concurrent
         # Per-call usage/safety/grounding/citation/function-call/candidate metadata:
@@ -136,6 +173,7 @@ class GeminiProvider(LLMProvider):
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.total_reasoning_tokens = 0
+        self._long_context_surcharge_usd = 0.0
         # Phase-4 multi-candidate + cache support.
         # ``candidate_count``: how many response candidates to ask for in
         # one call (Gemini supports up to ~8). The first is returned by
@@ -171,6 +209,35 @@ class GeminiProvider(LLMProvider):
         catalogue."""
         return True
 
+    def supports_json_schema(self) -> bool:
+        """Gemini constrains output to a JSON schema (``response_json_schema``) on the 2.x and 3.x models this provider targets."""
+        return True
+
+    def _get_pricing(self) -> tuple[float, float]:
+        """``(input, output)`` per 1M, warning ONCE per unknown model before the default is used.
+
+        The shared resolver warns on a prefix match but returns the default silently on a complete miss, so an
+        unknown model was priced at the Flash-Lite default with nothing in the log.
+        """
+        model = self.model_name
+        if longest_prefix_lookup(model, self._PRICING, None) is None and model not in GeminiProvider._warned_unknown_models:
+            GeminiProvider._warned_unknown_models.add(model)
+            logger.warning("Gemini pricing for %r is unknown; using the default %s per 1M. Cost estimates may be off.", model, self._DEFAULT_PRICING)
+        return super()._get_pricing()
+
+    _warned_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name)
+
+    def _add_long_context_surcharge(self, prompt_tokens: int, cached: int, output_tokens: int) -> None:
+        """Charge a >200K-prompt call the difference between the Pro long-context tier and the base rates."""
+        mult = longest_prefix_lookup(self.model_name, self._LONG_CONTEXT_MULTIPLIERS, None)
+        if mult is None or prompt_tokens <= self._LONG_CONTEXT_THRESHOLD:
+            return
+        in_rate, out_rate = self._get_pricing()
+        cache_rate = longest_prefix_lookup(self.model_name, self._CACHE_HIT_COST, in_rate)
+        cached = min(cached, prompt_tokens)
+        extra = ((prompt_tokens - cached) * in_rate * (mult[0] - 1) + cached * cache_rate * (mult[2] - 1) + output_tokens * out_rate * (mult[1] - 1)) / 1_000_000
+        self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + extra
+
     async def generate_json(
         self,
         prompt: str,
@@ -179,8 +246,9 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Generate structured JSON output, using Gemini's NATIVE JSON mode.
+        """Generate structured JSON output, using Gemini's NATIVE JSON mode (and, given ``json_schema``, a constrained schema).
 
         Without this override, base.generate_json forwarded no generate_kwargs, so ``json_mode``
         stayed False and ``response_mime_type="application/json"`` was never sent: a caller
@@ -195,6 +263,8 @@ class GeminiProvider(LLMProvider):
         extra: dict[str, Any] = {"images": images} if images else {}
         if thinking is not None:
             extra["thinking"] = thinking
+        if json_schema is not None:
+            extra["json_schema"] = json_schema
         return await self._generate_json_via(prompt, system, temperature, max_tokens, json_mode=True, **extra)
 
     def get_session_cost(self) -> dict[str, Any]:
@@ -213,6 +283,7 @@ class GeminiProvider(LLMProvider):
         cache_rate = longest_prefix_lookup(self.model_name, self._CACHE_HIT_COST, in_rate)
         input_cost = (cache_miss / 1_000_000) * in_rate + (cache_hit / 1_000_000) * cache_rate
         output_cost = ((self.total_completion_tokens + self.total_reasoning_tokens) / 1_000_000) * out_rate
+        surcharge = getattr(self, "_long_context_surcharge_usd", 0.0)
         return {
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,
@@ -222,11 +293,12 @@ class GeminiProvider(LLMProvider):
             "reasoning_tokens": self.total_reasoning_tokens,
             "input_cost_usd": input_cost,
             "output_cost_usd": output_cost,
-            "total_cost_usd": input_cost + output_cost,
+            "long_context_surcharge_usd": surcharge,
+            "total_cost_usd": input_cost + output_cost + surcharge,
         }
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)) | retry_if_exception(_is_retryable_genai_error),
+        retry=retry_if_exception_type(_TRANSIENT_TRANSPORT_ERRORS) | retry_if_exception(_is_retryable_genai_error),
         **INFINITE_RETRY_KWARGS,
     )
     async def generate(
@@ -238,6 +310,7 @@ class GeminiProvider(LLMProvider):
         json_mode: bool = False,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> str:
         """Generate text using Gemini.
 
@@ -251,8 +324,12 @@ class GeminiProvider(LLMProvider):
                 neither the OpenAI ``image_url`` shape nor Anthropic's ``source`` block, both of
                 which this SDK rejects. Absent or empty, ``contents`` stays the plain string it has
                 always been and the request body is unchanged.
-            thinking: Extended-thinking request (see `normalize_thinking`), sent as ``thinking_config.thinking_budget``
-                with the budgets the Claude providers use; None leaves the model's default. See `gemini_thinking_budget`.
+            thinking: Reasoning request (see `normalize_thinking`). Gemini 3 takes it as ``thinking_level``
+                (minimal/low/medium/high; "off" is the model's lowest level, since Gemini 3 cannot disable thinking),
+                Gemini 2.5 as ``thinking_budget`` with the budgets the Claude providers use. None leaves the model's
+                default. See `gemini_thinking_config`.
+            json_schema: A JSON schema (bare, or OpenAI's ``{"name", "strict", "schema"}`` wrapper) the answer is
+                constrained to, sent as ``response_json_schema`` with ``application/json``.
         """
         self._reset_per_call_state()
         if max_tokens <= 0:
@@ -265,8 +342,11 @@ class GeminiProvider(LLMProvider):
                 **({} if temperature is None else {"temperature": temperature}),  # `None` lets Gemini apply its own
                 "max_output_tokens": max_tokens,
                 "system_instruction": system if system else None,
-                "response_mime_type": "application/json" if json_mode else None,
+                "response_mime_type": "application/json" if json_mode or json_schema is not None else None,
             }
+            if json_schema is not None:
+                inner = json_schema.get("schema")
+                config_kwargs["response_json_schema"] = inner if isinstance(inner, dict) and ("name" in json_schema or "strict" in json_schema) else json_schema
             # Phase-4 multi-candidate + cached-content support. Skip
             # ``candidate_count`` when 1 (the SDK default) so the request
             # body stays unchanged for the common path.
@@ -274,9 +354,9 @@ class GeminiProvider(LLMProvider):
                 config_kwargs["candidate_count"] = self._candidate_count
             if self._cached_content:
                 config_kwargs["cached_content"] = self._cached_content
-            budget = gemini_thinking_budget(thinking, self.model_name)
-            if budget is not None:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=budget)
+            thinking_kwargs = gemini_thinking_config(thinking, self.model_name)
+            if thinking_kwargs is not None:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
             config = types.GenerateContentConfig(**config_kwargs)
 
             # Native async client (google-genai's own .aio surface) instead of offloading the
@@ -312,6 +392,11 @@ class GeminiProvider(LLMProvider):
                 self.total_prompt_tokens += self._last_usage["input_tokens"]
                 self.total_completion_tokens += self._last_usage["output_tokens"]
                 self.total_reasoning_tokens += self._last_usage["reasoning_tokens"]
+                self._add_long_context_surcharge(
+                    self._last_usage["input_tokens"],
+                    self._last_usage["cached_content_token_count"],
+                    self._last_usage["output_tokens"] + self._last_usage["reasoning_tokens"],
+                )
 
             # Safety-filter detection: Gemini returns finish_reason=SAFETY
             # when the response is blocked. response.text may be empty or
@@ -319,7 +404,23 @@ class GeminiProvider(LLMProvider):
             # safety_ratings (HARASSMENT / HATE_SPEECH / SEXUALLY_EXPLICIT
             # / DANGEROUS_CONTENT) so callers know WHICH category fired.
             _fr = self._last_finish_reason.upper() if isinstance(self._last_finish_reason, str) else ""
-            if "SAFETY" in _fr or "BLOCK" in _fr:
+            if not response.candidates:
+                # The PROMPT was blocked before any candidate existed; the reason lives on prompt_feedback, which was
+                # never read, so the error said only "likely safety block".
+                feedback = getattr(response, "prompt_feedback", None)
+                block_reason = getattr(feedback, "block_reason", None)
+                if block_reason is not None:
+                    raise LLMSafetyBlockError(
+                        f"Gemini blocked the prompt (block_reason={block_reason})",
+                        raw_text=None,
+                        details={
+                            "finish_reason": self._last_finish_reason,
+                            "block_reason": str(block_reason),
+                            "block_reason_message": getattr(feedback, "block_reason_message", None),
+                            "safety_ratings": self.last_safety_ratings,
+                        },
+                    )
+            if any(marker in _fr for marker in _BLOCKING_FINISH_REASONS):
                 raise LLMSafetyBlockError(
                     f"Gemini blocked response by safety filter (finish_reason={self._last_finish_reason})",
                     raw_text=None,

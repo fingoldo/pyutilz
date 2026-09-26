@@ -1,6 +1,11 @@
 """Region <-> dims matching for the kernel-tuning cache lookup (pure, no HW/disk deps)."""
 from __future__ import annotations
 
+import math
+from typing import Any
+
+import numpy as np
+
 # Region keys ending with one of these suffixes are interpreted as axis
 # CONSTRAINTS by the matcher; everything else in a region dict is opaque
 # decision payload. ``lookup`` strips exactly these suffixes from its return.
@@ -17,38 +22,46 @@ _OP_EQ = 2
 _SUFFIX_OPS = (("_max", _OP_MAX), ("_min", _OP_MIN), ("_eq", _OP_EQ))
 
 
-def _region_matches(region: dict, dims: dict) -> bool:
-    """A region matches a dims dict iff, for every requested dim, the region's
-    constraints on that axis hold:
-      * ``<axis>_max``: dim <= max   (numeric upper cap)
-      * ``<axis>_min``: dim >= min   (numeric lower cap)
-      * ``<axis>_eq`` : dim == value (categorical / exact -- dtype, ndim, location)
-    A constraint key absent or None is unconstrained; a dim with no constraint
-    key in the region is ignored (the region applies to any value of it)."""
-    for axis_name, axis_value in dims.items():
-        cap = region.get(f"{axis_name}_max")
-        if cap is not None and axis_value > cap:
-            return False
-        lo = region.get(f"{axis_name}_min")
-        if lo is not None and axis_value < lo:
-            return False
-        eq = region.get(f"{axis_name}_eq")
-        if eq is not None and axis_value != eq:
-            return False
-    return True
+def _normalize_eq(value: Any) -> Any:
+    """Tuples become lists, recursively. JSON storage turns every tuple in a region into a list, so an ``_eq``
+    constraint on a tuple value could never match again once reloaded from disk unless both sides are normalized."""
+    if isinstance(value, (tuple, list)):
+        return [_normalize_eq(v) for v in value]
+    return value
+
+
+def _is_nan(value: Any) -> bool:
+    """True for a float NaN (python float or numpy floating scalar), which compares False against every bound."""
+    return isinstance(value, (float, np.floating)) and bool(math.isnan(value))
 
 
 def _region_match_reason(region: dict, dims: dict) -> tuple:
-    """Like ``_region_matches`` but returns ``(ok, reason)`` -- the first failing
-    constraint -- for ``lookup_explain``."""
+    """``(ok, reason)`` for one region against a dims dict; the single implementation behind ``_region_matches`` and
+    ``lookup_explain``, and the reference the compiled ``lookup`` plan must agree with.
+
+    A region matches iff, for every requested dim, the region's constraints on that axis hold:
+      * ``<axis>_max``: dim <= max   (numeric upper cap)
+      * ``<axis>_min``: dim >= min   (numeric lower cap)
+      * ``<axis>_eq`` : dim == value (categorical / exact; tuples and lists compare equal element-wise)
+    A constraint key absent or None is unconstrained; a dim with no constraint key in the region is ignored.
+    A NaN dim matches NO constrained region: every comparison with NaN is False, so ``nan > cap`` used to let it
+    through every ``_max``/``_min`` check.
+    """
     for axis_name, axis_value in dims.items():
         cap = region.get(f"{axis_name}_max")
+        lo = region.get(f"{axis_name}_min")
+        eq = region.get(f"{axis_name}_eq")
+        if (cap is not None or lo is not None) and _is_nan(axis_value):
+            return False, f"{axis_name} is NaN"
         if cap is not None and axis_value > cap:
             return False, f"{axis_name}={axis_value} > {axis_name}_max={cap}"
-        lo = region.get(f"{axis_name}_min")
         if lo is not None and axis_value < lo:
             return False, f"{axis_name}={axis_value} < {axis_name}_min={lo}"
-        eq = region.get(f"{axis_name}_eq")
-        if eq is not None and axis_value != eq:
+        if eq is not None and _normalize_eq(axis_value) != _normalize_eq(eq):
             return False, f"{axis_name}={axis_value!r} != {axis_name}_eq={eq!r}"
     return True, "all constraints satisfied"
+
+
+def _region_matches(region: dict, dims: dict) -> bool:
+    """True iff ``region`` matches ``dims``; see ``_region_match_reason``."""
+    return bool(_region_match_reason(region, dims)[0])

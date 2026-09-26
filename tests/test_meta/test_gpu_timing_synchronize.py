@@ -67,3 +67,50 @@ def time_backend(fn, make_inputs, *, n_iters=2, timer: Callable[[], float] = tim
     path.write_text(regression_shape.lstrip("\n"), encoding="utf-8")
     findings = gpu_timing_sync.find_unsynchronized_gpu_timings([path])
     assert [(f.function, f.shape) for f in findings] == [("_run", "injected-callable-in-gpu-module")]
+
+
+def _null_stream_sync_calls(path: Path) -> list:
+    """``(line, source)`` of every ``<x>.Stream.null.synchronize()`` / ``<x>.null.synchronize()`` call in ``path``."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "synchronize"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "null"
+        ):
+            out.append((node.lineno, ast.unparse(node) if hasattr(ast, "unparse") else "null.synchronize()"))
+    return out
+
+
+def test_no_null_stream_only_sync_in_pyutilz() -> None:
+    """The shared gate accepts ANY sync call, so it could not see that ``synchronize_gpu_if_available`` waited only on
+    cupy's null stream (other streams, per-thread default streams and numba.cuda were timed at launch; audit
+    2026-09-26 GEN-4). A null-stream wait is never a device barrier; use ``cupy.cuda.runtime.deviceSynchronize()``."""
+    offenders = [f"{p.relative_to(SRC_ROOT).as_posix()}:{line}: {src}" for p in sorted(PYUTILZ_DIR.rglob("*.py")) for line, src in _null_stream_sync_calls(p)]
+    assert offenders == [], "null-stream-only GPU sync (not a device barrier):\n" + "\n".join(offenders)
+
+
+def test_null_stream_checker_can_fail(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    path.write_text("import cupy as _cp\n\ndef f():\n    _cp.cuda.Stream.null.synchronize()\n", encoding="utf-8")
+    assert [line for line, _ in _null_stream_sync_calls(path)] == [4]
+
+
+def test_the_timing_helper_is_a_device_barrier() -> None:
+    """Behavioural half: with a fake cupy that has a live context, the helper must call ``deviceSynchronize``."""
+    import sys
+    from unittest import mock
+
+    import pyutilz.dev.benchmarking as bm
+
+    cp = mock.MagicMock(name="cupy")
+    cp.cuda.runtime.getDeviceCount.return_value = 1
+    cp.cuda.driver.ctxGetCurrent.return_value = 1
+    with mock.patch.dict(sys.modules, {"cupy": cp}), mock.patch.object(bm, "_numba_cuda_initialised", return_value=False):
+        bm.synchronize_gpu_if_available()
+    cp.cuda.runtime.deviceSynchronize.assert_called_once_with()

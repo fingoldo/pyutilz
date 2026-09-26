@@ -21,8 +21,13 @@ class Pricing(NamedTuple):
 
     ``cache_hit`` is None when the provider publishes no cached-input rate; the base
     ``_cache_hit_cost_per_1m`` then falls back to the uncached input rate.
+
+    ``cache_write`` is the price of WRITING a prompt-cache entry (Anthropic-family routes bill it at
+    1.25x input for the 5-minute TTL). None means the provider publishes no separate rate, and
+    ``_cache_write_cost_per_1m`` falls back to the uncached input rate.
     """
 
     input: float
     output: float
     cache_hit: Optional[float] = None
+    cache_write: Optional[float] = None

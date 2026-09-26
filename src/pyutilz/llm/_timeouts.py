@@ -10,6 +10,20 @@ from __future__ import annotations
 from typing import Any
 
 
+def _separate_reasoning_budget(body: dict[str, Any]) -> float:
+    """Tokens of reasoning ``body`` budgets outside ``max_tokens``, or 0 when it states none."""
+    total = 0.0
+    for section, key in (("reasoning", "max_tokens"), ("thinking", "budget_tokens")):
+        block = body.get(section)
+        if not isinstance(block, dict):
+            continue
+        value = block.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            continue
+        total += float(value)
+    return total
+
+
 class DerivedTimeoutMixin:
     """The request-timeout policy: a model-name floor, raised by how much output the body asks for."""
 
@@ -65,6 +79,9 @@ class DerivedTimeoutMixin:
         if requested is None:
             requested = body.get("max_completion_tokens")
         if requested is None:
+            thinking_only = _separate_reasoning_budget(body)
+            if thinking_only:
+                return max(base, min(thinking_only * self._seconds_per_output_token, self._max_derived_timeout_s))
             return base
         try:
             tokens = float(requested)
@@ -75,5 +92,9 @@ class DerivedTimeoutMixin:
             if ceiling is None:
                 return base
             tokens = float(ceiling)
+        # A reasoning budget stated SEPARATELY from max_tokens (OpenRouter ``reasoning.max_tokens``, Anthropic-style
+        # ``thinking.budget_tokens``) is generated before the answer, so a small answer budget with a large think
+        # otherwise got the name default and timed out mid-thought.
+        tokens += _separate_reasoning_budget(body)
         needed = tokens * self._seconds_per_output_token
         return max(base, min(needed, self._max_derived_timeout_s))

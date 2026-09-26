@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
+Milestone: the LLM layer after the 2026-09-26 audit wave (OpenRouter, providers, shared core, CI, general). Every
+finding and its disposition is under `audits/2026-09-26/`.
+
 ### Added
+
+- `LLMProvider.route_fingerprint()`: SHA-256 of the sorted-JSON route payload, stable across equal configurations (a
+  tuple and a list of the same items digest the same). `OpenRouterProvider` digests the model plus every routing and
+  request-shaping constructor kwarg (`_ROUTE_FINGERPRINT_ATTRS`); credentials, concurrency, attribution headers and the
+  client-side 404 retry policy are excluded by name, and a meta test fails on any unclassified new kwarg. Response
+  caches and benchmark ledgers key on it.
+- `LLMStreamInterruptedError` is exported from `pyutilz.llm` and `pyutilz.llm.exceptions` (still importable from
+  `openai_compat`). `pyutilz.dev.attempt_archive` records it as the new `"interrupted"` outcome instead of `"truncated"`.
+- `Pricing.cache_write`; OpenAI-compatible `get_session_cost` prices tracked cache writes at that rate.
+- `LLMProvider.generate_json(json_schema=...)`, forwarded to `generate` when given.
+- A total per-call retry deadline, `PYUTILZ_LLM_MAX_CALL_SECONDS` (default 7200, 0 = none; checked only between attempts,
+  so a long stream is never cut), and `PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS` (default 3, 0 = none).
+- `generate_batch` forwards `images`, `thinking`, `json_mode` and `json_schema` from each request and warns about unknown keys.
 
 - `ClaudeCodeProvider.generate` and `GeminiProvider.generate` take `thinking=` like every other provider. Claude Code sends the effort budget as MAX_THINKING_TOKENS in the CLI environment (0 for off); Gemini sends `thinking_config.thinking_budget` (a Pro model, which cannot stop thinking, is sent nothing for off). Both `generate_json` methods forward it instead of logging that it is ignored. The budgets (`THINKING_BUDGETS`) moved to `pyutilz.llm._thinking`, still importable from `anthropic_provider`.
 

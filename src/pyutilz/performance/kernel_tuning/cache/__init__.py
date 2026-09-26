@@ -63,7 +63,7 @@ read-modify-write. That single mutable document was the root cause of the
 lost-update / stale-lock / 900s-wedge defects (see the locking critique). v3
 dissolves them by making each tuning an **immutable** file::
 
-    <cache_dir>/<hw_fingerprint>/<kernel_slug>/<code_version>.<salt>.<pid>.<ts>.json
+    <cache_dir>/<hw_fingerprint>/<kernel_slug>-<name_digest>/<code_version>.<salt>.<pid>.<ts>.json
 
 * **WRITE** -- a tuner writes a brand-new uniquely-named file (tempfile +
   ``os.replace``); no file is ever modified in place, so there is no

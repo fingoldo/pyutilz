@@ -123,7 +123,9 @@ def fake_gpu():
 
     with mock.patch.object(gd, "is_cuda_available", return_value=True), mock.patch.object(
         gd, "get_gpu_cuda_capabilities", return_value=dict(_FAKE_CAPS)
-    ), mock.patch.object(gd, "get_gpuutil_gpu_info", side_effect=_gputil), mock.patch.object(gd, "_free_bytes_via_cupy", return_value=None):
+    ), mock.patch.object(gd, "get_gpuutil_gpu_info", side_effect=_gputil), mock.patch.object(gd, "_free_bytes_via_cupy", return_value=None), mock.patch.object(
+        gd, "_cuda_ordinals_by_uuid", return_value=None
+    ):
         yield gputil_calls
     gd.reset_cache()
 

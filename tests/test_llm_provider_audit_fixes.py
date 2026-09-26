@@ -159,15 +159,14 @@ class TestAnthropicPricingFallback:
 
     def test_unpinned_uses_longest_prefix_and_warns(self, caplog):
         p = _make_anthropic()
-        # Hypothetical future, unpinned id. Longest matching prefix is
-        # "claude-opus-4" (from claude-opus-4-7). The warning makes the
-        # silent fallback visible so a new tier can't quietly inherit a
-        # wrong price without a trace.
+        # Hypothetical future, unpinned id. It shares the "claude-opus-4" prefix with legacy rows but is none of
+        # them, so it is NOT priced from one (the old prefix match could hand it Opus 4's $15/$75): it gets the
+        # documented unknown-model fallback, with a warning that names the table to extend (PROV-2).
         p.model = "claude-opus-4-2-20260101"
         with caplog.at_level("WARNING"):
             inp, out = p._get_pricing()
-        assert (inp, out) in {(5.00, 25.00), (15.00, 75.00)}
-        assert any("not pinned" in r.message for r in caplog.records)
+        assert (inp, out) == p._DEFAULT_PRICING
+        assert any("not in the Claude model table" in r.message for r in caplog.records)
 
     def test_unknown_model_falls_to_default(self):
         p = _make_anthropic()

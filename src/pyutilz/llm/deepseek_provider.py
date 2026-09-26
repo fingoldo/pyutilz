@@ -3,30 +3,33 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
 
-# Pricing per 1M tokens (USD): (input_cache_miss, input_cache_hit, output)
-# Source: https://api-docs.deepseek.com/quick_start/pricing
-# Updated 2026-04-28:
-#   - V4 models (deepseek-v4-flash, deepseek-v4-pro) launched
-#   - Cache-hit rates reduced to 1/10 of launch price (effective 2026-04-26)
-#   - Legacy aliases deepseek-chat / deepseek-reasoner deprecated 2026-07-24
+# PEAK pricing per 1M tokens (USD): (input_cache_miss, input_cache_hit, output).
+# Source: https://api-docs.deepseek.com/quick_start/pricing (fetched 2026-09-26).
+# Off-peak is half of every figure; see `deepseek_price_multiplier`.
 _PRICING = {
-    # New V4 family -- recommended
-    "deepseek-v4-flash": (0.14, 0.0028, 0.28),
-    "deepseek-v4-pro": (1.74, 0.0145, 3.48),
-    # Legacy aliases (deprecated 2026-07-24, still functional, V3.2-backed)
+    # DeepSeek-V4.1-Flash, the current Flash model.
+    "deepseek-flash": (0.30, 0.006, 1.20),
+    # Legacy name, "still accepted ... served by the DeepSeek-V4.1-Flash model and billed at the Flash price".
+    "deepseek-v4-flash": (0.30, 0.006, 1.20),
+    "deepseek-v4-pro": (1.32, 0.044, 3.96),
+    # Legacy aliases (deprecated 2026-07-24, V3.2-backed); no longer on the pricing page, last published rates.
     "deepseek-chat": (0.28, 0.028, 0.42),
     "deepseek-reasoner": (0.28, 0.028, 0.42),
 }
 
 _MAX_TOKENS = {
+    "deepseek-flash": 384_000,
     "deepseek-v4-flash": 384_000,
     "deepseek-v4-pro": 384_000,
     "deepseek-chat": 8192,
@@ -34,11 +37,26 @@ _MAX_TOKENS = {
 }
 
 _CONTEXT_WINDOW = {
+    "deepseek-flash": 1_000_000,
     "deepseek-v4-flash": 1_000_000,
     "deepseek-v4-pro": 1_000_000,
     "deepseek-reasoner": 128_000,
     "deepseek-chat": 64_000,
 }
+
+# The fixed-mode legacy aliases: every other model (the V4 family, deepseek-flash) takes the `thinking` toggle.
+_LEGACY_FIXED_MODE_MODELS = frozenset({"deepseek-chat", "deepseek-reasoner"})
+
+# "Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays."
+# Holidays are not modelled: a call on one is costed at the peak rate, an overestimate, never an underestimate.
+_PEAK_HOURS_UTC = frozenset({1, 2, 3, 6, 7, 8, 9})
+
+
+def deepseek_price_multiplier(when: datetime | None = None) -> float:
+    """1.0 during DeepSeek's peak window, 0.5 off-peak, for a call completing at ``when`` (default now, UTC)."""
+    moment = (datetime.now(timezone.utc) if when is None else when).astimezone(timezone.utc)
+    peak = moment.weekday() < 5 and moment.hour in _PEAK_HOURS_UTC
+    return 1.0 if peak else 0.5
 
 
 class DeepSeekProvider(OpenAICompatibleProvider):
@@ -47,21 +65,32 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     _base_url = "https://api.deepseek.com"
     _provider_name = "DeepSeek"
     _max_tokens_map = _MAX_TOKENS
-    _default_max_tokens = 8192
+    # An unknown model gets the CURRENT generation's limits: the old 8192 / 64K defaults were the retired
+    # deepseek-chat's, and silently capped the current deepseek-flash (384K output, 1M context) to them.
+    _default_max_tokens = 384_000
     _context_window_map = _CONTEXT_WINDOW
-    _default_context_window = 64_000
+    _default_context_window = 1_000_000
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "deepseek-v4-flash",
+        model: str = "deepseek-flash",
         max_concurrent: int = 10,
+        wait_on_insufficient_balance: bool = False,
     ):
+        """``wait_on_insufficient_balance``: on HTTP 402 keep retrying until the account is topped up (the old
+        behaviour) instead of failing the call at once. Off by default, because an unattended batch job otherwise
+        hangs with nothing but a repeating warning to show for it."""
         settings = get_llm_settings()
         resolved_key = api_key or (settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None)
         if not resolved_key:
             raise ValueError("DeepSeek API key not provided. " "Set DEEPSEEK_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
+        self.wait_on_insufficient_balance = wait_on_insufficient_balance
+        # USD by which the off-peak discount lowered this session's spend below the peak-rate figure the base
+        # `get_session_cost` computes from token totals. Accumulated per call, at the call's own completion time.
+        self._offpeak_input_discount_usd = 0.0
+        self._offpeak_output_discount_usd = 0.0
 
     def _get_timeout(self, model: str) -> float:
         """Return the request timeout in seconds for ``model`` (longer for reasoning/"pro" models)."""
@@ -69,13 +98,26 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         return 300.0 if "reasoner" in model or "pro" in model else 120.0
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
-        """Log a warning when the response indicates insufficient account balance (HTTP 402)."""
-        if resp.status_code == 402:
-            logger.warning(
-                "DeepSeek account has insufficient balance (HTTP 402). "
-                "Top up at https://platform.deepseek.com/top_up -- "
-                "retrying indefinitely until balance is restored..."
+        """On HTTP 402 (insufficient balance): fail the call, or with ``wait_on_insufficient_balance`` warn and let the
+        shared retry policy wait for a top-up.
+
+        The shared predicate retries 402 forever, which is right for a supervised process and wrong for a batch job
+        nobody is watching: it hung silently until someone topped the account up. Raising ``LLMProviderError`` here
+        (not an ``httpx`` error, so no retry predicate matches it) ends the call with the reason.
+        """
+        if resp.status_code != 402:
+            return
+        if not getattr(self, "wait_on_insufficient_balance", False):
+            raise LLMProviderError(
+                "DeepSeek account has insufficient balance (HTTP 402). Top up at https://platform.deepseek.com/top_up, "
+                "or construct DeepSeekProvider(wait_on_insufficient_balance=True) to wait for the top-up instead.",
+                details={"status_code": 402},
             )
+        logger.warning(
+            "DeepSeek account has insufficient balance (HTTP 402). "
+            "Top up at https://platform.deepseek.com/top_up -- "
+            "retrying indefinitely until balance is restored..."
+        )
 
     # _compute_billed_output not overridden — base default returns
     # completion_tokens which matches DeepSeek's billing semantics
@@ -94,10 +136,10 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         # are fixed-mode server-side and reject the field. Log a warning
         # so a caller passing thinking= to a legacy alias notices the
         # request goes through unchanged rather than silently ignored.
-        if not self.model_name.startswith("deepseek-v4"):
+        if self.model_name in _LEGACY_FIXED_MODE_MODELS:
             if thinking:
                 logger.warning(
-                    "DeepSeek %r does not support the thinking toggle " "(only deepseek-v4-* models do); thinking=%r ignored.",
+                    "DeepSeek %r does not support the thinking toggle (only the legacy aliases lack it); thinking=%r ignored.",
                     self.model_name,
                     thinking,
                 )
@@ -159,7 +201,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         ``(input, cache_hit, output)``; it is reordered into ``Pricing``'s named fields here so no
         caller ever has to remember which position means what.
 
-        Falls back to ``deepseek-v4-flash`` pricing on miss, with a single
+        Falls back to ``deepseek-flash`` pricing on miss, with a single
         warning per unknown model name (logged once via the cache itself
         as a side-effect) so callers don't get silently mis-priced. A
         typo like ``"deepseekv4"`` would otherwise estimate cost using
@@ -168,7 +210,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         row = _PRICING.get(model)
         if row is None:
             self._warn_unknown_model_once(model)
-            row = _PRICING["deepseek-v4-flash"]
+            row = _PRICING["deepseek-flash"]
         in_cost, cache_hit, out_cost = row
         return Pricing(float(in_cost), float(out_cost), float(cache_hit))
 
@@ -180,7 +222,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
             return
         DeepSeekProvider._seen_unknown_models.add(model)
         logger.warning(
-            "DeepSeek pricing for %r is unknown; falling back to " "deepseek-v4-flash rates. Cost estimates may be off.",
+            "DeepSeek pricing for %r is unknown; falling back to deepseek-flash rates. Cost estimates may be off.",
             model,
         )
 
@@ -191,3 +233,38 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     def _output_cost_per_1m(self, model: str) -> float:
         """Return the USD cost per 1M output tokens for ``model``."""
         return self._resolve_pricing(model).output
+
+    def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
+        """Record how much this call's off-peak discount takes off the peak-rate cost ``get_session_cost`` computes.
+
+        DeepSeek halves every rate outside its peak window, so pricing a session from its token totals alone
+        overstated off-peak spend twofold. The rate is a property of each call's time, so it is applied per call.
+        """
+        super()._track_provider_specific_usage(usage)
+        discount = 1.0 - deepseek_price_multiplier()
+        if discount <= 0:
+            return
+        pricing = self._resolve_pricing(self.model_name)
+        prompt = int(usage.get("prompt_tokens") or 0)
+        details = usage.get("prompt_tokens_details")
+        raw_hit = usage.get("prompt_cache_hit_tokens")
+        if raw_hit is None:
+            raw_hit = (details or {}).get("cached_tokens")
+        hit = int(raw_hit) if isinstance(raw_hit, (int, float)) else 0
+        completion = int(usage.get("completion_tokens") or 0)
+        cache_rate = pricing.cache_hit if pricing.cache_hit is not None else pricing.input
+        self._offpeak_input_discount_usd = (
+            getattr(self, "_offpeak_input_discount_usd", 0.0) + discount * ((prompt - hit) * pricing.input + hit * cache_rate) / 1_000_000
+        )
+        self._offpeak_output_discount_usd = getattr(self, "_offpeak_output_discount_usd", 0.0) + discount * completion * pricing.output / 1_000_000
+
+    def get_session_cost(self) -> dict[str, Any]:
+        """Session cost at the rate each call was actually billed at (peak or off-peak), see ``_track_provider_specific_usage``."""
+        cost = super().get_session_cost()
+        in_discount = getattr(self, "_offpeak_input_discount_usd", 0.0)
+        out_discount = getattr(self, "_offpeak_output_discount_usd", 0.0)
+        cost["input_cost_usd"] -= in_discount
+        cost["output_cost_usd"] -= out_discount
+        cost["total_cost_usd"] = cost["input_cost_usd"] + cost["output_cost_usd"]
+        cost["offpeak_discount_usd"] = in_discount + out_discount
+        return cost

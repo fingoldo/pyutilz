@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from tenacity import retry, retry_if_exception
 
-from ._messages import build_chat_messages
+from pyutilz.llm._openai_compat_body import RequestBodyMixin
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
 from pyutilz.llm._thinking import ThinkingControlMixin
@@ -28,12 +28,16 @@ from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
     _NON_RETRYABLE_STATUSES,
     _JSONDecodeError,
+    LLMStreamInterruptedError,
     _accumulate_stream_tool_calls,
     _is_retryable_http_error,
     _json_backend,
     _json_loads,
+    merge_extra_body,
     parse_response_envelope,
     parse_retry_after,
+    raise_for_error_in_body,
+    wait_honoring_retry_after,
 )
 
 # Also the public home the providers import `Pricing` from; it lives in `_pricing.py` for the line budget.
@@ -42,7 +46,7 @@ from pyutilz.llm._pricing import Pricing
 logger = logging.getLogger(__name__)
 
 
-class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsMixin, DerivedTimeoutMixin, ThinkingControlMixin, LLMProvider):
+class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixin, StreamAttemptsMixin, DerivedTimeoutMixin, ThinkingControlMixin, LLMProvider):
     """Base for providers exposing an OpenAI-compatible chat/completions API.
 
     Subclasses MUST define:
@@ -258,6 +262,14 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
             return self._input_cost_per_1m(model)
         return float(cache_hit)
 
+    def _cache_write_cost_per_1m(self, model: str) -> float:
+        """Return the cache-WRITE price per 1M tokens, falling back to the uncached input rate
+        when the provider publishes none (``Pricing.cache_write`` is None)."""
+        cache_write = self._resolve_pricing(model).cache_write
+        if cache_write is None:
+            return self._input_cost_per_1m(model)
+        return float(cache_write)
+
     # ── LLMProvider interface ────────────────────────────────────────
 
     @property
@@ -282,80 +294,27 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         """
         return self._context_window_map.get(self.model_name, self._default_context_window)
 
-    def supports_json_mode(self) -> bool:
-        """All OpenAI-compatible Chat Completions endpoints accept
-        ``response_format={"type": "json_object"}`` since 2023-11.
-        Subclasses with model-specific gating (notably OpenRouter, where
-        per-model support varies) override this with a catalogue check.
-        """
-        return True
-
-    def supports_json_schema(self) -> bool:
-        """OpenAI-compatible endpoints have accepted strict ``json_schema`` response formats since
-        2024-08. Support is per-model in practice, so routers (OpenRouter) override with a catalogue
-        check; a direct single-vendor endpoint can assume its own models.
-        """
-        return True
-
-    def _response_format(self, json_mode: bool, json_schema: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Choose the strictest response_format the model actually supports, and record which applied.
-
-        A caller passing ``json_schema`` to a model without strict-schema support degrades to plain JSON
-        mode rather than failing the call — a mixed-model sweep stays runnable — but the degradation is
-        logged and exposed via ``last_json_schema_applied`` so the caller can tell a guaranteed-shape
-        response from a merely-hopeful one instead of assuming the guarantee held.
-        """
-        self._last_json_schema_applied = False
-        if json_schema is not None:
-            if self.supports_json_schema():
-                self._last_json_schema_applied = True
-                return {"type": "json_schema", "json_schema": json_schema}
-            logger.warning(
-                "%s/%s does not support strict json_schema; falling back to json_object (enums NOT enforced)",
-                self._provider_name,
-                self.model_name,
-            )
-        if json_mode:
-            return {"type": "json_object"}
-        return None
-
-    @property
-    def last_json_schema_applied(self) -> bool:
-        """Whether the most recent call actually constrained generation to the caller's JSON schema."""
-        return getattr(self, "_last_json_schema_applied", False)
-
     async def _close(self):
-        """Close the underlying httpx client."""
-        await self._client.aclose()
+        """Close the underlying httpx client and every per-event-loop copy of it (see ``base.PerLoopHTTPClient``).
 
-    def _messages_for(self, prompt: str, system: str | None, images: "list[str] | None") -> list[dict[str, Any]]:
-        """``_build_messages``, called with the arity the request needs.
-
-        The third argument goes only when there ARE images: ``_build_messages`` is an override point
-        that a subclass or test double may still define as ``(self, prompt, system)``, so a text-only
-        call must reach it with two arguments and an unchanged body.
+        Only the current loop's client is reachable as ``self._client``; the copies made for other loops are
+        closed here too. Closing the current one fails loudly as before; a copy whose loop is already gone can
+        fail to close its sockets from this loop, which is logged rather than raised.
         """
-        return self._build_messages(prompt, system, images) if images else self._build_messages(prompt, system)
+        from pyutilz.llm.base import PerLoopHTTPClient
 
-    def _build_messages(
-        self,
-        prompt: str,
-        system: str | None = None,
-        images: "list[str] | None" = None,
-    ) -> list[dict[str, Any]]:
-        """The chat ``messages`` list -- see :func:`pyutilz.llm._messages.build_chat_messages`.
-
-        Kept as a delegating METHOD because it is a documented override point.
-        """
-        return build_chat_messages(prompt, system, images)
-
-    def _extra_request_body(self, model: str) -> dict[str, Any]:
-        """Return provider-specific extra fields to merge into the request body.
-
-        Subclasses override for things like vendor-specific defaults.
-        Defaults to empty so callers see vanilla OpenAI-compatible behavior.
-        """
-        return {}
+        current = self._client
+        if not getattr(current, "is_closed", False):
+            await current.aclose()
+        descriptor = LLMProvider.__dict__.get("_client")
+        others = descriptor.all_clients(self) if isinstance(descriptor, PerLoopHTTPClient) else []
+        for client in others:
+            if client is current or getattr(client, "is_closed", False):
+                continue
+            try:
+                await client.aclose()
+            except Exception as exc:
+                logger.debug("Closing a per-loop HTTP client failed: %s", exc)
 
     async def generate_stream(
         self,
@@ -367,8 +326,13 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         thinking: bool | str | None = None,
         json_schema: dict[str, Any] | None = None,
         images: list[str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        extra_body: dict[str, Any] | None = None,
     ):
         """Stream the model's response token-by-token via SSE.
+
+        ``tools`` / ``tool_choice`` / ``extra_body``: as on :meth:`generate`.
 
         Yields each content delta as a string; the caller concatenates.
         Token-usage accounting is updated only after the stream completes
@@ -390,7 +354,9 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
         # (``context_window``) are sync properties that may hit the network on a catalogue miss.
         await self._async_prepare()
-        body = self._build_stream_body(prompt, system, temperature, max_tokens, json_mode, thinking, json_schema, images)
+        body = self._build_stream_body(
+            prompt, system, temperature, max_tokens, json_mode, thinking, json_schema, images, tools=tools, tool_choice=tool_choice, extra_body=extra_body
+        )
 
         attempt = 0
         # One repair re-issue, mirroring _post_and_unwrap's: an endpoint that refuses
@@ -448,7 +414,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
                                 self._track_provider_specific_response(chunk)
                             # `_apply_stream_chunk` returns None for a chunk without choices, so an error chunk used to be
                             # skipped: the stream ended empty or cut short with no exception.
-                            self._raise_for_error_in_body(chunk, resp.request)
+                            self._raise_for_error_in_body(chunk, resp.request, streamed_text)
                             last_chunk = chunk
                             self._note_stream_chunk(attempt_state, chunk, first=chunk is first_chunk)
                             # Usage block tends to arrive on a chunk with empty
@@ -475,12 +441,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
                 if latest_usage is not None and not usage_recorded:
                     usage_recorded = True
                     self._track_streaming_usage(latest_usage)
-                if self._last_finish_reason == "length":
-                    raise LLMTruncationError(
-                        f"{self._provider_name} streamed response truncated by max_tokens (finish_reason='length')",
-                        finish_reason="length",
-                        partial_text="".join(streamed_text),
-                    )
+                self._raise_for_stream_finish("".join(streamed_text))
                 return
             except BaseException as exc:
                 # Only the stream-open / pre-first-token phase is safely
@@ -522,82 +483,18 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
                 )
                 await asyncio.sleep(wait_s)
 
-    def _build_stream_body(
-        self,
-        prompt: str,
-        system: str | None,
-        temperature: float | None,
-        max_tokens: int,
-        json_mode: bool,
-        thinking: bool | str | None,
-        json_schema: dict[str, Any] | None,
-        images: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Assemble the ``/chat/completions`` request body for a STREAMING call.
-
-        Split out of ``generate_stream`` so the streaming state machine stays within the project's
-        C901 budget; the caller must already have awaited ``_async_prepare()``, because the
-        ``max_output_tokens`` / ``context_window`` properties read here can hit the catalogue.
-        """
-        if max_tokens <= 0:
-            max_tokens = self.max_output_tokens
-        # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
-        # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
-        # (2026-08-08, autopsia pilot): a large prompt's real token count exceeded `count_tokens`'s
-        # estimate enough to overflow the context window even after clamping. Omitting `max_tokens`
-        # entirely instead of clamping was tried and reverted: OpenRouter's own docs confirm there is no
-        # universal fixed default across models when the field is absent, so widening the reserve keeps
-        # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
-
-        body: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": self._messages_for(prompt, system, images),
-            # `None` means DO NOT SEND the field, so the upstream applies its own default. `0.0` is a real
-            # temperature and the most deterministic one, which a truthiness test would silently turn off.
-            **({} if temperature is None else {"temperature": temperature}),
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
-        rf = self._response_format(json_mode, json_schema)
-        if rf is not None:
-            body["response_format"] = rf
-        body.update(self._extra_request_body(self.model_name))
-        if thinking is not None:
-            tf = self._thinking_request_field(thinking)
-            if tf is not None:
-                body.update(tf)
-
-        # OR + many OpenAI-compat upstreams emit usage on the FINAL
-        # SSE chunk only when ``stream_options: {"include_usage": true}``
-        # is set. Without it the stream never publishes usage at all,
-        # leaving streaming callers with zero cost / token tracking.
-        body.setdefault("stream_options", {"include_usage": True})
-        return body
-
-    def _raise_for_error_in_body(self, payload: dict[str, Any], request: httpx.Request) -> None:
-        """Raise the error an HTTP 200 body or stream chunk carries in place of choices; return if it carries none.
-
-        Measured on OpenRouter 2026-09-15: `{"error": {"code": 429, "message": "openai/gpt-5.6-luna is temporarily
-        rate-limited upstream"}}` arrived with status 200 and no choices. The buffered path reported it as "returned no
-        choices", which the retry predicate does not match, and the stream path skipped the chunk and ended empty - so a
-        transient rate limit was neither retried nor readable, and looked like a dead route. A numeric code of 400 or above
-        is raised as `httpx.HTTPStatusError` with that status, so the shared policy retries 429/5xx and refuses 400/404 at
-        once; anything else is an `LLMProviderError` naming the message.
-        """
-        error = payload.get("error")
-        if not isinstance(error, dict) or payload.get("choices"):
-            return
-        raw_code = error.get("code")
-        code = int(raw_code) if isinstance(raw_code, (int, str)) and str(raw_code).isdigit() else 0
-        error_message = str(error.get("message") or error)
-        if code >= 400:
-            raise httpx.HTTPStatusError(
-                f"{self._provider_name} returned error {code} in place of choices: {error_message}",
-                request=request,
-                response=httpx.Response(code, request=request, text=error_message),
+    def _raise_for_stream_finish(self, text: str) -> None:
+        """Raise when a stream that closed normally did not end in an answer: ``finish_reason`` "error" or "length"."""
+        if self._last_finish_reason == "error":
+            # The documented mid-stream failure can also arrive as a bare `finish_reason: "error"`; the text so far is a
+            # fragment, never an answer (it used to be returned as one).
+            raise LLMStreamInterruptedError(f"{self._provider_name} stream ended with finish_reason='error'", partial_text=text)
+        if self._last_finish_reason == "length":
+            raise LLMTruncationError(
+                f"{self._provider_name} streamed response truncated by max_tokens (finish_reason='length')",
+                finish_reason="length",
+                partial_text=text,
             )
-        raise LLMProviderError(f"{self._provider_name} returned no choices; error in body: {error_message}")
 
     def _apply_stream_chunk(self, chunk: dict[str, Any], tool_call_fragments: dict[int, dict[str, Any]]) -> str | None:
         """Fold one SSE chunk's choice into per-call metadata, returning its content delta if any.
@@ -703,7 +600,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
 
     @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
         retry=retry_if_exception(_is_retryable_http_error),
-        **INFINITE_RETRY_KWARGS,
+        **{**INFINITE_RETRY_KWARGS, "wait": wait_honoring_retry_after(INFINITE_RETRY_KWARGS["wait"])},
     )
     async def generate(
         self,
@@ -715,8 +612,16 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         thinking: bool | str | None = None,
         json_schema: dict[str, Any] | None = None,
         images: list[str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> str:
         """Generate text using OpenAI-compatible chat/completions API.
+
+        ``tools`` / ``tool_choice``: OpenAI function-calling definitions, sent as given; the model's calls are read
+        from ``last_tool_calls`` (a tool-call-only reply returns ``""``). ``extra_body``: any other request field
+        (``seed``, ``stop``, ``logprobs``, ``top_logprobs``, ``user``, ``parallel_tool_calls``, ...), merged LAST so it
+        wins; a dict value merges one level into a dict already in the body (``provider``, ``reasoning``).
 
         ``json_schema``: a strict OpenAI-style schema dict (``{"name":..., "strict": True, "schema":
         {...}}``). When the model supports it, generation is CONSTRAINED to that schema, so closed enums
@@ -760,19 +665,7 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         rf = self._response_format(json_mode, json_schema)
         async with self.semaphore:
-            body: dict[str, Any] = {
-                "model": self.model_name,
-                "messages": self._messages_for(prompt, system, images),
-                **({} if temperature is None else {"temperature": temperature}),  # `None` omits it; see `_build_stream_body`
-                "max_tokens": max_tokens,
-            }
-            if rf is not None:
-                body["response_format"] = rf
-            body.update(self._extra_request_body(self.model_name))
-            if thinking is not None:
-                thinking_field = self._thinking_request_field(thinking)
-                if thinking_field is not None:
-                    body.update(thinking_field)
+            body = self._request_body(prompt, system, temperature, max_tokens, rf, thinking, images, tools, tool_choice, extra_body)
             try:
                 content = await self._post_and_unwrap(body)
             except LLMTruncationError as truncation:
@@ -860,20 +753,33 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
         resp.raise_for_status()
         data = parse_response_envelope(resp, self._provider_name)
 
+        # Response metadata FIRST: the usage hook prices a call by the model that served it (OpenRouter's `models`
+        # fallback), and that model is read from the envelope here.
+        self._track_provider_specific_response(data)
+
         # Token usage tracking
         usage = data.get("usage", {})
         if usage:
             self._record_usage(usage)
 
-        self._track_provider_specific_response(data)
-
         choices = data.get("choices", [])
+        message = (choices[0].get("message") or {}) if choices else {}
+        content_so_far = message.get("content")
+        # A response double without ``.request`` must still reach the error check; the request only labels a raised error.
+        request = getattr(resp, "request", None)
+        if not isinstance(request, httpx.Request):
+            request = httpx.Request("POST", "/chat/completions")
+        self._raise_for_error_in_body(data, request, [content_so_far] if isinstance(content_so_far, str) else None)
         if not choices:
-            self._raise_for_error_in_body(data, resp.request)
             raise LLMProviderError(f"{self._provider_name} returned no choices")
 
         self._last_finish_reason = choices[0].get("finish_reason", "unknown")
-        message = choices[0].get("message") or {}
+        if self._last_finish_reason == "error":
+            # Billed and failed: a fragment with `finish_reason: "error"` is not an answer. Retryable, since a fresh
+            # POST duplicates nothing the caller has seen.
+            raise LLMStreamInterruptedError(
+                f"{self._provider_name} response ended with finish_reason='error'", partial_text=content_so_far if isinstance(content_so_far, str) else ""
+            )
         # Capture function-calling output before unwrapping content -- these
         # silently disappeared previously; pyutilz returned only the bare
         # text (often empty when the model chose tool_calls path).
@@ -960,10 +866,15 @@ class OpenAICompatibleProvider(_reasoning.ReasoningCaptureMixin, StreamAttemptsM
 
     def get_session_cost(self) -> dict[str, Any]:
         """Return cumulative token usage and cost breakdown for this session."""
-        cache_miss = self.total_prompt_tokens - self.total_cache_hit_tokens
+        # Cache writes are part of the prompt count but billed at their own rate (1.25x input on Anthropic-family
+        # routes); a provider that tracks them sets total_cache_write_tokens, the others bill none.
+        cache_write = int(getattr(self, "total_cache_write_tokens", 0) or 0)
+        cache_miss = self.total_prompt_tokens - self.total_cache_hit_tokens - cache_write
         input_cost = (cache_miss / 1_000_000) * self._input_cost_per_1m(self.model_name) + (
             self.total_cache_hit_tokens / 1_000_000
         ) * self._cache_hit_cost_per_1m(self.model_name)
+        if cache_write:
+            input_cost += (cache_write / 1_000_000) * self._cache_write_cost_per_1m(self.model_name)
         billed_output = self._compute_billed_output(self.total_completion_tokens, self.total_reasoning_tokens)
         output_cost = (billed_output / 1_000_000) * self._output_cost_per_1m(self.model_name)
         return {

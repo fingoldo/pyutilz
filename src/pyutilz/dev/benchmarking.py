@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import sys
 from typing import Any, Callable, Optional
 import numpy as np
 from timeit import default_timer as timer
@@ -25,9 +26,26 @@ from pyutilz.system.system import tqdmu
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _cupy_has_context(cp: Any) -> bool:
+    """True when this thread already has a current CUDA context (so a sync cannot be what creates one). May raise when
+    there is no driver; the caller treats that as nothing to wait for."""
+    # ``cudaGetDeviceCount`` initialises the driver WITHOUT creating a context; ``cuCtxGetCurrent`` before driver
+    # initialisation segfaults (reproduced with cupy 13 on Windows), so the order matters.
+    if int(cp.cuda.runtime.getDeviceCount()) <= 0:
+        return False
+    return bool(cp.cuda.driver.ctxGetCurrent())
+
+
+def _numba_cuda_initialised() -> bool:
+    """True when numba.cuda's driver has already been initialised in this process (never initialises it). May raise;
+    the caller treats that as nothing to wait for."""
+    from numba.cuda.cudadrv import driver as _drv  # only reached when numba.cuda is already imported
+
+    return bool(getattr(_drv.driver, "is_initialized", False))
+
+
 def synchronize_gpu_if_available() -> None:
-    """Block until pending GPU (cupy / numba.cuda) work on the default stream
-    completes.
+    """Block until ALL pending GPU work of this process completes: every cupy stream and every numba.cuda stream.
 
     GPU kernels launch ASYNCHRONOUSLY: a cupy/cuda call returns a device handle
     immediately and the kernel runs later. Timing such a call with a wall-clock
@@ -37,19 +55,37 @@ def synchronize_gpu_if_available() -> None:
     synchronize it actually LOST.) Call this immediately before stopping the
     timer so the measured interval includes the device compute.
 
-    No-op (and cheap -- an empty-stream sync is microseconds) when cupy is not
-    installed or no device work is pending. Forcing a host copy of the result
-    (``cp.asnumpy``) is an equivalent barrier, which is why DRAM-round-trip
-    timings are already honest.
-    """
-    try:
-        import cupy as _cp
+    Device-wide, not a null-stream wait: ``cupy.cuda.Stream.null.synchronize()`` (the previous body) did not wait for
+    work on other cupy streams or under ``CUPY_CUDA_PER_THREAD_DEFAULT_STREAM=1``, and nothing waited for numba.cuda
+    at all, so those backends were timed at launch and the kernel-tuning cache stored launch times. Now:
 
-        _cp.cuda.Stream.null.synchronize()
-    except Exception as e:
-        # Legitimate best-effort: cupy may not be installed, or there may be no pending device work;
-        # either way this is a no-op sync helper and must never fail the benchmark it's called from.
-        logger.debug("synchronize_gpu_if_available: no-op (%s)", e)  # nosec B110
+    * cupy (only if already imported and this thread has a CUDA context): ``cupy.cuda.runtime.deviceSynchronize()``;
+    * numba.cuda (only if already imported and its driver initialised): ``numba.cuda.synchronize()``.
+
+    Neither library is imported and no CUDA context is created here, so on a CPU-only run this stays a cheap no-op.
+    Forcing a host copy of the result (``cp.asnumpy``) is an equivalent barrier.
+    """
+    synced = False
+    cp = sys.modules.get("cupy")
+    if cp is not None:
+        try:
+            if _cupy_has_context(cp):
+                cp.cuda.runtime.deviceSynchronize()
+                synced = True
+        except Exception as e:
+            # Legitimate best-effort: no driver / no device means nothing to wait for, and a sync helper must never
+            # fail the benchmark it is called from.
+            logger.debug("synchronize_gpu_if_available: cupy sync skipped (%s)", e)  # nosec B110
+    numba_cuda = sys.modules.get("numba.cuda")
+    if numba_cuda is not None:
+        try:
+            if _numba_cuda_initialised():
+                numba_cuda.synchronize()
+                synced = True
+        except Exception as e:
+            logger.debug("synchronize_gpu_if_available: numba.cuda sync skipped (%s)", e)  # nosec B110
+    if not synced:
+        logger.debug("synchronize_gpu_if_available: no-op (no initialised cupy / numba.cuda context)")
 
 
 def _preserve_axis_value(value):
@@ -123,17 +159,61 @@ def benchmark_algos_by_runtime(
     return sorted_implementations, sorted_durations
 
 
-def _max_abs_diff(a, b) -> float:
-    """Max abs elementwise difference between two array-likes (host or device).
-    cupy arrays are pulled to host for the comparison; shape-mismatch -> inf."""
+def _output_vector(x: Any) -> np.ndarray:
+    """One flat float64 vector for a backend output: cupy arrays are pulled to host, and tuple / list / dict outputs
+    (possibly ragged, e.g. a tuple of arrays with different shapes) are flattened part by part (dicts in sorted key
+    order) and concatenated. Raises when a part cannot be read as numbers."""
+    if isinstance(x, dict):
+        parts = [x[k] for k in sorted(x, key=repr)]
+        return np.concatenate([_output_vector(v) for v in parts]) if parts else np.zeros(0, dtype=np.float64)
+    if isinstance(x, (tuple, list)):
+        try:
+            return np.asarray(x, dtype=np.float64).ravel()
+        except (TypeError, ValueError):  # swallow-ok: ragged / nested -> flatten each part below
+            pass
+        return np.concatenate([_output_vector(v) for v in x]) if x else np.zeros(0, dtype=np.float64)
+    if hasattr(x, "get") and callable(x.get) and not isinstance(x, np.ndarray):
+        x = x.get()
+    return np.asarray(x, dtype=np.float64).ravel()
+
+
+def _output_scale(x: Any) -> float:
+    """Largest finite ``|value|`` of an output (the rtol scale), 1.0 when there is none or it is 0 (all-zero or
+    all-NaN reference). ``np.abs(...).max() or 1.0`` stayed NaN for a reference containing a NaN (NaN is truthy), which
+    made every candidate fail the tolerance check."""
+    v = _output_vector(x)
+    finite = np.abs(v[np.isfinite(v)])
+    if finite.size == 0:
+        return 1.0
+    m = float(finite.max())
+    return m if m > 0.0 else 1.0
+
+
+def _max_abs_diff(a: Any, b: Any) -> float:
+    """Max abs elementwise difference between two outputs (host or device arrays, or tuple / list / dict of them).
+
+    Non-finite values must sit at the same positions with the same value (NaN matches NaN, +inf matches +inf);
+    a mismatch there, or a size mismatch, returns inf. The difference is taken over the finite positions only, so a NaN
+    shared by both outputs no longer turns the result into NaN (which failed every tolerance check)."""
     try:
-        a = np.asarray(a.get() if hasattr(a, "get") else a, dtype=np.float64)
-        b = np.asarray(b.get() if hasattr(b, "get") else b, dtype=np.float64)
-        if a.shape != b.shape:
+        va = _output_vector(a)
+        vb = _output_vector(b)
+        if va.shape != vb.shape:
             return float("inf")
-        if a.size == 0:
+        if va.size == 0:
             return 0.0
-        return float(np.abs(a - b).max())
+        fa = np.isfinite(va)
+        fb = np.isfinite(vb)
+        if not np.array_equal(fa, fb):
+            return float("inf")
+        nonfinite = ~fa
+        if nonfinite.any():
+            na, nb = va[nonfinite], vb[nonfinite]
+            if not (np.array_equal(np.isnan(na), np.isnan(nb)) and np.array_equal(na[~np.isnan(na)], nb[~np.isnan(nb)])):
+                return float("inf")
+        if not fa.any():
+            return 0.0
+        return float(np.abs(va[fa] - vb[fa]).max())
     except Exception as e:
         logger.debug("_max_abs_diff: comparison failed (%s), treating as maximally different", e)
         return float("inf")
@@ -206,19 +286,16 @@ def sweep_backend_crossover(
         try:
             ref_out = variants[ref](*args)
             synchronize_gpu_if_available() if synchronize_gpu else None
+            # Largest finite |ref| (1.0 for an all-zero / all-NaN reference). Inside this try: a reference output that
+            # cannot be read as numbers skips the size instead of aborting the whole sweep.
+            ref_scale = _output_scale(ref_out) if ref_out is not None else 1.0
         except Exception as exc:
-            # Without a reference output there is nothing to gate candidates against, so every
+            # Without a (numeric) reference output there is nothing to gate candidates against, so every
             # candidate would record a fabricated max_abs_diff of 0.0 and a divergent-but-faster
             # backend could be persisted as a tuned decision. Skip the size instead.
             logger.warning("sweep %s=%s: reference variant %r raised (%s) -> size skipped (no equivalence gate possible)", primary_axis, size, ref, exc)
             continue
         best_name, best_ms, best_diff = None, float("inf"), 0.0
-        # `.max() or 1.0`: same divide-by-zero guard as np.std/np.var's documented-safe idiom --
-        # abs(...).max() is 0.0 only when the reference output is all-zero, in which case
-        # substituting a scale of 1.0 for the equivalence-tolerance computation below is the
-        # intentional degenerate-case fallback, not a caller-falsy-value trap.
-        ref_scale = float(np.abs(np.asarray(
-            ref_out.get() if hasattr(ref_out, "get") else ref_out, dtype=np.float64)).max() or 1.0) if ref_out is not None else 1.0
         # Pass 1: warm up + equivalence-gate; survivors go into the timed rank.
         survivors: dict = {}
         diffs: dict = {}
@@ -279,9 +356,14 @@ def sweep_backend_crossover(
     return regions
 
 
-def _to_host(x):
-    """Pull a cupy array to host numpy; pass numpy / scalars through."""
-    return x.get() if hasattr(x, "get") else x
+def _to_host(x: Any) -> Any:
+    """Pull cupy arrays to host numpy (also inside a tuple / list / dict output); pass numpy / scalars through.
+    ``dict.get`` must not be mistaken for cupy's ``.get()``."""
+    if isinstance(x, dict):
+        return {k: _to_host(v) for k, v in x.items()}
+    if isinstance(x, (tuple, list)):
+        return type(x)(_to_host(v) for v in x)
+    return x.get() if hasattr(x, "get") and not isinstance(x, np.ndarray) else x
 
 
 def _rank_candidates(
@@ -462,16 +544,13 @@ def sweep_backend_grid(
                 ref_out = _to_host(variants[ref](*args))
                 if synchronize_gpu:
                     synchronize_gpu_if_available()
+                ref_scale = _output_scale(ref_out) if ref_out is not None else 1.0  # see sweep_backend_crossover
             except Exception as exc:
                 # Same reasoning as sweep_backend_crossover: no reference output means no
                 # equivalence gate, and an ungated winner must never be emitted as tuned.
                 logger.warning("grid %s res=%s: reference variant %r raised (%s) -> combination skipped", dims, res, ref, exc)
                 continue
             best_name, best_ms, best_diff = None, float("inf"), 0.0
-            # `.max() or 1.0`: divide-by-zero guard (see sweep_backend_grid's sibling comment) --
-            # ref_out all-zero is the only way abs().max() is 0.0, and falling back to a scale of
-            # 1.0 for the tolerance below is the intentional degenerate-case behavior.
-            ref_scale = float(np.abs(np.asarray(ref_out, dtype=np.float64)).max() or 1.0) if ref_out is not None else 1.0
             # Pass 1: warm up + equivalence-gate every variant. Survivors (those whose
             # output matches the reference within tol) go into the timed rank; a
             # divergent-but-faster variant is a bug, never a winner, so it is dropped
@@ -485,7 +564,7 @@ def sweep_backend_grid(
                     if synchronize_gpu:
                         synchronize_gpu_if_available()
                     diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
-                    if name != ref and diff > equiv_atol + equiv_rtol * ref_scale:
+                    if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
                         if verbose:
                             logger.info("grid %s res=%s: %s DIVERGES (%.2e) -> skip", dims, res, name, diff)
                         continue

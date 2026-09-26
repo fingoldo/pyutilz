@@ -9,7 +9,7 @@ symptom is that the cache "stopped helping".
 The existing suite asserts the digest is DETERMINISTIC and that it CHANGES when the data changes.
 Both are necessary and neither catches the failure above: a rewrite that alters every digest
 consistently passes both. So the literals below are the missing half. They were captured at
-`_HASH_VERSION = 3`, and if a change makes them fail the correct response is to decide deliberately:
+`_HASH_VERSION = 4`, and if a change makes them fail the correct response is to decide deliberately:
 bump `_HASH_VERSION` (which invalidates old entries loudly, by key prefix) and re-capture, or revert
 the change. Editing the literals to match new output without bumping the version is the one response
 that reproduces the bug this file exists to prevent.
@@ -64,27 +64,27 @@ def _case(name: str) -> np.ndarray:
     return builders[name]()
 
 
-#: Captured at ``_HASH_VERSION = 3``. See the module docstring before changing any of these.
+#: Captured at ``_HASH_VERSION = 4``. See the module docstring before changing any of these.
 _EXPECTED_DIGESTS = {
-    "float64_2d": "09fffdfe495f20978206b48eb04476e4",  # pragma: allowlist secret
-    "float64_F": "5e0b1024447653d3786ffad091747380",  # pragma: allowlist secret
-    "float64_strided": "96d321ef3728b600e7e505770c9dc8a4",  # pragma: allowlist secret
-    "float32_1d": "b7df7105755dcc5c6b7157bbf431549c",  # pragma: allowlist secret
-    "int64_2d": "0bcca7fd844e677c81a6bc7d5323ec08",  # pragma: allowlist secret
-    "int8": "24a92683ae9fbb800b62477c6a09876d",  # pragma: allowlist secret
-    "bool": "8943eb5116c266aecfa6e1089675fe0c",  # pragma: allowlist secret
-    "datetime64": "84574906d71de98f9019c1f35bd4c210",  # pragma: allowlist secret
-    "datetime64_2d": "2197b9527ad9b35cfa76d45c5ccf249e",  # pragma: allowlist secret
-    "timedelta64": "b4d54c409ce9b8ea48a2c33572de1fc2",  # pragma: allowlist secret
-    "unicode": "09f9c8c18204c9cdd7f34a6c12646821",  # pragma: allowlist secret
-    "bytes": "0c7ad3899f542cd3d4e9afb07fecdb5c",  # pragma: allowlist secret
-    "structured": "41bd771690ee2076e262c1fb1ccb8749",  # pragma: allowlist secret
-    "object": "e60e752c8ce28df08992e1f65bdbbd0a",  # pragma: allowlist secret
-    "scalar_0d": "f4dda7a9265c8558c2d9e57a848a314b",  # pragma: allowlist secret
-    "scalar_0d_dt": "8dedd768d232e986d4ac2cfb5f23d0fe",  # pragma: allowlist secret
-    "empty": "ffa2c86b04ce89ce5697f0b76713aa10",  # pragma: allowlist secret
-    "empty_2d": "662572b7e3695a80f3ffb8da6db66035",  # pragma: allowlist secret
-    "large_1d": "f9d0eda4b5644da98e69c58879e880e4",  # pragma: allowlist secret
+    "float64_2d": "9c58e6dec6c35aad4d02c980c0035512",  # pragma: allowlist secret
+    "float64_F": "fe0ad97c0172e43cc6452b1e6f7716a6",  # pragma: allowlist secret
+    "float64_strided": "acb4f0ad3e29facc58c16071eb87ebf6",  # pragma: allowlist secret
+    "float32_1d": "a860afd12baae914bfdb190db95ac7b7",  # pragma: allowlist secret
+    "int64_2d": "8a34237262ecb435df73fa4751105ae0",  # pragma: allowlist secret
+    "int8": "06828830e902f204a00784bf3f25f0d1",  # pragma: allowlist secret
+    "bool": "efcaa255abdb66c15ebdb51b8d185765",  # pragma: allowlist secret
+    "datetime64": "2710279116b52801a4fc986925972e8e",  # pragma: allowlist secret
+    "datetime64_2d": "d6665c2adc43b87291cc705d1f8102c6",  # pragma: allowlist secret
+    "timedelta64": "daa4c8efebb8e7a2a67779eb9094fae6",  # pragma: allowlist secret
+    "unicode": "77468a6ac746ab30d1dbb52c146fa614",  # pragma: allowlist secret
+    "bytes": "48d5c0c3def78c2ee7d640770f17b12b",  # pragma: allowlist secret
+    "structured": "3820e737dd85baa3af8c0ca274968879",  # pragma: allowlist secret
+    "object": "37d7f152d662487e6d89b9db9b27b31c",  # pragma: allowlist secret
+    "scalar_0d": "9e79357aee80ab97d4efd8194ac23949",  # pragma: allowlist secret
+    "scalar_0d_dt": "5e9c201747bb2722d9a3e75eb726414e",  # pragma: allowlist secret
+    "empty": "ead9854ac24024a71d823494fff217b2",  # pragma: allowlist secret
+    "empty_2d": "55c2cbf88b75389a3548866dac4c2dd9",  # pragma: allowlist secret
+    "large_1d": "c6fb22459d2988bb39cc7c4e94a6bd63",  # pragma: allowlist secret
 }
 
 
@@ -94,7 +94,7 @@ class TestTheDigestsAreTheOnesAlreadyOnDisk:
     def test_the_version_the_digests_were_captured_at_is_still_current(self):
         """The literals below only mean anything at the version they were taken at. A bump is the
         CORRECT way to change them, and it must invalidate this pin rather than pass silently."""
-        assert _HASH_VERSION == 3, "digests below were captured at version 3 -- re-capture them with the bump"
+        assert _HASH_VERSION == 4, "digests below were captured at version 4 -- re-capture them with the bump"
 
     @pytest.mark.parametrize("name", sorted(_EXPECTED_DIGESTS))
     def test_the_digest_is_unchanged(self, name):

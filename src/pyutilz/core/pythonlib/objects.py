@@ -268,7 +268,13 @@ def batch(iterable, n=1):
     [3, 4, 5]
     [6, 7, 8]
     [9]
+
+    Raises:
+        ValueError: ``n < 1`` (a negative ``n`` used to yield nothing at all), the same contract as
+            ``pyutilz.system.parallel.split_list_into_chunks``.
     """
+    if n < 1:
+        raise ValueError(f"batch: n must be >= 1, got {n}")
     length = len(iterable)
     for ndx in range(0, length, n):
         yield iterable[ndx : min(ndx + n, length)]

@@ -70,8 +70,8 @@ def read_json_with_checkpoint_fallback(cache_path: Path, checkpoint_path: Path) 
     if not checkpoint_path.exists():
         return None
     obj = json.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8"))
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
+    # Atomic (temp + replace): a concurrent reader must never see the restored cache half-written.
+    _atomic_write_bytes(cache_path, json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"))
     return obj
 
 

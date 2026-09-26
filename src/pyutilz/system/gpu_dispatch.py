@@ -87,6 +87,86 @@ _SAFE_DEFAULT_SMEM = 49152  # 48 KB fallback for unknown / forward-compat
 # Device selection
 # ---------------------------------------------------------------------------
 
+def _format_uuid(raw: object) -> Optional[str]:
+    """nvidia-smi style ``GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`` (lowercase) from a CUDA uuid given as bytes (cupy's
+    ``getDeviceProperties()['uuid']``, whose first 16 bytes are the uuid) or as a string (numba's ``Device.uuid``)."""
+    if isinstance(raw, (bytes, bytearray)):
+        if len(raw) < 16:
+            return None
+        h = bytes(raw[:16]).hex()
+        return f"GPU-{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+    if isinstance(raw, str) and raw:
+        u = raw.strip().lower()
+        return u if u.startswith("gpu-") else "gpu-" + u
+    return None
+
+
+def _cuda_ordinals_by_uuid() -> Optional[dict]:
+    """Per-process memoized ``_probe_cuda_ordinals_by_uuid`` (the visible-device set is fixed once CUDA initialises);
+    cleared by :func:`reset_cache`."""
+    return _cuda_ordinals_by_uuid_cached(os.getpid())
+
+
+@lru_cache(maxsize=4)
+def _cuda_ordinals_by_uuid_cached(pid: int) -> Optional[dict]:
+    """Cached worker; ``pid`` in the key so a fork re-probes."""
+    del pid
+    return _probe_cuda_ordinals_by_uuid()
+
+
+def _probe_cuda_ordinals_by_uuid() -> Optional[dict]:
+    """``{uuid (lowercase, "gpu-..."): CUDA ordinal}`` for every device CUDA can see in THIS process, i.e. after
+    ``CUDA_VISIBLE_DEVICES`` / ``CUDA_DEVICE_ORDER`` are applied. None when neither cupy nor numba can enumerate."""
+    try:
+        import cupy as cp
+
+        out: dict = {}
+        for i in range(int(cp.cuda.runtime.getDeviceCount())):
+            u = _format_uuid(cp.cuda.runtime.getDeviceProperties(i).get("uuid"))
+            if u is not None:
+                out[u.lower()] = i
+        if out:
+            return out
+    except Exception as e:  # swallow-ok: fall through to numba, then to None
+        logger.debug("select_best_gpu: cupy uuid enumeration failed (%s)", e)
+    try:
+        from numba import cuda as _ncuda
+
+        out = {}
+        for i, dev in enumerate(_ncuda.gpus):
+            u = _format_uuid(getattr(dev, "uuid", None))
+            if u is not None:
+                out[u.lower()] = i
+        if out:
+            return out
+    except Exception as e:  # swallow-ok: no enumerator available
+        logger.debug("select_best_gpu: numba uuid enumeration failed (%s)", e)
+    return None
+
+
+def _gputil_to_cuda_ids(gpus: list) -> list:
+    """GPUtil (nvidia-smi, PCI bus order, blind to ``CUDA_VISIBLE_DEVICES``) entries re-keyed to CUDA ordinals by uuid.
+
+    Each returned dict is a copy with ``"id"`` replaced by the CUDA ordinal and the nvidia-smi index kept as
+    ``"smi_id"``; GPUs CUDA cannot see are dropped. When no uuid map can be built (no cupy / numba), the GPUtil ids are
+    returned unchanged, which is only right when the two orders agree (single GPU, no ``CUDA_VISIBLE_DEVICES``)."""
+    ordinals = _cuda_ordinals_by_uuid()
+    if ordinals is None:
+        if len(gpus) > 1 or os.environ.get("CUDA_VISIBLE_DEVICES"):
+            logger.warning("select_best_gpu: cannot map nvidia-smi GPU ids to CUDA ordinals (no cupy/numba); the returned id may name a different GPU")
+        return list(gpus)
+    mapped = []
+    for g in gpus:
+        u = _format_uuid(g.get("uuid"))
+        if u is None or u.lower() not in ordinals:
+            continue
+        m = dict(g)
+        m["smi_id"] = g.get("id")
+        m["id"] = ordinals[u.lower()]
+        mapped.append(m)
+    return mapped
+
+
 @lru_cache(maxsize=16)
 def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
     """Inner cached worker. ``pid`` is part of the key so a fork resets it."""
@@ -96,6 +176,11 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
     gpus = get_gpuutil_gpu_info(attrs="id,memoryFree,memoryTotal,load,name,uuid")
     if not gpus:
         logger.debug("select_best_gpu: GPUtil returned no devices")
+        return None
+    # nvidia-smi numbers GPUs in PCI bus order; CUDA uses FASTEST_FIRST by default and CUDA_VISIBLE_DEVICES renumbers.
+    gpus = _gputil_to_cuda_ids(gpus)
+    if not gpus:
+        logger.debug("select_best_gpu: none of the GPUtil devices is visible to CUDA in this process")
         return None
 
     def _cc_tuple(dev_id: int) -> tuple[int, int]:
@@ -125,6 +210,9 @@ def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
     return int(best["id"])
 
 
+_STRATEGIES = ("auto", "vram", "compute", "idle")
+
+
 def select_best_gpu(strategy: str = "auto") -> Optional[int]:
     """Return device id of the best available GPU, or ``None`` on CPU-only hosts.
 
@@ -143,6 +231,8 @@ def select_best_gpu(strategy: str = "auto") -> Optional[int]:
     The result is cached per ``(strategy, pid)`` to avoid repeated nvidia-smi
     shell-outs. Call :func:`reset_cache` to force a re-probe.
     """
+    if strategy not in _STRATEGIES:
+        raise ValueError(f"Unknown strategy {strategy!r}. " "Expected one of: 'auto', 'vram', 'compute', 'idle'.")
     return _select_best_gpu_cached(strategy, os.getpid())
 
 
@@ -154,6 +244,7 @@ def reset_cache() -> None:
     ``pyutilz.core.pythonlib.is_cuda_available``. This is the single reset seam tests use when they
     mock CUDA availability or the GPUtil / driver probes."""
     _select_best_gpu_cached.cache_clear()
+    _cuda_ordinals_by_uuid_cached.cache_clear()
     _static_gpu_caps.cache_clear()
     is_cuda_available.cache_clear()
 
@@ -241,8 +332,11 @@ def optimal_threads_per_block(
 # Memory guard
 # ---------------------------------------------------------------------------
 
-def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
+def _free_bytes_via_cupy(device_id: Optional[int], include_pool: bool = False) -> Optional[int]:
     """Returns free GPU memory in bytes for `device_id` (or the current device if None) via cupy, or None if cupy is unavailable or the query fails transiently.
+
+    ``include_pool=True`` adds the bytes cached in cupy's default pool for that device, which cupy allocations can reuse
+    but numba / other allocators cannot (so the plain figure stays the default).
 
     Re-raises on an invalid-device CUDA error (status 101).
     """
@@ -252,12 +346,16 @@ def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
     except ImportError:
         return None
     try:
+        # memGetInfo counts memory CACHED in cupy's pool as used; cupy serves allocations from that cache first. The
+        # default pool is per device, so it is read under the same device.
         if device_id is not None:
             with cp.cuda.Device(int(device_id)):
                 free, _total = cp.cuda.runtime.memGetInfo()
+                pooled = cp.get_default_memory_pool().free_bytes() if include_pool else 0
         else:
             free, _total = cp.cuda.runtime.memGetInfo()
-        return int(free)
+            pooled = cp.get_default_memory_pool().free_bytes() if include_pool else 0
+        return int(free) + int(pooled)
     except CUDARuntimeError as e:
         # Loud-fail on invalid device id; silently degrade only on transient
         # / lookup errors. ``cudaErrorInvalidDevice == 101``.
@@ -270,9 +368,28 @@ def _free_bytes_via_cupy(device_id: Optional[int]) -> Optional[int]:
         return None
 
 
+def _pool_free_bytes(device_id: Optional[int]) -> int:
+    """Bytes cached (free) in cupy's default pool for ``device_id`` (current device if None); 0 without cupy."""
+    try:
+        import cupy as cp
+
+        if device_id is not None:
+            with cp.cuda.Device(int(device_id)):
+                return int(cp.get_default_memory_pool().free_bytes())
+        return int(cp.get_default_memory_pool().free_bytes())
+    except Exception as e:  # swallow-ok: no cupy / no device -> nothing pooled
+        logger.debug("cuda_memory_guard: pool free_bytes probe failed: %s", e)
+        return 0
+
+
 def _free_bytes_via_gputil(device_id: Optional[int]) -> Optional[int]:
-    """Returns free GPU memory in bytes for `device_id` (or the first listed device if None) via GPUtil, or None if unavailable."""
-    gpus = get_gpuutil_gpu_info(attrs="id,memoryFree,memoryTotal")
+    """Returns free GPU memory in bytes for CUDA device `device_id` (or the first listed device if None) via GPUtil, or None if unavailable.
+
+    GPUtil ids are nvidia-smi ids; they are mapped to CUDA ordinals by uuid first (see ``_gputil_to_cuda_ids``)."""
+    gpus = get_gpuutil_gpu_info(attrs="id,memoryFree,memoryTotal,uuid")
+    if not gpus:
+        return None
+    gpus = _gputil_to_cuda_ids(gpus)
     if not gpus:
         return None
     if device_id is None:
@@ -295,22 +412,26 @@ def cuda_memory_guard(
     required_bytes: int,
     device_id: Optional[int] = None,
     headroom_factor: float = 1.2,
+    release_pool: Optional[bool] = None,
 ) -> Iterator[None]:
     """Context manager that asserts enough free VRAM before a GPU allocation.
 
     Args:
         required_bytes: Expected peak allocation in bytes.
-        device_id: Target device id (``None`` -> current/default device).
+        device_id: Target CUDA device ordinal (``None`` -> current/default device).
         headroom_factor: Multiplier applied to ``required_bytes`` to leave a
             safety margin (default 1.2 = 20% headroom).
+        release_pool: whether to call ``cupy.get_default_memory_pool().free_all_blocks()`` on exit. ``None`` (default)
+            flushes only when the guard found memory tight (the driver's free memory alone was below the threshold);
+            ``True`` always, ``False`` never. Flushing on EVERY exit emptied the process-wide pool, including blocks
+            other threads were about to reuse, and sent every later allocation back to cudaMalloc/cudaFree.
+
+    Free VRAM is the driver's free memory PLUS the bytes cached in cupy's default pool, since cupy serves allocations
+    from its pool first; counting pooled memory as used raised MemoryError for allocations cupy could satisfy.
 
     Raises:
         MemoryError: If we can probe free VRAM and the threshold is not met.
         RuntimeError: If no CUDA backend is available at all.
-
-    On exit, if CuPy is importable, calls
-    ``cupy.get_default_memory_pool().free_all_blocks()`` so the pool returns
-    memory to the driver rather than holding it for the next pool allocation.
     """
     if required_bytes < 0:
         raise ValueError(f"required_bytes must be >= 0, got {required_bytes}")
@@ -319,8 +440,11 @@ def cuda_memory_guard(
         raise RuntimeError("cuda_memory_guard called but no CUDA device is available")
 
     threshold = int(required_bytes * float(headroom_factor))
-    free = _free_bytes_via_cupy(device_id)
+    driver_free = _free_bytes_via_cupy(device_id)
+    free = None if driver_free is None else driver_free + _pool_free_bytes(device_id)
     source = "cupy"
+    # Memory is "tight" when the driver alone could not serve the request and cupy's pool cache is needed for it.
+    tight = driver_free is not None and driver_free < threshold
     if free is None:
         free = _free_bytes_via_gputil(device_id)
         source = "GPUtil"
@@ -336,16 +460,23 @@ def cuda_memory_guard(
                 f"[probe={source}]"
             )
 
+    flush = tight if release_pool is None else bool(release_pool)
     try:
         yield
     finally:
-        try:
-            import cupy as cp
-            cp.get_default_memory_pool().free_all_blocks()
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.debug("cuda_memory_guard: cupy free_all_blocks failed: %s", e)
+        if flush:
+            try:
+                import cupy as cp
+
+                if device_id is not None:
+                    with cp.cuda.Device(int(device_id)):
+                        cp.get_default_memory_pool().free_all_blocks()
+                else:
+                    cp.get_default_memory_pool().free_all_blocks()
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug("cuda_memory_guard: cupy free_all_blocks failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -599,8 +730,8 @@ def _static_gpu_caps(device_id: int = 0) -> Optional[dict]:
         "name": None,
     }
 
-    gpus = get_gpuutil_gpu_info(attrs="id,name,memoryFree,memoryTotal")
-    for g in gpus or ():
+    gpus = get_gpuutil_gpu_info(attrs="id,name,memoryFree,memoryTotal,uuid")
+    for g in _gputil_to_cuda_ids(gpus or []):
         try:
             if int(g["id"]) == int(device_id):
                 # Recorded here only as the STARTING value; ``gpu_capability_summary`` overwrites it
@@ -625,7 +756,7 @@ def free_vram_gb(device_id: int = 0) -> Optional[float]:
     free = _free_bytes_via_cupy(device_id)
     if free is not None:
         return float(free) / (1024.0**3)
-    for g in get_gpuutil_gpu_info(attrs="id,memoryFree") or ():
+    for g in _gputil_to_cuda_ids(get_gpuutil_gpu_info(attrs="id,memoryFree,uuid") or []):
         try:
             if int(g["id"]) == int(device_id):
                 return float(g.get("memoryFree", 0.0))

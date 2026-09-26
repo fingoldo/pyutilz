@@ -96,10 +96,6 @@
       "count": 1,
       "note": ""
     },
-    "system/parallel.py::step > 0": {
-      "count": 1,
-      "note": ""
-    },
     "text/strings/configfiles.py::isinstance(variables, list)": {
       "count": 1,
       "note": ""

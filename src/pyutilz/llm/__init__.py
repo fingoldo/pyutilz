@@ -7,6 +7,7 @@ from pyutilz.llm.exceptions import (
     LLMRefusalError,
     LLMSafetyBlockError,
     LLMTruncationError,
+    LLMStreamInterruptedError,
     LLMUnparseableResponseError,
 )
 
@@ -76,6 +77,7 @@ __all__ = [
     "LLMRefusalError",
     "LLMSafetyBlockError",
     "LLMTruncationError",
+    "LLMStreamInterruptedError",
     "LLMUnparseableResponseError",
     "count_tokens",
 ]

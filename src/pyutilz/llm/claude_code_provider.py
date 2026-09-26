@@ -23,6 +23,8 @@ from pyutilz.llm._messages import images_on_disk
 from pyutilz.llm import _reasoning
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._thinking import claude_code_thinking_tokens  # re-exported: callers import it from here
+from pyutilz.llm._thinking import claude_code_effort
+from pyutilz.llm._claude_models import CLAUDE_CODE_ALIASES, ClaudeModelSpec, claude_model_spec
 from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS
 
 # Defined in the domain's exceptions module (so `except LLMProviderError` catches it) and re-exported
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Carved out 2026-09-07 (see claude_code_cli's docstring); re-exported here so existing importers
 # of these names keep working.
+from pyutilz.llm.claude_code_cli import usage_thinking_tokens
 from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger it shares
     MAX_TIMEOUT_RETRIES,
     _CliResultMessage,
@@ -42,7 +45,10 @@ from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger 
     _kill_process_tree,
     _is_transient_subprocess_error,
     _raise_on_cli_tool_use,  # noqa: F401 -- re-export, as above
+    _is_rate_limit_error,
+    _parse_reset_wait_seconds,
     run_cli,
+    usage_int,
 )
 
 # ---------------------------------------------------------------------------
@@ -174,89 +180,6 @@ except ImportError:
     _PATCHES_APPLIED = False
 
 
-_RATE_LIMIT_PATTERN = re.compile(
-    r"(?:hit your limit|rate.?limit|quota exceeded|usage limit)",
-    re.IGNORECASE,
-)
-_RESET_TIME_PATTERN = re.compile(
-    r"resets?\s+(?:(?P<month>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(?P<day>\d{1,2}),?\s+)?"
-    r"(?P<hour>\d{1,2})\s*(?::(?P<min>\d{2}))?\s*(?P<ampm>am|pm)?\b",
-    re.IGNORECASE,
-)
-_TIMEZONE_PATTERN = re.compile(
-    r"\(([A-Za-z]+/[A-Za-z_]+)\)",
-)
-
-
-def _parse_reset_wait_seconds(error_text: str) -> int | None:
-    """Parse reset time from rate limit error and return seconds to wait."""
-    m = _RESET_TIME_PATTERN.search(error_text)
-    if not m:
-        return None
-
-    hour = int(m.group("hour"))
-    minute = int(m.group("min")) if m.group("min") else 0
-    ampm = m.group("ampm")
-
-    if ampm:
-        ampm = ampm.lower()
-        if ampm == "pm" and hour != 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
-
-    tz_match = _TIMEZONE_PATTERN.search(error_text)
-    tz = None
-    if tz_match:
-        try:
-            import zoneinfo
-            tz = zoneinfo.ZoneInfo(tz_match.group(1))
-        except (ImportError, KeyError):
-            logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
-
-    now = datetime.now(tz) if tz else datetime.now()  # noqa: DTZ005 -- error text has no explicit timezone; falls back to local wall-clock, consistent with reset_time being derived from the same `now` a few lines below
-
-    month_str = m.group("month")
-    day_str = m.group("day")
-    if month_str and day_str:
-        _MONTHS = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-        }
-        month = _MONTHS[month_str.lower()]
-        day = int(day_str)
-        try:
-            reset_time = now.replace(
-                month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
-            )
-            if reset_time <= now:
-                reset_time = reset_time.replace(year=now.year + 1)
-        except ValueError:
-            # An impossible date ("resets Feb 30", or Feb 29 rolled into a non-leap year) must not
-            # turn a recoverable rate-limit pause into a hard failure of generate(); fall through
-            # to the caller's default wait instead.
-            logger.warning("Could not interpret rate-limit reset date %r-%r; using the default wait", month_str, day_str)
-            return None
-    else:
-        reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if reset_time <= now:
-            reset_time += timedelta(days=1)
-
-    wait = (reset_time - now).total_seconds() + 60
-    return int(wait)
-
-
-def _is_rate_limit_error(error: BaseException) -> bool:
-    """Check if an exception is a rate limit error."""
-    msg = str(error)
-    if _RATE_LIMIT_PATTERN.search(msg):
-        return True
-    stderr = getattr(error, "stderr", "")
-    if stderr and _RATE_LIMIT_PATTERN.search(str(stderr)):
-        return True
-    return False
-
-
 # One steer, used by both JSON entry points. They had different wordings, which split a prefix
 # that is otherwise byte-identical across calls and so cache-shared between them.
 _JSON_STEER = "\n\nRespond with valid JSON only. No markdown, no explanation. Start with { and end with }."
@@ -351,14 +274,19 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         }
 
     @property
+    def _spec(self) -> ClaudeModelSpec:
+        """The shared Claude table's row for this provider's model or CLI alias (``opus`` is Opus 5 on CLI 2.1.263)."""
+        return claude_model_spec(str(getattr(self, "model", None) if getattr(self, "model", None) is not None else "opus"), provider_label="Claude Code")
+
+    @property
     def max_output_tokens(self) -> int:
-        """Maximum output tokens supported by the underlying Claude Code model."""
-        return 32000
+        """Maximum output tokens of the model behind ``self.model`` (was a flat 32000, a quarter of the default ``opus``'s 128K)."""
+        return self._spec.max_output
 
     @property
     def context_window(self) -> int:
-        """Total context window size (input + output tokens) of the underlying Claude Code model."""
-        return 200_000
+        """Context window of the model behind ``self.model`` (was a flat 200K; the default ``opus`` has 1M)."""
+        return self._spec.context_window
 
     def supports_json_mode(self) -> bool:
         """Claude Code SDK has no hard JSON-mode toggle — the
@@ -406,9 +334,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             images: ``data:`` URIs, written to temporary files whose paths are appended to the
                 prompt -- see `pyutilz.llm._messages.images_on_disk`. The CLI has no image
                 argument, but the agent behind it can open files.
-            thinking: Extended-thinking request, as for every provider (see `normalize_thinking`). The CLI takes
-                no flag for it but reads MAX_THINKING_TOKENS from its environment, so the effort is sent there
-                with the same budgets the Anthropic API provider uses; False sends 0. None leaves the CLI default.
+            thinking: Reasoning request, as for every provider (see `normalize_thinking`). On a model that thinks
+                adaptively (every model behind the CLI's aliases but haiku) an effort string goes to ``--effort``; on a
+                budget-thinking model it goes to MAX_THINKING_TOKENS with the Anthropic API provider's budgets. False
+                sends MAX_THINKING_TOKENS=0. None leaves the CLI default.
         """
         if images:
             # Recursed rather than inlined so the temporary files stay on disk for the WHOLE call:
@@ -419,9 +348,8 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         if json_mode:
             json_hint = _JSON_STEER
             system = (system or "") + json_hint
-        thinking_tokens = claude_code_thinking_tokens(thinking)
-        # Passed only when there is a budget to send, so a call without a thinking request reaches the transport exactly as before.
-        transport_kwargs = {} if thinking_tokens is None else {"thinking_tokens": thinking_tokens}
+        # Passed only when there is something to send, so a call without a thinking request reaches the transport exactly as before.
+        transport_kwargs = self._thinking_transport_kwargs(thinking)
 
         self._call_count += 1
         # The per-call reset lives INSIDE the semaphore, at the top of _generate_sdk/_generate_cli
@@ -470,10 +398,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 rm = getattr(self, "_last_result_message", None)
                 rm_usage = getattr(rm, "usage", None) if rm is not None else None
                 if rm_usage is not None:
-                    in_tok = int(getattr(rm_usage, "input_tokens", 0) or 0)
-                    out_tok = int(getattr(rm_usage, "output_tokens", 0) or 0)
-                    cache_create = int(getattr(rm_usage, "cache_creation_input_tokens", 0) or 0)
-                    cache_read = int(getattr(rm_usage, "cache_read_input_tokens", 0) or 0)
+                    in_tok = usage_int(rm_usage, "input_tokens")
+                    out_tok = usage_int(rm_usage, "output_tokens")
+                    cache_create = usage_int(rm_usage, "cache_creation_input_tokens")
+                    cache_read = usage_int(rm_usage, "cache_read_input_tokens")
                     cost = float(getattr(rm, "total_cost_usd", 0.0) or 0.0)
                     sid = getattr(rm, "session_id", None)
                     nturns = getattr(rm, "num_turns", None)
@@ -493,7 +421,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                     out_tok = _count_tok(result)
                     self.last_cache_creation_input_tokens = 0
                     self.last_cache_read_input_tokens = 0
-                reasoning_tok = _reasoning.estimate_tokens(self.last_reasoning_text)
+                # The billed count when the result carries it (the CLI withholds the thinking TEXT, so an estimate from it is 0).
+                reported = usage_thinking_tokens(rm_usage) if rm_usage is not None else None
+                reasoning_tok = reported if reported is not None else _reasoning.estimate_tokens(self.last_reasoning_text)
                 self._last_usage = {
                     "input_tokens": in_tok,
                     "output_tokens": out_tok,
@@ -562,6 +492,21 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 await asyncio.sleep(wait_seconds)
                 logger.info("[RateLimit] Resuming after rate limit pause (attempt %d).", attempt + 1)
 
+    def _thinking_transport_kwargs(self, thinking: bool | str | int | None) -> dict[str, Any]:
+        """``thinking_tokens`` (MAX_THINKING_TOKENS) and/or ``effort`` (``--effort``) for a ``thinking=`` request.
+
+        The models behind ``opus``/``sonnet``/``fable`` think adaptively, where the documented depth control is the
+        effort level, not a token budget; the CLI exposes it as ``--effort`` (2.1.263). A budget is still what a
+        budget-thinking model (haiku) takes, and 0 is still how "off" is said.
+        """
+        budget = claude_code_thinking_tokens(thinking)
+        if budget is None:
+            return {}
+        if budget == 0 or not self._spec.adaptive_thinking:
+            return {"thinking_tokens": budget}
+        effort = claude_code_effort(thinking)
+        return {} if effort is None else {"effort": effort}
+
     _NESTED_BLOCK_VARS = frozenset({
         'CLAUDECODE',
         'CLAUDE_CODE_ENTRYPOINT',
@@ -575,8 +520,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         prompt: str,
         system: str | None = None,
         thinking_tokens: int | None = None,
+        effort: str | None = None,
     ) -> str:
-        """Generate text using claude-code-sdk; ``thinking_tokens`` goes to the CLI as MAX_THINKING_TOKENS."""
+        """Generate text using claude-code-sdk; ``thinking_tokens`` goes to the CLI as MAX_THINKING_TOKENS, ``effort`` as ``--effort``."""
         async with self.semaphore:
             self._reset_per_call_state()
             override_env = {k: "" for k in self._NESTED_BLOCK_VARS if k in os.environ}
@@ -605,7 +551,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
                 # them: it scopes only the built-in tool set. This provider is text-generation-only, so
                 # no ambient MCP configuration is ever wanted.
-                extra_args={"tools": "", "strict-mcp-config": None},
+                extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {})},
             )
 
             _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
@@ -636,6 +582,11 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 msg_type = type(msg).__name__
 
                 if isinstance(msg, ResultMessage):
+                    if getattr(msg, "is_error", False) is True:
+                        # An API error surfaced as result text used to be returned as the answer. Raised as text
+                        # so a rate-limit notice still reaches generate()'s rate-limit wait.
+                        self._last_result_message = msg
+                        raise RuntimeError(f"Claude Code reported an error: {msg.result or msg.subtype}")
                     if isinstance(msg.result, str) and msg.result:
                         result_text = msg.result
                     # Capture the real usage / cost / session metadata
@@ -685,8 +636,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         prompt: str,
         system: str | None = None,
         thinking_tokens: int | None = None,
+        effort: str | None = None,
     ) -> str:
-        """Generate text using Claude Code CLI (fallback); ``thinking_tokens`` goes to it as MAX_THINKING_TOKENS.
+        """Generate text using Claude Code CLI (fallback); ``thinking_tokens`` goes to it as MAX_THINKING_TOKENS, ``effort`` as ``--effort``.
 
         Takes no temperature/max_tokens: the CLI exposes no flag for either, so accepting them here
         only made the drop look deliberate. ``generate()`` warns about them once instead.
@@ -725,6 +677,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # set only, and with --dangerously-skip-permissions any loaded MCP tool would be
                 # auto-approved -- reachable from untrusted text passed in as the prompt.
                 "--strict-mcp-config",
+                *(["--effort", effort] if effort else []),
                 # LAST, immediately before the `-` positional: --tools is variadic, so it eats
                 # following arguments until the next flag. It parses correctly today with flags
                 # after it, but nothing pins that, and a variadic that swallowed the next flag
@@ -842,6 +795,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
+        json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
@@ -852,7 +806,11 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             max_tokens: Output-token ceiling; 0 derives one.
             images: refused, not forwarded -- this provider has no vision path.
             thinking: forwarded to ``generate``, which sends it to the CLI as MAX_THINKING_TOKENS.
+            json_schema: accepted for the shared signature and NOT enforced: the CLI's ``--json-schema`` is not
+                usable here (PROV-32), so the output is parsed as plain JSON and a warning says so.
         """
+        if json_schema is not None:
+            logger.warning("%s cannot constrain output to a JSON schema; json_schema is ignored and the answer is parsed as plain JSON.", type(self).__name__)
         # Declared for Liskov (the base class offers it) and REFUSED rather than ignored:
         # the Claude Code CLI takes a prompt string and no image parts, so accepting the argument and dropping it would answer a question the caller asked
         # about a picture the model never saw -- wrong, and with nothing in the output to show it.
@@ -889,12 +847,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         for req in requests:
             request_id = req.get("id", "unknown")
             try:
-                result = await self.generate(
-                    prompt=req["prompt"],
-                    system=req.get("system"),
-                    temperature=req.get("temperature", 0.7),
-                    max_tokens=req.get("max_tokens", 1024),
-                )
+                # Only the fields the request carries: a hard-coded max_tokens=1024 here was then dropped by generate()
+                # with a one-time "max_tokens ignored" warning no caller had earned.
+                optional = {k: req[k] for k in ("temperature", "max_tokens", "thinking") if k in req}
+                result = await self.generate(prompt=req["prompt"], system=req.get("system"), **optional)
                 yield {"id": request_id, "result": result}
             except Exception as e:
                 # debug, not error: this runs once per FAILED request in a caller-supplied batch that
@@ -928,8 +884,11 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         try:
             import anthropic as _anthropic
 
-            client = _anthropic.AsyncAnthropic()  # picks up ANTHROPIC_API_KEY from env, if set
-            result = await client.messages.count_tokens(model=self.model, messages=[{"role": "user", "content": text}])
+            # Closed on exit: one un-closed client (and its httpx connection pool) per call used to leak.
+            async with _anthropic.AsyncAnthropic() as client:  # picks up ANTHROPIC_API_KEY from env, if set
+                # A CLI alias is not an API model id; the counting endpoint needs the id it stands for.
+                model = CLAUDE_CODE_ALIASES.get(self.model, self.model)
+                result = await client.messages.count_tokens(model=model, messages=[{"role": "user", "content": text}])
             return int(result.input_tokens)
         except Exception as exc:
             logger.debug("Claude Code count_tokens via Anthropic API unavailable (%s); falling back to tiktoken approximation.", exc)

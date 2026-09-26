@@ -97,6 +97,7 @@ class TestSynchronizeGpu:
         from pyutilz.dev.benchmarking import synchronize_gpu_if_available
 
         monkeypatch.setitem(sys.modules, "cupy", None)
+        monkeypatch.setitem(sys.modules, "numba.cuda", None)  # device-wide sync also waits on numba.cuda (GEN-4)
         with caplog.at_level(_logging.DEBUG, logger="pyutilz.dev.benchmarking"):
             assert synchronize_gpu_if_available() is None  # swallowed, not raised
 

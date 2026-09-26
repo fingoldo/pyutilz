@@ -208,6 +208,8 @@ class TestSelectBestGpuStrategies:
             stack.enter_context(mock.patch.object(gd, "is_cuda_available", return_value=True))
             stack.enter_context(mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus))
             stack.enter_context(mock.patch.object(gd, "get_gpu_cuda_capabilities", side_effect=_caps))
+            # nvidia-smi ids equal CUDA ordinals here; the remapping itself is pinned in tests/test_general_audit_20260926.py.
+            stack.enter_context(mock.patch.object(gd, "_cuda_ordinals_by_uuid", return_value={"gpu-u0": 0, "gpu-u1": 1}))
             yield
         gd.reset_cache()
 
@@ -249,7 +251,9 @@ class TestGpuCapabilitySummaryHappyPath:
         gd.reset_cache()
         with mock.patch.object(gd, "is_cuda_available", return_value=True), mock.patch.object(
             gd, "get_gpu_cuda_capabilities", return_value=fake_caps
-        ), mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus), mock.patch.object(gd, "_free_bytes_via_cupy", return_value=None):
+        ), mock.patch.object(gd, "get_gpuutil_gpu_info", return_value=fake_gpus), mock.patch.object(gd, "_free_bytes_via_cupy", return_value=None), mock.patch.object(
+            gd, "_cuda_ordinals_by_uuid", return_value=None
+        ):
             s = gd.gpu_capability_summary(device_id=0)
         gd.reset_cache()
         assert s is not None

@@ -184,7 +184,17 @@ class TestCountTokens:
         p = _provider()
         fake_result = SimpleNamespace(input_tokens=42)
         fake_client = SimpleNamespace(messages=SimpleNamespace(count_tokens=AsyncMock(return_value=fake_result)))
-        fake_anthropic_module = SimpleNamespace(AsyncAnthropic=lambda: fake_client)
+
+        class _Ctx:
+            """The client is used as an async context manager now, so it is closed after the count (PROV-31)."""
+
+            async def __aenter__(self):
+                return fake_client
+
+            async def __aexit__(self, *exc):
+                return None
+
+        fake_anthropic_module = SimpleNamespace(AsyncAnthropic=lambda: _Ctx())
 
         with patch.dict("sys.modules", {"anthropic": fake_anthropic_module}):
             out = await p.count_tokens("hello world")

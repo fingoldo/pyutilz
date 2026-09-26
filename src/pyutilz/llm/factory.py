@@ -200,33 +200,80 @@ def get_llm_provider(
         return instance  # type: ignore[no-any-return]  # same untyped constructor, returning the freshly cached instance
 
 
+_shutdown_warned = False
+
+
+def _warn_shutdown_once(message: str, *args: object) -> None:
+    """First shutdown-close failure at WARNING (it used to vanish at DEBUG), the rest at DEBUG."""
+    global _shutdown_warned
+    if _shutdown_warned:
+        logger.debug(message, *args)
+        return
+    _shutdown_warned = True
+    logger.warning(message, *args)
+
+
+def _close_provider(provider: LLMProvider, shutdown_loop: "asyncio.AbstractEventLoop") -> None:
+    """Close one provider on the loop that owns its sockets when that loop still runs, else on ``shutdown_loop``."""
+    from pyutilz.llm.base import _NO_REBIND, PerLoopHTTPClient
+
+    close = getattr(provider, "_close", None)
+    descriptor = type(provider).__dict__.get("_client") or LLMProvider.__dict__.get("_client")
+    home = descriptor.home_loop(provider) if isinstance(descriptor, PerLoopHTTPClient) else None
+    if close is not None:
+        if home is not None and home.is_running() and not home.is_closed():
+            # The owning loop still runs in another thread: close there, where the transports belong.
+            try:
+                asyncio.run_coroutine_threadsafe(close(), home).result(timeout=10)
+            except Exception as exc:
+                _warn_shutdown_once("Provider close on its own loop failed during shutdown: %s", exc)
+        elif isinstance(descriptor, PerLoopHTTPClient) and descriptor.home_loop_gone(provider):
+            logger.debug("Skipping close of %s: the loop that opened its connections is closed", type(provider).__name__)
+        else:
+            token = _NO_REBIND.set(True)
+            try:
+                shutdown_loop.run_until_complete(close())
+            except Exception as exc:
+                _warn_shutdown_once("Provider close error during shutdown: %s", exc)
+            finally:
+                _NO_REBIND.reset(token)
+    if not isinstance(descriptor, PerLoopHTTPClient):
+        return
+    # Per-loop clones (see PerLoopHTTPClient) are not reached by a provider's own _close, which sees one client.
+    per_loop = provider.__dict__.get(descriptor._per_loop_key)
+    for loop, client in list(per_loop.items()) if per_loop is not None else []:
+        if getattr(client, "is_closed", True) or loop.is_closed():
+            continue
+        try:
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(client.aclose(), loop).result(timeout=10)
+            else:
+                shutdown_loop.run_until_complete(client.aclose())
+        except Exception as exc:
+            _warn_shutdown_once("Per-loop HTTP client close error during shutdown: %s", exc)
+
+
 def _close_cached_providers() -> None:
     """atexit handler: close every cached provider's HTTP client.
 
     Without this, ``OpenAICompatibleProvider._client`` (an httpx.AsyncClient
     with a connection pool + open SSL contexts) leaks at process shutdown,
     producing ``unclosed transport`` warnings or TLS finalisation errors
-    on Windows. Best-effort: failures during shutdown are logged at debug.
+    on Windows. Each client is closed on the loop that opened its sockets when that loop is still running,
+    and skipped when that loop is already closed (its sockets cannot be closed from another loop; the OS
+    reclaims them). The first failure is logged at WARNING.
     """
     providers = list(_provider_cache.values()) + list(_uncached_providers)
     if not providers:
         return
-    # Try to schedule async close. If no event loop running, skip async
-    # cleanup — the OS will reclaim sockets at process exit anyway.
     try:
         loop = asyncio.new_event_loop()
     except Exception as e:
-        logger.debug("Could not create event loop for provider shutdown cleanup: %s", e)
+        _warn_shutdown_once("Could not create event loop for provider shutdown cleanup: %s", e)
         return
     try:
         for provider in providers:
-            close = getattr(provider, "_close", None)
-            if close is None:
-                continue
-            try:
-                loop.run_until_complete(close())
-            except Exception as exc:
-                logger.debug("Provider close error during shutdown: %s", exc)
+            _close_provider(provider, loop)
     finally:
         loop.close()
 

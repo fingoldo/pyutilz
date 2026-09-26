@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from pyutilz.llm.exceptions import LLMUnparseableResponseError
+from pyutilz.llm.exceptions import LLMProviderError, LLMStreamInterruptedError, LLMUnparseableResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,116 @@ _NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({
 })
 
 
+#: String error codes OpenRouter (and upstreams it relays) put in a 200 body or chunk, mapped to the HTTP status that
+#: carries the same meaning, so the shared retry policy treats them like their numeric forms.
+_STRING_ERROR_CODE_STATUS: dict[str, int] = {
+    "server_error": 502,
+    "internal_error": 500,
+    "internal_server_error": 500,
+    "bad_gateway": 502,
+    "upstream_error": 502,
+    "provider_error": 502,
+    "service_unavailable": 503,
+    "overloaded": 503,
+    "overloaded_error": 503,
+    "timeout": 504,
+    "gateway_timeout": 504,
+    "rate_limit_exceeded": 429,
+    "rate_limited": 429,
+    "too_many_requests": 429,
+}
+
+
+def error_code_status(raw_code: Any) -> int:
+    """The HTTP status an in-body error ``code`` stands for: a numeric code as is, a known transient string mapped, else 0."""
+    if isinstance(raw_code, bool):
+        return 0
+    if isinstance(raw_code, int):
+        return raw_code
+    if isinstance(raw_code, str):
+        text = raw_code.strip()
+        if text.isdigit():
+            return int(text)
+        return _STRING_ERROR_CODE_STATUS.get(text.lower(), 0)
+    return 0
+
+
+def _status_is_transient(status: int) -> bool:
+    """429, 402 and 5xx are worth another attempt; anything else (including the unknown 0) is not."""
+    return status in (402, 429) or status >= 500
+
+
+def raise_for_error_in_body(payload: dict[str, Any], request: httpx.Request, provider_name: str, partial_text: str = "") -> None:
+    """Raise the error a 200 body or stream chunk carries; return when it carries none.
+
+    * A chunk WITH choices and an ``error`` (OpenRouter's mid-stream error event) raises :class:`LLMStreamInterruptedError`
+      carrying ``partial_text``: the upstream had started answering, so this is never an HTTP-level retry.
+    * A body with no choices and a code that maps to a status of 400 or above raises ``httpx.HTTPStatusError`` with that
+      status, so the shared policy retries 429/5xx and refuses 400/404 at once. String codes such as ``server_error`` map
+      through :func:`error_code_status`; they used to become 0 and a non-retryable plain error.
+    * Anything else raises ``LLMProviderError`` naming the message.
+    """
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return
+    raw_code = error.get("code")
+    status = error_code_status(raw_code)
+    error_message = str(error.get("message") or error)
+    if payload.get("choices"):
+        raise LLMStreamInterruptedError(
+            f"{provider_name} reported an error after it started answering (code={raw_code!r}): {error_message}",
+            code=raw_code,
+            partial_text=partial_text,
+            retryable=status == 0 or _status_is_transient(status),
+        )
+    if status >= 400:
+        raise httpx.HTTPStatusError(
+            f"{provider_name} returned error {raw_code} in place of choices: {error_message}",
+            request=request,
+            response=httpx.Response(status, request=request, text=error_message),
+        )
+    raise LLMProviderError(f"{provider_name} returned no choices; error in body: {error_message}")
+
+
+def merge_extra_body(body: dict[str, Any], extra: Any) -> dict[str, Any]:
+    """``body`` with ``extra`` merged over it, LAST: its top-level keys win, and a dict value merges one level into a dict
+    already present (so ``{"provider": {"zdr": True}}`` adds to the routing block instead of replacing it).
+
+    ``extra`` may be a mapping or a tuple of ``(key, value)`` pairs (the hashable form a factory cache key needs).
+    """
+    items = extra.items() if hasattr(extra, "items") else extra
+    out = dict(body)
+    for key, value in items:
+        current = out.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            out[key] = {**current, **value}
+        else:
+            out[key] = value
+    return out
+
+
+def wait_honoring_retry_after(base_wait: Any) -> Any:
+    """A tenacity wait: ``base_wait``'s delay, or the server's ``Retry-After`` on a 429 when that is longer.
+
+    The errors doc asks clients to respect ``Retry-After`` on 429; the buffered paths used the exponential schedule
+    alone and could retry inside the window the server named, re-triggering the limit.
+    """
+
+    def _wait(retry_state: Any) -> float:
+        """The base backoff, raised to the server's Retry-After when it asked for longer."""
+        delay = float(base_wait(retry_state))
+        outcome = getattr(retry_state, "outcome", None)
+        exc = outcome.exception() if outcome is not None and outcome.failed else None
+        response = getattr(exc, "response", None)
+        if getattr(response, "status_code", None) == 429:
+            hint = parse_retry_after(response)
+            if hint is not None and hint > delay:
+                return hint
+        return delay
+
+    return _wait
+
+
 def _is_retryable_http_error(exc: BaseException) -> bool:
     """Return True for transient HTTP errors that should be retried infinitely.
 
@@ -63,6 +173,8 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
     """
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code not in _NON_RETRYABLE_STATUSES
+    if isinstance(exc, LLMStreamInterruptedError):
+        return exc.retryable
     # An empty or non-JSON body on an otherwise-successful response is the same class of transient fault as
     # a transport error, but `resp.json()` reports it as `json.JSONDecodeError` (a `ValueError`), which
     # matches neither branch above - so it used to escape this predicate entirely and fail the call outright.
@@ -111,11 +223,9 @@ def parse_retry_after(resp: Any) -> float | None:
     re-triggering the rate limit. Returns seconds (float) or None.
 
     Honoured by the manual retry loop in ``generate_stream`` (it takes
-    ``max(server_hint, exponential_floor)`` between attempts). The
-    non-streaming ``generate()`` path uses tenacity's pure exponential+jitter
-    wait and does NOT read this hint — wiring it into the shared tenacity
-    wait would change retry timing for every provider and is left out
-    pending a benchmark on rate-limit-heavy paths.
+    ``max(server_hint, exponential_floor)`` between attempts) and, through
+    :func:`wait_honoring_retry_after`, by the buffered ``generate()`` wait on
+    a 429: the delay is only ever lengthened, never shortened.
     """
     if resp is None:
         return None

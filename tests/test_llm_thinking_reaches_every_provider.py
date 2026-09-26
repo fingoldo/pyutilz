@@ -81,9 +81,15 @@ class TestClaudeCode:
         monkeypatch.setattr(ccp, "_HAS_SDK", True, raising=False)
         monkeypatch.setattr(ccp, "ResultMessage", _Result, raising=False)
 
-        asyncio.run(ClaudeCodeProvider(model="sonnet").generate("say pong", thinking="low"))
-
+        # haiku thinks on a budget, so the budget goes to the environment. The adaptive aliases take
+        # `--effort` instead (asserted below).
+        asyncio.run(ClaudeCodeProvider(model="haiku").generate("say pong", thinking="low"))
         assert seen["env"]["MAX_THINKING_TOKENS"] == str(THINKING_BUDGETS["low"])
+
+        seen.clear()
+        asyncio.run(ClaudeCodeProvider(model="sonnet").generate("say pong", thinking="low"))
+        assert seen["extra_args"]["effort"] == "low"
+        assert "MAX_THINKING_TOKENS" not in seen["env"]
 
     def test_no_thinking_request_leaves_the_cli_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: list = []

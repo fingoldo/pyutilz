@@ -1,14 +1,17 @@
 """Core on-disk kernel-tuning cache: hardware fingerprinting, cache-dir resolution, and provenance tracking."""
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import errno
+import hashlib
 import json
 import logging
 import os
 import re
 import threading
 import time
+import uuid
 from functools import lru_cache
 from typing import Optional
 
@@ -158,9 +161,12 @@ def _write_hw_fingerprint_to_disk(fingerprint: str) -> None:
     """Persist the freshly-computed fingerprint. Best-effort: silently
     swallows write errors (read-only homedir, permissions, etc.) so the
     in-memory lru_cache still works."""
+    tmp: Optional[str] = None
     try:
         path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
-        tmp = path + ".tmp"
+        # Unique temp name per writer: per-target training scripts start concurrently, and a shared ``path + ".tmp"``
+        # let one process ``os.replace`` a file the other was still writing.
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
         payload = {
             "schema_version": _HW_FP_SCHEMA_VERSION,
             "fingerprint": fingerprint,
@@ -171,6 +177,9 @@ def _write_hw_fingerprint_to_disk(fingerprint: str) -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.debug("hw_fingerprint: failed to persist to disk: %s", e)
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
 
 
 @lru_cache(maxsize=1)
@@ -276,9 +285,24 @@ def host_cache_dir() -> str:
     return _ensure_cache_dir(os.path.join(cache_dir(), hw_fingerprint()))
 
 
-def _kernel_dir(host_dir: str, kernel_name: str) -> str:
-    """Directory for one kernel's immutable tuning files."""
+def _legacy_kernel_dir(host_dir: str, kernel_name: str) -> str:
+    """Pre-2026-09-26 kernel directory: the lossy ``_slug`` of the name, shared by names such as ``hist.cpu``/``hist``,
+    ``a@b``/``a@c`` or ``Mm``/``mm``. Still READ (every file carries its ``kernel_name``) and cleaned by evict, never
+    written."""
     return os.path.join(host_dir, _slug(kernel_name, maxlen=80))
+
+
+def _kernel_dir(host_dir: str, kernel_name: str) -> str:
+    """Directory for one kernel's immutable tuning files: ``<readable-part>-<blake2b(kernel_name)[:16 hex]>``.
+
+    The readable part keeps case-insensitive-safe characters only and is informational; the digest of the EXACT name
+    makes the directory unique per kernel, so two names can no longer share a directory (and its GC budget).
+    """
+    readable = re.sub(r"[^A-Za-z0-9._-]+", "_", kernel_name).strip("._-").lower()[:64]
+    if not readable:
+        readable = "kernel"  # a name with no filename-safe character; the digest still makes the dir unique
+    digest = hashlib.blake2b(kernel_name.encode("utf-8"), digest_size=8).hexdigest()
+    return os.path.join(host_dir, f"{readable}-{digest}")
 
 
 def _sweep_budget_seconds() -> float:

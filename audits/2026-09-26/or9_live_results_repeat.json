@@ -1,0 +1,305 @@
+{
+ "measured_at": "2026-09-26T09:23:18Z",
+ "prompt": "Reply with the single word: yes",
+ "max_tokens": 600,
+ "total_cost_usd": 0.000720276,
+ "results": [
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 1,
+   "cost": 9e-06,
+   "latency_s": 2.0
+  },
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 96,
+   "completion_tokens": 97,
+   "cost": 0.000369,
+   "latency_s": 1.99
+  },
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 1,
+   "cost": 9e-06,
+   "latency_s": 1.67
+  },
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 1,
+   "cost": 9e-06,
+   "latency_s": 1.31
+  },
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 70,
+   "completion_tokens": 71,
+   "cost": 0.0002715,
+   "latency_s": 2.74
+  },
+  {
+   "model": "google/gemini-3.7-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Google",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 1,
+   "cost": 9e-06,
+   "latency_s": 1.29
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "DigitalOcean",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 3,
+   "cost": 4.35e-06,
+   "latency_s": 1.79
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "OpenInference",
+   "finish_reason": "stop",
+   "content": " yes",
+   "reasoning_tokens": 7,
+   "completion_tokens": 10,
+   "cost": 5.38e-06,
+   "latency_s": 2.14
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "OpenInference",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 3,
+   "cost": 1.88e-06,
+   "latency_s": 1.19
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "OpenInference",
+   "finish_reason": "stop",
+   "content": "Yes",
+   "reasoning_tokens": 0,
+   "completion_tokens": 3,
+   "cost": 1.88e-06,
+   "latency_s": 0.81
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "OpenInference",
+   "finish_reason": "stop",
+   "content": " yes",
+   "reasoning_tokens": 6,
+   "completion_tokens": 9,
+   "cost": 4.88e-06,
+   "latency_s": 1.27
+  },
+  {
+   "model": "z-ai/glm-5.3-flash",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "OpenInference",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 3,
+   "completion_tokens": 6,
+   "cost": 3.41e-06,
+   "latency_s": 1.9
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "AkashML",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 5,
+   "completion_tokens": 16,
+   "cost": 3.08e-06,
+   "latency_s": 1.14
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Darkbloom",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 7,
+   "completion_tokens": 18,
+   "cost": 2.952e-06,
+   "latency_s": 1.5
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal",
+   "reasoning_sent": {
+    "effort": "minimal"
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "CoreWeave",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 16,
+   "completion_tokens": 29,
+   "cost": 5.93e-06,
+   "latency_s": 0.57
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Darkbloom",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 7,
+   "completion_tokens": 18,
+   "cost": 2.952e-06,
+   "latency_s": 0.81
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Darkbloom",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 7,
+   "completion_tokens": 18,
+   "cost": 2.952e-06,
+   "latency_s": 0.89
+  },
+  {
+   "model": "openai/gpt-oss-20b",
+   "variant": "effort_minimal_exclude",
+   "reasoning_sent": {
+    "effort": "minimal",
+    "exclude": true
+   },
+   "http_status": 200,
+   "error": null,
+   "provider": "Parasail",
+   "finish_reason": "stop",
+   "content": "yes",
+   "reasoning_tokens": 6,
+   "completion_tokens": 17,
+   "cost": 4.13e-06,
+   "latency_s": 1.95
+  }
+ ]
+}

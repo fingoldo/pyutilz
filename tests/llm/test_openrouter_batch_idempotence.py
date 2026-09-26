@@ -130,7 +130,9 @@ def test_a_rerun_refuses_when_it_cannot_tell(tmp_path: Path, listing: str | None
     assert api.posts == 1 and api.gets == []
 
 
-def test_a_listed_request_hash_decides_over_the_time_window(tmp_path: Path) -> None:
+def test_a_listed_metadata_hash_does_not_decide(tmp_path: Path) -> None:
+    # The submit sends no `metadata` (the batch docs accept none, verified 2026-09-26 OR-17), so a listed hash is never
+    # ours: two batches inside the window stay ambiguous whatever their metadata says, and the rerun refuses.
     state = tmp_path / "job.json"
     api = FakeApi()
     marker = _interrupted_submit(api, state)
@@ -138,8 +140,9 @@ def test_a_listed_request_hash_decides_over_the_time_window(tmp_path: Path) -> N
         {"id": "b_same_time_other_hash", "model": "m/x", "created_at": marker["submitting_at"], "metadata": {"request_hash": "0" * 64}},
         {"id": "b_ours", "model": "m/x", "created_at": marker["submitting_at"] + 5, "metadata": {"request_hash": marker["request_hash"]}},
     ]
-    _client(api).run("m/x", REQS, state_path=state)
-    assert api.posts == 1 and api.gets[-1] == "b_ours"
+    with pytest.raises(OpenRouterBatchError):
+        _client(api).run("m/x", REQS, state_path=state)
+    assert api.posts == 1 and api.gets == []
 
 
 def test_the_listing_reads_the_data_array() -> None:

@@ -192,7 +192,18 @@ def test_no_hash_fed_by_a_full_array_copy():
 
 def test_no_stale_todos():
     """A TODO older than 30 days is a decision nobody made, wearing the clothes of one that was."""
+    import os
+    import subprocess
+
     from py_ci_shared.stale_comment_age import assert_no_stale_todos
+
+    # ci.yml clones full history on the ubuntu 3.11 leg only (it runs on every push) and sets this variable on
+    # the shallow legs. The skip needs BOTH the variable and a genuinely shallow clone, so a full clone, or a
+    # local shallow clone without the opt-in, still fails loudly in py_ci_shared rather than passing vacuously.
+    if os.environ.get("PYUTILZ_CI_SHALLOW_CLONE") == "1":
+        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=REPO_ROOT, capture_output=True, text=True, check=False).stdout.strip()
+        if shallow == "true":
+            pytest.skip("shallow CI clone; the stale-TODO age check runs on ci.yml's full-history ubuntu 3.11 leg")
 
     assert_no_stale_todos(REPO_ROOT, ["src"])
 

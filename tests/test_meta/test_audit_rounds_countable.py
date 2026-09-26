@@ -14,7 +14,8 @@ from pathlib import Path
 from py_ci_shared.audit_round_format import assert_rounds_filed, finding_problems, round_files
 
 AUDITS = Path(__file__).resolve().parents[2] / "audits"
-FINDING_ID_RE = re.compile(r"^((?:F|MT-)\d+)\.")
+# Older rounds number findings ``F12.`` / ``MT-3.``; rounds from 2026-09-26 on use the shared ``OR-1 (High)`` form.
+FINDING_ID_RE = re.compile(r"^((?:F|MT-)\d+(?=\.)|[A-Z]+-\d+(?= \())")
 
 # Section headings of the preventive-meta-tests report's inventory, prose rather than findings.
 NOT_FINDINGS = (

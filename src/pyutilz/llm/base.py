@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
+import hashlib
 import json
 import logging
 import re
-import weakref
+import threading
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator
 
+from pyutilz.llm import _progress
 from pyutilz.llm.exceptions import (
     JSONParsingError,
     LLMRefusalError,
@@ -19,125 +20,58 @@ from pyutilz.llm.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-class PerCallAttr:
-    """Descriptor for a provider's "last successful call" state (e.g. ``last_tool_calls``,
-    ``_last_usage``), backed by a private ``contextvars.ContextVar`` per (instance, attribute).
+# Split out to `_descriptors.py` for module size; re-exported by name so existing imports keep working.
+from ._descriptors import (
+    LazySemaphore as LazySemaphore,
+    PerCallAttr as PerCallAttr,
+    PerLoopHTTPClient as PerLoopHTTPClient,
+    _NO_LOOP as _NO_LOOP,
+    _NO_REBIND as _NO_REBIND,
+    _NoLoop as _NoLoop,
+    _clone_async_client as _clone_async_client,
+    _is_async_httpx_client as _is_async_httpx_client,
+    _running_loop as _running_loop,
+)
 
-    Regression fix (2026-07-21 audit round 2, HIGH): these used to be plain instance attributes,
-    written unconditionally at the end of every ``generate()`` call. ``generate_batch()`` fires
-    N concurrent ``self.generate()`` calls on ONE shared, cached provider instance (see
-    ``llm.factory.get_llm_provider``'s whole reason for existing) via ``asyncio.create_task`` --
-    a write from one in-flight task was visible to every other task reading the same plain
-    attribute, so a caller reading e.g. ``provider.last_tool_calls`` right after a batch item is
-    yielded could silently get a DIFFERENT request's data (verified with a standalone repro:
-    ``generate_batch()`` yielded ``id='req-0'`` while ``provider.last_tool_calls`` already
-    reflected ``id='req-2'``).
-
-    ``asyncio.create_task()`` gives each Task its own COPY of the current context, so a
-    ``contextvars.ContextVar`` set inside one task is invisible to every other task -- this
-    closes the cross-task race. A direct (non-batched) ``await provider.generate(...)`` keeps
-    working exactly as before: no task boundary is crossed, so the write and the caller's
-    immediately-following read share the same context.
-
-    Does NOT fix (by design -- this is the correct, intentional behavior): the outer caller of
-    ``generate_batch()`` runs in yet another context than any individual request task, so it can
-    no longer read a completed batch item's metadata off the provider instance at all -- it must
-    come from the yielded dict instead (see ``generate_batch``'s ``usage``/``tool_calls``/etc.
-    keys), which is exactly the fix the audit's own report recommended.
-    """
-
-    def __init__(self, default_factory: Callable[[], Any]) -> None:
-        self._default_factory = default_factory
-        self._name = "_unnamed"
-        # One ContextVar per DESCRIPTOR (i.e. per class attribute), created here rather than
-        # lazily per (instance, attribute) on first touch. Two independent bugs are closed by
-        # that single change:
-        #  * the lazy per-instance creation was a check-then-act with no lock, so two threads
-        #    first touching the same attribute on one shared (factory-cached) provider could each
-        #    build a DISTINCT ContextVar; the loser wrote to a var no longer reachable and its own
-        #    next read fell through to the default -- indistinguishable from "the model returned
-        #    nothing" (2026-09-03 audit F10, reproduced in 287 of 3000 threaded trials).
-        #  * CPython documents ContextVars as objects to create at module/class scope and never
-        #    inside a function, because live Context objects keep strong references to them. One
-        #    var per instance meant a service constructing a provider per request (the
-        #    unhashable-kwargs path in llm.factory bypasses the LRU) minted vars nothing could
-        #    reclaim (F41). The count is now bounded by the number of declared class attributes.
-        # The var's VALUE is a per-instance mapping keyed by id(), validated through a weakref so
-        # a recycled id can never surface a dead instance's state. It is replaced copy-on-write on
-        # every set, never mutated in place, so a value set inside an asyncio Task stays invisible
-        # to every other Task -- the whole point of this descriptor.
-        self._var: contextvars.ContextVar[dict[int, Any]] = contextvars.ContextVar("PerCallAttr._unnamed")
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        self._name = name
-        self._var = contextvars.ContextVar(f"{owner.__name__}.{name}")
-
-    def default(self) -> Any:
-        """Return a freshly built default value for this attribute (used by ``_reset_per_call_state``)."""
-        return self._default_factory()
-
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
-            return self
-        entry = self._var.get({}).get(id(instance))
-        if entry is not None:
-            ref, value = entry
-            if ref() is instance:
-                return value
-        return self._default_factory()
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        ref: Callable[[], Any]
-        try:
-            ref = weakref.ref(instance)
-        except TypeError:  # instance's type forbids weak references
-            ref = _StrongRef(instance)
-        store = dict(self._var.get({}))
-        store[id(instance)] = (ref, value)
-        self._var.set(store)
+#: (label, model, kind) triples already warned about. Pricing is resolved on EVERY estimate_cost call, so an
+#: unwarned-once warning repeated per call and flooded the log for any model not pinned in a table.
+_PRICING_WARNED: set[tuple[str, str, str]] = set()
+_PRICING_WARNED_LOCK = threading.Lock()
 
 
-class _StrongRef:
-    """``weakref.ref``-compatible fallback for instances whose type disallows weak references."""
-
-    __slots__ = ("_obj",)
-
-    def __init__(self, obj: Any) -> None:
-        self._obj = obj
-
-    def __call__(self) -> Any:
-        return self._obj
+def _warn_pricing_once(provider_label: str, model: str, kind: str, message: str, *args: Any) -> None:
+    """Log ``message`` at WARNING the first time this (provider, model, kind) is seen in the process."""
+    key = (provider_label, model, kind)
+    with _PRICING_WARNED_LOCK:
+        if key in _PRICING_WARNED:
+            return
+        _PRICING_WARNED.add(key)
+    logger.warning(message, *args)
 
 
-class LazySemaphore:
-    """Descriptor for a provider's concurrency-limiting ``asyncio.Semaphore``, constructed lazily
-    on first access rather than eagerly in ``__init__``.
-
-    On Python 3.9, ``asyncio.Semaphore.__init__`` eagerly calls ``asyncio.get_event_loop()`` to
-    bind a loop; 3.10+ removed that eager bind in favour of binding lazily on first
-    ``acquire()``/``release()``. A provider is normally constructed synchronously (e.g. via
-    ``llm.factory.get_llm_provider``, in a sync test, or at import time) with no loop running, so
-    the eager bind raised ``RuntimeError: There is no current event loop`` on 3.9 only -- every
-    other supported version masked the bug. Deferring construction to first ``__get__`` (which
-    only happens inside ``async with self.semaphore:``, i.e. while a loop IS running) reproduces
-    3.10+'s lazy-bind behavior on 3.9 too. Backed by instance ``__dict__`` so a test can still
-    assign a replacement semaphore directly (``provider.semaphore = asyncio.Semaphore(1)``).
-    """
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        self._name = name
-
-    def __get__(self, instance: Any, owner: type | None = None) -> Any:
-        if instance is None:
-            return self
-        value = instance.__dict__.get(self._name)
-        if value is None:
-            value = asyncio.Semaphore(instance._max_concurrent)
-            instance.__dict__[self._name] = value
-        return value
-
-    def __set__(self, instance: Any, value: Any) -> None:
-        instance.__dict__[self._name] = value
+def _longest_prefix_match(model: str, table: dict[str, Any]) -> tuple[bool, Any]:
+    """``(found, value)``: exact key, else longest full-key prefix, else longest trailing-segment-trimmed prefix."""
+    if model in table and table[model] is not None:
+        return True, table[model]
+    best_val: Any = None
+    best_len = -1
+    for key, val in table.items():
+        if model.startswith(key) and len(key) > best_len:
+            best_len = len(key)
+            best_val = val
+    if best_val is None:
+        for key, val in table.items():
+            prefix = key.rsplit("-", 1)[0]
+            # The trimmed prefix must still name a MODEL, not just a vendor family: every xAI key
+            # trims to a bare ``grok``, so any future ``grok-5`` matched some arbitrary row and
+            # was priced from it, with the unknown-model warning unreachable inside the vendor's
+            # own namespace (2026-09-03 audit F19). Requiring a surviving ``-`` keeps the cases
+            # this stage exists for (``claude-opus-4-6-20250610`` -> ``claude-opus-4-6``) and
+            # rejects the vendor-prefix degenerate one.
+            if "-" in prefix and model.startswith(prefix) and len(prefix) > best_len:
+                best_len = len(prefix)
+                best_val = val
+    return best_val is not None, best_val
 
 
 def _longest_prefix_pricing(
@@ -156,7 +90,7 @@ def _longest_prefix_pricing(
          ``claude-opus-4-2-YYYYMMDD`` inheriting ``claude-opus-4-7``'s cheaper
          tier just because that entry iterated first). We always compare
          prefix lengths, mirroring the algorithm used by every provider.
-      3. ``default`` fallback (with a single warning).
+      3. ``default`` fallback, with a warning.
 
     Two prefix forms are tried, most-precise first, so both the
     Anthropic (date-suffixed KEY, date-less model) and the Gemini
@@ -170,38 +104,28 @@ def _longest_prefix_pricing(
          (``key.rsplit("-", 1)[0]``) — lets a date-less canonical model id
          (``claude-opus-4-6``) match a date-suffixed key
          (``claude-opus-4-6-20250610``).
+
+    The algorithm is :func:`longest_prefix_lookup`'s (one implementation, so the two cannot drift). Both
+    non-exact outcomes warn ONCE per (provider, model): the prefix match because it may mis-price, the default
+    because it usually prices a real model at $0 and understates every budget and ledger built on it.
     """
-    exact = pricing_table.get(model)
-    if exact:
-        return exact
-    # (a) longest full-key prefix.
-    best_val: tuple[float, float] | None = None
-    best_len = -1
-    for key, val in pricing_table.items():
-        if model.startswith(key) and len(key) > best_len:
-            best_len = len(key)
-            best_val = val
-    # (b) fall back to trailing-segment-trimmed prefixes.
-    if best_val is None:
-        for key, val in pricing_table.items():
-            prefix = key.rsplit("-", 1)[0]
-            # The trimmed prefix must still name a MODEL, not just a vendor family: every xAI key
-            # trims to a bare ``grok``, so any future ``grok-5`` matched some arbitrary row and
-            # was priced from it, with the unknown-model warning unreachable inside the vendor's
-            # own namespace (2026-09-03 audit F19). Requiring a surviving ``-`` keeps the cases
-            # this stage exists for (``claude-opus-4-6-20250610`` -> ``claude-opus-4-6``) and
-            # rejects the vendor-prefix degenerate one.
-            if "-" in prefix and model.startswith(prefix) and len(prefix) > best_len:
-                best_len = len(prefix)
-                best_val = val
-    if best_val is not None:
-        logger.warning(
-            "%s model %r not pinned in pricing table; falling back to the "
-            "longest-prefix match (%s/%s per 1M). Pin its exact id to avoid "
-            "silent mispricing.",
-            provider_label, model, best_val[0], best_val[1],
+    if model in pricing_table:
+        return pricing_table[model]
+    found, value = _longest_prefix_match(model, pricing_table)
+    if found:
+        _warn_pricing_once(
+            provider_label, model, "prefix",
+            "%s model %r not pinned in pricing table; falling back to the longest-prefix match (%s/%s per 1M). "
+            "Pin its exact id to avoid silent mispricing.",
+            provider_label, model, value[0], value[1],
         )
-        return best_val
+        return value  # type: ignore[no-any-return]  # values of a dict[str, tuple[float, float]]
+    _warn_pricing_once(
+        provider_label, model, "default",
+        "%s model %r is not in the pricing table; costing it at the default %s/%s per 1M. "
+        "Cost estimates for it are likely understated; add it to the table.",
+        provider_label, model, default[0], default[1],
+    )
     return default
 
 
@@ -212,28 +136,8 @@ def longest_prefix_lookup(model: str, table: dict[str, Any], default: Any) -> An
     fixed ``(input, output)`` pricing pair. Silent, no warning log -- callers wanting the
     mispricing-style warning should log it themselves.
     """
-    exact = table.get(model)
-    if exact is not None:
-        return exact
-    best_val = None
-    best_len = -1
-    for key, val in table.items():
-        if model.startswith(key) and len(key) > best_len:
-            best_len = len(key)
-            best_val = val
-    if best_val is None:
-        for key, val in table.items():
-            prefix = key.rsplit("-", 1)[0]
-            # The trimmed prefix must still name a MODEL, not just a vendor family: every xAI key
-            # trims to a bare ``grok``, so any future ``grok-5`` matched some arbitrary row and
-            # was priced from it, with the unknown-model warning unreachable inside the vendor's
-            # own namespace (2026-09-03 audit F19). Requiring a surviving ``-`` keeps the cases
-            # this stage exists for (``claude-opus-4-6-20250610`` -> ``claude-opus-4-6``) and
-            # rejects the vendor-prefix degenerate one.
-            if "-" in prefix and model.startswith(prefix) and len(prefix) > best_len:
-                best_len = len(prefix)
-                best_val = val
-    return best_val if best_val is not None else default
+    found, value = _longest_prefix_match(model, table)
+    return value if found else default
 
 
 # ── Refusal detection ─────────────────────────────────────────────────────
@@ -297,6 +201,14 @@ def is_llm_refusal(text: str) -> bool:
     return any(p.search(text) for p in _REFUSAL_PATTERNS)
 
 
+#: Optional ``generate()`` options a ``generate_batch`` request dict may carry, forwarded when present.
+_BATCH_FORWARDED_KEYS: tuple[str, ...] = ("images", "thinking", "json_mode", "json_schema")
+_BATCH_KNOWN_KEYS: frozenset[str] = frozenset({"id", "prompt", "system", "temperature", "max_tokens", *_BATCH_FORWARDED_KEYS})
+
+#: Characters of failed-candidate work (the sum of their error positions) after which ``extract_json``'s scan stops.
+_JSON_SCAN_BUDGET_CHARS = 20_000_000
+
+
 def _require_json_object(obj: Any, provider_name: str) -> dict[str, Any]:
     """Return ``obj`` when it is a JSON object, else raise :class:`JSONParsingError`.
 
@@ -315,6 +227,7 @@ class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
     semaphore = LazySemaphore()
+    _client = PerLoopHTTPClient()
 
     @property
     def max_output_tokens(self) -> int:
@@ -499,13 +412,22 @@ class LLMProvider(ABC):
             #    a single JSON value, and returns the first one that
             #    parses cleanly. Robust against prose-before-JSON,
             #    JSON-with-trailing-prose, and nested-object boundaries.
+            #    Each failed candidate costs O(position), not O(1): building the JSONDecodeError counts the
+            #    newlines of everything before the failure point. Thousands of ``{`` in a long truncated output
+            #    made the scan quadratic (measured 10 s on 180 KB). The scan therefore stops once the failures
+            #    have cost _JSON_SCAN_BUDGET_CHARS; a normal response never gets near it, and an object nested in
+            #    an unterminated one (``{"a": {"b": 2}``) is still found.
             decoder = json.JSONDecoder()
+            spent = 0
             for i, ch in enumerate(stripped):
                 if ch != "{":
                     continue
                 try:
                     obj, _end = decoder.raw_decode(stripped, i)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as scan_err:
+                    spent += max(scan_err.pos, i)
+                    if spent >= _JSON_SCAN_BUDGET_CHARS:
+                        break
                     continue
                 if isinstance(obj, dict):
                     return obj
@@ -513,7 +435,9 @@ class LLMProvider(ABC):
             # 5. Last resort — re-raise via the original strict parse so
             #    the JSONDecodeError handler below produces a clean error.
             return _require_json_object(json.loads(stripped), provider_name)
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, RecursionError) as e:
+            # RecursionError is what the decoder raises on deeply nested input ("[[[[..." or {"a":{"a":... loops from
+            # a degenerate decoder). It used to escape the JSONParsingError contract and every LLMProviderError handler.
             # Before reporting as malformed JSON, check whether the model
             # simply refused to answer — that's a distinct error class with
             # a distinct retry policy (do NOT retry refusals).
@@ -526,8 +450,10 @@ class LLMProvider(ABC):
                     f"{provider_name} refused to produce JSON",
                     raw_text=text,
                 )
-            logger.error("Failed to parse JSON from %s: %s\nResponse: %s", provider_name, e, text)
-            raise JSONParsingError(f"Invalid JSON response from {provider_name}: {e}")
+            # Truncated: a 65k-token output logged whole at ERROR put multi-megabyte lines in the log.
+            logger.error("Failed to parse JSON from %s: %s\nResponse (%d chars): %.2000s", provider_name, type(e).__name__ if isinstance(e, RecursionError) else e, len(text), text)
+            detail = "nesting too deep to decode" if isinstance(e, RecursionError) else str(e)
+            raise JSONParsingError(f"Invalid JSON response from {provider_name}: {detail}") from e
 
     @abstractmethod
     async def generate(
@@ -578,6 +504,19 @@ class LLMProvider(ABC):
             self._DEFAULT_PRICING,
             provider_label=self.__class__.__name__,
         )
+
+    def _route_payload(self) -> dict[str, Any]:
+        """What decides which upstream answers and how: here the provider class and model; routers extend it."""
+        return {"provider": type(self).__name__, "model": self._pricing_model_id()}
+
+    def route_fingerprint(self) -> str:
+        """SHA-256 hex digest of ``_route_payload()`` as sorted, compact JSON.
+
+        A stable key for response caches and benchmark ledgers: equal for identically configured providers (a
+        tuple and a list of the same items digest the same) and different whenever the route can differ.
+        """
+        blob = json.dumps(self._route_payload(), sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     @property
     def _provider_display_name(self) -> str:
@@ -715,12 +654,15 @@ class LLMProvider(ABC):
         max_tokens: int = 0,
         images: list[str] | None = None,
         thinking: bool | str | int | None = None,
+        *,
+        json_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate structured JSON output.
 
         Appends a "respond with valid JSON only" steer to the system prompt,
         calls ``generate``, then parses via ``extract_json``. Providers with a
         hard JSON-mode toggle (OpenAI-compat) override to pass it through.
+        ``json_schema`` is forwarded to ``generate`` only when given, like ``thinking``.
         """
         # `images` is forwarded ONLY when non-empty. A provider that does not implement vision has
         # no `images` parameter on its `generate`, and passing `images=None` to it would be a
@@ -730,6 +672,8 @@ class LLMProvider(ABC):
         # receive it, so it is forwarded only when the caller actually asked for reasoning.
         if thinking is not None:
             extra["thinking"] = thinking
+        if json_schema is not None:
+            extra["json_schema"] = json_schema
         return await self._generate_json_via(prompt, system, temperature, max_tokens, **extra)
 
     async def generate_batch(
@@ -752,7 +696,15 @@ class LLMProvider(ABC):
         async def process_request(req: dict) -> dict[str, Any]:
             """Run a single batch request via ``generate``, returning a result/error dict tagged with its id."""
             request_id = req.get("id", "unknown")
+            # Each request is its own stream. A StreamProgress installed around the batch would otherwise be
+            # shared by every task (create_task copies the context), summing their chars and interleaving their
+            # tails, so a repetition-loop watcher saw a mixture of streams.
+            _progress._CURRENT.set(None)
             try:
+                # Optional per-request options are forwarded only when present, so a provider whose generate()
+                # lacks one is not handed it. They used to be dropped silently: a vision or reasoning batch ran
+                # without its images/thinking.
+                options = {key: req[key] for key in _BATCH_FORWARDED_KEYS if key in req}
                 result = await self.generate(
                     prompt=req["prompt"],
                     system=req.get("system"),
@@ -762,6 +714,7 @@ class LLMProvider(ABC):
                     # truncated batch responses that the identical single call returned in full
                     # (2026-09-03 audit F39).
                     max_tokens=req.get("max_tokens", 0),
+                    **options,
                 )
                 out = {"id": request_id, "result": result}
                 out.update(self._capture_percall_metadata())
@@ -777,6 +730,9 @@ class LLMProvider(ABC):
         # Wrap as Tasks explicitly. ``asyncio.as_completed`` over raw
         # coroutines emits a DeprecationWarning in 3.11 and breaks in 3.12+
         # — feeding Tasks instead works across versions.
+        unknown = sorted({str(key) for req in requests if isinstance(req, dict) for key in req} - _BATCH_KNOWN_KEYS)
+        if unknown:
+            logger.warning("generate_batch: request key(s) %s are not used by any provider and are ignored", unknown)
         tasks = [asyncio.create_task(process_request(req)) for req in requests]
         try:
             for coro in asyncio.as_completed(tasks):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class LLMProviderError(Exception):
     """Error from LLM provider (Anthropic, Gemini, etc.)."""
@@ -100,3 +102,19 @@ class ClaudeCodeToolUseError(LLMProviderError, RuntimeError):
     documented catch-all ``except LLMProviderError`` did not catch it, so the one error the design
     most wants surfaced was the one that escaped the handler callers are told to write.
     """
+
+
+class LLMStreamInterruptedError(LLMProviderError):
+    """The upstream failed AFTER it had started answering: a mid-stream error event, or ``finish_reason == "error"``.
+
+    OpenRouter reports such a failure as a 200 SSE chunk ``{"error": {"code": "server_error", ...}, "choices": [{..,
+    "finish_reason": "error"}]}`` and then closes the stream. ``partial_text`` is what had been generated (and billed)
+    before it; it is NOT an answer. ``retryable`` says whether the upstream's code names a transient fault: the buffered
+    path re-issues on it, the streaming path never re-opens a stream that has already generated.
+    """
+
+    def __init__(self, message: str, *, code: Any = None, partial_text: str = "", retryable: bool = True) -> None:
+        super().__init__(message)
+        self.code = code
+        self.partial_text = partial_text
+        self.retryable = retryable

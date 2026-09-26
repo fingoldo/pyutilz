@@ -53,7 +53,11 @@ _CURRENT: contextvars.ContextVar[StreamProgress | None] = contextvars.ContextVar
 
 @contextlib.contextmanager
 def track_stream_progress(progress: StreamProgress | None = None) -> Iterator[StreamProgress]:
-    """Install ``progress`` (or a fresh one) as the counter for streams consumed inside this block."""
+    """Install ``progress`` (or a fresh one) as the counter for streams consumed inside this block.
+
+    One tracked stream per block: tasks created inside it inherit the counter (``create_task`` copies the
+    context), so concurrent streams would share it. ``LLMProvider.generate_batch`` clears it in each request task.
+    """
     target = progress if progress is not None else StreamProgress()
     token = _CURRENT.set(target)
     try:

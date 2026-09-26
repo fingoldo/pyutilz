@@ -55,17 +55,24 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            requirements-dev.txt
 
       # Extras set kept identical to ci.yml's test job (all runtime extras except
       # [gpu]/[dash]/[prefect]/[tensorflow]). `speedups` was missing until 2026-09-03, so this
       # coverage run always took the stdlib-json fallback branch and the merged report
       # understated every orjson-backed line.
       - name: Install pyutilz with all runtime extras + dev tooling
+        env:
+          UV_SYSTEM_PYTHON: "1"
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+          uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
 
       - name: Show installed versions
         run: |
@@ -139,6 +146,12 @@ jobs:
       - name: Upload coverage to Codecov (numba-disabled flag)
         uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
         if: success()
+        # The codecov CLI's coverage plugin re-runs `coverage xml` when it finds a .coverage data file, and
+        # without this it reads pyproject's whole-suite fail_under=85 and logs a spurious "Coverage failure:
+        # total of 7.05" (run 36118611749). Point it at the same gate-free rcfile the test step used, so the
+        # regenerated XML carries identical source/omit settings.
+        env:
+          COVERAGE_RCFILE: .coveragerc-numba
         with:
           files: ./coverage.xml
           flags: numba-disabled

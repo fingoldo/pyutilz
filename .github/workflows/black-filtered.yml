@@ -3,6 +3,12 @@ name: Black
 on:
   push:
     branches: [main, master]
+    # Push only, as in ci.yml: a docs/audit-only commit changes no Python for Black to check.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "audits/**"
+      - "LICENSE"
   pull_request:
     branches: [main, master]
 

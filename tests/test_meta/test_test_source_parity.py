@@ -240,6 +240,7 @@ _TEST_EXEMPT_MODULES: dict[str, str] = {
 # Test files (by stem — no .py) that don't have a 1:1 source counterpart
 # but cover a real concern. Reverse-direction whitelist.
 _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
+    "test_general_audit_20260926": "cross-cutting regression tests for audits/2026-09-26/50_general.md (GEN-1..15) over nine modules; one class per finding",
     "test_shared_gates_adopted": "meta-test running py_ci_shared gates over src/ and tests/ -- no single production module to pair with",
     "test_mypy_gate_floor": "meta-test over .pre-commit-config.yaml and mypy-full.yml -- the mypy_gate floor tracks the source-file count; no production module to pair with",
     "test_audit_rounds_countable": "meta-test over audits/ -- every finding has a disposition and rounds are filed by state, via py_ci_shared.audit_round_format; no production module to pair with",

@@ -35,6 +35,7 @@ from tenacity import AsyncRetrying, Retrying, retry_if_exception, stop_after_att
 from tenacity.wait import wait_base
 
 from pyutilz.llm._retry import RETRY_WAIT, log_retry
+from pyutilz.llm._openai_compat_http import parse_retry_after
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ MAX_CHOICE_OPTIONS = 255
 MAX_SCORE_LEVELS = 10
 DEFAULT_TIMEOUT_S = 15.0
 DEFAULT_MAX_ATTEMPTS = 5
-RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 524, 529})
+# 408 (request timeout) and 504 (gateway timeout) are transient per the errors doc, like the rest.
+RETRYABLE_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 524, 529})
 
 
 class OpenRouterDecisionsError(LLMProviderError, RuntimeError):
@@ -53,16 +55,17 @@ class OpenRouterDecisionsError(LLMProviderError, RuntimeError):
     Rooted at ``LLMProviderError`` (with ``RuntimeError`` kept for existing callers) so the domain root catches it.
     """
 
-    def __init__(self, message: str, *, status_code: Optional[int] = None, code: Any = None, raw: Any = None) -> None:
-        """Keep the HTTP status, the envelope's ``code`` and the raw body next to the message."""
+    def __init__(self, message: str, *, status_code: Optional[int] = None, code: Any = None, raw: Any = None, retry_after_s: Optional[float] = None) -> None:
+        """Keep the HTTP status, the envelope's ``code``, the raw body and the server's ``Retry-After`` next to the message."""
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.raw = raw
+        self.retry_after_s = retry_after_s
 
     @property
     def retryable(self) -> bool:
-        """True for rate limits and transient upstream failures (429, 500, 502, 503, 524, 529)."""
+        """True for timeouts, rate limits and transient upstream failures (408, 429, 500, 502, 503, 504, 524, 529)."""
         return self.status_code in RETRYABLE_STATUSES
 
 
@@ -120,7 +123,9 @@ class ScoreQuestion:
 
 
 Question = Union[NoulQuestion, ChoiceQuestion, ScoreQuestion]
-State = Union[str, Mapping[str, Any], Sequence[str]]
+# String forward references: a runtime alias is evaluated even under `from __future__ import annotations`, and
+# collections.abc classes are not subscriptable on Python 3.8 (collection error on every 3.8 CI leg).
+State = Union[str, "Mapping[str, Any]", "Sequence[str]"]
 
 
 @dataclass(frozen=True)
@@ -303,7 +308,9 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
     except ValueError:
         data = resp.text[:500]
     if resp.status_code >= 400:
-        raise _error_from_body(data, resp.status_code)
+        err = _error_from_body(data, resp.status_code)
+        err.retry_after_s = parse_retry_after(resp)
+        raise err
     if not isinstance(data, dict):
         raise OpenRouterDecisionsError(f"decisions: non-object response: {str(data)[:300]}", status_code=resp.status_code, raw=data)
     return data
@@ -312,6 +319,20 @@ def _check_response(resp: httpx.Response) -> Dict[str, Any]:
 def _result_of(resp: httpx.Response, questions: Mapping[str, Question], t0: float) -> DecisionResult:
     """Check and parse one HTTP response; latency runs from ``t0`` (a ``perf_counter`` reading) to now."""
     return parse_response(_check_response(resp), questions, latency_s=time.perf_counter() - t0)
+
+
+def _wait_honoring_retry_after(base: Any) -> Any:
+    """``base``'s delay, lengthened to the server's ``Retry-After`` when the failed attempt carried a longer one."""
+
+    def _wait(retry_state: Any) -> float:
+        """The base backoff, raised to the server's Retry-After when it asked for longer."""
+        delay = float(base(retry_state))
+        outcome = retry_state.outcome
+        exc = outcome.exception() if outcome is not None and outcome.failed else None
+        hint = getattr(exc, "retry_after_s", None)
+        return max(delay, float(hint)) if isinstance(hint, (int, float)) else delay
+
+    return _wait
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -360,7 +381,7 @@ class OpenRouterDecisionsClient:
         self._aclient_kwargs: Dict[str, Any] = dict(base_url=base_url, transport=async_transport, timeout=timeout, headers=headers)
         self._aclient: Optional[httpx.AsyncClient] = None
         self._retry_kwargs: Dict[str, Any] = dict(
-            wait=retry_wait if retry_wait is not None else RETRY_WAIT,
+            wait=_wait_honoring_retry_after(retry_wait if retry_wait is not None else RETRY_WAIT),
             stop=stop_after_attempt(max_attempts),
             retry=retry_if_exception(_is_retryable),
             before_sleep=log_retry,

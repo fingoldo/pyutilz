@@ -1,0 +1,30 @@
+codecov:
+  # A test failure on one leg must not stop the coverage upload from being processed.
+  require_ci_to_pass: false
+
+# Three independent series reach codecov: `unit` from ci.yml on every push, `numba-disabled` from the
+# nightly numba-coverage.yml, and `combined` from codecov-full.yml. The last two upload on one commit a
+# day, and every later push creates a HEAD commit without them, so shields.io (which reads HEAD) showed
+# "unknown" for the flag badges. carryforward reuses a flag's last report on commits that did not upload it.
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: unit
+      carryforward: true
+    - name: numba-disabled
+      carryforward: true
+    - name: combined
+      carryforward: true
+
+coverage:
+  status:
+    # The ratchet is pytest-cov's fail_under=85 in CI; a second codecov project gate would only duplicate it.
+    project: off
+    # Informational: reports whether the lines a change touches are covered, without failing the commit.
+    patch:
+      default:
+        target: 85%
+        informational: true
+
+comment: false

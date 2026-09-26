@@ -38,14 +38,17 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-      # The project itself, so the audited set is what a consumer actually resolves from the
+      # The project with every runtime extra, so the extras' dependency closure (boto3, selenium, the LLM
+      # SDKs, spaCy, ...) is audited too, not only the nine core dependencies. The audited set is what a consumer actually resolves from the
       # open lower bounds -- auditing pyproject.toml's declarations alone would report on version
       # ranges rather than on the versions anyone runs.
       - name: Install project
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[all]"
 
       - name: Audit installed dependencies
         run: |

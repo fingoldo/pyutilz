@@ -1,0 +1,52 @@
+name: CodeQL
+
+# SAST scan (dataflow analysis) -- complements bandit's AST-pattern rules, which catches a
+# different, overlapping-but-not-identical bug class. Ported from mlframe 2026-09-26 (audit 40 CI-11):
+# table-stakes for a repo already treating CI security seriously (zizmor, bandit, codespell
+# already wired in as blocking gates), free for public repos, near-zero maintenance once wired.
+
+on:
+  # With no pull requests opened here, the weekly schedule was this scan's only live trigger, so a
+  # finding introduced on a Thursday sat unseen until the following Wednesday. Ubuntu, no tests: the
+  # macOS abort that disabled it (X5) cannot reach this workflow.
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "audits/**"
+      - "LICENSE"
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * 3"  # weekly, Wednesday 07:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a  # v4.37.1
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a  # v4.37.1
+        with:
+          category: "/language:python"

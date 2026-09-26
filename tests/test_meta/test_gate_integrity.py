@@ -110,6 +110,7 @@ _CANONICAL_EXTRAS = frozenset("pandas polars database system llm nlp cloud speed
 _DECLARED_DIFFERENT_EXTRAS = {
     "publish.yml::all,dev": "A release smoke test must import what `pip install pyutilz[all]` gets, not just what the test matrix exercises.",
     "ci.yml::all,dev": "deptry's own install: the dependency-drift scan has to see every declared extra, or it reports each unseen one as unused.",
+    "pip-audit.yml::all": "The advisory scan audits what `pip install pyutilz[all]` resolves; it runs no tests, so it needs neither [dev] nor ci.yml's narrower set.",
     "docs.yml::docs": "mkdocs builds prose; it imports no runtime extra, and installing them would add minutes to every docs run.",
 }
 

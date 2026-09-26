@@ -21,8 +21,11 @@ import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import sys
 import threading
+import re
 import time
+from datetime import datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +195,13 @@ def _consume_cli_stream(
         if etype == "result":
             result_event = event
             subtype = event.get("subtype", "")
-            if subtype == "success":
+            if event.get("is_error"):
+                # `is_error` is the CLI's own verdict and outranks `subtype`: an API error surfaced as result text
+                # (a rate-limit notice, an overloaded upstream) used to be returned as the model's answer whenever
+                # the subtype still read "success". Raised as the error text, so the provider's rate-limit matcher sees it.
+                message = event.get("result") if event.get("result") else event.get("error")
+                error_text = str(message) if message else f"the CLI reported an error (subtype={subtype!r})"
+            elif subtype == "success":
                 # An empty success is not an answer. The SDK path raises "produced no result"
                 # for exactly this shape, and returning "" here handed the caller a blank
                 # string that then failed JSON parsing with a far less informative message.
@@ -221,6 +230,28 @@ def _consume_cli_stream(
     return result_text, error_text, False, result_event
 
 
+def usage_int(usage: Any, name: str) -> int:
+    """One integer usage field off a usage MAPPING (the CLI's JSON, and ``claude_code_sdk``'s ``ResultMessage.usage``,
+    typed ``dict[str, Any] | None``) or an attribute object; 0 when absent or not a number.
+
+    The SDK path read its usage with ``getattr(usage, "input_tokens", 0)``, which on a dict is always 0: whenever the
+    SDK was installed, every token and cache count it recorded was zero.
+    """
+    value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
+
+
+def usage_thinking_tokens(usage: Any) -> int | None:
+    """``usage.output_tokens_details.thinking_tokens``, the billed reasoning count, or None when not reported."""
+    details = usage.get("output_tokens_details") if isinstance(usage, dict) else getattr(usage, "output_tokens_details", None)
+    if details is None:
+        return None
+    value = details.get("thinking_tokens") if isinstance(details, dict) else getattr(details, "thinking_tokens", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 class _CliResultMessage:
     """The CLI's ``result`` event in the shape ``generate()`` already reads off the SDK's
     ``ResultMessage``: a ``.usage`` object with the four token counts and a ``.total_cost_usd``.
@@ -234,10 +265,11 @@ class _CliResultMessage:
     def __init__(self, event: dict) -> None:
         raw = event.get("usage") or {}
         self.usage = SimpleNamespace(
-            input_tokens=int(raw.get("input_tokens", 0) or 0),
-            output_tokens=int(raw.get("output_tokens", 0) or 0),
-            cache_creation_input_tokens=int(raw.get("cache_creation_input_tokens", 0) or 0),
-            cache_read_input_tokens=int(raw.get("cache_read_input_tokens", 0) or 0),
+            input_tokens=usage_int(raw, "input_tokens"),
+            output_tokens=usage_int(raw, "output_tokens"),
+            cache_creation_input_tokens=usage_int(raw, "cache_creation_input_tokens"),
+            cache_read_input_tokens=usage_int(raw, "cache_read_input_tokens"),
+            output_tokens_details=raw.get("output_tokens_details"),
         )
         self.total_cost_usd = float(event.get("total_cost_usd", 0.0) or 0.0)
         self.session_id = event.get("session_id")
@@ -398,3 +430,88 @@ def _stream_one_call(
     # ``if returncode != 0`` guard is intentionally kept as
     # belt-and-braces for any future non-success return path.
     return 0, result_text, stderr_data, result_event
+
+
+# Rate-limit parsing, moved here from claude_code_provider (2026-09-26) when that module reached its
+# 1000-line budget; re-exported from there for existing importers.
+_RATE_LIMIT_PATTERN = re.compile(
+    r"(?:hit your limit|rate.?limit|quota exceeded|usage limit)",
+    re.IGNORECASE,
+)
+_RESET_TIME_PATTERN = re.compile(
+    r"resets?\s+(?:(?P<month>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(?P<day>\d{1,2}),?\s+)?"
+    r"(?P<hour>\d{1,2})\s*(?::(?P<min>\d{2}))?\s*(?P<ampm>am|pm)?\b",
+    re.IGNORECASE,
+)
+_TIMEZONE_PATTERN = re.compile(
+    r"\(([A-Za-z]+/[A-Za-z_]+)\)",
+)
+
+
+def _parse_reset_wait_seconds(error_text: str) -> int | None:
+    """Parse reset time from rate limit error and return seconds to wait."""
+    m = _RESET_TIME_PATTERN.search(error_text)
+    if not m:
+        return None
+
+    hour = int(m.group("hour"))
+    minute = int(m.group("min")) if m.group("min") else 0
+    ampm = m.group("ampm")
+
+    if ampm:
+        ampm = ampm.lower()
+        if ampm == "pm" and hour != 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+
+    tz_match = _TIMEZONE_PATTERN.search(error_text)
+    tz = None
+    if tz_match:
+        try:
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo(tz_match.group(1))
+        except (ImportError, KeyError):
+            logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
+
+    now = datetime.now(tz) if tz else datetime.now()  # noqa: DTZ005 -- error text has no explicit timezone; falls back to local wall-clock, consistent with reset_time being derived from the same `now` a few lines below
+
+    month_str = m.group("month")
+    day_str = m.group("day")
+    if month_str and day_str:
+        _MONTHS = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        }
+        month = _MONTHS[month_str.lower()]
+        day = int(day_str)
+        try:
+            reset_time = now.replace(
+                month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
+            )
+            if reset_time <= now:
+                reset_time = reset_time.replace(year=now.year + 1)
+        except ValueError:
+            # An impossible date ("resets Feb 30", or Feb 29 rolled into a non-leap year) must not
+            # turn a recoverable rate-limit pause into a hard failure of generate(); fall through
+            # to the caller's default wait instead.
+            logger.warning("Could not interpret rate-limit reset date %r-%r; using the default wait", month_str, day_str)
+            return None
+    else:
+        reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if reset_time <= now:
+            reset_time += timedelta(days=1)
+
+    wait = (reset_time - now).total_seconds() + 60
+    return int(wait)
+
+
+def _is_rate_limit_error(error: BaseException) -> bool:
+    """Check if an exception is a rate limit error."""
+    msg = str(error)
+    if _RATE_LIMIT_PATTERN.search(msg):
+        return True
+    stderr = getattr(error, "stderr", "")
+    if stderr and _RATE_LIMIT_PATTERN.search(str(stderr)):
+        return True
+    return False

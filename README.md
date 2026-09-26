@@ -1,15 +1,17 @@
 # pyutilz
 
-[![CI](https://github.com/fingoldo/pyutilz/workflows/CI/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
-[![MyPy](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml)
-[![Black](https://github.com/fingoldo/pyutilz/workflows/Black/badge.svg)](https://github.com/fingoldo/pyutilz/actions)
-[![codecov](https://codecov.io/gh/fingoldo/pyutilz/branch/master/graph/badge.svg)](https://codecov.io/gh/fingoldo/pyutilz)
+[![CI](https://github.com/fingoldo/pyutilz/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/ci.yml?query=branch%3Amaster)
+[![MyPy](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/mypy-full.yml?query=branch%3Amaster)
+[![Black](https://github.com/fingoldo/pyutilz/actions/workflows/black-filtered.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/black-filtered.yml?query=branch%3Amaster)
+[![coverage](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?label=coverage)](https://codecov.io/gh/fingoldo/pyutilz)
 [![codecov-numba](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?flag=numba-disabled&label=codecov-numba)](https://codecov.io/gh/fingoldo/pyutilz/flags)
 [![codecov-full](https://img.shields.io/codecov/c/github/fingoldo/pyutilz/master?flag=combined&label=codecov-full)](https://codecov.io/gh/fingoldo/pyutilz/flags)
-[![PyPI](https://img.shields.io/pypi/v/pyutilz.svg)](https://pypi.org/project/pyutilz/)
-[![Python](https://img.shields.io/pypi/pyversions/pyutilz.svg)](https://pypi.org/project/pyutilz/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![Python 3.8-3.14](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/fingoldo/pyutilz)
+[![types: py.typed](https://img.shields.io/badge/types-py.typed-blue.svg)](https://peps.python.org/pep-0561/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg)](https://fingoldo.github.io/pyutilz/)
+[![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg?branch=master&event=push)](https://fingoldo.github.io/pyutilz/)
 
 A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core installs nine hard dependencies -- `numba`, `numpy`, `joblib`, `portalocker`, `psutil`, `pandas`, `tqdm`, `pympler` (plus `tomli` below Python 3.11) -- because `pyutilz.core.pythonlib` and `pyutilz.system.system`, the modules nearly every other subpackage imports, use them unconditionally at import time; `pyproject.toml` records the rationale per dependency. Everything heavier than that (scipy, Pillow, selenium, the cloud SDKs, the LLM SDKs, spaCy, ...) is opt-in through an extras group, so you install only the domains you actually use.
 
@@ -33,7 +35,7 @@ pip install pyutilz[prefect]          # prefect, requests (pyutilz.system.schedu
 pip install pyutilz[tensorflow]       # tensorflow (system.parallel.set_tf_gpu only)
 pip install pyutilz[gpu]              # cupy -- see the caveat below
 pip install pyutilz[docs]             # mkdocs-material, to build this documentation site
-pip install pyutilz[dev]              # pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-randomly + ruff + black + mypy + bandit + sqlglot
+pip install pyutilz[dev]              # pytest + pytest-cov + pytest-benchmark + pytest-asyncio + pytest-instafail + pytest-progress + pytest-timeout + pytest-xdist + pytest-randomly + ruff + black + mypy + bandit + sqlglot
 ```
 
 `[all]` = `pandas,polars,database,web,cloud,nlp,llm,system,stats,speedups`. It deliberately leaves out four
@@ -67,7 +69,7 @@ Requires Python 3.8+. Tested on 3.8 through 3.14.
 
 | Sub-package          | Purpose                                              |
 | -------------------- | ---------------------------------------------------- |
-| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata, matrix utilities, FileMaker integration, sidecar-verified `safe_pickle`, content-addressable `disk_cache` |
+| `pyutilz.core`       | Core Python helpers: type handling, object loading, lazy-import proxy, version metadata, matrix utilities, FileMaker integration, sidecar-verified `safe_pickle`, content-addressable `disk_cache` (array keys hash shape, dtype and every byte of the buffer, as a blake2b leaf tree; `_HASH_VERSION` 4, so entries written under the older head/tail summary miss once) |
 | `pyutilz.data`       | `pandaslib`, `polarslib`, `numpylib`, `numbalib`, `git_checkpoint_cache` (git-tracked backup + auto-restore for a machine-local cache) |
 | `pyutilz.database`   | PostgreSQL/MySQL helpers, parameterised queries, identifier validation, Redis, Delta Lake |
 | `pyutilz.web`        | HTTP/scraping utilities, browser automation, GraphQL, statistical proxy health-tracking, `url_guard` SSRF-style URL validation, `cached_client`, Decodo proxy provider |
@@ -151,6 +153,54 @@ rows = list_openrouter_models(
 top = rows[0]
 print(top["id"], top["health"]["best_uptime_30m"], top["health"]["best_latency_p50_ms"], "ms p50")
 ```
+
+**OpenRouter routing and request options** — constructor kwargs (hashable: tuples, and tuples of pairs for
+mappings, so the factory cache keeps working), all optional and sent only when set:
+
+| kwarg | wire field | notes |
+|---|---|---|
+| `provider_order`, `provider_only`, `provider_ignore` | `provider.order` / `only` / `ignore` | tuples of provider slugs |
+| `provider_sort`, `provider_allow_fallbacks` | `provider.sort` / `allow_fallbacks` | `"price"`, `"throughput"`, `"latency"` |
+| `provider_require_parameters` | `provider.require_parameters` | `None` (default) = automatic, see below; `True` / `False` = always / never |
+| `provider_data_collection` | `provider.data_collection` | `"allow"` or `"deny"`, checked at construction |
+| `provider_zdr` | `provider.zdr` | zero-data-retention endpoints only |
+| `provider_quantizations` | `provider.quantizations` | e.g. `("fp8", "bf16")` |
+| `provider_max_price` | `provider.max_price` | e.g. `(("prompt", 1), ("completion", 2))`, USD per 1M tokens |
+| `provider_preferred_min_throughput`, `provider_preferred_max_latency` | `provider.preferred_*` | a number, or percentiles `(("p90", 50),)` |
+| `models_fallback` | `models` | limits (`max_output_tokens`, `context_window`) become the minimum across the list; the cost estimate prices each call at the model that served it |
+| `enable_web_search`, `web_search_engine`, `web_search_max_results` | `plugins: [{"id": "web", ...}]` | citations land in `last_web_search_citations`, streamed calls included; a `:online` model suffix also works |
+| `pdf_engine` | `plugins: [{"id": "file-parser", "pdf": {"engine": ...}}]` | `"mistral-ocr"`, `"cloudflare-ai"`, `"native"` |
+| `transforms` | `transforms` | `("middle-out",)`, opt-in: it DROPS prompt content to fit the context |
+| `anthropic_top_level_cache` / `system_cache_control` | top-level `cache_control` / a `cache_control` breakpoint on the system prompt | the breakpoint form is what Gemini needs |
+| `extra_body` | merged into every request | `seed`, `user`, `stop`, `logprobs`, `verbosity`, ... |
+
+Automatic `require_parameters`: sent as `true` when the request carries `response_format` or asks the model to
+reason (an effort or a budget) AND the catalogue lists every parameter in the body for that model. The first half is
+the accurate default: without it OpenRouter may route to an endpoint that silently drops the schema or the reasoning
+request. The second half keeps it safe: the flag filters on every parameter, so a model whose catalogue lacks one we
+send (o-series and `temperature`) would otherwise have no endpoint left.
+
+Per call, `generate()` / `generate_stream()` on every OpenAI-compatible provider accept `tools=`, `tool_choice=`
+(tool calls are read from `last_tool_calls`) and `extra_body=` (merged last; a dict value merges one level into an
+existing one, so `extra_body={"provider": {"zdr": True}}` adds to the routing block). On OpenRouter, `thinking=<int>`
+sends a reasoning budget `{"reasoning": {"max_tokens": n}}`. A `json_schema` without `strict` is sent with
+`strict: true`; an explicit `strict: False` is sent as given and leaves `last_json_schema_applied` False. An upstream
+failure after generation started (OpenRouter's mid-stream error event, or `finish_reason: "error"`) raises
+`LLMStreamInterruptedError` with the fragment in `partial_text`, instead of returning it as an answer.
+
+**Errors, retries and cache keys (every provider)** — every provider error derives from `LLMProviderError`
+(`from pyutilz.llm import ...`): `LLMTruncationError` (output limit hit; `partial_text`), `LLMStreamInterruptedError`
+(upstream failed after generating; `partial_text`, `code`, `retryable`), `JSONParsingError` (also for JSON nested too
+deep to decode), `LLMRefusalError`, `LLMSafetyBlockError`, `LLMUnparseableResponseError`. Transient failures are
+retried with backoff up to `PYUTILZ_LLM_MAX_RETRIES` attempts (default 50, 0 = unlimited), within a total per-call
+deadline `PYUTILZ_LLM_MAX_CALL_SECONDS` (default 7200 s, 0 = none; checked between attempts only, so a long stream is
+never cut) and at most `PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS` read timeouts in a row (default 3, 0 = no cap); HTTP 402
+gets `PYUTILZ_LLM_BILLING_GRACE_SECONDS` (default 300). `generate_json(..., json_schema=...)` constrains output where
+the provider supports it, and `generate_batch` forwards each request's `images`, `thinking`, `json_mode` and
+`json_schema`. `provider.route_fingerprint()` is a SHA-256 over the provider, model and (on OpenRouter) every routing
+and request-shaping option, for keying response caches and benchmark results: equal configurations give equal keys,
+and credentials never enter it. A factory-cached provider can be used from successive `asyncio.run` calls; its
+semaphore and HTTP client are per event loop.
 
 **Statistical proxy health tracking** — bans a port only when its
 error rate is `ban_rate_multiplier` × the cohort average (computed

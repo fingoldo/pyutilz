@@ -3,8 +3,26 @@ name: CI
 on:
   push:
     branches: [main, master]
+    # A docs/audit-only push would otherwise spend the whole test matrix, mypy and black. Push only:
+    # "CI required checks" is a required status on PRs, and a required check that never runs leaves the
+    # PR pending forever instead of skipped. Mirrors mlframe's ci.yml.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "audits/**"
+      - "LICENSE"
   pull_request:
     branches: [main, master]
+  schedule:
+    # Sunday 03:17 UTC: the weekly full OS x Python sweep. Off the hour because scheduled runs queue
+    # account-wide and most crons sit on :00.
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: "Run the full three-OS, all-version sweep instead of the representative push legs"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,7 +36,45 @@ permissions:
   contents: read
 
 jobs:
+  # The matrix is chosen by EVENT, as in mlframe's ci.yml. A push runs five representative legs: ubuntu on
+  # the floor (3.8), the coverage leg (3.11) and the ceiling (3.14), plus windows and macOS on 3.11 so both
+  # non-linux branches of the platform-specific code (wmi/pywin32, cp1251 console, POSIX permission bits)
+  # still run on every commit. A pull_request, the weekly schedule and a workflow_dispatch with
+  # full_matrix=true run the full 21-leg sweep. The full sweep on every push cost ~150 runner-minutes
+  # (macOS billed 10x, windows 2x) and queued behind the ~20-concurrent-job account budget.
+  matrix-setup:
+    name: Choose the matrix for this event
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Build the job list
+        id: build
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FORCE_FULL: ${{ inputs.full_matrix }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+
+          full = os.environ["EVENT_NAME"] in ("pull_request", "schedule") or os.environ.get("FORCE_FULL") == "true"
+          versions = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+          if full:
+              legs = [{"os": "ubuntu-latest", "python-version": v} for v in versions]
+              legs += [{"os": "windows-latest", "python-version": v} for v in versions]
+              # macos-latest is arm64 and setup-python publishes no 3.8/3.9 build for it, so the floor
+              # runs on the Intel image instead of being dropped.
+              legs += [{"os": "macos-15-intel" if v in ("3.8", "3.9") else "macos-latest", "python-version": v} for v in versions]
+          else:
+              legs = [{"os": "ubuntu-latest", "python-version": v} for v in ("3.8", "3.11", "3.14")]
+              legs += [{"os": "windows-latest", "python-version": "3.11"}, {"os": "macos-latest", "python-version": "3.11"}]
+          print("matrix=" + json.dumps({"include": legs}))
+          PY
+
   test:
+    needs: matrix-setup
     runs-on: ${{ matrix.os }}
     # bash on every OS (it ships on the Windows runners too): the run: blocks below are
     # written in POSIX shell, and Windows would otherwise default to pwsh and parse them differently.
@@ -29,40 +85,34 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        # Three OSes since 2026-09-02: this library carries genuinely platform-specific code
-        # (wmi/pywin32 probes, a cp1251 console path, POSIX permission bits, path handling),
-        # and a linux-only matrix could never exercise either non-linux half of those branches.
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-        exclude:
-          # macos-latest is arm64, and setup-python publishes no 3.8/3.9 build for it.
-          - os: macos-latest
-            python-version: "3.8"
-          - os: macos-latest
-            python-version: "3.9"
-        include:
-          # Those two run on an Intel macOS image instead, so the supported floor keeps
-          # its macOS coverage rather than being silently dropped by the exclusion above.
-          - os: macos-15-intel
-            python-version: "3.8"
-          - os: macos-15-intel
-            python-version: "3.9"
+      # Three OSes since 2026-09-02: this library carries genuinely platform-specific code
+      # (wmi/pywin32 probes, a cp1251 console path, POSIX permission bits, path handling),
+      # and a linux-only matrix could never exercise either non-linux half of those branches.
+      matrix: ${{ fromJSON(needs.matrix-setup.outputs.matrix) }}
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         persist-credentials: false
         # test_no_stale_todos dates each TODO with git blame; a shallow clone dates every line to the boundary,
-        # so py-ci-shared's stale_comment_age refuses it rather than pass having checked nothing.
-        fetch-depth: 0
+        # so py-ci-shared's stale_comment_age refuses it rather than pass having checked nothing. Full history
+        # only on the ubuntu 3.11 leg, which always runs; the test skips explicitly on a shallow clone elsewhere.
+        fetch-depth: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '0' || '1' }}
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
         python-version: ${{ matrix.python-version }}
-        cache: pip
-        cache-dependency-path: pyproject.toml
+
+    # uv resolves and installs the heavy extras union several times faster than pip. The cache key covers
+    # requirements-dev.txt too: it carries the py-ci-shared pin every leg installs.
+    - name: Set up uv
+      uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+      with:
+        enable-cache: true
+        cache-dependency-glob: |
+          pyproject.toml
+          requirements-dev.txt
 
     - name: Install dependencies
       # Single unconditional install for every matrix leg. The two Python-floor incompatibilities
@@ -71,9 +121,10 @@ jobs:
       # thinc>=8.3.12 floor, `google-genai ; python_version >= '3.9'` for [llm]), so pip resolves
       # each leg correctly from metadata rather than from a hand-transcribed package list here
       # that silently drifts whenever those groups change (2026-09-02 packaging audit).
+      env:
+        UV_SYSTEM_PYTHON: "1"
       run: |
-        python -m pip install --upgrade pip
-        pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
+        uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
         # The meta-suite imports py_ci_shared directly (value_bearing_asserts, deferred_drift,
         # gate_integrity, ...). It is deliberately NOT in [dev] - a git+https requirement in project
         # metadata makes the distribution unpublishable - so it is installed from the declared
@@ -81,7 +132,7 @@ jobs:
         # let CI and the declared dependency name different commits.
         # py-ci-shared requires python>=3.9: the requirement's marker skips it on the 3.8 legs, where
         # conftest ignores the meta-tests that import it; on every other leg a missing install fails.
-        pip install -r requirements-dev.txt
+        uv pip install -r requirements-dev.txt
 
     - name: Download nltk punkt_tab data
       # [nlp] installs the nltk PACKAGE but not its corpora -- those are a separate runtime
@@ -98,14 +149,19 @@ jobs:
       run: python -m spacy download en_core_web_sm || true
 
     - name: Run tests with coverage
+      env:
+        # Lets test_no_stale_todos skip on the shallow legs (see fetch-depth above); unset on the full-history leg.
+        PYUTILZ_CI_SHALLOW_CLONE: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11') && '0' || '1' }}
       run: |
-        pytest -m "not gpu" --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
+        pytest -m "not gpu" -n auto --dist=loadgroup --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
       uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@6a8e3829678dab35e21d380292f7b34ae84c8d14  # v1.17.0  # pragma: allowlist secret
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
+        # Explicit flag so the per-push series is distinguishable from numba-disabled and combined.
+        flags: unit
         token: ${{ secrets.CODECOV_TOKEN }}
 
     # Raw sqlite `.coverage` (not the derived coverage.xml above) so codecov-full.yml can

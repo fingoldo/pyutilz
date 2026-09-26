@@ -138,8 +138,9 @@ class TestMaxOutputTokens:
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = "claude-opus-4-6"
         assert p.max_output_tokens == 128000
+        # 128K per https://platform.claude.com/docs/en/models/sonnet-4-6/overview (was 64K here, a stale figure).
         p.model = "claude-sonnet-4-6"
-        assert p.max_output_tokens == 64000
+        assert p.max_output_tokens == 128000
         p.model = "claude-haiku-4-5-20251001"
         assert p.max_output_tokens == 64000
 
@@ -153,13 +154,14 @@ class TestMaxOutputTokens:
 
     def test_claude_code_max_tokens(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
+        # A bare instance means the default alias, `opus` (Opus 5 on CLI 2.1.263): 128K output, not a flat 32000.
         p = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
-        assert p.max_output_tokens == 32000
+        assert p.max_output_tokens == 128000
 
     def test_claude_code_context_window(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider
         p = ClaudeCodeProvider.__new__(ClaudeCodeProvider)
-        assert p.context_window == 200_000
+        assert p.context_window == 1_000_000
 
     def test_xai_max_tokens(self):
         from pyutilz.llm.xai_provider import XAIProvider
@@ -324,8 +326,9 @@ class TestAnthropicProvider:
         p = AnthropicProvider.__new__(AnthropicProvider)
         p.model = "claude-unknown-future-model"
         inp, out = p._get_pricing()
-        assert inp == 3.00
-        assert out == 15.00
+        # The unknown-Claude fallback is the current Opus tier (pyutilz.llm._claude_models.UNKNOWN_CLAUDE_MODEL).
+        assert inp == 4.00
+        assert out == 20.00
 
     def test_missing_api_key_raises(self):
         from unittest.mock import patch, MagicMock

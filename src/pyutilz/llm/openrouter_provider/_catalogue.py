@@ -172,6 +172,24 @@ def _cache_read_cost_per_1m_or_none(model: str) -> "float | None":
         return None
 
 
+def _cache_write_cost_per_1m_or_none(model: str) -> "float | None":
+    """Return the prompt-cache WRITE USD-per-1M rate for ``model`` (``pricing.input_cache_write``), or None.
+
+    Verified against a live ``/models`` listing 2026-09-26: Anthropic entries carry ``input_cache_write`` (1.25x the
+    input rate, the 5-minute TTL) and ``input_cache_write_1h`` (2x). The usage block does not say which TTL a write
+    used, and this package only ever requests the default ephemeral (5-minute) cache, so the 5-minute rate is the one.
+    None means the catalogue does not say, and the caller prices writes at the plain input rate.
+    """
+    entry = _fetch_models_catalogue().get(model)
+    raw = ((entry or {}).get("pricing") or {}).get("input_cache_write")
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+
+
 def _per_token_cost_pair(model: str) -> tuple[float, float]:
     """Return ``(input_cost_per_1m, output_cost_per_1m)`` for ``model``, or ``(0.0, 0.0)`` with a
     one-time warning when the catalogue has no pricing for it."""

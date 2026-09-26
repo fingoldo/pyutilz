@@ -67,15 +67,8 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> Iterator[list]:
     """
     if chunk_size < 1:
         raise ValueError(f"split_list_into_chunks: chunk_size must be >= 1, got {chunk_size}")
-    t = len(the_list)
-    n = int(t / chunk_size)
-    for i in range(n + 1):
-        left = i * chunk_size
-        r = left + chunk_size
-        if r > t:
-            r = t
-        if r > left:
-            yield the_list[left:r]
+    for left, r in split_list_into_chunks_indices(the_list, chunk_size):
+        yield the_list[left:r]
 
 
 def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[tuple]:
@@ -90,14 +83,8 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[
     if chunk_size < 1:
         raise ValueError(f"split_list_into_chunks_indices: chunk_size must be >= 1, got {chunk_size}")
     t = len(the_list)
-    n = int(t / chunk_size)
-    for i in range(n + 1):
-        left = i * chunk_size
-        r = left + chunk_size
-        if r > t:
-            r = t
-        if r > left:
-            yield left, r
+    for left in range(0, t, chunk_size):
+        yield left, min(left + chunk_size, t)
 
 
 def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tuple]:
@@ -127,23 +114,13 @@ def split_array(arr: Sized, step: int) -> list:
     Returns list of (a,b) tuples of array split into chunks using certain step size.
     >>> split_array(np.random.uniform(0,1,5477),step=1000)
     [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000), (4000, 5000), (5000, 5477)]
-    """
 
-    length = len(arr)
-    a = 0
-    b = a
-    res = []
-    assert step > 0  # nosec B101 - internal argument-validity invariant (positive chunk size), not a security check
-    while True:
-        b = a + step
-        if b >= length:
-            b = length
-        if b > 0:
-            res.append((a, b))
-        if b == length:
-            break
-        a = b
-    return res
+    Raises:
+        ValueError: ``step < 1`` (was an ``assert``, which ``python -O`` strips, leaving an infinite loop for step 0).
+    """
+    if step < 1:
+        raise ValueError(f"split_array: step must be >= 1, got {step}")
+    return list(split_list_into_chunks_indices(arr, step))  # type: ignore[arg-type]  # only len() is used
 
 
 def distribute_work(workload: Sequence, n_jobs: Optional[int] = None, nworkers: Optional[int] = None) -> tuple:
@@ -170,11 +147,18 @@ def distribute_work(workload: Sequence, n_jobs: Optional[int] = None, nworkers: 
     workload_indices_per_worker: List[List[Any]] = [[] for _ in range(n_jobs)]
     totals = [(0, i) for i in range(n_jobs)]
     heapq.heapify(totals)
-    for i, value in enumerate(workload):
+    # Largest-first (LPT): greedy least-loaded assignment in INPUT order can leave the slowest worker at ~2x the ideal
+    # load; in descending order it is bounded by 4/3 of optimal. The sort is stable, so equal sizes keep input order.
+    assigned: List[List[int]] = [[] for _ in range(n_jobs)]
+    for i in sorted(range(len(workload)), key=lambda j: -workload[j]):
         total, index = heapq.heappop(totals)
-        planned_work_per_worker[index].append(value)
-        workload_indices_per_worker[index].append(i)
-        heapq.heappush(totals, (total + value, index))
+        assigned[index].append(i)
+        heapq.heappush(totals, (total + workload[i], index))
+    # Each worker's items are returned in input order, as before.
+    for index, idxs in enumerate(assigned):
+        idxs.sort()
+        workload_indices_per_worker[index].extend(idxs)
+        planned_work_per_worker[index].extend(workload[i] for i in idxs)
     return planned_work_per_worker, workload_indices_per_worker
 
 

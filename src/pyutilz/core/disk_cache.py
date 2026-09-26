@@ -5,7 +5,7 @@ dominates a single call, invoked repeatedly across hyperparam sweeps / ablations
 updates where the inputs recur exactly or near-exactly. Caching the result amortises the cost
 across re-calls with zero correctness loss. NOT a replacement for ``functools.lru_cache``
 (in-process, hash-keyed by identity-of-args) or ``joblib.Memory`` (persists pickled function
-arguments, slow for large arrays) -- this is content-addressable, summary-hashed, multi-process
+arguments, slow for large arrays) -- this is content-addressable, content-hashed, multi-process
 safe, and built for numpy/pandas-shaped inputs specifically.
 
 Ported from a downstream ML project's own shared cache module (used across two independent
@@ -15,9 +15,8 @@ consumers there). Design:
   bit-identical bytes (last-writer-wins via atomic rename), so no locking is needed across
   processes. The cache is safe under parallel workers.
 
-* Hashing avoids reading the full payload bytes. :func:`hash_array_summary` computes a stable
-  summary from (shape, dtype, first/last N rows, per-column sum/min/max); this keeps the key cost
-  O(rows + cols) instead of O(rows*cols), which matters for large arrays.
+* Hashing covers the full content. :func:`hash_array_summary` (name kept for compatibility) hashes
+  shape, dtype and every byte of the array with a fixed-leaf blake2b tree, parallel across leaves.
 
 * Atomic writes: write to ``tmp_<uuid>.pkl``, ``os.replace`` to the final path. ``os.replace`` is
   atomic on both POSIX and Windows (when source and destination share a filesystem); a crash
@@ -46,12 +45,12 @@ import pickle  # nosec B403 - pickle used only for trusted same-process/dev-loca
 import struct
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional, Union
 
 import numpy as np
 
-from pyutilz.core.array_summary import column_sum_min_max
 from pyutilz.core.safe_pickle import PickleVerificationError, safe_load, write_sidecar
 
 
@@ -74,10 +73,8 @@ __all__ = [
 ]
 
 
-# Number of leading + trailing rows fed into the array summary hash. 64 is enough to discriminate
-# practical near-collisions (random row shuffles change the head/tail bytes) without making the
-# hash O(rows). Column-axis coverage comes from per-column min/max/sum below, so even a
-# single-row change to a middle row is caught when the column-sum changes.
+# Former head/tail row count of the (retired, v<=3) summary hash. Kept only as the default of the ignored
+# ``n_summary_rows`` parameter so existing callers keep working.
 _DEFAULT_SUMMARY_ROWS = 64
 
 # Default cache cap: ~1 GB.
@@ -99,7 +96,9 @@ _HASH_DIGEST_BYTES = 16
 #   v3 (2026-09-03): non-numeric dtypes are no longer summarised by head/tail bytes alone --
 #   bool/datetime64/timedelta64 get exact integer column reductions, string/void dtypes hash their
 #   full buffer, and object dtype hashes element values instead of heap pointers.
-_HASH_VERSION = 3
+#   v4 (2026-09-26): every non-object dtype hashes its FULL buffer (leaf-tree blake2b); the head/tail + sum/min/max
+#   summary collided on middle-row swaps and on any change in a column containing a NaN.
+_HASH_VERSION = 4
 
 
 def _hasher() -> Any:
@@ -124,28 +123,73 @@ def _buffer(arr: np.ndarray) -> memoryview:
     its way to reduce correctly. Viewing the contiguous buffer as raw bytes first works for every
     dtype including 0-d, empty, structured and fixed-width string arrays.
     """
-    return np.ascontiguousarray(arr).view(np.uint8).data
+    # ``reshape(-1)``: a 2-D array gives a 2-D memoryview whose slices are ROWS, not bytes; the leaf hasher slices bytes.
+    return np.ascontiguousarray(arr).view(np.uint8).reshape(-1).data
+
+
+# Full-content hashing: the buffer is cut into fixed-size leaves, each leaf is blake2b-hashed (in a thread pool when there
+# is more than one leaf; hashlib releases the GIL on large updates), and the leaf digests are hashed in order. The leaf
+# size is a constant, never derived from the core count, so the digest is identical on every machine. Measured on 20M
+# float64 (160 MB): one serial blake2b pass 0.83 s, the leaf tree about 0.2 s on 8 threads.
+_LEAF_BYTES = 8 << 20
+_MAX_HASH_THREADS = 8
+
+
+def _feed_full_buffer(h: Any, arr: np.ndarray) -> None:
+    """Feed a digest of EVERY byte of *arr* (C order) into *h*: single pass for one leaf, leaf tree otherwise.
+
+    A leaf is a whole number of elements (``_LEAF_BYTES // itemsize``), so a strided input can be hashed leaf by leaf
+    through ``arr.flat[i:j]`` (a C-order copy of just that leaf) instead of materialising a contiguous duplicate of the
+    whole array, and still produce exactly the digest of its contiguous copy.
+    """
+    n_elems = int(arr.size)
+    itemsize = int(arr.dtype.itemsize)
+    h.update(struct.pack("<Q", n_elems * itemsize))
+    leaf_elems = max(1, _LEAF_BYTES // max(1, itemsize))
+    contiguous = bool(arr.flags["C_CONTIGUOUS"])
+    if n_elems <= leaf_elems:
+        h.update(_buffer(arr))
+        return
+    flat_buf = _buffer(arr) if contiguous else None
+
+    def _leaf_digest(start: int) -> bytes:
+        """blake2b digest of the leaf starting at element ``start`` (the last leaf may be shorter)."""
+        stop = min(start + leaf_elems, n_elems)
+        if flat_buf is not None:
+            chunk = flat_buf[start * itemsize : stop * itemsize]
+        else:
+            chunk = _buffer(arr.flat[start:stop])
+        return hashlib.blake2b(chunk, digest_size=_HASH_DIGEST_BYTES).digest()
+
+    starts = range(0, n_elems, leaf_elems)
+    n_workers = min(_MAX_HASH_THREADS, len(starts), os.cpu_count() or 1)
+    if n_workers <= 1:
+        digests = [_leaf_digest(st) for st in starts]
+    else:
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            digests = list(pool.map(_leaf_digest, starts))
+    h.update(b"T")
+    for d in digests:
+        h.update(d)
 
 
 def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_ROWS) -> str:
-    """Stable content hash of an ndarray from a sub-O(N) summary.
+    """Stable content hash of an ndarray over its FULL content.
 
     Hash inputs (in order, length-tagged so concatenation can't collide):
-      1. shape tuple
-      2. dtype.str (e.g. ``'<f8'``)
-      3. First ``n_summary_rows`` rows' raw bytes
-      4. Last ``n_summary_rows`` rows' raw bytes
-      5. Per-column ``sum``, ``min``, ``max`` (float64 cast for stability)
+      1. ``_HASH_VERSION``
+      2. shape tuple
+      3. dtype.str (e.g. ``'<f8'``)
+      4. every byte of the array in C order (object arrays: the ``repr`` of their element values)
 
-    For 1-D arrays the row slicing degrades to head/tail slices. For 0-D (scalar) arrays the slice
-    is the whole array.
+    Until ``_HASH_VERSION`` 4 this was a summary (head/tail rows plus per-column sum/min/max), which gave the same key for
+    two arrays differing only in the order of middle rows, or anywhere in a column containing a NaN (sum/min/max all
+    NaN), so ``DiskCache`` returned results computed for different data. The summary pass already read every element,
+    so it was never sub-O(N); the full hash costs a constant factor more and is exact.
 
-    The array is NOT copied to C order up front: only the head/tail row slices need contiguity and
-    they are individually wrapped below, so a strided input (e.g. a column view of a bigger frame)
-    no longer costs a full duplicate allocation at exactly the moment a large array is in flight.
-
-    Returns a 32-character hex string.
+    ``n_summary_rows`` is accepted for backward compatibility and ignored. Returns a 32-character hex string.
     """
+    del n_summary_rows
     arr = np.asarray(arr)
     h = _hasher()
     h.update(struct.pack("<I", _HASH_VERSION))
@@ -157,49 +201,12 @@ def hash_array_summary(arr: np.ndarray, n_summary_rows: int = _DEFAULT_SUMMARY_R
     h.update(dtype_bytes)
     if arr.size == 0:
         return str(h.hexdigest())
-    kind = arr.dtype.kind
-    if kind == "O":
-        # ``tobytes()`` on an object array serialises PyObject* ADDRESSES, which differ in every
-        # process -- the key would never be reproducible. Hash the element VALUES instead; there is
-        # no per-column reduction that could catch a middle-row change otherwise, so the whole
-        # array is fed, not just head/tail.
+    if arr.dtype.kind == "O":
+        # ``tobytes()`` on an object array serialises PyObject* ADDRESSES, which differ in every process -- hash the
+        # element VALUES instead.
         h.update(repr(arr.tolist()).encode("utf-8", "backslashreplace"))
-    elif kind in "SUV":
-        # Fixed-width string / bytes / structured dtypes have no numeric reduction below, so
-        # head/tail bytes would be the ONLY content-bearing input and every middle-row difference
-        # would collide. Feed the full buffer.
-        h.update(_buffer(arr))
-    elif arr.ndim == 0:
-        h.update(_buffer(arr))
     else:
-        head_n = min(n_summary_rows, arr.shape[0])
-        tail_n = min(n_summary_rows, arr.shape[0])
-        h.update(_buffer(arr[:head_n]))
-        h.update(_buffer(arr[-tail_n:]))
-    if kind in "bMm":
-        # bool / datetime64 / timedelta64 are not ``np.number`` subtypes, so the reductions below
-        # used to be skipped entirely and only head/tail rows discriminated. View them through
-        # their integer counterparts and reduce EXACTLY in int64 (a float64 cast would lose the
-        # low bits of nanosecond timestamps).
-        red = arr.view(np.int8) if kind == "b" else arr.view(np.int64)
-        axis = 0 if red.ndim >= 2 else None
-        h.update(_buffer(np.asarray(red.sum(axis=axis, dtype=np.int64))))
-        h.update(_buffer(np.asarray(red.min(axis=axis)).astype(np.int64)))
-        h.update(_buffer(np.asarray(red.max(axis=axis)).astype(np.int64)))
-    elif arr.ndim >= 2 and np.issubdtype(arr.dtype, np.number):
-        # One fused pass instead of three full strided numpy reductions -- measured 175 ms -> 5.4 ms
-        # on a (2_000_000, 4) float64 array. This is the cache-KEY computation, so on a cache HIT it
-        # used to be able to cost more than the work being cached.
-        col_sum, col_min, col_max = column_sum_min_max(arr)
-        h.update(_buffer(col_sum))
-        h.update(_buffer(col_min))
-        h.update(_buffer(col_max))
-    elif arr.ndim == 1 and np.issubdtype(arr.dtype, np.number):
-        triplet = np.array(
-            [float(arr.sum(dtype=np.float64)), float(arr.min()), float(arr.max())],
-            dtype=np.float64,
-        )
-        h.update(_buffer(triplet))
+        _feed_full_buffer(h, arr)
     return str(h.hexdigest())
 
 
@@ -254,8 +261,7 @@ def _feed(h: Any, obj: Any) -> None:
         for item in sorted(obj, key=lambda x: repr(x)):
             _feed(h, item)
     elif isinstance(obj, np.ndarray):
-        # Defer to the summary hasher so arrays nested inside dicts/tuples don't drag the full
-        # bytes into the hash.
+        # Defer to the array hasher so a nested array contributes a fixed-width digest, not its raw bytes.
         h.update(b"A")
         h.update(hash_array_summary(obj).encode("ascii"))
     elif hasattr(obj, "tolist"):

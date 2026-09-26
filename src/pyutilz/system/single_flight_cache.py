@@ -142,7 +142,6 @@ class SingleFlightCache(Generic[_K, _V]):
             self.hits += 1
             return cast("_V", value)
 
-        self.misses += 1
         is_fetcher = False
         evt: Optional[asyncio.Event] = None
         async with self._get_inflight_lock():
@@ -150,7 +149,10 @@ class SingleFlightCache(Generic[_K, _V]):
             # while we were waiting for the lock.
             value = cache.get(key, _MISSING)
             if value is not _MISSING:
+                # Another coroutine filled it while we waited for the lock: this call is a hit, not a miss.
+                self.hits += 1
                 return cast("_V", value)
+            self.misses += 1
             if key not in self._inflight:
                 self._inflight[key] = asyncio.Event()
                 is_fetcher = True
@@ -180,8 +182,10 @@ class SingleFlightCache(Generic[_K, _V]):
             logger.debug("SingleFlightCache.get_or_fetch: fetcher for %r raised; returning default (not cached)", key, exc_info=True)
             return default
         finally:
-            async with self._get_inflight_lock():
-                evt = self._inflight.pop(key, None)
+            # No lock and no await here: the class is bound to ONE event loop, so pop + set run atomically with respect
+            # to every other coroutine. Awaiting the lock used to leave a window where a second cancellation (delivered
+            # while waiting for it) skipped ``evt.set()`` and blocked every waiter on this key forever.
+            evt = self._inflight.pop(key, None)
             if evt is not None:
                 evt.set()
 

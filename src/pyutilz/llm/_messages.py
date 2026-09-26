@@ -161,6 +161,22 @@ def build_gemini_parts(prompt: str, images: "list[str] | None" = None) -> "str |
     return parts if len(parts) > 1 else prompt
 
 
+#: Media types ``images_on_disk`` will write, and the extension each gets.
+_IMAGE_EXTENSIONS: dict[str, str] = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/bmp": "bmp",
+    "image/tiff": "tiff",
+    "image/svg+xml": "svg",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/avif": "avif",
+}
+
+
 @contextlib.contextmanager
 def images_on_disk(images: list[str] | None) -> Iterator[tuple[str, list[Path]]]:
     """Write `data:` URIs to temporary files and yield the prompt fragment that points at them.
@@ -194,8 +210,15 @@ def images_on_disk(images: list[str] | None) -> Iterator[tuple[str, list[Path]]]
             except Exception:  # a malformed part is dropped, never fatal
                 dropped.append("an image whose base64 payload will not decode")
                 continue
-            extension = media_type.split("/", 1)[1].split("+")[0]
+            # The extension comes from an allowlist, never from the URI. The media type is caller data, and
+            # ``image/x/../../name`` used to become a path that escaped the temp dir and outlived the call.
+            extension = _IMAGE_EXTENSIONS.get(media_type.lower())
+            if extension is None:
+                dropped.append("an image of an unsupported media type")
+                continue
             path = directory / f"attachment_{index + 1}.{extension}"
+            if path.resolve().parent != directory.resolve():  # pragma: no cover - unreachable with allowlisted names
+                raise ValueError(f"refusing to write an attachment outside {directory}")
             path.write_bytes(raw)
             written.append(path)
         _report_dropped(dropped, len(images), "claude-code")

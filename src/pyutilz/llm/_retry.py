@@ -5,13 +5,16 @@ pipeline batches survive temporary outages, rate-limit windows, and billing
 pauses without operator intervention.
 
 By default retries up to ``MAX_RETRY_ATTEMPTS`` times (configurable via the
-``PYUTILZ_LLM_MAX_RETRIES`` environment variable, 0 = infinite).
+``PYUTILZ_LLM_MAX_RETRIES`` environment variable, 0 = infinite), within a total
+per-call deadline (``PYUTILZ_LLM_MAX_CALL_SECONDS``, default 7200, 0 = none) and a cap on
+consecutive read timeouts (``PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS``, default 3, 0 = none).
 """
 
 from __future__ import annotations  # PEP 604 in a runtime-evaluated annotation below; the floor is 3.8
 
 import logging
 import os
+from typing import Any
 
 from tenacity import (
     stop_after_attempt,
@@ -94,6 +97,55 @@ if BILLING_GRACE_SECONDS < 0:
     BILLING_GRACE_SECONDS = 300.0
 
 
+# ── A total deadline per call, and a cap on back-to-back read timeouts ─────────────────────────────
+#
+# Without these the only elapsed-time stop was the 402 grace: 50 attempts, each allowed up to 3,000 s by the
+# derived timeout, with up to 300 s of backoff between them, put the worst case for ONE call near 46 hours.
+#
+# The deadline is checked only BETWEEN attempts, never during one, so a long legitimate stream is never cut: an
+# attempt that started before the deadline runs to its own timeout, and the deadline only refuses to start
+# another. It is sized to let two full-length derived-timeout attempts (2 x 3,000 s) plus backoff fit.
+_DEFAULT_MAX_CALL_SECONDS = 7200.0
+_DEFAULT_MAX_CONSECUTIVE_TIMEOUTS = 3
+
+
+def _env_number(name: str, default: float) -> float:
+    """A non-negative float from the environment, warning and falling back to ``default`` on junk."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number; falling back to %s.", name, raw, default)
+        return default
+    if value < 0:
+        logger.warning("%s=%s is negative; falling back to %s. Use 0 to disable.", name, value, default)
+        return default
+    return value
+
+
+#: Seconds after the first attempt started past which no further attempt is started. 0 disables the deadline.
+MAX_CALL_SECONDS: float = _env_number("PYUTILZ_LLM_MAX_CALL_SECONDS", _DEFAULT_MAX_CALL_SECONDS)
+#: Consecutive read timeouts after which a call gives up. A silent route that times out at the derived ceiling
+#: will do it again, and each such attempt may be billed upstream while it generated. 0 disables the cap.
+MAX_CONSECUTIVE_TIMEOUTS: int = int(_env_number("PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS", _DEFAULT_MAX_CONSECUTIVE_TIMEOUTS))
+
+#: Exception class names that mean "the attempt waited for the model and gave up", across httpx and the SDKs.
+_READ_TIMEOUT_NAMES = frozenset({"ReadTimeout", "APITimeoutError", "DeadlineExceeded", "TimeoutError"})
+
+
+def _is_read_timeout(exc: BaseException | None) -> bool:
+    """True for a read-side timeout (httpx ``ReadTimeout``, SDK timeout errors, builtin ``TimeoutError``).
+
+    Matched by class name through the MRO rather than by import, for the same reason as ``_is_billing_pause``.
+    A ``ConnectTimeout`` is not one: it fails fast and says nothing about a route that has gone silent.
+    """
+    if exc is None:
+        return False
+    return any(cls.__name__ in _READ_TIMEOUT_NAMES for cls in type(exc).__mro__)
+
+
 def _is_billing_pause(exc: BaseException | None) -> bool:
     """True for an HTTP 402 from any provider.
 
@@ -105,10 +157,28 @@ def _is_billing_pause(exc: BaseException | None) -> bool:
     return getattr(response, "status_code", None) == 402
 
 
-def _stop_policy(retry_state) -> bool:
-    """The shared attempt cap, plus an earlier cut-off for billing pauses."""
-    if _is_billing_pause(retry_state.outcome.exception() if retry_state.outcome else None):
-        elapsed = retry_state.seconds_since_start or 0.0
+def _stop_policy(retry_state: Any) -> bool:
+    """The shared attempt cap, plus a total deadline, a consecutive-timeout cap and a billing-pause cut-off."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    elapsed = retry_state.seconds_since_start or 0.0
+    if MAX_CALL_SECONDS and elapsed >= MAX_CALL_SECONDS:
+        logger.error(
+            "Giving up after %.0fs across %d attempt(s): the call deadline is %.0fs (PYUTILZ_LLM_MAX_CALL_SECONDS, 0 = none).",
+            elapsed, retry_state.attempt_number, MAX_CALL_SECONDS,
+        )
+        return True
+    # The streak lives on the RetryCallState, which tenacity creates per call, so it never leaks between calls.
+    streak = getattr(retry_state, "_pyutilz_timeout_streak", 0)
+    streak = streak + 1 if _is_read_timeout(exc) else 0
+    retry_state._pyutilz_timeout_streak = streak
+    if MAX_CONSECUTIVE_TIMEOUTS and streak >= MAX_CONSECUTIVE_TIMEOUTS:
+        logger.error(
+            "Giving up after %d consecutive read timeouts: the route is not answering within the timeout "
+            "(PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS, 0 = no cap).",
+            streak,
+        )
+        return True
+    if _is_billing_pause(exc):
         if elapsed >= BILLING_GRACE_SECONDS:
             logger.error(
                 "Giving up after %.0fs of HTTP 402 (account out of credits). "

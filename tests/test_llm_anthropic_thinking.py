@@ -78,7 +78,9 @@ class TestGenerateRequestBody:
         # Constructed properly (with a fake key) rather than via __new__: generate()
         # touches a dozen counters __init__ seeds, and stubbing them one by one is
         # how a test ends up asserting against a half-built object.
-        p = AnthropicProvider(api_key="sk-fake-test-key-not-real")
+        # A budget-thinking model: these tests pin the manual `budget_tokens` shape. Adaptive-thinking models
+        # (the default and every current one) are covered in tests/llm/test_providers_coverage_20260926.py.
+        p = AnthropicProvider(api_key="sk-fake-test-key-not-real", model="claude-sonnet-4-20250514")
 
         captured: dict = {}
         block = MagicMock()

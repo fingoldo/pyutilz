@@ -54,12 +54,16 @@ def test_provider_class_declares_own_override(module_path, class_name, expected)
     import importlib
     mod = importlib.import_module(module_path)
     cls = getattr(mod, class_name)
-    # Must have its OWN definition, not just inherited.
-    assert "supports_json_mode" in cls.__dict__, f"{class_name} must declare its own supports_json_mode " f"(currently inheriting base default)"
+    # Must have its OWN definition, not the base default. "Own" includes a provider-specific mixin in its MRO:
+    # OpenAICompatibleProvider's moved to _openai_compat_body.RequestBodyMixin when openai_compat was split.
+    from pyutilz.llm.base import LLMProvider
+
+    owner = next(k for k in cls.__mro__ if "supports_json_mode" in k.__dict__)
+    assert owner is not LLMProvider, f"{class_name} must declare its own supports_json_mode (currently inheriting base default)"
     # Method should return the documented expected value when called
     # on an instance — but instantiating each provider needs API keys
     # / SDK setup. Inspect the function bytecode default instead.
-    fn = cls.__dict__["supports_json_mode"]
+    fn = owner.__dict__["supports_json_mode"]
     # Find the literal True/False the function returns (covers the
     # simple ``return True`` / ``return False`` overrides).
     import dis
