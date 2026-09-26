@@ -352,6 +352,32 @@ OPT_IN_ONLY: frozenset[str] = frozenset({
 })
 
 
+# Each scanner that has a py-ci-shared gate for the same bug class, mapped to that gate's module. Both are kept:
+# measured on pyutilz and mlframe, every pair reports sites the other misses, or the scanner's name carries
+# baseline keys in consumer ratchets that retiring it would re-key. Each scanner module's docstring names its
+# gate and says how the two differ; test_shared_gate_counterparts pins both.
+SHARED_GATE_COUNTERPARTS: dict[str, str] = {
+    "additive_epsilon_denominator": "py_ci_shared.epsilon_padded_denominators",
+    "bare_except": "py_ci_shared.swallowed_exceptions",
+    "broad_except_swallow": "py_ci_shared.swallowed_exceptions",
+    "default_via_or": "py_ci_shared.sentinel_or_fallback",
+    "import_cycle": "py_ci_shared.import_cycles",
+    "unpicklable_resource_state": "py_ci_shared.pickle_state_completeness",
+    "stale_source_citation": "py_ci_shared.stale_source_citations",
+    "wall_clock_assertion": "py_ci_shared.clock_day_boundary",
+    "vacuous_loop_assertion": "py_ci_shared.vacuous_loop_assertions",
+    "nondiscriminating_test": "py_ci_shared.nondiscriminating_shapes",
+    "source_text_assertion": "py_ci_shared.source_text_claims",
+    "duplicate_function_body": "py_ci_shared.drifted_duplicate_functions",
+    "near_duplicate_function_body": "py_ci_shared.drifted_duplicate_functions",
+    "reexport_patch_target": "py_ci_shared.inert_patch_targets",
+    "patch_target_is_a_reexport": "py_ci_shared.inert_patch_targets",
+    "comment_names_missing_symbol": "py_ci_shared.phantom_code_references",
+    "undeclared_import": "py_ci_shared.unresolved_imports",
+    "getattr_literal_on_known_dataclass": "py_ci_shared.config_getattr_default_parity",
+}
+
+
 def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     """Return a COPY of the scanner registry (mirrors kernel_tuning/registry.py's
     ``get_registry()`` pattern) -- the ONLY supported way to read the registry, so an accidental

@@ -70,3 +70,18 @@ def test_production_code_never_reloads_a_module():
 def test_no_identity_comparison_of_string_constants():
     """`x is SOME_STRING` holds only while CPython happens to intern both sides; compare strings by value."""
     assert_no_identity_comparisons(sorted(SRC.rglob("*.py")), root=REPO_ROOT, min_files=200)
+
+
+def test_every_counterpart_gate_named_by_code_audit_exists():
+    """SHARED_GATE_COUNTERPARTS in pyutilz's code_audit registry points at gates by module name; each must import."""
+    import importlib
+
+    from pyutilz.dev.code_audit.registry import SHARED_GATE_COUNTERPARTS
+
+    missing = []
+    for gate in sorted(set(SHARED_GATE_COUNTERPARTS.values())):
+        try:
+            importlib.import_module(gate)
+        except ImportError as exc:
+            missing.append(f"{gate}: {exc}")
+    assert missing == [], "counterpart gates that do not import: " + "; ".join(missing)

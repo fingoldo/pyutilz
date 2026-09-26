@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.phantom_code_references checks every backticked name and test file
+in a comment. This scanner is narrower (backticked private calls) but also flags absolute-line citations.
+"""
 
 from __future__ import annotations
 

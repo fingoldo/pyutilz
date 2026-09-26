@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.source_text_claims reports every site this scanner does and more.
+This scanner stays because consumers hold baseline keys under its name.
+"""
 from __future__ import annotations
 
 import ast

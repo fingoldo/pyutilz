@@ -1,4 +1,9 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.swallowed_exceptions reports a handler whose whole body is
+pass/continue, in production code only. This scanner reports any broad handler without a warning-level
+log or re-raise, in every tree, so it stays.
+"""
 from __future__ import annotations
 
 import ast

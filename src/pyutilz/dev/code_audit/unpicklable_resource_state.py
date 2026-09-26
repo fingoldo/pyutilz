@@ -1,4 +1,9 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.pickle_state_completeness judges a live resource assigned OUTSIDE
+__init__ and a copy-form __getstate__ that forgets a cache. This scanner also reports a lock, event or
+process handle created in __init__ of a class with no __getstate__, so it stays.
+"""
 from __future__ import annotations
 
 import ast

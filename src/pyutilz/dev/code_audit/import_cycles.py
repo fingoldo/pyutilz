@@ -1,4 +1,9 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.import_cycles finds every cycle this scanner does plus the
+package-facade ones it misses, and simulates import order. This scanner stays for the projects that
+run only code_audit_meta; a project running the gate gets a superset.
+"""
 from __future__ import annotations
 
 import ast

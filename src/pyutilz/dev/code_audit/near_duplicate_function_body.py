@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.drifted_duplicate_functions groups copies by name and signature.
+This scanner compares bodies across names, so the two report different pairs.
+"""
 from __future__ import annotations
 
 import ast

@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.unresolved_imports reports a first-party from-import whose name does
+not exist. This scanner reports a third-party import missing from the declared dependencies.
+"""
 from __future__ import annotations
 
 import ast

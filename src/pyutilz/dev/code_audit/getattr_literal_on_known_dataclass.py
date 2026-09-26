@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.config_getattr_default_parity compares a getattr default with a
+pydantic schema default. This scanner reports a getattr literal naming a field a dataclass does not have.
+"""
 
 from __future__ import annotations
 

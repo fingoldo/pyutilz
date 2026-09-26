@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.vacuous_loop_assertions ratchets floorless assert-only loops by
+function and ordinal. The two disagree on what counts as a floor, so neither replaces the other.
+"""
 
 from __future__ import annotations
 

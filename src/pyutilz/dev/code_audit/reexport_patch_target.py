@@ -6,6 +6,9 @@ their false-positive suppression rule. THIS one is the narrower, older half: it 
 ambiguity when it cannot see the call site's binding style, so it is the stricter reading and can
 speak about a case its sibling stays silent on. Registered but listed in `registry.OPT_IN_ONLY`,
 so upgrading pyutilz does not suddenly report every site twice; name it in `checks=` to run it.
+
+Shared-gate counterpart: py_ci_shared.inert_patch_targets reports a patch of a name the module does not
+have. This scanner reports a patch of a name the module has only as a re-export, a different shape.
 """
 
 from __future__ import annotations

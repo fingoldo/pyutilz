@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.sentinel_or_fallback reports value-or-fallback only on a declared
+list of setting names (max_tokens, seed, timeout...). This scanner is the general shape with heuristics.
+"""
 from __future__ import annotations
 
 import ast

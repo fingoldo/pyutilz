@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.nondiscriminating_shapes names per-shape reasons (wide literal
+ranges, envelope and median-error asserts, late skips). The shape lists barely overlap, so both run.
+"""
 
 from __future__ import annotations
 

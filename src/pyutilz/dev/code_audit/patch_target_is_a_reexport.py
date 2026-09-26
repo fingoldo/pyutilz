@@ -6,6 +6,9 @@ false-positive suppression rule, and this one is the more permissive reading: it
 the facade also calls the name, because the patch then does reach a real call and which one the
 test means is not decidable from here (see the third bullet of the reported-when list below). Its
 sibling reports that case, and is `registry.OPT_IN_ONLY` for exactly that reason.
+
+Shared-gate counterpart: py_ci_shared.inert_patch_targets reports a patch of a name the module does not
+have. This scanner reports a patch of a name the module has only as a re-export, a different shape.
 """
 
 from __future__ import annotations

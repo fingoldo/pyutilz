@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart for wall_clock_assertion: py_ci_shared.clock_day_boundary takes the other half
+of the same proposal, a real clock shifted by part of a day. The two report disjoint shapes.
+"""
 
 from __future__ import annotations
 

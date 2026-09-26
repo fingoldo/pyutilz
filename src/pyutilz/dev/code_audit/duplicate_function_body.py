@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.drifted_duplicate_functions reports same-named module-level copies
+that drifted apart. This scanner reports identical bodies under any name, which the gate never does.
+"""
 from __future__ import annotations
 
 import ast

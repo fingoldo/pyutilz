@@ -1,4 +1,9 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.stale_source_citations resolves self-citations, past-end lines
+and cited symbols in .py citations. It leaves a cited file that no longer exists to this scanner, which
+also reads .sql/.md/.toml/.yaml citations, so it stays (opt-in).
+"""
 from __future__ import annotations
 
 import ast

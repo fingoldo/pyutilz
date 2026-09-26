@@ -1,4 +1,8 @@
-"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
+"""(internal) part of pyutilz.dev.code_audit; see package __init__ for docs.
+
+Shared-gate counterpart: py_ci_shared.epsilon_padded_denominators reports only a pad on a POWER
+denominator (d**k + eps). This scanner is the wider rule and reports every additive pad, so it stays.
+"""
 
 from __future__ import annotations
 
