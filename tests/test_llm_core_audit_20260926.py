@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import base64
 import gc
 import json
@@ -104,6 +105,7 @@ class TestPerLoopResources:
         assert a1 is a2
         assert a1 is not b1
 
+    @pytest.mark.skipif(sys.version_info < (3, 10), reason="before 3.10 an asyncio.Semaphore binds to a loop when created")
     def test_explicit_semaphore_is_kept_on_every_loop(self):
         provider = _Provider()
         sem = asyncio.Semaphore(5)
@@ -333,7 +335,9 @@ class TestExtractJson:
     @pytest.mark.parametrize("unit", ["[", '{"a":'], ids=["array", "object"])
     def test_deep_nesting_is_a_json_parsing_error(self, unit):
         text = unit * 100_000
-        with pytest.raises(JSONParsingError, match="nesting too deep"):
+        # 3.14's decoder no longer recurses, so it reports a plain decode error there; either way it must be
+        # JSONParsingError, never a RecursionError escaping the documented except clause.
+        with pytest.raises(JSONParsingError, match=r"nesting too deep|Invalid JSON"):
             LLMProvider.extract_json(text)
 
     def test_runaway_scan_is_capped(self, monkeypatch):

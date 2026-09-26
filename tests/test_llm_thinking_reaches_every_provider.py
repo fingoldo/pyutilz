@@ -115,6 +115,7 @@ class TestGemini:
         assert gemini_thinking_budget(False, "gemini-2.5-pro") is None
 
     def test_the_budget_reaches_the_request(self) -> None:
+        pytest.importorskip("google.genai")  # the provider builds real HttpOptions / config types
         mock_settings = MagicMock()
         mock_settings.gemini_api_key = None
         with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch(

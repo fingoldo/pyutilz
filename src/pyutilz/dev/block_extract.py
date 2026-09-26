@@ -43,6 +43,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Union
 
+# ``match`` statements exist from 3.10; on older interpreters there is no such node to meet.
+_MATCH: "tuple[type, ...]" = (ast.Match,) if hasattr(ast, "Match") else ()
+
+
+def _write(path: Path, text: str, *, newline: str) -> None:
+    """``Path.write_text(..., newline=)`` without the 3.10+ keyword: the same bytes on every supported Python."""
+    with open(path, "w", encoding="utf-8", newline=newline) as fh:
+        fh.write(text)
+
 __all__ = ["ExtractionPlan", "ExtractionResult", "rename_in_function", "name_events", "plan_extraction", "apply_extraction", "import_lines", "absolutise_relative_imports"]
 
 _LOOPS = (ast.For, ast.AsyncFor, ast.While)
@@ -293,7 +302,7 @@ def _definitely_bound(stmts: list) -> set:
             out |= _definitely_bound(st.body) & _definitely_bound(st.orelse) if st.orelse else set()
         elif isinstance(st, (ast.With, ast.AsyncWith)):
             out |= _definitely_bound(st.body)
-        elif isinstance(st, (ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match)):
+        elif isinstance(st, (ast.For, ast.AsyncFor, ast.While, ast.Try, *_MATCH)):
             continue
         else:
             out |= {n for _, k, n in name_events([st]) if k == "store"}
@@ -307,7 +316,7 @@ def _never_reads_prior_binding(later: list, name: str) -> bool:
         mentions = [e for e in name_events([st]) if e[2] == name]
         if not mentions:
             continue
-        if not isinstance(st, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)) and mentions[0][1] == "store":
+        if not isinstance(st, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, *_MATCH)) and mentions[0][1] == "store":
             return True  # rebound unconditionally before this statement reads it
         break
     rebinding_loops = [n for st in later for n in ast.walk(st) if isinstance(n, (ast.For, ast.AsyncFor))
@@ -470,7 +479,7 @@ def rename_in_function(path: Union[str, Path], func: str, mapping: dict) -> int:
     left = sorted({s.id for s in ast.walk(fn2) if isinstance(s, ast.Name) and s.id in names})
     if left:
         raise ValueError(f"rename left uses of {left}")
-    path.write_text(new_src.replace("\n", nl), encoding="utf-8", newline="")
+    _write(path, new_src.replace("\n", nl), newline="")
     return len(edits)
 
 
@@ -556,12 +565,12 @@ def apply_extraction(
     have = {ln for ln in tgt[i:j].split("\n") if ln.strip()} | set(import_lines(plan.path, core_module, plan.module_names))
     ordered = sorted(have, key=lambda s: (not s.startswith("import "), s))
     tgt = tgt[:i] + "".join(ln + "\n" for ln in ordered) + tgt[j:]
-    target_path.write_text(tgt.rstrip("\n") + "\n" + helper_src, encoding="utf-8", newline="\n")
+    _write(target_path, tgt.rstrip("\n") + "\n" + helper_src, newline="\n")
     first = lines[plan.start - 1]
     indent = first[: len(first) - len(first.lstrip())]
     call = f"{helper}({', '.join(params)})"
     if outs:
         call = ", ".join(outs) + " = " + call
     new = [*lines[: plan.start - 1], f"{indent}from {target_module} import {helper}\n", indent + call + "\n", *lines[plan.end :]]
-    plan.path.write_text("".join(new).replace("\r\n", "\n").replace("\n", nl), encoding="utf-8", newline="")
+    _write(plan.path, "".join(new).replace("\r\n", "\n").replace("\n", nl), newline="")
     return ExtractionResult(call=indent + call, helper_source=helper_src.lstrip())
