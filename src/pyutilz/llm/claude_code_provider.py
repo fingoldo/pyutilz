@@ -47,6 +47,9 @@ from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger 
     _raise_on_cli_tool_use,  # noqa: F401 -- re-export, as above
     _is_rate_limit_error,
     _parse_reset_wait_seconds,
+    _RATE_LIMIT_PATTERN,  # noqa: F401 -- re-export: downstream (glossum) imports the patterns from this module
+    _RESET_TIME_PATTERN,  # noqa: F401 -- re-export, as above
+    _TIMEZONE_PATTERN,  # noqa: F401 -- re-export, as above
     run_cli,
     usage_int,
 )
