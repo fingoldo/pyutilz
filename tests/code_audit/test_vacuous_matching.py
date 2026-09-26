@@ -68,3 +68,35 @@ def score_grounding(pred_triples, pred_triples_raw):
 """)
     findings = scan_partial_guard_across_siblings(tmp_path)
     assert len(findings) == 1 and "score_grounding" in findings[0].detail
+
+
+def test_vacuous_empty_pattern_match_accepts_an_assert_as_the_guard(tmp_path: Path):
+    """A test's ``assert seen, "..."`` (or bare ``assert seen``) right before ``all(... in seen)`` establishes non-emptiness."""
+    _write(
+        tmp_path,
+        "test_ok.py",
+        """
+def test_with_message(seen):
+    assert seen, "nothing was replayed"
+    assert all(s is not None for s in seen)
+
+
+def test_bare(widths):
+    assert widths
+    assert all(w == 3 for w in widths)
+""",
+    )
+    assert scan_vacuous_empty_pattern_match(tmp_path) == []
+
+
+def test_vacuous_empty_pattern_match_is_not_fooled_by_an_assert_on_another_name(tmp_path: Path):
+    _write(
+        tmp_path,
+        "test_bad.py",
+        """
+def test_it(seen, seen_twice):
+    assert seen_twice
+    assert all(s for s in seen)
+""",
+    )
+    assert len(scan_vacuous_empty_pattern_match(tmp_path)) == 1

@@ -22,7 +22,8 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _
 # Matched as WORD-BOUNDED regexes, not with `in` against raw source: a plain substring test let any
 # longer identifier starting with the variable's name satisfy the guard, so `if xs:` counted as a
 # guard for `x` and silenced a real hit.
-_GUARD_TEMPLATES = ("not {v}", "if {v}", r"len\({v}\)", r"bool\({v}\)", "{v} and ", "and {v}", "{v} or ")
+# ``assert {v}`` is how a test establishes it -- ``assert seen, "nothing was replayed"`` right before ``all(... in seen)``.
+_GUARD_TEMPLATES = ("not {v}", "if {v}", r"len\({v}\)", r"bool\({v}\)", "{v} and ", "and {v}", "{v} or ", r"assert {v}[ \t]*(?:,|\n|$)")
 
 
 def _is_guarded(name: str, function_source: str, module_source: str) -> bool:
