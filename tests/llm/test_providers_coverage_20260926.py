@@ -1,4 +1,4 @@
-"""Regression tests for audits/2026-09-26/20_providers_coverage.md (PROV-*): native provider feature coverage.
+"""Regression tests for audits/implemented/2026-09-26/20_providers_coverage.md (PROV-*): native provider feature coverage.
 
 Every test drives the provider's own request building or response handling with the network stubbed out, and asserts
 on the value that was wrong before the fix (the request field, the price, the raised type), so reverting a fix fails.

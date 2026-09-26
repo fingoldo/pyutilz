@@ -1,4 +1,4 @@
-"""Regression tests for the 2026-09-26 shared-core audit (audits/2026-09-26/30_llm_core.md, CORE-*)."""
+"""Regression tests for the 2026-09-26 shared-core audit (audits/implemented/2026-09-26/30_llm_core.md, CORE-*)."""
 
 from __future__ import annotations
 

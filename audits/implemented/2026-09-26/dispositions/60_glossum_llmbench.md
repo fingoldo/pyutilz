@@ -49,4 +49,4 @@ Tests in both repos.
 
 ### DS-12
 
-**Disposition:** OPEN -- pyutilz 1.1.0 is committed with this round; downstream floors move to pyutilz>=1.1 in the adoption commits, then this closes.
+**Disposition:** RESOLVED -- pyutilz is 1.1.0 (60c59c3; back-compat re-export 89eb1f6). autopsia requires pyutilz>=1.1 (c8575423), llm_bench requires pyutilz>=1.1 (57e79a7), glossum's uv.lock pins pyutilz 1.1.0 at 89eb1f6 (bc237a75; it installs from git, so the lock is its pin).

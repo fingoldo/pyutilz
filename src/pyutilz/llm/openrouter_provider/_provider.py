@@ -558,7 +558,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
     def _catalogue_says_reasoning_mandatory(self) -> bool:
         """True when the catalogue marks this model's reasoning ``mandatory`` (then the off switch is refused with a 400).
 
-        Measured live 2026-09-26 (``audits/2026-09-26/or9_live_results.json``): on all five catalogue-mandatory models
+        Measured live 2026-09-26 (``audits/implemented/2026-09-26/or9_live_results.json``): on all five catalogue-mandatory models
         probed (gpt-oss-20b, gpt-5-nano, glm-5.3-flash, step-3.5-flash, gemini-3.7-flash) BOTH ``enabled: false`` and
         ``effort: "none"`` were refused with HTTP 400 "Reasoning is mandatory", while ``effort: "minimal"`` succeeded on
         every one (0-121 reasoning tokens). Reading the flag up front saves the refused round trip the per-process set

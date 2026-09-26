@@ -114,4 +114,4 @@ stays in the open tree while any row is OPEN, then moves to `audits/implemented/
 | **RESOLVED** | Low | `DS-9` | glossum: two measurement scripts call OpenRouter over raw HTTP and miss what the provider now does |
 | **RESOLVED** | Med | `DS-10` | llm_bench: no way to pass the new provider kwargs to the default factory, so benchmarks cannot hold quantization and route policy fixed |
 | **RESOLVED** | Low | `DS-11` | llm_bench: failure classification has no label for a stream interruption, and a require_parameters 404 is labelled ModelNotFound |
-| **OPEN** | Med | `DS-12` | all repos: pins cannot express the new API |
+| **RESOLVED** | Med | `DS-12` | all repos: pins cannot express the new API |

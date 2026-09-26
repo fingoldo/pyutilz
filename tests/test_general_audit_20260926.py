@@ -1,4 +1,4 @@
-"""Regression tests for audits/2026-09-26/50_general.md (GEN-1 .. GEN-15), one class per finding.
+"""Regression tests for audits/implemented/2026-09-26/50_general.md (GEN-1 .. GEN-15), one class per finding.
 
 Each test reproduces the audited failure and fails on the pre-fix code; see the disposition file for the mapping.
 """

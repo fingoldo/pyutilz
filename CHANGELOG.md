@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-09-26
 
 Milestone: the LLM layer after the 2026-09-26 audit wave (OpenRouter, providers, shared core, CI, general). Every
-finding and its disposition is under `audits/2026-09-26/`.
+finding and its disposition is under `audits/implemented/2026-09-26/`.
 
 ### Added
 

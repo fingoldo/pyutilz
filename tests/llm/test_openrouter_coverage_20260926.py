@@ -1,4 +1,4 @@
-"""Regression tests for audits/2026-09-26/10_openrouter_coverage.md (OR-1 .. OR-20).
+"""Regression tests for audits/implemented/2026-09-26/10_openrouter_coverage.md (OR-1 .. OR-20).
 
 Each test drives the real code path with the wire shape OpenRouter documents, and asserts on the exact field or
 exception, so reverting a fix fails a test rather than just changing a count.
@@ -390,7 +390,7 @@ def test_or9_int_thinking_is_a_reasoning_max_tokens_budget() -> None:
     assert _body(p, thinking=True)["reasoning"] == {"effort": "medium"}
 
 
-# Recorded 2026-09-26 (audits/2026-09-26/or9_live_results.json): the refusal every mandatory endpoint returned to both
+# Recorded 2026-09-26 (audits/implemented/2026-09-26/or9_live_results.json): the refusal every mandatory endpoint returned to both
 # `enabled: false` and `effort: "none"`.
 _MANDATORY_REFUSAL = "Reasoning is mandatory for this endpoint and cannot be disabled."
 
@@ -418,7 +418,7 @@ def test_or9_refused_off_switch_is_repaired_to_minimal(sent: dict) -> None:
 
 
 def test_or9_recorded_live_results_support_the_fallback() -> None:
-    data = json.loads((Path(__file__).resolve().parents[2] / "audits" / "2026-09-26" / "or9_live_results.json").read_text(encoding="utf-8"))
+    data = json.loads((Path(__file__).resolve().parents[2] / "audits" / "implemented" / "2026-09-26" / "or9_live_results.json").read_text(encoding="utf-8"))
     mandatory = {r["model"] for r in data["results"] if r["variant"] == "enabled_false" and r["http_status"] == 400}
     assert len(mandatory) >= 3
     for r in data["results"]:
