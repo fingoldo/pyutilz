@@ -138,6 +138,35 @@ def test_run_all_parallel_keeps_an_unpicklable_runtime_scanner(tmp_path: Path):
     assert marker in findings
 
 
+def _oom_outside_parent(root, exclude_dirs=None, *, parent_pid: int):
+    """Runs out of memory in any process but ``parent_pid`` -- a scanner that fits alone but not beside its pool siblings."""
+    import os
+
+    if os.getpid() != parent_pid:
+        raise MemoryError
+    return [Finding(check="oom_probe", severity="Low", file="ok.py", line=1, snippet="x = 1", detail="ran in the parent")]
+
+
+def test_run_all_reruns_in_process_a_scanner_that_ran_out_of_memory_in_a_worker(tmp_path: Path):
+    """Every pool worker parses the corpus on its own, so a heavy scanner could hit MemoryError there, be logged as failed and
+    return nothing, which a baseline gate then read as "every finding of this check was fixed". It must be re-run in-process."""
+    import functools
+    import os
+
+    from pyutilz.dev.code_audit import register_scanner
+    from pyutilz.dev.code_audit.registry import _SCANNERS
+
+    _write(tmp_path, "ok.py", "x = 1\n")
+    name = "oom_probe"
+    register_scanner(name, functools.partial(_oom_outside_parent, parent_pid=os.getpid()), allow_override=True)
+    try:
+        checks = [name, "mutable_default", "bare_except", "nan_equality", "console_unicode"]
+        findings = run_all(tmp_path, checks=checks, parallel=True)
+    finally:
+        _SCANNERS.pop(name, None)
+    assert [f.detail for f in findings if f.check == name] == ["ran in the parent"]
+
+
 def test_run_all_survives_one_failing_scanner(tmp_path: Path):
     """F216 regression: an exception in one scanner aborted pool.map (and the sequential loop),
     discarding every other scanner's findings."""

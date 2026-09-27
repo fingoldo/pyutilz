@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `code_audit.run_all`: a scanner that runs out of memory in a pool worker is re-run in-process after the pool closes. Each
+  worker parses the corpus on its own, so a heavy scanner could fail beside its siblings and report no findings, which a
+  baseline gate then read as every finding of that check being fixed.
 - `[llm]` requires `google-genai>=1.51` (Python 3.10+): the Gemini provider sends `ThinkingConfig.thinking_level`, which
   older versions reject as an extra input, so the declared `>=1.0` floor installed a version that failed every Gemini 3 request.
 - `code_audit` `docstring_args`: a prose colon (`see :func:`x``) is no longer read as a documented argument, and an entry

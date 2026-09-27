@@ -387,7 +387,7 @@ def get_scanners() -> dict[str, Callable[..., list[Finding]]]:
     return dict(_SCANNERS)
 
 
-def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> list[Finding]:
+def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]") -> Optional[list[Finding]]:
     """Module-level (picklable) trampoline for ``ProcessPoolExecutor`` -- runs one scanner and
     returns its findings. A bound/local closure can't be pickled for the cross-process call, so
     this indirection is required, not just style.
@@ -397,16 +397,23 @@ def _run_one(args: "tuple[str, Optional[Callable[..., list[Finding]]], Path, fro
     through ``register_scanner()`` was absent in the child and the whole run died on a ``KeyError``.
     ``fn=None`` means "resolve it from the worker's own registry" (the built-ins, not re-pickled
     per task).
+
+    Returns ``None`` when the scanner ran out of memory: every worker holds its own parse of the corpus, so a scanner that
+    fits alone can fail beside its siblings, and ``run_all`` re-runs it in-process after the pool has released them.
     """
     name, fn, root, exclude_dirs = args
     if fn is None:
         fn = _SCANNERS.get(name)
     if fn is None:  # pragma: no cover - guarded against upstream by run_all's resolution pass
         raise KeyError(f"scanner {name!r} is not available in this worker; register_scanner() it before run_all()")
-    return _run_scanner(name, fn, root, exclude_dirs)
+    try:
+        return _run_scanner(name, fn, root, exclude_dirs, reraise_memory_error=True)
+    except MemoryError:
+        logger.info("code_audit scanner %r ran out of memory in a worker process; re-running it after the pool closes", name)
+        return None
 
 
-def _run_scanner(name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str]) -> list[Finding]:
+def _run_scanner(name: str, fn: Callable[..., list[Finding]], root: Path, exclude_dirs: frozenset[str], *, reraise_memory_error: bool = False) -> list[Finding]:
     """Run one scanner, converting a raised exception into a logged warning and zero findings.
 
     One scanner tripping over one pathological file must not delete the other 88 scanners' output,
@@ -414,6 +421,11 @@ def _run_scanner(name: str, fn: Callable[..., list[Finding]], root: Path, exclud
     """
     try:
         return fn(root, exclude_dirs=exclude_dirs)
+    except MemoryError:
+        if reraise_memory_error:
+            raise
+        logger.warning("code_audit scanner %r failed; its findings are missing from this run", name, exc_info=True)
+        return []
     except Exception:
         logger.warning("code_audit scanner %r failed; its findings are missing from this run", name, exc_info=True)
         return []
@@ -571,8 +583,11 @@ def run_all(
                 local_only.append(name)
         if tasks:
             with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
-                for findings in pool.map(_run_one, tasks):
-                    out.extend(findings)
+                for (name, *_), findings in zip(tasks, pool.map(_run_one, tasks)):
+                    if findings is None:
+                        local_only.append(name)
+                    else:
+                        out.extend(findings)
         for name in local_only:
             out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
     else:
