@@ -224,8 +224,12 @@
     },
     "monitoring": {
       "API_TIMEOUT_SEC": "value",
+      "EXIT_FLUSH_BUDGET_SEC": "value",
+      "RETRY_INITIAL_DELAY_SEC": "value",
+      "RETRY_MAX_AGE_SEC": "value",
+      "RETRY_MAX_DELAY_SEC": "value",
       "annotations": "value",
-      "job_completed": "callable(job_id:any:0:, status:any:1:0, data:any:1:None, provider:any:1:'healthchecks.io', api_key:any:1:None, blocking:any:1:True)",
+      "job_completed": "callable(job_id:any:0:, status:any:1:0, data:any:1:None, provider:any:1:'healthchecks.io', api_key:any:1:None, blocking:any:1:True, retry:any:1:True)",
       "log_duration": "callable(threshold:any:1:1.0, logger_name:any:1:None, max_arg_size:any:1:1000)",
       "logger": "value",
       "monitored": "callable(job_id:any:1:None, status:any:1:0, log_data:any:1:True, should_have_data:any:1:False, duration_field:any:1:'duration', duration_rounding:any:1:4, provider:any:1:'healthchecks.io', api_key:any:1:None)",

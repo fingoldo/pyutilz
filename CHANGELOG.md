@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `system.monitoring.job_completed(..., retry=True)`: a heartbeat that fails transiently (network error, timeout, 408/425/429,
+  5xx) is redelivered from a background daemon thread with exponential backoff (5 s doubling to 5 min, +-20% jitter) for as long
+  as the process lives, instead of being logged once and forgotten. A long-lived scraper whose final ping hit
+  `Failed to resolve 'cronitor.link'` raised a "Missed Event" for a healthy job. One pending heartbeat per (endpoint, state): a
+  newer failure replaces the older one and any successful send cancels it, so the queue is bounded by the number of monitors;
+  a refusal a retry cannot change (403, 404, ...) is not retried; a heartbeat still undelivered after `RETRY_MAX_AGE_SEC` (6 h)
+  is dropped with a warning; an `atexit` pass makes one last attempt within `EXIT_FLUSH_BUDGET_SEC`. The call still returns
+  after the first attempt and logs exactly what it did before; `retry=False` restores the single shot.
+
 ### Fixed
 
 - `code_audit.run_all`: a scanner that runs out of memory in a pool worker is re-run in-process after the pool closes. Each

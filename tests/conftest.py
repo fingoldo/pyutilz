@@ -223,6 +223,22 @@ def gemini_key() -> str:
 
 
 @pytest.fixture(autouse=True)
+def _no_heartbeat_retry_threads(monkeypatch: pytest.MonkeyPatch):
+    """Keep ``pyutilz.system.monitoring``'s background heartbeat retry from outliving a test.
+
+    ``job_completed`` retries a transiently failed send from a daemon thread. The existing tests simulate failures
+    with ``requests`` patched for the duration of ONE test, so a retry firing later would hit the real network from
+    an unrelated test. The mechanism is switched off here and anything pending is dropped afterwards; the retry's
+    own tests (``test_monitoring_retry.py``) switch it back on with tiny delays.
+    """
+    from pyutilz.system import monitoring
+
+    monkeypatch.setattr(monitoring, "_RETRY_ENABLED", False)
+    yield
+    monitoring._RETRIER.clear()
+
+
+@pytest.fixture(autouse=True)
 def _restore_root_logger_configuration():
     """Undo any process-wide root-logger reconfiguration a test performs.
 

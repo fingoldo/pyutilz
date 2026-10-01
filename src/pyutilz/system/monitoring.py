@@ -17,13 +17,14 @@ logger = logging.getLogger(__name__)
 
 import time
 import atexit
+import random
 import functools
 import threading
 import concurrent.futures
 from functools import wraps
 from datetime import datetime
 from timeit import default_timer as timer
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 # requests lives under pyutilz's optional [web] extra -- a plain module-level `import requests`
 # forced ANY use of pyutilz.system.monitoring (even functions that never touch job-completion
@@ -52,6 +53,244 @@ _TIMEOUT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10, thread
 atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 
 # ----------------------------------------------------------------------------------------------------------------------------
+# HEARTBEAT DELIVERY: BACKGROUND RETRY
+# ----------------------------------------------------------------------------------------------------------------------------
+#
+# A heartbeat that fails on a transient network error used to be logged once and forgotten. On a long-lived
+# process that is the worst moment to forget it: the job HAS finished, the monitor is waiting for exactly this
+# ping, and the next regular one may be hours away -- so one DNS blip ("Failed to resolve 'cronitor.link'")
+# turned into a "Missed Event" alert for a healthy scraper. The failed send is now handed to a background
+# thread that retries with exponential backoff for as long as the process lives (bounded by RETRY_MAX_AGE_SEC).
+
+#: Delay before the first retry; doubles on every further failure of the same heartbeat.
+RETRY_INITIAL_DELAY_SEC = 5.0
+#: Ceiling of the backoff. Five minutes keeps a long outage cheap and still delivers within minutes of recovery.
+RETRY_MAX_DELAY_SEC = 300.0
+#: A heartbeat still undelivered after this long is dropped with one warning: the job's next regular ping is due
+#: well before it, and a six-hour-old "complete" would only mislead the monitor's timeline.
+RETRY_MAX_AGE_SEC = 6 * 3600.0
+#: Best-effort budget for one last delivery pass at interpreter exit (see ``_HeartbeatRetrier.flush``).
+EXIT_FLUSH_BUDGET_SEC = 10.0
+
+#: Process-wide switch. ``job_completed(..., retry=False)`` opts one call out; tests switch the whole mechanism off
+#: so no background thread outlives them.
+_RETRY_ENABLED = True
+
+#: HTTP statuses worth another attempt: the request timed out, was throttled, or the provider failed. Everything else
+#: (200, 403 "blocked in your country", 404 unknown monitor, ...) is a verdict a retry cannot change.
+_TRANSIENT_STATUSES = frozenset({408, 425, 429}) | frozenset(range(500, 600))
+
+#: The body of a heartbeat: the dict ``monitored`` builds, or a plain string.
+_HeartbeatData = Optional[Union[Dict[str, Any], str]]
+
+#: One heartbeat stream: (endpoint, state). A newer ping for the same stream makes every older pending one obsolete.
+_HeartbeatKey = Tuple[str, str]
+
+
+def _backoff_delay(failures: int) -> float:
+    """Seconds to wait after the *failures*-th consecutive failure: INITIAL, 2x, 4x, ... capped, with +-20% jitter."""
+    base = min(RETRY_MAX_DELAY_SEC, RETRY_INITIAL_DELAY_SEC * (2 ** max(0, failures - 1)))
+    return float(base * random.uniform(0.8, 1.2))  # nosec B311 - jitter for load spreading, not a security decision
+
+
+def _attempt(
+    endpoint: str,
+    data: _HeartbeatData,
+    params: Optional[Dict[str, Any]],
+    provider: str,
+    job_id: str,
+    timeout: float = API_TIMEOUT_SEC,
+) -> bool:
+    """One POST of a heartbeat. True when there is nothing left to retry, False on a transient failure.
+
+    Logging is unchanged from the single-shot sender this replaced: one warning on a non-OK status or a request
+    error. 200, 403 (blocked in your country) and 429 (rate limited) stay silent; of those only 429 is retried.
+    """
+    try:
+        if requests is None:
+            raise ImportError("job_completed's heartbeat send requires requests, which failed to import (see earlier debug log for the reason)")
+        res = requests.post(endpoint, data=data, params=params, timeout=timeout)
+
+        if res.status_code not in (200, 403, 429):
+            # 403=blocked in your country
+            # 429=rate limit exceeded
+            logger.warning("Problem %s while sending heartbeat to %s on job %s: %s", res.status_code, provider, job_id, res.text)
+        return bool(res.status_code not in _TRANSIENT_STATUSES)
+    except ImportError as e:
+        logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
+        return True  # no retry can install the missing package
+    except Exception as e:
+        logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
+        return False
+
+
+class _Pending:
+    """A heartbeat awaiting redelivery, with its own backoff clock."""
+
+    __slots__ = ("data", "endpoint", "failures", "first_failed_at", "job_id", "key", "next_at", "params", "provider")
+
+    def __init__(
+        self,
+        key: _HeartbeatKey,
+        endpoint: str,
+        data: _HeartbeatData,
+        params: Optional[Dict[str, Any]],
+        provider: str,
+        job_id: str,
+    ) -> None:
+        self.key = key
+        self.endpoint = endpoint
+        # Copied: the caller's dict (``monitored`` builds one per call) may be mutated after we return.
+        self.data: _HeartbeatData = dict(data) if isinstance(data, dict) else data
+        self.params: Optional[Dict[str, Any]] = dict(params) if params else params
+        self.provider = provider
+        self.job_id = job_id
+        now = time.monotonic()
+        self.first_failed_at = now
+        self.failures = 1
+        self.next_at = now + _backoff_delay(1)
+
+
+class _HeartbeatRetrier:
+    """Redelivers failed heartbeats from one daemon thread, which exists only while something is pending.
+
+    At most one pending heartbeat per stream (see ``_HeartbeatKey``): a newer failure replaces the older one, and a
+    successful send on a stream cancels whatever is still pending on it, so the queue is bounded by the number of
+    distinct monitors in the process and a flapping network cannot grow it.
+    """
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition()
+        self._pending: Dict[_HeartbeatKey, _Pending] = {}
+        self._thread: Optional[threading.Thread] = None
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """A retrier owns a lock and a live thread; pickling one is always a mistake, so say so."""
+        raise TypeError("_HeartbeatRetrier holds a lock and a thread and cannot be pickled")
+
+    def submit(self, item: _Pending) -> None:
+        """Queue *item* for redelivery, replacing an older pending heartbeat on the same stream."""
+        with self._cv:
+            self._pending[item.key] = item
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="heartbeat-retry", daemon=True)
+                self._thread.start()
+            self._cv.notify_all()
+        logger.info("Heartbeat to %s on monitor %s queued for background retry (first retry in %.0fs)", item.provider, item.job_id, item.next_at - item.first_failed_at)
+
+    def forget(self, key: _HeartbeatKey) -> None:
+        """A heartbeat on *key* was delivered (or refused for good): older pending ones on it are obsolete."""
+        with self._cv:
+            if self._pending.pop(key, None) is not None:
+                self._cv.notify_all()
+
+    @staticmethod
+    def _log_gave_up(item: _Pending, now: float) -> None:
+        """The one warning a dropped heartbeat gets (each is dropped exactly once, so there is nothing to throttle)."""
+        logger.warning(
+            "Giving up on heartbeat to %s on monitor %s after %d failed attempts over %.0f min",
+            item.provider,
+            item.job_id,
+            item.failures,
+            (now - item.first_failed_at) / 60,
+        )
+
+    def _next_due(self, now: float) -> Tuple[List[_Pending], Optional[float]]:
+        """(pending items due now, seconds until the next one is due or None when none is waiting); drops expired ones."""
+        due: List[_Pending] = []
+        soonest: Optional[float] = None
+        for key, item in list(self._pending.items()):
+            if now - item.first_failed_at > RETRY_MAX_AGE_SEC:
+                del self._pending[key]
+                self._log_gave_up(item, now)
+            elif item.next_at <= now:
+                due.append(item)
+            else:
+                wait = item.next_at - now
+                soonest = wait if soonest is None else min(soonest, wait)
+        return due, soonest
+
+    def _run(self) -> None:
+        """Retry loop; returns (and lets ``submit`` start a fresh thread) once nothing is pending."""
+        while True:
+            with self._cv:
+                while True:
+                    due, soonest = self._next_due(time.monotonic())
+                    if due:
+                        break
+                    if not self._pending:
+                        self._thread = None
+                        self._cv.notify_all()
+                        return
+                    self._cv.wait(timeout=soonest)
+            for item in due:
+                delivered = _attempt(item.endpoint, item.data, item.params, item.provider, item.job_id)
+                with self._cv:
+                    if self._pending.get(item.key) is not item:
+                        continue  # replaced or cancelled while the request was in flight
+                    if delivered:
+                        del self._pending[item.key]
+                        logger.info(
+                            "Heartbeat to %s on monitor %s delivered on attempt %d after %.0fs",
+                            item.provider,
+                            item.job_id,
+                            item.failures + 1,
+                            time.monotonic() - item.first_failed_at,
+                        )
+                    else:
+                        item.failures += 1
+                        item.next_at = time.monotonic() + _backoff_delay(item.failures)
+            with self._cv:
+                self._cv.notify_all()
+
+    def flush(self, budget: float = EXIT_FLUSH_BUDGET_SEC) -> None:
+        """One last delivery attempt per pending heartbeat, within *budget* seconds. Registered ``atexit``.
+
+        A one-shot job that finishes, hits a network blip on its final ping and exits would otherwise lose it: the
+        retry thread is a daemon and dies with the interpreter. Never raises, never blocks past the budget.
+        """
+        deadline = time.monotonic() + budget
+        try:
+            with self._cv:
+                items = list(self._pending.values())
+            for item in items:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if _attempt(item.endpoint, item.data, item.params, item.provider, item.job_id, timeout=min(API_TIMEOUT_SEC, remaining)):
+                    self.forget(item.key)
+        except Exception as e:  # nosec B110 - interpreter shutdown: nothing useful left to do with a failure here
+            logger.debug("heartbeat flush at exit failed: %s", e)
+
+    def wait_idle(self, timeout: float) -> bool:
+        """Block until nothing is pending, or *timeout* seconds pass. True when idle (used by tests and diagnostics)."""
+        deadline = time.monotonic() + timeout
+        with self._cv:
+            while self._pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._cv.wait(timeout=remaining)
+        return True
+
+    def pending_count(self) -> int:
+        """Number of heartbeats currently awaiting redelivery."""
+        with self._cv:
+            return len(self._pending)
+
+    def clear(self) -> None:
+        """Drop everything pending and let the thread wind down."""
+        with self._cv:
+            self._pending.clear()
+            self._cv.notify_all()
+
+
+_RETRIER = _HeartbeatRetrier()
+
+# Registered after the executor's shutdown above, so it runs BEFORE it (atexit is LIFO).
+atexit.register(_RETRIER.flush)
+
+# ----------------------------------------------------------------------------------------------------------------------------
 # 3RD PARTIES MONITORING
 # ----------------------------------------------------------------------------------------------------------------------------
 
@@ -59,10 +298,11 @@ atexit.register(_TIMEOUT_EXECUTOR.shutdown, wait=False)
 def job_completed(
     job_id: str,
     status: int = 0,
-    data: Optional[Union[dict, str]] = None,
+    data: _HeartbeatData = None,
     provider: str = "healthchecks.io",
     api_key: Optional[str] = None,
     blocking: bool = True,
+    retry: bool = True,
 ) -> None:
     """Ping a dead-man's-switch monitoring provider (healthchecks.io / cronitor.io) that a job completed.
 
@@ -80,6 +320,13 @@ def job_completed(
     ``data`` is a dict (the shape the ``monitored`` decorator builds and passes, and the form
     ``requests`` encodes as a form body) or a plain string; both are stringified for cronitor.io's
     ``msg`` param and passed through as the POST body for healthchecks.io.
+
+    ``retry=True`` (default): a send that fails transiently -- a network error, a timeout, a 408/425/429 or a 5xx --
+    is handed to a background thread that retries with exponential backoff (``RETRY_INITIAL_DELAY_SEC`` doubling up
+    to ``RETRY_MAX_DELAY_SEC``) while the process lives, so a DNS blip at the moment a long-lived job reports in no
+    longer turns into a "missed event" alert. This call still returns after the FIRST attempt. A newer heartbeat on the
+    same monitor and state replaces an older pending one, and any successful send cancels it. A refusal a retry cannot
+    change (403, 404, ...) is not retried. Pass ``retry=False`` for the old single-shot behaviour.
     """
 
     endpoint = ""
@@ -106,20 +353,14 @@ def job_completed(
 
     if endpoint:
 
+        key: _HeartbeatKey = (endpoint, str(params.get("state")) if params else "")
+
         def _send() -> None:
-            """Post the heartbeat to the endpoint, logging (not raising) on a non-OK status or request error."""
-            try:
-                if requests is None:
-                    raise ImportError("job_completed's heartbeat send requires requests, which failed to import (see earlier debug log for the reason)")
-                res = requests.post(endpoint, data=data, params=params, timeout=API_TIMEOUT_SEC)
-
-                if res.status_code not in (200, 403, 429):
-                    # 403=blocked in your country
-                    # 429=rate limit exceeded
-                    logger.warning("Problem %s while sending heartbeat to %s on job %s: %s", res.status_code, provider, job_id, res.text)
-
-            except Exception as e:
-                logger.warning("Error while sending heartbeat to %s on monitor %s: %s", provider, job_id, e)
+            """Post the heartbeat, logging (not raising) on a non-OK status or request error; queue a transient failure for retry."""
+            if _attempt(endpoint, data, params, provider, job_id):
+                _RETRIER.forget(key)  # delivered, or refused for good: an older pending ping on this stream is obsolete
+            elif retry and _RETRY_ENABLED:
+                _RETRIER.submit(_Pending(key, endpoint, data, params, provider, job_id))
 
         if blocking:
             _send()
