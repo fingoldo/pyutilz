@@ -26,6 +26,8 @@ Python 3.8 compatible: annotations are resolved with ``typing.get_type_hints`` a
 from __future__ import annotations
 
 import argparse
+import ast
+import contextlib
 import inspect
 import importlib
 import re
@@ -156,7 +158,8 @@ def signature_drift(
     """
     params = {p.name: p for p in signature_parameters(target, exclude=exclude)}
     fields = model.model_fields
-    exempt = set(getattr(model, "__signature_overrides__", ()))
+    skip_default = set(getattr(model, "__signature_skip_default__", ()))
+    exempt = set(getattr(model, "__signature_overrides__", ())) | skip_default
     problems: List[str] = []
     problems.extend(f"parameter {name!r} is in the signature but not in {model.__name__}" for name in params if name not in fields)
     problems.extend(f"field {name!r} of {model.__name__} is no longer a parameter" for name in fields if name not in params)
@@ -166,7 +169,7 @@ def signature_drift(
             continue
         if p.required != field.is_required():
             problems.append(f"{name!r}: required in the signature={p.required}, in the model={field.is_required()}")
-        elif not p.required and not _same_default(p.default, field.get_default(call_default_factory=True)):
+        elif not p.required and name not in skip_default and not _same_default(p.default, field.get_default(call_default_factory=True)):
             problems.append(f"{name!r}: default {p.default!r} in the signature, {field.get_default(call_default_factory=True)!r} in the model")
         if check_annotations and name not in exempt and p.annotated and field.annotation != p.annotation:
             problems.append(f"{name!r}: annotation {p.annotation!r} in the signature, {field.annotation!r} in the model")
@@ -176,11 +179,13 @@ def signature_drift(
 _TYPING_NAMES = frozenset(typing.__all__)
 
 
-def _annotation_source(annotation: Any, imports: "set[str]") -> str:
+def _annotation_source(annotation: Any, imports: "set[str]", allowed_modules: Optional[Sequence[str]] = None) -> str:
     """Python source for ``annotation``; names it needs are added to ``imports`` (``typing`` names and ``import pkg`` modules).
 
     ``typing`` constructs and builtins render as written; a class renders as its dotted path with the module imported. Anything
-    that cannot be rendered as an expression (a local class, a lambda) degrades to ``Any`` so the generated file always imports.
+    that cannot be rendered as an expression (a local class, a lambda) degrades to ``Any`` so the generated file always imports. With
+    ``allowed_modules`` an annotation that names a class from any other module also degrades to ``Any``: importing such a module
+    from the generated file would drag the target's package (and its import cost) in, which a lightweight config must not do.
     """
     if annotation is Any or annotation is inspect.Parameter.empty:
         imports.add("typing.Any")
@@ -188,17 +193,35 @@ def _annotation_source(annotation: Any, imports: "set[str]") -> str:
     if annotation is None or annotation is type(None):
         return "None"
     text = typing._type_repr(annotation) if hasattr(typing, "_type_repr") else repr(annotation)  # type: ignore[attr-defined]
-    text = text.replace("typing.", "")
+    text = text.replace("typing.", "").replace("NoneType", "None")
     if "<" in text or "lambda" in text or "<locals>" in text:
         imports.add("typing.Any")
         return "Any"
-    for token in set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", text)):
-        head = token.split(".")[0]
+    scan = re.sub(r"'[^']*'|\"[^\"]*\"", "", text)  # a Literal's string values are not names to import
+    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", scan))
+    if allowed_modules is not None:
+        for token in tokens:
+            if "." in token and not any(token.startswith(prefix + ".") for prefix in allowed_modules):
+                imports.add("typing.Any")
+                return "Any"
+    for token in tokens:
         if "." in token:
-            imports.add(f"module:{head}")
+            imports.add(f"module:{token.rsplit('.', 1)[0]}")
         elif token in _TYPING_NAMES:
             imports.add(f"typing.{token}")
     return text
+
+
+_UNPARSED: Any = object()
+
+
+def _is_literal_default(value: Any) -> bool:
+    """True when ``repr(value)`` is valid Python source that evaluates back to an equal ``repr`` (so it can be written into a generated module)."""
+    text = repr(value)
+    parsed: Any = _UNPARSED
+    with contextlib.suppress(ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        parsed = ast.literal_eval(text)
+    return parsed is not _UNPARSED and repr(parsed) == text
 
 
 def render_model_source(
@@ -209,18 +232,27 @@ def render_model_source(
     overrides: Optional[Mapping[str, Any]] = None,
     docstring: Optional[str] = None,
     regenerate_hint: Optional[str] = None,
+    allowed_modules: Optional[Sequence[str]] = None,
 ) -> str:
     """Source of a module that defines ``class_name`` as a strict pydantic model mirroring ``target``'s signature.
 
-    ``overrides`` values are source strings (``'Literal["a", "b"]'`` or ``'Field(0.9, gt=0, le=1)'``) written verbatim: a string that
+    ``allowed_modules`` (module-name prefixes, e.g. ``("collections", "numpy")``) keeps the generated file import-light: an annotation
+    naming a class from any other module is written as ``Any``. ``overrides`` values are source strings (``'Literal["a", "b"]'`` or ``'Field(0.9, gt=0, le=1)'``) written verbatim: a string that
     starts with ``Field(`` replaces the default, anything else replaces the annotation. The module does not import ``target``.
     """
     overrides = dict(overrides or {})
     imports: "set[str]" = {"pydantic.BaseModel", "pydantic.ConfigDict"}
     lines: List[str] = []
+    skip_default: List[str] = []
     for p in signature_parameters(target, exclude=exclude):
-        ann = _annotation_source(p.annotation, imports)
+        ann = _annotation_source(p.annotation, imports, allowed_modules)
         default = "" if p.required else f" = {p.default!r}"
+        if not p.required and not _is_literal_default(p.default):
+            # A default that has no source form (a numpy dtype, an enum member) cannot be written into the module; the field accepts anything
+            # and defaults to None, and the drift check leaves it out of the default/annotation comparison.
+            imports.add("typing.Any")
+            ann, default = "Any", " = None"
+            skip_default.append(p.name)
         if not p.required and isinstance(p.default, (list, dict, set)):
             imports.add("pydantic.Field")
             default = f" = Field(default_factory=lambda: {p.default!r})"
@@ -232,11 +264,11 @@ def render_model_source(
             else:
                 ann = str(text)
         lines.append(f"    {p.name}: {ann}{default}")
+    override_text = " ".join(str(v) for v in overrides.values())
+    imports.update(f"typing.{name}" for name in _TYPING_NAMES if re.search(rf"\b{name}\[", override_text))
     typing_names = sorted(i.split(".", 1)[1] for i in imports if i.startswith("typing."))
     pydantic_names = sorted(i.split(".", 1)[1] for i in imports if i.startswith("pydantic."))
     modules = sorted(i.split(":", 1)[1] for i in imports if i.startswith("module:"))
-    if "Literal[" in " ".join(str(v) for v in overrides.values()) and "Literal" not in typing_names:
-        typing_names.append("Literal")
     source_ref = f"{getattr(target, '__module__', '?')}:{getattr(target, '__qualname__', '?')}"
     hint = regenerate_hint if regenerate_hint is not None else f"python -m pyutilz.dev.signature_models {source_ref} --name {class_name}"
     out = [
@@ -262,6 +294,7 @@ def render_model_source(
             "",
             '    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)',
             f"    __signature_overrides__ = {tuple(sorted(overrides))!r}",
+            f"    __signature_skip_default__ = {tuple(skip_default)!r}",
             "",
             *(lines if lines else ["    pass"]),
             "",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import typing
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -139,3 +140,55 @@ def test_cli_writes_and_checks_the_generated_file(tmp_path, capsys):
     out.write_text(out.read_text(encoding="utf-8") + "\n# stale\n", encoding="utf-8")
     assert main([target, "--name", "SelectorConfig", "-o", str(out), "--check"]) == 1
     assert "out of date" in capsys.readouterr().out
+
+
+class _Color(__import__("enum").Enum):
+    """An enum used as an annotation and a default (no source form for the default)."""
+
+    RED = "red"
+
+
+class _Heavy:
+    """A target whose parameters have a non-literal default and an enum annotation."""
+
+    def __init__(self, dtype: type = __import__("numpy").int32, color: _Color = _Color.RED, mode: "typing.Literal['a.b', 'c']" = "c") -> None:
+        """Keep the arguments; only the signature matters here."""
+
+
+def test_a_default_without_a_source_form_is_rendered_as_any_and_left_out_of_the_drift_check(tmp_path, monkeypatch):
+    """dtype/enum defaults cannot be written into a module: the field accepts anything, defaults to None and is not reported as drift."""
+    path = tmp_path / "heavy_config.py"
+    path.write_text(render_model_source(_Heavy, "HeavyConfig"), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("heavy_config_generated", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "heavy_config_generated", module)
+    spec.loader.exec_module(module)
+    assert module.HeavyConfig().dtype is None
+    assert module.HeavyConfig(dtype=int).dtype is int
+    assert signature_drift(module.HeavyConfig, _Heavy) == []
+    with pytest.raises(ValidationError):
+        module.HeavyConfig(mode="z")
+
+
+class _Elsewhere:
+    """A class from a module the generated file must not import."""
+
+
+def _target_with_foreign_annotation(a: _Elsewhere, b: int = 1) -> None:
+    """A target with one annotation naming a foreign class."""
+
+
+def test_allowed_modules_degrades_a_foreign_class_annotation_to_any():
+    """With ``allowed_modules`` the generated file never imports the target's package just to spell an annotation."""
+    source = render_model_source(_target_with_foreign_annotation, "ForeignConfig", allowed_modules=("collections",))
+    assert "a: Any" in source
+    assert "import tests.test_dev_signature_models" not in source and "import test_dev_signature_models" not in source
+    unrestricted = render_model_source(_target_with_foreign_annotation, "ForeignConfig")
+    assert "a: tests.test_dev_signature_models._Elsewhere" in unrestricted and "import tests.test_dev_signature_models" in unrestricted
+
+
+def test_typing_names_used_only_in_an_override_are_imported():
+    """An override that spells ``Union[...]`` needs ``Union`` imported even when no signature annotation used it."""
+    source = render_model_source(_Selector, "SelectorConfig", overrides={"alpha": 'Union[float, Literal["auto"]]'})
+    assert "Union" in source.split("from pydantic")[0] and "Literal" in source.split("from pydantic")[0]
