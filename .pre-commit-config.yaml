@@ -40,7 +40,7 @@ repos:
   # were hand-debugged there (a duplicate continue-on-error: key that silently
   # broke CI for days; a bash-conditional that broke on a Windows runner).
   - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
-    rev: v1.7.12.24
+    rev: v1.7.12.25
     hooks:
       - id: actionlint
 
@@ -56,7 +56,7 @@ repos:
   # CHANGELOG, CONTRIBUTING, TESTING, mkdocs site) -- proportionally more prose surface
   # here than mlframe since docstrings are the primary documentation, not inline comments.
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         # No --ignore-words-list here on purpose: pyproject.toml's [tool.codespell] is the single
