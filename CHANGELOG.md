@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `dev.signature_models`: `model_from_signature` builds a frozen `extra="forbid"` pydantic model with one field per parameter of a class or function (names, annotations and defaults from the signature, `overrides` for `Literal`/`Field` constraints, `exclude` for parameters the caller must not set), so a config that used to forward a `dict` of keyword arguments rejects a typo, a wrong type or an out-of-range value when it is created. `render_model_source` writes the same model as a module for committing (it does not import the target), `signature_drift` lists every way a model no longer matches the live signature for a meta-test, and `python -m pyutilz.dev.signature_models pkg.mod:Class -o file.py [--check]` regenerates or verifies it.
+
 - `system.monitoring.job_completed(..., retry=True)`: a heartbeat that fails transiently (network error, timeout, 408/425/429,
   5xx) is redelivered from a background daemon thread with exponential backoff (5 s doubling to 5 min, +-20% jitter) for as long
   as the process lives, instead of being logged once and forgotten. A long-lived scraper whose final ping hit

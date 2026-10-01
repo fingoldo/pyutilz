@@ -88,7 +88,7 @@ _PACKAGE_OWN_GROUPS: dict[str, tuple[str, ...]] = {
     "anthropic": ("llm",),
     "httpx": ("llm",),
     "tenacity": ("llm",),
-    "pydantic": ("llm",),
+    "pydantic": ("llm", "dev"),
     "pydantic_settings": ("llm",),
     "PIL": ("system",),
     "scipy": ("system",),

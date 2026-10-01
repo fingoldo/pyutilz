@@ -351,6 +351,8 @@ dev = [
     # dev/benchmarking.py unconditionally imports numpy -- found 2026-07-21 audit: no extras
     # group covering the dev domain declared it. numpy is a core dependency now (numba needs it
     # at import time), so `pip install .[dev]` alone gets it without a redundant redeclaration.
+    # dev/signature_models.py builds pydantic models from signatures and imports pydantic at module level.
+    "pydantic>=2.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-benchmark>=4.0",
