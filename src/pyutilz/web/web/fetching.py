@@ -85,7 +85,6 @@ def get_url(
     while n_retries < max_retries:
         try:
             n_retries = n_retries + 1
-            # print("Getting url %s,headers=%s,params=%s,proxies=%s,timeout=%s,cookies=%s" % (url,headers,params,proxies,timeout,sess.cookies.get_dict()))
 
             # We are trying to fetch some url. Do we need to create new proxy session?
             with _facade._state_lock:

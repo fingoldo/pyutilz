@@ -104,10 +104,8 @@ def normalize_sentence(
                 term_len = len(term)
                 sentence = sentence.replace(" " + term + " ", " ")
                 if sentence.startswith(term + " "):
-                    # print(sentence ,'->', sentence[term_len + 1:])
                     sentence = sentence[term_len + 1 :]
                 elif sentence.endswith(" " + term):
-                    # print(sentence ,'->', sentence[:-(term_len + 1)])
                     sentence = sentence[: -(term_len + 1)]
 
     # dict.fromkeys, not set(): set() ordering varies with PYTHONHASHSEED, and the greedy

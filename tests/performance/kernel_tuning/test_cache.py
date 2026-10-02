@@ -537,9 +537,16 @@ class TestAsyncSweepHwBusyGate:
         from pyutilz.performance.kernel_tuning import benchmark as bm
         bm._HW_BUSY_CACHE = None
 
-    def _patch(self, monkeypatch, *, gpu_load=None, cpu_pct=None):
+    def _patch(self, monkeypatch, *, gpu_load=None, cpu_pct=None, ttl_zero=True):
         """Patch GPUtil + psutil into the lazy imports the gate uses."""
         monkeypatch.delenv("PYUTILZ_KERNEL_SWEEP_HW_BUSY", raising=False)
+        # The verdict cache is process-wide and an async sweep thread left running by an earlier test can store a REAL poll in it
+        # between _reset() and the call under test (a loaded CI runner polls busy), so a zero TTL makes every call re-poll the mocks.
+        # The one test that is ABOUT the cache keeps the real TTL.
+        if ttl_zero:
+            from pyutilz.performance.kernel_tuning import benchmark as bm
+
+            monkeypatch.setattr(bm, "_HW_BUSY_TTL", 0.0)
         import builtins
         real_import = builtins.__import__
         gpu_mod = mock.MagicMock()
@@ -589,7 +596,7 @@ class TestAsyncSweepHwBusyGate:
 
     def test_verdict_is_ttl_cached(self, monkeypatch):
         self._reset()
-        gpu_mod, _ = self._patch(monkeypatch, gpu_load=0.95, cpu_pct=1.0)
+        gpu_mod, _ = self._patch(monkeypatch, gpu_load=0.95, cpu_pct=1.0, ttl_zero=False)
         assert ktc._async_sweep_hw_busy() is True
         # Second call within the TTL must NOT re-poll GPUtil.
         assert ktc._async_sweep_hw_busy() is True

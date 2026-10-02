@@ -66,7 +66,6 @@ def flatten_keys_to_set(
     res: Set[Any] = set()
     if isinstance(obj, dict):
         for key, value in obj.items():
-            # print(key,value)
             if isinstance(value, (dict, Iterable)) and not isinstance(value, (str, bytes)):
                 # str/bytes are Iterable, so a string VALUE used to recurse and reach the
                 # ``res.add(obj)`` branch below -- dropping its KEY entirely ({"a": "b"} -> {'b'}),

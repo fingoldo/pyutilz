@@ -76,10 +76,8 @@ def download_in_parallel(
                 if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
                     logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
         if (n_processed % report_each) == 0:
-            # pbar.update(report_each)
             logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))
     logger.info("Finished! n_processed=%d,n_errored=%d", n_processed, len(errored_urls))
-    # pbar.close()
     return errored_urls
 
 

@@ -21,8 +21,6 @@ logger = logging.getLogger("pyutilz.database.db")
 
 from pyutilz.core.pythonlib import ensure_installed  # noqa: F401
 
-# ensure_installed("sqlalchemy psycopg2 pandas pymysql")
-
 # ----------------------------------------------------------------------------------------------------------------------------
 # Normal Imports -- this module is a shared-imports hub: most names below are unused HERE but
 # re-exported for the sibling submodules and the ``__init__`` facade to import explicitly.

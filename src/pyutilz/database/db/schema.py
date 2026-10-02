@@ -315,7 +315,6 @@ def create_postgres_range_partitions(table_name: str, from_date: date, to_date: 
             # arguments this function's own signature declares, on the very first period. Normalize the
             # period bounds to midnight-UTC datetimes here (a datetime is passed through unchanged).
             cmd = f"CREATE TABLE {part_name} PARTITION OF {table_name} FOR VALUES FROM ('{datetime_to_utc_timestamp(_as_utc_datetime(d))*int(10**bigint_degree)}') TO ('{datetime_to_utc_timestamp(_as_utc_datetime(n))*int(10**bigint_degree)}')"
-        # print(cmd)
         _facade.safe_execute(cmd)
 
 
