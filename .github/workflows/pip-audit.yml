@@ -58,4 +58,8 @@ jobs:
           # an error under --strict. So audit the frozen third-party set, pinned exactly as installed; --no-deps because
           # the freeze already holds the whole closure. A known vulnerability in any of them still fails the job.
           pip freeze --exclude-editable > frozen-requirements.txt
-          pip-audit --strict -r frozen-requirements.txt --no-deps --disable-pip --progress-spinner off
+          # PYSEC-2026-3740 / CVE-2026-81726 (nltk <= 3.10.3): path traversal in the model-artifact APIs TransitionParser,
+          # AveragedPerceptron, PerceptronTagger and maxent, with no fixed release yet. pyutilz only calls nltk's tokenizers
+          # (text/tokenizers.py: sent_tokenize, word_tokenize) and none of those APIs, so it is not reachable from here. Re-check when nltk ships a fix
+          # and delete this ignore then.
+          pip-audit --strict -r frozen-requirements.txt --no-deps --disable-pip --progress-spinner off --ignore-vuln PYSEC-2026-3740
