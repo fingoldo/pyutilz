@@ -102,7 +102,7 @@ def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
             if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
                 if node.args:
                     _record(node.args[0], node.lineno)
-            # self._inc_stat("k")
+            # the increment-helper form: the first argument names the key
             elif node.func.attr in _INC_HELPERS and node.args:
                 _record(node.args[0], node.lineno)
     return written
