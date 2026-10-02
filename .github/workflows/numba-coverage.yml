@@ -74,6 +74,14 @@ jobs:
         run: |
           uv pip install -e ".[pandas,polars,database,system,llm,nlp,cloud,speedups,dev]"
 
+      # tests/conftest.py imports py_ci_shared while registering pytest options, so a run without it dies at collection
+      # (the nightly failed with ModuleNotFoundError after the uv migration dropped this step). ci.yml installs it the same way:
+      # the one SHA pin lives in requirements-dev.txt, not in [dev], whose metadata cannot carry a git+https requirement.
+      - name: Install py-ci-shared (pinned in requirements-dev.txt)
+        env:
+          UV_SYSTEM_PYTHON: "1"
+        run: uv pip install -r requirements-dev.txt
+
       - name: Show installed versions
         run: |
           python -c "import numba; print('numba', numba.__version__)"
