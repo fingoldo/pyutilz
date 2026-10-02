@@ -61,6 +61,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[all,dev]"
+          # tests/conftest.py imports py_ci_shared while registering pytest options; it is deliberately not in [dev] (a direct
+          # reference in project metadata makes the distribution unpublishable), so it comes from requirements-dev.txt like in ci.yml.
+          pip install -r requirements-dev.txt
           pytest --no-cov -q
 
       - name: Build sdist and wheel
