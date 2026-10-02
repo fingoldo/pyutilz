@@ -479,18 +479,20 @@ class TestThinkingRequestField:
 
     def test_deepseek_v4_enabled(self):
         p = self._deepseek("deepseek-v4-chat")
-        assert p._thinking_request_field("high") == {"thinking": {"type": "enabled"}}
+        assert p._thinking_request_field("high") == {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
+        assert p._thinking_request_field(True) == {"thinking": {"type": "enabled"}}
 
     def test_deepseek_v4_disabled(self):
         p = self._deepseek("deepseek-v4-chat")
         assert p._thinking_request_field(False) == {"thinking": {"type": "disabled"}}
         assert p._thinking_request_field("") == {"thinking": {"type": "disabled"}}
 
-    def test_deepseek_legacy_alias_returns_none(self, caplog):
+    def test_deepseek_legacy_alias_takes_the_toggle(self, caplog):
+        # Live 2026-10-03 the legacy alias is served by deepseek-flash and honours the toggle, so it is sent.
         p = self._deepseek("deepseek-chat")
         with caplog.at_level("WARNING"):
-            assert p._thinking_request_field("high") is None
-        assert any("thinking toggle" in r.message for r in caplog.records)
+            assert p._thinking_request_field("high") == {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
+        assert not any("thinking toggle" in r.message for r in caplog.records)
 
     def test_openrouter_true_defaults_medium(self):
         p = self._openrouter()

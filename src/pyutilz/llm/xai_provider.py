@@ -54,11 +54,12 @@ _PRICING: dict[str, tuple[float, float]] = {
     "grok-4.20-0309-non-reasoning": (1.25, 2.50),
     "grok-4.20-multi-agent-0309": (1.25, 2.50),
     "grok-build-0.1": (1.00, 2.00),
-    # grok-4.20 beta family -- premium beta, $2/$6 per 1M tokens, 2M context
-    "grok-4.20-beta": (2.00, 6.00),
-    "grok-4.20-multi-agent-beta-0309": (2.00, 6.00),
-    "grok-4.20-beta-0309-reasoning": (2.00, 6.00),
-    "grok-4.20-beta-0309-non-reasoning": (2.00, 6.00),
+    # grok-4.20 beta ids: ALIASES of the 0309 releases in GET /v1/language-models (2026-10-03), billed at their rates.
+    # They used to be priced at the old $2/$6 beta tariff.
+    "grok-4.20-beta": (1.25, 2.50),
+    "grok-4.20-multi-agent-beta-0309": (1.25, 2.50),
+    "grok-4.20-beta-0309-reasoning": (1.25, 2.50),
+    "grok-4.20-beta-0309-non-reasoning": (1.25, 2.50),
     # grok-4 fast family — cheapest, 2M context
     "grok-4-1-fast-reasoning": (0.20, 0.50),
     "grok-4-1-fast-non-reasoning": (0.20, 0.50),
@@ -70,8 +71,9 @@ _PRICING: dict[str, tuple[float, float]] = {
     # Legacy Grok 3
     "grok-3": (3.00, 15.00),
     "grok-3-mini": (0.30, 0.50),
-    # Coding-specialized
-    "grok-code-fast-1": (0.20, 1.50),
+    # An alias of grok-build-0.1 in GET /v1/language-models (2026-10-03): served AND billed as it (a live call
+    # returned "model": "grok-build-0.1" and cost_in_usd_ticks at the build rates, 1.7x what the old row said).
+    "grok-code-fast-1": (1.00, 2.00),
 }
 
 _CACHE_HIT_COST: dict[str, float] = {
@@ -95,20 +97,38 @@ _CACHE_HIT_COST: dict[str, float] = {
     "grok-4-0709": 0.75,
     "grok-3": 0.75,
     "grok-3-mini": 0.07,
-    "grok-code-fast-1": 0.02,
+    "grok-code-fast-1": 0.20,
 }
 
 # A request with this many prompt tokens or more is billed at the long-context tier: every rate doubled.
 _LONG_CONTEXT_THRESHOLD = 200_000
 
-# `reasoning_effort` per https://docs.x.ai/docs/guides/reasoning: grok-4.6 / 4.7 take low|medium|high|xhigh, grok-4.5
-# low|medium|high (it treats xhigh as high). Reasoning is mandatory on them, so "off" becomes the lowest level.
+# `reasoning_effort` levels as GET /v1/language-models reports them (``capabilities.reasoning_effort``, 2026-10-03):
+# grok-4.5 / 4.6 / 4.7 take low|medium|high|xhigh (reasoning is mandatory, so "off" becomes ``low``); grok-4.3 also
+# takes ``none``, which is what "off" becomes there. grok-4.3 had no row, so ``thinking=`` was never sent to it.
 # grok-4.20-multi-agent also accepts the field but it sets the AGENT COUNT there, so it is never sent to it.
 _EFFORT_LEVELS: dict[str, tuple[str, ...]] = {
     "grok-4.7": ("low", "medium", "high", "xhigh"),
     "grok-4.6": ("low", "medium", "high", "xhigh"),
-    "grok-4.5": ("low", "medium", "high"),
+    "grok-4.5": ("low", "medium", "high", "xhigh"),
+    "grok-4.3": ("none", "low", "medium", "high", "xhigh"),
 }
+
+# Server-side tool prices, USD per invocation or per fetched item (https://docs.x.ai/docs/pricing, 2026-10-03:
+# web search $5 / 1k calls, code execution $5 / 1k, collections/file search $2.50 / 1k, X search $5 / 1k posts and
+# $10 / 1k profiles). Keyed by the ``usage.server_side_tool_usage_details`` field that counts them.
+_TOOL_PRICES_USD: dict[str, float] = {
+    "web_search_calls": 0.005,
+    "code_interpreter_calls": 0.005,
+    "file_search_calls": 0.0025,
+    "document_search_calls": 0.0025,
+    "x_posts_fetched": 0.005,
+    "x_users_fetched": 0.010,
+}
+
+# ``usage.cost_in_usd_ticks``: the amount xAI billed for the request, in units of 1e-10 USD (a live grok-4.3 call of
+# 91 uncached + 128 cached prompt and 213 output tokens reported 6,718,500 ticks = $0.00067185, its list price).
+_USD_PER_TICK = 1e-10
 
 
 class XAIProvider(OpenAICompatibleProvider):
@@ -137,7 +157,7 @@ class XAIProvider(OpenAICompatibleProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "grok-4-1-fast-reasoning",
+        model: str = "grok-4.3",
         max_concurrent: int = 10,
         live_search: bool | str = False,
         live_search_max_sources: int | None = None,
@@ -163,6 +183,11 @@ class XAIProvider(OpenAICompatibleProvider):
         # Extra USD the long-context tier adds on top of the <200K rates `get_session_cost` prices totals at,
         # accumulated per call because the tier is decided by each request's own prompt size.
         self._long_context_surcharge_usd = 0.0
+        # Server-side tool spend (live search), and the total xAI itself reported (``cost_in_usd_ticks``).
+        self._tool_cost_usd = 0.0
+        self._reported_cost_usd = 0.0
+        # The model the API says served the requests, when it differs from the requested id (see `_resolve_pricing`).
+        self._served_model: str | None = None
 
     def _get_timeout(self, model: str) -> float:
         """Return the request timeout in seconds, using a longer timeout for reasoning-mode models whose chain-of-thought generation can be slow."""
@@ -176,12 +201,12 @@ class XAIProvider(OpenAICompatibleProvider):
         return 240.0
 
     def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
-        """Return the total output tokens billed by xAI, which combines completion and reasoning tokens.
+        """Return the total output tokens billed by xAI: completion plus reasoning.
 
-        xAI documents that "reasoning tokens are billed as part of your total consumption" and reports them in
-        ``usage`` separately; whether ``completion_tokens`` already includes them is not stated in the reasoning
-        guide (fetched 2026-09-26), and without an xAI key it was not probed. Kept as the sum, matching the
-        formula this provider has always used; a live response settles it.
+        Measured live 2026-10-03: on chat completions ``completion_tokens`` EXCLUDES the reasoning tokens
+        (grok-4.3: prompt 219 + completion 3 + reasoning 210 = total_tokens 432), and the sum priced at the output
+        rate reproduces the billed ``cost_in_usd_ticks`` exactly. The Responses API counts differently (its
+        ``output_tokens`` includes reasoning) and is mapped onto this convention in `_unwrap_responses_output`.
         """
         return completion_tokens + reasoning_tokens
 
@@ -205,9 +230,28 @@ class XAIProvider(OpenAICompatibleProvider):
             wanted = levels[-1] if wanted == "xhigh" else "high"
         return {"reasoning_effort": wanted}
 
+    def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
+        """Note the model that actually served the request when it is not the one asked for.
+
+        xAI silently redirects retired and alias ids: ``grok-4-1-fast-reasoning`` is answered by ``grok-4.3`` and
+        ``grok-code-fast-1`` by ``grok-build-0.1`` (live, 2026-10-03), and bills at the SERVING model's rates, so a
+        session priced by the requested id understated a redirected grok-4-1-fast call fivefold.
+        """
+        super()._track_provider_specific_response(data)
+        served = data.get("model")
+        if not isinstance(served, str) or not served or served == self.model_name:
+            return
+        if getattr(self, "_served_model", None) != served:
+            logger.warning("xAI served %r with %r; pricing this session at %r rates", self.model_name, served, served)
+        self._served_model = served
+
     def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
-        """Add the long-context surcharge for a request of 200K prompt tokens or more (every rate doubles there)."""
+        """Record the billed total xAI reports, and add the long-context surcharge for a request of 200K prompt
+        tokens or more (every rate doubles there)."""
         super()._track_provider_specific_usage(usage)
+        ticks = usage.get("cost_in_usd_ticks")
+        if isinstance(ticks, (int, float)) and not isinstance(ticks, bool):
+            self._reported_cost_usd = getattr(self, "_reported_cost_usd", 0.0) + ticks * _USD_PER_TICK
         prompt = int(usage.get("prompt_tokens") or 0)
         if prompt < _LONG_CONTEXT_THRESHOLD:
             return
@@ -220,11 +264,18 @@ class XAIProvider(OpenAICompatibleProvider):
         self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + base
 
     def get_session_cost(self) -> dict[str, Any]:
-        """Session cost including the long-context tier (see ``_track_provider_specific_usage``)."""
+        """Session cost including the long-context tier and server-side tool calls.
+
+        ``reported_cost_usd`` is the sum of what xAI itself said it billed (``usage.cost_in_usd_ticks``), for
+        reconciling against ``total_cost_usd``, which is computed from the price tables.
+        """
         cost = super().get_session_cost()
         surcharge = getattr(self, "_long_context_surcharge_usd", 0.0)
+        tools = getattr(self, "_tool_cost_usd", 0.0)
         cost["long_context_surcharge_usd"] = surcharge
-        cost["total_cost_usd"] += surcharge
+        cost["tool_cost_usd"] = tools
+        cost["total_cost_usd"] += surcharge + tools
+        cost["reported_cost_usd"] = getattr(self, "_reported_cost_usd", 0.0)
         return cost
 
     async def generate(  # type: ignore[override]  # same parameters as the base; overridden to route live search
@@ -281,15 +332,31 @@ class XAIProvider(OpenAICompatibleProvider):
 
     def _unwrap_responses_output(self, data: dict[str, Any]) -> str:
         """Answer text, usage and citations out of a Responses API body."""
+        self._track_provider_specific_response(data)
         usage = data.get("usage") or {}
         if usage:
-            # The Responses usage names mapped onto the chat-completions ones `_record_usage` reads.
-            self._record_usage({
+            # The Responses usage names mapped onto the chat-completions ones `_record_usage` reads. Unlike chat
+            # completions, Responses ``output_tokens`` INCLUDES the reasoning tokens (live 2026-10-03: input 38,134 +
+            # output 1,051 = total 39,185, of which 814 reasoning), so the reasoning count is taken out of the
+            # completion count here; passing both through billed those 814 tokens twice.
+            output = int(usage.get("output_tokens") or 0)
+            reasoning = min(output, int((usage.get("output_tokens_details") or {}).get("reasoning_tokens") or 0))
+            mapped: dict[str, Any] = {
                 "prompt_tokens": usage.get("input_tokens") or 0,
-                "completion_tokens": usage.get("output_tokens") or 0,
+                "completion_tokens": output - reasoning,
                 "prompt_tokens_details": {"cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens") or 0},
-                "completion_tokens_details": {"reasoning_tokens": (usage.get("output_tokens_details") or {}).get("reasoning_tokens") or 0},
-            })
+                "completion_tokens_details": {"reasoning_tokens": reasoning},
+            }
+            if "cost_in_usd_ticks" in usage:
+                mapped["cost_in_usd_ticks"] = usage["cost_in_usd_ticks"]
+            self._record_usage(mapped)
+            # Server-side tool calls are billed on top of tokens: that same call cost $0.0250 more than its tokens,
+            # which is its 5 web_search calls at $5 / 1k.
+            tools = usage.get("server_side_tool_usage_details")
+            if isinstance(tools, dict):
+                self._tool_cost_usd = getattr(self, "_tool_cost_usd", 0.0) + sum(
+                    float(tools.get(field) or 0) * price for field, price in _TOOL_PRICES_USD.items()
+                )
         texts: list[str] = []
         annotations: list[Any] = []
         for item in data.get("output") or []:
@@ -317,11 +384,8 @@ class XAIProvider(OpenAICompatibleProvider):
         # only handles key/ACL CRUD. Balance is dashboard-only.
         raise NotImplementedError("xAI has no public API to fetch remaining credit. " "Check console.x.ai for credit balance and usage.")
 
-    async def check_account_limits(self) -> dict:
-        """Not supported for xAI: always raises NotImplementedError since per-key rate limits are tier-based and not exposed via the API."""
-        raise NotImplementedError(
-            "xAI does not expose per-key rate limits via API. " "Limits are tier-based on docs.x.ai/docs/usage and visible at console.x.ai."
-        )
+    # check_account_limits is inherited: every xAI response carries x-ratelimit-{limit,remaining}-{requests,tokens}
+    # (live, 2026-10-03), which the base captures. The override that always raised NotImplementedError hid them.
 
     _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
 
@@ -342,6 +406,7 @@ class XAIProvider(OpenAICompatibleProvider):
         unrecognized or dated snapshot id used to silently take the cheapest tariff in the table,
         so session cost under-reported by several times with nothing in the log.
         """
+        model = self._billed_model(model)
         pair = _PRICING.get(model)
         if pair is None:
             pair = longest_prefix_lookup(model, _PRICING, None)
@@ -350,8 +415,17 @@ class XAIProvider(OpenAICompatibleProvider):
             pair = (0.20, 0.50)
         return Pricing(float(pair[0]), float(pair[1]), self._resolve_cache_hit(model))
 
+    def _billed_model(self, model: str) -> str:
+        """The id to price ``model`` by: the model xAI reported serving this session's requests when ``model`` is the
+        requested one and the tables know the served id, else ``model`` itself."""
+        served = getattr(self, "_served_model", None)
+        if served and model == getattr(self, "model_name", None) and longest_prefix_lookup(served, _PRICING, None) is not None:
+            return str(served)
+        return model
+
     def _resolve_cache_hit(self, model: str) -> float:
         """Return the cached-input price per 1M for ``model`` from xAI's separate cache-hit table."""
+        model = self._billed_model(model)
         resolved = _CACHE_HIT_COST.get(model)
         if resolved is None:
             resolved = longest_prefix_lookup(model, _CACHE_HIT_COST, None)

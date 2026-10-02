@@ -25,16 +25,18 @@ class TestDeepSeekConfig:
     def test_pricing_chat(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-chat"
-        assert p._input_cost_per_1m("deepseek-chat") == 0.28
-        assert p._output_cost_per_1m("deepseek-chat") == 0.42
-        assert p._cache_hit_cost_per_1m("deepseek-chat") == 0.028
+        # Live 2026-10-03: the legacy alias is answered by deepseek-flash and billed at its rates.
+        assert p._input_cost_per_1m("deepseek-chat") == 0.30
+        assert p._output_cost_per_1m("deepseek-chat") == 1.20
+        assert p._cache_hit_cost_per_1m("deepseek-chat") == 0.006
 
     def test_pricing_reasoner(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-reasoner"
-        assert p._input_cost_per_1m("deepseek-reasoner") == 0.28
-        assert p._output_cost_per_1m("deepseek-reasoner") == 0.42
-        assert p._cache_hit_cost_per_1m("deepseek-reasoner") == 0.028
+        # Live 2026-10-03: the legacy alias is answered by deepseek-flash and billed at its rates.
+        assert p._input_cost_per_1m("deepseek-reasoner") == 0.30
+        assert p._output_cost_per_1m("deepseek-reasoner") == 1.20
+        assert p._cache_hit_cost_per_1m("deepseek-reasoner") == 0.006
 
     def test_pricing_v4_flash(self):
         # The legacy name is "billed at the Flash price" (api-docs.deepseek.com/quick_start/pricing, 2026-09-26, peak).
@@ -82,24 +84,24 @@ class TestDeepSeekConfig:
         p.model_name = "deepseek-v4-pro"
         assert p._thinking_request_field(False) == {"thinking": {"type": "disabled"}}
 
-    def test_thinking_field_none_for_legacy_aliases(self):
-        # Legacy chat/reasoner are fixed-mode server-side; provider rejects
-        # the thinking field, so we return None to skip emitting it.
+    def test_thinking_field_sent_for_legacy_aliases(self):
+        # Live 2026-10-03: both legacy aliases are served by deepseek-flash and honour `thinking.type` either way
+        # (deepseek-chat + enabled returned reasoning tokens, deepseek-reasoner + disabled returned none).
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         for legacy in ("deepseek-chat", "deepseek-reasoner"):
             p.model_name = legacy
-            assert p._thinking_request_field(True) is None, legacy
-            assert p._thinking_request_field(False) is None, legacy
+            assert p._thinking_request_field(True) == {"thinking": {"type": "enabled"}}, legacy
+            assert p._thinking_request_field(False) == {"thinking": {"type": "disabled"}}, legacy
 
-    def test_thinking_field_string_coerces_to_bool(self):
-        """Bool-flag API: any non-empty effort string -> enabled,
-        empty string -> disabled. Lets callers pass the same
-        ``thinking="high"`` to ALL providers and have each one route
-        to its own schema."""
+    def test_thinking_field_effort_string_enables_and_sets_reasoning_effort(self):
+        """Any non-empty effort string enables thinking AND maps onto DeepSeek's documented ``reasoning_effort``
+        (low | high | max); an unknown one enables thinking at the model default; empty string disables."""
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-v4-flash"
-        for effort in ("low", "medium", "high", "minimal", "anything"):
-            assert p._thinking_request_field(effort) == {"thinking": {"type": "enabled"}}, effort
+        expected = {"minimal": "low", "low": "low", "medium": "high", "high": "high", "xhigh": "max", "max": "max"}
+        for effort, level in expected.items():
+            assert p._thinking_request_field(effort) == {"thinking": {"type": "enabled"}, "reasoning_effort": level}, effort
+        assert p._thinking_request_field("anything") == {"thinking": {"type": "enabled"}}
         assert p._thinking_request_field("") == {"thinking": {"type": "disabled"}}
 
     def test_timeout_v4_flash_short(self):
@@ -114,27 +116,27 @@ class TestDeepSeekConfig:
     def test_max_tokens_v4_flash(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-v4-flash"
-        assert p.max_output_tokens == 384_000
+        assert p.max_output_tokens == 393_216  # GET /models and the max_tokens range error, 2026-10-03
 
     def test_max_tokens_v4_pro(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-v4-pro"
-        assert p.max_output_tokens == 384_000
+        assert p.max_output_tokens == 393_216
 
     def test_context_window_v4_flash(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-v4-flash"
-        assert p.context_window == 1_000_000
+        assert p.context_window == 1_048_576
 
     def test_max_tokens_chat(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-chat"
-        assert p.max_output_tokens == 8192
+        assert p.max_output_tokens == 393_216  # served by deepseek-flash; a 20,000-token request was accepted live
 
     def test_max_tokens_reasoner(self):
         p = DeepSeekProvider.__new__(DeepSeekProvider)
         p.model_name = "deepseek-reasoner"
-        assert p.max_output_tokens == 65536
+        assert p.max_output_tokens == 393_216
 
     def test_handle_special_status_402_warns(self, caplog):
         """402 is credit exhaustion; the operator's only signal must actually be emitted."""

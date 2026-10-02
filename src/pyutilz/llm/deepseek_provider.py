@@ -23,29 +23,46 @@ _PRICING = {
     # Legacy name, "still accepted ... served by the DeepSeek-V4.1-Flash model and billed at the Flash price".
     "deepseek-v4-flash": (0.30, 0.006, 1.20),
     "deepseek-v4-pro": (1.32, 0.044, 3.96),
-    # Legacy aliases (deprecated 2026-07-24, V3.2-backed); no longer on the pricing page, last published rates.
-    "deepseek-chat": (0.28, 0.028, 0.42),
-    "deepseek-reasoner": (0.28, 0.028, 0.42),
+    # Legacy aliases. Live 2026-10-03 both are answered by deepseek-flash (the response's "model" field), take
+    # its 20,000+ token outputs and the thinking toggle, and are billed as it: their old V3.2 rates ($0.28/$0.42)
+    # understated a deepseek-chat call by about a third.
+    "deepseek-chat": (0.30, 0.006, 1.20),
+    "deepseek-reasoner": (0.30, 0.006, 1.20),
 }
 
+# GET /models (2026-10-03): ``max_output_tokens`` 393,216 and ``context_window`` 1,048,576 for both current models; a
+# request above 393,216 is a 400 "the valid range of max_tokens is [1, 393216]". The pricing page rounds these to
+# "384K" / "1M", which is what this table used to hold.
+_V4_MAX_OUTPUT = 393_216
+_V4_CONTEXT = 1_048_576
+
 _MAX_TOKENS = {
-    "deepseek-flash": 384_000,
-    "deepseek-v4-flash": 384_000,
-    "deepseek-v4-pro": 384_000,
-    "deepseek-chat": 8192,
-    "deepseek-reasoner": 65536,
+    "deepseek-flash": _V4_MAX_OUTPUT,
+    "deepseek-v4-flash": _V4_MAX_OUTPUT,
+    "deepseek-v4-pro": _V4_MAX_OUTPUT,
+    "deepseek-chat": _V4_MAX_OUTPUT,
+    "deepseek-reasoner": _V4_MAX_OUTPUT,
 }
 
 _CONTEXT_WINDOW = {
-    "deepseek-flash": 1_000_000,
-    "deepseek-v4-flash": 1_000_000,
-    "deepseek-v4-pro": 1_000_000,
-    "deepseek-reasoner": 128_000,
-    "deepseek-chat": 64_000,
+    "deepseek-flash": _V4_CONTEXT,
+    "deepseek-v4-flash": _V4_CONTEXT,
+    "deepseek-v4-pro": _V4_CONTEXT,
+    "deepseek-reasoner": _V4_CONTEXT,
+    "deepseek-chat": _V4_CONTEXT,
 }
 
-# The fixed-mode legacy aliases: every other model (the V4 family, deepseek-flash) takes the `thinking` toggle.
-_LEGACY_FIXED_MODE_MODELS = frozenset({"deepseek-chat", "deepseek-reasoner"})
+# ``reasoning_effort`` takes low | high | max, default high (https://api-docs.deepseek.com/guides/thinking_mode and
+# GET /models ``effort.supported_levels``, 2026-10-03). The caller's vocabulary maps onto the nearest documented level;
+# ``medium`` is not documented, so it takes the default rather than an undocumented value.
+_DEEPSEEK_EFFORTS: dict[str, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "high",
+    "high": "high",
+    "xhigh": "max",
+    "max": "max",
+}
 
 # "Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday, excluding Chinese public holidays."
 # Holidays are not modelled: a call on one is costed at the peak rate, an overestimate, never an underestimate.
@@ -67,9 +84,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
     _max_tokens_map = _MAX_TOKENS
     # An unknown model gets the CURRENT generation's limits: the old 8192 / 64K defaults were the retired
     # deepseek-chat's, and silently capped the current deepseek-flash (384K output, 1M context) to them.
-    _default_max_tokens = 384_000
+    _default_max_tokens = _V4_MAX_OUTPUT
     _context_window_map = _CONTEXT_WINDOW
-    _default_context_window = 1_000_000
+    _default_context_window = _V4_CONTEXT
 
     def __init__(
         self,
@@ -125,30 +142,26 @@ class DeepSeekProvider(OpenAICompatibleProvider):
 
     # NOTE: thinking mode is intentionally LEFT ENABLED by default for V4.
     # Callers who need non-thinking mode (e.g. tight max_tokens budget on
-    # structured JSON output) should pass ``thinking=False`` to ``generate()``
-    # or use the legacy ``deepseek-chat`` alias which routes to non-thinking
-    # server-side. See DeepSeek docs:
-    # https://api-docs.deepseek.com/api/create-chat-completion
+    # structured JSON output) should pass ``thinking=False`` to ``generate()``.
+    # See DeepSeek docs: https://api-docs.deepseek.com/guides/thinking_mode
 
     def _thinking_request_field(self, thinking: bool | str) -> dict | None:
-        """Build the request-body ``thinking`` field for V4 models, or None for legacy aliases that don't support it."""
-        # Only V4 models support this toggle; legacy aliases (chat/reasoner)
-        # are fixed-mode server-side and reject the field. Log a warning
-        # so a caller passing thinking= to a legacy alias notices the
-        # request goes through unchanged rather than silently ignored.
-        if self.model_name in _LEGACY_FIXED_MODE_MODELS:
-            if thinking:
-                logger.warning(
-                    "DeepSeek %r does not support the thinking toggle (only the legacy aliases lack it); thinking=%r ignored.",
-                    self.model_name,
-                    thinking,
-                )
-            return None
-        # DeepSeek V4 expects a hard on/off, not an effort string.
-        # Coerce: ``True`` or any non-empty effort string -> enabled;
-        # ``False`` / empty string -> disabled.
-        enabled, _effort = self._normalize_thinking(thinking)
-        return {"thinking": {"type": "enabled" if enabled else "disabled"}}
+        """Build the request-body ``thinking`` toggle, plus ``reasoning_effort`` when an effort level was asked for.
+
+        Every model takes the toggle, the legacy ``deepseek-chat`` / ``deepseek-reasoner`` aliases included: live on
+        2026-10-03 both are served by deepseek-flash and honour ``thinking.type`` either way, so the refusal this used
+        to apply to them ignored a working setting. An effort string used to be collapsed to "enabled", which runs at
+        DeepSeek's default ``high``: ``thinking="low"`` asked for less reasoning and was billed for more.
+        """
+        enabled, effort = self._normalize_thinking(thinking)
+        field: dict[str, Any] = {"thinking": {"type": "enabled" if enabled else "disabled"}}
+        if enabled and effort is not None:
+            level = _DEEPSEEK_EFFORTS.get(effort)
+            if level is None:
+                logger.warning("Unknown thinking effort %r for DeepSeek; using the model's default. Known: %s", effort, sorted(_DEEPSEEK_EFFORTS))
+            else:
+                field["reasoning_effort"] = level
+        return field
 
     async def get_account_credits(self) -> dict:
         """Query DeepSeek's ``/user/balance`` endpoint.

@@ -1,0 +1,2359 @@
+{
+ "date": "2026-10-03",
+ "spend_estimate_usd": 0.08709637399999998,
+ "notes": {
+  "anthropic": "Account credit exhausted: every Messages and count_tokens call returned 400 'credit balance is too low' (not retried by pyutilz, correctly). Only GET /v1/models could be read.",
+  "openai": "Account credit exhausted: POST /chat/completions returned 429 insufficient_quota/credit_balance_exhausted, which pyutilz retried forever (fixed).",
+  "gemini": "Key is FREE tier: api_implied_cost is the paid list price; real billing $0. Pro models have a zero free-tier quota (429 limit: 0).",
+  "deepseek": "Probed at 2026-10-02T19:00Z (Friday, off-peak): multiplier 0.5 applied on both sides.",
+  "xai": "api_implied_cost = usage.cost_in_usd_ticks / 1e10 (the money xAI billed)."
+ },
+ "model_listings": {
+  "anthropic": [
+   {
+    "id": "claude-sonnet-5-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-5-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-fable-5-1",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-sonnet-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-fable-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-4-8",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-4-7",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": true,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": false,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-sonnet-4-6",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": false,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": true,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-4-6",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": false,
+     "max": true
+    },
+    "thinking_types": {
+     "enabled": true,
+     "adaptive": true
+    }
+   },
+   {
+    "id": "claude-opus-4-5-20251101",
+    "max_input_tokens": 200000,
+    "max_tokens": 64000,
+    "effort": {
+     "low": true,
+     "medium": true,
+     "high": true,
+     "xhigh": false,
+     "max": false
+    },
+    "thinking_types": {
+     "enabled": true,
+     "adaptive": false
+    }
+   },
+   {
+    "id": "claude-haiku-4-5-20251001",
+    "max_input_tokens": 200000,
+    "max_tokens": 64000,
+    "effort": {
+     "low": false,
+     "medium": false,
+     "high": false,
+     "xhigh": false,
+     "max": false
+    },
+    "thinking_types": {
+     "enabled": true,
+     "adaptive": false
+    }
+   },
+   {
+    "id": "claude-sonnet-4-5-20250929",
+    "max_input_tokens": 1000000,
+    "max_tokens": 64000,
+    "effort": {
+     "low": false,
+     "medium": false,
+     "high": false,
+     "xhigh": false,
+     "max": false
+    },
+    "thinking_types": {
+     "enabled": true,
+     "adaptive": false
+    }
+   }
+  ],
+  "xai": [
+   {
+    "id": "grok-4.20-0309-non-reasoning",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 12500,
+    "cached_prompt_text_token_price": 2000,
+    "prompt_image_token_price": 12500,
+    "completion_text_token_price": 25000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 25000,
+    "cached_prompt_text_token_price_long_context": 4000,
+    "completion_text_token_price_long_context": 50000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-4.20-non-reasoning",
+     "grok-4.20-non-reasoning-latest",
+     "grok-4.20-beta-non-reasoning",
+     "grok-4.20-beta-latest-non-reasoning",
+     "grok-4.20-experimental-beta-0304-non-reasoning",
+     "grok-4.20-experimental-beta-non-reasoning-latest",
+     "grok-4.20-beta-0309-non-reasoning",
+     "grok-4.20-non-reasoning-gv2"
+    ]
+   },
+   {
+    "id": "grok-4.20-0309-reasoning",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 12500,
+    "cached_prompt_text_token_price": 2000,
+    "prompt_image_token_price": 12500,
+    "completion_text_token_price": 25000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 25000,
+    "cached_prompt_text_token_price_long_context": 4000,
+    "completion_text_token_price_long_context": 50000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-4.20-reasoning-latest",
+     "grok-4.20",
+     "grok-4.20-reasoning",
+     "grok-4.20-0309",
+     "grok-4.20-beta-0309-reasoning",
+     "grok-4.20-beta",
+     "grok-4.20-beta-0309",
+     "grok-4.20-beta-latest",
+     "grok-4.20-beta-latest-reasoning",
+     "grok-4.20-beta-reasoning",
+     "grok-4.20-experimental-beta-0304-reasoning",
+     "grok-4.20-experimental-beta-0304",
+     "grok-4.20-experimental-beta-reasoning-latest",
+     "grok-4.20-experimental-beta-latest",
+     "grok-4.20-reasoning-gv2"
+    ]
+   },
+   {
+    "id": "grok-4.20-multi-agent-0309",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 12500,
+    "cached_prompt_text_token_price": 2000,
+    "prompt_image_token_price": 12500,
+    "completion_text_token_price": 25000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 25000,
+    "cached_prompt_text_token_price_long_context": 4000,
+    "completion_text_token_price_long_context": 50000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-4.20-multi-agent",
+     "grok-4.20-multi-agent-latest",
+     "grok-4.20-multi-agent-beta-latest",
+     "grok-4.20-multi-agent-experimental-beta-0304",
+     "grok-4.20-multi-agent-experimental-beta-latest",
+     "grok-4.20-multi-agent-beta-0309"
+    ]
+   },
+   {
+    "id": "grok-4.3",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 12500,
+    "cached_prompt_text_token_price": 2000,
+    "prompt_image_token_price": 12500,
+    "completion_text_token_price": 25000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 25000,
+    "cached_prompt_text_token_price_long_context": 4000,
+    "completion_text_token_price_long_context": 50000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-4.3-latest"
+    ],
+    "capabilities": {
+     "reasoning_effort": [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "default_reasoning_effort": "low"
+    }
+   },
+   {
+    "id": "grok-4.5",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 20000,
+    "cached_prompt_text_token_price": 3000,
+    "prompt_image_token_price": 20000,
+    "completion_text_token_price": 60000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 40000,
+    "cached_prompt_text_token_price_long_context": 6000,
+    "completion_text_token_price_long_context": 120000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-4.5-latest",
+     "grok-build-latest"
+    ],
+    "capabilities": {
+     "reasoning_effort": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "default_reasoning_effort": "high"
+    }
+   },
+   {
+    "id": "grok-4.6",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 20000,
+    "cached_prompt_text_token_price": 5000,
+    "prompt_image_token_price": 20000,
+    "completion_text_token_price": 60000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 40000,
+    "cached_prompt_text_token_price_long_context": 10000,
+    "completion_text_token_price_long_context": 120000,
+    "long_context_threshold": 200000,
+    "aliases": [],
+    "capabilities": {
+     "reasoning_effort": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "default_reasoning_effort": "high"
+    }
+   },
+   {
+    "id": "grok-4.7",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 20000,
+    "cached_prompt_text_token_price": 5000,
+    "prompt_image_token_price": 20000,
+    "completion_text_token_price": 60000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 40000,
+    "cached_prompt_text_token_price_long_context": 10000,
+    "completion_text_token_price_long_context": 120000,
+    "long_context_threshold": 200000,
+    "aliases": [],
+    "capabilities": {
+     "reasoning_effort": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+     ],
+     "default_reasoning_effort": "high"
+    }
+   },
+   {
+    "id": "grok-build-0.1",
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "prompt_text_token_price": 10000,
+    "cached_prompt_text_token_price": 2000,
+    "prompt_image_token_price": 10000,
+    "completion_text_token_price": 20000,
+    "search_price": 0,
+    "prompt_text_token_price_long_context": 20000,
+    "cached_prompt_text_token_price_long_context": 4000,
+    "completion_text_token_price_long_context": 40000,
+    "long_context_threshold": 200000,
+    "aliases": [
+     "grok-code-fast-1",
+     "grok-code-fast",
+     "grok-code-fast-1-0825"
+    ]
+   }
+  ],
+  "deepseek": [
+   {
+    "id": "deepseek-flash",
+    "object": "model",
+    "owned_by": "deepseek",
+    "name": "DeepSeek-V4.1-Flash",
+    "context_window": 1048576,
+    "max_output_tokens": 393216,
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "effort": {
+     "supported_levels": [
+      "low",
+      "high",
+      "max"
+     ],
+     "default_level": "high"
+    },
+    "api_capabilities": {
+     "anthropic_messages": {
+      "system_prompt_update": "in-history"
+     }
+    }
+   },
+   {
+    "id": "deepseek-v4-pro",
+    "object": "model",
+    "owned_by": "deepseek",
+    "name": "DeepSeek-V4-Pro",
+    "context_window": 1048576,
+    "max_output_tokens": 393216,
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ],
+    "effort": {
+     "supported_levels": [
+      "low",
+      "high",
+      "max"
+     ],
+     "default_level": "high"
+    },
+    "api_capabilities": {
+     "anthropic_messages": {
+      "system_prompt_update": "leading-only"
+     }
+    }
+   }
+  ],
+  "gemini_text": [
+   {
+    "name": "models/gemini-2.5-flash",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-2.5-pro",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-2.5-flash-lite",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3-flash-preview",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.1-pro-preview",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.1-pro-preview-customtools",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.1-flash-lite-preview",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.1-flash-lite",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.5-flash",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.5-flash-lite",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.5-transcribe",
+    "input_limit": 98304,
+    "output_limit": 32768
+   },
+   {
+    "name": "models/gemini-3.6-flash",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.7-flash",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-3.8-flash",
+    "input_limit": 1048576,
+    "output_limit": 65536
+   },
+   {
+    "name": "models/gemini-2.5-computer-use-preview-10-2025",
+    "input_limit": 131072,
+    "output_limit": 65536
+   }
+  ]
+ },
+ "calls": {
+  "anthropic": [
+   {
+    "model": "claude-sonnet-5",
+    "check": "count_tokens",
+    "params": null,
+    "http_status": 400,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "BadRequestError: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purcha",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: BadRequestError: Error code: 400 - {'type': 'error', 'error'"
+   },
+   {
+    "model": "claude-sonnet-5-5",
+    "check": "count_tokens",
+    "params": null,
+    "http_status": 400,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "BadRequestError: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purcha",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: BadRequestError: Error code: 400 - {'type': 'error', 'error'"
+   },
+   {
+    "model": "claude-haiku-4-5-20251001",
+    "check": "count_tokens",
+    "params": null,
+    "http_status": 400,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "BadRequestError: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purcha",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: BadRequestError: Error code: 400 - {'type': 'error', 'error'"
+   },
+   {
+    "model": "claude-nonexistent-9",
+    "check": "count_tokens_permanent_4xx",
+    "params": null,
+    "http_status": 400,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "BadRequestError",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "raised (PROV-8 ok)"
+   }
+  ],
+  "xai": [
+   {
+    "model": "grok-4.3",
+    "check": "reasoning_medium",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "medium",
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.3",
+      "max_tokens": 300
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "prompt_tokens": 219,
+     "completion_tokens": 3,
+     "total_tokens": 432,
+     "prompt_tokens_details": {
+      "text_tokens": 219,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 128
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 210,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 6718500
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00067185,
+    "api_implied_cost_usd": 0.00067185,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "0.05",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-4.3",
+    "check": "thinking_off",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.3",
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "prompt_tokens": 195,
+     "completion_tokens": 2,
+     "total_tokens": 327,
+     "prompt_tokens_details": {
+      "text_tokens": 195,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 192
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 130,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 3721500
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00037215,
+    "api_implied_cost_usd": 0.00037215,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-4.5",
+    "check": "reasoning_low",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "low",
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.5",
+      "max_tokens": 300,
+      "reasoning_effort": "low"
+     }
+    ],
+    "model_served": [
+     "grok-4.5"
+    ],
+    "usage": {
+     "prompt_tokens": 504,
+     "completion_tokens": 1,
+     "total_tokens": 545,
+     "prompt_tokens_details": {
+      "text_tokens": 504,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 40,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 12540000
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.001254,
+    "api_implied_cost_usd": 0.001254,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-4-1-fast-reasoning",
+    "check": "default_model_retired?",
+    "params": {
+     "max_tokens": 50,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4-1-fast-reasoning",
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "prompt_tokens": 195,
+     "completion_tokens": 2,
+     "total_tokens": 306,
+     "prompt_tokens_details": {
+      "text_tokens": 195,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 128
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 109,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 3868500
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 7.53e-05,
+    "api_implied_cost_usd": 0.00038685,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "grok-code-fast-1",
+    "check": "alias_pricing",
+    "params": {
+     "max_tokens": 50,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-code-fast-1",
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "grok-build-0.1"
+    ],
+    "usage": {
+     "prompt_tokens": 189,
+     "completion_tokens": 2,
+     "total_tokens": 298,
+     "prompt_tokens_details": {
+      "text_tokens": 189,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 128
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 107,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 3046000
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00017826000000000002,
+    "api_implied_cost_usd": 0.0003046,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "grok-4.3",
+    "check": "live_search_responses_api",
+    "params": {
+     "max_tokens": 300,
+     "thinking": false,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.3",
+      "tools": [
+       {
+        "type": "web_search"
+       },
+       {
+        "type": "x_search"
+       }
+      ],
+      "max_output_tokens": 300
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "input_tokens": 38134,
+     "input_tokens_details": {
+      "cached_tokens": 16576
+     },
+     "output_tokens": 1051,
+     "output_tokens_details": {
+      "reasoning_tokens": 814
+     },
+     "total_tokens": 39185,
+     "num_sources_used": 0,
+     "num_server_side_tools_used": 5,
+     "cost_in_usd_ticks": 578902000,
+     "server_side_tool_usage_details": {
+      "web_search_calls": 5,
+      "x_search_calls": 0,
+      "x_posts_fetched": 0,
+      "x_users_fetched": 0,
+      "code_interpreter_calls": 0,
+      "file_search_calls": 0,
+      "mcp_calls": 0,
+      "document_search_calls": 0,
+      "image_generation_calls": 0
+     },
+     "context_details": {
+      "input_tokens": 23467,
+      "output_tokens": 418
+     }
+    },
+    "finish": [
+     "completed"
+    ],
+    "our_cost_usd": 0.0349252,
+    "api_implied_cost_usd": 0.0578902,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "**The top headline on the BBC News website on October 1, 2026, appears to have focused on major international stories such as an attempted hijacking o",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "grok-4.3",
+    "check": "AFTER_FIX_thinking_off_sends_none",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.3",
+      "max_tokens": 50,
+      "reasoning_effort": "none"
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "prompt_tokens": 187,
+     "completion_tokens": 2,
+     "total_tokens": 189,
+     "prompt_tokens_details": {
+      "text_tokens": 187,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 128
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 1043500
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00010435,
+    "api_implied_cost_usd": 0.00010435,
+    "cost_match": true,
+    "reported_cost_usd": 0.00010435,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-4-1-fast-reasoning",
+    "check": "AFTER_FIX_served_model_pricing",
+    "params": {
+     "max_tokens": 50,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4-1-fast-reasoning",
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "prompt_tokens": 195,
+     "completion_tokens": 2,
+     "total_tokens": 300,
+     "prompt_tokens_details": {
+      "text_tokens": 195,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 192
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 103,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 3046500
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00030465000000000006,
+    "api_implied_cost_usd": 0.00030465,
+    "cost_match": true,
+    "reported_cost_usd": 0.00030465,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-code-fast-1",
+    "check": "AFTER_FIX_alias_pricing",
+    "params": {
+     "max_tokens": 50,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-code-fast-1",
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "grok-build-0.1"
+    ],
+    "usage": {
+     "prompt_tokens": 189,
+     "completion_tokens": 2,
+     "total_tokens": 320,
+     "prompt_tokens_details": {
+      "text_tokens": 189,
+      "audio_tokens": 0,
+      "image_tokens": 0,
+      "cached_tokens": 128
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 129,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "num_sources_used": 0,
+     "cost_in_usd_ticks": 3486000
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.0003486,
+    "api_implied_cost_usd": 0.0003486,
+    "cost_match": true,
+    "reported_cost_usd": 0.0003486,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "grok-4.3",
+    "check": "AFTER_FIX_live_search_cost",
+    "params": {
+     "max_tokens": 300,
+     "thinking": false,
+     "temperature": null
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "grok-4.3",
+      "tools": [
+       {
+        "type": "web_search"
+       },
+       {
+        "type": "x_search"
+       }
+      ],
+      "max_output_tokens": 300,
+      "reasoning": {
+       "effort": "none"
+      }
+     }
+    ],
+    "model_served": [
+     "grok-4.3"
+    ],
+    "usage": {
+     "input_tokens": 7714,
+     "input_tokens_details": {
+      "cached_tokens": 3648
+     },
+     "output_tokens": 79,
+     "output_tokens_details": {
+      "reasoning_tokens": 0
+     },
+     "total_tokens": 7793,
+     "num_sources_used": 0,
+     "num_server_side_tools_used": 3,
+     "cost_in_usd_ticks": 210096000,
+     "server_side_tool_usage_details": {
+      "web_search_calls": 3,
+      "x_search_calls": 0,
+      "x_posts_fetched": 0,
+      "x_users_fetched": 0,
+      "code_interpreter_calls": 0,
+      "file_search_calls": 0,
+      "mcp_calls": 0,
+      "document_search_calls": 0,
+      "image_generation_calls": 0
+     },
+     "context_details": {
+      "input_tokens": 5694,
+      "output_tokens": 28
+     }
+    },
+    "finish": [
+     "completed"
+    ],
+    "our_cost_usd": 0.0210096,
+    "api_implied_cost_usd": 0.0210096,
+    "cost_match": true,
+    "reported_cost_usd": 0.0210096,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "Riot police clash with students as education protests rage in France.[[1]](https://x.com/bbcworld)",
+    "verdict": "PASS"
+   }
+  ],
+  "gemini": [
+   {
+    "model": "gemini-2.5-flash-lite",
+    "check": "budget_thinking_off",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 50,
+      "thinking_config": {
+       "thinking_budget": 0
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-2.5-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 1.2e-06,
+    "api_implied_cost_usd": 1.2000000000000002e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-2.5-flash",
+    "check": "budget_thinking_low_cap300",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "low"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 300,
+      "thinking_config": {
+       "thinking_budget": 2048
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-2.5-flash"
+    ],
+    "usage": {
+     "candidates_token_count": 3,
+     "prompt_token_count": 13,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 13
+      }
+     ],
+     "thoughts_token_count": 287,
+     "total_token_count": 303
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 0.0007289,
+    "api_implied_cost_usd": 0.0007289,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3.1-flash-lite-preview",
+    "check": "level_minimal",
+    "params": {
+     "max_tokens": 100,
+     "thinking": "minimal"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 100,
+      "thinking_config": {
+       "thinking_level": "MINIMAL"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3.1-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 4e-06,
+    "api_implied_cost_usd": 4e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3.8-flash",
+    "check": "level_off",
+    "params": {
+     "max_tokens": 200,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 200,
+      "thinking_config": {
+       "thinking_level": "LOW"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3.8-flash"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 1.05e-05,
+    "api_implied_cost_usd": 1.05e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3.8-flash",
+    "check": "level_minimal_probe",
+    "params": {
+     "max_tokens": 200,
+     "thinking": "minimal"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 200,
+      "thinking_config": {
+       "thinking_level": "LOW"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3.8-flash"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 1.05e-05,
+    "api_implied_cost_usd": 1.05e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3-flash-preview",
+    "check": "level_high",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "high"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 300,
+      "thinking_config": {
+       "thinking_level": "HIGH"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3-flash-preview"
+    ],
+    "usage": {
+     "candidates_token_count": 3,
+     "prompt_token_count": 13,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 13
+      }
+     ],
+     "thoughts_token_count": 127,
+     "total_token_count": 143
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 0.00039649999999999993,
+    "api_implied_cost_usd": 0.0003965,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3.1-flash-lite",
+    "check": "ga_id_pricing",
+    "params": {
+     "max_tokens": 50
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 50
+     }
+    ],
+    "model_served": [
+     "gemini-3.1-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 4e-06,
+    "api_implied_cost_usd": 4e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-3.6-flash",
+    "check": "unlisted_pricing",
+    "params": {
+     "max_tokens": 200,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 200,
+      "thinking_config": {
+       "thinking_level": "MINIMAL"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3.6-flash"
+    ],
+    "usage": {
+     "candidates_token_count": 1,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 5
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 2.4999999999999998e-06,
+    "api_implied_cost_usd": 6.75e-06,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "gemini-3.5-flash-lite",
+    "check": "prefix_pricing",
+    "params": {
+     "max_tokens": 200,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 200,
+      "thinking_config": {
+       "thinking_level": "MINIMAL"
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-3.5-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 2,
+     "prompt_token_count": 4,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 4
+      }
+     ],
+     "total_token_count": 6
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 2.4e-05,
+    "api_implied_cost_usd": 6.2e-06,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "gemini-2.5-flash-lite",
+    "check": "json_schema",
+    "params": {
+     "max_tokens": 100,
+     "thinking": false,
+     "json_schema": {
+      "type": "object",
+      "properties": {
+       "fruit": {
+        "type": "string"
+       },
+       "color": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "fruit",
+       "color"
+      ]
+     }
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 100,
+      "response_mime_type": "application/json",
+      "response_json_schema": {
+       "type": "object",
+       "properties": {
+        "fruit": {
+         "type": "string"
+        },
+        "color": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "fruit",
+        "color"
+       ]
+      },
+      "thinking_config": {
+       "thinking_budget": 0
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-2.5-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 19,
+     "prompt_token_count": 8,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 8
+      }
+     ],
+     "total_token_count": 27
+    },
+    "finish": [
+     [
+      "FinishReason.STOP"
+     ]
+    ],
+    "our_cost_usd": 8.400000000000001e-06,
+    "api_implied_cost_usd": 8.400000000000001e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "{\n  \"fruit\": \"apple\",\n  \"color\": \"red\"\n}",
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-2.5-flash-lite",
+    "check": "max_tokens_truncation",
+    "params": {
+     "max_tokens": 5,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "temperature": 0.7,
+      "max_output_tokens": 5,
+      "thinking_config": {
+       "thinking_budget": 0
+      }
+     }
+    ],
+    "model_served": [
+     "gemini-2.5-flash-lite"
+    ],
+    "usage": {
+     "candidates_token_count": 5,
+     "prompt_token_count": 14,
+     "prompt_tokens_details": [
+      {
+       "modality": "TEXT",
+       "token_count": 14
+      }
+     ],
+     "total_token_count": 19
+    },
+    "finish": [
+     [
+      "FinishReason.MAX_TOKENS"
+     ]
+    ],
+    "our_cost_usd": 3.4000000000000005e-06,
+    "api_implied_cost_usd": 3.4000000000000005e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": "LLMTruncationError: Gemini response truncated by max_tokens (finish_reason=FinishReason.MAX_TOKENS)",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "PASS"
+   },
+   {
+    "model": "gemini-2.5-flash-lite",
+    "check": "count_tokens",
+    "params": null,
+    "http_status": null,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": 8,
+    "answer_excerpt": null,
+    "verdict": "ok"
+   },
+   {
+    "model": "gemini-3.1-pro-preview",
+    "check": "AFTER_FIX_zero_quota_429_fails_fast",
+    "params": null,
+    "http_status": null,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429,"
+   }
+  ],
+  "deepseek": [
+   {
+    "model": "deepseek-flash",
+    "check": "thinking_off",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 50,
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 2,
+     "total_tokens": 9,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 7
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 2.2499999999999996e-06,
+    "api_implied_cost_usd": 2.25e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "thinking_low",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "low"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 300,
+      "thinking": {
+       "type": "enabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 40,
+     "completion_tokens": 18,
+     "total_tokens": 58,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 16
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 40
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 1.6800000000000002e-05,
+    "api_implied_cost_usd": 1.68e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "thinking_default_none",
+    "params": {
+     "max_tokens": 300
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 300
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 40,
+     "completion_tokens": 20,
+     "total_tokens": 60,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 18
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 40
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 1.8e-05,
+    "api_implied_cost_usd": 1.8e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "cache_call1",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 50,
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 2219,
+     "completion_tokens": 1,
+     "total_tokens": 2220,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 2219
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 0.00033345,
+    "api_implied_cost_usd": 0.00033345,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "cache_call2",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 50,
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 2219,
+     "completion_tokens": 2,
+     "total_tokens": 2221,
+     "prompt_tokens_details": {
+      "cached_tokens": 2048
+     },
+     "prompt_cache_hit_tokens": 2048,
+     "prompt_cache_miss_tokens": 171
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 3.299400000000001e-05,
+    "api_implied_cost_usd": 3.2994e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-v4-pro",
+    "check": "pro_thinking_off",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-v4-pro",
+      "temperature": 0.7,
+      "max_tokens": 50,
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-v4-pro"
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 2,
+     "total_tokens": 9,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 7
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 8.58e-06,
+    "api_implied_cost_usd": 8.580000000000001e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-chat",
+    "check": "legacy_alias",
+    "params": {
+     "max_tokens": 50
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "max_tokens": 50
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 2,
+     "total_tokens": 9,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 7
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 1.4000000000000001e-06,
+    "api_implied_cost_usd": 2.25e-06,
+    "cost_match": false,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "MISMATCH (pre-fix; see AFTER_FIX rows)"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "reasoning_effort_low_extra_body",
+    "params": {
+     "max_tokens": 300,
+     "thinking": true,
+     "extra_body": {
+      "reasoning_effort": "low"
+     }
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 300,
+      "thinking": {
+       "type": "enabled"
+      },
+      "reasoning_effort": "low"
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 40,
+     "completion_tokens": 18,
+     "total_tokens": 58,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 16
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 40
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 1.6800000000000002e-05,
+    "api_implied_cost_usd": 1.68e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": null,
+    "check": "get_account_credits",
+    "params": null,
+    "http_status": null,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "ok"
+   },
+   {
+    "model": "deepseek-flash",
+    "check": "AFTER_FIX_thinking_low_sends_effort",
+    "params": {
+     "max_tokens": 300,
+     "thinking": "low"
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-flash",
+      "temperature": 0.7,
+      "max_tokens": 300,
+      "thinking": {
+       "type": "enabled"
+      },
+      "reasoning_effort": "low"
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 40,
+     "completion_tokens": 20,
+     "total_tokens": 60,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "completion_tokens_details": {
+      "reasoning_tokens": 18
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 40
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 1.8e-05,
+    "api_implied_cost_usd": 1.8e-05,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "391",
+    "verdict": "PASS"
+   },
+   {
+    "model": "deepseek-chat",
+    "check": "AFTER_FIX_legacy_alias_price_and_toggle",
+    "params": {
+     "max_tokens": 50,
+     "thinking": false
+    },
+    "http_status": [
+     200
+    ],
+    "request_fields_sent": [
+     {
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "max_tokens": 50,
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    ],
+    "model_served": [
+     "deepseek-flash"
+    ],
+    "usage": {
+     "prompt_tokens": 7,
+     "completion_tokens": 2,
+     "total_tokens": 9,
+     "prompt_tokens_details": {
+      "cached_tokens": 0
+     },
+     "prompt_cache_hit_tokens": 0,
+     "prompt_cache_miss_tokens": 7
+    },
+    "finish": [
+     [
+      "stop"
+     ]
+    ],
+    "our_cost_usd": 2.2499999999999996e-06,
+    "api_implied_cost_usd": 2.25e-06,
+    "cost_match": true,
+    "reported_cost_usd": null,
+    "exception": null,
+    "result": null,
+    "answer_excerpt": "OK.",
+    "verdict": "PASS"
+   }
+  ],
+  "openai": [
+   {
+    "model": "gpt-5-nano",
+    "check": "AFTER_FIX_quota_429_fails_fast",
+    "params": null,
+    "http_status": null,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "LLMProviderError: OpenAI account has no credit left (HTTP 429 credit_balance_exhausted): You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: LLMProviderError: OpenAI account has no credit left (HTTP 42"
+   },
+   {
+    "model": "gpt-5-nano",
+    "check": "AFTER_FIX_quota_429_stream_fails_fast",
+    "params": null,
+    "http_status": null,
+    "request_fields_sent": [],
+    "model_served": [],
+    "usage": null,
+    "finish": [],
+    "our_cost_usd": null,
+    "api_implied_cost_usd": null,
+    "cost_match": null,
+    "reported_cost_usd": null,
+    "exception": "LLMProviderError: OpenAI account has no credit left (HTTP 429 credit_balance_exhausted): You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
+    "result": null,
+    "answer_excerpt": null,
+    "verdict": "error: LLMProviderError: OpenAI account has no credit left (HTTP 42"
+   }
+  ]
+ }
+}

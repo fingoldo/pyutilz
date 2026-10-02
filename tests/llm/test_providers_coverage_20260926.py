@@ -445,16 +445,18 @@ def _deepseek(model: str = "deepseek-flash", **kw: Any) -> Any:
 class TestProv16Prov18DeepSeekFlash:
     def test_flash_limits(self) -> None:
         p = _deepseek()
-        assert (p.max_output_tokens, p.context_window) == (384_000, 1_000_000)
+        # GET /models, 2026-10-03: max_output_tokens 393,216, context_window 1,048,576 (the page rounds to 384K / 1M).
+        assert (p.max_output_tokens, p.context_window) == (393_216, 1_048_576)
         assert p._resolve_pricing("deepseek-flash").input == 0.30
 
     def test_unknown_model_defaults_to_the_current_generation(self) -> None:
         p = _deepseek("deepseek-v5-something")
-        assert (p.max_output_tokens, p.context_window) == (384_000, 1_000_000)
+        assert (p.max_output_tokens, p.context_window) == (393_216, 1_048_576)
 
     def test_flash_takes_the_thinking_toggle(self) -> None:
         assert _deepseek()._thinking_request_field(True) == {"thinking": {"type": "enabled"}}
-        assert _deepseek("deepseek-chat")._thinking_request_field(True) is None
+        # Live 2026-10-03 the legacy alias is served by deepseek-flash and honours the toggle.
+        assert _deepseek("deepseek-chat")._thinking_request_field(True) == {"thinking": {"type": "enabled"}}
 
 
 class TestProv17DeepSeekOffPeak:
@@ -555,7 +557,8 @@ class TestProv21XaiEffortAndTier:
         [
             ("grok-4.7", "high", {"reasoning_effort": "high"}),
             ("grok-4.7", "max", {"reasoning_effort": "xhigh"}),
-            ("grok-4.5", "xhigh", {"reasoning_effort": "high"}),
+            # GET /v1/language-models lists xhigh for grok-4.5 (2026-10-03).
+            ("grok-4.5", "xhigh", {"reasoning_effort": "xhigh"}),
             ("grok-4.6", False, {"reasoning_effort": "low"}),
             ("grok-4.6", "minimal", {"reasoning_effort": "low"}),
             ("grok-4-1-fast-reasoning", "high", None),

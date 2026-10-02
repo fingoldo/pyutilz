@@ -135,8 +135,25 @@ def anthropic_thinking_request(thinking: bool | str | None, max_tokens: int, *, 
     level = claude_effort(effort, model=model)
     spec = claude_model_spec(model, provider_label="Anthropic")
     if level is not None and spec.supports_effort:
-        out["output_config"] = {"effort": level}
+        out["output_config"] = {"effort": _supported_effort(level, spec.effort_levels, model)}
     return out
+
+
+_EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max")
+
+
+def _supported_effort(level: str, supported: tuple[str, ...], model: str) -> str:
+    """``level`` if the model takes it, else the highest level it takes below it (``xhigh`` -> ``high`` on 4.6).
+
+    ``GET /v1/models`` lists the levels per model; sending one outside them is a 400 that fails the whole call.
+    """
+    if level in supported or not supported:
+        return level
+    rank = _EFFORT_ORDER.index(level) if level in _EFFORT_ORDER else len(_EFFORT_ORDER)
+    below = [lvl for lvl in _EFFORT_ORDER[:rank] if lvl in supported]
+    clamped = below[-1] if below else supported[0]
+    logger.info("%s does not take effort %r; sending %r", model, level, clamped)
+    return clamped
 
 
 def _schema_body(json_schema: dict[str, Any]) -> dict[str, Any]:

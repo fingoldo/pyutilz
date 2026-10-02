@@ -385,6 +385,11 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
                         "POST", "/chat/completions", json=body, timeout=self._timeout_for(body),
                     ) as resp:
                         self._capture_rate_limit_headers(resp.headers)
+                        aread = getattr(resp, "aread", None)
+                        if resp.status_code >= 400 and aread is not None:
+                            # An error body is small; reading it lets `_handle_special_status` classify the error by
+                            # its body (OpenAI's exhausted-credit 429) exactly as on the buffered path.
+                            await aread()
                         self._handle_special_status(resp)
                         resp.raise_for_status()
                         attempt_state["response_started"] = True

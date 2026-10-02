@@ -147,10 +147,11 @@ class TestMaxOutputTokens:
     def test_deepseek_max_tokens(self):
         from pyutilz.llm.deepseek_provider import DeepSeekProvider
         p = DeepSeekProvider.__new__(DeepSeekProvider)
+        # Both legacy aliases are served by deepseek-flash (live, 2026-10-03), so they take its output cap.
         p.model_name = "deepseek-chat"
-        assert p.max_output_tokens == 8192
+        assert p.max_output_tokens == 393_216
         p.model_name = "deepseek-reasoner"
-        assert p.max_output_tokens == 65536
+        assert p.max_output_tokens == 393_216
 
     def test_claude_code_max_tokens(self):
         from pyutilz.llm.claude_code_provider import ClaudeCodeProvider

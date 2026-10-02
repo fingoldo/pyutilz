@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from tenacity import retry, retry_if_exception, retry_if_exception_type
@@ -40,6 +41,9 @@ except ImportError:
     # to import google.api_core must NOT clobber a valid ``types`` binding.
     types = None
 
+# A quota violation whose limit is zero: the model is not available on this key's tier at all, so waiting cannot help.
+_ZERO_QUOTA = re.compile(r"\blimit:\s*0(?![\d.])")
+
 # Regression fix (2026-07-21 audit): the installed google-genai SDK (the only Gemini client this
 # module imports -- `from google import genai` above) raises its OWN google.genai.errors
 # ClientError/ServerError (both inherit directly from Exception), NOT google.api_core.exceptions
@@ -50,12 +54,17 @@ try:
     from google.genai.errors import ClientError as _GenaiClientError, ServerError as _GenaiServerError
 
     def _is_retryable_genai_error(exc: BaseException) -> bool:
-        """5xx (ServerError) always retryable; ClientError only for 429 (rate limit) -- other 4xx
-        (400 bad request, 401/403 auth) are permanent and must not be retried."""
+        """5xx (ServerError) always retryable; ClientError only for a 429 that can clear -- other 4xx
+        (400 bad request, 401/403 auth) are permanent and must not be retried.
+
+        A 429 whose quota is ``limit: 0`` is permanent too: measured live 2026-10-03, a free-tier key calling
+        gemini-3.1-pro-preview gets ``RESOURCE_EXHAUSTED ... generate_content_free_tier_requests, limit: 0`` with a
+        five-hour ``retryDelay``, and retrying it kept the call asleep forever instead of failing it.
+        """
         if isinstance(exc, _GenaiServerError):
             return True
         if isinstance(exc, _GenaiClientError):
-            return getattr(exc, "code", None) == 429
+            return getattr(exc, "code", None) == 429 and not _ZERO_QUOTA.search(str(exc))
         return False
 except ImportError:
 
@@ -88,6 +97,12 @@ class GeminiProvider(LLMProvider):
         # announces $1.50 / $7.50 from 2027-01-01.
         "gemini-3.8-flash": (0.75, 3.75),
         "gemini-3.7-flash": (0.75, 3.75),
+        # Re-checked 2026-10-03; these three are served (GET /v1beta/models) but had no row: 3.6 Flash took the
+        # $0.25/$1.50 default, 3.5 Flash-Lite matched the 3.5 Flash prefix (5x its price), and the GA 3.1 Flash-Lite id
+        # only resolved through the preview row's prefix with a warning.
+        "gemini-3.6-flash": (0.75, 3.75),
+        "gemini-3.5-flash-lite": (0.30, 2.50),
+        "gemini-3.1-flash-lite": (0.25, 1.50),
         "gemini-3.5-flash": (1.50, 9.00),
         # Tier-2 (>200K): ($4.00, $18.00) — 2x input, 1.5x output.
         "gemini-3.1-pro-preview": (2.00, 12.00),
@@ -103,6 +118,9 @@ class GeminiProvider(LLMProvider):
     _CACHE_HIT_COST: dict[str, float] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
         "gemini-3.8-flash": 0.075,
         "gemini-3.7-flash": 0.075,
+        "gemini-3.6-flash": 0.075,
+        "gemini-3.5-flash-lite": 0.03,
+        "gemini-3.1-flash-lite": 0.025,
         "gemini-3.5-flash": 0.15,
         "gemini-3.1-pro-preview": 0.20,
         "gemini-3.1-flash-lite-preview": 0.025,

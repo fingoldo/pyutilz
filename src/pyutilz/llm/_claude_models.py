@@ -14,6 +14,10 @@ Sources, fetched 2026-09-26:
     https://platform.claude.com/docs/en/build-with-claude/structured-outputs  (which take ``output_config.format``)
     https://platform.claude.com/docs/en/models/{opus-4-5,sonnet-4-5,sonnet-4-6,opus-5,fable-5}/overview
 The retired Claude 3.x rows are the last published figures, kept so historical logs still price.
+
+Re-checked 2026-10-03 against ``GET /v1/models`` (``max_input_tokens``, ``max_tokens``, ``capabilities.effort`` and
+``capabilities.thinking.types`` per model) and the pricing page: Sonnet 5.5 was missing (priced as an unknown model at
+the Opus fallback, twice its real rate), Sonnet 4.5's context is 1M, and the effort levels differ per model.
 """
 
 from __future__ import annotations
@@ -41,6 +45,9 @@ class ClaudeModelSpec:
     adaptive_thinking: bool = True
     supports_effort: bool = True
     supports_structured_output: bool = True
+    # The ``output_config.effort`` levels the model accepts, as ``GET /v1/models`` reports them under
+    # ``capabilities.effort`` (read live 2026-10-03): 4.6 has no ``xhigh``, Opus 4.5 neither ``xhigh`` nor ``max``.
+    effort_levels: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
 
 _1M = 1_000_000
@@ -57,12 +64,14 @@ CLAUDE_MODELS: dict[str, ClaudeModelSpec] = {
     "claude-opus-5": ClaudeModelSpec(5.0, 25.0, 128_000, _1M),
     "claude-opus-4-8": ClaudeModelSpec(5.0, 25.0, 128_000, _1M),
     "claude-opus-4-7": ClaudeModelSpec(5.0, 25.0, 128_000, _1M),
-    "claude-opus-4-6": ClaudeModelSpec(5.0, 25.0, 128_000, _1M),
+    "claude-opus-4-6": ClaudeModelSpec(5.0, 25.0, 128_000, _1M, effort_levels=("low", "medium", "high", "max")),
+    "claude-sonnet-5-5": ClaudeModelSpec(2.0, 10.0, 128_000, _1M),
     "claude-sonnet-5": ClaudeModelSpec(2.0, 10.0, 128_000, _1M),
-    "claude-sonnet-4-6": ClaudeModelSpec(3.0, 15.0, 128_000, _1M),
+    "claude-sonnet-4-6": ClaudeModelSpec(3.0, 15.0, 128_000, _1M, effort_levels=("low", "medium", "high", "max")),
     # Extended-thinking-only generation. Opus 4.5 is the one of them that also takes ``effort``.
-    "claude-opus-4-5": ClaudeModelSpec(5.0, 25.0, 64_000, _200K, adaptive_thinking=False),
-    "claude-sonnet-4-5": ClaudeModelSpec(3.0, 15.0, 64_000, _200K, adaptive_thinking=False, supports_effort=False),
+    "claude-opus-4-5": ClaudeModelSpec(5.0, 25.0, 64_000, _200K, adaptive_thinking=False, effort_levels=("low", "medium", "high")),
+    # ``GET /v1/models`` reports ``max_input_tokens: 1000000`` for claude-sonnet-4-5-20250929 (2026-10-03).
+    "claude-sonnet-4-5": ClaudeModelSpec(3.0, 15.0, 64_000, _1M, adaptive_thinking=False, supports_effort=False),
     "claude-haiku-4-5": ClaudeModelSpec(1.0, 5.0, 64_000, _200K, adaptive_thinking=False, supports_effort=False),
     # Retired on the first-party API (still served on Bedrock / Google Cloud).
     "claude-opus-4-1": ClaudeModelSpec(15.0, 75.0, 32_000, _200K, adaptive_thinking=False, supports_effort=False, supports_structured_output=False),

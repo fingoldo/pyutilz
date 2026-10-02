@@ -55,7 +55,8 @@ class TestXAIConfig:
         assert p._output_cost_per_1m("grok-4") == 15.00
 
     def test_pricing_grok420_beta(self):
-        # Regression: prior code had $2000/$6000 (1000x error). Should be $2/$6.
+        # Regression: prior code had $2000/$6000 (1000x error). These ids are now aliases of the grok-4.20-0309
+        # releases in GET /v1/language-models (2026-10-03) and billed at their $1.25 / $2.50 / $0.20 rates.
         p = XAIProvider.__new__(XAIProvider)
         for variant in (
             "grok-4.20-beta",
@@ -63,8 +64,8 @@ class TestXAIConfig:
             "grok-4.20-beta-0309-reasoning",
             "grok-4.20-beta-0309-non-reasoning",
         ):
-            assert p._input_cost_per_1m(variant) == 2.00, variant
-            assert p._output_cost_per_1m(variant) == 6.00, variant
+            assert p._input_cost_per_1m(variant) == 1.25, variant
+            assert p._output_cost_per_1m(variant) == 2.50, variant
             assert p._cache_hit_cost_per_1m(variant) == 0.20, variant
 
     def test_cache_hit_cost(self):
@@ -73,7 +74,8 @@ class TestXAIConfig:
         assert p._cache_hit_cost_per_1m("grok-4-0709") == 0.75
         assert p._cache_hit_cost_per_1m("grok-4") == 0.75
         assert p._cache_hit_cost_per_1m("grok-3-mini") == 0.07
-        assert p._cache_hit_cost_per_1m("grok-code-fast-1") == 0.02
+        # grok-code-fast-1 is served and billed as grok-build-0.1 (live, 2026-10-03).
+        assert p._cache_hit_cost_per_1m("grok-code-fast-1") == 0.20
 
     def test_context_window_grok4(self):
         p = XAIProvider.__new__(XAIProvider)

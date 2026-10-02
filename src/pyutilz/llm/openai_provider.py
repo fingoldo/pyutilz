@@ -10,6 +10,7 @@ import httpx
 
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 _PRICING: dict[str, tuple[float, float]] = {
     # GPT-6 family (reasoning; 1.05M context, 128K output per https://developers.openai.com/api/docs/models).
     "gpt-6-astra": (10.00, 50.00),
+    # On the pricing page and in GET /v1/models (2026-10-03); it had no row and was priced as gpt-5-mini.
+    "gpt-6.1-sol": (2.00, 10.00),
     "gpt-6-sol": (2.00, 10.00),
     "gpt-6-luna": (0.10, 0.50),
     # GPT-5.6 family.
@@ -65,6 +68,7 @@ _PRICING: dict[str, tuple[float, float]] = {
 # cached rate is recorded as the full input price: a cached token is never priced below what it is billed at.
 _CACHE_HIT_COST: dict[str, float] = {
     "gpt-6-astra": 1.00,
+    "gpt-6.1-sol": 0.10,
     "gpt-6-sol": 0.20,
     "gpt-6-luna": 0.01,
     "gpt-5.6-sol": 0.40,
@@ -103,6 +107,7 @@ _CACHE_HIT_COST: dict[str, float] = {
 # states for GPT-6 only; a request above a model's real cap is answered with a 400 naming the cap.
 _MAX_TOKENS: dict[str, int] = {
     "gpt-6-astra": 128_000,
+    "gpt-6.1-sol": 128_000,
     "gpt-6-sol": 128_000,
     "gpt-6-luna": 128_000,
     "gpt-5.6-sol": 128_000,
@@ -139,6 +144,7 @@ _MAX_TOKENS: dict[str, int] = {
 
 _CONTEXT_WINDOW: dict[str, int] = {
     "gpt-6-astra": 1_050_000,
+    "gpt-6.1-sol": 1_050_000,
     "gpt-6-sol": 1_050_000,
     "gpt-6-luna": 1_050_000,
     "gpt-5.6-sol": 400_000,
@@ -180,7 +186,10 @@ _NON_REASONING_PREFIXES = ("gpt-5-chat",)
 
 # The lowest effort each family accepts, which is what `thinking=False` becomes: reasoning cannot be switched off on
 # the o-series or GPT-6 Astra (`none` is a 400 there), GPT-5 offers `minimal`, and GPT-5.1 onward `none`
-# (https://developers.openai.com/api/docs/guides/reasoning). Longest prefix wins.
+# (https://developers.openai.com/api/docs/guides/reasoning). Longest prefix wins. In the GPT-6 family only Luna takes
+# `none`; Sol and Astra start at `low` (https://developers.openai.com/api/docs/models, 2026-10-03). Sending them `none`
+# drew the 400 that `_body_after_rejected_request` answers by dropping `reasoning_effort`, so "off" ran at the
+# model's DEFAULT effort, the opposite of what was asked.
 _LOWEST_EFFORT: dict[str, str] = {
     "o1": "low",
     "o3": "low",
@@ -193,6 +202,8 @@ _LOWEST_EFFORT: dict[str, str] = {
     "gpt-5.6": "none",
     "gpt-6": "none",
     "gpt-6-astra": "low",
+    "gpt-6-sol": "low",
+    "gpt-6.1-sol": "low",
 }
 
 # A dated snapshot (`-2026-01-15`, `-20260115`) or `-latest` of a known id: the same model, priced as its base row.
@@ -200,6 +211,20 @@ _SNAPSHOT_SUFFIX = re.compile(r"-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$")
 
 # Models whose API answered a `temperature` with a 400, learned at runtime (see `_body_after_rejected_request`).
 _MODELS_REJECTING_TEMPERATURE: set[str] = set()
+
+
+# 429 error codes that mean the account is out of money or quota, not that a window is momentarily full.
+_QUOTA_EXHAUSTED_CODES = frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+
+def _error_object(resp: httpx.Response) -> dict[str, Any]:
+    """The ``error`` object of an OpenAI error body, or an empty dict when the body is not one."""
+    try:
+        body = resp.json()
+    except (ValueError, httpx.ResponseNotRead):
+        return {}
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, dict) else {}
 
 
 def is_reasoning_model(model: str) -> bool:
@@ -245,9 +270,22 @@ class OpenAIProvider(OpenAICompatibleProvider):
         return 240.0
 
     def _handle_special_status(self, resp: httpx.Response) -> None:
-        """Log a warning when the response signals an OpenAI rate limit (HTTP 429)."""
-        if resp.status_code == 429:
-            logger.warning("OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop.")
+        """Fail at once on an exhausted account; log a warning on an ordinary rate limit (HTTP 429), which is retried.
+
+        OpenAI reports an empty credit balance as a 429 too (``"type": "insufficient_quota"``, ``"code":
+        "credit_balance_exhausted"``, measured live 2026-10-03). The shared retry predicate retries every 429, so
+        such a call never returned: it slept and re-sent until someone topped the account up.
+        """
+        if resp.status_code != 429:
+            return
+        error = _error_object(resp)
+        if error.get("type") == "insufficient_quota" or error.get("code") in _QUOTA_EXHAUSTED_CODES:
+            reason = error["code"] if error.get("code") else error.get("type")
+            raise LLMProviderError(
+                f"OpenAI account has no credit left (HTTP 429 {reason}): {error.get('message', '')}",
+                details={"status_code": 429, "type": error.get("type"), "code": error.get("code")},
+            )
+        logger.warning("OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop.")
 
     def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
         """Return the output token count OpenAI actually bills for (completion_tokens already includes reasoning_tokens)."""
