@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `llm`: one shared pricing mechanism for cache writes and long-context tiers (`llm._pricing`: `LongContextTier`, an
+  optional `Pricing.long_context`, `price_call()`), replacing the separate xAI and Gemini tier code and Anthropic's
+  inline write multipliers. New: the OpenAI >272K tier on gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna,
+  gpt-5.6-sol/terra/luna, gpt-5.5 and gpt-5.4, and OpenAI cache writes at 1.25x input on GPT-5.6 and later (they were
+  billed at the plain input rate, or not split out at all). The tier is charged per call, `get_session_cost()` gains
+  `long_context_surcharge_usd` and `long_context_calls` on every OpenAI-compatible provider, and `estimate_cost()`
+  applies the tier. xAI and Gemini Pro figures are unchanged; Gemini 2.5 Flash / Flash-Lite calls above 200K no longer
+  receive the Pro surcharge, which a prefix match had given them.
+
 - `dev.signature_models`: `model_from_signature` builds a frozen `extra="forbid"` pydantic model with one field per parameter of a class or function (names, annotations and defaults from the signature, `overrides` for `Literal`/`Field` constraints, `exclude` for parameters the caller must not set), so a config that used to forward a `dict` of keyword arguments rejects a typo, a wrong type or an out-of-range value when it is created. `render_model_source` writes the same model as a module for committing (it does not import the target), `signature_drift` lists every way a model no longer matches the live signature for a meta-test, and `python -m pyutilz.dev.signature_models pkg.mod:Class -o file.py [--check]` regenerates or verifies it.
 
 - `system.monitoring.job_completed(..., retry=True)`: a heartbeat that fails transiently (network error, timeout, 408/425/429,

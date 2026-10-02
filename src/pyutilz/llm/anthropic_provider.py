@@ -12,6 +12,7 @@ from tenacity import retry, retry_if_exception, retry_if_exception_type
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._messages import build_anthropic_content
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._pricing import CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, Pricing, price_call
 from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
 from pyutilz.llm._thinking import MIN_THINKING_BUDGET, THINKING_BUDGETS  # re-exported: callers import them from here
 from pyutilz.llm._thinking import CLAUDE_EFFORTS, claude_effort
@@ -677,13 +678,17 @@ class AnthropicProvider(LLMProvider):
         (1-hour); cache reads bill the model's own multiplier: 0.1x on most models, 0.05x on Opus 5.5, 0.025x on
         Fable/Mythos 5.1 (https://platform.claude.com/docs/en/about-claude/pricing). A flat 0.10 overstated a cached
         Fable 5.1 session's reads fourfold.
+
+        Priced through the shared :func:`~pyutilz.llm._pricing.price_call` (5-minute writes are ``Pricing.cache_write``);
+        1-hour writes, a split only Anthropic reports, are added at :data:`~pyutilz.llm._pricing.CACHE_WRITE_1H_MULT`.
+        No long-context tier: 4.6 and later bill the full 1M window at standard rates (pricing page, 2026-10-03).
         """
         spec = self._spec
-        in_rate, out_rate = spec.input_per_1m, spec.output_per_1m
-        input_cost = (
-            input_tokens * in_rate + cache_write_5m * in_rate * 1.25 + cache_write_1h * in_rate * 2.0 + cache_read * in_rate * spec.cache_read_multiplier
-        ) / 1_000_000
-        return input_cost, output_tokens * out_rate / 1_000_000
+        in_rate = spec.input_per_1m
+        pricing = Pricing(in_rate, spec.output_per_1m, in_rate * spec.cache_read_multiplier, in_rate * CACHE_WRITE_5M_MULT)
+        # price_call takes reads and writes as parts of the prompt; Anthropic's input_tokens excludes both.
+        input_cost, output_cost = price_call(pricing, input_tokens + cache_write_5m + cache_read, output_tokens, cache_read=cache_read, cache_write=cache_write_5m)
+        return input_cost + cache_write_1h * in_rate * CACHE_WRITE_1H_MULT / 1_000_000, output_cost
 
     def get_session_cost(self) -> dict[str, Any]:
         """Return cumulative usage including cache + thinking accounting (see ``_cost_usd`` for the rates)."""

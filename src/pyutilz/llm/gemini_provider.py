@@ -12,6 +12,7 @@ from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm._messages import build_gemini_parts
+from pyutilz.llm._pricing import LongContextTier, Pricing, long_context_surcharge, price_call
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
 from pyutilz.llm._thinking import gemini_thinking_budget  # noqa: F401 -- re-exported: callers import it from here
 from pyutilz.llm._thinking import gemini_thinking_config
@@ -89,9 +90,8 @@ class GeminiProvider(LLMProvider):
     #
     # NOTE: Gemini Pro models (2.5-pro and 3.1-pro-preview) have TIERED
     # pricing — prompts ≤200K tokens billed at the lower tier, >200K at
-    # the higher tier. We bill at the lower tier here; callers issuing
-    # >200K prompts should override via ``estimate_cost`` with explicit
-    # rates. Tier-2 prices documented in the comments next to each entry.
+    # the higher tier. This table holds the lower tier; the upper one is
+    # ``_LONG_CONTEXT_TIERS`` below, applied per call and by ``estimate_cost``.
     _PRICING: dict[str, tuple[float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table, not a per-instance mutable-default bug
         # Re-checked 2026-09-26 against the same page. 3.7 / 3.8 Flash are priced through 2026-12-31; the page
         # announces $1.50 / $7.50 from 2027-01-01.
@@ -131,14 +131,15 @@ class GeminiProvider(LLMProvider):
     }
     _DEFAULT_PRICING = (0.25, 1.50)
 
-    # The >200K-prompt tier of the Pro models, as multipliers on the <=200K rates (input, output, cached input):
-    # 2.5 Pro $2.50 / $15 / $0.25 against $1.25 / $10 / $0.125, 3.1 Pro $4 / $18 / $0.40 against $2 / $12 / $0.20.
+    # The >200K-prompt tier of the Pro models, as multipliers on the <=200K rates (input x2, output x1.5, cached x2):
+    # 2.5 Pro $2.50 / $15 / $0.25 against $1.25 / $10 / $0.125, 3.1 Pro $4 / $18 / $0.40 against $2 / $12 / $0.20,
+    # applied to the whole request. Gemini bills no cache writes, so the write multiplier is never used.
     # A request's tier is set by ITS prompt size, so it is charged per call (``_add_long_context_surcharge``).
-    _LONG_CONTEXT_MULTIPLIERS: dict[str, tuple[float, float, float]] = {  # noqa: RUF012 -- intentional shared class-level pricing table
-        "gemini-2.5-pro": (2.0, 1.5, 2.0),
-        "gemini-3.1-pro-preview": (2.0, 1.5, 2.0),
-    }
     _LONG_CONTEXT_THRESHOLD = 200_000
+    _LONG_CONTEXT_TIERS: dict[str, LongContextTier] = {  # noqa: RUF012 -- intentional shared class-level pricing table
+        "gemini-2.5-pro": LongContextTier(_LONG_CONTEXT_THRESHOLD, 2.0, 1.5, 2.0, 2.0),
+        "gemini-3.1-pro-preview": LongContextTier(_LONG_CONTEXT_THRESHOLD, 2.0, 1.5, 2.0, 2.0),
+    }
 
     # Per-request timeout. google-genai's own default is none at all, so a stalled connection held its semaphore
     # slot indefinitely; every other provider here pins one. Generous because a thinking model can think for minutes.
@@ -192,6 +193,7 @@ class GeminiProvider(LLMProvider):
         self.total_completion_tokens = 0
         self.total_reasoning_tokens = 0
         self._long_context_surcharge_usd = 0.0
+        self._long_context_calls = 0
         # Phase-4 multi-candidate + cache support.
         # ``candidate_count``: how many response candidates to ask for in
         # one call (Gemini supports up to ~8). The first is returned by
@@ -245,16 +247,37 @@ class GeminiProvider(LLMProvider):
 
     _warned_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name)
 
-    def _add_long_context_surcharge(self, prompt_tokens: int, cached: int, output_tokens: int) -> None:
-        """Charge a >200K-prompt call the difference between the Pro long-context tier and the base rates."""
-        mult = longest_prefix_lookup(self.model_name, self._LONG_CONTEXT_MULTIPLIERS, None)
-        if mult is None or prompt_tokens <= self._LONG_CONTEXT_THRESHOLD:
-            return
+    def _current_pricing(self) -> Pricing:
+        """The current model's :class:`Pricing`: ``_get_pricing`` rates, the prefix-matched cached rate, and the Pro tier."""
         in_rate, out_rate = self._get_pricing()
         cache_rate = longest_prefix_lookup(self.model_name, self._CACHE_HIT_COST, in_rate)
-        cached = min(cached, prompt_tokens)
-        extra = ((prompt_tokens - cached) * in_rate * (mult[0] - 1) + cached * cache_rate * (mult[2] - 1) + output_tokens * out_rate * (mult[1] - 1)) / 1_000_000
-        self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + extra
+        return Pricing(in_rate, out_rate, cache_rate, long_context=self._long_context_tier())
+
+    def _long_context_tier(self) -> LongContextTier | None:
+        """The current model's tier: its own row or a versioned id of it (``gemini-2.5-pro-002``), never a sibling.
+
+        Not ``longest_prefix_lookup``: its trimmed-prefix stage turns ``gemini-2.5-pro`` into ``gemini-2.5`` and so gave
+        every 2.5 Flash / Flash-Lite call above 200K the Pro surcharge, though Flash has no long-context tier.
+        """
+        model = self.model_name
+        keys = [k for k in self._LONG_CONTEXT_TIERS if model == k or model.startswith(k + "-")]
+        return self._LONG_CONTEXT_TIERS[max(keys, key=len)] if keys else None
+
+    def _add_long_context_surcharge(self, prompt_tokens: int, cached: int, output_tokens: int) -> None:
+        """Charge a >200K-prompt call the difference between the Pro long-context tier and the base rates."""
+        tier = self._long_context_tier()
+        if tier is None or not tier.applies(prompt_tokens):
+            return
+        extra_in, extra_out = long_context_surcharge(self._current_pricing(), prompt_tokens, output_tokens, cache_read=cached)
+        self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + extra_in + extra_out
+        self._long_context_calls = getattr(self, "_long_context_calls", 0) + 1
+
+    def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Estimate cost in USD (cache-miss pricing), at the Pro long-context tier when ``input_tokens`` exceeds 200K."""
+        tier = self._long_context_tier()
+        if tier is not None and tier.applies(input_tokens):
+            return sum(price_call(self._current_pricing(), input_tokens, output_tokens))
+        return super().estimate_cost(input_tokens, output_tokens)
 
     async def generate_json(
         self,
@@ -312,6 +335,7 @@ class GeminiProvider(LLMProvider):
             "input_cost_usd": input_cost,
             "output_cost_usd": output_cost,
             "long_context_surcharge_usd": surcharge,
+            "long_context_calls": int(getattr(self, "_long_context_calls", 0) or 0),
             "total_cost_usd": input_cost + output_cost + surcharge,
         }
 

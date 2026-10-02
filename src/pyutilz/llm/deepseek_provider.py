@@ -278,6 +278,6 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         out_discount = getattr(self, "_offpeak_output_discount_usd", 0.0)
         cost["input_cost_usd"] -= in_discount
         cost["output_cost_usd"] -= out_discount
-        cost["total_cost_usd"] = cost["input_cost_usd"] + cost["output_cost_usd"]
+        cost["total_cost_usd"] = cost["input_cost_usd"] + cost["output_cost_usd"] + cost.get("long_context_surcharge_usd", 0.0)
         cost["offpeak_discount_usd"] = in_discount + out_discount
         return cost

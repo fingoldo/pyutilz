@@ -135,6 +135,18 @@ headers for Anthropic and DeepSeek, and raises `NotImplementedError` by
 design for OpenAI/xAI/Gemini regardless of any headers already captured
 (Claude Code shells out to the CLI, no HTTP headers to capture at all).
 
+**Pricing tiers.** Cache writes and long-context tiers go through one mechanism in `pyutilz.llm._pricing`: a
+`Pricing` record carries an optional `cache_write` rate and an optional `LongContextTier` (prompt threshold plus
+input / output / cached-input / cache-write multipliers), and `price_call()` prices one request, billing the WHOLE
+request at the tier once its own prompt crosses the threshold. The tier depends on each request's prompt, so it is
+charged per call and `get_session_cost()` reports it as `long_context_surcharge_usd` with a `long_context_calls`
+count; `estimate_cost()` applies it as well. Tiers: xAI doubles every rate at >=200K prompt tokens; Gemini 2.5 Pro and
+3.1 Pro bill input and cached input x2, output x1.5 above 200K; OpenAI gpt-6-astra / 6.1-sol / 6-sol / 6-luna,
+gpt-5.6-sol / terra / luna, gpt-5.5 and gpt-5.4 bill input, cached input and cache writes x2, output x1.5 above 272K
+(whole request assumed; OpenAI's page does not say). Cache writes: Anthropic 1.25x input (5 min) / 2x (1 h); OpenAI
+1.25x on GPT-5.6 and later, read from `cache_write_tokens` in the usage block; OpenRouter prices them from its
+catalogue per served model.
+
 **OpenRouter health-aware model selection** — two-stage lookup
 (offline catalogue → concurrent live `/endpoints` health check) drops
 degraded upstreams and ranks by live latency. Stage-2 is auth-gated

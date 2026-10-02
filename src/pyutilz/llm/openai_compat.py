@@ -41,7 +41,7 @@ from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: thi
 )
 
 # Also the public home the providers import `Pricing` from; it lives in `_pricing.py` for the line budget.
-from pyutilz.llm._pricing import Pricing
+from pyutilz.llm._pricing import LongContextTier, Pricing, long_context_surcharge, price_call
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,12 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         self.total_completion_tokens = 0
         self.total_cache_hit_tokens = 0
         self.total_reasoning_tokens = 0
+        # Prompt-cache WRITE tokens (part of prompt_tokens), from the usage block when the provider reports them.
+        self.total_cache_write_tokens = 0
         self._call_count = 0
+        # What the long-context tier added, summed per call (a session total cannot tell which calls crossed it).
+        self._long_context_surcharge_usd = 0.0
+        self._long_context_calls = 0
         # Per-call usage/tool_calls/citations/finish_reason: PerCallAttr class-level descriptors
         # (declared above __init__) provide the defaults; nothing to initialize here.
         # ``last_rate_limits`` is a PerCallAttr declared above -- captured automatically from
@@ -269,6 +274,15 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         if cache_write is None:
             return self._input_cost_per_1m(model)
         return float(cache_write)
+
+    def _long_context_tier(self, model: str) -> LongContextTier | None:
+        """The long-context tier of ``model``, None when it has none (the default).
+
+        A cheap gate checked on every recorded response before ``_resolve_pricing`` is consulted, so a provider whose
+        pricing lookup is expensive (OpenRouter's catalogue) is never asked for it per call. A provider with tiers
+        overrides this and puts the same tier on ``Pricing.long_context``.
+        """
+        return None
 
     # ── LLMProvider interface ────────────────────────────────────────
 
@@ -558,11 +572,15 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         cache_hit = usage.get("prompt_cache_hit_tokens") or prompt_details.get("cached_tokens", 0) or 0
         details = usage.get("completion_tokens_details", {}) or {}
         reasoning_tok = details.get("reasoning_tokens", 0) or 0
+        # Cache writes: chat completions nests them under prompt_tokens_details (OpenRouter, verified live), the
+        # Responses API under input_tokens_details (OpenAI's prompt-caching guide).
+        cache_write = int(prompt_details.get("cache_write_tokens") or (usage.get("input_tokens_details") or {}).get("cache_write_tokens") or 0)
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += compl_tok
         self.total_cache_hit_tokens += cache_hit
         self.total_reasoning_tokens += reasoning_tok
+        self.total_cache_write_tokens = int(getattr(self, "total_cache_write_tokens", 0) or 0) + cache_write
         self._call_count += 1
 
         # ACCUMULATED within one call (realtime_applications audit 2026-09-10, LLM-7): a re-issued
@@ -580,6 +598,8 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         }
 
         self._track_provider_specific_usage(usage)
+        # After the hook: a provider may learn from the response which model to price this call at (xAI's redirects).
+        self._add_long_context_surcharge(prompt_tok, self._compute_billed_output(compl_tok, reasoning_tok), cache_hit, cache_write)
 
         logger.info(
             "%s [call #%d] %d prompt (%d cached) + %d completion" "%s | cumulative: %d in, %d out",
@@ -863,8 +883,20 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
     # shadowed the only generate_batch that calls it. Deleted; this class now inherits the base
     # implementation, restoring the hook and removing the duplication in one fix.
 
+    def _add_long_context_surcharge(self, prompt_tokens: int, billed_output: int, cache_hit: int, cache_write: int) -> None:
+        """Add what the long-context tier charges ONE response on top of its short-context price (see ``_pricing``)."""
+        tier = self._long_context_tier(self.model_name)
+        if tier is None or not tier.applies(prompt_tokens):
+            return
+        extra_in, extra_out = long_context_surcharge(self._resolve_pricing(self.model_name), prompt_tokens, billed_output, cache_hit, cache_write)
+        self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + extra_in + extra_out
+        self._long_context_calls = getattr(self, "_long_context_calls", 0) + 1
+
     def estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Estimate cost in USD (cache miss pricing)."""
+        """Estimate cost in USD (cache miss pricing), at the long-context tier when ``input_tokens`` reaches it."""
+        tier = self._long_context_tier(self.model_name)
+        if tier is not None and tier.applies(input_tokens):
+            return sum(price_call(self._resolve_pricing(self.model_name), input_tokens, output_tokens))
         input_cost = (input_tokens / 1_000_000) * self._input_cost_per_1m(self.model_name)
         output_cost = (output_tokens / 1_000_000) * self._output_cost_per_1m(self.model_name)
         return input_cost + output_cost
@@ -882,6 +914,8 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
             input_cost += (cache_write / 1_000_000) * self._cache_write_cost_per_1m(self.model_name)
         billed_output = self._compute_billed_output(self.total_completion_tokens, self.total_reasoning_tokens)
         output_cost = (billed_output / 1_000_000) * self._output_cost_per_1m(self.model_name)
+        # Short-context rates on the totals are exact (linear); the tier is per call, see ``_pricing``.
+        surcharge = float(getattr(self, "_long_context_surcharge_usd", 0.0) or 0.0)
         return {
             "calls": self._call_count,
             "prompt_tokens": self.total_prompt_tokens,
@@ -891,7 +925,9 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
             "reasoning_tokens": self.total_reasoning_tokens,
             "input_cost_usd": input_cost,
             "output_cost_usd": output_cost,
-            "total_cost_usd": input_cost + output_cost,
+            "long_context_surcharge_usd": surcharge,
+            "long_context_calls": int(getattr(self, "_long_context_calls", 0) or 0),
+            "total_cost_usd": input_cost + output_cost + surcharge,
         }
 
     async def count_tokens(self, text: str) -> int:

@@ -635,8 +635,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         prompt_details = usage.get("prompt_tokens_details") or {}
         cache_write = int(prompt_details.get("cache_write_tokens", 0) or 0)
         self.last_cache_write_tokens = int(self.last_cache_write_tokens or 0) + cache_write
-        if cache_write:
-            self.total_cache_write_tokens += cache_write
+        # total_cache_write_tokens is accumulated by the base _record_usage from this same field, for every provider.
 
         cached = int(prompt_details.get("cached_tokens", 0) or 0)
         # NOTE: total_cache_hit_tokens itself is now accumulated in the shared base class's

@@ -17,6 +17,8 @@
     "llm/gemini_provider.py::_is_retryable_genai_error::exc": "ImportError fallback stub for the real predicate above it: with google.genai absent there is nothing to classify, and the signature must match the version used when the SDK is present.",
     "llm/openai_compat.py::OpenAICompatibleProvider._compute_billed_output::reasoning_tokens": "Base-class hook: the OpenAI-family default is reasoning-included-in-completion, so only completion_tokens is billed; xAI's override adds reasoning_tokens.",
     "llm/_openai_compat_body.py::RequestBodyMixin._extra_request_body::model": "Base-class hook returning vanilla OpenAI-compatible behaviour (no extra fields); OpenRouter's override uses model for routing options.",
+    "llm/openai_compat.py::OpenAICompatibleProvider._long_context_tier::model": "Base-class hook returning no tier; OpenAI's override looks the model up, xAI's applies one tier to every model.",
+    "llm/xai_provider.py::XAIProvider._long_context_tier::model": "Override of the base hook: every xAI model shares the one 200K tier, so the model id does not change the answer.",
     "llm/openai_compat.py::OpenAICompatibleProvider._get_timeout::model": "Base-class hook returning a flat 120s default; per-model timeouts are an override's job (OpenRouter keys off model).",
     "llm/openai_compat.py::OpenAICompatibleProvider._track_provider_specific_response::data": "Documented no-op hook; OpenRouter's override reads data for generation id / upstream provider / resolved model.",
     "llm/openai_compat.py::OpenAICompatibleProvider._track_provider_specific_usage::usage": "Documented no-op hook; OpenRouter's override reads usage.cost.",

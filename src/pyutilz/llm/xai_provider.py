@@ -12,6 +12,7 @@ from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
+from pyutilz.llm._pricing import LongContextTier
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,10 @@ _CACHE_HIT_COST: dict[str, float] = {
     "grok-code-fast-1": 0.20,
 }
 
-# A request with this many prompt tokens or more is billed at the long-context tier: every rate doubled.
+# A request with this many prompt tokens or more is billed at the long-context tier: every rate doubled, for all tokens
+# of the request (https://docs.x.ai/docs/models; the threshold is GET /v1/language-models' ``long_context_threshold``).
 _LONG_CONTEXT_THRESHOLD = 200_000
+_LONG_CONTEXT_TIER = LongContextTier(_LONG_CONTEXT_THRESHOLD, 2.0, 2.0, 2.0, 2.0, inclusive=True)
 
 # `reasoning_effort` levels as GET /v1/language-models reports them (``capabilities.reasoning_effort``, 2026-10-03):
 # grok-4.5 / 4.6 / 4.7 take low|medium|high|xhigh (reasoning is mandatory, so "off" becomes ``low``); grok-4.3 also
@@ -180,9 +183,6 @@ class XAIProvider(OpenAICompatibleProvider):
             logger.warning("xAI search tools take no source cap; live_search_max_sources=%r is ignored", live_search_max_sources)
         self._live_search_max_sources = live_search_max_sources
         self._return_citations = return_citations
-        # Extra USD the long-context tier adds on top of the <200K rates `get_session_cost` prices totals at,
-        # accumulated per call because the tier is decided by each request's own prompt size.
-        self._long_context_surcharge_usd = 0.0
         # Server-side tool spend (live search), and the total xAI itself reported (``cost_in_usd_ticks``).
         self._tool_cost_usd = 0.0
         self._reported_cost_usd = 0.0
@@ -246,35 +246,26 @@ class XAIProvider(OpenAICompatibleProvider):
         self._served_model = served
 
     def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
-        """Record the billed total xAI reports, and add the long-context surcharge for a request of 200K prompt
-        tokens or more (every rate doubles there)."""
+        """Record the billed total xAI reports (the long-context tier is charged by the shared base, `_pricing`)."""
         super()._track_provider_specific_usage(usage)
         ticks = usage.get("cost_in_usd_ticks")
         if isinstance(ticks, (int, float)) and not isinstance(ticks, bool):
             self._reported_cost_usd = getattr(self, "_reported_cost_usd", 0.0) + ticks * _USD_PER_TICK
-        prompt = int(usage.get("prompt_tokens") or 0)
-        if prompt < _LONG_CONTEXT_THRESHOLD:
-            return
-        pricing = self._resolve_pricing(self.model_name)
-        hit = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
-        details = usage.get("completion_tokens_details") or {}
-        output = self._compute_billed_output(int(usage.get("completion_tokens") or 0), int(details.get("reasoning_tokens") or 0))
-        cache_rate = pricing.cache_hit if pricing.cache_hit is not None else pricing.input
-        base = ((prompt - hit) * pricing.input + hit * cache_rate + output * pricing.output) / 1_000_000
-        self._long_context_surcharge_usd = getattr(self, "_long_context_surcharge_usd", 0.0) + base
+
+    def _long_context_tier(self, model: str) -> LongContextTier:
+        """Every xAI model doubles every rate for a request whose prompt reaches 200K tokens."""
+        return _LONG_CONTEXT_TIER
 
     def get_session_cost(self) -> dict[str, Any]:
-        """Session cost including the long-context tier and server-side tool calls.
+        """Session cost including the long-context tier (summed per call by the base) and server-side tool calls.
 
         ``reported_cost_usd`` is the sum of what xAI itself said it billed (``usage.cost_in_usd_ticks``), for
         reconciling against ``total_cost_usd``, which is computed from the price tables.
         """
         cost = super().get_session_cost()
-        surcharge = getattr(self, "_long_context_surcharge_usd", 0.0)
         tools = getattr(self, "_tool_cost_usd", 0.0)
-        cost["long_context_surcharge_usd"] = surcharge
         cost["tool_cost_usd"] = tools
-        cost["total_cost_usd"] += surcharge + tools
+        cost["total_cost_usd"] += tools
         cost["reported_cost_usd"] = getattr(self, "_reported_cost_usd", 0.0)
         return cost
 
@@ -413,7 +404,7 @@ class XAIProvider(OpenAICompatibleProvider):
         if pair is None:
             self._warn_unknown_model_once(model)
             pair = (0.20, 0.50)
-        return Pricing(float(pair[0]), float(pair[1]), self._resolve_cache_hit(model))
+        return Pricing(float(pair[0]), float(pair[1]), self._resolve_cache_hit(model), long_context=_LONG_CONTEXT_TIER)
 
     def _billed_model(self, model: str) -> str:
         """The id to price ``model`` by: the model xAI reported serving this session's requests when ``model`` is the

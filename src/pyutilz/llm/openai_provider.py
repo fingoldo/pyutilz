@@ -11,6 +11,7 @@ import httpx
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMProviderError
+from pyutilz.llm._pricing import LongContextTier
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,29 @@ _CACHE_HIT_COST: dict[str, float] = {
     "gpt-5-codex": 0.125,
     "gpt-5.1-codex": 0.125,
 }
+
+# Cache-WRITE prices per 1M tokens: "For GPT-5.6 and later, cache writes cost 1.25x the standard, uncached input-token
+# rate" (https://developers.openai.com/api/docs/guides/prompt-caching, 2026-10-03); the pricing page lists these values.
+# Earlier models bill no write premium, so a write there costs the plain input rate (the base fallback).
+_CACHE_WRITE_COST: dict[str, float] = {
+    "gpt-6-astra": 12.50,
+    "gpt-6.1-sol": 2.50,
+    "gpt-6-sol": 2.50,
+    "gpt-6-luna": 0.125,
+    "gpt-5.6-sol": 5.00,
+    "gpt-5.6-terra": 2.50,
+    "gpt-5.6-luna": 0.25,
+}
+
+# The long-context tier: "Short context: <=272K input tokens. Long context: >272K input tokens." On these models the
+# pricing page's long column doubles input, cached input and cache writes and multiplies output by 1.5 (2026-10-03).
+# Matched exactly (or as a dated snapshot), never by prefix: gpt-5.4-mini / -pro have no long column. Whether the long
+# rate covers the whole request or only the tokens past 272K is not stated; whole-request (as at xAI and Gemini) is
+# what is billed here, UNVERIFIED for OpenAI.
+_LONG_CONTEXT_TIER = LongContextTier(272_000, 2.0, 1.5, 2.0, 2.0)
+_LONG_CONTEXT_MODELS = frozenset(
+    {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4"}
+)
 
 # Output limits. GPT-6: 128K (models page). The GPT-5.x rows keep the GPT-5 family's 128K, which the models page
 # states for GPT-6 only; a request above a model's real cap is answered with a 400 naming the cap.
@@ -402,7 +426,13 @@ class OpenAIProvider(OpenAICompatibleProvider):
             self._warn_unknown_model_once(model, "its family's" if pair is not None else "gpt-5-mini")
             if pair is None:
                 pair = _PRICING["gpt-5-mini"]
-        return Pricing(float(pair[0]), float(pair[1]))
+        write = _CACHE_WRITE_COST.get(row) if row is not None else None
+        # cache_hit filled in so the long-context tier scales the real cached rate, not the input rate.
+        return Pricing(float(pair[0]), float(pair[1]), self._cache_hit_cost_per_1m(model), write, self._long_context_tier(model))
+
+    def _long_context_tier(self, model: str) -> LongContextTier | None:
+        """The >272K tier on the models whose pricing row lists one (exact id or a dated snapshot of it), else None."""
+        return _LONG_CONTEXT_TIER if self._known_row(model, dict.fromkeys(_LONG_CONTEXT_MODELS)) is not None else None
 
     def _input_cost_per_1m(self, model: str) -> float:
         """Return USD cost per 1M input tokens for `model`, warning and falling back to gpt-5-mini rates if unknown."""
