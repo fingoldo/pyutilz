@@ -53,4 +53,9 @@ jobs:
       - name: Audit installed dependencies
         run: |
           pip install pip-audit
-          pip-audit --strict --progress-spinner off
+          # The project is the one editable install and is not on PyPI: `pip-audit --strict` (fail when any dependency cannot be
+          # collected) failed every run with 'pyutilz (1.1.0): Dependency not found on PyPI', and --skip-editable is itself
+          # an error under --strict. So audit the frozen third-party set, pinned exactly as installed; --no-deps because
+          # the freeze already holds the whole closure. A known vulnerability in any of them still fails the job.
+          pip freeze --exclude-editable > frozen-requirements.txt
+          pip-audit --strict -r frozen-requirements.txt --no-deps --disable-pip --progress-spinner off
