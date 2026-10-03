@@ -66,6 +66,26 @@ def _callable_of(target: Callable[..., Any]) -> Callable[..., Any]:
     return target.__init__ if inspect.isclass(target) else target  # type: ignore[misc]
 
 
+def _resolved(annotation: Any, fn: Callable[..., Any]) -> Any:
+    """``annotation`` with a leftover ``ForwardRef`` evaluated in the function's globals.
+
+    ``typing.get_type_hints`` evaluates a string once; an annotation written as a quoted string under
+    ``from __future__ import annotations`` (``"typing.Literal['a']"``) is a string of a string, which 3.9+ resolves
+    recursively and 3.8 returns as a ``ForwardRef``. An unresolvable one stays as it was.
+    """
+    if isinstance(annotation, typing.ForwardRef):
+
+        def holder() -> None:
+            """Carries the annotation so ``get_type_hints`` evaluates it the way it evaluates a parameter's."""
+
+        holder.__annotations__ = {"value": annotation}
+        try:
+            return typing.get_type_hints(holder, getattr(fn, "__globals__", {}))["value"]
+        except Exception:
+            return annotation
+    return annotation
+
+
 def signature_parameters(target: Callable[..., Any], *, exclude: Iterable[str] = ()) -> List[SignatureParameter]:
     """Parameters of ``target`` (a class or a function) in declaration order, without ``self``/``cls``, ``*args``/``**kwargs`` or ``exclude``.
 
@@ -82,7 +102,7 @@ def signature_parameters(target: Callable[..., Any], *, exclude: Iterable[str] =
     for name, param in inspect.signature(fn).parameters.items():
         if name in skip or param.kind in _SKIP_KINDS:
             continue
-        raw = hints.get(name, param.annotation)
+        raw = _resolved(hints.get(name, param.annotation), fn)
         annotated = raw is not inspect.Parameter.empty
         out.append(SignatureParameter(name, raw if annotated else Any, param.default, annotated))
     return out
@@ -337,7 +357,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 1
         return 0
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8", newline="\n")
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:  # Path.write_text(newline=) is 3.10+
+        handle.write(source)
     return 0
 
 
