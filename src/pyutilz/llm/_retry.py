@@ -187,7 +187,7 @@ def _stop_policy(retry_state: Any) -> bool:
                 elapsed,
             )
             return True
-    return _STOP_ATTEMPTS(retry_state)
+    return bool(_STOP_ATTEMPTS(retry_state))
 
 
 _STOP = _stop_policy

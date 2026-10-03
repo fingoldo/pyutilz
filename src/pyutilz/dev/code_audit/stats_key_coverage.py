@@ -97,7 +97,7 @@ def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
                 for sub in ast.walk(node.value):
                     if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "get" and _is_counter_attribute(sub.func.value) == attr:
                         _record(_subscript_index(store), node.lineno)
-        # self.stats.setdefault("k", 0)
+        # a setdefault call on the counter attribute registers its first argument as a key
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
                 if node.args:

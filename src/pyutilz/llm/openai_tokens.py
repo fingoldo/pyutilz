@@ -23,7 +23,7 @@ from pyutilz.llm.token_counter import count_tokens
 
 tiktoken: Any
 try:
-    import tiktoken
+    import tiktoken  # type: ignore[no-redef]
 except ImportError:
     tiktoken = None
 

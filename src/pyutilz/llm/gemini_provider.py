@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 genai: Any
 types: Any
 try:
-    from google import genai
-    from google.genai import types
+    from google import genai  # type: ignore[no-redef]
+    from google.genai import types  # type: ignore[no-redef]
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
