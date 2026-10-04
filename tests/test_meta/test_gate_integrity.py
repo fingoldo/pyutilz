@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 import py_ci_shared  # noqa: F401  # conftest ignores this module on python 3.8 only; elsewhere a missing install must fail
+
 pytest.importorskip("yaml", reason="PyYAML is required to parse .pre-commit-config.yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +59,7 @@ _DECLARED_NARROWINGS = {
         "shape. Surfaced by the full-select advisory pass instead."
     ),
     "ci.yml::ruff-blocking::with::ignore=C901": "The CI half of the same decision; the two venues must stay in step, which is why both keys are listed.",
+    "pre-commit::pytest-smoke-on-push::-m=not gpu and not slow": "Pre-push smoke run over tests/stats only; the full suite is the ci.yml job. Not a merge gate, a local early-warning subset.",
     "pyproject::[tool.ruff]::exclude": "VCS/build artifact dirs only. tests/ and scripts/ were REMOVED from this list 2026-09-02 and _benchmarks/ on 2026-09-03 (audit 06/F09), along with the pre-commit hook's mirror of it; all three are linted, with their idiomatic codes exempted per-file instead.",
     "pyproject::[tool.ruff.lint]::per-file-ignores": "Each entry carries its own inline reason at the call site in pyproject.toml; the exemptions are per-file and per-code, never whole-directory.",
     # -- mypy -------------------------------------------------------------------------
