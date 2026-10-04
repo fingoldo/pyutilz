@@ -118,7 +118,7 @@ class TestHwFingerprint:
         # ``gpu_capability_summary`` actually runs (the disk cache layer
         # would otherwise short-circuit before any GPU probe).
         try:
-            with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
+            with mock.patch.object(ktc, "gpu_capability_summary", return_value=None), mock.patch("pyutilz.performance.kernel_tuning.cache.cache_base._gpu_device_count", return_value=0):
                 ktc._gpu_summary_cached.cache_clear()  # GPU probe is per-device-cached now
                 fp = ktc.hw_fingerprint()
             assert "no-gpu" in fp

@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pyutilz.system.gpu_dispatch import gpu_capability_summary
 
@@ -95,85 +95,232 @@ def _gpu_summary_cached(device_id: int):
     return _probe(device_id)
 
 
-def _gpu_slug_and_cc() -> tuple[str, str]:
-    """Returns (gpu_name_slug, cc_str). On CPU-only host: ("no-gpu", "").
+_GPU_NONE = "no-gpu"
+_GPU_UNKNOWN = "gpu-unknown"
+# CUDA runtime statuses meaning "no usable device / driver on this host" (cudaErrorInsufficientDriver, cudaErrorNoDevice): a definite answer, not a probe failure.
+_CUDA_NO_DEVICE_STATUSES = (35, 100)
+_CUPY_DIST_NAMES = ("cupy", "cupy-cuda11x", "cupy-cuda12x", "cupy-cuda13x")
+_GPU_OPT_OUT_PREDICATES: List[Callable[[], bool]] = []
 
-    Uses the LIVE current CUDA device id, not always 0, so a 2-GPU box
-    where the user routes to device 1 gets a distinct fingerprint
-    (different GPU model + cc may apply).
+
+def register_gpu_opt_out(predicate: Callable[[], bool]) -> None:
+    """Register an extra "this run must not use the GPU" predicate (idempotent); an opted-out run neither reads nor writes the persisted fingerprint."""
+    if predicate not in _GPU_OPT_OUT_PREDICATES:
+        _GPU_OPT_OUT_PREDICATES.append(predicate)
+
+
+def _predicate_holds(predicate: Callable[[], bool]) -> bool:
+    """Result of an opt-out predicate; a predicate that raises counts as not opting out."""
+    try:
+        return bool(predicate())
+    except Exception as e:
+        logger.warning("GPU opt-out predicate failed (%s), treating it as not opting out", e)
+        return False
+
+
+def _gpu_opted_out() -> bool:
+    """True when this run declared it must not use the GPU: ``CUDA_VISIBLE_DEVICES`` empty / ``-1`` / ``NoDevFiles``, ``PYUTILZ_DISABLE_GPU=1``,
+    or any predicate passed to :func:`register_gpu_opt_out`."""
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None and cvd.strip() in ("", "-1", "NoDevFiles"):
+        return True
+    if os.environ.get("PYUTILZ_DISABLE_GPU", "").strip() == "1":
+        return True
+    return any(_predicate_holds(predicate) for predicate in _GPU_OPT_OUT_PREDICATES)
+
+
+def _gpu_device_count() -> int:
+    """Number of CUDA devices. ``0`` only when the stack reports it without error (no driver / no device); any other failure propagates."""
+    try:
+        import cupy as cp
+    except ImportError:
+        cp = None
+    if cp is not None:
+        try:
+            return int(cp.cuda.runtime.getDeviceCount())
+        except cp.cuda.runtime.CUDARuntimeError as e:
+            if getattr(e, "status", None) in _CUDA_NO_DEVICE_STATUSES:
+                return 0
+            raise
+    try:
+        from numba import cuda as numba_cuda
+    except ImportError:
+        return 0
+    try:
+        return len(numba_cuda.list_devices())
+    except numba_cuda.CudaSupportError as e:
+        logger.warning("numba reports no usable CUDA driver (%s), treating the host as GPU-less", e)
+        return 0
+
+
+def _gpu_slug_and_cc() -> tuple[str, str]:
+    """Returns ``(gpu_name_slug, cc_str)``.
+
+    * ``("no-gpu", "")`` -- the host genuinely has no CUDA device (the stack reported zero devices without error).
+    * ``("gpu-unknown", "")`` -- the probe failed, or the stack reports devices the capability probe could not describe. NOT a statement about the
+      hardware: :func:`hw_fingerprint` never persists it.
+
+    Uses the LIVE current CUDA device id, not always 0, so a 2-GPU box where the user routes to device 1 gets a distinct fingerprint.
     """
     try:
         dev_id = _current_device_id()
         summary = _gpu_summary_cached(dev_id)
         if summary is None:
-            return ("no-gpu", "")
+            return (_GPU_NONE, "") if _gpu_device_count() == 0 else (_GPU_UNKNOWN, "")
         name = summary.get("name") or "unknown"
         cc = f"{int(summary.get('cc_major', 0))}.{int(summary.get('cc_minor', 0))}"
         return (_slug(name), cc)
     except Exception as e:
         logger.debug("gpu_capability_summary failed: %s", e)
-        return ("no-gpu", "")
+        return (_GPU_UNKNOWN, "")
+
+
+def _token(value: object) -> str:
+    """Filename-safe fragment of ``value`` (``x`` when it is missing)."""
+    text = re.sub(r"[^A-Za-z0-9.]+", "", "" if value is None else str(value))
+    return text if text else "x"
+
+
+def _one_dist_version(name: str) -> Optional[str]:
+    """Installed version of distribution ``name`` as a key token, or ``None`` when it is not installed."""
+    try:
+        from importlib import metadata
+
+        return _token(metadata.version(name))
+    except Exception as e:
+        logger.debug("distribution %s version unavailable (%s)", name, e)
+        return None
+
+
+def _dist_version(*names: str) -> str:
+    """Installed version of the first distribution in ``names`` that exists, without importing it; ``x`` when none is installed."""
+    versions = (_one_dist_version(name) for name in names)
+    return next((v for v in versions if v is not None), "x")
+
+
+def _package_stamp() -> str:
+    """Versions of numba and cupy as installed, cheap enough to re-check on every disk read."""
+    return f"nb{_dist_version('numba')}_cupy{_dist_version(*_CUPY_DIST_NAMES)}"
+
+
+def _numba_threads() -> int:
+    """Effective numba thread count of this process (``NUMBA_NUM_THREADS``), falling back to the CPU count when numba is absent."""
+    try:
+        import numba
+
+        return int(numba.config.NUMBA_NUM_THREADS)
+    except Exception as e:
+        logger.debug("numba thread count unavailable (%s), using the CPU count", e)
+        return int(os.cpu_count() or 1)
+
+
+def _vram_class(total_vram: object) -> str:
+    """Total VRAM rounded up to a power-of-two GiB class (``vram8g``); GPUtil reports MiB, the summary key says GB, so both scales are accepted."""
+    try:
+        value = float(total_vram)  # type: ignore[arg-type]  # object from a loosely-typed summary dict; the except covers a non-numeric value
+    except (TypeError, ValueError):
+        return "vramx"
+    if value <= 0:
+        return "vramx"
+    gib = value / 1024.0 if value > 256 else value
+    cls = 1
+    while cls < gib:
+        cls *= 2
+    return f"vram{cls}g"
+
+
+def _gpu_identity_suffix() -> str:
+    """Device index, VRAM class, CUDA driver / runtime and cupy versions of the live GPU, as a key fragment. Fields that cannot be read are ``x``."""
+    prov = _build_provenance()
+    gpu = prov.get("gpu_summary")
+    vram = gpu.get("total_vram_gb") if isinstance(gpu, dict) else None
+    return "_".join(
+        (
+            f"d{_current_device_id()}",
+            _vram_class(vram),
+            f"drv{_token(prov.get('cuda_driver_version'))}",
+            f"rt{_token(prov.get('cuda_runtime_version'))}",
+        )
+    )
 
 
 _HW_FP_DISK_FILENAME = ".hw_fingerprint.json"
-_HW_FP_SCHEMA_VERSION = 1
+_HW_FP_SCHEMA_VERSION = 2
 _HW_FP_FRESHNESS_SECONDS = 7 * 24 * 3600  # 7 days
 
 
-def _read_hw_fingerprint_from_disk() -> Optional[str]:
-    """Return the fingerprint from the on-disk cache if present, schema-
-    compatible, and recent enough; ``None`` otherwise.
+def _hw_fp_selector() -> str:
+    """Which devices this process can see: persisted entries are keyed by it so a run routed to another GPU does not reuse another device's key."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    return visible if visible else "default"
 
-    Uses file mtime rather than an embedded timestamp so a stale file is
-    invalidated even if the JSON parses fine. The default freshness
-    window is 7 days; ``PYUTILZ_HW_FP_REFRESH=1`` forces a recompute
-    even on a fresh file (for users who just swapped GPU / upgraded
-    drivers and don't want to delete the file by hand).
-    """
-    if os.environ.get("PYUTILZ_HW_FP_REFRESH", "").strip() == "1":
-        return None
+
+def _hw_fp_path() -> Optional[str]:
+    """Path of the on-disk fingerprint file, or ``None`` when the cache directory cannot be resolved."""
     try:
-        # ``cache_dir()`` makedirs on first call -- safe to invoke here
-        # before any kernel-tuning JSON exists.
-        path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
+        return os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
     except Exception as e:
         logger.debug("Could not resolve on-disk hw-fingerprint path (%s), skipping disk cache", e)
         return None
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    age = max(0.0, time.time() - st.st_mtime)
-    if age > _HW_FP_FRESHNESS_SECONDS:
-        return None
+
+
+def _load_hw_fp_entries(path: str) -> Dict[str, Any]:
+    """Entries of a schema-compatible fingerprint file (``{}`` when it is missing, unreadable or of another schema)."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if data.get("schema_version") != _HW_FP_SCHEMA_VERSION:
-        return None
-    fp = data.get("fingerprint")
-    return fp if isinstance(fp, str) and fp else None
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or data.get("schema_version") != _HW_FP_SCHEMA_VERSION:
+        return {}
+    entries = data.get("entries")
+    return entries if isinstance(entries, dict) else {}
 
 
-def _write_hw_fingerprint_to_disk(fingerprint: str) -> None:
-    """Persist the freshly-computed fingerprint. Best-effort: silently
-    swallows write errors (read-only homedir, permissions, etc.) so the
-    in-memory lru_cache still works."""
+def _read_hw_fingerprint_from_disk(selector: Optional[str] = None) -> Optional[str]:
+    """Return the persisted hardware part of the fingerprint for ``selector`` (default: the current ``CUDA_VISIBLE_DEVICES`` view) when it is
+    schema-compatible, recent enough and was recorded under the installed numba / cupy versions; ``None`` otherwise.
+
+    ``PYUTILZ_HW_FP_REFRESH=1`` forces a recompute even on a fresh entry (a driver or GPU swap does not change the file by itself).
+    """
+    if os.environ.get("PYUTILZ_HW_FP_REFRESH", "").strip() == "1":
+        return None
+    path = _hw_fp_path()
+    if path is None:
+        return None
+    entry = _load_hw_fp_entries(path).get(selector if selector is not None else _hw_fp_selector())
+    if not isinstance(entry, dict):
+        return None
+    fp, ts = entry.get("fingerprint"), entry.get("ts")
+    if not isinstance(fp, str) or not fp or not isinstance(ts, (int, float)):
+        return None
+    if max(0.0, time.time() - float(ts)) > _HW_FP_FRESHNESS_SECONDS:
+        return None
+    if entry.get("stamp") != _package_stamp():
+        return None
+    return fp
+
+
+def _write_hw_fingerprint_to_disk(fingerprint: str, selector: Optional[str] = None) -> None:
+    """Persist the freshly-computed hardware fingerprint under ``selector``. Best-effort: silently swallows write errors (read-only homedir,
+    permissions, etc.) so the in-memory lru_cache still works. Callers must not pass a fingerprint derived from a failed or opted-out probe."""
     tmp: Optional[str] = None
     try:
-        path = os.path.join(cache_dir(), _HW_FP_DISK_FILENAME)
+        path = _hw_fp_path()
+        if path is None:
+            return
+        entries = _load_hw_fp_entries(path)
+        entries[selector if selector is not None else _hw_fp_selector()] = {
+            "fingerprint": fingerprint,
+            "ts": time.time(),
+            "stamp": _package_stamp(),
+            "ts_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        }
         # Unique temp name per writer: per-target training scripts start concurrently, and a shared ``path + ".tmp"``
         # let one process ``os.replace`` a file the other was still writing.
         tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
-        payload = {
-            "schema_version": _HW_FP_SCHEMA_VERSION,
-            "fingerprint": fingerprint,
-            "ts_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
-        }
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
+            json.dump({"schema_version": _HW_FP_SCHEMA_VERSION, "entries": entries}, f)
         os.replace(tmp, path)
     except Exception as e:
         logger.debug("hw_fingerprint: failed to persist to disk: %s", e)
@@ -184,32 +331,36 @@ def _write_hw_fingerprint_to_disk(fingerprint: str) -> None:
 
 @lru_cache(maxsize=1)
 def hw_fingerprint() -> str:
-    """Stable per-host key. Format::
+    """Per-host key. Format::
 
-        cpu_<cpu_slug>_gpu_<gpu_slug>_cc<major>.<minor>
-        cpu_<cpu_slug>_no-gpu                    (CPU-only host)
+        cpu_<cpu>_gpu_<gpu>_cc<M.m>_d<device>_vram<N>g_drv<driver>_rt<runtime>_nb<numba>_cupy<cupy>_t<threads>
+        cpu_<cpu>_no-gpu_nb<numba>_cupy<cupy>_t<threads>      (host with no CUDA device)
+        cpu_<cpu>_gpu-unknown_nb<numba>_cupy<cupy>_t<threads>  (GPU probe failed; never persisted)
 
-    Cached two ways:
+    ``threads`` is the effective numba thread count of THIS process, so a tuning measured with 2 threads is not reused at 16. The key
+    also carries the device index, a power-of-two VRAM class, the CUDA driver / runtime versions and the numba / cupy versions. Adding a
+    component changes the key, which only triggers a re-tune; the old per-host directories are simply no longer consulted.
+
+    The hardware part is cached two ways:
       * ``lru_cache(maxsize=1)`` for the process lifetime.
-      * On-disk JSON at ``<cache_dir>/.hw_fingerprint.json`` shared
-        across processes (7-day freshness window via file mtime;
-        invalidate manually by deleting the file or setting
-        ``PYUTILZ_HW_FP_REFRESH=1``).
+      * On-disk JSON at ``<cache_dir>/.hw_fingerprint.json`` shared across processes (7-day freshness, entries keyed by the visible-device
+        selector, re-validated against the installed numba / cupy versions; delete the file or set ``PYUTILZ_HW_FP_REFRESH=1`` to force a
+        re-probe after a driver or GPU swap). The thread count is appended after the read, never persisted.
 
-    The cross-process cache exists because ``_cpu_model_slug()`` calls
-    ``cpuinfo.get_cpu_info()`` which on Windows queries WMI / runs
-    CPUID probes (~1.9s cold per process), and ``_gpu_slug_and_cc()``
-    queries nvidia-smi via gputil (~100ms-2s cold). For short-lived
-    CLI tools / tests / per-target training scripts that pay this
-    ~2.7s first-call cost on every invocation, the disk cache drops
-    subsequent processes to ~1ms (file read + JSON parse + mtime
-    check). HW doesn't change between processes on the same host;
-    the 7-day staleness gate covers driver / GPU swaps without
-    manual maintenance.
+    The cross-process cache exists because ``_cpu_model_slug()`` calls ``cpuinfo.get_cpu_info()`` (~1.9s cold on Windows) and the GPU probe
+    queries nvidia-smi (~100ms-2s cold).
+
+    Only a definite answer is persisted: a failed probe (``gpu-unknown``) and an opted-out run (``CUDA_VISIBLE_DEVICES`` empty,
+    ``PYUTILZ_DISABLE_GPU=1`` or a registered opt-out predicate) are keyed in memory only, and an opted-out run does not read the GPU
+    entries either, so it resolves the CPU-only key of the hardware it will actually use. A host where the stack reports zero devices without
+    error persists ``no-gpu`` as before.
     """
-    disk = _read_hw_fingerprint_from_disk()
-    if disk is not None:
-        return disk
+    opted_out = _gpu_opted_out()
+    threads = f"_t{_numba_threads()}"
+    if not opted_out:
+        disk = _read_hw_fingerprint_from_disk()
+        if disk is not None:
+            return disk + threads
     # Resolve the two HW probes through the FACADE package
     # (``pyutilz.performance.kernel_tuning.cache``) rather than this submodule so a
     # ``monkeypatch.setattr(cache, "_cpu_model_slug", ...)`` on the public package --
@@ -221,13 +372,22 @@ def hw_fingerprint() -> str:
     _cpu_probe = getattr(_facade, "_cpu_model_slug", _cpu_model_slug)
     _gpu_probe = getattr(_facade, "_gpu_slug_and_cc", _gpu_slug_and_cc)
     cpu = _cpu_probe()
-    gpu, cc = _gpu_probe()
-    if gpu == "no-gpu":
-        fp = f"cpu_{cpu}_no-gpu"
+    gpu, cc = (_GPU_NONE, "") if opted_out else _gpu_probe()
+    stamp = _package_stamp()
+    if gpu == _GPU_NONE:
+        base = f"cpu_{cpu}_{_GPU_NONE}_{stamp}"
+    elif gpu == _GPU_UNKNOWN:
+        base = f"cpu_{cpu}_{_GPU_UNKNOWN}_{stamp}"
     else:
-        fp = f"cpu_{cpu}_gpu_{gpu}_cc{cc}"
-    _write_hw_fingerprint_to_disk(fp)
-    return fp
+        try:
+            identity = _gpu_identity_suffix()
+        except Exception as e:
+            logger.warning("GPU identity probe failed (%s), key carries no device details", e)
+            identity = "dx"
+        base = f"cpu_{cpu}_gpu_{gpu}_cc{cc}_{identity}_{stamp}"
+    if not opted_out and gpu != _GPU_UNKNOWN:
+        _write_hw_fingerprint_to_disk(base)
+    return base + threads
 
 
 @lru_cache(maxsize=8)

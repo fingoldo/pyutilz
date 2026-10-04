@@ -13,7 +13,7 @@ discrete decision) per ``(input_size_axis_1, input_size_axis_2, ...)``.
 Generic API
 -----------
 
-* :func:`hw_fingerprint` -- stable per-host key (CPU model + GPU name + cc).
+* :func:`hw_fingerprint` -- per-host key (CPU model, GPU name / cc / device / VRAM / driver, library versions, numba threads).
 * :class:`KernelTuningCache` -- read / write / lookup; multiple kernels per
   host file, schema-versioned JSON.
 * :func:`cache_path` / :func:`cache_dir` -- file-system layout.
@@ -114,6 +114,7 @@ from .cache_base import (
     host_cache_dir,
     hw_fingerprint,
     provenance_changed,
+    register_gpu_opt_out,
 )
 import threading  # re-exported: a test references ``cache.threading.Event()``
 
@@ -142,6 +143,7 @@ __all__ = [
     "host_cache_dir",
     "register_default_cache",
     "hw_fingerprint",
+    "register_gpu_opt_out",
 ]
 
 

@@ -60,7 +60,7 @@ def test_facade_monkeypatch_of_cpu_probe_is_seen_by_hw_fingerprint(tmp_path, mon
     ktc.hw_fingerprint.cache_clear()
     try:
         fp = ktc.hw_fingerprint()
-        assert fp == "cpu_sensorcpu_no-gpu", fp
+        assert fp.startswith("cpu_sensorcpu_no-gpu_"), fp
     finally:
         ktc.hw_fingerprint.cache_clear()
 
@@ -72,6 +72,7 @@ def test_facade_monkeypatch_of_gpu_capability_is_seen(tmp_path, monkeypatch):
     monkeypatch.setenv("PYUTILZ_HW_FP_REFRESH", "1")
     monkeypatch.setattr(ktc, "_cpu_model_slug", lambda: "sensorcpu")
     try:
+        monkeypatch.setattr(base, "_gpu_device_count", lambda: 0)
         with mock.patch.object(ktc, "gpu_capability_summary", return_value=None):
             ktc._gpu_summary_cached.cache_clear()
             ktc.hw_fingerprint.cache_clear()
