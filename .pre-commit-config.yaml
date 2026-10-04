@@ -114,6 +114,7 @@ repos:
 
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: ~3 min (subprocess isolation), far over the per-commit budget.
       - id: pyutilz-meta-tests
         name: "pyutilz meta-tests (alias / API / optional-deps / side effects)"
         entry: pytest tests/test_meta/ --no-cov -p no:randomly -q -x
@@ -121,7 +122,7 @@ repos:
         types: [python]
         pass_filenames: false
         always_run: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   - repo: local
     hooks:
@@ -195,38 +196,41 @@ repos:
   # warning locally and failing later in CI. Called directly (not through a warn-only wrapper).
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: whole-project scan (pass_filenames false), tens of seconds.
       - id: bandit-blocking
         name: "bandit security scan (blocking)"
         entry: python -m bandit -r src/pyutilz -ll
         language: system
         types: [python]
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   # Dead-code gate: vulture --min-confidence 80. Blocking since 2026-07-09 -- triaged to 0
   # findings (see the CI lint-blocking job), so this mirrors that CI gate exactly.
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: whole-project scan (pass_filenames false).
       - id: vulture-blocking
         name: "vulture dead-code scan (blocking)"
         entry: python -m vulture src/pyutilz scripts/vulture_whitelist.py --min-confidence 80
         language: system
         types: [python]
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   # Docstring-coverage gate: 100% (see [tool.interrogate] in pyproject.toml). Blocking since
   # 2026-07-09, mirroring the CI lint-blocking job -- a missing docstring on a new function
   # fails the commit immediately instead of surfacing only in CI.
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: whole-project scan (pass_filenames false).
       - id: interrogate-blocking
         name: "interrogate docstring coverage (blocking, 100%)"
         entry: python -m interrogate --fail-under 100 src/pyutilz
         language: system
         types: [python]
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   # Dependency-drift gate: deptry (unused/missing/transitive). Blocking since 2026-07-09,
   # mirroring the CI lint-blocking job -- see [tool.deptry] for the package_module_name_map +
@@ -235,12 +239,13 @@ repos:
   # are meaningless without a real environment to check imports against.
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: whole-project scan needing the full dev env.
       - id: deptry-blocking
         name: "deptry dependency check (blocking)"
         entry: python -m deptry .
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
   # Workflow-YAML style gate: yamllint. Blocking since 2026-07-11, mirroring the CI
   # lint-blocking job -- catches the SHA-pin comment-spacing / indentation class of nit before
@@ -316,28 +321,24 @@ repos:
   # an over-eager exclude) to far fewer files than the tree actually holds.
   - repo: local
     hooks:
+      # Moved pre-commit -> pre-push 2026-10-04: whole-project mypy takes minutes; a per-commit hook this slow gets --no-verify.
       - id: mypy-full-blocking
         name: "mypy (whole project, blocking, completion-asserted)"
         entry: python -m py_ci_shared.mypy_gate --min-files 261 src/pyutilz
         language: system
         types: [python]
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
 
-  # The WHOLE suite, on push only. The per-commit hook above runs tests/test_meta/ alone, which is
-  # what keeps committing fast - but it means a functional break reaches CI untouched, and one did:
-  # generate_json gained a `thinking` parameter on three providers and not on their base, and the
-  # test that caught it lives in tests/llm/, which no hook was running (fixed in e5efc40).
-  #
-  # Be clear about what this buys. It catches the "test nobody ran" class only. It cannot catch a
-  # difference between this machine and a CI leg - a 3.8-only AST shape, an older polars refusing an
-  # operation, a macOS clock, an extra this box happens to have installed - and most of the recent CI
-  # failures were exactly that. Roughly twelve minutes; `git push --no-verify` skips it.
+  # Pre-push smoke tests. CI runs the whole suite (~12 min locally, 21 matrix legs on CI: -m "not gpu" -n auto
+  # --cov-fail-under=85); that is CI's job. Locally push runs the meta-tests + whole-project gates above and this
+  # small smoke subset (tests/stats, the mypy-strict beachhead package). Left to CI: the full suite, the coverage
+  # floor, the OS/Python matrix, CodeQL, dependency-review, pip-audit, docs build, build/twine checks.
   - repo: local
     hooks:
-      - id: pytest-full-on-push
-        name: "full test suite (push only)"
-        entry: pytest --no-cov -q -p no:randomly -x
+      - id: pytest-smoke-on-push
+        name: "smoke tests: tests/stats (push only; full suite + matrix left to CI)"
+        entry: pytest tests/stats --no-cov -p no:randomly -n 2 -m "not gpu and not slow" -x
         language: system
         types: [python]
         pass_filenames: false
