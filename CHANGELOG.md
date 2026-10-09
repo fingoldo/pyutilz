@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slowest rival costing at least `prune_min_ms` and its lead not shrinking; the cell takes that variant as its decision and no variant is run
   there. A rival that is flat or catching up (the approach to a crossover) is never skipped past. This keeps sweeps over kernels whose CPU
   reference takes minutes per call at the largest sizes affordable. `prune_dominated=False` measures every cell.
+  Inside a measured cell the same `prune_ratio`/`prune_min_ms` also stop re-timing a candidate that was that much slower than the best on its
+  first timed call (`_rank_candidates(drop_ratio=, drop_min_ms=)`).
 - `llm`: one shared pricing mechanism for cache writes and long-context tiers (`llm._pricing`: `LongContextTier`, an
   optional `Pricing.long_context`, `price_call()`), replacing the separate xAI and Gemini tier code and Anthropic's
   inline write multipliers. New: the OpenAI >272K tier on gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna,

@@ -372,8 +372,14 @@ def _rank_candidates(
     repeats: int,
     synchronize_gpu: bool,
     ranking: str,
+    drop_ratio: float = 0.0,
+    drop_min_ms: float = 0.0,
 ) -> "dict[str, float]":
     """Time each already-equivalence-vetted candidate and return {name: ms}.
+
+    ``drop_ratio`` > 0 (``"robust"`` ranking only): after the first rep, a candidate whose time is at least ``drop_ratio`` times the best one and at least
+    ``drop_min_ms`` is not timed again - it cannot realistically win on later reps (its warmup already ran), and re-timing a call that takes seconds is
+    what makes a sweep slow. Its first-rep time is reported.
 
     Two ranking modes:
 
@@ -422,8 +428,9 @@ def _rank_candidates(
 
     # robust: interleave candidates within each rep, take per-candidate min over reps.
     best: dict[str, float] = {name: float("inf") for name in names}
+    live = list(names)
     for _rep in range(reps):
-        for name in names:
+        for name in live:
             fn = candidates[name]
             try:
                 t0 = timer()
@@ -435,6 +442,9 @@ def _rank_candidates(
                 ms = float("inf")
             if ms < best[name]:
                 best[name] = ms
+        if drop_ratio > 0.0 and _rep == 0 and len(live) > 1:
+            fastest = min(best.values())
+            live = [n for n in live if not (best[n] >= drop_ratio * fastest and best[n] >= drop_min_ms)]
     return best
 
 
@@ -595,7 +605,8 @@ def sweep_backend_grid(
             sweep's most expensive calls (a CPU kernel at the largest sizes can take minutes per call) where
             the answer is already settled. Skipped cells are not equivalence-gated (the smaller cells were).
             ``False`` measures every cell.
-        prune_ratio: how many times slower every rival must be, in each smaller neighbour, to count as dominated.
+        prune_ratio: how many times slower every rival must be, in each smaller neighbour, to count as dominated. Within a measured cell the same ratio
+            (with ``prune_min_ms``) stops re-timing a candidate that was that much slower than the best on its first timed call.
         prune_min_ms: a rival must cost at least this much (ms) in a neighbour before skipping is worth the lost measurement.
         verbose: 0 = silent; >0 increases logging detail of the sweep's progress.
 
@@ -676,7 +687,10 @@ def sweep_backend_grid(
             )
             # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
             # which is contention-robust; mean=legacy sequential per-candidate mean).
-            timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
+            timings = _rank_candidates(
+                survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking,
+                drop_ratio=prune_ratio if prune_dominated else 0.0, drop_min_ms=prune_min_ms,
+            )
             for name in names:  # iterate in declared order so ties prefer the earlier (e.g. reference) variant
                 if name not in timings:
                     continue

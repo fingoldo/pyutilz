@@ -16,7 +16,7 @@ def _sweep(monkeypatch, cost, axes, **kw):
         built.append(dict(dims))
         return (0,)
 
-    def fake_rank(candidates, repeats, synchronize_gpu, ranking="robust"):
+    def fake_rank(candidates, repeats, synchronize_gpu, ranking="robust", **_ignored):
         dims = built[-1]
         return {name: cost(name, dims) for name in candidates}
 
@@ -96,7 +96,7 @@ def test_pruning_can_be_turned_off(monkeypatch):
 def test_skipped_cells_do_not_run_any_variant(monkeypatch):
     """Skipping saves the expensive calls themselves: no variant is invoked at a skipped cell."""
     calls = []
-    monkeypatch.setattr(bm, "_rank_candidates", lambda candidates, repeats, synchronize_gpu, ranking="robust": {n: (10.0 if n == "gpu" else 100000.0) for n in candidates})
+    monkeypatch.setattr(bm, "_rank_candidates", lambda candidates, repeats, synchronize_gpu, ranking="robust", **_ignored: {n: (10.0 if n == "gpu" else 100000.0) for n in candidates})
     variants = {"cpu": lambda *a: calls.append(("cpu", a)) or 0.0, "gpu": lambda *a: calls.append(("gpu", a)) or 0.0}
     bm.sweep_backend_grid(variants, {"n": [1, 2, 3, 4, 5]}, lambda dims: (dims["n"],), reference="cpu", repeats=1)
     assert {a[0] for _, a in calls} == {1, 2}
@@ -121,3 +121,68 @@ def test_a_shrinking_lead_is_not_pruned(monkeypatch):
     axes = {"n": [1, 2, 3, 4]}
     _, built = _sweep(monkeypatch, lambda name, d: 1000.0 if name == "gpu" else 20000.0 / d["n"], axes)
     assert [b["n"] for b in built] == [1, 2, 3, 4]
+
+
+def _fake_clock(monkeypatch):
+    """Replace the module timer with a clock the candidates advance, so costs are exact."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(bm, "timer", lambda: clock["t"])
+    return clock
+
+
+def test_a_hopeless_candidate_is_not_retimed_within_a_cell(monkeypatch):
+    """A candidate 50x slower than the best on its first timed call (and costly) is timed once; the others use every repeat."""
+    clock = _fake_clock(monkeypatch)
+    calls = {"fast": 0, "slow": 0}
+
+    def fast():
+        """Costs 100 ms."""
+        calls["fast"] += 1
+        clock["t"] += 0.1
+
+    def slow():
+        """Costs 5 s."""
+        calls["slow"] += 1
+        clock["t"] += 5.0
+
+    out = bm._rank_candidates({"fast": fast, "slow": slow}, repeats=4, synchronize_gpu=False, ranking="robust", drop_ratio=3.0, drop_min_ms=1000.0)
+    assert calls == {"fast": 4, "slow": 1}
+    assert out["slow"] > 50 * out["fast"] * 0.99
+
+
+def test_a_slow_but_cheap_candidate_keeps_its_repeats(monkeypatch):
+    """Below drop_min_ms re-timing is cheap, so every candidate keeps all repeats (and a noisy first call can still be corrected)."""
+    clock = _fake_clock(monkeypatch)
+    calls = {"a": 0, "b": 0}
+
+    def a():
+        """Costs 1 ms."""
+        calls["a"] += 1
+        clock["t"] += 0.001
+
+    def b():
+        """Costs 20 ms."""
+        calls["b"] += 1
+        clock["t"] += 0.02
+
+    bm._rank_candidates({"a": a, "b": b}, repeats=3, synchronize_gpu=False, ranking="robust", drop_ratio=3.0, drop_min_ms=1000.0)
+    assert calls == {"a": 3, "b": 3}
+
+
+def test_dropping_is_off_by_default_in_the_ranker(monkeypatch):
+    """_rank_candidates without drop_ratio re-times everything, as before."""
+    clock = _fake_clock(monkeypatch)
+    calls = {"s": 0, "f": 0}
+
+    def f():
+        """Costs 1 ms."""
+        calls["f"] += 1
+        clock["t"] += 0.001
+
+    def s():
+        """Costs 10 s."""
+        calls["s"] += 1
+        clock["t"] += 10.0
+
+    bm._rank_candidates({"f": f, "s": s}, repeats=3, synchronize_gpu=False, ranking="robust")
+    assert calls == {"f": 3, "s": 3}
