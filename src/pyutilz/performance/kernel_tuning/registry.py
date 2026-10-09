@@ -442,10 +442,13 @@ def _run_spec_tuning(cache, spec: TunerSpec, code_version: str, device_id: Optio
             cache.evict(spec.kernel_name)
         # dims={} just drives the tuner + persist; the return is ignored (we
         # count persisted regions). equiv_tol is threaded so a divergent region
-        # is rejected at update even on this forced sweep.
+        # is rejected at update even on this forced sweep. fallback=None: the
+        # spec's own fallback is a callable OF the dims (n_samples, ...), which this
+        # dims-less offline call cannot supply - and nothing here uses its value -
+        # so an empty sweep must return, not raise TypeError from fallback().
         cache.get_or_tune(
             spec.kernel_name, dims={}, tuner=spec.tuner, axes=list(spec.axes.keys()),
-            fallback=spec.fallback, env_key=spec.env_key, code_version=code_version,
+            fallback=None, env_key=spec.env_key, code_version=code_version,
             salt=spec.salt, equiv_tol=tol, hooks=hooks, once_per_process=False,
             async_sweep=False,  # offline tuning must run the sweep SYNCHRONOUSLY and wait for/persist the result
         )

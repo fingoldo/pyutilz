@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `kernel_tuning`: offline tuning (`tune_spec` / `retune_all` / the `refresh` CLIs) no longer dies with `TypeError: fallback() missing ... 'n_samples'` when a sweep persists nothing. `_run_spec_tuning` handed the spec's fallback - a callable OF the dims - to `get_or_tune` with `dims={}` and ignored its value, so any empty sweep called it bare. It now passes no fallback. And a sweep that RAISES is reported at WARNING (`the sweep for <kernel> raised <Type>: <msg>`): it was swallowed at DEBUG, which made it indistinguishable from a sweep that found nothing - both persisted zero regions with no explanation. The old tests used a dict fallback and so never exercised the callable one.
 - `kernel_tuning.registry._group_gpus_by_model` (and so `retune_all` / `mlframe-tune-kernels refresh-all`) read `GPUtil.GPU.compute_capability`, an attribute GPUtil never had, so the call raised `AttributeError` on any real host; the old test hid it by giving its fake GPU objects that attribute. The capability now comes from CUDA (`_gpu_compute_capability`: cupy, then numba), and the tests use fakes with only the attributes `GPUtil.GPU` really has.
 - `code_audit.run_all`: a scanner that runs out of memory in a pool worker is re-run in-process after the pool closes. Each
   worker parses the corpus on its own, so a heavy scanner could fail beside its siblings and report no findings, which a

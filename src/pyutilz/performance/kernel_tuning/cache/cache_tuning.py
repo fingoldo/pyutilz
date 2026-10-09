@@ -207,7 +207,10 @@ class _CacheTuningMixin(_CacheState):
         try:
             return tuner()
         except Exception as e:
-            logger.debug("kernel_tuning_cache: tuner for %s failed: %s", kernel_name, e)
+            # A sweep error must never break dispatch, but swallowing it at DEBUG made "the sweep raised" indistinguishable from "the sweep found nothing":
+            # both persisted zero regions with no explanation. It is a defect in the sweep (or the host), so it is said at WARNING.
+            logger.warning("kernel_tuning_cache: the sweep for %s raised %s: %s; no tuning was persisted", kernel_name, type(e).__name__, e)
+            logger.debug("kernel_tuning_cache: sweep traceback for %s", kernel_name, exc_info=True)
             return None
 
     def _spawn_async_sweep(self, kernel_name: str, *, dims, tuner, axes, code_version, salt, equiv_tol, hooks):

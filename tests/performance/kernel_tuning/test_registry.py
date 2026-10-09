@@ -126,6 +126,34 @@ def test_run_spec_tuning_populates_cache():
     assert n2 == 2
 
 
+def test_run_spec_tuning_with_a_dims_callable_fallback_and_an_empty_sweep_does_not_raise():
+    """Real specs carry a fallback that is a callable OF the dims (n_samples, ...). Offline tuning has no dims, so an empty sweep used to call it bare and die with TypeError."""
+    from pyutilz.performance.kernel_tuning.registry import _run_spec_tuning
+    from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
+
+    cache = KernelTuningCache(in_memory=True)
+
+    def fallback(n_samples):
+        return {"backend_choice": "numpy" if n_samples < 1000 else "numba"}
+
+    spec = TunerSpec(kernel_name="needs_dims", variant_fns=(_np, _nb), tuner=lambda: [], axes={"n": [100, 1000]}, fallback=fallback)
+    assert _run_spec_tuning(cache, spec, code_version="cv1", device_id=None, force=True, hooks=None) == 0
+
+
+def test_a_sweep_that_raises_is_reported_at_warning_not_swallowed_at_debug(caplog):
+    """'The sweep raised' and 'the sweep found nothing' both persisted zero regions; only the second is silent now."""
+    from pyutilz.performance.kernel_tuning.cache import KernelTuningCache
+
+    def boom():
+        raise RuntimeError("no GPU variants could be built")
+
+    cache = KernelTuningCache(in_memory=True)
+    with caplog.at_level("WARNING"):
+        cache.get_or_tune("raising_kernel", dims={}, tuner=boom, axes=["n"], fallback={"backend_choice": "numpy"}, once_per_process=False, async_sweep=False)
+    messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("raising_kernel" in m and "RuntimeError" in m and "no GPU variants could be built" in m for m in messages), messages
+
+
 def test_group_gpus_by_model(monkeypatch):
     """_group_gpus_by_model groups devices by name + compute capability, taking the capability from CUDA (the fake GPUs carry only what GPUtil.GPU really has)."""
 
