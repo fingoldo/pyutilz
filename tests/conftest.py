@@ -239,6 +239,25 @@ def _no_heartbeat_retry_threads(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_process_lifetime_module_state():
+    """Clear module-level registries that functions mutate, so one test's state never reaches the next.
+
+    Only modules already in ``sys.modules`` are touched; the fixture must not import them.
+    """
+    yield
+    for module_name, attr in (
+        ("pyutilz.database.psycopg2_pool", "_conn_last_used"),
+        ("pyutilz.dev.code_audit.console_unicode", "_UNREADABLE_INIT_WARNED"),
+        ("pyutilz.dev.logginglib", "_log_throttle_last"),
+        ("pyutilz.llm._claude_models", "_warned_unknown"),
+    ):
+        module = sys.modules.get(module_name)
+        container = getattr(module, attr, None) if module is not None else None
+        if container is not None:
+            container.clear()
+
+
+@pytest.fixture(autouse=True)
 def _restore_root_logger_configuration():
     """Undo any process-wide root-logger reconfiguration a test performs.
 

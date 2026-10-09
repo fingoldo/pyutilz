@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(r"D:\Upd\Programming\PythonCodeRepository\pyutilz")
+REPO = Path(__file__).resolve().parent.parent
 results: list[tuple[str, str, bool, str]] = []
 
 
