@@ -641,7 +641,7 @@ def sweep_backend_grid(
             skipped = tracker.dominated_winner(idx, res) if prune_dominated else None
             if skipped is not None:
                 tracker.record(idx, res, skipped, None)
-                region = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
+                region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
                 if len(residencies) > 1:
                     region["location_eq"] = res
                 region[decision_key] = skipped
@@ -685,7 +685,7 @@ def sweep_backend_grid(
                     best_name, best_ms, best_diff = name, ms, diffs[name]
             if best_name is not None:
                 tracker.record(idx, res, best_name, dict(timings))
-            region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
+            region = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
             if len(residencies) > 1:
                 region["location_eq"] = res
             region[decision_key] = best_name or ref
