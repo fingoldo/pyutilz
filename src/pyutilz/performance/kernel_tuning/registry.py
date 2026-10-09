@@ -342,6 +342,29 @@ def retune_all(
     return results
 
 
+def _gpu_compute_capability(device_id: int) -> tuple[int, int]:
+    """``(major, minor)`` CUDA compute capability of ``device_id``, or ``(0, 0)`` when it cannot be determined.
+
+    ``GPUtil.GPU`` has no compute-capability attribute (it only reports name, load, memory and driver), so the capability comes from CUDA itself: cupy first (an
+    attribute query that does not change the current device), then numba through :func:`pyutilz.system.system.get_gpu_cuda_capabilities`.
+    """
+    try:
+        import cupy as cp
+
+        digits = str(cp.cuda.Device(int(device_id)).compute_capability)  # "61" for 6.1, "100" for 10.0: the minor version is always the last digit
+        return int(digits[:-1] or 0), int(digits[-1])
+    except Exception as exc:  # cupy absent or the device query failed: try the numba route
+        logger.debug("cupy compute-capability query for device %s failed (%s: %s); trying numba", device_id, type(exc).__name__, exc)
+    try:
+        from pyutilz.system.system import get_gpu_cuda_capabilities
+
+        caps = get_gpu_cuda_capabilities(device_id=int(device_id)) or {}
+        return int(caps.get("COMPUTE_CAPABILITY_MAJOR", 0)), int(caps.get("COMPUTE_CAPABILITY_MINOR", 0))
+    except Exception as exc:
+        logger.debug("numba compute-capability query for device %s failed (%s: %s)", device_id, type(exc).__name__, exc)
+        return 0, 0
+
+
 def _group_gpus_by_model() -> dict[str, list[int]]:
     """Group GPUs by unique model (name + compute capability).
 
@@ -353,7 +376,8 @@ def _group_gpus_by_model() -> dict[str, list[int]]:
     groups: Dict[Any, Any] = {}
     for gpu in gpus:
         # Model name: abbreviated GPU name + compute capability.
-        model = f"{gpu.name.split()[0]}_{gpu.compute_capability[0]}{gpu.compute_capability[1]}"
+        major, minor = _gpu_compute_capability(gpu.id)
+        model = f"{gpu.name.split()[0]}_{major}{minor}"
         groups.setdefault(model, []).append(gpu.id)
     return groups
 

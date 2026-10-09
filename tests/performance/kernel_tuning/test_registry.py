@@ -127,21 +127,83 @@ def test_run_spec_tuning_populates_cache():
 
 
 def test_group_gpus_by_model(monkeypatch):
-    """_group_gpus_by_model groups devices by name + compute capability."""
+    """_group_gpus_by_model groups devices by name + compute capability, taking the capability from CUDA (the fake GPUs carry only what GPUtil.GPU really has)."""
 
     import pyutilz.performance.kernel_tuning.registry as reg
 
-    class _G:
-        def __init__(self, gid, name, cc):
-            self.id, self.name, self.compute_capability = gid, name, cc
+    class _G:  # the attributes of a real GPUtil.GPU that matter here: no compute_capability
+        def __init__(self, gid, name):
+            self.id, self.name = gid, name
 
+    capability = {0: (8, 9), 1: (8, 9), 2: (7, 0)}
     fake = types.ModuleType("GPUtil")
-    fake.getGPUs = lambda: [_G(0, "NVIDIA RTX 4090", (8, 9)), _G(1, "NVIDIA RTX 4090", (8, 9)), _G(2, "Tesla V100", (7, 0))]
+    fake.getGPUs = lambda: [_G(0, "NVIDIA RTX 4090"), _G(1, "NVIDIA RTX 4090"), _G(2, "Tesla V100")]
     monkeypatch.setitem(sys.modules, "GPUtil", fake)
+    monkeypatch.setattr(reg, "_gpu_compute_capability", lambda device_id: capability[device_id])
     groups = reg._group_gpus_by_model()
     assert len(groups) == 2  # the two identical 4090s collapse into one model
     assert sorted(len(v) for v in groups.values()) == [1, 2]
     assert [0, 1] in [sorted(v) for v in groups.values()]
+    assert set(groups) == {"NVIDIA_89", "Tesla_70"}
+
+
+def test_same_name_different_capability_are_different_models(monkeypatch):
+    """Two cards with the same marketing name but another compute capability must not share tuned parameters."""
+
+    import pyutilz.performance.kernel_tuning.registry as reg
+
+    class _G:
+        def __init__(self, gid, name):
+            self.id, self.name = gid, name
+
+    fake = types.ModuleType("GPUtil")
+    fake.getGPUs = lambda: [_G(0, "NVIDIA GeForce X"), _G(1, "NVIDIA GeForce X")]
+    monkeypatch.setitem(sys.modules, "GPUtil", fake)
+    monkeypatch.setattr(reg, "_gpu_compute_capability", lambda device_id: (6, 1) if device_id == 0 else (7, 5))
+    assert len(reg._group_gpus_by_model()) == 2
+
+
+def test_gpu_compute_capability_parses_cupy_and_falls_back_to_numba(monkeypatch):
+    """cupy reports the capability as a digit string ("61", "100"); without cupy the numba route is used; with neither the answer is (0, 0), not an exception."""
+
+    import pyutilz.performance.kernel_tuning.registry as reg
+
+    class _Dev:
+        def __init__(self, cc):
+            self.compute_capability = cc
+
+    fake_cupy = types.ModuleType("cupy")
+    fake_cupy.cuda = types.SimpleNamespace(Device=lambda i: _Dev({0: "61", 1: "100", 2: "89"}[i]))
+    monkeypatch.setitem(sys.modules, "cupy", fake_cupy)
+    assert reg._gpu_compute_capability(0) == (6, 1)
+    assert reg._gpu_compute_capability(1) == (10, 0)
+    assert reg._gpu_compute_capability(2) == (8, 9)
+
+    monkeypatch.setitem(sys.modules, "cupy", None)  # import cupy -> ImportError
+    fake_probing = types.ModuleType("pyutilz.system.system")
+    fake_probing.get_gpu_cuda_capabilities = lambda device_id=0: {"COMPUTE_CAPABILITY_MAJOR": 7, "COMPUTE_CAPABILITY_MINOR": 5}
+    monkeypatch.setitem(sys.modules, "pyutilz.system.system", fake_probing)
+    assert reg._gpu_compute_capability(0) == (7, 5)
+
+    fake_probing.get_gpu_cuda_capabilities = lambda device_id=0: None  # numba unavailable
+    assert reg._gpu_compute_capability(0) == (0, 0)
+
+
+def test_gpu_compute_capability_matches_the_installed_gpu_when_cuda_is_present():
+    """On a real CUDA host the helper agrees with the numba probe the rest of the package uses (skipped without a GPU)."""
+
+    import pytest
+
+    cuda = pytest.importorskip("numba.cuda")
+    if not cuda.is_available():
+        pytest.skip("no CUDA device")
+    import pyutilz.performance.kernel_tuning.registry as reg
+    from pyutilz.system.system import get_gpu_cuda_capabilities
+
+    caps = get_gpu_cuda_capabilities(device_id=0) or {}
+    expected = (int(caps.get("COMPUTE_CAPABILITY_MAJOR", 0)), int(caps.get("COMPUTE_CAPABILITY_MINOR", 0)))
+    assert expected != (0, 0)
+    assert reg._gpu_compute_capability(0) == expected
 
 
 def test_pick_least_loaded_device(monkeypatch):
