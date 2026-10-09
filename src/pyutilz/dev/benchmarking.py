@@ -438,6 +438,91 @@ def _rank_candidates(
     return best
 
 
+def _gate_grid_variants(variants, names, args, ref, ref_out, ref_scale, equiv_atol, equiv_rtol, synchronize_gpu, verbose, label):
+    """Warm up every variant (absorbing jit / cudagraph / alloc / transfer-plan) and keep those whose output matches the reference within tolerance.
+
+    Returns ``(survivors {name: zero-arg callable}, diffs {name: max abs diff})``; a variant that raises or diverges is dropped (logged when ``verbose``)."""
+    survivors: dict = {}
+    diffs: dict = {}
+    for name in names:
+        fn = variants[name]
+        try:
+            fn(*args)  # warmup
+            if synchronize_gpu:
+                synchronize_gpu_if_available()
+            diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
+            if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
+                if verbose:
+                    logger.info("%s: %s DIVERGES (%.2e) -> skip", label, name, diff)
+                continue
+        except Exception as e:
+            if verbose:
+                logger.info("%s: %s failed warmup (%s) -> skip", label, name, e)
+            continue
+        diffs[name] = diff
+        survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
+    return survivors, diffs
+
+
+class _DominanceTracker:
+    """Remembers the winner (and the timings) of every settled grid cell and says which later cells a variant already dominates from below.
+
+    On every axis with a smaller neighbour the same variant must (1) win by at least ``ratio`` over EVERY rival, (2) with the slowest rival already costing
+    ``min_ms`` and (3) with its lead not shrinking over the last two steps of that axis (so a rival that is flat or catching up - the approach to a crossover -
+    is never skipped past). Two measured points on an axis are needed to see a trend; a neighbour that was itself skipped carries its trend with it."""
+
+    def __init__(self, ratio: float, min_ms: float) -> None:
+        """Set the dominance thresholds; ``ratio`` is the required lead over every rival, ``min_ms`` the rival cost below which skipping is not worth it."""
+        self.ratio = ratio
+        self.min_ms = min_ms
+        self._cells: dict = {}  # (axis-index tuple, residency) -> (winner, {variant: ms}) when measured, (winner, None) when skipped
+
+    def record(self, idx: tuple, res: str, winner: str, timings: "Optional[dict]") -> None:
+        """Store the outcome of a cell (``timings`` is None for a skipped one)."""
+        self._cells[(idx, res)] = (winner, timings)
+
+    @staticmethod
+    def _lead(timings: dict, winner: str) -> float:
+        """How many times slower the closest rival of ``winner`` is (inf when every rival failed)."""
+        rivals = [ms for name, ms in timings.items() if name != winner]
+        return min(rivals) / timings[winner] if rivals else float("inf")
+
+    def _step(self, idx: tuple, res: str, axis: int, back: int):
+        """The stored outcome ``back`` steps below ``idx`` along ``axis`` (None when unknown)."""
+        return self._cells.get(((*idx[:axis], idx[axis] - back, *idx[axis + 1 :]), res))
+
+    def _axis_winner(self, idx: tuple, res: str, axis: int):
+        """The variant dominating along one axis ('' when the axis offers no evidence, None when it blocks pruning)."""
+        i = idx[axis]
+        prev = self._step(idx, res, axis, 1)
+        if prev is None:
+            return None
+        winner, timings = prev
+        if timings is None:
+            return winner
+        finite = [ms for name, ms in timings.items() if name != winner and ms != float("inf")]
+        if (max(finite) if finite else 0.0) < self.min_ms or self._lead(timings, winner) < self.ratio or i < 2:
+            return None
+        prev2 = self._step(idx, res, axis, 2)
+        if prev2 is None:
+            return None
+        if prev2[1] is not None and (prev2[0] != winner or self._lead(prev2[1], winner) > self._lead(timings, winner) * 1.0001):
+            return None
+        return winner
+
+    def dominated_winner(self, idx: tuple, res: str):
+        """The variant that dominates the cell at ``idx`` from below on every axis that has a smaller neighbour, or None."""
+        winner = None
+        for axis, i in enumerate(idx):
+            if i == 0:
+                continue
+            w = self._axis_winner(idx, res, axis)
+            if w is None or winner not in (None, w):
+                return None
+            winner = w
+        return winner
+
+
 def sweep_backend_grid(
     variants: "dict[str, Callable]",
     axes: "dict[str, list]",
@@ -452,6 +537,9 @@ def sweep_backend_grid(
     synchronize_gpu: bool = True,
     decision_key: str = "backend_choice",
     ranking: str = "robust",
+    prune_dominated: bool = True,
+    prune_ratio: float = 3.0,
+    prune_min_ms: float = 1000.0,
     verbose: int = 0,
 ) -> list:
     """Full-grid, residency-aware backend sweep -> kernel_tuning_cache regions.
@@ -497,6 +585,18 @@ def sweep_backend_grid(
             since noise only adds time). ``"mean"`` is the legacy sequential
             per-candidate mean (kept for A/B; correct only on a quiet device). See
             :func:`_rank_candidates`.
+        prune_dominated: skip the cells a variant has been winning "single-handedly" on the way up.
+            Axes are swept ascending, and a cell is NOT timed when every smaller neighbour (one step down
+            on each axis) was won by the same variant with every rival at least ``prune_ratio`` times
+            slower AND the slowest rival already costing ``prune_min_ms`` or more (or was itself skipped
+            on that basis), with that lead not shrinking over the last two steps of the axis (a rival that is flat
+            or catching up - the approach to a crossover - is never skipped past). The skipped cell takes the
+            dominating variant as its decision. It saves the
+            sweep's most expensive calls (a CPU kernel at the largest sizes can take minutes per call) where
+            the answer is already settled. Skipped cells are not equivalence-gated (the smaller cells were).
+            ``False`` measures every cell.
+        prune_ratio: how many times slower every rival must be, in each smaller neighbour, to count as dominated.
+        prune_min_ms: a rival must cost at least this much (ms) in a neighbour before skipping is worth the lost measurement.
         verbose: 0 = silent; >0 increases logging detail of the sweep's progress.
 
     Returns:
@@ -530,10 +630,29 @@ def sweep_backend_grid(
     # largest-measured winner instead of falling through to None (the heuristic).
     catchall: dict = {}
 
-    for combo in tqdmu(list(itertools.product(*(axes[d] for d in dim_names))), desc="grid sweep", leave=False):
+    tracker = _DominanceTracker(prune_ratio, prune_min_ms)
+
+    cells = itertools.product(*(range(len(axes[d])) for d in dim_names))
+    for idx in tqdmu(list(cells), desc="grid sweep", leave=False):
+        combo = tuple(axes[d][i] for d, i in zip(dim_names, idx))
         dims = dict(zip(dim_names, combo))
-        host_args = make_inputs(dims)
+        host_args = None
         for res in residencies:
+            skipped = tracker.dominated_winner(idx, res) if prune_dominated else None
+            if skipped is not None:
+                tracker.record(idx, res, skipped, None)
+                region = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
+                if len(residencies) > 1:
+                    region["location_eq"] = res
+                region[decision_key] = skipped
+                regions.append(region)
+                if combo == _max_combo:
+                    catchall[res] = skipped
+                if verbose:
+                    logger.info("grid %s res=%s -> %s (skipped: dominated in every smaller neighbour)", dims, res, skipped)
+                continue
+            if host_args is None:
+                host_args = make_inputs(dims)
             try:
                 args = mover(host_args) if res == "device" else host_args
             except Exception as e:
@@ -551,29 +670,10 @@ def sweep_backend_grid(
                 logger.warning("grid %s res=%s: reference variant %r raised (%s) -> combination skipped", dims, res, ref, exc)
                 continue
             best_name, best_ms, best_diff = None, float("inf"), 0.0
-            # Pass 1: warm up + equivalence-gate every variant. Survivors (those whose
-            # output matches the reference within tol) go into the timed rank; a
-            # divergent-but-faster variant is a bug, never a winner, so it is dropped
-            # here BEFORE timing. Warmup absorbs jit / cudagraph / alloc / transfer-plan.
-            survivors: dict = {}
-            diffs: dict = {}
-            for name in names:
-                fn = variants[name]
-                try:
-                    fn(*args)  # warmup
-                    if synchronize_gpu:
-                        synchronize_gpu_if_available()
-                    diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, fn(*args))
-                    if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
-                        if verbose:
-                            logger.info("grid %s res=%s: %s DIVERGES (%.2e) -> skip", dims, res, name, diff)
-                        continue
-                except Exception as e:
-                    if verbose:
-                        logger.info("grid %s res=%s: %s failed warmup (%s) -> skip", dims, res, name, e)
-                    continue
-                diffs[name] = diff
-                survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
+            # Pass 1: warm up + equivalence-gate every variant; a divergent-but-faster variant is a bug, never a winner, so it is dropped BEFORE timing.
+            survivors, diffs = _gate_grid_variants(
+                variants, names, args, ref, ref_out, ref_scale, equiv_atol, equiv_rtol, synchronize_gpu, verbose, f"grid {dims} res={res}"
+            )
             # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
             # which is contention-robust; mean=legacy sequential per-candidate mean).
             timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
@@ -583,6 +683,8 @@ def sweep_backend_grid(
                 ms = timings[name]
                 if ms < best_ms:
                     best_name, best_ms, best_diff = name, ms, diffs[name]
+            if best_name is not None:
+                tracker.record(idx, res, best_name, dict(timings))
             region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
             if len(residencies) > 1:
                 region["location_eq"] = res

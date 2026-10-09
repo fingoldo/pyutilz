@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `dev.benchmarking.sweep_backend_grid`: `prune_dominated` (default on), `prune_ratio` (3.0) and `prune_min_ms` (1000). A cell is no longer
+  timed when, on every axis, the same variant already beat every rival by `prune_ratio` or more in the two previous steps with the
+  slowest rival costing at least `prune_min_ms` and its lead not shrinking; the cell takes that variant as its decision and no variant is run
+  there. A rival that is flat or catching up (the approach to a crossover) is never skipped past. This keeps sweeps over kernels whose CPU
+  reference takes minutes per call at the largest sizes affordable. `prune_dominated=False` measures every cell.
 - `llm`: one shared pricing mechanism for cache writes and long-context tiers (`llm._pricing`: `LongContextTier`, an
   optional `Pricing.long_context`, `price_call()`), replacing the separate xAI and Gemini tier code and Anthropic's
   inline write multipliers. New: the OpenAI >272K tier on gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna,

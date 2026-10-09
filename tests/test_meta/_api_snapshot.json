@@ -5,7 +5,7 @@
       "benchmark_algos_by_runtime": "callable(implementations:any:0:, algo_name:any:1:'', n_reps:any:1:2, verbose:any:1:0, synchronize_gpu:any:1:True, algo_kwargs:**kw:0:)",
       "logger": "value",
       "sweep_backend_crossover": "callable(variants:any:0:, sizes:any:0:, make_inputs:any:0:, primary_axis:any:0:, reference:kw:1:None, extra_region_keys:kw:1:None, repeats:kw:1:15, equiv_atol:kw:1:1e-06, equiv_rtol:kw:1:1e-06, synchronize_gpu:kw:1:True, decision_key:kw:1:'backend_choice', ranking:kw:1:'robust', verbose:kw:1:0)",
-      "sweep_backend_grid": "callable(variants:any:0:, axes:any:0:, make_inputs:any:0:, reference:kw:1:None, residencies:kw:1:('host',), to_device:kw:1:None, repeats:kw:1:15, equiv_atol:kw:1:1e-06, equiv_rtol:kw:1:1e-06, synchronize_gpu:kw:1:True, decision_key:kw:1:'backend_choice', ranking:kw:1:'robust', verbose:kw:1:0)",
+      "sweep_backend_grid": "callable(variants:any:0:, axes:any:0:, make_inputs:any:0:, reference:kw:1:None, residencies:kw:1:('host',), to_device:kw:1:None, repeats:kw:1:15, equiv_atol:kw:1:1e-06, equiv_rtol:kw:1:1e-06, synchronize_gpu:kw:1:True, decision_key:kw:1:'backend_choice', ranking:kw:1:'robust', prune_dominated:kw:1:True, prune_ratio:kw:1:3.0, prune_min_ms:kw:1:1000.0, verbose:kw:1:0)",
       "synchronize_gpu_if_available": "callable()",
       "tqdmu": "callable(args:*args:0:, kwargs:**kw:0:)"
     },
