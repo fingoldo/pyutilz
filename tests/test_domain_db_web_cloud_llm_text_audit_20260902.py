@@ -920,8 +920,7 @@ def test_f36_dated_snapshot_inherits_its_family_budget():
 
 
 def test_f54_unknown_xai_model_warns_once(caplog):
-    """It silently took the cheapest tariff in the table, under-reporting session cost several
-    times over with nothing in the log."""
+    """It silently took the cheapest tariff in the table, under-reporting session cost several times over with nothing in the log."""
     from pyutilz.llm.xai_provider import XAIProvider
 
     reset_log_throttles()
