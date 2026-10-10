@@ -32,8 +32,10 @@ logger = logging.getLogger(__name__)
 
 import psutil
 
+from pyutilz.dev.logginglib import ONCE, log_throttle
+
 from types import ModuleType
-from typing import Any, Optional, Set, Tuple
+from typing import Any, Optional, Tuple
 
 # psutil's own optional (platform-gated) module-level functions, in the order they appear in its
 # __init__.py. Keep in sync with psutil upstream if new gated functions are adopted here.
@@ -41,7 +43,6 @@ OPTIONAL_PSUTIL_FUNCTIONS: Tuple[str, ...] = ("cpu_freq", "sensors_temperatures"
 
 # Names already reported as absent, so the warning is emitted once per process rather than once per
 # sample -- a monitor sampling at 1 Hz would otherwise fill the log with the same platform fact.
-_ABSENCE_LOGGED: Set[str] = set()
 
 
 def has_psutil_function(name: str, psutil_module: Optional[ModuleType] = None) -> bool:
@@ -68,8 +69,7 @@ def _log_absence_once(name: str) -> None:
 
     The absence is a fixed property of the platform, so repeating it once per sample would bury every other line in the log.
     """
-    if name not in _ABSENCE_LOGGED:
-        _ABSENCE_LOGGED.add(name)
+    if log_throttle(f"psutil_absent:{name}", ONCE):
         logger.info("psutil.%s() is not available on this platform; the metrics derived from it will be reported as unavailable", name)
 
 

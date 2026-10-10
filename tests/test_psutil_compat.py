@@ -9,6 +9,7 @@ the duration of one test (``monkeypatch.delattr``), never by mutating ``sys.modu
 """
 
 from types import SimpleNamespace
+from pyutilz.dev.logginglib import reset_log_throttles
 
 import pytest
 
@@ -18,9 +19,9 @@ from pyutilz.system import psutil_compat as pc
 
 
 @pytest.fixture(autouse=True)
-def _fresh_absence_log(monkeypatch):
+def _fresh_absence_log():
     """Isolate the once-per-process absence log so tests don't depend on execution order."""
-    monkeypatch.setattr(pc, "_ABSENCE_LOGGED", set())
+    reset_log_throttles()
 
 
 def _fake_psutil(**attrs):

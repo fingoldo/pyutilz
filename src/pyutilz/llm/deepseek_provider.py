@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
 
@@ -227,13 +228,10 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         in_cost, cache_hit, out_cost = row
         return Pricing(float(in_cost), float(out_cost), float(cache_hit))
 
-    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
-
     def _warn_unknown_model_once(self, model: str) -> None:
         """Log a one-time warning (per model name, across instances) that pricing is unknown and flash rates are used."""
-        if model in DeepSeekProvider._seen_unknown_models:
+        if not log_throttle(f"deepseek.unknown_model:{model}", ONCE):
             return
-        DeepSeekProvider._seen_unknown_models.add(model)
         logger.warning(
             "DeepSeek pricing for %r is unknown; falling back to deepseek-flash rates. Cost estimates may be off.",
             model,

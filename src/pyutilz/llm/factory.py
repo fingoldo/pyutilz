@@ -18,6 +18,7 @@ from collections import OrderedDict
 
 from pyutilz.llm.config import LLMSettings, get_llm_settings
 from pyutilz.llm.base import LLMProvider
+from pyutilz.dev.logginglib import ONCE, log_throttle
 
 logger = logging.getLogger(__name__)
 
@@ -200,17 +201,12 @@ def get_llm_provider(
         return instance  # type: ignore[no-any-return]  # same untyped constructor, returning the freshly cached instance
 
 
-_shutdown_warned = False
-
-
 def _warn_shutdown_once(message: str, *args: object) -> None:
     """First shutdown-close failure at WARNING (it used to vanish at DEBUG), the rest at DEBUG."""
-    global _shutdown_warned
-    if _shutdown_warned:
+    if log_throttle("llm.factory.shutdown_close", ONCE):
+        logger.warning(message, *args)
+    else:
         logger.debug(message, *args)
-        return
-    _shutdown_warned = True
-    logger.warning(message, *args)
 
 
 def _close_provider(provider: LLMProvider, shutdown_loop: "asyncio.AbstractEventLoop") -> None:

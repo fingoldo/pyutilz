@@ -27,6 +27,7 @@ Finding ids map to test classes:
 """
 
 from __future__ import annotations
+from pyutilz.dev.logginglib import reset_log_throttles
 
 import asyncio
 import contextvars
@@ -597,7 +598,7 @@ class TestF19VendorPrefixDegeneracy:
     def test_xai_unknown_model_now_warns_and_uses_the_documented_default(self, caplog):
         xai_provider = pytest.importorskip("pyutilz.llm.xai_provider")
         provider = xai_provider.XAIProvider.__new__(xai_provider.XAIProvider)
-        xai_provider.XAIProvider._seen_unknown_models.discard("grok-5")
+        reset_log_throttles()
         with caplog.at_level("WARNING", logger="pyutilz.llm.xai_provider"):
             rates = provider._resolve_pricing("grok-5")
         # `_resolve_pricing` returns the shared `Pricing` record, so the fallback is read by field

@@ -570,6 +570,9 @@ def debugged(max_retries: int = 3):
 # `pyutilz.dev.code_audit`'s `unthrottled_hot_loop_log` check looks for the call sites this exists
 # to serve, so the check and the helper now live in the same package.
 
+#: ``min_interval`` for a message that should appear once per process: ``log_throttle(key, ONCE)``.
+ONCE = float("inf")
+
 _log_throttle_lock = threading.Lock()
 _log_throttle_last: Dict[str, float] = {}
 

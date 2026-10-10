@@ -711,4 +711,3 @@ _INVALIDATION_LOGGED_THIS_PROCESS: set = set()
 # raised) for the SAME (kernel_name, dims-shape) reason. Log each distinct (kernel_name, branch) at
 # most once per process instead of once per call; the fallback VALUE returned is unaffected, only the
 # warning volume is throttled.
-_DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS: set = set()

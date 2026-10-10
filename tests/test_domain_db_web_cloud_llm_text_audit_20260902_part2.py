@@ -5,6 +5,7 @@ Nothing here touches a real database, a real network endpoint, or a real LLM pro
 """
 
 import asyncio
+from pyutilz.dev.logginglib import reset_log_throttles
 from unittest.mock import Mock
 
 import pytest
@@ -174,7 +175,7 @@ def test_f26_stale_result_message_is_not_re_counted(monkeypatch):
 def test_f32_ignored_max_tokens_and_temperature_are_warned_about(monkeypatch, caplog):
     """claude-code is the factory's DEFAULT provider, and it silently dropped both -- so a
     determinism requirement (temperature=0.0) did not hold, with no warning anywhere."""
-    ccmod.ClaudeCodeProvider._seen_unsupported_params.clear()
+    reset_log_throttles()
     p = _claude_code_provider_for_generate(monkeypatch)
     with caplog.at_level("WARNING"):
         asyncio.run(p.generate("hi", temperature=0.0, max_tokens=32000))

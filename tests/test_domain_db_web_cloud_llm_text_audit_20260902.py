@@ -5,6 +5,7 @@ real database, a real network endpoint, or a real LLM provider.
 """
 
 import asyncio
+from pyutilz.dev.logginglib import reset_log_throttles
 import re
 import sys
 import threading
@@ -923,7 +924,7 @@ def test_f54_unknown_xai_model_warns_once(caplog):
     times over with nothing in the log."""
     from pyutilz.llm.xai_provider import XAIProvider
 
-    XAIProvider._seen_unknown_models.clear()
+    reset_log_throttles()
     p = XAIProvider.__new__(XAIProvider)
     with caplog.at_level("WARNING"):
         assert p._input_cost_per_1m("totally-unknown-model") == 0.20

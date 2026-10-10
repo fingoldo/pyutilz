@@ -1,6 +1,7 @@
 """Regression tests for the 2026-09-26 shared-core audit (audits/implemented/2026-09-26/30_llm_core.md, CORE-*)."""
 
 from __future__ import annotations
+from pyutilz.dev.logginglib import reset_log_throttles
 
 import asyncio
 import sys
@@ -299,7 +300,7 @@ class TestCallDeadline:
 
 class TestPricingFallback:
     def test_default_fallback_warns_once_per_model(self, caplog):
-        base_mod._PRICING_WARNED.clear()
+        reset_log_throttles()
         with caplog.at_level(logging.WARNING, logger="pyutilz.llm.base"):
             for _ in range(3):
                 assert _longest_prefix_pricing("unknown-x", {"a-1": (1.0, 2.0)}, (0.0, 0.0), "P") == (0.0, 0.0)
@@ -309,7 +310,7 @@ class TestPricingFallback:
         assert "'unknown-x'" in lines[0] and "'unknown-y'" in lines[1]
 
     def test_prefix_warning_is_once_not_per_estimate(self, caplog):
-        base_mod._PRICING_WARNED.clear()
+        reset_log_throttles()
         provider = _Provider(model="fam-model-2027")
         with caplog.at_level(logging.WARNING, logger="pyutilz.llm.base"):
             for _ in range(5):
@@ -317,7 +318,7 @@ class TestPricingFallback:
         assert sum("longest-prefix match" in r.getMessage() for r in caplog.records) == 1
 
     def test_exact_match_is_silent(self, caplog):
-        base_mod._PRICING_WARNED.clear()
+        reset_log_throttles()
         with caplog.at_level(logging.WARNING, logger="pyutilz.llm.base"):
             assert _longest_prefix_pricing("a-1", {"a-1": (1.0, 2.0)}, (0.0, 0.0)) == (1.0, 2.0)
         assert caplog.records == []

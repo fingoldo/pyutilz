@@ -7,11 +7,11 @@ import hashlib
 import json
 import logging
 import re
-import threading
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
 from pyutilz.llm import _progress
+from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.exceptions import (
     JSONParsingError,
     LLMRefusalError,
@@ -33,20 +33,13 @@ from ._descriptors import (
     _running_loop as _running_loop,
 )
 
-#: (label, model, kind) triples already warned about. Pricing is resolved on EVERY estimate_cost call, so an
-#: unwarned-once warning repeated per call and flooded the log for any model not pinned in a table.
-_PRICING_WARNED: set[tuple[str, str, str]] = set()
-_PRICING_WARNED_LOCK = threading.Lock()
-
-
 def _warn_pricing_once(provider_label: str, model: str, kind: str, message: str, *args: Any) -> None:
-    """Log ``message`` at WARNING the first time this (provider, model, kind) is seen in the process."""
-    key = (provider_label, model, kind)
-    with _PRICING_WARNED_LOCK:
-        if key in _PRICING_WARNED:
-            return
-        _PRICING_WARNED.add(key)
-    logger.warning(message, *args)
+    """Log ``message`` at WARNING the first time this (provider, model, kind) is seen in the process.
+
+    Pricing is resolved on EVERY estimate_cost call, so an unwarned-once warning repeated per call and flooded the log for any model not pinned in a table.
+    """
+    if log_throttle(f"llm.pricing:{provider_label}:{model}:{kind}", ONCE):
+        logger.warning(message, *args)
 
 
 def _longest_prefix_match(model: str, table: dict[str, Any]) -> tuple[bool, Any]:

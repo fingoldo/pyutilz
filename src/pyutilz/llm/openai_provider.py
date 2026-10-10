@@ -10,6 +10,7 @@ import httpx
 
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm._pricing import LongContextTier
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
@@ -382,13 +383,10 @@ class OpenAIProvider(OpenAICompatibleProvider):
             "OpenAI has no public API to fetch remaining credit. " "Check platform.openai.com/usage or platform.openai.com/account/billing/overview."
         )
 
-    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
-
     def _warn_unknown_model_once(self, model: str, priced_as: str = "gpt-5-mini") -> None:
         """Log a one-time warning that pricing for `model` is unknown and which row's rates it is priced at instead."""
-        if model in OpenAIProvider._seen_unknown_models:
+        if not log_throttle(f"openai.unknown_model:{model}", ONCE):
             return
-        OpenAIProvider._seen_unknown_models.add(model)
         logger.warning(
             "OpenAI pricing for %r is unknown; pricing it at %s rates. Cost estimates may be off.",
             model,

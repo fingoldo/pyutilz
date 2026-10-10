@@ -5,6 +5,7 @@ on the value that was wrong before the fix (the request field, the price, the ra
 """
 
 from __future__ import annotations
+from pyutilz.dev.logginglib import reset_log_throttles
 
 import json
 import logging
@@ -417,7 +418,7 @@ class TestProv13Prov14OpenAIAccounting:
         from pyutilz.llm.openai_provider import OpenAIProvider
 
         p = OpenAIProvider.__new__(OpenAIProvider)
-        OpenAIProvider._seen_unknown_models.discard("gpt-5-pro-2026-01-15")
+        reset_log_throttles()
         with caplog.at_level(logging.WARNING):
             assert p._input_cost_per_1m("gpt-5-pro-2026-01-15") == 15.0
             assert p._cache_hit_cost_per_1m("gpt-5-pro-2026-01-15") == 15.0
@@ -427,7 +428,7 @@ class TestProv13Prov14OpenAIAccounting:
         from pyutilz.llm.openai_provider import OpenAIProvider
 
         p = OpenAIProvider.__new__(OpenAIProvider)
-        OpenAIProvider._seen_unknown_models.discard("zzz-unknown")
+        reset_log_throttles()
         with caplog.at_level(logging.WARNING):
             p._input_cost_per_1m("zzz-unknown")
         assert any("unknown" in r.getMessage() for r in caplog.records)

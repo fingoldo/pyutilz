@@ -11,6 +11,7 @@ from pyutilz.llm._openai_compat_http import _is_retryable_http_error, parse_resp
 from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
+from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
 from pyutilz.llm._pricing import LongContextTier
 from pyutilz.llm.openai_compat import OpenAICompatibleProvider, Pricing
@@ -378,13 +379,10 @@ class XAIProvider(OpenAICompatibleProvider):
     # check_account_limits is inherited: every xAI response carries x-ratelimit-{limit,remaining}-{requests,tokens}
     # (live, 2026-10-03), which the base captures. The override that always raised NotImplementedError hid them.
 
-    _seen_unknown_models: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per model name, across all instances), not a per-instance mutable-default bug
-
     def _warn_unknown_model_once(self, model: str) -> None:
         """Log a one-time warning that pricing for ``model`` is unknown and the fast-tier fallback is used."""
-        if model in XAIProvider._seen_unknown_models:
+        if not log_throttle(f"xai.unknown_model:{model}", ONCE):
             return
-        XAIProvider._seen_unknown_models.add(model)
         logger.warning(
             "xAI pricing for %r is unknown; falling back to the grok-4-fast tariff. Cost estimates may be off.",
             model,

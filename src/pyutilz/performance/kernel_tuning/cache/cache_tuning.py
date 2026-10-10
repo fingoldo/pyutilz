@@ -11,9 +11,10 @@ import threading
 import time
 from typing import Callable, Optional
 
+from pyutilz.dev.logginglib import ONCE, log_throttle
+
 from ._common import _CacheState, _facade, logger
 from .cache_base import (
-    _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS,
     _INVALIDATION_LOGGED_THIS_PROCESS,
     _TUNED_THIS_PROCESS,
     _async_sweep_idle_max_wait,
@@ -35,9 +36,7 @@ class _CacheTuningMixin(_CacheState):
         """Log one ``_fb()`` DEFAULT-cache-fallback branch at most once per (guard_key, branch) per
         process. A FIT-TIME dispatcher re-enters the same branch on every call until the background
         sweep lands, which for a per-iteration monitor metric can be hundreds of calls per fit."""
-        log_key = (guard_key, branch)
-        if log_key not in _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS:
-            _DEFAULT_CACHE_FALLBACK_LOGGED_THIS_PROCESS.add(log_key)
+        if log_throttle(f"kernel_tuning.default_cache_fallback:{guard_key}:{branch}", ONCE):
             logger.warning(msg, *args, **kwargs)
 
     def _apply_equiv_gate(self, kernel_name, regions, equiv_tol, hooks=None):

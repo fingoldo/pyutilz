@@ -21,6 +21,7 @@ from typing import Any, AsyncIterator
 
 from pyutilz.llm._messages import images_on_disk
 from pyutilz.llm import _reasoning
+from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.base import LLMProvider, PerCallAttr
 from pyutilz.llm._thinking import claude_code_thinking_tokens  # re-exported: callers import it from here
 from pyutilz.llm._thinking import claude_code_effort
@@ -303,13 +304,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         provider."""
         return False
 
-    _seen_unsupported_params: set[str] = set()  # noqa: RUF012 -- intentional shared class-level dedupe set (warn once per parameter name, across all instances), not a per-instance mutable-default bug
-
     def _warn_unsupported_param_once(self, param: str) -> None:
         """Log a one-time warning that ``param`` cannot be honoured by the Claude Code backend."""
-        if param in ClaudeCodeProvider._seen_unsupported_params:
+        if not log_throttle(f"claude_code.unsupported_param:{param}", ONCE):
             return
-        ClaudeCodeProvider._seen_unsupported_params.add(param)
         logger.warning(
             "ClaudeCodeProvider cannot forward %r to the Claude Code SDK; the value you passed is ignored. "
             "Route to another provider if this parameter matters for correctness.",
