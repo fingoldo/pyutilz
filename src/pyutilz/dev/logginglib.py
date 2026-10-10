@@ -606,7 +606,31 @@ def log_throttle(key: str, min_interval: float = 60.0) -> bool:
         return False
 
 
-def reset_log_throttles() -> None:
-    """Forget every throttle window. For tests, which must not inherit each other's clocks."""
+_log_throttle_counts: Dict[str, int] = {}
+
+
+def log_throttled(logger: logging.Logger, key: str, level: int, msg: str, *args: object, max_count: int = 5, exc_info: bool = False) -> None:
+    """Log at most ``max_count`` times per distinct ``key``, then stay silent for that key (the last allowed line is followed by a suppression notice).
+
+    The count-based sibling of :func:`log_throttle`, for a per-iteration ``logger.warning(...)`` in a hot loop whose first few occurrences carry the
+    signal and whose rest is spam. ``key`` names the call site (and the failure shape), not the per-iteration payload; distinct keys count
+    independently and share the lock and the reset of :func:`log_throttle`. ``exc_info=True`` keeps the traceback on the surfaced occurrences.
+    """
     with _log_throttle_lock:
-        _log_throttle_last.clear()
+        n = _log_throttle_counts.get(key, 0)
+        _log_throttle_counts[key] = n + 1
+    if n < max_count:
+        logger.log(level, msg, *args, exc_info=exc_info)
+        if n == max_count - 1:
+            logger.log(level, "%s: further occurrences suppressed (throttled)", key)
+
+
+def reset_log_throttles(key: Optional[str] = None) -> None:
+    """Forget the throttle windows and counts of ``key``, or of every key when it is None. For tests, which must not inherit each other's state."""
+    with _log_throttle_lock:
+        if key is None:
+            _log_throttle_last.clear()
+            _log_throttle_counts.clear()
+        else:
+            _log_throttle_last.pop(key, None)
+            _log_throttle_counts.pop(key, None)
