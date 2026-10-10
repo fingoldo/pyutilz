@@ -156,7 +156,7 @@ jobs:
         pytest -m "not gpu" -n auto --dist=loadgroup --cov=src/pyutilz --cov-report=xml --cov-report=term-missing --cov-fail-under=85 --durations=200
 
     - name: Upload coverage to Codecov
-      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+      uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       with:
         files: ./coverage.xml
@@ -187,14 +187,14 @@ jobs:
   # https://github.com/fingoldo/py-ci-shared and this repo's pyproject.toml `[tool.ruff] extend`.
   ruff-blocking:
     name: Ruff (real bugs - blocking)
-    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/ruff-blocking.yml@9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
     with:
-      py-ci-shared-ref: f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+      py-ci-shared-ref: 9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
       ignore: "C901"
 
   lint-blocking:
     name: lint + security (blocking, triaged clean)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
     with:
       source-path: src/pyutilz
       codespell-paths: src docs README.md CHANGELOG.md CONTRIBUTING.md TESTING.md
@@ -206,9 +206,9 @@ jobs:
 
   lint-advisory:
     name: lint (advisory)
-    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+    uses: fingoldo/py-ci-shared/.github/workflows/lint-advisory.yml@9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
     with:
-      py-ci-shared-ref: f6aa24a3679d96ffb819615e4ac47494d7b9452b  # v1.18.0  # pragma: allowlist secret
+      py-ci-shared-ref: 9d0cc27e67fbee91ee00b357551c130e0b59a0eb  # v1.22.4  # pragma: allowlist secret
       source-path: src/pyutilz
 
   build:
