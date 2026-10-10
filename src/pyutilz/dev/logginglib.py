@@ -625,6 +625,12 @@ def log_throttled(logger: logging.Logger, key: str, level: int, msg: str, *args:
             logger.log(level, "%s: further occurrences suppressed (throttled)", key)
 
 
+def log_throttle_count(key: str) -> int:
+    """How many times :func:`log_throttled` has been called for ``key`` since the last reset (including the suppressed calls)."""
+    with _log_throttle_lock:
+        return _log_throttle_counts.get(key, 0)
+
+
 def reset_log_throttles(key: Optional[str] = None) -> None:
     """Forget the throttle windows and counts of ``key``, or of every key when it is None. For tests, which must not inherit each other's state."""
     with _log_throttle_lock:

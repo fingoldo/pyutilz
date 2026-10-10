@@ -52,3 +52,17 @@ def test_reset_with_a_key_clears_only_that_key_in_both_stores() -> None:
     reset_log_throttles("k.window")
     assert log_throttle("k.window", ONCE) is True
     assert log_throttle("k.other", ONCE) is False
+
+
+def test_log_throttle_count_counts_suppressed_calls_too() -> None:
+    """The counter keeps counting past max_count, so a test can assert how many times a call site fired."""
+    import logging
+
+    from pyutilz.dev.logginglib import log_throttle_count, log_throttled
+
+    reset_log_throttles()
+    log = logging.getLogger("pyutilz.test_throttle_count")
+    for _ in range(8):
+        log_throttled(log, "count.site", logging.DEBUG, "x", max_count=2)
+    assert log_throttle_count("count.site") == 8
+    assert log_throttle_count("never.used") == 0
