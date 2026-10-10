@@ -24,17 +24,13 @@ def test_reset_fixture_clears_registered_module_state():
     assert not _claude_models._warned_unknown
 
 
-def test_reset_fixture_does_not_import_absent_modules():
+def test_reset_fixture_does_not_import_absent_modules(monkeypatch):
     gen = conftest._reset_process_lifetime_module_state.__wrapped__()
     next(gen)
-    saved = sys.modules.pop("pyutilz.database.psycopg2_pool", None)
-    try:
-        with pytest.raises(StopIteration):
-            next(gen)
-        assert "pyutilz.database.psycopg2_pool" not in sys.modules
-    finally:
-        if saved is not None:
-            sys.modules["pyutilz.database.psycopg2_pool"] = saved
+    monkeypatch.delitem(sys.modules, "pyutilz.database.psycopg2_pool", raising=False)
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert "pyutilz.database.psycopg2_pool" not in sys.modules
 
 
 def test_prove_meta_checks_repo_is_derived_from_file():

@@ -208,7 +208,7 @@ def _numba_threads() -> int:
     try:
         import numba
 
-        return int(numba.config.NUMBA_NUM_THREADS)
+        return int(getattr(numba.config, "NUMBA_NUM_THREADS", os.cpu_count() or 1))
     except Exception as e:
         logger.debug("numba thread count unavailable (%s), using the CPU count", e)
         return int(os.cpu_count() or 1)
