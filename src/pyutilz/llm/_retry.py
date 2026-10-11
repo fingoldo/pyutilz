@@ -217,6 +217,7 @@ class _LazyRetry:
         self._built: Any = None
 
     def _policy(self) -> Any:
+        """Build the tenacity-wrapped function on first use and reuse it afterwards."""
         if self._built is None:
             from tenacity import retry
 
@@ -232,6 +233,7 @@ class _LazyRetry:
         return self._policy()(*args, **kwargs)
 
     def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        """Return the descriptor on class access and a bound method on instance access."""
         if obj is None:
             return self
         return types.MethodType(self, obj)
@@ -245,6 +247,7 @@ def lazy_retry(factory: Callable[[], dict[str, Any]]) -> Callable[[_F], _F]:
     """
 
     def decorate(fn: _F) -> _F:
+        """Wrap fn in a lazily-built tenacity policy."""
         return cast(_F, _LazyRetry(fn, factory))
 
     return decorate

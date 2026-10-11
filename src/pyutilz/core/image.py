@@ -23,6 +23,11 @@ from os.path import getsize
 from sys import getsizeof
 
 from pyutilz.text.strings import remove_json_defaults
+
+try:
+    from PIL.ExifTags import TAGS  # public re-export of Pillow's EXIF tag table, part of the module surface
+except ImportError:  # optional extra 'imaging': absent in a core-only install
+    TAGS = None
 from typing import Optional, Tuple
 
 

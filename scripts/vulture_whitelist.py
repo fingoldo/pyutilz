@@ -33,3 +33,7 @@ exc_tb
 # `if TYPE_CHECKING:` blocks or string annotations, so both read as unused imports.
 WebDriver
 WebElement
+
+# llm/_retry.py _LazyRetry.__get__ -- descriptor protocol signature (obj, objtype); objtype is
+# part of the required __get__ contract and is not needed for the bound-method result.
+objtype

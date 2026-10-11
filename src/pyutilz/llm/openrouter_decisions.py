@@ -375,7 +375,7 @@ class OpenRouterDecisionsClient:
         async_transport: Optional[httpx.AsyncBaseTransport] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        retry_wait: Optional["wait_base"] = None,
+        retry_wait: Optional[wait_base] = None,
     ) -> None:
         """Resolve the key and prepare the HTTP clients; ``retry_wait`` defaults to the shared LLM backoff."""
         key = _resolve_api_key(api_key)
