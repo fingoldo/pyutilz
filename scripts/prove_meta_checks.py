@@ -6,6 +6,7 @@ Never mutates the real repo: every defective artefact is written into a temp cop
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -43,7 +44,8 @@ def main() -> int:
     from py_ci_shared import ci_test_dir_reachability, ci_workflow_gate, ci_workflow_timeout_gate, docs_inventory_parity, gate_integrity, git_dependency_pins, loc_budget, phantom_markdown_links, prose_numeric_claims
     from py_ci_shared.mypy_gate import check_mypy_output
 
-    with tempfile.TemporaryDirectory(dir=r"D:\Temp") as raw_tmp:
+    # Scratch dir is overridable (e.g. a larger drive); unset means the system temp dir.
+    with tempfile.TemporaryDirectory(dir=os.environ.get("PYUTILZ_SCRATCH_DIR") or None) as raw_tmp:
         tmp = Path(raw_tmp)
         root = copy_repo_shell(tmp)
         workflows = root / ".github" / "workflows"

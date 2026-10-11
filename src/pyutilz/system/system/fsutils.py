@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-import json
 import psutil
 from typing import Optional
 import os, subprocess  # nosec B404 - used only to invoke the fixed trusted "pylspci" binary below with a hardcoded argv, no shell/user input
 
 
+from pyutilz.core import jsonlib
 from pyutilz.text.strings import remove_json_defaults
 from .probing import _resolve_binary  # absolute-path resolution for spawned probe binaries (see _resolve_binary's docstring)
 
@@ -85,14 +85,14 @@ def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, req
 def list_linux_devices() -> Optional[dict]:
     """List PCI devices on Linux via the ``pylspci`` CLI tool, stripping default/empty fields from each entry. Return None on any error (e.g. tool missing, non-Linux host)."""
     try:
-        devices = json.loads(subprocess.check_output([_resolve_binary("pylspci"), "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
+        devices = jsonlib.loads(subprocess.check_output([_resolve_binary("pylspci"), "-nn"]).decode("utf-8"))  # nosec B603 B607 - fixed trusted binary "pylspci" with hardcoded argv, no shell, no external/user-controlled input
         for device in devices:
             remove_json_defaults(
                 device,
                 {"progif": None, "driver": None, "kernel_modules": [], "numa_node": None, "iommu_group": None, "physical_slot": None},
                 warn_if_not_default=False,
             )
-        return devices  # type: ignore[no-any-return]  # json.loads over pylspci output returns Any
+        return devices  # type: ignore[no-any-return]  # jsonlib.loads over pylspci output returns Any
     except Exception as e:
         logger.exception(e)
         return None

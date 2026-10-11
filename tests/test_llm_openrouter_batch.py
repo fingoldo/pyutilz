@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,7 @@ class FakeOpenRouter:
         assert req.headers["Authorization"] == "Bearer k"
         if req.method == "POST" and req.url.path.endswith("/batches"):
             self.raw_submit.append(req.content)
-            self.submits.append(json.loads(req.content))
+            self.submits.append(jsonlib.loads(req.content))
             return httpx.Response(202, json={"id": "batch_1", "status": "validating"})
         if req.method == "GET" and req.url.path.endswith("/batches/batch_1"):
             self.polls += 1
@@ -123,7 +123,7 @@ def test_job_id_persisted_before_polling_and_resume_does_not_resubmit(tmp_path: 
 
 def test_resume_refuses_mismatched_state(tmp_path: Path) -> None:
     state = tmp_path / "job.json"
-    state.write_bytes(json.dumps({"batch_id": "old", "model": "m/x", "custom_ids": ["zzz"]}).encode())
+    state.write_bytes(jsonlib.dumps({"batch_id": "old", "model": "m/x", "custom_ids": ["zzz"]}).encode())
     fake = FakeOpenRouter()
     c, _ = _client(fake)
     with pytest.raises(OpenRouterBatchError, match="different"):

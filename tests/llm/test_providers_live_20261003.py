@@ -9,7 +9,7 @@ a price, a request field, or whether an error is retried.
 from __future__ import annotations
 
 import asyncio
-import json
+from pyutilz.core import jsonlib
 import logging
 from typing import Any
 
@@ -273,7 +273,7 @@ class TestXaiLiveSearchCost:
         sent: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            sent.append(json.loads(request.content))
+            sent.append(jsonlib.loads(request.content))
             return httpx.Response(200, headers=_RL_HEADERS, json={
                 "model": "grok-4.3",
                 "status": "completed",
@@ -306,7 +306,7 @@ class TestDeepSeekLegacyAliasIsFlash:
         sent: list[dict[str, Any]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            sent.append(json.loads(request.content))
+            sent.append(jsonlib.loads(request.content))
             # Recorded: request "deepseek-chat", response "model": "deepseek-flash".
             return httpx.Response(200, json={
                 "model": "deepseek-flash",

@@ -20,9 +20,16 @@ logger = logging.getLogger("pyutilz.data.polarslib")
 import os
 
 os.environ["_RJEM_MALLOC_CONF"] = "muzzy_decay_ms:0"  # prevents memory leak in polars
-import polars as pl, polars.selectors as cs  # noqa: F401
-
 from typing import Any, Dict, Iterable, Literal, Optional, Tuple, TypeVar  # noqa: F401
+
+pl: Any
+cs: Any
+try:
+    import polars as pl  # type: ignore[no-redef]
+    import polars.selectors as cs  # type: ignore[no-redef]
+except ImportError:  # optional extra 'polars': absent in a core-only install
+    pl = None
+    cs = None
 import numpy as np  # noqa: F401
 
 
@@ -51,7 +58,7 @@ POLARS_DEFAULT_QUANTILES: list = [0.1, 0.25, 0.5, 0.75, 0.9]
 
 import inspect as _inspect
 
-_EXPLODE_TAKES_EMPTY_AS_NULL = "empty_as_null" in _inspect.signature(pl.LazyFrame.explode).parameters
+_EXPLODE_TAKES_EMPTY_AS_NULL = pl is not None and "empty_as_null" in _inspect.signature(pl.LazyFrame.explode).parameters
 
 
 def explode_keeping_empty_as_null(frame: Any, *columns: Any) -> Any:

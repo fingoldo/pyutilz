@@ -1,7 +1,7 @@
 """``hw_fingerprint`` distinguishes a failed or opted-out GPU probe from a genuinely GPU-less host and keys the hardware it will really use."""
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import sys
 import types
 from typing import Any, Callable, Dict
@@ -38,7 +38,7 @@ class _Env:
         """Entries stored on disk (``{}`` when no file was written)."""
         if not self.path.exists():
             return {}
-        return json.loads(self.path.read_text(encoding="utf-8"))["entries"]
+        return jsonlib.loads(self.path.read_text(encoding="utf-8"))["entries"]
 
 
 @pytest.fixture
@@ -183,7 +183,7 @@ def test_genuine_gpu_less_host_persists_no_gpu_and_rereads_it(env):
 
 def test_legacy_schema_no_gpu_file_is_not_read(env):
     """A ``no-gpu`` fingerprint persisted by the old schema (possibly from a failed probe) is ignored and the GPU is probed afresh."""
-    env.path.write_text(json.dumps({"schema_version": 1, "fingerprint": "cpu_testcpu_no-gpu", "ts_utc": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    env.path.write_text(jsonlib.dumps({"schema_version": 1, "fingerprint": "cpu_testcpu_no-gpu", "ts_utc": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
     fp = env.fp()
     assert "_gpu_testcard-9000_" in fp and "no-gpu" not in fp
     assert env.persisted()["default"]["fingerprint"] == _gpu_part(fp)
@@ -253,20 +253,20 @@ def test_persisted_entries_are_keyed_by_the_visible_device_selector(env, monkeyp
 def test_entry_recorded_under_other_package_versions_is_discarded(env):
     """A numba / cupy upgrade invalidates the persisted hardware part."""
     env.fp()
-    data = json.loads(env.path.read_text(encoding="utf-8"))
+    data = jsonlib.loads(env.path.read_text(encoding="utf-8"))
     data["entries"]["default"]["stamp"] = "nb0.0.0_cupy0.0.0"
     data["entries"]["default"]["fingerprint"] = "STALE-SENTINEL"
-    env.path.write_text(json.dumps(data), encoding="utf-8")
+    env.path.write_text(jsonlib.dumps(data), encoding="utf-8")
     assert "STALE-SENTINEL" not in env.fp()
 
 
 def test_expired_entry_is_discarded(env):
     """An entry older than the freshness window is re-probed."""
     env.fp()
-    data = json.loads(env.path.read_text(encoding="utf-8"))
+    data = jsonlib.loads(env.path.read_text(encoding="utf-8"))
     data["entries"]["default"]["ts"] = 1.0
     data["entries"]["default"]["fingerprint"] = "STALE-SENTINEL"
-    env.path.write_text(json.dumps(data), encoding="utf-8")
+    env.path.write_text(jsonlib.dumps(data), encoding="utf-8")
     assert "STALE-SENTINEL" not in env.fp()
 
 

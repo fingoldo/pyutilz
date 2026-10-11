@@ -15,7 +15,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm.openrouter_provider._catalogue import _fetch_models_catalogue, _pkg
 

@@ -29,10 +29,20 @@ import io  # noqa: F401
 import os  # noqa: F401
 import warnings  # noqa: F401
 import numpy as np  # noqa: F401
-import pandas as pd, polars as pl  # noqa: F401
+import pandas as pd  # noqa: F401
+
+pl: Any
+try:
+    import polars as pl  # type: ignore[no-redef]
+except ImportError:  # optional extra 'polars': absent in a core-only install
+    pl = None
 from pyutilz.text.strings import find_between  # noqa: F401
 from collections import defaultdict  # noqa: F401
-from pyarrow.dataset import dataset  # noqa: F401
+dataset: Any
+try:
+    from pyarrow.dataset import dataset  # type: ignore[no-redef]
+except ImportError:  # optional extra 'pyarrow': absent in a core-only install
+    dataset = None
 from pyutilz.core.pythonlib import to_float  # noqa: F401
 
 import ctypes  # noqa: F401

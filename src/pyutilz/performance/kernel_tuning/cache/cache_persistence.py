@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import datetime as _dt
 import glob as _glob
-import json
+from pyutilz.core import jsonlib
 import os
 import random
 import time
@@ -73,7 +73,7 @@ class _CachePersistenceMixin(_CacheState):
             tmp = f"{final_path}.{os.getpid()}.{random.randrange(1 << 30):x}.tmp"  # nosec B311 - unique-ish temp filename suffix to avoid concurrent-writer collisions, not security/cryptographic use
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, sort_keys=True)
+                    f.write(jsonlib.dumps(payload, indent=True, sort_keys=True))
                 os.replace(tmp, final_path)
                 return True
             except OSError as e:
@@ -117,7 +117,7 @@ class _CachePersistenceMixin(_CacheState):
             return  # a live peer is migrating; its result will be read on next _load
         try:
             with open(legacy, encoding="utf-8") as f:
-                data = json.load(f)
+                data = jsonlib.loads(f.read())
             # Only import kernels from a SCHEMA- and FINGERPRINT-compatible
             # monolith (CURRENT schema only, matching host). Pre-v4 tunings are deliberately NOT
             # accepted any more: they were recorded by an unsynchronized ``time_backend`` and so
@@ -136,7 +136,7 @@ class _CachePersistenceMixin(_CacheState):
                 self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
             os.replace(legacy, legacy + ".migrated")
             logger.info("kernel_tuning_cache: migrated %d kernels from legacy %s (compatible=%s)", len(kernels), legacy, compatible)
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, jsonlib.JSONDecodeError) as e:
             logger.debug("kernel_tuning_cache: legacy migration failed: %s", e)
         finally:
             with contextlib.suppress(OSError):
@@ -224,8 +224,8 @@ class _CachePersistenceMixin(_CacheState):
         for p in files:
             try:
                 with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-            except (OSError, json.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
+                    rec = jsonlib.loads(f.read())
+            except (OSError, jsonlib.JSONDecodeError):  # swallow-ok: a foreign or partial entry file is not a cache hit; the next read tunes afresh
                 continue
             if not isinstance(rec, dict) or rec.get("schema_version") != SCHEMA_VERSION:
                 continue
@@ -347,9 +347,9 @@ class _CachePersistenceMixin(_CacheState):
             entry = None
             try:
                 with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
+                    rec = jsonlib.loads(f.read())
                 entry = rec.get("entry") if isinstance(rec, dict) else None
-            except (OSError, json.JSONDecodeError):  # swallow-ok: an unreadable entry sorts as oldest and is evicted first, which is the intended outcome
+            except (OSError, jsonlib.JSONDecodeError):  # swallow-ok: an unreadable entry sorts as oldest and is evicted first, which is the intended outcome
                 pass  # unreadable -- sorts as oldest (ts=""), evicted first
             candidates.append((self._record_sort_key(entry, p), p))
         candidates.sort(key=lambda c: c[0])
@@ -393,8 +393,8 @@ class _CachePersistenceMixin(_CacheState):
         for p in _glob.glob(os.path.join(legacy, "*.json")):
             try:
                 with open(p, encoding="utf-8") as f:
-                    rec = json.load(f)
-            except (OSError, json.JSONDecodeError):  # swallow-ok: an unreadable record is not this kernel's tuning; leave it
+                    rec = jsonlib.loads(f.read())
+            except (OSError, jsonlib.JSONDecodeError):  # swallow-ok: an unreadable record is not this kernel's tuning; leave it
                 continue
             if isinstance(rec, dict) and rec.get("kernel_name") == kernel_name:
                 with contextlib.suppress(OSError):

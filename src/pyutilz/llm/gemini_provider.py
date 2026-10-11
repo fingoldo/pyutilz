@@ -6,11 +6,9 @@ import logging
 import re
 from typing import Any
 
-from tenacity import retry, retry_if_exception, retry_if_exception_type
-
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.exceptions import LLMSafetyBlockError, LLMTruncationError
-from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._retry import infinite_retry_kwargs, lazy_retry
 from pyutilz.llm._messages import build_gemini_parts
 from pyutilz.llm._pricing import LongContextTier, Pricing, long_context_surcharge, price_call
 from pyutilz.llm.base import LLMProvider, PerCallAttr, longest_prefix_lookup
@@ -77,6 +75,16 @@ except ImportError:
 # Finish reasons that mean the response was withheld by a policy filter. PROHIBITED_CONTENT, RECITATION, SPII and
 # IMAGE_SAFETY were missed by the old "SAFETY"/"BLOCK" test and fell through to the generic empty-text error.
 _BLOCKING_FINISH_REASONS = ("SAFETY", "BLOCK", "PROHIBITED_CONTENT", "RECITATION", "SPII")
+
+
+def _generate_retry_policy() -> dict[str, Any]:
+    """Tenacity kwargs for ``GeminiProvider.generate``; built on first call (see ``lazy_retry``)."""
+    from tenacity import retry_if_exception, retry_if_exception_type
+
+    return {
+        "retry": retry_if_exception_type(_TRANSIENT_TRANSPORT_ERRORS) | retry_if_exception(_is_retryable_genai_error),
+        **infinite_retry_kwargs(),
+    }
 
 
 class GeminiProvider(LLMProvider):
@@ -339,10 +347,7 @@ class GeminiProvider(LLMProvider):
             "total_cost_usd": input_cost + output_cost + surcharge,
         }
 
-    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        retry=retry_if_exception_type(_TRANSIENT_TRANSPORT_ERRORS) | retry_if_exception(_is_retryable_genai_error),
-        **INFINITE_RETRY_KWARGS,
-    )
+    @lazy_retry(_generate_retry_policy)
     async def generate(
         self,
         prompt: str,

@@ -19,7 +19,7 @@ Modes:
 The tuner sleeps ``sleep_ms`` to widen the concurrency window, and stamps the
 region with the worker pid so we can tell which sweep won.
 """
-import json
+from pyutilz.core import jsonlib
 import os
 import sys
 import time
@@ -90,7 +90,7 @@ def main():
         "persisted": persisted,
     }
     with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(out, f)
+        f.write(jsonlib.dumps(out))
 
 
 if __name__ == "__main__":

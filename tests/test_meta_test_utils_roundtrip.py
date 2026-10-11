@@ -163,23 +163,21 @@ class TestFindingsRatchet:
         assert drained == []
 
     def test_baselined_findings_are_neither_new_nor_drained(self, tmp_path):
-        import json
-
+        from pyutilz.core import jsonlib
         from pyutilz.dev.meta_test_utils import findings_ratchet
 
         baseline = tmp_path / "b.json"
-        baseline.write_text(json.dumps(["a.py:1", "b.py:2"]), encoding="utf-8")
+        baseline.write_text(jsonlib.dumps(["a.py:1", "b.py:2"]), encoding="utf-8")
 
         new, drained = findings_ratchet(["a.py:1", "b.py:2"], baseline)
         assert new == [] and drained == []
 
     def test_reports_new_and_drained_separately_and_sorted(self, tmp_path):
-        import json
-
+        from pyutilz.core import jsonlib
         from pyutilz.dev.meta_test_utils import findings_ratchet
 
         baseline = tmp_path / "b.json"
-        baseline.write_text(json.dumps(["old2.py:2", "kept.py:9", "old1.py:1"]), encoding="utf-8")
+        baseline.write_text(jsonlib.dumps(["old2.py:2", "kept.py:9", "old1.py:1"]), encoding="utf-8")
 
         new, drained = findings_ratchet(["kept.py:9", "z_new.py:5", "a_new.py:3"], baseline)
         assert new == ["a_new.py:3", "z_new.py:5"]

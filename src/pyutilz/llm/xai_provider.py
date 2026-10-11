@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from tenacity import retry, retry_if_exception
 
-from pyutilz.llm._openai_compat_http import _is_retryable_http_error, parse_response_envelope, wait_honoring_retry_after
-from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._openai_compat_http import http_retry_policy, parse_response_envelope
+from pyutilz.llm._retry import lazy_retry
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.dev.logginglib import ONCE, log_throttle
@@ -290,10 +289,7 @@ class XAIProvider(OpenAICompatibleProvider):
         answer: str = await self._generate_with_search(prompt, system, temperature, max_tokens, thinking)
         return answer
 
-    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        retry=retry_if_exception(_is_retryable_http_error),
-        **{**INFINITE_RETRY_KWARGS, "wait": wait_honoring_retry_after(INFINITE_RETRY_KWARGS["wait"])},
-    )
+    @lazy_retry(http_retry_policy)
     async def _generate_with_search(self, prompt: str, system: str | None, temperature: float | None, max_tokens: int, thinking: bool | str | None) -> str:
         """One ``POST /responses`` with the search tools (https://docs.x.ai/docs/guides/tools/search-tools)."""
         self._reset_per_call_state()

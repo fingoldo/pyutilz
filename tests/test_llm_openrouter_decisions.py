@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from pyutilz.core import jsonlib
 from typing import Any, Dict, List
 
 import httpx
@@ -70,7 +70,7 @@ def test_live_shape_parses_all_three_types() -> None:
     seen: List[httpx.Request] = []
     c = _client([httpx.Response(200, json=LIVE_BODY)], seen)
     r = c.decide("I was charged twice", QUESTIONS)
-    sent = json.loads(seen[0].content)
+    sent = jsonlib.loads(seen[0].content)
     assert seen[0].url.path == "/api/alpha/decisions"
     assert sent["model"] == DEFAULT_MODEL
     assert sent["questions"]["anger"] == {"type": "score", "instructions": "How upset?", "criteria": ["calm", "annoyed", "furious"]}
@@ -166,7 +166,7 @@ def test_async_decide_retries_and_parses() -> None:
             await c.aclose()
 
     r = asyncio.run(run())
-    assert len(seen) == 2 and json.loads(seen[1].content)["state"] == ["line one", "line two"]
+    assert len(seen) == 2 and jsonlib.loads(seen[1].content)["state"] == ["line one", "line two"]
     assert r.answers["anger"].value == 1 and c.total_cost_usd == pytest.approx(0.000016338)
 
 

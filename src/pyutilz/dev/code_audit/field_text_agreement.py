@@ -6,7 +6,7 @@ over a source tree. This module re-exports it unchanged so
 ``pyutilz.dev.code_audit.field_text_agreement`` keeps resolving.
 """
 
-from ..field_text_agreement import (  # noqa: F401  -- re-export shim
+from ..field_text_agreement import (  # noqa: F401 -- re-export shim
     AGREE,
     CONTRADICT,
     KIND_OPPOSED,

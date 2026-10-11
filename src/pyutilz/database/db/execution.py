@@ -8,9 +8,10 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 
 from typing import Any, Iterable, Optional, Union
 
+from pyutilz.core import jsonlib
+
 from ._common import (
     logger,
-    json,
     pd,
     re,
     datetime,
@@ -439,20 +440,10 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
                 elif ltypename in ["json", "jsonb"]:
                     raw_val = val if isinstance(val, (str, bytes, bytearray)) else str(val)
                     try:
-                        # orjson is faster than stdlib json; falls back if missing (kept optional -- core has no
-                        # hard requirements).
-                        import orjson  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
-
-                        try:
-                            val = orjson.loads(raw_val)
-                        except orjson.JSONDecodeError:
-                            logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
-                    except ImportError:
-                        try:
-                            val = json.loads(raw_val)
-                        except json.JSONDecodeError:
-                            # Leave non-JSON values untouched rather than crashing settings load.
-                            logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
+                        val = jsonlib.loads(raw_val)
+                    except jsonlib.JSONDecodeError:
+                        # Leave non-JSON values untouched rather than crashing settings load.
+                        logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
                 elif ltypename in ["bool", "boolean"]:
                     # str(val) so an already-boolean (or numeric) column value does not blow up on
                     # .lower(); True/1 still map to True via their str() forms.

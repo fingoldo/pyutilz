@@ -1,7 +1,7 @@
 """Smoke tests for pyutilz.performance.kernel_tuning.cache."""
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import logging
 import os
 from unittest import mock
@@ -66,7 +66,7 @@ class TestCacheRoundTrip:
         # Write a v999 file directly
         path = os.path.join(tmp_cache_dir, ktc.hw_fingerprint() + ".json")
         with open(path, "w") as f:
-            json.dump({"schema_version": 999, "hw_fingerprint": ktc.hw_fingerprint(), "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}, f)
+            f.write(jsonlib.dumps({"schema_version": 999, "hw_fingerprint": ktc.hw_fingerprint(), "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}))
         cache = ktc.KernelTuningCache()
         # Mismatch -> miss
         assert cache.has("k") is False
@@ -74,9 +74,9 @@ class TestCacheRoundTrip:
     def test_fingerprint_mismatch_treated_as_miss(self, tmp_cache_dir):
         path = os.path.join(tmp_cache_dir, ktc.hw_fingerprint() + ".json")
         with open(path, "w") as f:
-            json.dump({"schema_version": ktc.SCHEMA_VERSION,
+            f.write(jsonlib.dumps({"schema_version": ktc.SCHEMA_VERSION,
                        "hw_fingerprint": "totally-different-host",
-                       "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}, f)
+                       "kernels": {"k": {"axes": ["n"], "regions": [{"variant": "x"}]}}}))
         cache = ktc.KernelTuningCache()
         assert cache.has("k") is False
 
@@ -150,10 +150,9 @@ class TestHwFingerprint:
     def test_disk_cache_refresh_env_forces_recompute(self, tmp_cache_dir, monkeypatch):
         # Seed the on-disk cache with a sentinel value, then set
         # ``PYUTILZ_HW_FP_REFRESH=1`` and confirm the next call ignores it.
-        import json as _json
         disk_file = os.path.join(tmp_cache_dir, ".hw_fingerprint.json")
         with open(disk_file, "w", encoding="utf-8") as f:
-            _json.dump({"schema_version": 1, "fingerprint": "STALE-SENTINEL"}, f)
+            f.write(jsonlib.dumps({"schema_version": 1, "fingerprint": "STALE-SENTINEL"}))
         ktc.hw_fingerprint.cache_clear()
         monkeypatch.setenv("PYUTILZ_HW_FP_REFRESH", "1")
         fp = ktc.hw_fingerprint()
@@ -163,10 +162,9 @@ class TestHwFingerprint:
     def test_disk_cache_schema_mismatch_triggers_recompute(self, tmp_cache_dir):
         # An old (or hand-edited) cache file with a future schema_version
         # must be treated as a miss, NOT returned as the fingerprint.
-        import json as _json
         disk_file = os.path.join(tmp_cache_dir, ".hw_fingerprint.json")
         with open(disk_file, "w", encoding="utf-8") as f:
-            _json.dump({"schema_version": 999, "fingerprint": "STALE-SENTINEL"}, f)
+            f.write(jsonlib.dumps({"schema_version": 999, "fingerprint": "STALE-SENTINEL"}))
         ktc.hw_fingerprint.cache_clear()
         fp = ktc.hw_fingerprint()
         assert fp != "STALE-SENTINEL"
@@ -251,13 +249,13 @@ class TestProvenance:
     def _read_kernel_record(self, cache, kernel_name):
         """Read the single immutable per-kernel record file (v3 storage)."""
         import glob as _glob
-        import json
+        from pyutilz.core import jsonlib
         kdir = ktc._kernel_dir(cache._path, kernel_name)
         files = _glob.glob(os.path.join(kdir, "*.json"))
         assert files, f"no immutable file written for {kernel_name}"
         # Newest wins; for these single-write tests there is exactly one.
         with open(sorted(files)[-1], "r", encoding="utf-8") as f:
-            return json.load(f)
+            return jsonlib.loads(f.read())
 
     def test_provenance_written_on_save(self, tmp_cache_dir):
         cache = ktc.KernelTuningCache()
@@ -271,7 +269,7 @@ class TestProvenance:
     def test_stale_provenance_treated_as_miss(self, tmp_cache_dir):
         # Write a tuning with a deliberately-stale CUDA driver version into its
         # immutable record, then load with a mocked-current driver -> miss.
-        import json
+        from pyutilz.core import jsonlib
         from unittest import mock
         import glob as _glob
         cache = ktc.KernelTuningCache()
@@ -279,10 +277,10 @@ class TestProvenance:
         kdir = ktc._kernel_dir(cache._path, "k")
         rec_path = sorted(_glob.glob(os.path.join(kdir, "*.json")))[-1]
         with open(rec_path, "r", encoding="utf-8") as f:
-            rec = json.load(f)
+            rec = jsonlib.loads(f.read())
         rec.setdefault("provenance", {})["cuda_driver_version"] = 1000  # ancient
         with open(rec_path, "w", encoding="utf-8") as f:
-            json.dump(rec, f)
+            f.write(jsonlib.dumps(rec))
         # Fresh instance (no in-memory state) + a mocked NEW driver version.
         fresh = ktc.KernelTuningCache()
         with mock.patch.object(
@@ -444,7 +442,7 @@ class TestGCRespectsTunedUtc:
         survivors = []
         for p in files:
             with open(p, encoding="utf-8") as f:
-                rec = json.load(f)
+                rec = jsonlib.loads(f.read())
             survivors.append(rec.get("entry", {}).get("regions"))
         assert [{"variant": "gen0"}] in survivors, "the logically newest tuning (by tuned_utc) must not be GC'd away"
 
@@ -694,7 +692,7 @@ class TestDefaultCacheFallbackLogThrottling:
         # A DEFAULT cache that IS registered but holds no entry for our kernel -> the "no_match" branch.
         default_path = os.path.join(tmp_cache_dir, "default.json")
         with open(default_path, "w", encoding="utf-8") as f:
-            json.dump({"schema_version": ktc.SCHEMA_VERSION, "kernels": {"other_kernel": {"axes": ["n"], "regions": [{"n_max": None, "variant": "x"}]}}}, f)
+            f.write(jsonlib.dumps({"schema_version": ktc.SCHEMA_VERSION, "kernels": {"other_kernel": {"axes": ["n"], "regions": [{"n_max": None, "variant": "x"}]}}}))
         assert ktc.register_default_cache(default_path) is True
 
         cache = ktc.KernelTuningCache()

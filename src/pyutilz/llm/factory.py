@@ -15,10 +15,14 @@ import sys
 import threading
 import weakref
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
-from pyutilz.llm.config import LLMSettings, get_llm_settings
+from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.base import LLMProvider
 from pyutilz.dev.logginglib import ONCE, log_throttle
+
+if TYPE_CHECKING:
+    from pyutilz.llm.config import LLMSettings
 
 logger = logging.getLogger(__name__)
 

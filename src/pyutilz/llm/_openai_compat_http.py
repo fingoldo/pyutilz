@@ -11,27 +11,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
+from pyutilz.core import jsonlib
+from pyutilz.llm._retry import infinite_retry_kwargs
 from pyutilz.llm.exceptions import LLMProviderError, LLMStreamInterruptedError, LLMUnparseableResponseError
 
 logger = logging.getLogger(__name__)
 
-# orjson is faster than stdlib json for the per-chunk streaming parse below;
-# resolved once at import time (not per-call, this loop runs per token chunk)
-# and falls back to stdlib if missing (kept optional -- core has no hard
-# requirements).
-_json_backend: Any
-try:
-    import orjson as _json_backend  # type: ignore[import-not-found,no-redef]  # absent in a minimal install (import-not-found), resolvable in CI where it then redefines the annotation above (no-redef); BOTH codes are needed, which environment you check from decides which one fires
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
-except ImportError:
-    import json as _json_backend  # type: ignore[no-redef]
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
+# Per-chunk streaming parse (runs per token); orjson via the core jsonlib helper.
+_json_loads = jsonlib.loads
+_JSONDecodeError = jsonlib.JSONDecodeError
 
 
 _NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({
@@ -141,6 +135,14 @@ def merge_extra_body(body: dict[str, Any], extra: Any) -> dict[str, Any]:
         else:
             out[key] = value
     return out
+
+
+def http_retry_policy() -> dict[str, Any]:
+    """Tenacity kwargs for transient HTTP errors, honouring ``Retry-After``. Built on first call (see ``lazy_retry``)."""
+    from tenacity import retry_if_exception
+
+    kwargs = infinite_retry_kwargs()
+    return {"retry": retry_if_exception(_is_retryable_http_error), **kwargs, "wait": wait_honoring_retry_after(kwargs["wait"])}
 
 
 def wait_honoring_retry_after(base_wait: Any) -> Any:

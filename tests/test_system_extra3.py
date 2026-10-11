@@ -699,8 +699,8 @@ class TestListLinuxDevices:
             {"slot": "00:00.0", "cls": "Host bridge", "progif": None, "driver": None,
              "kernel_modules": [], "numa_node": None, "iommu_group": None, "physical_slot": None}
         ]
-        import json
-        mock_sub.check_output.return_value = json.dumps(devices).encode("utf-8")
+        from pyutilz.core import jsonlib
+        mock_sub.check_output.return_value = jsonlib.dumps(devices).encode("utf-8")
         result = list_linux_devices()
         assert isinstance(result, list)
         # defaults should be removed

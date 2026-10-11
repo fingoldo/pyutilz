@@ -36,7 +36,11 @@ import asyncio
 import logging
 from typing import Any, ClassVar
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm.exceptions import LLMProviderError
 from pyutilz.llm.base import PerCallAttr

@@ -7,7 +7,7 @@ Split out of ``cache_class.py``; mixed into the class there, so every method kee
 from __future__ import annotations
 
 import contextlib
-import json
+from pyutilz.core import jsonlib
 import os
 import threading
 import time
@@ -68,7 +68,7 @@ class _CacheSweepClaimMixin(_CacheState):
         got 2"). Fix: write the payload to a per-attempt temp file, then ``os.link``
         it into place -- an atomic, exclusive publish (fails if the marker exists), so
         the marker is only ever visible fully-formed."""
-        payload = json.dumps({"pid": os.getpid(), "start_ts": time.time(), "host": hw_fingerprint()}).encode("utf-8")
+        payload = jsonlib.dumps_bytes({"pid": os.getpid(), "start_ts": time.time(), "host": hw_fingerprint()})
         # Staging path must be UNIQUE per concurrent claimer: same-process THREADS share os.getpid(), and
         # time.time_ns() can collide on a coarse-resolution clock (Windows), so (pid, tid, ns) -- tid disambiguates
         # concurrent threads, ns disambiguates a thread's sequential retries -- guarantees no two live claimers
@@ -133,8 +133,8 @@ class _CacheSweepClaimMixin(_CacheState):
         """
         try:
             with open(path, encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, json.JSONDecodeError):
+                info = jsonlib.loads(f.read())
+        except (OSError, jsonlib.JSONDecodeError):
             info = {}
         pid = int(info.get("pid", 0) or 0)
         start_ts = float(info.get("start_ts", 0.0) or 0.0)

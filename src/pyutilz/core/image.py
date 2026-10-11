@@ -20,11 +20,6 @@ logger = logging.getLogger(__name__)
 
 from os.path import getsize
 
-import PIL.Image
-from PIL.ExifTags import TAGS
-from PIL.TiffImagePlugin import IFDRational
-from PIL import ImageFile
-
 from sys import getsizeof
 
 from pyutilz.text.strings import remove_json_defaults
@@ -33,6 +28,8 @@ from typing import Optional, Tuple
 
 def ensure_bytes_converted(obj: dict) -> dict:
     """Ensure image information (as per Pillow) is converted from bytes to strings."""
+    from PIL.TiffImagePlugin import IFDRational
+
     for field, value in obj.copy().items():
         if isinstance(value, bytes):
             try:
@@ -71,6 +68,11 @@ def get_image_properties(
     ``ImageFile.LOAD_TRUNCATED_IMAGES`` is a process-global that changes decoding for every other
     PIL user in the process, so it is restored on exit rather than left flipped on.
     """
+    import PIL.Image
+    from PIL import ImageFile
+    from PIL.ExifTags import TAGS
+    from PIL.TiffImagePlugin import IFDRational
+
     if skip_empty_exif is not None:
         logger.warning("get_image_properties: `skip_empty_exif` is a deprecated alias of `skip_unknown_exif_tags`; please rename the argument.")
         skip_unknown_exif_tags = skip_empty_exif

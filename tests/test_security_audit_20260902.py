@@ -45,8 +45,7 @@ class TestF01JsonPathValidation:
 
 def _fake_cli_proc_factory(captured: dict):
     """Return a ``subprocess.Popen`` stand-in that records argv and replays one successful stream-json result event."""
-    import json as _json
-
+    from pyutilz.core import jsonlib as _jsonlib
     class _FakeProc:
         def poll(self):
             """The process has already produced its whole transcript, so it is never still running."""
@@ -66,7 +65,7 @@ def _fake_cli_proc_factory(captured: dict):
         def __init__(self, cmd, **_kwargs):
             captured["cmd"] = list(cmd)
             self.stdin = io.StringIO()
-            self.stdout = io.StringIO(_json.dumps({"type": "result", "subtype": "success", "result": "ok"}) + "\n")
+            self.stdout = io.StringIO(_jsonlib.dumps({"type": "result", "subtype": "success", "result": "ok"}) + "\n")
             self.stderr = io.StringIO("")
 
         def kill(self):

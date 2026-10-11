@@ -26,15 +26,20 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-import httpx
+if TYPE_CHECKING:
+    from tenacity.wait import wait_base
+
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm.exceptions import LLMProviderError
-from tenacity import AsyncRetrying, Retrying, retry_if_exception, stop_after_attempt
-from tenacity.wait import wait_base
-
-from pyutilz.llm._retry import RETRY_WAIT, log_retry
+from pyutilz.llm._retry import log_retry
+from pyutilz.llm._retry import retry_wait as _shared_retry_wait
 from pyutilz.llm._openai_compat_http import parse_retry_after
 
 logger = logging.getLogger(__name__)
@@ -370,7 +375,7 @@ class OpenRouterDecisionsClient:
         async_transport: Optional[httpx.AsyncBaseTransport] = None,
         timeout: float = DEFAULT_TIMEOUT_S,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        retry_wait: Optional[wait_base] = None,
+        retry_wait: Optional["wait_base"] = None,
     ) -> None:
         """Resolve the key and prepare the HTTP clients; ``retry_wait`` defaults to the shared LLM backoff."""
         key = _resolve_api_key(api_key)
@@ -380,8 +385,10 @@ class OpenRouterDecisionsClient:
         self._client = httpx.Client(base_url=base_url, transport=transport, timeout=timeout, headers=headers)
         self._aclient_kwargs: Dict[str, Any] = dict(base_url=base_url, transport=async_transport, timeout=timeout, headers=headers)
         self._aclient: Optional[httpx.AsyncClient] = None
+        from tenacity import retry_if_exception, stop_after_attempt
+
         self._retry_kwargs: Dict[str, Any] = dict(
-            wait=_wait_honoring_retry_after(retry_wait if retry_wait is not None else RETRY_WAIT),
+            wait=_wait_honoring_retry_after(retry_wait if retry_wait is not None else _shared_retry_wait()),
             stop=stop_after_attempt(max_attempts),
             retry=retry_if_exception(_is_retryable),
             before_sleep=log_retry,
@@ -446,6 +453,8 @@ class OpenRouterDecisionsClient:
     ) -> DecisionResult:
         """Ask ``questions`` about ``state``; limits are checked before any HTTP call, transient failures retried."""
         payload = build_payload(model, state, questions, allow_moving_alias=allow_moving_alias)
+        from tenacity import Retrying
+
         for attempt in Retrying(**self._retry_kwargs):
             with attempt:
                 t0 = time.perf_counter()
@@ -462,6 +471,8 @@ class OpenRouterDecisionsClient:
     ) -> DecisionResult:
         """Async ``decide``."""
         payload = build_payload(model, state, questions, allow_moving_alias=allow_moving_alias)
+        from tenacity import AsyncRetrying
+
         async for attempt in AsyncRetrying(**self._retry_kwargs):
             with attempt:
                 t0 = time.perf_counter()

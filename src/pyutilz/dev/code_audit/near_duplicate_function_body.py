@@ -8,7 +8,8 @@ from __future__ import annotations
 import ast
 import difflib
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
+from itertools import chain
 from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
@@ -169,7 +170,9 @@ def _shingles(tokens: tuple[str, ...], k: int = _SHINGLE_SIZE) -> set[int]:
     whole tuple if it's shorter than ``k``, or empty for an empty tuple)."""
     if len(tokens) < k:
         return {hash(tokens)} if tokens else set()
-    return {hash(tokens[i : i + k]) for i in range(len(tokens) - k + 1)}
+    # zip over k offset slices yields the same windows as indexing each one, but the window
+    # tuples are built in C instead of one Python-level slice per position.
+    return {hash(window) for window in zip(*(tokens[i:] for i in range(k)))}
 
 
 def scan_near_duplicate_function_body(
@@ -261,11 +264,9 @@ def scan_near_duplicate_function_body(
     for idx, sh in enumerate(entry_shingles):
         if not sh:
             continue
-        shared_counts: dict[int, int] = defaultdict(int)
-        for h in sh:
-            for other in shingle_index.get(h, ()):
-                if other != idx:
-                    shared_counts[other] += 1
+        # Counter.update over a flat chain counts in C; the self-match is dropped afterwards.
+        shared_counts = Counter(chain.from_iterable(shingle_index.get(h, ()) for h in sh))
+        shared_counts.pop(idx, None)
         for other, count in shared_counts.items():
             threshold = _MIN_SHARED_SHINGLE_FRACTION * min(len(sh), len(entry_shingles[other]))
             if count >= threshold:

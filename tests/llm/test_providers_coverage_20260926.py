@@ -7,7 +7,7 @@ on the value that was wrong before the fix (the request field, the price, the ra
 from __future__ import annotations
 from pyutilz.dev.logginglib import reset_log_throttles
 
-import json
+from pyutilz.core import jsonlib
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -41,7 +41,7 @@ def _anthropic(model: str = "claude-opus-5-5", responses: list[Any] | None = Non
     queue = list(responses or [_message(_text("ok"))])
 
     async def _create(**kwargs: Any) -> Any:
-        sent.append(json.loads(json.dumps(kwargs, default=str)))
+        sent.append(jsonlib.loads(jsonlib.dumps(kwargs, default=str)))
         item = queue.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -339,7 +339,7 @@ class TestProv10Prov12OpenAIBody:
         seen: list[dict] = []
 
         def handler(req: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(req.content))
+            seen.append(jsonlib.loads(req.content))
             return _chat_ok(seen[-1])
 
         p = _openai("o3", handler)
@@ -353,7 +353,7 @@ class TestProv10Prov12OpenAIBody:
         seen: list[dict] = []
 
         def handler(req: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(req.content))
+            seen.append(jsonlib.loads(req.content))
             return _chat_ok(seen[-1])
 
         p = _openai("gpt-4o", handler)
@@ -367,7 +367,7 @@ class TestProv10Prov12OpenAIBody:
         seen: list[dict] = []
 
         def handler(req: httpx.Request) -> httpx.Response:
-            body = json.loads(req.content)
+            body = jsonlib.loads(req.content)
             seen.append(body)
             if "temperature" in body:
                 return httpx.Response(400, json={"error": {"message": "Unsupported value: 'temperature' does not support 0.2"}})
@@ -524,7 +524,7 @@ class TestProv20XaiSearchTools:
         seen: list[tuple[str, dict]] = []
 
         def handler(req: httpx.Request) -> httpx.Response:
-            seen.append((req.url.path, json.loads(req.content)))
+            seen.append((req.url.path, jsonlib.loads(req.content)))
             return httpx.Response(200, json={
                 "status": "completed",
                 "output": [{"type": "message", "content": [{"type": "output_text", "text": "answer", "annotations": []}]}],
@@ -712,7 +712,7 @@ class TestProv26Prov27ClaudeCodeResult:
         from pyutilz.llm.claude_code_cli import _consume_cli_stream
 
         q: queue.Queue = queue.Queue()
-        q.put(json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": "API Error: 529 overloaded"}))
+        q.put(jsonlib.dumps({"type": "result", "subtype": "success", "is_error": True, "result": "API Error: 529 overloaded"}))
         q.put(None)
         text, error, timed_out, _event = _consume_cli_stream(q, 5.0)
         assert text is None and error == "API Error: 529 overloaded" and timed_out is False

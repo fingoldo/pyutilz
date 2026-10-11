@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import glob
 import hashlib
-import json
+from pyutilz.core import jsonlib
 import logging
 import os
 import sys
@@ -128,7 +128,7 @@ class TestGen2KernelDirs:
         }
         path = os.path.join(legacy, f"nocv.0.1.{abs(hash((name, variant)))}.json")
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(rec, f)
+            f.write(jsonlib.dumps(rec))
         return path
 
     def test_legacy_shared_dir_yields_every_kernel_it_holds(self, tmp_cache_dir):
@@ -585,9 +585,9 @@ import pyutilz.data.git_checkpoint_cache as gcc
 class TestGen15CheckpointRestoreIsAtomic:
     def test_restore_goes_through_the_atomic_writer(self, tmp_path: Path):
         ckpt = tmp_path / "c.json.gz"
-        ckpt.write_bytes(gzip.compress(json.dumps({"a": 1}).encode("utf-8")))
+        ckpt.write_bytes(gzip.compress(jsonlib.dumps({"a": 1}).encode("utf-8")))
         cache_path = tmp_path / "sub" / "c.json"
         with mock.patch.object(gcc, "_atomic_write_bytes", wraps=gcc._atomic_write_bytes) as spy:
             assert gcc.read_json_with_checkpoint_fallback(cache_path, ckpt) == {"a": 1}
         assert spy.call_args.args[0] == cache_path
-        assert json.loads(cache_path.read_text(encoding="utf-8")) == {"a": 1}
+        assert jsonlib.loads(cache_path.read_text(encoding="utf-8")) == {"a": 1}

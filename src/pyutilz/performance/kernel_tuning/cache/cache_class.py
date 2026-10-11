@@ -8,7 +8,7 @@ from __future__ import annotations
 import contextlib  # noqa: F401
 import datetime as _dt
 import glob as _glob  # noqa: F401
-import json
+from pyutilz.core import jsonlib
 import logging  # noqa: F401
 import os  # noqa: F401
 import random  # noqa: F401
@@ -35,9 +35,9 @@ from .cache_base import (
     hw_fingerprint,
     provenance_changed,  # noqa: F401
 )
-from .cache_hooks import LoggerHooks, TuningHooks, _DEFAULT_HOOKS  # noqa: F401 (TuningHooks used in annotations)
-from .region_matching import _AXIS_SUFFIXES, _OP_EQ, _OP_MAX, _OP_MIN, _SUFFIX_OPS, _normalize_eq, _region_match_reason, _region_matches  # noqa: F401 - _OP_EQ/_region_matches are re-exported for the historical cache_class.<name> surface
-from ._common import _CacheState, _FACADE_NAME, _facade, logger  # noqa: F401 (re-exported: historical ``cache_class`` attribute surface)
+from .cache_hooks import LoggerHooks, TuningHooks, _DEFAULT_HOOKS  # noqa: F401 -- (TuningHooks used in annotations)
+from .region_matching import _AXIS_SUFFIXES, _OP_EQ, _OP_MAX, _OP_MIN, _SUFFIX_OPS, _normalize_eq, _region_match_reason, _region_matches  # noqa: F401 -- _OP_EQ/_region_matches are re-exported for the historical cache_class.<name> surface
+from ._common import _CacheState, _FACADE_NAME, _facade, logger  # noqa: F401 -- (re-exported: historical ``cache_class`` attribute surface)
 from .cache_persistence import _CachePersistenceMixin
 from .cache_sweeping import _CacheSweepClaimMixin
 from .cache_tuning import _CacheTuningMixin
@@ -59,7 +59,7 @@ def register_default_cache(path: str) -> bool:
     fac = _facade()
     try:
         with open(path, encoding="utf-8") as f:
-            payload = json.load(f)
+            payload = jsonlib.loads(f.read())
         c = KernelTuningCache(in_memory=True)
         with c._lock:
             c._loaded = {"schema_version": payload.get("schema_version", SCHEMA_VERSION), "kernels": payload.get("kernels", {})}

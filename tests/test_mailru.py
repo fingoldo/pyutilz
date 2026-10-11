@@ -7,7 +7,7 @@ worth pinning is the URL shape and the paging, not mail.ru's uptime.
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 from typing import Any, Dict, List
 
 import pytest
@@ -114,4 +114,4 @@ def test_the_module_is_reachable_from_the_package(monkeypatch: pytest.MonkeyPatc
     from pyutilz import cloud
 
     assert cloud.mailru is mailru
-    assert json  # the import above is used by the stubs' own payload shape
+    assert jsonlib  # the import above is used by the stubs' own payload shape

@@ -7,11 +7,12 @@ so pulling it in at module scope would impose that on every consumer of ``pyutil
 
 import http
 import os
-from typing import Callable, List, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence
 
 # Imported for the ``Optional[requests.Response]`` annotation only -- the actual GET goes through
 # ``_facade.requests`` so that patching ``pyutilz.web.web.requests`` is honoured here.
-import requests
+if TYPE_CHECKING:
+    import requests
 
 from ._common import _error_log_throttle, logger
 

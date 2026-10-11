@@ -62,6 +62,8 @@ dependencies = [
     # the honest fix (the alternative, a lazy-import refactor of the library's most widely-shared
     # helper module, has a much larger blast radius for three lightweight, pure-pip-installable
     # packages with no heavy system/CUDA prerequisites of their own).
+    # orjson is the one JSON backend for every module (stdlib json is banned in src/, see core/jsonlib.py).
+    "orjson>=3",
     "numba>=0.56",
     # numba itself hard-requires numpy at its own import time (not lazily) -- found 2026-07-21
     # audit follow-up: masking numpy alone (leaving numba unmasked, since numba is core) still
@@ -332,12 +334,8 @@ gpu = [
 # multi-hundred-MB ML framework used by exactly one function, system/parallel.py's set_tf_gpu()).
 # Drop-in accelerators: nothing imports these unconditionally, every use site falls back to the
 # stdlib when they are absent, so this group only ever makes an existing code path faster.
-# orjson replaces the stdlib json encoder across database/db, llm/openai_compat,
-# performance/kernel_tuning/remote, text/strings/jsonutils and web/* -- measured 25-32x on
-# json_pg_dumps's nested-payload path (2026-09-02 performance audit, F03).
-speedups = [
-    "orjson>=3",
-]
+# orjson is now a core dependency (see [project.dependencies]); the speedups group is kept empty for install compatibility.
+speedups = []
 
 # Consequence to keep in mind: `pip install pyutilz[all]` canNOT import pyutilz.dev.dashlib or
 # pyutilz.system.scheduling.prefect -- add the matching extra explicitly, e.g.

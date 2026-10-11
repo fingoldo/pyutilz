@@ -18,7 +18,7 @@ if HAS_NUMBA:
 
     from ._common import SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD, _check_word_coverage, _strip_stop_words, logger
     from ._numba_kernels import (
-        _compare_one_candidate_with_matches,  # noqa: F401 - re-exported for the historical pyutilz.text.similarity.<name> surface
+        _compare_one_candidate_with_matches,  # noqa: F401 -- re-exported for the historical pyutilz.text.similarity.<name> surface
         _pack_words,
         _run_sentences_similarity_core,
         _sentences_similarity_batch_core,

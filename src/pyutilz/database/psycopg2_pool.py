@@ -26,9 +26,13 @@ import weakref
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
-import psycopg2
-import psycopg2.extras
-import psycopg2.pool
+psycopg2: Any
+try:
+    import psycopg2  # type: ignore[no-redef]
+    import psycopg2.extras  # type: ignore[no-redef]
+    import psycopg2.pool  # type: ignore[no-redef]
+except ImportError:  # optional extra 'database': absent in a core-only install
+    psycopg2 = None
 
 try:
     from pgvector.psycopg2 import register_vector

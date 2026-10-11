@@ -659,11 +659,11 @@ def findings_ratchet(findings: Iterable[str], baseline_path: Path) -> tuple[list
 
     A missing baseline file is treated as an empty baseline, so the first run reports everything.
     """
-    import json
+    from pyutilz.core import jsonlib
 
     known: set[str] = set()
     if baseline_path.exists():
-        known = set(json.loads(baseline_path.read_text(encoding="utf-8")))
+        known = set(jsonlib.loads(baseline_path.read_text(encoding="utf-8")))
     current = set(findings)
     return sorted(current - known), sorted(known - current)
 

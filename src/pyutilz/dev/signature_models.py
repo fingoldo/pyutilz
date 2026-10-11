@@ -34,9 +34,10 @@ import re
 import typing
 from pathlib import Path
 import sys
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+if TYPE_CHECKING:  # pydantic is an optional extra; runtime imports are lazy, inside the functions that build a model
+    from pydantic import BaseModel
 
 __all__ = ["model_from_signature", "render_model_source", "signature_drift", "signature_parameters", "SignatureParameter", "main"]
 
@@ -119,6 +120,8 @@ def _field_definitions(params: Sequence[SignatureParameter], overrides: Mapping[
         if p.name in overrides:
             override = overrides[p.name]
             if isinstance(override, tuple):
+                from pydantic import Field
+
                 ann, extra = override
                 default = Field(... if p.required else p.default, **extra) if isinstance(extra, dict) else extra
             else:
@@ -144,6 +147,8 @@ def model_from_signature(
     to ``(annotation, {"gt": 0, ...})`` to attach ``Field`` constraints. ``unannotated="error"`` refuses a parameter with no annotation
     instead of typing it ``Any``. The resulting class records ``__signature_source__`` and ``__signature_overrides__`` for the drift check.
     """
+    from pydantic import BaseModel, ConfigDict, create_model
+
     overrides = dict(overrides or {})
     params = signature_parameters(target, exclude=exclude)
     config = ConfigDict(extra="forbid", frozen=frozen, arbitrary_types_allowed=True)

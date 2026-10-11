@@ -75,9 +75,7 @@ _OPTIONAL_DEP_GROUPS: dict[str, list[str]] = {
     # now pins the dict against pyproject.toml so a newly ADDED extra cannot be forgotten either.
     # pydantic is listed here as well as under "llm": dash >= 4 depends on it directly, so a real
     # `pip install pyutilz[dash]` always brings it in and masking it would test a state that cannot occur.
-    # orjson is soft-imported everywhere it is used (try/except with a stdlib fallback), so masking
-    # it must leave every module importable -- that is exactly what this scenario pins.
-    "speedups": ["orjson"],
+    # orjson is a core dependency now (pyproject [project.dependencies]); no scenario masks it.
     "dash": ["flask", "dash", "dash_bootstrap_components", "pydantic"],
     # requests is listed here as well as under "web": prefect depends on it, so a real
     # `pip install pyutilz[prefect]` always brings it in and masking it would test an impossible
@@ -147,6 +145,7 @@ _EXTRAS_WITHOUT_MASKING_SCENARIO = {
     "stats": "empty documented alias -- its former sole member numpy is a core dependency now",
     "dev": "test/lint tooling, not importable-feature deps: nothing in src/pyutilz imports it",
     "docs": "mkdocs-material, a site-build tool never imported by the package",
+    "speedups": "empty alias kept for install compatibility: its former sole member orjson is a core dependency now",
 }
 
 

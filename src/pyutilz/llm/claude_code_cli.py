@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import json
 import logging
 import os
 import queue
@@ -30,6 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+from pyutilz.core import jsonlib
 from pyutilz.llm.exceptions import ClaudeCodeToolUseError
 
 
@@ -182,8 +182,8 @@ def _consume_cli_stream(
         if not raw:
             continue
         try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
+            event = jsonlib.loads(raw)
+        except jsonlib.JSONDecodeError:
             # Dropped, but not in silence: a CLI that changed its stream format would otherwise
             # surface only as "produced no result", with the actual cause invisible. Debug
             # rather than warning because a partial line at the tail of a killed stream is

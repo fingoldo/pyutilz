@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import gzip
-import json
-
+from pyutilz.core import jsonlib
 from pyutilz.data.git_checkpoint_cache import (
     read_bytes_with_checkpoint_fallback,
     read_json_with_checkpoint_fallback,
@@ -18,7 +17,7 @@ def test_json_checkpoint_round_trips(tmp_path):
     obj = {"a": 1, "b": {"c": [1, 2, 3]}}
     write_json_checkpoint(obj, checkpoint_path)
 
-    restored = json.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8"))
+    restored = jsonlib.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8"))
     assert restored == obj
 
 
@@ -40,7 +39,7 @@ def test_json_checkpoint_is_deterministic_sort_keys():
 def test_read_json_prefers_live_cache_when_present(tmp_path):
     cache_path = tmp_path / "cache.json"
     checkpoint_path = tmp_path / "checkpoint.json.gz"
-    cache_path.write_text(json.dumps({"live": True}), encoding="utf-8")
+    cache_path.write_text(jsonlib.dumps({"live": True}), encoding="utf-8")
     write_json_checkpoint({"live": False}, checkpoint_path)
 
     assert read_json_with_checkpoint_fallback(cache_path, checkpoint_path) == {"live": True}
@@ -55,7 +54,7 @@ def test_read_json_restores_from_checkpoint_when_cache_missing(tmp_path):
     assert result == {"restored": True}
     # Restore also writes the live cache back out, so a second read doesn't need the checkpoint.
     assert cache_path.exists()
-    assert json.loads(cache_path.read_text(encoding="utf-8")) == {"restored": True}
+    assert jsonlib.loads(cache_path.read_text(encoding="utf-8")) == {"restored": True}
 
 
 def test_read_json_restores_from_checkpoint_when_cache_is_empty(tmp_path):

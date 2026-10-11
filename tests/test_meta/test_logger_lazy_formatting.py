@@ -27,7 +27,7 @@ fail unless added to baseline via ``--refresh-logger-baseline``.
 from __future__ import annotations
 
 import ast
-import json
+from pyutilz.core import jsonlib
 import sys
 from pathlib import Path
 
@@ -113,10 +113,10 @@ def test_no_new_eager_log_format_on_debug_or_info():
     current = _build_offending_set()
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
-        _BASELINE_PATH.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        _BASELINE_PATH.write_text(jsonlib.dumps(sorted(current), indent=True), encoding="utf-8")
         pytest.skip(f"logger lazy-format baseline refreshed at " f"{_BASELINE_PATH.name} ({len(current)} eager call site(s))")
 
-    baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
+    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
     fixed = sorted(baseline - current)
 

@@ -16,7 +16,7 @@ Refresh after intentionally accepting more missing docstrings (rare):
 from __future__ import annotations
 
 import ast
-import json
+from pyutilz.core import jsonlib
 import sys
 from pathlib import Path
 
@@ -78,12 +78,12 @@ def test_no_new_undocumented_public_symbols():
 
     if _refresh_requested() or not _BASELINE_PATH.exists():
         _BASELINE_PATH.write_text(
-            json.dumps(sorted(current), indent=2),
+            jsonlib.dumps(sorted(current), indent=True),
             encoding="utf-8",
         )
         pytest.skip(f"docstring baseline refreshed at {_BASELINE_PATH.name} " f"({len(current)} undocumented symbols)")
 
-    baseline = set(json.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
+    baseline = set(jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8")))
     new = sorted(current - baseline)
     fixed = sorted(baseline - current)
 

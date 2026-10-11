@@ -6,7 +6,6 @@ The provider lists themselves (``IP_PROVIDERS``/``COUNTRY_PROVIDERS``) live in t
 """
 
 import http
-import json
 import ssl
 from dataclasses import dataclass
 from random import shuffle
@@ -23,6 +22,7 @@ from ._common import _ensure_http_scheme, logger
 # ``pyutilz.web.web.timeout`` / ``.IP_PROVIDERS`` / ``.get_ipinfo`` is seen here, where a from-import
 # would have snapshotted the original value).
 import pyutilz.web.web as _facade
+from pyutilz.core import jsonlib
 
 
 def _direct_urlopen(url: str, timeout: Optional[float] = None) -> Any:
@@ -168,13 +168,7 @@ def get_country_by_ip(ip: Optional[str] = None, providers: Optional[Sequence[dic
 
 def get_ipinfo(use_urllib: bool = False, url: str = "https://api.ipify.org?format=json") -> Optional[Any]:
     """Fetch JSON IP info from ``url``, either directly via ``urllib`` (``use_urllib=True``) or via the module's ``get_url`` (session/proxy-aware) fetcher."""
-    json_loads: Any
-    try:
-        import orjson
-
-        json_loads = orjson.loads
-    except ImportError:
-        json_loads = json.loads
+    json_loads: Any = jsonlib.loads
 
     if use_urllib:
         try:

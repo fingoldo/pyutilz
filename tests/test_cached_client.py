@@ -7,7 +7,7 @@ runs offline and deterministically -- no real network access, no flakiness from 
 from __future__ import annotations
 
 import io
-import json
+from pyutilz.core import jsonlib
 import pickle
 import urllib.error
 from contextlib import contextmanager
@@ -34,7 +34,7 @@ class TestGetJson:
         assert result == {"a": 1}
         cached = list(tmp_path.rglob("*.json"))
         assert len(cached) == 1
-        assert json.loads(cached[0].read_text())["data"] == {"a": 1}
+        assert jsonlib.loads(cached[0].read_text())["data"] == {"a": 1}
 
     def test_cache_hit_never_calls_urlopen(self, tmp_path):
         client = CachedHttpClient(cache_dir=tmp_path)

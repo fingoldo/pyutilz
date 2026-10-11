@@ -7,7 +7,7 @@ exception, so reverting a fix fails a test rather than just changing a count.
 from __future__ import annotations
 
 import asyncio
-import json
+from pyutilz.core import jsonlib
 import math
 from pathlib import Path
 from typing import Any
@@ -98,7 +98,7 @@ class _Stream:
 
 
 def _data(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload)}"
+    return f"data: {jsonlib.dumps(payload)}"
 
 
 async def _drain(p: OpenRouterProvider, **kw: Any) -> str:
@@ -418,7 +418,7 @@ def test_or9_refused_off_switch_is_repaired_to_minimal(sent: dict) -> None:
 
 
 def test_or9_recorded_live_results_support_the_fallback() -> None:
-    data = json.loads((Path(__file__).resolve().parents[2] / "audits" / "implemented" / "2026-09-26" / "or9_live_results.json").read_text(encoding="utf-8"))
+    data = jsonlib.loads((Path(__file__).resolve().parents[2] / "audits" / "implemented" / "2026-09-26" / "or9_live_results.json").read_text(encoding="utf-8"))
     mandatory = {r["model"] for r in data["results"] if r["variant"] == "enabled_false" and r["http_status"] == 400}
     assert len(mandatory) >= 3
     for r in data["results"]:

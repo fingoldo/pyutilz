@@ -7,7 +7,7 @@ import asyncio
 import sys
 import base64
 import gc
-import json
+from pyutilz.core import jsonlib
 import logging
 import tempfile
 from pathlib import Path
@@ -342,21 +342,20 @@ class TestExtractJson:
             LLMProvider.extract_json(text)
 
     def test_runaway_scan_is_capped(self, monkeypatch):
-        calls = []
-        real = json.JSONDecoder
+        calls: list[int] = []
+        real = base_mod._object_span_end
 
-        class Counting(real):  # type: ignore[misc,valid-type]
-            def raw_decode(self, s: str, idx: int = 0) -> Any:
-                calls.append(idx)
-                return super().raw_decode(s, idx)
+        def counting(s: str, idx: int) -> int:
+            calls.append(idx)
+            return real(s, idx)
 
-        monkeypatch.setattr(base_mod.json, "JSONDecoder", Counting)
+        monkeypatch.setattr(base_mod, "_object_span_end", counting)
         monkeypatch.setattr(base_mod, "_JSON_SCAN_BUDGET_CHARS", 10_000)
         text = "prose " + '{"b": 1, ' * 5000
         with pytest.raises(JSONParsingError):
             LLMProvider.extract_json(text)
-        # Error positions grow by 9 per candidate: the budget is spent after ~47 candidates, not 5000.
-        assert 30 < len(calls) < 60
+        # Each unterminated candidate is charged the rest of the text, so the budget ends the scan after a few candidates, not 5000.
+        assert 1 <= len(calls) < 60
 
     def test_object_nested_in_an_unterminated_one_is_still_found(self):
         assert LLMProvider.extract_json('Result: {"a": {"b": 2}') == {"b": 2}
@@ -708,7 +707,7 @@ class TestRouteFingerprint:
     def test_api_key_never_enters_the_payload(self):
         p = _or()
         dummy_key = "sk-secret"  # pragma: allowlist secret -- a dummy key, asserted absent from the route payload
-        assert dummy_key not in json.dumps(_or(**{}).__class__(api_key=dummy_key)._route_payload(), default=str)
+        assert dummy_key not in jsonlib.dumps(_or(**{}).__class__(api_key=dummy_key)._route_payload(), default=str)
         assert "api_key" not in p._route_payload()
 
     def test_reassigned_model_is_honoured(self):

@@ -31,7 +31,6 @@ Two more ways a second paid batch could be submitted are closed:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import random
@@ -42,8 +41,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
+from pyutilz.core import jsonlib
 from pyutilz.llm import _reasoning
 from pyutilz.llm.exceptions import LLMProviderError
 
@@ -110,7 +114,7 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
     """Write ``payload`` as JSON through a temporary file and a rename, so a crash never leaves a half-written file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_bytes(json.dumps(payload, indent=1, sort_keys=True).encode("utf-8"))
+    tmp.write_bytes(jsonlib.dumps_bytes(payload, indent=True, sort_keys=True))
     os.replace(tmp, path)
 
 
@@ -119,7 +123,7 @@ def load_job_state(state_path: str | os.PathLike[str]) -> dict[str, Any] | None:
     p = Path(state_path)
     if not p.exists():
         return None
-    data = json.loads(p.read_bytes().decode("utf-8"))
+    data = jsonlib.loads(p.read_bytes())
     return data if isinstance(data, dict) else None
 
 
@@ -166,7 +170,7 @@ def request_hash(
     64
     """
     payload = build_submit_payload(model, requests, endpoint=endpoint, provider_only=provider_only)
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return hashlib.sha256(jsonlib.dumps_bytes(payload, sort_keys=True)).hexdigest()
 
 
 def _created_at(batch: Mapping[str, Any]) -> float | None:
@@ -207,7 +211,7 @@ def parse_result_item(item: Mapping[str, Any]) -> BatchResult:
     err = item.get("error")
     resp = item.get("response")
     if err:
-        res.error = json.dumps(err, sort_keys=True) if not isinstance(err, str) else err
+        res.error = jsonlib.dumps(err, sort_keys=True) if not isinstance(err, str) else err
         return res
     if not isinstance(resp, dict):
         res.error = "result has neither response nor error"
@@ -218,7 +222,7 @@ def parse_result_item(item: Mapping[str, Any]) -> BatchResult:
         res.error = f"unparseable response body: {str(body)[:200]}"
         return res
     if res.status_code is not None and not 200 <= int(res.status_code) < 300:
-        res.error = f"HTTP {res.status_code}: {json.dumps(body.get('error', body), sort_keys=True)[:500]}"
+        res.error = f"HTTP {res.status_code}: {jsonlib.dumps(body.get('error', body), sort_keys=True)[:500]}"
         return res
     usage = body.get("usage") or {}
     res.prompt_tokens = int(usage.get("prompt_tokens") or 0)
@@ -227,7 +231,7 @@ def parse_result_item(item: Mapping[str, Any]) -> BatchResult:
     res.cost_usd = float(cost) if cost is not None else None
     choices = body.get("choices") or []
     if not choices:
-        res.error = f"no choices in response body: {json.dumps(body.get('error', body), sort_keys=True)[:300]}"
+        res.error = f"no choices in response body: {jsonlib.dumps(body.get('error', body), sort_keys=True)[:300]}"
         return res
     choice = choices[0]
     msg = choice.get("message") or {}

@@ -82,7 +82,7 @@ class _Events(ast.NodeVisitor):
         for t in node.targets if isinstance(node, ast.Assign) else [node.target]:
             self.visit(t)
 
-    visit_Assign = visit_AnnAssign = _assign  # noqa: N815 - ast.NodeVisitor dispatch names
+    visit_Assign = visit_AnnAssign = _assign  # noqa: N815 -- ast.NodeVisitor dispatch names
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         """Walrus: value first, then the binding."""

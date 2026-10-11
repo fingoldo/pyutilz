@@ -11,7 +11,6 @@ dials out) for reproducible test/CI runs.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -23,6 +22,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, cast
 
+from pyutilz.core import jsonlib
 from pyutilz.core.serialization import atomic_write_bytes
 from pyutilz.web.url_guard import ALLOWED_SCHEMES, urlopen_checked
 
@@ -140,7 +140,7 @@ class CachedHttpClient:
     def _write_cache_entry(self, path: Path, payload: Dict[str, Any]) -> None:
         """Atomically write a JSON cache entry, creating parent directories as needed."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        body = jsonlib.dumps_bytes(payload)
         atomic_write_bytes(str(path), lambda f: f.write(body))
 
     def _read_capped(self, resp: Any, url: str) -> Optional[bytes]:
@@ -237,9 +237,9 @@ class CachedHttpClient:
         path = self._cache_path(url, tag)
         if path.exists():
             try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload = jsonlib.loads(path.read_text(encoding="utf-8"))
                 return payload.get("data")
-            except (json.JSONDecodeError, OSError):
+            except (jsonlib.JSONDecodeError, OSError):
                 pass  # a corrupt cache entry is refetched rather than trusted
         if self.offline():
             logger.debug("cached_client %s: offline, no cache entry for %s", tag, url)
@@ -250,8 +250,8 @@ class CachedHttpClient:
             try:
                 # errors="replace": a mis-encoded body is a permanent failure for this URL, not a
                 # reason to abort the caller's batch with an escaping UnicodeDecodeError.
-                data = json.loads(raw.decode("utf-8", errors="replace"))
-            except json.JSONDecodeError as exc:
+                data = jsonlib.loads(raw.decode("utf-8", errors="replace"))
+            except jsonlib.JSONDecodeError as exc:
                 logger.debug("cached_client %s: invalid JSON for %s: %s", tag, url, exc)
         if data is not None or cache_failures:
             self._write_cache_entry(path, {"url": url, "data": data})
@@ -275,11 +275,11 @@ class CachedHttpClient:
         path = self._cache_path(url, tag, kind="text")
         if path.exists():
             try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload = jsonlib.loads(path.read_text(encoding="utf-8"))
                 body = payload.get("text")
                 if isinstance(body, str):
                     return body
-            except (json.JSONDecodeError, OSError):
+            except (jsonlib.JSONDecodeError, OSError):
                 pass
         if self.offline():
             logger.debug("cached_client %s: offline, no cache entry for %s", tag, url)

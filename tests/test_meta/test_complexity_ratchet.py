@@ -17,7 +17,7 @@ Refresh with ``pytest tests/test_meta/test_complexity_ratchet.py --refresh-compl
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import os
 import re
 import subprocess  # nosec B404 - runs the pinned dev-extra `ruff` module via sys.executable, no user input reaches argv
@@ -45,8 +45,8 @@ def _collect() -> dict[str, int]:
     if proc.returncode not in (0, 1) or not proc.stdout.strip():
         pytest.skip(f"ruff C901 scan unavailable in this environment (rc={proc.returncode}): {proc.stderr.strip()[:400]}")
     try:
-        findings = json.loads(proc.stdout)
-    except json.JSONDecodeError:  # pragma: no cover - defensive
+        findings = jsonlib.loads(proc.stdout)
+    except jsonlib.JSONDecodeError:  # pragma: no cover - defensive
         pytest.skip("ruff produced non-JSON output; C901 ratchet cannot run here")
     out: dict[str, int] = {}
     for item in findings:
@@ -65,10 +65,10 @@ def test_c901_complexity_does_not_regress(request: pytest.FixtureRequest) -> Non
     current = _collect()
 
     if request.config.getoption("--refresh-complexity-baseline"):
-        _BASELINE_PATH.write_text(json.dumps(dict(sorted(current.items())), indent=2) + "\n", encoding="utf-8", newline="\n")
+        _BASELINE_PATH.write_text(jsonlib.dumps(dict(sorted(current.items())), indent=True) + "\n", encoding="utf-8", newline="\n")
         pytest.skip(f"Refreshed complexity baseline: {len(current)} entries")
 
-    baseline: dict[str, int] = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    baseline: dict[str, int] = jsonlib.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
 
     new_offenders = sorted(k for k in current if k not in baseline)
     assert not new_offenders, (

@@ -530,7 +530,6 @@ from __future__ import annotations
 # importable as ``from pyutilz.dev.code_audit import ast`` etc. before the
 # split into a subpackage; keep them re-exported so no caller breaks.
 import ast  # re-exported facade name (`pyutilz.dev.code_audit.ast`), part of the historic flat-module public surface
-import json
 import sys  # re-exported facade name (`pyutilz.dev.code_audit.sys`), part of the historic flat-module public surface
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -793,7 +792,7 @@ import types as _types
 #
 # COMPUTED, not a hand-maintained tuple: the tuple this replaces had fallen thirty submodules behind
 # the package, so the invariant it asserts was simply false and the surface was arbitrary -- one
-# newer scanner module visible, its neighbour not. Deliberate stdlib re-exports (``ast``, ``json``,
+# newer scanner module visible, its neighbour not. Deliberate stdlib re-exports (``ast``,
 # ``sys``) are unaffected: they are not submodules of this package.
 for _submod_name, _submod_value in list(globals().items()):
     if isinstance(_submod_value, _types.ModuleType) and _submod_value.__name__.startswith(__name__ + "."):

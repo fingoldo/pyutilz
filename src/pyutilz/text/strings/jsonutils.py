@@ -7,21 +7,11 @@
 from ._logproxy import logger
 
 from typing import Any, Dict, Iterable, Optional, Sequence, Union
-import json
 import math
 
-# Resolved ONCE at import instead of per call: ``json_pg_dumps`` is the jsonb bulk-insert path, and
-# an import statement in its body re-pays a sys.modules lookup plus frame work on every row.
-# Annotated `Optional[Any]` rather than left to inference: inferring the module type makes the
-# `if _orjson is not None` guards below always-true to the type checker, which types the stdlib
-# fallback paths away as unreachable on any box that happens to have orjson installed.
-_orjson: Optional[Any]
-try:
-    import orjson as _orjson_mod
-except ImportError:  # orjson is optional -- the stdlib branch below is the fallback
-    _orjson = None
-else:
-    _orjson = _orjson_mod
+import orjson as _orjson
+
+from pyutilz.core import jsonlib
 
 # The six characters orjson emits for a real NUL inside a string. Postgres rejects a NUL in
 # json/jsonb text, so its presence (or, conservatively, that of a legitimately-escaped backslash
@@ -299,7 +289,7 @@ class _PreSerializedJson:
     def adapted(self) -> Any:
         """The normalized python object, parsed from the serialized text on first access."""
         if self._adapted is self._MISSING:
-            self._adapted = json.loads(self._raw)
+            self._adapted = jsonlib.loads(self._raw)
         return self._adapted
 
     def dumps(self, obj: Any = None) -> str:
@@ -335,10 +325,8 @@ class _PreSerializedJson:
 def json_pg_dumps(obj: object, sort_keys: bool = False) -> object:
     """Serialize ``obj`` to a psycopg2 ``Json``-compatible wrapper for insertion into a jsonb column.
 
-    Uses orjson (falling back to stdlib json if unavailable). NUL characters (which postgres
-    rejects inside jsonb text) and NaN/Infinity/-Infinity floats are normalized out, so the output
-    is identical regardless of which JSON backend is installed and a value containing the literal
-    text ``\\u0000`` survives intact.
+    Uses orjson. NUL characters (which postgres rejects inside jsonb text) and NaN/Infinity/-Infinity floats
+    are normalized out, and a value containing the literal text ``\\u0000`` survives intact.
 
     The orjson branch does NOT pre-walk the document. orjson already emits ``null`` for NaN/Inf
     natively -- exactly the policy :func:`_normalize_for_pg_json` enforces -- and NUL is the only
@@ -348,32 +336,20 @@ def json_pg_dumps(obj: object, sort_keys: bool = False) -> object:
     payload, plus a second copy of the document in memory) now runs only for the rare NUL-bearing
     document instead of every row. A string that legitimately contains the six characters
     ``\\u0000`` also trips the check -- a false positive costs the slow path, never correctness.
-    The stdlib fallback still normalizes unconditionally: it emits the non-standard
-    ``NaN``/``Infinity`` tokens postgres rejects, so there the walk is load-bearing.
 
     The serialized text is handed to the adapter as-is (see :class:`_PreSerializedJson`) instead of
-    being re-parsed with stdlib json and then re-serialized a third time at adapt time.
+    being re-parsed and then re-serialized a third time at adapt time.
     """
-    if _orjson is not None:
-        opts = _orjson.OPT_SORT_KEYS if sort_keys else 0
-        raw: Optional[str]
-        try:
-            raw = _orjson.dumps(obj, default=json_serial, option=opts).decode("utf-8")
-        except TypeError:
-            # orjson refuses shapes the normalizer flattens for it (tuples -> lists, most notably).
-            # Fall through to the normalize-then-serialize path rather than raising.
-            raw = None
-        if raw is not None and _ESCAPED_NUL not in raw:
-            return _PreSerializedJson(raw)
-        try:
-            return _PreSerializedJson(_orjson.dumps(_normalize_for_pg_json(obj), default=json_serial, option=opts).decode("utf-8"))
-        except TypeError:
-            # orjson rejects shapes stdlib json accepts -- non-str dict keys ("Dict key must be
-            # str") and lone surrogates ("surrogates not allowed"). The docstring promises the
-            # output does not depend on which backend is installed, so fall through to stdlib
-            # rather than raising only on the boxes that happen to have orjson.
-            pass
-    return _PreSerializedJson(json.dumps(_normalize_for_pg_json(obj), default=json_serial, sort_keys=sort_keys))
+    option = _orjson.OPT_SORT_KEYS if sort_keys else 0
+    raw: Optional[str]
+    try:
+        raw = _orjson.dumps(obj, default=json_serial, option=option).decode("utf-8")
+    except TypeError:
+        # orjson refuses shapes the normalizer flattens for it (tuples -> lists, most notably), and non-str dict keys.
+        raw = None
+    if raw is not None and _ESCAPED_NUL not in raw:
+        return _PreSerializedJson(raw)
+    return _PreSerializedJson(jsonlib.dumps(_normalize_for_pg_json(obj), default=json_serial, sort_keys=sort_keys, non_str_keys=True))
 
 
 def get_jsonlist_property(

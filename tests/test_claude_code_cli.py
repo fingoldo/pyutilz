@@ -40,10 +40,9 @@ _EVENT = {
 
 
 def _consume(event: dict):
-    import json
-
+    from pyutilz.core import jsonlib
     q: "queue.Queue" = queue.Queue()
-    q.put(json.dumps(event))
+    q.put(jsonlib.dumps(event))
     return _consume_cli_stream(q, timeout=5.0)
 
 

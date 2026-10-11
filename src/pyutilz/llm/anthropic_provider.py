@@ -6,12 +6,9 @@ import asyncio
 import logging
 from typing import Any, ClassVar
 
-import anthropic
-from tenacity import retry, retry_if_exception, retry_if_exception_type
-
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm._messages import build_anthropic_content
-from pyutilz.llm._retry import INFINITE_RETRY_KWARGS
+from pyutilz.llm._retry import infinite_retry_kwargs, lazy_retry
 from pyutilz.llm._pricing import CACHE_WRITE_1H_MULT, CACHE_WRITE_5M_MULT, Pricing, price_call
 from pyutilz.llm.base import LLMProvider, PerCallAttr, normalize_thinking
 from pyutilz.llm._thinking import MIN_THINKING_BUDGET, THINKING_BUDGETS  # re-exported: callers import them from here
@@ -170,6 +167,29 @@ def _int_field(obj: Any, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def _generate_retry_policy() -> dict[str, Any]:
+    """Tenacity kwargs for ``AnthropicProvider.generate``; built on first call, so ``anthropic`` is imported lazily (see ``lazy_retry``)."""
+    import anthropic
+    from tenacity import retry_if_exception, retry_if_exception_type
+
+    # Regression fix (2026-07-21 audit): OverloadedError (529), ServiceUnavailableError (503),
+    # and DeadlineExceededError (504) are SEPARATE, SIBLING subclasses of APIStatusError in the
+    # installed SDK -- NOT subclasses of InternalServerError -- so the previous tuple silently
+    # never retried Anthropic's own documented "always retry with backoff" 529 overloaded
+    # condition. Retrying on the status-code set directly (rather than enumerating leaf
+    # classes) also survives the SDK adding new status-specific exception subclasses later.
+    return {
+        "retry": retry_if_exception_type((
+            anthropic.RateLimitError,
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+        )) | retry_if_exception(
+            lambda e: isinstance(e, anthropic.APIStatusError) and getattr(e, "status_code", None) in {429, 500, 502, 503, 504, 529}
+        ),
+        **infinite_retry_kwargs(),
+    }
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider with async support and retry logic."""
 
@@ -236,6 +256,8 @@ class AnthropicProvider(LLMProvider):
         # default (2 internal retries) multiplied every tenacity attempt, so a sustained 529
         # produced several times the upstream calls PYUTILZ_LLM_MAX_RETRIES documents. An explicit
         # timeout replaces the SDK default, matching every other provider's pinned timeout.
+        import anthropic
+
         self.client = anthropic.AsyncAnthropic(api_key=self.api_key, max_retries=0, timeout=self._request_timeout_seconds)
         self._max_concurrent = max_concurrent
         # Cumulative session accounting (mirrors OpenAICompatibleProvider).
@@ -302,22 +324,7 @@ class AnthropicProvider(LLMProvider):
         the schema: https://platform.claude.com/docs/en/build-with-claude/structured-outputs lists the models."""
         return self._spec.supports_structured_output
 
-    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        # Regression fix (2026-07-21 audit): OverloadedError (529), ServiceUnavailableError (503),
-        # and DeadlineExceededError (504) are SEPARATE, SIBLING subclasses of APIStatusError in the
-        # installed SDK -- NOT subclasses of InternalServerError -- so the previous tuple silently
-        # never retried Anthropic's own documented "always retry with backoff" 529 overloaded
-        # condition. Retrying on the status-code set directly (rather than enumerating leaf
-        # classes) also survives the SDK adding new status-specific exception subclasses later.
-        retry=retry_if_exception_type((
-            anthropic.RateLimitError,
-            anthropic.APIConnectionError,
-            anthropic.APITimeoutError,
-        )) | retry_if_exception(
-            lambda e: isinstance(e, anthropic.APIStatusError) and getattr(e, "status_code", None) in {429, 500, 502, 503, 504, 529}
-        ),
-        **INFINITE_RETRY_KWARGS,
-    )
+    @lazy_retry(_generate_retry_policy)
     async def generate(
         self,
         prompt: str,

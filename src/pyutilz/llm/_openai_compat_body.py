@@ -9,7 +9,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm._messages import build_chat_messages
 from pyutilz.llm._openai_compat_http import merge_extra_body, raise_for_error_in_body

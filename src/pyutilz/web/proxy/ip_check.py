@@ -12,6 +12,8 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from pyutilz.core import jsonlib
+
 _log = logging.getLogger(__name__)
 
 # A bare IPv4 dotted-quad or IPv6 address -- used to decide whether the raw JSON response body
@@ -19,22 +21,8 @@ _log = logging.getLogger(__name__)
 # general-purpose IP validator (doesn't reject out-of-range octets; that's not this check's job).
 _IP_SHAPE_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$")
 
-# orjson is faster than stdlib json; resolved once so the fallback branch never
-# references the `orjson` name after a failed import (that raised UnboundLocalError
-# here previously -- the name is local to the function once ANY `import orjson`
-# appears in its body, so referencing `orjson.JSONDecodeError` in the except clause
-# blew up when the import itself had failed).
-_json_backend: Any
-try:
-    import orjson as _json_backend  # type: ignore[no-redef]  # only flagged where orjson IS installed, i.e. in CI but not in a minimal env
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
-except ImportError:
-    import json as _json_backend  # type: ignore[no-redef]
-
-    _json_loads = _json_backend.loads
-    _JSONDecodeError = _json_backend.JSONDecodeError
+_json_loads = jsonlib.loads
+_JSONDecodeError = jsonlib.JSONDecodeError
 
 __all__ = [
     "IP_CHECK_URLS",

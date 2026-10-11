@@ -195,7 +195,7 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
             finally:
                 self.in_assign_target = was_target
 
-        visit_Assign = _visit_assignment  # noqa: N815 - ast.NodeVisitor's own dispatch-method naming convention
+        visit_Assign = _visit_assignment  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
         visit_AnnAssign = _visit_assignment  # noqa: N815
         visit_AugAssign = _visit_assignment  # noqa: N815
 
@@ -223,7 +223,7 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
                         self._record(a.arg, a.lineno, a.col_offset, True)
             self.generic_visit(node)
 
-        visit_FunctionDef = _visit_def  # noqa: N815 - ast.NodeVisitor's own dispatch-method naming convention
+        visit_FunctionDef = _visit_def  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
         visit_AsyncFunctionDef = _visit_def  # noqa: N815
         visit_ClassDef = _visit_def  # noqa: N815
 
@@ -540,23 +540,23 @@ def _main(argv: "list[str] | None" = None) -> int:
         dry = "--dry-run" in args
         rest = [a for a in args[1:] if a != "--dry-run"]
         if len(rest) != 4:
-            print("usage: python -m pyutilz.dev.freevar_analysis --split <source.py> <target.py> <first> <last> [--dry-run]", file=sys.stderr)  # noqa: T201 - CLI usage message
+            print("usage: python -m pyutilz.dev.freevar_analysis --split <source.py> <target.py> <first> <last> [--dry-run]", file=sys.stderr)  # noqa: T201 -- CLI usage message
             return 2
         try:
             moved = split_out_module(rest[0], rest[1], rest[2], rest[3], apply=not dry)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)  # noqa: T201 - CLI's actual output
+            print(str(exc), file=sys.stderr)  # noqa: T201 -- CLI's actual output
             return 1
-        print(f"{'would move' if dry else 'moved'} {len(moved)} top-level name(s) to {rest[1]}; every body verified byte-identical")  # noqa: T201 - CLI's actual output
+        print(f"{'would move' if dry else 'moved'} {len(moved)} top-level name(s) to {rest[1]}; every body verified byte-identical")  # noqa: T201 -- CLI's actual output
         for name in moved:
-            print(f"    {name}")  # noqa: T201 - CLI's actual output
+            print(f"    {name}")  # noqa: T201 -- CLI's actual output
         return 0
     if len(args) != 3:
-        print("usage: python -m pyutilz.dev.freevar_analysis <file.py> <start_line> <end_line>", file=sys.stderr)  # noqa: T201 - CLI usage message
+        print("usage: python -m pyutilz.dev.freevar_analysis <file.py> <start_line> <end_line>", file=sys.stderr)  # noqa: T201 -- CLI usage message
         return 2
     path, start_s, end_s = args
     report = analyze_range(path, int(start_s), int(end_s))
-    print(format_report(report, path, int(start_s), int(end_s)))  # noqa: T201 - CLI's actual output
+    print(format_report(report, path, int(start_s), int(end_s)))  # noqa: T201 -- CLI's actual output
     return 0
 
 

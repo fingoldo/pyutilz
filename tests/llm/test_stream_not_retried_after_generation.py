@@ -8,7 +8,7 @@ reads the final attempt's usage only, recorded none of it.
 from __future__ import annotations
 
 import asyncio
-import json
+from pyutilz.core import jsonlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -61,7 +61,7 @@ class _Stream:
 
 
 def _data(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload)}"
+    return f"data: {jsonlib.dumps(payload)}"
 
 
 _REASONING = _data({"id": "gen-9", "choices": [{"delta": {"reasoning": "thinking about it"}}]})

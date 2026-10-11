@@ -1,4 +1,6 @@
 """Thin wrapper around a single global Redis connection, with retrying command execution."""
+
+from __future__ import annotations
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -16,11 +18,19 @@ logger=logging.getLogger(__name__)
 
 from typing import Any, Optional, Union
 
-import redis
 from time import sleep
 from random import random
-from redis.exceptions import AuthenticationError as RedisAuthenticationError
-from redis.exceptions import ConnectionError as RedisConnectionError
+redis: Any
+RedisAuthenticationError: Any
+RedisConnectionError: Any
+try:
+    import redis  # type: ignore[no-redef]
+    from redis.exceptions import AuthenticationError as RedisAuthenticationError  # type: ignore[no-redef]
+    from redis.exceptions import ConnectionError as RedisConnectionError  # type: ignore[no-redef]
+except ImportError:  # optional extra 'database': absent in a core-only install
+    redis = None
+    RedisAuthenticationError = None
+    RedisConnectionError = None
 
 from pyutilz.database.exceptions import DatabaseConnectionError
 

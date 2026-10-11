@@ -17,11 +17,6 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from flask import session
-
-from dash import html, dcc
-from dash.development.base_component import Component
-import dash_bootstrap_components as dbc
 from typing import Optional
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -309,6 +304,11 @@ def create_tabs(
         no-render paths, each logged at DEBUG: ``tabsList`` is empty, the current user is not
         authenticated, or no tab survived the per-tab role filter.
     """
+    from flask import session
+    from dash import html, dcc
+    from dash.development.base_component import Component
+    import dash_bootstrap_components as dbc
+
     if not tabsList:
         # tabsList[0] below is unguarded; an empty list raised IndexError at render time instead of
         # simply rendering nothing.

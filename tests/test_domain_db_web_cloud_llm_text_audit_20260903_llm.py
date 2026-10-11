@@ -31,7 +31,7 @@ from pyutilz.dev.logginglib import reset_log_throttles
 
 import asyncio
 import contextvars
-import json
+from pyutilz.core import jsonlib
 import sys
 from unittest.mock import AsyncMock, MagicMock
 
@@ -106,7 +106,7 @@ class _ReadableResponse:
 
 
 def _sse(payload: dict) -> str:
-    return "data: " + json.dumps(payload)
+    return "data: " + jsonlib.dumps(payload)
 
 
 # ── F01 ───────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from pyutilz.core import jsonlib
 from pathlib import Path
 from typing import Any, AsyncIterator, List, Optional
 
@@ -50,7 +50,7 @@ class _FakeProvider:
         return answer
 
     async def generate_json(self, prompt: str, system: Optional[str] = None) -> dict:
-        return json.loads(await self.generate(prompt, system=system))
+        return jsonlib.loads(await self.generate(prompt, system=system))
 
     async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         self.last_generation_id = "gen-stream"
@@ -88,7 +88,7 @@ class TestTheTextIsKeptBeforeTheCallerParses:
         """The shape that motivated it: the model answered, the caller's parse failed, and the answer was gone."""
         provider, store, sink = _wrapped(tmp_path, _FakeProvider(["not json {"]))
 
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(jsonlib.JSONDecodeError):
             _run(provider.generate_json("p"))
 
         (row,) = sink.read()

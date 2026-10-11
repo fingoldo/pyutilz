@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ast
 import io
-import json
+from pyutilz.core import jsonlib
 import sys
 import zlib
 from pathlib import Path
@@ -73,15 +73,15 @@ class TestProxyCredentialEscaping:
     def test_quote_in_password_does_not_break_the_script(self):
         password = 'p"a' + chr(92) + "ss"
         script = self._js(password=password)
-        # json.dumps emits an escaped literal, so the raw quote never appears unescaped.
-        assert json.dumps(password) in script
+        # jsonlib.dumps emits an escaped literal, so the raw quote never appears unescaped.
+        assert jsonlib.dumps(password) in script
         assert 'password: "p"a' not in script
 
     def test_injection_payload_stays_inside_the_string_literal(self):
         payload = 'x"};alert(1);var y={"a":"'
         script = self._js(password=payload)
-        assert json.dumps(payload) in script
-        assert "alert(1)" not in script.replace(json.dumps(payload), "")
+        assert jsonlib.dumps(payload) in script
+        assert "alert(1)" not in script.replace(jsonlib.dumps(payload), "")
 
     def test_non_numeric_port_fails_loudly(self):
         with pytest.raises(ValueError):
@@ -405,7 +405,7 @@ class _FakeProc:
     def __init__(self, events):
         self.args = ["claude"]
         self.stdin = _FakeStream()
-        self.stdout = io.StringIO("".join(json.dumps(e) + "\n" for e in events))
+        self.stdout = io.StringIO("".join(jsonlib.dumps(e) + "\n" for e in events))
         self.stderr = io.StringIO("")
         self.returncode = 0
 

@@ -13,26 +13,29 @@ import random
 from abc import abstractmethod
 from typing import Any
 
-import httpx
-from tenacity import retry, retry_if_exception
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm._openai_compat_body import RequestBodyMixin
 from pyutilz.llm.exceptions import LLMProviderError, LLMTruncationError
-from pyutilz.llm._retry import INFINITE_RETRY_KWARGS, MAX_RETRY_ATTEMPTS
+from pyutilz.llm._retry import MAX_RETRY_ATTEMPTS, lazy_retry
 from pyutilz.llm._thinking import ThinkingControlMixin
 from pyutilz.llm._timeouts import DerivedTimeoutMixin
 from pyutilz.llm._stream_attempts import StreamAttemptsMixin
 from pyutilz.llm import _reasoning
 from pyutilz.llm._progress import note_stream_progress
 from pyutilz.llm.base import LLMProvider, PerCallAttr
-from pyutilz.llm._openai_compat_http import (  # noqa: F401  -- re-exported: this module stays the public facade for these helpers
+from pyutilz.llm._openai_compat_http import (  # noqa: F401 -- re-exported: this module stays the public facade for these helpers
     _NON_RETRYABLE_STATUSES,
     _JSONDecodeError,
     LLMStreamInterruptedError,
     _accumulate_stream_tool_calls,
     _is_retryable_http_error,
-    _json_backend,
     _json_loads,
+    http_retry_policy,
     merge_extra_body,
     parse_response_envelope,
     parse_retry_after,
@@ -623,10 +626,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         """
         self._record_usage(usage)
 
-    @retry(  # type: ignore[call-overload]  # tenacity's retry() overloads can't be resolved through a **dict unpack; correct at runtime
-        retry=retry_if_exception(_is_retryable_http_error),
-        **{**INFINITE_RETRY_KWARGS, "wait": wait_honoring_retry_after(INFINITE_RETRY_KWARGS["wait"])},
-    )
+    @lazy_retry(http_retry_policy)
     async def generate(
         self,
         prompt: str,

@@ -123,7 +123,7 @@ def retry_with_backoff(
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
-                except Exception as e:  # noqa: PERF203 - per-iteration isolation is the point of a retry loop
+                except Exception as e:  # noqa: PERF203 -- per-iteration isolation is the point of a retry loop
                     last_exception = e
                     category = classify(e)
 

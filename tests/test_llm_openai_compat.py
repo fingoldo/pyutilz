@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
@@ -541,7 +541,7 @@ class TestCumulativeUsageLogging:
         # -- generate_stream() --
         p2 = _make_provider()
         lines = [
-            f"data: {json.dumps({'choices': [], 'usage': usage})}",
+            f"data: {jsonlib.dumps({'choices': [], 'usage': usage})}",
             "data: [DONE]",
         ]
         p2._client = AsyncMock()
@@ -676,7 +676,7 @@ class _FakeResponse:
 
 def test_an_empty_body_is_raised_as_a_retryable_unparsable_response():
     """OpenRouter intermittently returns an empty body on a 200. `resp.json()` reports that as
-    `json.JSONDecodeError` - a `ValueError` - which matches neither the HTTP-status nor the transport branch
+    `jsonlib.JSONDecodeError` - a `ValueError` - which matches neither the HTTP-status nor the transport branch
     of `_is_retryable_http_error`, so the call used to fail outright instead of being retried. MEASURED
     2026-08-06 in a downstream repo: across three runs of one live-LLM tier a DIFFERENT test failed each
     time and one run was green, which reads as flaky tests rather than one retryable fault.
@@ -946,8 +946,8 @@ class TestAnErrorChunkInAStreamIsNotSkipped:
 
         monkeypatch.setattr(openai_compat_mod, "MAX_RETRY_ATTEMPTS", 3)
         monkeypatch.setattr(openai_compat_mod.asyncio, "sleep", _no_sleep)
-        error_line = f"data: {json.dumps({'id': 'gen-1', 'error': {'code': 429, 'message': 'temporarily rate-limited upstream'}})}"
-        answer_lines = [f"data: {json.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}", "data: [DONE]"]
+        error_line = f"data: {jsonlib.dumps({'id': 'gen-1', 'error': {'code': 429, 'message': 'temporarily rate-limited upstream'}})}"
+        answer_lines = [f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'ok'}, 'finish_reason': 'stop'}]})}", "data: [DONE]"]
         p = _make_provider()
         p._client = AsyncMock()
         p._client.stream = MagicMock(side_effect=[_MockStreamResponse(lines=[error_line]), _MockStreamResponse(lines=answer_lines)])
@@ -960,8 +960,8 @@ class TestAnErrorChunkInAStreamIsNotSkipped:
     @pytest.mark.asyncio
     async def test_an_error_after_content_raises_instead_of_returning_a_cut_answer(self):
         lines = [
-            f"data: {json.dumps({'choices': [{'delta': {'content': 'partial answer text'}}]})}",
-            f"data: {json.dumps({'error': {'code': 502, 'message': 'upstream connection lost'}})}",
+            f"data: {jsonlib.dumps({'choices': [{'delta': {'content': 'partial answer text'}}]})}",
+            f"data: {jsonlib.dumps({'error': {'code': 502, 'message': 'upstream connection lost'}})}",
             "data: [DONE]",
         ]
         p = _make_provider()

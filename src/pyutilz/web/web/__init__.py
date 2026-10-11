@@ -24,7 +24,6 @@ a submodule-local copy would silently diverge from it.
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
-import json
 import logging
 import os
 
@@ -40,7 +39,11 @@ from ._common import logger
 
 from typing import Any, Callable, List, Optional, Sequence
 
-import requests
+requests: Any
+try:
+    import requests  # type: ignore[no-redef]
+except ImportError:  # optional extra 'web': absent in a core-only install
+    requests = None
 import urllib.request
 import urllib.parse
 from random import random, shuffle
@@ -144,7 +147,6 @@ init_vars()
 # The submodule names themselves are deliberately NOT listed: they are new, and leaking them into
 # `pyutilz.web` would add package attributes that never existed.
 __all__ = [
-    "json",
     "logging",
     "os",
     "logger",

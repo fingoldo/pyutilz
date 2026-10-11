@@ -6,38 +6,55 @@ explicitly (``get_llm_settings(env_file=...)`` or ``PYUTILZ_LLM_ENV_FILE``) -- n
 Callers can also inject their own settings object into the factory.
 """
 
+import functools
 import logging
 import os
 import threading
 import time
-from typing import Optional, Union
-
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyutilz.llm._unset import UNSET_ENV_FILE, _Unset
+
+if TYPE_CHECKING:
+    # Static alias only: the runtime class is built lazily by _llm_settings_class() (see __getattr__ below).
+    LLMSettings = Any
 
 logger = logging.getLogger(__name__)
 
 
-class LLMSettings(BaseSettings):
-    """LLM provider settings loaded from environment variables."""
+@functools.lru_cache(maxsize=1)
+def _llm_settings_class() -> type:
+    """Build the ``LLMSettings`` pydantic class on first use, so importing this module needs no pydantic (see ``__getattr__``)."""
+    from pydantic import SecretStr
+    from pydantic_settings import BaseSettings, SettingsConfigDict
 
-    # No default env_file: see get_llm_settings() for why a bare relative ".env" (resolved against
-    # whatever directory the process happens to be in) is not a safe place to read API keys from.
-    # Callers who want one pass it explicitly, or set PYUTILZ_LLM_ENV_FILE.
-    model_config = SettingsConfigDict(
-        env_file=None,
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    class LLMSettings(BaseSettings):
+        """LLM provider settings loaded from environment variables."""
 
-    anthropic_api_key: Optional[SecretStr] = None
-    gemini_api_key: Optional[SecretStr] = None
-    deepseek_api_key: Optional[SecretStr] = None
-    xai_api_key: Optional[SecretStr] = None
-    openai_api_key: Optional[SecretStr] = None
-    openrouter_api_key: Optional[SecretStr] = None
+        # No default env_file: see get_llm_settings() for why a bare relative ".env" (resolved against
+        # whatever directory the process happens to be in) is not a safe place to read API keys from.
+        # Callers who want one pass it explicitly, or set PYUTILZ_LLM_ENV_FILE.
+        model_config = SettingsConfigDict(
+            env_file=None,
+            env_file_encoding="utf-8",
+            extra="ignore",
+        )
+
+        anthropic_api_key: Optional[SecretStr] = None
+        gemini_api_key: Optional[SecretStr] = None
+        deepseek_api_key: Optional[SecretStr] = None
+        xai_api_key: Optional[SecretStr] = None
+        openai_api_key: Optional[SecretStr] = None
+        openrouter_api_key: Optional[SecretStr] = None
+
+    return LLMSettings
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``LLMSettings`` lazily: the pydantic-settings class is built on first access, not at import."""
+    if name == "LLMSettings":
+        return _llm_settings_class()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Regression fix (2026-07-21 audit round 2, LOW): a plain ``@lru_cache`` cached the *one*
@@ -59,7 +76,7 @@ except ValueError:
     )
     _SETTINGS_TTL_SECONDS = _DEFAULT_SETTINGS_TTL_SECONDS
 _settings_lock = threading.Lock()
-_cached_settings: Optional[LLMSettings] = None
+_cached_settings: Optional["LLMSettings"] = None
 _cached_settings_at: float = float("-inf")
 # Sentinel distinguishing "caller said nothing" (consult PYUTILZ_LLM_ENV_FILE) from an explicit
 # ``env_file=None`` (environment variables only) -- None is a meaningful value here, so it cannot
@@ -69,7 +86,7 @@ _UNSET_ENV_FILE = UNSET_ENV_FILE
 _cached_env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE
 
 
-def get_llm_settings(env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE) -> LLMSettings:
+def get_llm_settings(env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE) -> "LLMSettings":
     """Get the LLM settings instance, refreshed at most once per ``_SETTINGS_TTL_SECONDS``
     (default 60s, override via ``PYUTILZ_LLM_SETTINGS_TTL_SECONDS``).
 
@@ -107,7 +124,7 @@ def get_llm_settings(env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE) -> LL
         # The ignore below: `_env_file` is pydantic-settings' documented per-instantiation
         # override of model_config's env_file, but BaseSettings.__init__ is typed with only the
         # model's own fields, so mypy sees it as an unexpected keyword.
-        _cached_settings = LLMSettings(_env_file=env_file)  # type: ignore[call-arg]
+        _cached_settings = _llm_settings_class()(_env_file=env_file)  # type: ignore[call-arg]
         _cached_settings_at = now
         return _cached_settings
 

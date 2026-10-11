@@ -20,7 +20,6 @@ logger=logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import os
-import json
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Typing
@@ -56,7 +55,7 @@ if TYPE_CHECKING:
 # Utilz
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from pyutilz.core import pythonlib
+from pyutilz.core import jsonlib, pythonlib
 
 from datetime import datetime, timezone
 from time import sleep
@@ -232,10 +231,10 @@ def _build_proxy_extension_js(proxy_server: dict) -> str:
         # so it supplies its own quotes -- the `"%s"` wrappers are gone from the template
         # above. The port goes through int() + %d so a non-numeric port fails loudly here
         # instead of being spliced into parseInt().
-        json.dumps(str(proxy_server["PROXY_HOST"])),
+        jsonlib.dumps(str(proxy_server["PROXY_HOST"])),
         int(proxy_server["PROXY_PORT"]),
-        json.dumps(str(proxy_server["PROXY_USER"])),
-        json.dumps(str(proxy_server["PROXY_PASS"])),
+        jsonlib.dumps(str(proxy_server["PROXY_USER"])),
+        jsonlib.dumps(str(proxy_server["PROXY_PASS"])),
     )
 
 

@@ -570,8 +570,7 @@ from pyutilz.strings import json_pg_dumps
 
 
 def test_json_pg_dumps_basic():
-    import json as _json
-
+    from pyutilz.core import jsonlib as _jsonlib
     result = json_pg_dumps({"a": 1})
     assert result.adapted == {"a": 1}
     # Compare the quoted literal SEMANTICALLY, not byte-for-byte: the adapter now hands psycopg2 the
@@ -581,7 +580,7 @@ def test_json_pg_dumps_basic():
     # faster serializer.
     quoted = result.getquoted()
     assert quoted.startswith(b"'") and quoted.endswith(b"'")
-    assert _json.loads(quoted[1:-1].decode("utf-8")) == {"a": 1}
+    assert _jsonlib.loads(quoted[1:-1].decode("utf-8")) == {"a": 1}
 
 
 def test_json_pg_dumps_strips_embedded_nul():

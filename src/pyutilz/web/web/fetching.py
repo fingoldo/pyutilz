@@ -3,12 +3,13 @@ rotation (``get_new_session``) and block-handling (``handle_blocking``) it drive
 
 import http
 import warnings
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 # Imported for the ``Optional[requests.Response]`` return annotation on get_url() only -- every
 # actual call goes through ``_facade.requests`` so that patching ``pyutilz.web.web.requests``
 # (which tests do, to swap in a mock Session factory) is honoured here.
-import requests
+if TYPE_CHECKING:  # runtime calls go through _facade.requests
+    import requests
 
 from ._common import logger
 
@@ -41,7 +42,7 @@ def get_url(
     ratelimited_proxy_sleep_interval: int = 0,
     ratelimiting_statuses: Sequence = (429,),
     session_expired_statuses: Sequence = (),
-) -> Optional[requests.Response]:
+) -> Optional["requests.Response"]:
     """Fetch ``url`` (GET/POST/etc per ``verb``) with retries, proxy rotation and rate-limit/blocking handling.
 
     Manages the module-level session/proxy/header state (creating a new session when needed,

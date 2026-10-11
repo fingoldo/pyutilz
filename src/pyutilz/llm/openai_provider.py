@@ -6,7 +6,11 @@ import logging
 import re
 from typing import Any
 
-import httpx
+httpx: Any
+try:
+    import httpx  # type: ignore[no-redef]
+except ImportError:  # optional extra 'llm': absent in a core-only install
+    httpx = None
 
 from pyutilz.llm.base import longest_prefix_lookup, normalize_thinking
 from pyutilz.llm.config import get_llm_settings

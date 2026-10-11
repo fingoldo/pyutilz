@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
-import json
+from pyutilz.core import jsonlib
 import subprocess  # nosec B404 - runs the repo's own pinned linter on the repo's own source, no external input
 import sys
 from pathlib import Path
@@ -91,7 +91,7 @@ def collect_unused_parameters(root: Path) -> dict[str, str]:
 
     findings: dict[str, str] = {}
     by_file: dict[str, dict[tuple[int, int], str]] = {}
-    for item in json.loads(proc.stdout or "[]"):
+    for item in jsonlib.loads(proc.stdout or "[]"):
         filename = Path(item["filename"]).resolve()
         rel = filename.relative_to(root).as_posix()
         owners = by_file.setdefault(str(filename), _enclosing_functions(filename))
@@ -108,7 +108,7 @@ def _load_baseline() -> dict[str, str]:
     if not _BASELINE_PATH.exists():
         return {}
     with _BASELINE_PATH.open(encoding="utf-8") as fh:
-        data = json.load(fh)
+        data = jsonlib.loads(fh.read())
     return dict(data.get("entries", data))
 
 
@@ -123,7 +123,7 @@ def _write_baseline(findings: dict[str, str], previous: dict[str, str]) -> None:
         "entries": entries,
     }
     with _BASELINE_PATH.open("w", encoding="utf-8", newline="\n") as fh:
-        json.dump(payload, fh, indent=2, ensure_ascii=True)
+        fh.write(jsonlib.dumps(payload, indent=True))
         fh.write("\n")
 
 

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
+from pyutilz.core import jsonlib
 from pyutilz.llm import _progress
 from pyutilz.dev.logginglib import ONCE, log_throttle
 from pyutilz.llm.exceptions import (
@@ -202,6 +202,31 @@ _BATCH_KNOWN_KEYS: frozenset[str] = frozenset({"id", "prompt", "system", "temper
 _JSON_SCAN_BUDGET_CHARS = 20_000_000
 
 
+def _object_span_end(text: str, start: int) -> int:
+    """Index just past the ``}`` closing the ``{`` at ``start``, honouring JSON string quoting and escapes; -1 if it never closes."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for j in range(start, len(text)):
+        ch = text[j]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return -1
+
+
 def _require_json_object(obj: Any, provider_name: str) -> dict[str, Any]:
     """Return ``obj`` when it is a JSON object, else raise :class:`JSONParsingError`.
 
@@ -341,10 +366,10 @@ class LLMProvider(ABC):
         """Extract and parse JSON from LLM response, handling code blocks.
 
         Strategy: prefer markdown-fenced JSON, then scan the body with
-        ``json.JSONDecoder.raw_decode`` from each ``{`` candidate. The
+        a brace-matched span from each ``{`` candidate (:func:`_object_span_end`). The
         scan-based approach replaces brittle regexes — a lazy ``\\{...?\\}``
         stops at the first ``}`` even mid-object, while a greedy form
-        crosses multiple objects. ``raw_decode`` knows JSON's grammar.
+        crosses multiple objects. The span honours JSON string quoting and escapes.
 
         Args:
             text: Raw LLM response that may contain JSON in code blocks.
@@ -378,8 +403,8 @@ class LLMProvider(ABC):
                 # error is swallowed -- _require_json_object's raise still propagates, so a fenced
                 # top-level array remains a hard error exactly as before.
                 try:
-                    return _require_json_object(json.loads(fence_match.group(1)), provider_name)
-                except json.JSONDecodeError:
+                    return _require_json_object(jsonlib.loads(fence_match.group(1)), provider_name)
+                except jsonlib.JSONDecodeError:
                     pass
 
             # 2. Strip leading fence even without a closing fence (some
@@ -396,8 +421,8 @@ class LLMProvider(ABC):
             # 3. Try the whole stripped text first (cheap path: most
             #    json_mode= responses are pure JSON).
             try:
-                return _require_json_object(json.loads(stripped), provider_name)
-            except json.JSONDecodeError:
+                return _require_json_object(jsonlib.loads(stripped), provider_name)
+            except jsonlib.JSONDecodeError:
                 pass
 
             # 4. Scan for the first parseable JSON object via raw_decode.
@@ -410,15 +435,20 @@ class LLMProvider(ABC):
             #    made the scan quadratic (measured 10 s on 180 KB). The scan therefore stops once the failures
             #    have cost _JSON_SCAN_BUDGET_CHARS; a normal response never gets near it, and an object nested in
             #    an unterminated one (``{"a": {"b": 2}``) is still found.
-            decoder = json.JSONDecoder()
             spent = 0
             for i, ch in enumerate(stripped):
                 if ch != "{":
                     continue
+                end = _object_span_end(stripped, i)
+                if end < 0:
+                    spent += len(stripped) - i
+                    if spent >= _JSON_SCAN_BUDGET_CHARS:
+                        break
+                    continue
                 try:
-                    obj, _end = decoder.raw_decode(stripped, i)
-                except json.JSONDecodeError as scan_err:
-                    spent += max(scan_err.pos, i)
+                    obj = jsonlib.loads(stripped[i:end])
+                except jsonlib.JSONDecodeError:
+                    spent += end - i
                     if spent >= _JSON_SCAN_BUDGET_CHARS:
                         break
                     continue
@@ -427,8 +457,8 @@ class LLMProvider(ABC):
 
             # 5. Last resort — re-raise via the original strict parse so
             #    the JSONDecodeError handler below produces a clean error.
-            return _require_json_object(json.loads(stripped), provider_name)
-        except (json.JSONDecodeError, RecursionError) as e:
+            return _require_json_object(jsonlib.loads(stripped), provider_name)
+        except (jsonlib.JSONDecodeError, RecursionError) as e:
             # RecursionError is what the decoder raises on deeply nested input ("[[[[..." or {"a":{"a":... loops from
             # a degenerate decoder). It used to escape the JSONParsingError contract and every LLMProviderError handler.
             # Before reporting as malformed JSON, check whether the model
@@ -508,7 +538,7 @@ class LLMProvider(ABC):
         A stable key for response caches and benchmark ledgers: equal for identically configured providers (a
         tuple and a list of the same items digest the same) and different whenever the route can differ.
         """
-        blob = json.dumps(self._route_payload(), sort_keys=True, separators=(",", ":"), default=str)
+        blob = jsonlib.dumps(self._route_payload(), sort_keys=True, default=str)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     @property

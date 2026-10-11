@@ -1,5 +1,7 @@
 """Incremental builders and memory-usage helpers for scipy sparse (CSR/COO) matrices."""
 
+from __future__ import annotations
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -15,10 +17,12 @@ logger=logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
 import numpy as np
-from scipy.sparse import csr_matrix, csc_matrix, coo_matrix
+
+if TYPE_CHECKING:  # scipy is an optional extra; runtime imports below are lazy
+    from scipy.sparse import csr_matrix
 
 class CsrIndPtrConstructor:
     """Incremental builder of CSR matrices from (indptr, indices, data) triples.
@@ -51,6 +55,8 @@ class CsrIndPtrConstructor:
             # Elements were added since the last add_row(): indptr's final boundary excludes them,
             # so building now would silently drop that whole row. Close it instead.
             self.add_row()
+        from scipy.sparse import csr_matrix
+
         matrix = csr_matrix((self.data, self.indices, self.indptr), dtype=dtype)
         if clear_source:
             # Reset to empty buffers rather than `del`-ing the attributes, which left the builder
@@ -86,6 +92,8 @@ class CsrRowColConstructor:
             clear_source: if True, empty the internal buffers after building, leaving the
                 instance reusable for the next matrix.
         """
+        from scipy.sparse import csr_matrix
+
         matrix = csr_matrix((self.data, (self.rows, self.cols)), dtype=dtype)
         if clear_source:
             self.rows = []
@@ -102,6 +110,8 @@ def get_sparse_memory_usage(mat: object) -> int:
     "unsupported input" sentinel let callers silently under-count real memory usage when summing
     across mixed container types.
     """
+    from scipy.sparse import coo_matrix, csc_matrix, csr_matrix
+
     try:
         if isinstance(mat, (csr_matrix, csc_matrix)):
             # csr and csc share the same (data, indptr, indices) layout, just transposed semantics.

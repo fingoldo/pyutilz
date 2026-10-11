@@ -10,8 +10,7 @@ not.
 from __future__ import annotations
 
 import asyncio
-import json
-
+from pyutilz.core import jsonlib
 import pytest
 
 import pyutilz.llm.claude_code_provider as ccp
@@ -86,7 +85,7 @@ def fake_cli(monkeypatch):
     made: "list[_FakeProc]" = []
 
     def _popen(cmd, **kwargs):
-        proc = _FakeProc([json.dumps({"type": "system", "subtype": "init"}) + "\n", json.dumps(_RESULT) + "\n"])
+        proc = _FakeProc([jsonlib.dumps({"type": "system", "subtype": "init"}) + "\n", jsonlib.dumps(_RESULT) + "\n"])
         proc.cmd = cmd
         proc.kwargs = kwargs
         made.append(proc)

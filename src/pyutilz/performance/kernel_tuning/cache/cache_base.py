@@ -5,7 +5,7 @@ import contextlib
 import datetime as _dt
 import errno
 import hashlib
-import json
+from pyutilz.core import jsonlib
 import logging
 import os
 import re
@@ -268,7 +268,7 @@ def _load_hw_fp_entries(path: str) -> Dict[str, Any]:
     """Entries of a schema-compatible fingerprint file (``{}`` when it is missing, unreadable or of another schema)."""
     try:
         with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+            data = jsonlib.loads(f.read())
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict) or data.get("schema_version") != _HW_FP_SCHEMA_VERSION:
@@ -320,7 +320,7 @@ def _write_hw_fingerprint_to_disk(fingerprint: str, selector: Optional[str] = No
         # let one process ``os.replace`` a file the other was still writing.
         tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"schema_version": _HW_FP_SCHEMA_VERSION, "entries": entries}, f)
+            f.write(jsonlib.dumps({"schema_version": _HW_FP_SCHEMA_VERSION, "entries": entries}))
         os.replace(tmp, path)
     except Exception as e:
         logger.debug("hw_fingerprint: failed to persist to disk: %s", e)

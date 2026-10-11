@@ -19,7 +19,7 @@ Library usage::
 from __future__ import annotations
 
 import argparse
-import json
+from pyutilz.core import jsonlib
 import re
 import subprocess  # nosec B404 - shells out to the trusted local `gh` CLI only, no untrusted input reaches the shell
 from dataclasses import dataclass, field
@@ -106,10 +106,10 @@ def _gh_json(args: list[str]) -> Any:
     # encoding="utf-8", errors="replace" -- NOT text=True, which decodes with
     # locale.getpreferredencoding(False) (cp1251 on a Russian-locale Windows box). CI logs are
     # UTF-8: a byte undefined in the ambient codepage raises UnicodeDecodeError inside subprocess's
-    # own reader thread, where it is swallowed, and stdout silently becomes None -- json.loads(None)
+    # own reader thread, where it is swallowed, and stdout silently becomes None -- jsonlib.loads(None)
     # then raises TypeError with no trace of the real cause. Without such a byte it merely mojibakes.
     result = subprocess.run(["gh", *args], capture_output=True, encoding="utf-8", errors="replace", check=True)  # nosec B603 B607 - fixed `gh` binary, args are caller-controlled repo/run identifiers, not untrusted input
-    return json.loads(result.stdout)
+    return jsonlib.loads(result.stdout)
 
 
 def _list_job_ids(repo: str, run_id: str, conclusion: str | None) -> dict[str, str]:

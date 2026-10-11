@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 from time import sleep
-import prefect
 from typing import Optional, Union
 
 client = None
@@ -30,6 +29,8 @@ client = None
 
 def connect(prefect_key: Optional[str] = None) -> None:
     """Create the module-level Prefect ``client`` from ``prefect_key`` (or from ``settings.ini``'s ``[PREFECT] prefect_key`` if not given) and hook it into the graphql helper; sets ``client`` to None if no key is available."""
+    import prefect
+
     global client
     if prefect_key is None:
         # locals() inside a normal function scope is a DISCONNECTED SNAPSHOT dict in CPython --

@@ -165,7 +165,7 @@ _SPLITTABLE = '''"""A module that grew too big."""
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 from pathlib import Path
 
 CONSTANT = 3
@@ -180,7 +180,7 @@ def keep_me(x):
 # the move has to be contiguous rather than name-by-name.
 def move_a(payload):
     """First moved."""
-    return json.dumps(payload, sort_keys=True)
+    return jsonlib.dumps(payload, sort_keys=True)
 
 
 def move_b(path):
@@ -273,7 +273,7 @@ def test_the_split_module_still_imports_and_behaves(tmp_path, monkeypatch):
 
     monkeypatch.syspath_prepend(str(tmp_path))
     module = importlib.import_module("splitpkg.big")
-    assert module.move_a({"b": 1, "a": 2}) == '{"a": 2, "b": 1}'
+    assert module.move_a({"b": 1, "a": 2}) == '{"a":2,"b":1}'
     assert module.move_b("/x/y/z.txt") == "z.txt"
     assert module.keep_me(1) == 4
 

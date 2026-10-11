@@ -17,7 +17,7 @@ module -- cheap startup, no import-deadlock under disk contention.
 """
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import os
 import subprocess
 import sys
@@ -91,13 +91,13 @@ def test_same_kernel_exactly_one_sweep_no_lost_update(host_dir, tmp_path):
     procs = [_launch("same_kernel", host_dir, outs[i], sleep_ms=400) for i in range(n)]
     _run_workers(procs)
 
-    results = [json.load(open(o, encoding="utf-8")) for o in outs]
+    results = [jsonlib.loads(open(o, encoding="utf-8").read()) for o in outs]
     swept = [r for r in results if r["ran_sweep"]]
     assert len(swept) == 1, f"expected exactly one sweep, got {len(swept)}: {[r['pid'] for r in swept]}"
     # All workers must end up with the SAME persisted winner (the one sweep).
-    winners = {json.dumps(r["persisted"], sort_keys=True) for r in results if r["persisted"]}
+    winners = {jsonlib.dumps(r["persisted"], sort_keys=True) for r in results if r["persisted"]}
     assert len(winners) == 1, f"workers disagree on persisted winner: {winners}"
-    assert json.loads(next(iter(winners)))["backend"] == "measured"
+    assert jsonlib.loads(next(iter(winners)))["backend"] == "measured"
 
 
 @pytest.mark.timeout(480)
@@ -114,7 +114,7 @@ def test_different_kernels_no_lost_update_D1(host_dir, tmp_path):
 
     # Each worker swept its own kernel + persisted it.
     for i in range(n):
-        r = json.load(open(outs[i], encoding="utf-8"))
+        r = jsonlib.loads(open(outs[i], encoding="utf-8").read())
         assert r["ran_sweep"], f"{kernels[i]} did not sweep"
         assert r["persisted"] and r["persisted"]["backend"] == "measured"
 
@@ -140,7 +140,7 @@ def test_stale_marker_is_stolen_when_owner_pid_dead(host_dir):
     marker = cache._marker_path("wedged", "cv1")
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     with open(marker, "w", encoding="utf-8") as f:
-        json.dump({"pid": 999999999, "start_ts": time.time(), "host": ktc.hw_fingerprint()}, f)
+        f.write(jsonlib.dumps({"pid": 999999999, "start_ts": time.time(), "host": ktc.hw_fingerprint()}))
 
     swept = {"v": False}
 
@@ -165,7 +165,7 @@ def test_stale_marker_is_stolen_when_start_ts_expired(host_dir, monkeypatch):
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     # Our OWN live pid, but a start_ts well past the 1s budget -> stealable.
     with open(marker, "w", encoding="utf-8") as f:
-        json.dump({"pid": os.getpid(), "start_ts": time.time() - 100, "host": ktc.hw_fingerprint()}, f)
+        f.write(jsonlib.dumps({"pid": os.getpid(), "start_ts": time.time() - 100, "host": ktc.hw_fingerprint()}))
 
     swept = {"v": False}
 
@@ -237,7 +237,7 @@ def test_live_in_budget_marker_is_NOT_stolen(host_dir):
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     # Our own (alive) pid + a fresh start_ts -> a legitimate in-flight sweep.
     with open(marker, "w", encoding="utf-8") as f:
-        json.dump({"pid": os.getpid(), "start_ts": time.time(), "host": ktc.hw_fingerprint()}, f)
+        f.write(jsonlib.dumps({"pid": os.getpid(), "start_ts": time.time(), "host": ktc.hw_fingerprint()}))
 
     swept = {"v": False}
 
@@ -262,7 +262,7 @@ def test_lookup_never_blocks_during_inprogress_sweep(host_dir):
     marker = cache._marker_path("kx", "cv1")
     os.makedirs(os.path.dirname(marker), exist_ok=True)
     with open(marker, "w", encoding="utf-8") as f:
-        json.dump({"pid": os.getpid(), "start_ts": time.time(), "host": ktc.hw_fingerprint()}, f)
+        f.write(jsonlib.dumps({"pid": os.getpid(), "start_ts": time.time(), "host": ktc.hw_fingerprint()}))
     try:
         ktc.hw_fingerprint.cache_clear()
         fresh = ktc.KernelTuningCache()

@@ -33,11 +33,12 @@ import dataclasses
 import functools
 import hashlib
 import inspect
-import json
 import logging
 import os
 import tempfile
 import time
+
+from pyutilz.core import jsonlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterable, List, Optional, Union
@@ -214,7 +215,7 @@ class JsonlAttemptSink:
 
     async def record(self, attempt: AttemptRecord) -> None:
         """Append one attempt as a JSON line; a failed write is logged and counted, never raised."""
-        line = json.dumps(attempt.to_dict(), sort_keys=True, ensure_ascii=False, default=str)
+        line = jsonlib.dumps(attempt.to_dict(), sort_keys=True, default=str)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as fh:
@@ -229,7 +230,7 @@ class JsonlAttemptSink:
         """Every attempt written so far, oldest first."""
         if not self.path.exists():
             return []
-        return [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return [jsonlib.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _int_or_none(value: Any) -> Optional[int]:

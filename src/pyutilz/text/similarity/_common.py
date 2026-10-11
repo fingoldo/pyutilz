@@ -17,9 +17,13 @@ logger = logging.getLogger("pyutilz.text.similarity")
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-from jellyfish import levenshtein_distance  # noqa: F401 -- re-exported for ``sentences.py``/``basics.py``
+levenshtein_distance: Any
+try:
+    from jellyfish import levenshtein_distance  # type: ignore[no-redef]
+except ImportError:  # optional extra 'nlp': absent in a core-only install
+    levenshtein_distance = None
 from pyutilz.text.strings import strip_doubled_characters  # noqa: F401 -- re-exported for ``basics.py``
-from typing import Optional  # re-exported for every submodule
+from typing import Any, Optional  # re-exported for every submodule
 
 # Above this many tokens per sentence, the O(w_min * N_a * N_b) greedy matching pass
 # (a full rescan of the similarity matrix for each of the w_min greedy picks, on top of the

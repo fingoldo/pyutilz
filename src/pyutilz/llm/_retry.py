@@ -12,16 +12,11 @@ consecutive read timeouts (``PYUTILZ_LLM_MAX_CONSECUTIVE_TIMEOUTS``, default 3, 
 
 from __future__ import annotations  # PEP 604 in a runtime-evaluated annotation below; the floor is 3.8
 
+import functools
 import logging
 import os
-from typing import Any
-
-from tenacity import (
-    stop_after_attempt,
-    stop_never,
-    wait_exponential,
-    wait_random,
-)
+import types
+from typing import Any, Callable, TypeVar, cast
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +61,20 @@ def log_retry(retry_state) -> None:
 # actually produce 5, 5, 8, 16, 32, 64, 128, 256, 300 -- the first two attempts both floor at 5s
 # before the doubling pattern becomes visible, not a clean 5/10/20/... sequence), capped at 300s
 # (5 min), plus random jitter to avoid thundering herd.
-RETRY_WAIT = wait_exponential(multiplier=2, min=5, max=300) + wait_random(0, 5)
+@functools.lru_cache(maxsize=1)
+def retry_wait() -> Any:
+    """The shared wait strategy, built on first use so tenacity is imported lazily (the llm modules import without it)."""
+    from tenacity import wait_exponential, wait_random
 
-_STOP_ATTEMPTS = stop_never if MAX_RETRY_ATTEMPTS == 0 else stop_after_attempt(MAX_RETRY_ATTEMPTS)
+    return wait_exponential(multiplier=2, min=5, max=300) + wait_random(0, 5)
+
+
+@functools.lru_cache(maxsize=1)
+def _attempt_cap() -> Any:
+    """The shared attempt cap (``MAX_RETRY_ATTEMPTS``; 0 = never stop), built on first use."""
+    from tenacity import stop_after_attempt, stop_never
+
+    return stop_never if MAX_RETRY_ATTEMPTS == 0 else stop_after_attempt(MAX_RETRY_ATTEMPTS)
 
 # ── Billing pauses get a grace window, not the full schedule ────────────────────────────────────
 #
@@ -187,16 +193,67 @@ def _stop_policy(retry_state: Any) -> bool:
                 elapsed,
             )
             return True
-    return bool(_STOP_ATTEMPTS(retry_state))
+    return bool(_attempt_cap()(retry_state))
 
 
 _STOP = _stop_policy
 
-# Common tenacity kwargs for retry on transient errors.
-# Each provider supplies its own `retry=` predicate.
-INFINITE_RETRY_KWARGS = dict(
-    wait=RETRY_WAIT,
-    stop=_STOP,
-    before_sleep=log_retry,
-    reraise=True,
-)
+def infinite_retry_kwargs() -> dict[str, Any]:
+    """Common tenacity kwargs for retry on transient errors. Each provider supplies its own ``retry=`` predicate."""
+    return dict(wait=retry_wait(), stop=_STOP, before_sleep=log_retry, reraise=True)
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+class _LazyRetry:
+    """A method whose tenacity policy is built on first use, keeping tenacity's ``.retry`` / ``__wrapped__`` surface."""
+
+    def __init__(self, fn: Callable[..., Any], factory: Callable[[], dict[str, Any]]) -> None:
+        self.__wrapped__ = fn
+        self.__name__ = getattr(fn, "__name__", "retrying")
+        self.__doc__ = fn.__doc__
+        self._factory = factory
+        self._built: Any = None
+
+    def _policy(self) -> Any:
+        if self._built is None:
+            from tenacity import retry
+
+            self._built = retry(**self._factory())(self.__wrapped__)  # type: ignore[call-overload]  # tenacity's retry() overloads don't resolve through a **dict unpack
+        return self._built
+
+    @property
+    def retry(self) -> Any:
+        """tenacity's ``Retrying`` object (stop/wait are read and assigned through it, as on a plain tenacity wrapper)."""
+        return self._policy().retry
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._policy()(*args, **kwargs)
+
+    def __get__(self, obj: Any, objtype: Any = None) -> Any:
+        if obj is None:
+            return self
+        return types.MethodType(self, obj)
+
+
+def lazy_retry(factory: Callable[[], dict[str, Any]]) -> Callable[[_F], _F]:
+    """Tenacity ``@retry`` whose policy comes from ``factory()`` on the first call, not at decoration time.
+
+    Decoration-time construction imports tenacity (and any SDK the policy names) at class definition, which makes the
+    module unimportable without the optional extra. The policy is built once and cached; retry behaviour is unchanged.
+    """
+
+    def decorate(fn: _F) -> _F:
+        return cast(_F, _LazyRetry(fn, factory))
+
+    return decorate
+
+
+def __getattr__(name: str) -> Any:
+    """Back-compat names ``RETRY_WAIT`` and ``INFINITE_RETRY_KWARGS``, resolved lazily (importing them builds tenacity objects)."""
+    if name == "RETRY_WAIT":
+        return retry_wait()
+    if name == "INFINITE_RETRY_KWARGS":
+        return infinite_retry_kwargs()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 from pathlib import Path
 
 from pyutilz.dev.persistence_sweep import field_sentinels, file_sentinel_locations, jsonl_records, records_holding, written_files
@@ -13,13 +13,13 @@ def _write_store(root: Path) -> None:
     rows = root / "bench" / "results.jsonl"
     rows.parent.mkdir(parents=True)
     rows.write_text(
-        json.dumps({"article": "a1", "claim": "ZZSENT0000ZZ", "confident": True, "p": 0.25}) + "\n"
-        + json.dumps({"article": "a2", "claim": "other", "confident": 1, "p": 0.5}) + "\n",
+        jsonlib.dumps({"article": "a1", "claim": "ZZSENT0000ZZ", "confident": True, "p": 0.25}) + "\n"
+        + jsonlib.dumps({"article": "a2", "claim": "other", "confident": 1, "p": 0.5}) + "\n",
         encoding="utf-8",
     )
     doc = root / "store" / "a1.json"
     doc.parent.mkdir(parents=True)
-    doc.write_text(json.dumps({"triples": [{"note": "ZZSENT0001ZZ", "moderator": {"value": "70-99% é"}}]}), encoding="utf-8")
+    doc.write_text(jsonlib.dumps({"triples": [{"note": "ZZSENT0001ZZ", "moderator": {"value": "70-99% é"}}]}), encoding="utf-8")
 
 
 class TestTheSweepFindsWhatWasWritten:
@@ -41,7 +41,7 @@ class TestTheSweepFindsWhatWasWritten:
         assert found == {"_control": []}
 
     def test_escaped_non_ascii_is_searched_decoded(self, tmp_path: Path) -> None:
-        """json.dumps writes é as \\u00e9 by default; a caller's own sentinel with non-ASCII must still be found."""
+        """jsonlib.dumps writes é as \\u00e9 by default; a caller's own sentinel with non-ASCII must still be found."""
         _write_store(tmp_path)
 
         found = file_sentinel_locations({"moderator": "70-99% é"}, written_files([tmp_path]))

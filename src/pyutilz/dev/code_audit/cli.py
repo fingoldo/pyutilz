@@ -1,11 +1,12 @@
 """(internal) part of pyutilz.dev.code_audit; see package __init__ for docs."""
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from dataclasses import asdict
 from typing import Optional
+
+from pyutilz.core import jsonlib
 
 from ._base import SEVERITIES, Finding, UNKNOWN_SEVERITY_RANK, _DEFAULT_EXCLUDE_DIRS, severity_rank
 from .registry import get_check_aliases, get_scanners, render_check_catalogue, run_all
@@ -27,7 +28,7 @@ def _render_markdown(findings: list[Finding]) -> str:
 
 def _render_json(findings: list[Finding]) -> str:
     """Renders findings as a sorted-keys, indented JSON array of dataclass dicts."""
-    return json.dumps([asdict(f) for f in findings], indent=2, sort_keys=True)
+    return jsonlib.dumps([asdict(f) for f in findings], indent=True, sort_keys=True)
 
 
 def main(argv: Optional[list[str]] = None) -> int:

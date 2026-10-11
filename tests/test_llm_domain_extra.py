@@ -163,8 +163,7 @@ class TestLLMTruncationErrorWiring:
         p._provider_name = "OpenAI"
 
         async def fake_post(*a, **kw):
-            import json as _json
-
+            from pyutilz.core import jsonlib as _jsonlib
             class _Resp:
                 status_code = 200
                 headers = {}
@@ -183,7 +182,7 @@ class TestLLMTruncationErrorWiring:
                 # truncation-error path this test targets.
                 @property
                 def text(self):
-                    return _json.dumps(self.json())
+                    return _jsonlib.dumps(self.json())
 
             return _Resp()
 

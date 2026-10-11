@@ -29,11 +29,12 @@ step is worth more than the niceties of a real object store.
 
 from __future__ import annotations
 
-import json
 import logging
 import urllib.request
 from functools import lru_cache
 from typing import Any, Dict, Iterator, List
+
+from pyutilz.core import jsonlib
 
 from pyutilz.web.url_guard import urlopen_checked
 
@@ -67,7 +68,7 @@ def _get_json(url: str, timeout: int = 60) -> Dict[str, Any]:
     """One JSON GET with the agent set, since every endpoint here needs it."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urlopen_checked(request, timeout=timeout) as response:
-        return dict(json.loads(response.read()))
+        return dict(jsonlib.loads(response.read()))
 
 
 @lru_cache(maxsize=1)

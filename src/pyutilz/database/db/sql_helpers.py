@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from typing import Optional
-import json
 import warnings
 
+from pyutilz.core import jsonlib
 from pyutilz.database.exceptions import SQLValidationError
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -78,17 +78,8 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
 
         if jsonize:
             if type(value) in (dict, list):
-                # Sorted keys give stable serialization (stable hashing/dedup rule). orjson is ~5-10x faster than
-                # stdlib json on dumps; falls back to stdlib only if orjson missing (kept optional -- core has no
-                # hard requirements).
-                try:
-                    import orjson  # type: ignore[import-not-found]  # optional dependency, absent in a minimal install
-
-                    value = orjson.dumps(value, option=orjson.OPT_SORT_KEYS).decode("utf-8")
-                except ImportError:
-                    # separators matches orjson's compact (no-space) output so the
-                    # stored/hashed string is stable regardless of which backend ran.
-                    value = json.dumps(value, sort_keys=True, separators=(",", ":"))
+                # Sorted keys give stable serialization (stable hashing/dedup rule); orjson emits compact output.
+                value = jsonlib.dumps(value, sort_keys=True)
 
         values.append(value)
         if mode == "insert":

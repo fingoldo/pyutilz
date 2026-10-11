@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import json
+from pyutilz.core import jsonlib
 import sys
 from pathlib import Path
 
@@ -115,14 +115,14 @@ def test_public_api_matches_snapshot():
     current = _build_snapshot()
     if _refresh_requested() or not _SNAPSHOT_PATH.exists():
         _SNAPSHOT_PATH.write_text(
-            json.dumps(current, indent=2, sort_keys=True),
+            jsonlib.dumps(current, indent=True, sort_keys=True),
             encoding="utf-8",
         )
         n_aliases = len(current["module_aliases"])
         n_symbols = sum(len(v) for v in current["alias_surfaces"].values())
         pytest.skip(f"snapshot refreshed at {_SNAPSHOT_PATH.name} " f"({n_aliases} aliases, {n_symbols} symbols)")
 
-    expected = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    expected = jsonlib.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     diffs: list[str] = []
 
     # Top-level __all__ and alias map — flat dict comparison.

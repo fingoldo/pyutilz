@@ -11,7 +11,7 @@ baseline only shrinks: converting one to an explicit ``raise`` makes its entry s
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 from pathlib import Path
 
 from py_ci_shared.value_bearing_asserts import assert_no_value_bearing_asserts, find_value_bearing_asserts
@@ -25,7 +25,7 @@ def regenerate_baseline(path: Path = _BASELINE_PATH) -> None:
     """Rewrite the debt baseline from today's value-bearing asserts."""
     offenders, _seen = find_value_bearing_asserts(PACKAGE_ROOT)
     keys = sorted({f"{entry.split('  ', 1)[0].rsplit(':', 1)[0]}::{entry.split('  ', 1)[1]}" for entry in offenders})
-    path.write_text(json.dumps(keys, indent=2) + "\n", encoding="utf-8")
+    path.write_text(jsonlib.dumps(keys, indent=True) + "\n", encoding="utf-8")
 
 
 def test_no_new_value_bearing_asserts():

@@ -102,10 +102,10 @@ def written_files(roots: Iterable[Any], suffixes: Sequence[str] = TEXT_FILE_SUFF
 
 def _decoded_json(text: str) -> Optional[str]:
     """``text`` re-serialised with non-ASCII left literal when it parses as JSON, else ``None``."""
-    import json
+    from pyutilz.core import jsonlib
 
     try:
-        return json.dumps(json.loads(text), ensure_ascii=False)
+        return jsonlib.dumps(jsonlib.loads(text))
     except ValueError:
         return None
 
@@ -144,13 +144,14 @@ def file_sentinel_locations(sentinels: Mapping[str, str], files: Iterable[Any]) 
 
 def jsonl_records(path: Any) -> List[Dict[str, Any]]:
     """Every JSON object in a JSONL file, skipping blank lines; a missing file is no records."""
-    import json
     from pathlib import Path
+
+    from pyutilz.core import jsonlib
 
     p = Path(path)
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [jsonlib.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _walk_values(obj: Any, field: str) -> List[Any]:

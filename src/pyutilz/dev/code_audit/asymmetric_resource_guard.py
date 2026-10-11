@@ -115,7 +115,7 @@ class _GuardedCallVisitor(ast.NodeVisitor):
     # ``async with`` shares the exact same handling as ``with`` -- alias the dispatch
     # target rather than defining a second identical method (ast.NodeVisitor requires
     # both names to exist since Python routes on the node's own class name).
-    visit_AsyncWith = visit_With  # noqa: N815 - name is fixed by the ast.NodeVisitor dispatch protocol
+    visit_AsyncWith = visit_With  # noqa: N815 -- name is fixed by the ast.NodeVisitor dispatch protocol
 
     def visit_Call(self, node: ast.Call) -> None:
         """ast.NodeVisitor dispatch target for a Call; records a hit for any

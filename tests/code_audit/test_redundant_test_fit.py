@@ -266,9 +266,9 @@ def test_cli_json_output(tmp_path: Path, capsys):
     _write(tmp_path, "bad.py", "def f(items=[]):\n    items.append(1)\n")
     from pyutilz.dev.code_audit import main as cli_main
     cli_main([str(tmp_path), "--format", "json"])
-    import json as _json
+    from pyutilz.core import jsonlib as _jsonlib
     out = capsys.readouterr().out
-    payload = _json.loads(out)
+    payload = _jsonlib.loads(out)
     assert isinstance(payload, list)
     assert payload and payload[0]["check"] == "mutable_default"
 

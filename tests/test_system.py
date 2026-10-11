@@ -175,7 +175,7 @@ class TestPlatformCompatibility:
 
         # ``import ctypes.wintypes`` itself is portable (it is pure stdlib on every platform);
         # the non-portable part is ctypes.windll, reached only via trim_windows_process_memory.
-        import ctypes.wintypes  # noqa: F401 - importability on this platform IS the assertion
+        import ctypes.wintypes  # noqa: F401 -- importability on this platform IS the assertion
 
         trims = []
         monkeypatch.setattr(memory_mod, "trim_windows_process_memory", lambda *a, **kw: trims.append(1) or True)

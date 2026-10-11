@@ -6,7 +6,7 @@ bug the fix removed) -- not the speed, which is measured in the audit's disposit
 
 from __future__ import annotations
 
-import json
+from pyutilz.core import jsonlib
 import os
 import pickle
 import threading
@@ -88,7 +88,7 @@ def test_f01_schema_bump_invalidates_pre_v4_tunings(tmp_path, monkeypatch):
         "entry": {"axes": ["n"], "regions": [{"n_max": 10**12, "variant": "gpu", "wall_ms": 0.0366}]},
     }
     with open(os.path.join(kdir, "old.json"), "w", encoding="utf-8") as f:
-        json.dump(rec, f)
+        f.write(jsonlib.dumps(rec))
 
     cache = ktc.KernelTuningCache()
     assert cache.lookup("phantom", n=1000) is None, "a v3 (unsynchronized) tuning must not be reused"
@@ -546,16 +546,12 @@ def test_f03_serialized_text_is_handed_over_verbatim():
     payload = {"b": 1, "a": [1, 2, {"c": None}]}
     out = json_pg_dumps(payload)
     assert out.dumps(None) == orjson.dumps(payload).decode("utf-8")
-    assert json.loads(out.getquoted()[1:-1].decode("utf-8")) == payload
+    assert jsonlib.loads(out.getquoted()[1:-1].decode("utf-8")) == payload
 
 
-def test_f03_orjson_and_stdlib_branches_agree_on_a_hostile_payload():
+def test_f03_hostile_payload_is_normalized():
     payload = {"nan": float("nan"), "inf": float("inf"), "ninf": float("-inf"), "nul": "a" + chr(0) + "b", "ok": [1, 2.5, None]}
-    with_orjson = json_pg_dumps(payload).adapted
-    with mock.patch("pyutilz.text.strings.jsonutils._orjson", None):
-        without = json_pg_dumps(payload).adapted
-    assert with_orjson == without
-    assert without == {"nan": None, "inf": None, "ninf": None, "nul": "ab", "ok": [1, 2.5, None]}
+    assert json_pg_dumps(payload).adapted == {"nan": None, "inf": None, "ninf": None, "nul": "ab", "ok": [1, 2.5, None]}
 
 
 def test_f03_tuple_falls_back_instead_of_raising():

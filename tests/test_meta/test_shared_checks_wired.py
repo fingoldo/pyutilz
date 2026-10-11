@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-import py_ci_shared  # noqa: F401  # conftest ignores this module on python 3.8 only; elsewhere a missing install must fail
+import py_ci_shared  # conftest ignores this module on python 3.8 only; elsewhere a missing install must fail  # noqa: F401
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"

@@ -32,11 +32,12 @@ is itself the durability guarantee a project already relies on for everything el
 from __future__ import annotations
 
 import gzip
-import json
 import os
 import uuid
 from pathlib import Path
 from typing import Any
+
+from pyutilz.core import jsonlib
 
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
@@ -54,7 +55,7 @@ def write_json_checkpoint(obj: Any, checkpoint_path: Path) -> None:
     every write to the live cache so the checkpoint is never more than one write stale -- a human
     still has to ``git add``/commit the resulting file, but its on-disk content is always current,
     never dependent on a separately-remembered backup script."""
-    payload = json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8")
+    payload = jsonlib.dumps_bytes(obj, indent=True, sort_keys=True)
     _atomic_write_bytes(checkpoint_path, gzip.compress(payload, mtime=0))
 
 
@@ -66,12 +67,12 @@ def read_json_with_checkpoint_fallback(cache_path: Path, checkpoint_path: Path) 
     originally came from), and returns it. Returns ``None`` if neither exists -- the same honest-
     absence contract as a cache that was simply never populated."""
     if cache_path.exists() and cache_path.stat().st_size > 0:
-        return json.loads(cache_path.read_text(encoding="utf-8"))
+        return jsonlib.loads(cache_path.read_text(encoding="utf-8"))
     if not checkpoint_path.exists():
         return None
-    obj = json.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8"))
+    obj = jsonlib.loads(gzip.decompress(checkpoint_path.read_bytes()).decode("utf-8"))
     # Atomic (temp + replace): a concurrent reader must never see the restored cache half-written.
-    _atomic_write_bytes(cache_path, json.dumps(obj, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8"))
+    _atomic_write_bytes(cache_path, jsonlib.dumps_bytes(obj, indent=True, sort_keys=True))
     return obj
 
 
