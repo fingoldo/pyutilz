@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Any, Optional
 
+session: Any
 try:
     from flask import session  # public re-export; the render path imports it again locally
 except ImportError:  # optional extra 'dash': absent in a core-only install

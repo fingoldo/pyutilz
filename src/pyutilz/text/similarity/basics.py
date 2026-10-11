@@ -22,7 +22,7 @@ def levenshtein_strings_similarity(a: str, b: str) -> float:
     """
     if not a and not b:
         return 1.0
-    return 1 - levenshtein_distance(a, b) / max(len(a), len(b))
+    return float(1 - levenshtein_distance(a, b) / max(len(a), len(b)))
 
 
 def contigous_strings_similarity(a: str, b: str) -> tuple:

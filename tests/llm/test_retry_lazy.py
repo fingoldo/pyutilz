@@ -74,3 +74,22 @@ def test_retry_property_exposes_the_tenacity_retrying_object():
             return 1
 
     assert Client().method.retry.stop.max_attempt_number == 7
+
+
+def test_cached_attempt_cap_picks_up_a_changed_setting_after_cache_clear(monkeypatch):
+    from tenacity import stop_never
+
+    from pyutilz.llm import _retry
+
+    try:
+        _retry.retry_wait.cache_clear()
+        monkeypatch.setattr(_retry, "MAX_RETRY_ATTEMPTS", 4)
+        _retry._attempt_cap.cache_clear()
+        assert _retry._attempt_cap().max_attempt_number == 4
+
+        monkeypatch.setattr(_retry, "MAX_RETRY_ATTEMPTS", 0)
+        _retry._attempt_cap.cache_clear()
+        assert _retry._attempt_cap() is stop_never
+    finally:
+        _retry.retry_wait.cache_clear()
+        _retry._attempt_cap.cache_clear()
