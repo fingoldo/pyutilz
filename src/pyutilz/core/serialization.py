@@ -147,6 +147,46 @@ def _decompress_capped(data: bytes, max_output_bytes: Optional[int]) -> bytes:
     return b"".join(chunks)
 
 
+def _resolve_serialized_source(obj: Any, verify_sidecar: bool) -> Any:
+    """Turn a file path or file-like object into its raw bytes; anything else is returned unchanged."""
+    if isinstance(obj, str):
+        if not os.path.isfile(obj):
+            # None is a perfectly valid unpickled value, so it cannot double as the
+            # error signal: a missing file must be distinguishable from a successful
+            # round-trip of None.
+            logger.error("File %s not found", obj)
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), obj)
+        if verify_sidecar:
+            from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar
+
+            if not _verify_sidecar(obj):
+                raise PickleVerificationError(
+                    f"unserialize: refusing to unpickle {obj!r}; sha256 sidecar missing or mismatch. "
+                    "Run pyutilz.core.safe_pickle.write_sidecar(path) on a trusted copy, or call "
+                    "unserialize(..., verify_sidecar=False) to accept the historical unverified behaviour."
+                )
+        with open(obj, "rb") as f:
+            return f.read()
+    if isinstance(obj, io.IOBase):
+        return obj.read()
+    return obj
+
+
+def _unpickle_payload(obj: bytes, compression: Optional[int], max_output_bytes: Optional[int]) -> Any:
+    """Decompress (bounded, falling back to raw bytes when not zlib data) and unpickle ``obj``."""
+    data = obj
+    if compression is not None:
+        try:
+            data = _decompress_capped(obj, max_output_bytes)
+        except zlib.error:
+            # zlib raises "incorrect header check" / "incorrect data check" for uncompressed input:
+            # fall back to treating obj as raw (uncompressed) pickle bytes.
+            logger.warning("Data seems to be not compressed; reading as raw pickle")
+            data = obj
+    return pickle.loads(data)  # nosec B301 - opt-in sidecar verification (verify_sidecar=True) covers the file-path case;
+    # in-memory bytes/file-like input is the caller's own data, produced within the same process
+
+
 def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 9, verify_sidecar: bool = False, max_output_bytes: Optional[int] = DEFAULT_MAX_DECOMPRESSED_BYTES) -> Any:
     """
     If fname is passed, data will be read from disk.
@@ -182,41 +222,9 @@ def unserialize(obj: Union[str, bytes, io.IOBase], compression: Optional[int] = 
         if not -1 <= compression <= 9:
             raise ValueError(f"compression must be in -1..9 (zlib's accepted levels), got {compression}")
     try:
-        if isinstance(obj, str):
-            if not os.path.isfile(obj):
-                # None is a perfectly valid unpickled value, so it cannot double as the
-                # error signal: a missing file must be distinguishable from a successful
-                # round-trip of None.
-                logger.error("File %s not found", obj)
-                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), obj)
-            else:
-                if verify_sidecar:
-                    from pyutilz.core.safe_pickle import verify_sidecar as _verify_sidecar
-
-                    if not _verify_sidecar(obj):
-                        raise PickleVerificationError(
-                            f"unserialize: refusing to unpickle {obj!r}; sha256 sidecar missing or mismatch. "
-                            "Run pyutilz.core.safe_pickle.write_sidecar(path) on a trusted copy, or call "
-                            "unserialize(..., verify_sidecar=False) to accept the historical unverified behaviour."
-                        )
-                with open(obj, "rb") as f:
-                    obj = f.read()
-        elif isinstance(obj, io.IOBase):
-            obj = obj.read()
-
+        obj = _resolve_serialized_source(obj, verify_sidecar)
         if isinstance(obj, bytes):
-            data = obj
-            if compression is not None:
-                try:
-                    data = _decompress_capped(obj, max_output_bytes)
-                except zlib.error:
-                    # zlib raises "incorrect header check" / "incorrect data check" for uncompressed input:
-                    # fall back to treating obj as raw (uncompressed) pickle bytes.
-                    logger.warning("Data seems to be not compressed; reading as raw pickle")
-                    data = obj
-            data = pickle.loads(data)  # nosec B301 - opt-in sidecar verification above (verify_sidecar=True) covers the file-path case;
-            # in-memory bytes/file-like input is the caller's own data, produced within the same process
-            return data
+            return _unpickle_payload(obj, compression, max_output_bytes)
         else:
             raise TypeError(f"unserialize: unexpected input data type {type(obj)}; expected str path, bytes or a file-like object")
     except PickleVerificationError:

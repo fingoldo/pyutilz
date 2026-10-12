@@ -65,48 +65,62 @@ def _imported_bindings(tree: ast.Module, src_lines: list[str]) -> list[tuple[str
     out: list[tuple[str, int, str]] = []
     for node in tree.body:
         if isinstance(node, ast.Import):
-            if "# noqa" in _line_text(src_lines, node.lineno):
-                continue
-            claimed: set[int] = set()
-            for alias in node.names:
-                bound = alias.asname or alias.name.split(".")[0]
-                if bound.startswith("_"):
-                    continue
-                # A multi-line import block's own alias may carry its own per-name rationale
-                # comment on a different physical line than node.lineno -- check both.
-                alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
-                if "# noqa" in _line_text(src_lines, alias_lineno):
-                    continue
-                out.append((bound, alias_lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+            out.extend(_plain_import_bindings(node, src_lines))
         elif isinstance(node, ast.ImportFrom):
-            if node.module is None or node.module == "__future__":
-                continue
-            if "# noqa" in _line_text(src_lines, node.lineno):
-                continue
-            claimed = set()
-            for alias in node.names:
-                if alias.name == "*":
-                    continue
-                bound = alias.asname or alias.name
-                if bound.startswith("_"):
-                    continue
-                # A multi-line parenthesized import block puts a per-name rationale comment on
-                # the ALIAS's own line, not the statement line -- check both, since this is the
-                # codebase's actual convention for per-name-reviewed re-exports.
-                alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
-                if "# noqa" in _line_text(src_lines, alias_lineno):
-                    continue
-                # Report the ALIAS's own line (not the enclosing statement's node.lineno):
-                # a multi-line `from x import (a, b, c)` block has every alias share the SAME
-                # node.lineno, so two independently-dead names in one such block previously
-                # reported IDENTICAL (check, file, line) keys -- the baseline-diff harness keys
-                # findings on exactly that tuple (see py_ci_shared.code_audit_meta._key), so the
-                # second finding silently overwrote/masked the first in the results dict instead
-                # of being a second, independently-reviewable finding. Confirmed in the wild
-                # (2026-08-04): removing one dead name from such a block (via a noqa directive) caused a
-                # SECOND, previously-hidden dead import in the same block to suddenly "appear" --
-                # it was there all along, just masked by the key collision.
-                out.append((bound, alias_lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+            out.extend(_from_import_bindings(node, src_lines))
+    return out
+
+
+def _plain_import_bindings(node: ast.Import, src_lines: list[str]) -> list[tuple[str, int, str]]:
+    """Bindings from one ``import X [as Y]`` statement, skipping private and noqa-exempt aliases."""
+    out: list[tuple[str, int, str]] = []
+    if "# noqa" in _line_text(src_lines, node.lineno):
+        return out
+    claimed: set[int] = set()
+    for alias in node.names:
+        bound = alias.asname or alias.name.split(".")[0]
+        if bound.startswith("_"):
+            continue
+        # A multi-line import block's own alias may carry its own per-name rationale
+        # comment on a different physical line than node.lineno -- check both.
+        alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
+        if "# noqa" in _line_text(src_lines, alias_lineno):
+            continue
+        out.append((bound, alias_lineno, f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
+    return out
+
+
+def _from_import_bindings(node: ast.ImportFrom, src_lines: list[str]) -> list[tuple[str, int, str]]:
+    """Bindings from one ``from X import Y [as Z]`` statement, skipping star, future and noqa-exempt names."""
+    out: list[tuple[str, int, str]] = []
+    if node.module is None or node.module == "__future__":
+        return out
+    if "# noqa" in _line_text(src_lines, node.lineno):
+        return out
+    claimed: set[int] = set()
+    for alias in node.names:
+        if alias.name == "*":
+            continue
+        bound = alias.asname or alias.name
+        if bound.startswith("_"):
+            continue
+        # A multi-line parenthesized import block puts a per-name rationale comment on
+        # the ALIAS's own line, not the statement line -- check both, since this is the
+        # codebase's actual convention for per-name-reviewed re-exports.
+        alias_lineno = _alias_own_lineno(alias, node, src_lines, claimed)
+        if "# noqa" in _line_text(src_lines, alias_lineno):
+            continue
+        # Report the ALIAS's own line (not the enclosing statement's node.lineno):
+        # a multi-line `from x import (a, b, c)` block has every alias share the SAME
+        # node.lineno, so two independently-dead names in one such block previously
+        # reported IDENTICAL (check, file, line) keys -- the baseline-diff harness keys
+        # findings on exactly that tuple (see py_ci_shared.code_audit_meta._key), so the
+        # second finding silently overwrote/masked the first in the results dict instead
+        # of being a second, independently-reviewable finding. Confirmed in the wild
+        # (2026-08-04): removing one dead name from such a block (via a noqa directive) caused a
+        # SECOND, previously-hidden dead import in the same block to suddenly "appear" --
+        # it was there all along, just masked by the key collision.
+        out.append((bound, alias_lineno, f"from {node.module} import {alias.name}" + (f" as {alias.asname}" if alias.asname else "")))
     return out
 
 

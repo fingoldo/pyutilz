@@ -58,6 +58,62 @@ def _get_thread_cursors() -> Dict[str, Any]:
     return cast(Dict[str, Any], _thread_local.cursors)
 
 
+def _setup_postgres_session(
+    conn: Any,
+    username: Any,
+    pwd: Any,
+    db_host: Any,
+    db_port: Any,
+    db_name: Any,
+    db_schema: Optional[str],
+    db_sslmode: Optional[str],
+) -> None:
+    """Autocommit, SQLAlchemy engine, thread-cursor reset and default cursor for a fresh psycopg2 connection."""
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+
+    conn_string = "postgresql+psycopg2://%s:%s@%s:%s/%s?" % (username, pwd, db_host, db_port, db_name)  # pragma: allowlist secret
+
+    if db_sslmode:
+        conn_string += f"&sslmode={db_sslmode}"
+    if db_schema:
+        conn_string += f"&options=--search_path%3D{db_schema},public"
+
+    _facade.conn_alchemy = _facade.sqlalchemy.create_engine(conn_string, paramstyle="format")
+    # https://stackoverflow.com/questions/25917741/sqlalchemy-with-postgres-insert-into-a-table-whose-columns-have-parentheses
+
+    # Only clears THIS (the connecting) thread's own cursor cache -- any other thread
+    # already holding cached cursors against a stale/prior connection keeps them
+    # until it next touches get_cursor() and (if the old connection is truly dead)
+    # gets a real error from psycopg2 rather than a silent cross-thread mix-up.
+    thread_cursors = _get_thread_cursors()
+    thread_cursors.clear()
+
+    cur = conn.cursor()
+    _facade.cur = cur
+
+    # if db_schema: cur.execute(f"set search_path to '{db_schema}'")
+
+    thread_cursors["cursor"] = cur
+
+
+def _postgres_connect_params(db_name: Any, db_host: Any, db_port: Any, username: Any, pwd: Any, db_schema: Optional[str], db_sslmode: Optional[str]) -> Dict[str, Any]:
+    """Keyword arguments for ``psycopg2.connect`` built from the optional sslmode and search_path."""
+    params: Dict[str, Any] = dict(dbname=db_name, host=db_host, port=db_port, user=username, password=pwd)
+    if db_sslmode:
+        params["sslmode"] = db_sslmode
+    if db_schema:
+        params["options"] = f"--search_path={db_schema},public"
+    return params
+
+
+def _setup_mysql_engine(username: Any, pwd: Any, db_host: Any, db_port: Any, db_name: Any) -> None:
+    """Build the SQLAlchemy engine for MySQL (import of pymysql doubles as the availability check)."""
+    #!pip install pymysql
+    import pymysql  # noqa: F401 -- the import IS the availability check for the engine URL built below
+
+    _facade.conn_alchemy = _facade.sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
+
+
 def connect_to_db(
     m_db_name,
     m_db_host,
@@ -116,45 +172,13 @@ def connect_to_db(
             if db_flavor == "postgres":
                 #!pip install psycopg2
 
-                params = dict(dbname=db_name, host=db_host, port=db_port, user=username, password=pwd)
-                if db_sslmode:
-                    params["sslmode"] = db_sslmode
-                if db_schema:
-                    params["options"] = f"--search_path={db_schema},public"
-
+                params = _postgres_connect_params(db_name, db_host, db_port, username, pwd, db_schema, db_sslmode)
                 conn = _facade.psycopg2.connect(**params)
                 _facade.conn = conn
                 conn_opened_this_iteration = True
-                conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-
-                conn_string = "postgresql+psycopg2://%s:%s@%s:%s/%s?" % (username, pwd, db_host, db_port, db_name)  # pragma: allowlist secret
-
-                if db_sslmode:
-                    conn_string += f"&sslmode={db_sslmode}"
-                if db_schema:
-                    conn_string += f"&options=--search_path%3D{db_schema},public"
-
-                _facade.conn_alchemy = _facade.sqlalchemy.create_engine(conn_string, paramstyle="format")
-                # https://stackoverflow.com/questions/25917741/sqlalchemy-with-postgres-insert-into-a-table-whose-columns-have-parentheses
-
-                # Only clears THIS (the connecting) thread's own cursor cache -- any other thread
-                # already holding cached cursors against a stale/prior connection keeps them
-                # until it next touches get_cursor() and (if the old connection is truly dead)
-                # gets a real error from psycopg2 rather than a silent cross-thread mix-up.
-                thread_cursors = _get_thread_cursors()
-                thread_cursors.clear()
-
-                cur = conn.cursor()
-                _facade.cur = cur
-
-                # if db_schema: cur.execute(f"set search_path to '{db_schema}'")
-
-                thread_cursors["cursor"] = cur
+                _setup_postgres_session(conn, username, pwd, db_host, db_port, db_name, db_schema, db_sslmode)
             elif db_flavor == "mysql":
-                #!pip install pymysql
-                import pymysql  # noqa: F401 -- the import IS the availability check for the engine URL built below
-
-                _facade.conn_alchemy = _facade.sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
+                _setup_mysql_engine(username, pwd, db_host, db_port, db_name)
 
             if init_params_fn is not None:
                 init_params_fn()

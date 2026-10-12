@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # pyutilz.database.db.__init__ unconditionally imports sqlalchemy/psycopg2/pymysql regardless
 # of this file's own deferred psycopg2.extras import a few lines below (fixed 2026-07-21 audit:
 # broke `pip install pyutilz[nlp]` alone, since [nlp] doesn't declare the [database] stack).
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pyutilz.text.strings import (
     merge_punctuation_signs,
@@ -67,6 +67,21 @@ except Exception as e:  # nosec B110 - optional dependency probe, mirrors the sp
 vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(  # noqa: A001 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     ","
 )
+
+def _review_to_sentences(review: Any, newlines: Any) -> str:
+    """Clean a review's title and body and join their sentencized text with single spaces."""
+    res = ""
+    for text in (review.title, review.body):
+        if not text:
+            continue
+        if newlines:
+            text = text.replace(newlines, "\n")
+
+        text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
+        if text is not None and len(text) > 1:
+            res += ("" if len(res) == 0 else " ") + sentencize_text(text)
+    return res
+
 
 class AdvancedTokenizer:
     """
@@ -283,18 +298,7 @@ class AdvancedTokenizer:
                         break
 
                     for review in chunk:
-
-                        res = ""
-                        for text in (review.title, review.body):
-                            if not text:
-                                continue
-                            if newlines:
-                                text = text.replace(newlines, "\n")
-
-                            text = fix_broken_sentences(remove_videos(fix_quotations(fix_spaces(fix_duplicate_tokens(fix_html(text))))))  # type: ignore[arg-type]  # text is guaranteed non-empty here (guarded above), so every step in this chain returns a real str
-                            if text is not None and len(text) > 1:
-                                res += ("" if len(res) == 0 else " ") + sentencize_text(text)
-
+                        res = _review_to_sentences(review, newlines)
                         if len(res) > 0:
                             res = ensure_space_after_comma(res)
                             self.tokenize(res)

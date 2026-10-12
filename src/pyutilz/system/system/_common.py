@@ -258,30 +258,34 @@ def get_wmi_obj_as_dict(
     for prop in obj.properties:
         if prop in exclude_pros:
             continue
-        value = getattr(obj, prop)
-        if prop in ensure_float:
-            try:
-                value = float(value)
-            except (ValueError, TypeError):
-                pass
-        elif prop in ensure_int:
-            try:
-                float_value = float(value)
-                int_value = int(float_value)
-                if float_value != int_value:
-                    logger.debug(
-                        "ensure_int truncated a fractional value for property %r: %r -> %r (precision loss)",
-                        prop,
-                        value,
-                        int_value,
-                    )
-                value = int_value
-            except (ValueError, TypeError):
-                pass
-        elif prop in decode_dict:
-            value = decode_dict[prop](value)
-        obj_dict[prop] = value
+        obj_dict[prop] = _convert_wmi_value(prop, getattr(obj, prop), ensure_float, ensure_int, decode_dict)
     return obj_dict
+
+
+def _convert_wmi_value(prop: str, value: _Any, ensure_float: set, ensure_int: set, decode_dict: dict) -> _Any:
+    """Convert one WMI property value: float, int (truncation logged), a decoder from ``decode_dict``, or as-is."""
+    if prop in ensure_float:
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            pass
+    elif prop in ensure_int:
+        try:
+            float_value = float(value)
+            int_value = int(float_value)
+            if float_value != int_value:
+                logger.debug(
+                    "ensure_int truncated a fractional value for property %r: %r -> %r (precision loss)",
+                    prop,
+                    value,
+                    int_value,
+                )
+            value = int_value
+        except (ValueError, TypeError):
+            pass
+    elif prop in decode_dict:
+        value = decode_dict[prop](value)
+    return value
 
 
 def summarize_devices(

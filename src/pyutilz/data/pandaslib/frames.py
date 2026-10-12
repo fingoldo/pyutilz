@@ -127,6 +127,39 @@ def _rare_and_uninformative_from_value_counts(stats, max_unique_percent: float) 
     return col_rare, (1 - non_rare_count / col_total if col_total > 0 else 0.0)
 
 
+def _print_polars_value_counts(var: str, height: int, vals: list, counts: list, max_vars: "Optional[int]") -> None:
+    """Print one polars column's value counts, honouring ``max_vars`` (0 prints a blank line, >0 truncates)."""
+    if max_vars is not None and max_vars == 0:
+        print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+    elif height == 0:
+        stats = pd.Series([], name="count", dtype="int64")
+        stats.index.name = var
+        print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+    else:
+        stats = pd.Series(counts, index=vals, name="count")
+        stats.index.name = var
+        if max_vars is not None and max_vars > 0:
+            print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+        else:
+            print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+
+
+def _record_rare_and_uninformative(
+    var: str,
+    vals: list,
+    counts: list,
+    max_unique_percent: float,
+    rare_categories: Dict[Any, Any],
+    uninformative_features: Dict[Any, Any],
+) -> None:
+    """Record ``var``'s rare values, and its uninformative fraction when only one value survives them."""
+    col_rare, uninformative = _rare_and_uninformative_from_lists(vals, counts, max_unique_percent)
+    if col_rare:
+        rare_categories[var] = col_rare
+        if uninformative is not None:
+            uninformative_features[var] = uninformative
+
+
 def _showcase_polars_columns(
     df: "pl.DataFrame",
     target_cols: list,
@@ -170,24 +203,14 @@ def _showcase_polars_columns(
         n_unique = vc.height
         wants_display = n_unique > 0 and not (max_vars is not None and max_vars == 0)
         wants_rare = 0 < n_unique <= max_cat_uniq_qty
+        vals: list = []
+        counts: list = []
         if wants_display or wants_rare:
             vals = vc.get_column(var).to_list()
             counts = vc.get_column("count").to_list()
 
         if should_print:
-            if max_vars is not None and max_vars == 0:
-                print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            elif vc.height == 0:
-                stats = pd.Series([], name="count", dtype="int64")
-                stats.index.name = var
-                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            else:
-                stats = pd.Series(counts, index=vals, name="count")
-                stats.index.name = var
-                if max_vars is not None and max_vars > 0:
-                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-                else:
-                    print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+            _print_polars_value_counts(var, vc.height, vals, counts, max_vars)
 
         # bench-attempt-rejected (2026-09-02): doing the rare filter in polars
         # (vc.filter(pl.col("count") <= threshold)) instead of over the python lists. Rejected on
@@ -196,11 +219,7 @@ def _showcase_polars_columns(
         # win here came from sharing the single conversion (16.9/17.7/13.4 ms of a 250/315/265 ms
         # call, 40 cols x 5000 uniques), which the shared vals/counts above already banks.
         if wants_rare:
-            col_rare, uninformative = _rare_and_uninformative_from_lists(vals, counts, max_unique_percent)
-            if col_rare:
-                rare_categories[var] = col_rare
-                if uninformative is not None:
-                    uninformative_features[var] = uninformative
+            _record_rare_and_uninformative(var, vals, counts, max_unique_percent, rare_categories, uninformative_features)
     return rare_categories, uninformative_features
 
 

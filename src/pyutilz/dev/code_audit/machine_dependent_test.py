@@ -90,6 +90,47 @@ def _test_functions(tree: ast.Module) -> List[_FunctionDef]:
     return [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")]
 
 
+def _elapsed_names_in(body: List[ast.AST]) -> Set[str]:
+    """Names bound (plain or annotated) to a clock difference somewhere in ``body``."""
+    elapsed_names: Set[str] = set()
+    for node in body:
+        if isinstance(node, ast.Assign) and _is_timer_difference(node.value):
+            elapsed_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None and _is_timer_difference(node.value):
+            if isinstance(node.target, ast.Name):
+                elapsed_names.add(node.target.id)
+    return elapsed_names
+
+
+def _wall_clock_findings_in_fn(fn: _FunctionDef, rel: str, src_lines: List[str]) -> List[Finding]:
+    """Findings for one test function: each assert comparing an elapsed duration."""
+    findings: List[Finding] = []
+    body = list(ast.walk(fn))
+    elapsed_names = _elapsed_names_in(body)
+    for node in body:
+        if not isinstance(node, ast.Assert):
+            continue
+        for cmp_node in ast.walk(node.test):
+            if not isinstance(cmp_node, ast.Compare):
+                continue
+            if not (_is_duration(cmp_node.left, elapsed_names) or any(_is_duration(c, elapsed_names) for c in cmp_node.comparators)):
+                continue
+            findings.append(
+                Finding(
+                    check="wall_clock_assertion",
+                    severity="P2",
+                    file=rel,
+                    line=node.lineno,
+                    snippet=_line_text(src_lines, node.lineno),
+                    detail=(
+                        f"{fn.name}() asserts on an elapsed wall-clock duration, so its verdict is a property of the runner's speed and clock resolution, not of the code under test. Assert the observable outcome, or a ratio against a baseline measured on the same box."
+                    ),
+                )
+            )
+            break
+    return findings
+
+
 def scan_wall_clock_assertion(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -121,36 +162,7 @@ def scan_wall_clock_assertion(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for fn in _test_functions(tree):
-            body = list(ast.walk(fn))
-            elapsed_names: Set[str] = set()
-            for node in body:
-                if isinstance(node, ast.Assign) and _is_timer_difference(node.value):
-                    elapsed_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-                elif isinstance(node, ast.AnnAssign) and node.value is not None and _is_timer_difference(node.value):
-                    if isinstance(node.target, ast.Name):
-                        elapsed_names.add(node.target.id)
-
-            for node in body:
-                if not isinstance(node, ast.Assert):
-                    continue
-                for cmp_node in ast.walk(node.test):
-                    if not isinstance(cmp_node, ast.Compare):
-                        continue
-                    if not (_is_duration(cmp_node.left, elapsed_names) or any(_is_duration(c, elapsed_names) for c in cmp_node.comparators)):
-                        continue
-                    findings.append(
-                        Finding(
-                            check="wall_clock_assertion",
-                            severity="P2",
-                            file=rel,
-                            line=node.lineno,
-                            snippet=_line_text(src_lines, node.lineno),
-                            detail=(
-                                f"{fn.name}() asserts on an elapsed wall-clock duration, so its verdict is a property of the runner's speed and clock resolution, not of the code under test. Assert the observable outcome, or a ratio against a baseline measured on the same box."
-                            ),
-                        )
-                    )
-                    break
+            findings.extend(_wall_clock_findings_in_fn(fn, rel, src_lines))
     return findings
 
 

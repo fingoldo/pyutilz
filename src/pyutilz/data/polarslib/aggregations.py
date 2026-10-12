@@ -552,6 +552,144 @@ def _cpu_only_exprs(
     return exprs, columns_to_unnest, unnest_rules
 
 
+def _ewm_defaults(
+    ewm_spans: Optional[list], ewm_time_half_lifes: Optional[list], ewm_basic_funcs: Optional[list], ewm_final_funcs: Optional[list]
+) -> tuple[list, list, list, list]:
+    """Replace each falsy EWM list argument with its default (empty spans/half-lifes, mean/std and mean funcs)."""
+    if not ewm_spans:
+        ewm_spans = []
+    if not ewm_time_half_lifes:
+        ewm_time_half_lifes = []
+    if not ewm_basic_funcs:
+        ewm_basic_funcs = "ewm_mean ewm_std".split()
+    if not ewm_final_funcs:
+        ewm_final_funcs = "mean".split()
+    return ewm_spans, ewm_time_half_lifes, ewm_basic_funcs, ewm_final_funcs
+
+
+def _filter_value_feature_exprs(
+    *,
+    af: Callable[[pl.Expr], pl.Expr],
+    fpref: str,
+    filter_field: str,
+    boolean_fields: list,
+    numerical_fields: list,
+    categorical_fields: list,
+    ts_diff_fields: list,
+    pds_fields: list,
+    linreg_fields: list,
+    pds_numaggs: list,
+    pds_params: dict,
+    numaggs: list,
+    quantiles: list,
+    ts_numaggs: list,
+    tds_quantiles: list,
+    fields_remap: dict,
+    dtype: Any,
+    nans_filler: float,
+    engine: str,
+    add_peaks_stats: bool,
+    weighting_fields: Optional[list],
+    exclude_fields: Optional[list],
+    othersvals_at_extremums: bool,
+    othersvals_basic_fields: Optional[list],
+    othersvals_other_fields: Optional[list],
+    othersvals_excluded_fields: Optional[list],
+    ewm_spans: list,
+    ewm_timestamp: Optional[str],
+    ewm_time_half_lifes: list,
+    ewm_basic_funcs: list,
+    ewm_final_funcs: list,
+    use_parametrized_pds_features: bool,
+    corr_methods: list,
+    corr_fields: Optional[dict],
+    linreg_timestamp_field: Optional[str],
+    concentration_top_n: int,
+    concentrations_params: dict,
+) -> tuple[list, list, list]:
+    """Feature expressions, unnest columns and unnest rules for one subgroup filter value (``af`` applies its filter)."""
+    exprs: list = []
+    unnest: list = []
+    rules: list = []
+    exprs.append(af(cs.first()).len().alias(f"{fpref}nrecs"))
+    exprs.extend(_boolean_feature_exprs(af, fpref, boolean_fields, fields_remap))
+
+    if add_peaks_stats:
+        exprs.extend(_peak_feature_exprs(af, fpref, numerical_fields, fields_remap, dtype))
+
+    exprs.extend(_numagg_quantile_exprs(af, fpref, numerical_fields, numaggs, quantiles, fields_remap))
+
+    # Weighting
+    if weighting_fields:
+        wcols = add_weighted_aggregates(
+            columns_selector=(cs.numeric() - cs.by_name(exclude_fields or [])),
+            weighting_columns=weighting_fields,
+            fpref=fpref,
+            fields_remap=fields_remap,
+            expr_filter=af,
+        )
+        exprs.extend(wcols)
+
+    if othersvals_at_extremums:
+        exprs.extend(
+            _othersvals_exprs(
+                af,
+                fpref,
+                numerical_fields,
+                filter_field,
+                exclude_fields,
+                othersvals_basic_fields,
+                othersvals_other_fields,
+                othersvals_excluded_fields,
+            )
+        )
+
+    exprs.extend(
+        _ewm_feature_exprs(
+            af,
+            fpref,
+            numerical_fields,
+            ewm_basic_funcs,
+            ewm_spans,
+            ewm_final_funcs,
+            ewm_timestamp,
+            ewm_time_half_lifes,
+            fields_remap,
+        )
+    )
+
+    # Categorical stats. For gpu mode, categoricals need to be converted to String upfront.
+    exprs.extend(_nunique_exprs(af, fpref, categorical_fields, fields_remap))
+
+    if engine != "gpu":
+        cpu_exprs, cpu_unnest, cpu_rules = _cpu_only_exprs(
+            af,
+            fpref,
+            numerical_fields,
+            categorical_fields,
+            ts_diff_fields,
+            pds_fields,
+            linreg_fields,
+            fields_remap,
+            dtype,
+            nans_filler,
+            ts_numaggs,
+            tds_quantiles,
+            pds_numaggs,
+            pds_params,
+            use_parametrized_pds_features,
+            corr_methods,
+            corr_fields,
+            linreg_timestamp_field,
+            concentration_top_n,
+            concentrations_params,
+        )
+        exprs.extend(cpu_exprs)
+        unnest.extend(cpu_unnest)
+        rules.extend(cpu_rules)
+    return exprs, unnest, rules
+
+
 def build_aggregate_features_polars(
     df: pl.DataFrame,
     #
@@ -627,14 +765,7 @@ def build_aggregate_features_polars(
     quantiles = _or_default(quantiles, POLARS_DEFAULT_QUANTILES)
     tds_quantiles = _or_default(tds_quantiles, POLARS_DEFAULT_QUANTILES)
 
-    if not ewm_spans:
-        ewm_spans = []
-    if not ewm_time_half_lifes:
-        ewm_time_half_lifes = []
-    if not ewm_basic_funcs:
-        ewm_basic_funcs = "ewm_mean ewm_std".split()
-    if not ewm_final_funcs:
-        ewm_final_funcs = "mean".split()
+    ewm_spans, ewm_time_half_lifes, ewm_basic_funcs, ewm_final_funcs = _ewm_defaults(ewm_spans, ewm_time_half_lifes, ewm_basic_funcs, ewm_final_funcs)
 
     pds_numaggs = _or_default(pds_numaggs, "hmean query_abs_energy query_cid_ce query_mean_abs_change".split())  # query_permute_entropy # query_first_digit_cnt
     corr_methods = _or_default(corr_methods, ["pearson", "spearman", "xi", "kendall", "bicor"])
@@ -695,83 +826,48 @@ def build_aggregate_features_polars(
                 return expr if not _filter_field else expr.filter(pl.col(_filter_field) == _filter_value)
 
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
-
-            feature_expressions.append(af(cs.first()).len().alias(f"{fpref}nrecs"))
-            feature_expressions.extend(_boolean_feature_exprs(af, fpref, boolean_fields, fields_remap))
-
-            if add_peaks_stats:
-                feature_expressions.extend(_peak_feature_exprs(af, fpref, numerical_fields, fields_remap, dtype))
-
-            feature_expressions.extend(_numagg_quantile_exprs(af, fpref, numerical_fields, numaggs, quantiles, fields_remap))
-
-            # Weighting
-            if weighting_fields:
-                wcols = add_weighted_aggregates(
-                    columns_selector=(cs.numeric() - cs.by_name(exclude_fields or [])),
-                    weighting_columns=weighting_fields,
-                    fpref=fpref,
-                    fields_remap=fields_remap,
-                    expr_filter=af,
-                )
-                feature_expressions.extend(wcols)
-
-            if othersvals_at_extremums:
-                feature_expressions.extend(
-                    _othersvals_exprs(
-                        af,
-                        fpref,
-                        numerical_fields,
-                        filter_field,
-                        exclude_fields,
-                        othersvals_basic_fields,
-                        othersvals_other_fields,
-                        othersvals_excluded_fields,
-                    )
-                )
-
-            feature_expressions.extend(
-                _ewm_feature_exprs(
-                    af,
-                    fpref,
-                    numerical_fields,
-                    ewm_basic_funcs,
-                    ewm_spans,
-                    ewm_final_funcs,
-                    ewm_timestamp,
-                    ewm_time_half_lifes,
-                    fields_remap,
-                )
+            exprs, unnest, rules = _filter_value_feature_exprs(
+                af=af,
+                fpref=fpref,
+                filter_field=filter_field,
+                boolean_fields=boolean_fields,
+                numerical_fields=numerical_fields,
+                categorical_fields=categorical_fields,
+                ts_diff_fields=ts_diff_fields,
+                pds_fields=pds_fields,
+                linreg_fields=linreg_fields,
+                pds_numaggs=pds_numaggs,
+                pds_params=pds_params,
+                numaggs=numaggs,
+                quantiles=quantiles,
+                ts_numaggs=ts_numaggs,
+                tds_quantiles=tds_quantiles,
+                fields_remap=fields_remap,
+                dtype=dtype,
+                nans_filler=nans_filler,
+                engine=engine,
+                add_peaks_stats=add_peaks_stats,
+                weighting_fields=weighting_fields,
+                exclude_fields=exclude_fields,
+                othersvals_at_extremums=othersvals_at_extremums,
+                othersvals_basic_fields=othersvals_basic_fields,
+                othersvals_other_fields=othersvals_other_fields,
+                othersvals_excluded_fields=othersvals_excluded_fields,
+                ewm_spans=ewm_spans,
+                ewm_timestamp=ewm_timestamp,
+                ewm_time_half_lifes=ewm_time_half_lifes,
+                ewm_basic_funcs=ewm_basic_funcs,
+                ewm_final_funcs=ewm_final_funcs,
+                use_parametrized_pds_features=use_parametrized_pds_features,
+                corr_methods=corr_methods,
+                corr_fields=corr_fields,
+                linreg_timestamp_field=linreg_timestamp_field,
+                concentration_top_n=concentration_top_n,
+                concentrations_params=concentrations_params,
             )
-
-            # Categorical stats. For gpu mode, categoricals need to be converted to String upfront.
-            feature_expressions.extend(_nunique_exprs(af, fpref, categorical_fields, fields_remap))
-
-            if engine != "gpu":
-                cpu_exprs, cpu_unnest, cpu_rules = _cpu_only_exprs(
-                    af,
-                    fpref,
-                    numerical_fields,
-                    categorical_fields,
-                    ts_diff_fields,
-                    pds_fields,
-                    linreg_fields,
-                    fields_remap,
-                    dtype,
-                    nans_filler,
-                    ts_numaggs,
-                    tds_quantiles,
-                    pds_numaggs,
-                    pds_params,
-                    use_parametrized_pds_features,
-                    corr_methods,
-                    corr_fields,
-                    linreg_timestamp_field,
-                    concentration_top_n,
-                    concentrations_params,
-                )
-                feature_expressions.extend(cpu_exprs)
-                columns_to_unnest.extend(cpu_unnest)
-                unnest_rules.extend(cpu_rules)
+            feature_expressions.extend(exprs)
+            columns_to_unnest.extend(unnest)
+            unnest_rules.extend(rules)
 
     return feature_expressions, columns_to_unnest, unnest_rules
 

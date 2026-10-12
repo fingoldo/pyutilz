@@ -100,49 +100,74 @@ def _promote_object_columns(
     reduction pass downstream reads them back) and ``new_dtypes`` for a category one. Columns with
     more than ``max_categories`` distinct values, and anything the casts reject, are left alone.
     """
-    for col, the_type in old_dtypes.items():
+    # Iterate a snapshot: the promotions below overwrite the current column's entry, and a snapshot makes that explicit.
+    for col, the_type in list(old_dtypes.items()):
         if "object" in the_type or "str" in the_type or "string" in the_type:
             if col in skip_columns:
                 continue
 
             # first try to int64, then to float64, then to category
             try:
-                candidate = df[col].astype(np.int64)
-                # np.int64 cast silently truncates fractional floats (3.5 -> 3) instead of raising,
-                # so verify the round-trip is exactly equal to the original values before accepting it.
-                if not (candidate.astype(np.float64) == df[col].astype(np.float64)).all():
-                    raise ValueError(f"Column {col} contains fractional values; cannot be int64")
-                # That round-trip compares VALUES, so textual detail a number reproduces identically
-                # (a leading zero above all) passes it and is then thrown away. Such a column is an
-                # identifier spelled with digits, not a quantity; leave it to the category branch.
-                if _has_identifier_like_text(df[col]):
-                    raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
-                df[col] = candidate
-                old_dtypes[col] = "int64"
-                int_fields.append(col)
+                _promote_column_to_int64(df, col, old_dtypes, int_fields)
             except Exception:
                 try:
-                    as_float = df[col].astype(np.float64)
-                    if _has_identifier_like_text(df[col]):
-                        raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
-                    df[col] = as_float
-                    old_dtypes[col] = "float64"
-                    float_fields.append(col)
+                    _promote_column_to_float64(df, col, old_dtypes, float_fields)
                 except Exception:
-                    try:
-                        n = df[col].nunique()
-                        if n <= max_categories:
-                            if verbose:
-                                logger.info("%s %s->category", col, the_type)
+                    _promote_column_to_category(df, col, the_type, old_dtypes, new_dtypes, max_categories, inplace, verbose)
 
-                            new_dtypes[col] = "category"
-                            if inplace:
-                                df[col] = df[col].astype(new_dtypes[col])
 
-                    except Exception as e3:
-                        if verbose:
-                            logger.warning(f"Could not convert to category column {col}: {e3}")
-                        pass  # to avoid stumbling on lists like [1]
+def _promote_column_to_int64(df: pd.DataFrame, col: Any, old_dtypes: dict, int_fields: list) -> None:
+    """Cast an object column to int64 in place, raising if it is fractional or identifier-like text."""
+    candidate = df[col].astype(np.int64)
+    # np.int64 cast silently truncates fractional floats (3.5 -> 3) instead of raising,
+    # so verify the round-trip is exactly equal to the original values before accepting it.
+    if not (candidate.astype(np.float64) == df[col].astype(np.float64)).all():
+        raise ValueError(f"Column {col} contains fractional values; cannot be int64")
+    # That round-trip compares VALUES, so textual detail a number reproduces identically
+    # (a leading zero above all) passes it and is then thrown away. Such a column is an
+    # identifier spelled with digits, not a quantity; leave it to the category branch.
+    if _has_identifier_like_text(df[col]):
+        raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
+    df[col] = candidate
+    old_dtypes[col] = "int64"
+    int_fields.append(col)
+
+
+def _promote_column_to_float64(df: pd.DataFrame, col: Any, old_dtypes: dict, float_fields: list) -> None:
+    """Cast an object column to float64 in place, raising if it is identifier-like text."""
+    as_float = df[col].astype(np.float64)
+    if _has_identifier_like_text(df[col]):
+        raise ValueError(f"Column {col} holds identifier-like text; casting it to a number would lose formatting")
+    df[col] = as_float
+    old_dtypes[col] = "float64"
+    float_fields.append(col)
+
+
+def _promote_column_to_category(
+    df: pd.DataFrame,
+    col: Any,
+    the_type: str,
+    old_dtypes: dict,
+    new_dtypes: dict,
+    max_categories: int,
+    inplace: bool,
+    verbose: bool,
+) -> None:
+    """Mark an object column as category when it has few enough distinct values; failures are logged and skipped."""
+    try:
+        n = df[col].nunique()
+        if n <= max_categories:
+            if verbose:
+                logger.info("%s %s->category", col, the_type)
+
+            new_dtypes[col] = "category"
+            if inplace:
+                df[col] = df[col].astype(new_dtypes[col])
+
+    except Exception as e3:
+        if verbose:
+            logger.warning(f"Could not convert to category column {col}: {e3}")
+        pass  # to avoid stumbling on lists like [1]
 
 
 def _bucket_fields(df: pd.DataFrame, skip_columns: Sequence, old_dtypes: Dict[Any, str]) -> tuple:

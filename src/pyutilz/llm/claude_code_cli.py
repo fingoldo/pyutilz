@@ -350,18 +350,8 @@ def run_cli(cmd: "list[str]", prompt: str, sub_env: dict, child_cwd: str, timeou
         return _stream_one_call(proc, prompt, timeout, cancel_evt)
 
 
-def _stream_one_call(
-    proc: "subprocess.Popen",
-    prompt: str,
-    timeout: float,
-    cancel_evt: "threading.Event",
-) -> "tuple[int, str, str, dict | None]":
-    """Write the prompt, drain both pipes in parallel, and turn the event stream into a result.
-
-    Split from ``run_cli`` so the spawn can be a ``with`` block whose body is one call: the
-    stream handling is long enough that leaving it under the context manager would put the
-    function straight back over the C901 ceiling the carve just brought it under.
-    """
+def _write_prompt(proc: "subprocess.Popen", prompt: str) -> None:
+    """Write the prompt to the child's stdin and close it; a child that already exited is tolerated."""
     try:
         assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
         proc.stdin.write(prompt)
@@ -369,6 +359,9 @@ def _stream_one_call(
     except BrokenPipeError:
         pass
 
+
+def _start_stdout_reader(proc: "subprocess.Popen") -> "tuple[queue.Queue[str | None], threading.Thread]":
+    """Start the daemon thread that feeds ``proc.stdout`` lines into a queue, ending with a ``None`` sentinel."""
     line_q: queue.Queue[str | None] = queue.Queue()
 
     def _reader():
@@ -382,7 +375,11 @@ def _stream_one_call(
 
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
+    return line_q, reader_thread
 
+
+def _start_stderr_reader(proc: "subprocess.Popen") -> "tuple[list[str], threading.Thread]":
+    """Start the daemon thread draining ``proc.stderr`` so the child never blocks on it; returns the collected chunks."""
     # stderr used to be read only after the run, with a single blocking read(500) and
     # no timeout. Nothing consumed it meanwhile, so a CLI that wrote more than one
     # pipe buffer's worth of warnings blocked on its own stderr write and hung until
@@ -401,6 +398,39 @@ def _stream_one_call(
 
     stderr_thread = threading.Thread(target=_stderr_reader, daemon=True)
     stderr_thread.start()
+    return stderr_chunks, stderr_thread
+
+
+def _reap_process(proc: "subprocess.Popen", reader_thread: "threading.Thread", stderr_thread: "threading.Thread") -> None:
+    """Kill the child's process tree, wait for it, and join both pipe readers (stdout is fully drained before stderr is read)."""
+    _kill_process_tree(proc)
+    # Reap the process WITHOUT reading the pipes (the reader
+    # owns stdout). wait() avoids the communicate() double-drain.
+    try:
+        proc.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    # Join the reader so stdout is fully drained/closed before
+    # we read stderr below -- prevents a half-open-pipe race.
+    reader_thread.join(timeout=5)
+    stderr_thread.join(timeout=5)
+
+
+def _stream_one_call(
+    proc: "subprocess.Popen",
+    prompt: str,
+    timeout: float,
+    cancel_evt: "threading.Event",
+) -> "tuple[int, str, str, dict | None]":
+    """Write the prompt, drain both pipes in parallel, and turn the event stream into a result.
+
+    Split from ``run_cli`` so the spawn can be a ``with`` block whose body is one call: the
+    stream handling is long enough that leaving it under the context manager would put the
+    function straight back over the C901 ceiling the carve just brought it under.
+    """
+    _write_prompt(proc, prompt)
+    line_q, reader_thread = _start_stdout_reader(proc)
+    stderr_chunks, stderr_thread = _start_stderr_reader(proc)
 
     # The _reader thread is the SOLE consumer of stdout. Do NOT
     # call proc.communicate() here -- it would race the reader on
@@ -410,17 +440,7 @@ def _stream_one_call(
     try:
         result_text, error_text, timed_out, result_event = _consume_cli_stream(line_q, timeout, cancel_evt)
     finally:
-        _kill_process_tree(proc)
-        # Reap the process WITHOUT reading the pipes (the reader
-        # owns stdout). wait() avoids the communicate() double-drain.
-        try:
-            proc.wait(timeout=5)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-        # Join the reader so stdout is fully drained/closed before
-        # we read stderr below -- prevents a half-open-pipe race.
-        reader_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
+        _reap_process(proc, reader_thread, stderr_thread)
 
     stderr_data = "".join(stderr_chunks)[-2000:]
 

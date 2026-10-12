@@ -41,6 +41,51 @@ m_app_name, m_scraper_name, m_version, m_ip = None, None, None, None
 _identity_lock = threading.Lock()
 
 
+def _content_version(frame: Any) -> str:
+    """``<date>.<8-hex md5 of the calling module's source>``, where ``frame`` is the caller's frame."""
+    import hashlib
+    import inspect
+    import sys
+    from datetime import datetime
+
+    module = inspect.getmodule(frame)
+    del frame  # drop the reference immediately: a live frame pins the caller's whole locals mapping
+    if module is None or module.__file__ is None:
+        raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
+    with open(module.__file__, "rb") as f:
+        payload = f.read()
+    # `usedforsecurity=` arrived in python 3.9 (bpo-9216); on 3.8 hashlib.md5 rejects it with TypeError. The flag is purely declarative -- it says this
+    # digest is a content tag, not a security primitive -- so it is passed wherever the interpreter can express it and omitted on 3.8, where the
+    # resulting digest is byte-for-byte identical.
+    if sys.version_info >= (3, 9):
+        digest = hashlib.md5(payload, usedforsecurity=False)
+    else:
+        digest = hashlib.md5(payload)  # nosec B324 - content tag, not a security primitive; the 3.9+ branch above says so via usedforsecurity=False, which 3.8 cannot accept
+    file_hash = digest.hexdigest()[:8]
+    return f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"  # noqa: DTZ005 -- date-only (%Y.%m.%d) version tag, not a point-in-time value; local calendar date is intentional
+
+
+def _resolve_node_id(info: Any, scraper_name: Optional[str]) -> None:
+    """Populate ``_container.node_id`` by selecting the node row, inserting it when absent; raises if neither yields an id."""
+    fields = "host_name,os_machine_guid,os_serial"
+
+    db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
+    # Re-read into a local after each call: db_command populates _container.node_id as a
+    # side effect, which a type checker cannot see, so reading the attribute directly
+    # keeps it narrowed to None from the enclosing `if` and types the raise below away.
+    node_id = getattr(_container, "node_id", None)
+    if node_id is None:
+        db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
+        node_id = getattr(_container, "node_id", None)
+    if node_id is None:
+        # Same contract as the get_system_info branch above: returning None here left
+        # the caller with a scraper that never registered, never heartbeats and is
+        # invisible to the monitoring system, without one log line saying why.
+        raise RuntimeError(
+            f"register_scraper: nodes table returned no id for scraper {scraper_name!r} (both select and insert failed to yield one); NOT registered"
+        )
+
+
 def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] = None, app_name: Optional[str] = None, ip: Optional[str] = None) -> Optional[Any]:
     """Register the current process as a scraper node and emit a starting heartbeat.
 
@@ -67,35 +112,15 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
     global _container, pid, m_app_name, m_scraper_name, m_version, m_ip
 
     import os
-    import inspect
-    from datetime import datetime
+    import sys
 
     with _identity_lock:
         pid = os.getpid()
 
-    frame = None
     if version is None:
-        # get content-based version of the calling file (hash)
-        import hashlib
-        import sys
         # sys._getframe(1), not inspect.stack()[1]: the latter materialises a FrameInfo (with source
         # context) for EVERY frame on the stack and pins the caller's locals, all to read one module.
-        frame = sys._getframe(1)
-        module = inspect.getmodule(frame)
-        frame = None  # drop the reference immediately: a live frame pins the caller's whole locals mapping
-        if module is None or module.__file__ is None:
-            raise ValueError("could not resolve the calling module's file to compute a content-based version; pass version= explicitly")
-        with open(module.__file__, "rb") as f:
-            payload = f.read()
-        # `usedforsecurity=` arrived in python 3.9 (bpo-9216); on 3.8 hashlib.md5 rejects it with TypeError. The flag is purely declarative -- it says this
-        # digest is a content tag, not a security primitive -- so it is passed wherever the interpreter can express it and omitted on 3.8, where the
-        # resulting digest is byte-for-byte identical.
-        if sys.version_info >= (3, 9):
-            digest = hashlib.md5(payload, usedforsecurity=False)
-        else:
-            digest = hashlib.md5(payload)  # nosec B324 - content tag, not a security primitive; the 3.9+ branch above says so via usedforsecurity=False, which 3.8 cannot accept
-        file_hash = digest.hexdigest()[:8]
-        version = f"{datetime.now().strftime('%Y.%m.%d')}.{file_hash}"  # noqa: DTZ005 -- date-only (%Y.%m.%d) version tag, not a point-in-time value; local calendar date is intentional
+        version = _content_version(sys._getframe(1))
     if app_name is None:
         app_name = pythonlib.lookup_in_stack("app_name")
 
@@ -126,24 +151,7 @@ def register_scraper(scraper_name: Optional[str] = None, version: Optional[str] 
                 logger.exception(e)
                 raise
             else:
-                fields = "host_name,os_machine_guid,os_serial"
-
-                db.db_command("select", "nodes", where_fields=fields, returning="id", source=info, fetch_into=_container)
-                # Re-read into a local after each call: db_command populates _container.node_id as a
-                # side effect, which a type checker cannot see, so reading the attribute directly
-                # keeps it narrowed to None from the enclosing `if` and types the raise below away.
-                node_id = getattr(_container, "node_id", None)
-                if node_id is None:
-                    db.db_command("insert", "nodes", set_fields=fields, returning="id", source=info, fetch_into=_container)
-                    node_id = getattr(_container, "node_id", None)
-                if node_id is None:
-                    # Same contract as the get_system_info branch above: returning None here left
-                    # the caller with a scraper that never registered, never heartbeats and is
-                    # invisible to the monitoring system, without one log line saying why.
-                    raise RuntimeError(
-                        f"register_scraper: nodes table returned no id for scraper {scraper_name!r} (both select and insert failed to yield one); NOT registered"
-                    )
-
+                _resolve_node_id(info, scraper_name)
                 db.db_command(
                     "insert",
                     "nodes_info",

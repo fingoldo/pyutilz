@@ -114,6 +114,58 @@ def _methods_of(cls: ast.ClassDef) -> list[ast.FunctionDef | ast.AsyncFunctionDe
     return out
 
 
+def _class_recovery_sites(cls: ast.ClassDef) -> dict[tuple[frozenset[str], str], list[tuple[str, bool, int]]]:
+    """(exception names, recovery call) -> [(method, wrapped, line)] across this class's methods."""
+    seen: dict[tuple[frozenset[str], str], list[tuple[str, bool, int]]] = {}
+    for method in _methods_of(cls):
+        for node in ast.walk(method):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            exceptions = _handler_exception_names(node)
+            if not exceptions:
+                continue
+            for call, (wrapped, call_line) in _recovery_calls(node, exceptions).items():
+                seen.setdefault((exceptions, call), []).append((method.name, wrapped, call_line))
+    return seen
+
+
+def _asymmetry_finding(
+    cls: ast.ClassDef,
+    rel: str,
+    src_lines: list[str],
+    exceptions: frozenset[str],
+    call: str,
+    sites: list[tuple[str, bool, int]],
+) -> Finding | None:
+    """A finding when one sibling method's recovery call is bare and another's is wrapped, else None."""
+    # At least two DISTINCT methods: two handlers inside one method are not siblings,
+    # and the finding text ("while its sibling `run` wraps ...") named the method itself.
+    if len({name for name, _wrapped, _line in sites}) < 2:
+        return None
+    guarded = [m for m, wrapped, _ in sites if wrapped]
+    bare = [(m, line) for m, wrapped, line in sites if not wrapped]
+    if not guarded or not bare:
+        return None
+    bare_method, bare_line = bare[0]
+    # The sibling named in the detail has to be a DIFFERENT method.
+    sibling = next((name for name in guarded if name != bare_method), None)
+    if sibling is None:
+        return None
+    return Finding(
+        check="asymmetric_except_siblings",
+        severity="P2",
+        file=rel,
+        line=bare_line,
+        snippet=_line_text(src_lines, bare_line),
+        detail=(
+            f"`{cls.name}.{bare_method}` calls `{call}` bare inside "
+            f"`except {'/'.join(sorted(exceptions))}`, while its sibling "
+            f"`{sibling}` wraps the identical call. A failure in the recovery "
+            "then escapes the handler that exists to contain it."
+        ),
+    )
+
+
 def scan_asymmetric_except_siblings(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -139,45 +191,9 @@ def scan_asymmetric_except_siblings(
         for cls in ast.walk(tree):
             if not isinstance(cls, ast.ClassDef):
                 continue
-            # (exception names, recovery call) -> [(method, wrapped, line)]
-            seen: dict[tuple[frozenset[str], str], list[tuple[str, bool, int]]] = {}
-            for method in _methods_of(cls):
-                for node in ast.walk(method):
-                    if not isinstance(node, ast.ExceptHandler):
-                        continue
-                    exceptions = _handler_exception_names(node)
-                    if not exceptions:
-                        continue
-                    for call, (wrapped, call_line) in _recovery_calls(node, exceptions).items():
-                        seen.setdefault((exceptions, call), []).append((method.name, wrapped, call_line))
-
+            seen = _class_recovery_sites(cls)
             for (exceptions, call), sites in sorted(seen.items(), key=lambda kv: sorted(kv[0][0])):
-                # At least two DISTINCT methods: two handlers inside one method are not siblings,
-                # and the finding text ("while its sibling `run` wraps ...") named the method itself.
-                if len({name for name, _wrapped, _line in sites}) < 2:
-                    continue
-                guarded = [m for m, wrapped, _ in sites if wrapped]
-                bare = [(m, line) for m, wrapped, line in sites if not wrapped]
-                if not guarded or not bare:
-                    continue
-                bare_method, bare_line = bare[0]
-                # The sibling named in the detail has to be a DIFFERENT method.
-                sibling = next((name for name in guarded if name != bare_method), None)
-                if sibling is None:
-                    continue
-                findings.append(
-                    Finding(
-                        check="asymmetric_except_siblings",
-                        severity="P2",
-                        file=rel,
-                        line=bare_line,
-                        snippet=_line_text(src_lines, bare_line),
-                        detail=(
-                            f"`{cls.name}.{bare_method}` calls `{call}` bare inside "
-                            f"`except {'/'.join(sorted(exceptions))}`, while its sibling "
-                            f"`{sibling}` wraps the identical call. A failure in the recovery "
-                            "then escapes the handler that exists to contain it."
-                        ),
-                    )
-                )
+                finding = _asymmetry_finding(cls, rel, src_lines, exceptions, call, sites)
+                if finding is not None:
+                    findings.append(finding)
     return findings

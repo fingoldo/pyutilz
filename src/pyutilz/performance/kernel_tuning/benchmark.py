@@ -25,6 +25,7 @@ with even a realistic micro-measurement, trust the end-to-end one.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import statistics
@@ -223,13 +224,6 @@ def time_backend(
     concurrency = max(1, int(concurrency))
     _gpu_sync = _resolve_gpu_sync(concurrency) if synchronize_gpu else _noop_sync
 
-    def _prebuild(count: int) -> list:
-        """Build `count` argument tuples via `make_inputs`: fresh per entry, or one shared tuple repeated, per `fresh_inputs_per_call`."""
-        if fresh_inputs_per_call:
-            return [tuple(make_inputs()) for _ in range(count)]
-        shared = tuple(make_inputs())
-        return [shared] * count
-
     try:
         for _ in range(max(0, int(warmup))):
             fn(*make_inputs())
@@ -245,42 +239,76 @@ def time_backend(
         logger.warning("time_backend: %r raised during warmup -- treating as inf (excluded from this sweep).", fn, exc_info=True)
         return float("inf")
 
-    def _run(inputs_list: list, out: list) -> None:
-        """Time `fn(*args)` for each prebuilt `args` in `inputs_list` (optionally gating on idle hardware first) and append the elapsed seconds to `out`."""
-        local = []
-        for args in inputs_list:
-            # Don't START the next iteration while the device we need is busy: a contended
-            # sample is a wrong measurement. Wait (bounded) for the hardware to free up first.
-            if hw_idle_gate:
-                wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll, max_wait=hw_idle_max_wait, timer=timer)
-            t0 = timer()
-            fn(*args)
-            # INSIDE the timed region, before the close: a CUDA launch returns immediately, so a
-            # timer stopped here without a device sync measures the launch, not the compute.
-            _gpu_sync()
-            local.append(timer() - t0)
-        out.extend(local)
-
+    timed = functools.partial(
+        _time_inputs,
+        gpu_sync=_gpu_sync,
+        hw_idle_gate=hw_idle_gate,
+        hw_idle_threshold=hw_idle_threshold,
+        hw_idle_poll=hw_idle_poll,
+        hw_idle_max_wait=hw_idle_max_wait,
+        timer=timer,
+    )
     try:
         if concurrency == 1:
             samples: list[float] = []
-            _run(_prebuild(n_iters), samples)
-            return float(statistics.median(samples) * 1000.0) if samples else float("inf")
+            timed(fn, _prebuild_inputs(make_inputs, n_iters, fresh_inputs_per_call), samples)
+            return _median_ms(samples)
 
         # Pre-build every thread's inputs (host-side) before starting, so the timed region is purely
         # ``fn`` -- including, for a GPU backend, its own H2D upload of the fresh buffer.
-        per_thread_inputs = [_prebuild(n_iters) for _ in range(concurrency)]
+        per_thread_inputs = [_prebuild_inputs(make_inputs, n_iters, fresh_inputs_per_call) for _ in range(concurrency)]
         results: list[list[float]] = [[] for _ in range(concurrency)]
-        threads = [threading.Thread(target=_run, args=(per_thread_inputs[i], results[i])) for i in range(concurrency)]
+        threads = [threading.Thread(target=timed, args=(fn, per_thread_inputs[i], results[i])) for i in range(concurrency)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
         flat = [s for r in results for s in r]
-        return float(statistics.median(flat) * 1000.0) if flat else float("inf")
+        return _median_ms(flat)
     except Exception:
         logger.warning("time_backend: %r raised during timed run -- treating as inf (excluded from this sweep).", fn, exc_info=True)
         return float("inf")
+
+
+def _prebuild_inputs(make_inputs: Callable[[], Sequence], count: int, fresh_inputs_per_call: bool) -> list:
+    """Build ``count`` argument tuples via ``make_inputs``: fresh per entry, or one shared tuple repeated."""
+    if fresh_inputs_per_call:
+        return [tuple(make_inputs()) for _ in range(count)]
+    shared = tuple(make_inputs())
+    return [shared] * count
+
+
+def _median_ms(samples: list[float]) -> float:
+    """Median of ``samples`` (seconds) in milliseconds, or ``inf`` when there are none."""
+    return float(statistics.median(samples) * 1000.0) if samples else float("inf")
+
+
+def _time_inputs(
+    fn: Callable,
+    inputs_list: list,
+    out: list,
+    *,
+    gpu_sync: Callable[[], None],
+    hw_idle_gate: bool,
+    hw_idle_threshold: Optional[float],
+    hw_idle_poll: float,
+    hw_idle_max_wait: float,
+    timer: Callable[[], float],
+) -> None:
+    """Time ``fn(*args)`` for each prebuilt ``args`` in ``inputs_list`` (optionally gating on idle hardware first) and append the elapsed seconds to ``out``."""
+    local = []
+    for args in inputs_list:
+        # Don't START the next iteration while the device we need is busy: a contended
+        # sample is a wrong measurement. Wait (bounded) for the hardware to free up first.
+        if hw_idle_gate:
+            wait_for_idle_hardware(hw_idle_threshold, poll=hw_idle_poll, max_wait=hw_idle_max_wait, timer=timer)
+        t0 = timer()
+        fn(*args)
+        # INSIDE the timed region, before the close: a CUDA launch returns immediately, so a
+        # timer stopped here without a device sync measures the launch, not the compute.
+        gpu_sync()
+        local.append(timer() - t0)
+    out.extend(local)
 
 
 def benchmark_backends(
