@@ -30,6 +30,11 @@ from .sql_helpers import construct_templates_and_values, validate_sql_identifier
 # connection globals live and every cross-function call (safe_execute, get_cursor, ...) patchable.
 import pyutilz.database.db as _facade
 
+# pause before retrying a database command.
+_DB_RETRY_SLEEP_SECONDS = 1
+
+# pause before reconnecting after a dropped connection.
+_DB_RECONNECT_SLEEP_SECONDS = 3
 
 def get_table_fields(table: str, alias: str, prefix: str = "", suffix: str = "", excluding: Union[str, Iterable[str]] = "") -> str:
     """Returns a comma-separated ``<alias>.<column> <prefix><column><suffix>`` select list for a table.
@@ -145,7 +150,7 @@ def _recover_from_cursor_collision(cursor_name: Optional[str], retry_count: int,
     # to pop. The retry then re-issued DECLARE <same name> and collided again, burning
     # the whole retry budget. Close the colliding server-side cursor for real instead.
     _close_colliding_named_cursor(cursor_name)
-    _facade.sleep(1)
+    _facade.sleep(_DB_RETRY_SLEEP_SECONDS)
     return retry_count
 
 
@@ -215,7 +220,7 @@ def basic_db_execute(
                 raise
             logger.exception("Database operation failed (statement=%s): %s", stmt_preview, e)
             logger.info("Retrying database operation (%s/%s)...", retry_count, max_retries)
-            _facade.sleep(1)
+            _facade.sleep(_DB_RETRY_SLEEP_SECONDS)
             _reconnect_for_retry()
             continue  # Retry the operation
         except DuplicateTable as e:
@@ -662,7 +667,7 @@ def execute_alchemy(sql: str, max_retries: int = 3) -> None:
         except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             logger.exception(e)
             last_exc = e
-            _facade.sleep(3)
+            _facade.sleep(_DB_RECONNECT_SLEEP_SECONDS)
     # Regression fix: previously fell off the end of the function with no return/raise once
     # `n < max_retries` became false -- a permanently-broken statement (SQL syntax error,
     # permission denied) failed identically on every attempt (retried as if transient) and then

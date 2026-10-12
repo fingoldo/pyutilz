@@ -38,6 +38,9 @@ from datetime import timezone, datetime
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+# interval between load checks while waiting for idle devices.
+_IDLE_POLL_SECONDS = 1
+
 def run_from_ipython():
     """Return True if the current process is running inside an IPython/Jupyter session, False otherwise."""
     try:
@@ -461,7 +464,7 @@ def ensure_idle_devices(
             start_time = now
 
         last_warned_at = _warn_if_still_waiting(now - wait_started_at, now, last_warned_at)
-        time.sleep(1)
+        time.sleep(_IDLE_POLL_SECONDS)
         now = time.time()
 
     logger.warning("ensure_idle_devices: devices still busy after %.0f s; giving up.", now - wait_started_at)

@@ -49,6 +49,9 @@ _READ_CHUNK_BYTES = 256 * 1024
 _SAFE_TAG_RE = re.compile(r"\A[A-Za-z0-9_.-]+\Z")
 
 
+# base of the exponential retry backoff.
+_RETRY_BACKOFF_BASE_SECONDS = 2
+
 class CachedHttpClient:
     """A GET client with disk caching, per-host throttling, and offline mode.
 
@@ -209,7 +212,7 @@ class CachedHttpClient:
             # contract to depend on silently.
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 if attempt < retries - 1:
-                    time.sleep(2**attempt)
+                    time.sleep(_RETRY_BACKOFF_BASE_SECONDS**attempt)
                     continue
                 logger.debug("cached_client: %s for %s", exc, url)
                 return None

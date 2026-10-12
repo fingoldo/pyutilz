@@ -28,6 +28,8 @@ from ._common import (
 # ``pyutilz.database.db.conn`` would never be seen here).
 import pyutilz.database.db as _facade
 
+# pause before retrying a failed database connection.
+_CONNECT_RETRY_SLEEP_SECONDS = 5
 
 @compiles(Insert, "postgresql")
 def prefix_inserts(insert, compiler, **kw):
@@ -196,7 +198,7 @@ def connect_to_db(
             if max_retries is not None and attempt >= max_retries:
                 logger.error("connect_to_db: giving up after %d attempts", attempt)
                 raise
-            _facade.sleep(5)
+            _facade.sleep(_CONNECT_RETRY_SLEEP_SECONDS)
         else:
             logger.info("Connected to the DB %s", db_name)
             return

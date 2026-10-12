@@ -39,6 +39,9 @@ from pyutilz.database.exceptions import DatabaseConnectionError
 # checking of redis method names on this module's central object.
 rc: Optional[redis.Redis] = None
 
+# upper bound of the random pause between Redis retries.
+_REDIS_RETRY_JITTER_SECONDS = 1
+
 def rconnect (redis_host:str, redis_port:int, redis_db_name:Union[int,str], redis_db_pwd:str, decode_responses:bool=True):
     """
     Create a Redis connection with the given credentials, store it as the module-level global ``rc``, and return it.
@@ -134,7 +137,7 @@ def rexecute(method_name: str, *args, max_retries: Any = None, **kwargs) -> Any:
             if max_retries is not None and attempt >= max_retries:
                 logger.error("rexecute: giving up after %d attempts", attempt)
                 raise
-            sleep(1 * random())  # nosec B311 - jitter for retry backoff timing, not a security/crypto use
+            sleep(_REDIS_RETRY_JITTER_SECONDS * random())  # nosec B311 - jitter for retry backoff timing, not a security/crypto use
         except Exception as e:
             # Permanent error: log and propagate instead of busy-looping forever.
             logger.exception(e)

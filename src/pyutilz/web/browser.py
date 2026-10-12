@@ -102,6 +102,18 @@ basic_headers = {"accept-encoding": "gzip,deflate", "accept-language": "en-US,en
 # basic_headers default for every other consumer in the process.
 headers = dict(basic_headers)
 
+# wait for a manual or slow login to complete.
+_LOGIN_WAIT_SECONDS = 120
+
+# short pause for a page to settle.
+_PAGE_SETTLE_SECONDS = 2
+
+# base of the exponential session-refresh backoff.
+_SESSION_REFRESH_BACKOFF_BASE = 2
+
+# cap on the session-refresh backoff before jitter.
+_SESSION_REFRESH_BACKOFF_CAP_SECONDS = 30
+
 def find_element_by_xpath(browser: Any, query: str) -> "WebElement":
     """Locates an element by XPath."""
     from selenium.webdriver.common.by import By
@@ -162,7 +174,7 @@ def browser_get(path:str)->None:
             # would proceed to inspect browser.title/attempt login while the browser was still
             # on the PREVIOUS page (navigation to `path` never completed), acting on stale
             # content instead of the page it thinks it just loaded.
-            sleep(2)
+            sleep(_PAGE_SETTLE_SECONDS)
             browser.get(path)
         else:
             raise(e)
@@ -485,7 +497,7 @@ def _ensure_browser() -> None:
                             f"LoginAndGetCookies: session-refresh failed {_session_refresh_attempts} times "
                             f"in a row with an unrecognized error, giving up: {e}"
                         ) from e
-                    sleep(min(2**_session_refresh_attempts, 30) * random())  # nosec B311 - jittered backoff on an unrecognized session-refresh error, not security-sensitive
+                    sleep(min(_SESSION_REFRESH_BACKOFF_BASE**_session_refresh_attempts, _SESSION_REFRESH_BACKOFF_CAP_SECONDS) * random())  # nosec B311 - jittered backoff on an unrecognized session-refresh error, not security-sensitive
             else:
                 break
 
@@ -571,7 +583,7 @@ def _check_login_state(keys: Any) -> bool:
     drv = cast("WebDriver", browser)
     if pythonlib.anyof_elements_in_string(("Cloudflare",), drv.title):
         logger.warning("Ddos or captcha protection on %s. Waiting for operator to solve it...", target)
-        sleep(120)
+        sleep(_LOGIN_WAIT_SECONDS)
 
     if pythonlib.anyof_elements_in_string(logout_signs, drv.title):
         return _submit_credentials(keys)

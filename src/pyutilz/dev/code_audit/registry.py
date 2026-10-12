@@ -89,6 +89,7 @@ from .unreachable_import_fallback import scan_unreachable_import_fallback
 from .comment_names_missing_symbol import scan_comment_names_missing_symbol, scan_comment_cites_absolute_line
 from .unit_suffix_mismatch import scan_unit_suffix_mismatch
 from .sentinel_guard_mismatch import scan_sentinel_guard_mismatch
+from .timing_literal_in_call import scan_timing_literal_in_call
 from .stats_key_coverage import scan_stats_key_coverage
 from .constructor_param_overwritten import scan_constructor_param_overwritten
 from .lazy_log_assertion import scan_lazy_log_assertion
@@ -240,6 +241,7 @@ register_scanner("lazy_log_assertion", scan_lazy_log_assertion)
 register_scanner("constructor_param_overwritten", scan_constructor_param_overwritten)
 register_scanner("stats_key_coverage", scan_stats_key_coverage)
 register_scanner("sentinel_guard_mismatch", scan_sentinel_guard_mismatch)
+register_scanner("timing_literal_in_call", scan_timing_literal_in_call)
 register_scanner("unit_suffix_mismatch", scan_unit_suffix_mismatch)
 register_scanner("comment_names_missing_symbol", scan_comment_names_missing_symbol)
 register_scanner("comment_cites_absolute_line", scan_comment_cites_absolute_line)

@@ -636,6 +636,7 @@ from .patch_target_is_a_reexport import scan_patch_target_is_a_reexport
 from .raising_stub_swallowed import scan_raising_stub_swallowed
 from .sentinel_cached_as_answer import scan_sentinel_cached_as_answer
 from .sentinel_guard_mismatch import scan_sentinel_guard_mismatch
+from .timing_literal_in_call import scan_timing_literal_in_call
 from .sibling_guard_missing import scan_sibling_guard_missing
 from .override_signature_drift import scan_override_signature_drift
 from .source_text_assertions import scan_source_text_assertions
@@ -771,6 +772,7 @@ __all__ = [
     "scan_raising_stub_swallowed",
     "scan_sentinel_cached_as_answer",
     "scan_sentinel_guard_mismatch",
+    "scan_timing_literal_in_call",
     "scan_sibling_guard_missing",
     "scan_override_signature_drift",
     "scan_source_text_assertions",

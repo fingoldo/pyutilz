@@ -32,6 +32,9 @@ S3_BUCKET_NAME: _Optional[str] = None  # To be configured by user
 # --------------------------------------------------------------------------------------------------------------
 
 
+# pause between polls of a model artifact that is not ready yet.
+_POLL_SLEEP_SECONDS = 10
+
 def _gcp_storage_bucket(bucket_name, acc_file):
     """Open a GCS bucket handle using a service-account JSON key file.
 
@@ -159,12 +162,12 @@ def _download_model_from_s3(local_object_path: str, s3_object_path: str, bucket:
             # and "corrupt zip", both `sleep(10)`). Matching them here closes the same
             # busy-loop risk class already fixed in those two branches.
             logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
-            sleep(10)
+            sleep(_POLL_SLEEP_SECONDS)
         else:
             logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
     else:
         logger.warning("Model %s not found in bucket %s", s3_object_path, S3_BUCKET_NAME)
-        sleep(10)
+        sleep(_POLL_SLEEP_SECONDS)
 
 
 def _unpack_local_zip(local_object_path: str, s3_object_path: str, temp_dir: str) -> None:
@@ -188,7 +191,7 @@ def _unpack_local_zip(local_object_path: str, s3_object_path: str, temp_dir: str
                     os.remove(local_object_path + ".zip")
                 except OSError as remove_err:
                     logger.error("Could not remove corrupted archive %s: %s", local_object_path + ".zip", remove_err)
-                sleep(10)
+                sleep(_POLL_SLEEP_SECONDS)
             else:
                 logger.info("Unzipped model from archive %s", local_object_path + ".zip")
                 os.remove(local_object_path + ".zip")
