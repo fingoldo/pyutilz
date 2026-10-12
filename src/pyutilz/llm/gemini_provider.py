@@ -222,12 +222,12 @@ class GeminiProvider(LLMProvider):
         return 1_048_576
 
     @property
-    def max_output_tokens(self) -> int:
-        """Maximum number of output tokens supported by the configured model."""
+    def max_output_tokens(self) -> int | None:
+        """The configured model's output ceiling for the families listed here, else None (``max_tokens`` is then omitted)."""
         for prefix, limit in [("gemini-3", 65536), ("gemini-2.5", 65536), ("gemini-2.0", 8192)]:
             if self.model_name.startswith(prefix):
                 return limit
-        return 8192
+        return None
 
     def supports_json_mode(self) -> bool:
         """Gemini 2.0+ accepts ``response_mime_type="application/json"``
@@ -349,7 +349,7 @@ class GeminiProvider(LLMProvider):
 
     def _build_generate_config(
         self,
-        max_tokens: int,
+        max_tokens: int | None,
         temperature: float | None,
         system: str | None,
         json_mode: bool,
@@ -359,7 +359,7 @@ class GeminiProvider(LLMProvider):
         """The ``GenerateContentConfig`` for one call: sampling, system instruction, JSON constraints, thinking and cache options."""
         config_kwargs: dict[str, Any] = {
             **({} if temperature is None else {"temperature": temperature}),  # `None` lets Gemini apply its own
-            "max_output_tokens": max_tokens,
+            **({} if max_tokens is None or max_tokens == 0 else {"max_output_tokens": max_tokens}),  # None: the model's own limit applies
             "system_instruction": system if system else None,
             "response_mime_type": "application/json" if json_mode or json_schema is not None else None,
         }
@@ -460,12 +460,11 @@ class GeminiProvider(LLMProvider):
                 constrained to, sent as ``response_json_schema`` with ``application/json``.
         """
         self._reset_per_call_state()
-        if max_tokens <= 0:
-            max_tokens = self.max_output_tokens
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget = self.fit_max_tokens_to_context(budget, prompt, system)
         async with self.semaphore:
             contents = build_gemini_parts(prompt, images)
-            config = self._build_generate_config(max_tokens, temperature, system, json_mode, json_schema, thinking)
+            config = self._build_generate_config(budget, temperature, system, json_mode, json_schema, thinking)
 
             # Native async client (google-genai's own .aio surface) instead of offloading the
             # sync client to a dedicated ThreadPoolExecutor: avoids consuming a thread-pool

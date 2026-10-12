@@ -31,11 +31,11 @@ class RequestBodyMixin:
     if TYPE_CHECKING:  # supplied by OpenAICompatibleProvider and its other mixins
 
         @property
-        def max_output_tokens(self) -> int:
-            """The provider's output-token ceiling (typing stub)."""
+        def max_output_tokens(self) -> int | None:
+            """The provider's output-token ceiling, None when unknown (typing stub)."""
             ...
 
-        def fit_max_tokens_to_context(self, max_tokens: int, prompt: str, system: str | None = None) -> int:
+        def fit_max_tokens_to_context(self, max_tokens: int | None, prompt: str, system: str | None = None) -> int | None:
             """The output budget clamped to the context window (typing stub)."""
             ...
 
@@ -129,7 +129,7 @@ class RequestBodyMixin:
         prompt: str,
         system: str | None,
         temperature: float | None,
-        max_tokens: int,
+        max_tokens: int | None,
         rf: dict[str, Any] | None,
         thinking: bool | str | None,
         images: list[str] | None,
@@ -144,7 +144,8 @@ class RequestBodyMixin:
             # `None` means DO NOT SEND the field, so the upstream applies its own default. `0.0` is a real
             # temperature and the most deterministic one, which a truthiness test would silently turn off.
             **({} if temperature is None else {"temperature": temperature}),
-            "max_tokens": max_tokens,
+            # Omitted when there is no known ceiling (None) or the unset 0 marker: the provider applies its own limit.
+            **({} if max_tokens is None or max_tokens == 0 else {"max_tokens": max_tokens}),
         }
         if rf is not None:
             body["response_format"] = rf
@@ -181,8 +182,7 @@ class RequestBodyMixin:
         C901 budget; the caller must already have awaited ``_async_prepare()``, because the
         ``max_output_tokens`` / ``context_window`` properties read here can hit the catalogue.
         """
-        if max_tokens <= 0:
-            max_tokens = self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
         # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
         # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
         # (2026-08-08, autopsia pilot): a large prompt's real token count exceeded `count_tokens`'s
@@ -190,9 +190,9 @@ class RequestBodyMixin:
         # entirely instead of clamping was tried and reverted: OpenRouter's own docs confirm there is no
         # universal fixed default across models when the field is absent, so widening the reserve keeps
         # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        budget = self.fit_max_tokens_to_context(budget, prompt, system)
         rf = self._response_format(json_mode, json_schema)
-        body = self._request_body(prompt, system, temperature, max_tokens, rf, thinking, images, tools, tool_choice, extra_body)
+        body = self._request_body(prompt, system, temperature, budget, rf, thinking, images, tools, tool_choice, extra_body)
         body["stream"] = True
         # OpenAI and several OpenAI-compatible upstreams publish streamed usage only when ``stream_options:
         # {"include_usage": true}`` is set. OpenRouter documents the field as deprecated with no effect: it always
