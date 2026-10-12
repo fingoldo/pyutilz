@@ -520,8 +520,14 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         """``thinking_tokens`` (MAX_THINKING_TOKENS) and/or ``effort`` (``--effort``) for a ``thinking=`` request.
 
         The models behind ``opus``/``sonnet``/``fable`` think adaptively, where the documented depth control is the
-        effort level, not a token budget; the CLI exposes it as ``--effort`` (2.1.263). A budget is still what a
-        budget-thinking model (haiku) takes, and 0 is still how "off" is said.
+        effort level, not a token budget; the CLI exposes it as ``--effort``. A budget is still what a budget-thinking
+        model (the ``haiku`` alias, Haiku 4.5) takes, and 0 is still how "off" is said.
+
+        Measured 2026-10-12 on CLI 2.1.296 with ``claude-haiku-5-5``: ``--effort`` is accepted and changes the depth
+        of thinking (the answer to a two-leg timetable question: 394 thinking tokens at ``low``, 1,322 at ``max``, both
+        correct). Haiku 5.5 is not in ``CLAUDE_MODELS`` (see the note there), so ``self._spec`` is the unknown-model
+        default, which is adaptive: this branch sends ``effort`` for it and no ``MAX_THINKING_TOKENS``. The
+        ``thinking_tokens`` budget is therefore never sent to Haiku 5.5 by this provider.
         """
         budget = claude_code_thinking_tokens(thinking)
         if budget is None:

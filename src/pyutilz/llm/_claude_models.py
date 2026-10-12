@@ -88,6 +88,13 @@ CLAUDE_MODELS: dict[str, ClaudeModelSpec] = {
 # current Opus tier, so an unknown model is neither silently capped at a legacy limit nor priced at zero.
 UNKNOWN_CLAUDE_MODEL = ClaudeModelSpec(4.0, 20.0, 64_000, _200K)
 
+# Not listed on purpose: ``claude-haiku-5-5``. The CLI reports its limits (``modelUsage``, 2026-10-12, CLI 2.1.296):
+# ``maxOutputTokens`` 128,000 and ``contextWindow`` 1,000,000, accepts ``--effort`` (low and max verified, thinking
+# 394 and 1,322 tokens on one question), and the table has no documented price for it. A row needs the price from
+# the documentation (an invented price would misprice every call), so until then the unknown-model default applies:
+# adaptive thinking, i.e. ``effort`` and no token budget. The default's own max-output and context figures are ours
+# and are NOT a cap sent to the model; the Claude Code provider never sends max_tokens.
+
 # Claude Code's model aliases, as the CLI resolves them (``claude --model opus``). Verified 2026-09-26 against
 # CLI 2.1.263 by reading ``modelUsage`` off a live ``--output-format json`` result: ``opus`` is Opus 5, not the
 # newer Opus 5.5, so the alias cannot be derived from the API lineup and is pinned from the measurement.
