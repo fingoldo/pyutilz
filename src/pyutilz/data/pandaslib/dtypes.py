@@ -113,7 +113,7 @@ def _promote_object_columns(
                 try:
                     _promote_column_to_float64(df, col, old_dtypes, float_fields)
                 except Exception:
-                    _promote_column_to_category(df, col, the_type, old_dtypes, new_dtypes, max_categories, inplace, verbose)
+                    _promote_column_to_category(df, col, the_type, new_dtypes, max_categories, inplace, verbose)
 
 
 def _promote_column_to_int64(df: pd.DataFrame, col: Any, old_dtypes: dict, int_fields: list) -> None:
@@ -147,7 +147,6 @@ def _promote_column_to_category(
     df: pd.DataFrame,
     col: Any,
     the_type: str,
-    old_dtypes: dict,
     new_dtypes: dict,
     max_categories: int,
     inplace: bool,
