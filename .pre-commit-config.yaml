@@ -99,7 +99,7 @@ repos:
     hooks:
       - id: ruff-real-bugs
         name: "ruff (real bugs block)"
-        entry: python -m ruff check --ignore C901
+        entry: python -m ruff check
         language: system
         types: [python]
         # pre-commit passes matching files as explicit CLI args, which BYPASSES ruff's own
