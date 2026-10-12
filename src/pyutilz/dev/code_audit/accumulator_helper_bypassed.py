@@ -129,6 +129,24 @@ def _accumulates(node: ast.AST, structure: str) -> bool:
     return False
 
 
+def _is_lock_with(node: ast.With | ast.AsyncWith) -> bool:
+    """True when a ``with`` statement's context expressions name a lock or mutex.
+
+    Only the context expressions themselves (`with self._ids_lock:`), and matched on whole
+    `_`-separated segments: scanning the whole subtree for the substring "lock" let
+    `with self._block_reader:`, `with blocking_section():` and `with clock_timer:` silence
+    genuine bypasses.
+    """
+    names: set[str] = set()
+    for item in node.items:
+        for sub in ast.walk(item.context_expr):
+            if isinstance(sub, ast.Attribute):
+                names.add(sub.attr)
+            elif isinstance(sub, ast.Name):
+                names.add(sub.id)
+    return any({"lock", "mutex"} & set(name.lower().split("_")) for name in names)
+
+
 def _lines_under_a_lock(func: ast.AST) -> set[int]:
     """Line numbers inside a `with <something>lock:` block in this function.
 
@@ -138,20 +156,7 @@ def _lines_under_a_lock(func: ast.AST) -> set[int]:
     """
     protected: set[int] = set()
     for node in ast.walk(func):
-        if not isinstance(node, (ast.With, ast.AsyncWith)):
-            continue
-        # Only the context expressions themselves (`with self._ids_lock:`), and matched on whole
-        # `_`-separated segments: scanning the whole subtree for the substring "lock" let
-        # `with self._block_reader:`, `with blocking_section():` and `with clock_timer:` silence
-        # genuine bypasses.
-        names: set[str] = set()
-        for item in node.items:
-            for sub in ast.walk(item.context_expr):
-                if isinstance(sub, ast.Attribute):
-                    names.add(sub.attr)
-                elif isinstance(sub, ast.Name):
-                    names.add(sub.id)
-        if not any({"lock", "mutex"} & set(name.lower().split("_")) for name in names):
+        if not isinstance(node, (ast.With, ast.AsyncWith)) or not _is_lock_with(node):
             continue
         for stmt in node.body:
             for sub in ast.walk(stmt):

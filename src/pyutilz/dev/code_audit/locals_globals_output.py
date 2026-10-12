@@ -37,6 +37,31 @@ _OUTPUT_LIKE_KWARG_NAMES = frozenset({"object", "out", "output", "target", "dest
 _READ_ONLY_BUILTIN_CONSUMERS = frozenset({"set", "list", "dict", "tuple", "frozenset", "sorted", "len", "str", "repr", "print", "iter", "any", "all", "min", "max", "sum"})
 
 
+def _kwarg_output_findings(node: ast.Call, rel: str, src_lines: list[str]) -> list[Finding]:
+    """Findings for ``locals()``/``globals()`` passed as a keyword argument of ``node``."""
+    findings: list[Finding] = []
+    for kw in node.keywords:
+        if kw.arg is not None and is_locals_or_globals_call(kw.value):
+            severity = "P1" if kw.arg in _OUTPUT_LIKE_KWARG_NAMES else "Low"
+            which = "locals" if isinstance(kw.value, ast.Call) and cast(ast.Name, kw.value.func).id == "locals" else "globals"  # cast: is_locals_or_globals_call() above already proved func is an ast.Name
+            findings.append(Finding(
+                check="locals_globals_as_output",
+                severity=severity,
+                file=rel,
+                line=kw.value.lineno,
+                snippet=_line_text(src_lines, kw.value.lineno),
+                detail=(
+                    f"`{kw.arg}={which}()` passed as an argument -- {which}() inside an "
+                    "ordinary function scope is a DISCONNECTED SNAPSHOT dict in CPython; "
+                    "if the callee is expected to write into it and have those writes "
+                    "reach the real variable/global slot, they never will. Pass a real "
+                    "dict, capture the callee's return value, or read the resolved value "
+                    "back out of a local dict after the call."
+                ),
+            ))
+    return findings
+
+
 def scan_locals_globals_as_output(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -64,25 +89,7 @@ def scan_locals_globals_as_output(
                 continue  # this Call IS the locals()/globals() call itself, not a use of it
             if isinstance(node.func, ast.Name) and node.func.id in _READ_ONLY_BUILTIN_CONSUMERS:
                 continue  # read-only consumer -- never the write-back bug shape this scanner targets
-            for kw in node.keywords:
-                if kw.arg is not None and is_locals_or_globals_call(kw.value):
-                    severity = "P1" if kw.arg in _OUTPUT_LIKE_KWARG_NAMES else "Low"
-                    which = "locals" if isinstance(kw.value, ast.Call) and cast(ast.Name, kw.value.func).id == "locals" else "globals"  # cast: is_locals_or_globals_call() above already proved func is an ast.Name
-                    findings.append(Finding(
-                        check="locals_globals_as_output",
-                        severity=severity,
-                        file=rel,
-                        line=kw.value.lineno,
-                        snippet=_line_text(src_lines, kw.value.lineno),
-                        detail=(
-                            f"`{kw.arg}={which}()` passed as an argument -- {which}() inside an "
-                            "ordinary function scope is a DISCONNECTED SNAPSHOT dict in CPython; "
-                            "if the callee is expected to write into it and have those writes "
-                            "reach the real variable/global slot, they never will. Pass a real "
-                            "dict, capture the callee's return value, or read the resolved value "
-                            "back out of a local dict after the call."
-                        ),
-                    ))
+            findings.extend(_kwarg_output_findings(node, rel, src_lines))
             for arg in node.args:
                 if is_locals_or_globals_call(arg):
                     which = cast(ast.Name, cast(ast.Call, arg).func).id  # cast: is_locals_or_globals_call() above already proved arg is a Call whose func is an ast.Name

@@ -166,6 +166,21 @@ def scan_wall_clock_assertion(
     return findings
 
 
+def _wall_clock_sleeps(own: List[ast.AST]) -> List[ast.Call]:
+    """``time.sleep``-style calls in ``own`` whose single literal argument is a real wall-clock interval."""
+    sleeps: List[ast.Call] = []
+    for node in own:
+        if not (isinstance(node, ast.Call) and len(node.args) == 1):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else (node.func.id if isinstance(node.func, ast.Name) else "")
+        if name != "sleep":
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)) and not isinstance(arg.value, bool) and arg.value >= _WALL_CLOCK_SLEEP_SECONDS:
+            sleeps.append(node)
+    return sleeps
+
+
 def scan_sleep_then_assert(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -195,16 +210,7 @@ def scan_sleep_then_assert(
         rel = py.relative_to(root).as_posix()
         for fn in _test_functions(tree):
             own = _own_body_nodes(fn)
-            sleeps: List[ast.Call] = []
-            for node in own:
-                if not (isinstance(node, ast.Call) and len(node.args) == 1):
-                    continue
-                name = node.func.attr if isinstance(node.func, ast.Attribute) else (node.func.id if isinstance(node.func, ast.Name) else "")
-                if name != "sleep":
-                    continue
-                arg = node.args[0]
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)) and not isinstance(arg.value, bool) and arg.value >= _WALL_CLOCK_SLEEP_SECONDS:
-                    sleeps.append(node)
+            sleeps = _wall_clock_sleeps(own)
             if not sleeps:
                 continue
             first_sleep = min(sleeps, key=lambda c: c.lineno)
@@ -256,6 +262,16 @@ def _guarded_lines(fn: ast.AST) -> Set[int]:
     return guarded
 
 
+def _unguarded_first_reads(body: List[ast.AST], guarded: Set[int]) -> Dict[Tuple[str, str], int]:
+    """First line of each ``(owner, attr)`` attribute load in ``body`` that is not inside a try/if."""
+    reads: Dict[Tuple[str, str], int] = {}
+    for node in body:
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and node.lineno not in guarded:
+            key = (ast.dump(node.value), node.attr)
+            reads[key] = min(reads.get(key, node.lineno), node.lineno)
+    return reads
+
+
 def scan_deleted_attribute_read_unconditionally(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -290,12 +306,7 @@ def scan_deleted_attribute_read_unconditionally(
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             body = list(ast.walk(fn))
-            guarded = _guarded_lines(fn)
-            reads: Dict[Tuple[str, str], int] = {}
-            for node in body:
-                if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and node.lineno not in guarded:
-                    key = (ast.dump(node.value), node.attr)
-                    reads[key] = min(reads.get(key, node.lineno), node.lineno)
+            reads = _unguarded_first_reads(body, _guarded_lines(fn))
             for node in body:
                 for owner, attr, lineno in _deleted_attributes(node):
                     first_read: Optional[int] = reads.get((ast.dump(owner), attr))

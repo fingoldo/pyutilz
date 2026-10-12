@@ -158,6 +158,11 @@ def _handler_has_documented_rationale(handler: ast.ExceptHandler, src_lines: lis
     return any(marker in window for marker in _DOCUMENTED_RATIONALE_MARKERS)
 
 
+def _is_flaggable_handler(handler: ast.ExceptHandler, src_lines: list[str]) -> bool:
+    """True for a broad, silently-swallowing handler with no documented rationale."""
+    return _is_broad_except(handler) and _is_silent_swallow(handler) and not _handler_has_documented_rationale(handler, src_lines)
+
+
 def scan_broad_except_swallows(root: Path,
                                exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
                                ) -> list[Finding]:
@@ -188,11 +193,7 @@ def scan_broad_except_swallows(root: Path,
             if _try_body_is_best_effort_op(node.body):
                 continue
             for handler in node.handlers:
-                if not _is_broad_except(handler):
-                    continue
-                if not _is_silent_swallow(handler):
-                    continue
-                if _handler_has_documented_rationale(handler, src_lines):
+                if not _is_flaggable_handler(handler, src_lines):
                     continue
                 kind = "bare except" if handler.type is None else "except Exception"
                 findings.append(Finding(

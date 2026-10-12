@@ -223,6 +223,18 @@ def _showcase_polars_columns(
     return rare_categories, uninformative_features
 
 
+def _print_value_counts(stats: Any, should_print: bool, max_vars: "Optional[int]") -> None:
+    """Print one column's value counts, honouring ``should_print`` and the ``max_vars`` row cap."""
+    if not should_print:
+        return
+    if max_vars is None:
+        print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+    elif max_vars > 0:
+        print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+    else:
+        print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+
+
 def _showcase_pandas_columns(
     df: "pd.DataFrame",
     target_cols: list,
@@ -245,14 +257,7 @@ def _showcase_pandas_columns(
         stats = df[var].value_counts(dropna=dropna)
         if max_vars is not None:
             assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
-        if should_print:
-            if max_vars is not None:
-                if max_vars > 0:
-                    print(stats.head(max_vars))  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-                else:
-                    print("")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
-            else:
-                print(stats)  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
+        _print_value_counts(stats, should_print, max_vars)
 
         # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
         # computed above), so a column that's within max_cat_uniq_qty distinct non-null

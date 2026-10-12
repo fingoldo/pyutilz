@@ -90,6 +90,15 @@ def _is_persistent_target(
     return False
 
 
+def _assignment_pairs(targets: list[ast.expr], value: ast.expr) -> list[tuple[list[ast.expr], ast.expr]]:
+    """``(target_list, value)`` pairs for one assignment. A tuple/list assignment is unpacked
+    element-wise, so each constructor is judged against the target it actually lands on."""
+    sequence_targets = [t for t in targets if isinstance(t, (ast.Tuple, ast.List))]
+    if isinstance(value, (ast.Tuple, ast.List)) and len(sequence_targets) == len(targets) and all(len(t.elts) == len(value.elts) for t in sequence_targets):
+        return [([t.elts[position] for t in sequence_targets], element) for position, element in enumerate(value.elts)]
+    return [(list(targets), value)]
+
+
 def _attribute_assigned_primitive_calls(func: ast.AST, module_names: frozenset[str] = frozenset()) -> set[ast.AST]:
     """Primitive-constructor call nodes that eventually reach a persistent
     target (see ``_is_persistent_target``) ANYWHERE inside ``func`` --
@@ -112,16 +121,7 @@ def _attribute_assigned_primitive_calls(func: ast.AST, module_names: frozenset[s
             targets, value = [node.target], node.value
         else:
             continue
-        # Unpack `self.a, self.b = Lock(), Event()` element-wise, so each constructor is judged
-        # against the target it actually lands on rather than against the whole tuple.
-        pairs: list[tuple[list[ast.expr], ast.expr]] = []
-        sequence_targets = [t for t in targets if isinstance(t, (ast.Tuple, ast.List))]
-        if isinstance(value, (ast.Tuple, ast.List)) and len(sequence_targets) == len(targets) and all(len(t.elts) == len(value.elts) for t in sequence_targets):
-            for position, element in enumerate(value.elts):
-                pairs.append(([t.elts[position] for t in sequence_targets], element))
-        else:
-            pairs.append((list(targets), value))
-        for sub_targets, sub_value in pairs:
+        for sub_targets, sub_value in _assignment_pairs(targets, value):
             if any(_is_persistent_target(t, global_names, module_names) for t in sub_targets):
                 direct.add(sub_value)
                 if isinstance(sub_value, ast.Name):

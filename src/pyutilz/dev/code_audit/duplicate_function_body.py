@@ -43,6 +43,36 @@ def _normalized_body(body: list) -> str:
     return ast.dump(ast.Module(body=body, type_ignores=[]), annotate_fields=True, include_attributes=False)
 
 
+_FuncNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
+
+
+def _group_by_body(
+    root: Path,
+    exclude_dirs: frozenset[str],
+    min_nodes: int,
+) -> DefaultDict[str, List[Tuple[Path, _FuncNode, List[str]]]]:
+    """Every non-dunder function over ``min_nodes`` AST nodes, grouped by its normalized body."""
+    by_hash: DefaultDict[str, List[Tuple[Path, _FuncNode, List[str]]]] = defaultdict(list)
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = _read_src_lines(py)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name.startswith("__") and node.name.endswith("__"):
+                continue
+            body = _stripped_body(node)
+            if _node_count(body) < min_nodes:
+                continue
+            key = _normalized_body(body)
+            if not key:
+                continue
+            by_hash[key].append((py, node, src_lines))
+    return by_hash
+
+
 def scan_duplicate_function_body(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -85,26 +115,7 @@ def scan_duplicate_function_body(
 
     Severity: P2 -- each copy still works today; the risk is silent future drift.
     """
-    _FuncNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
-    by_hash: DefaultDict[str, List[Tuple[Path, _FuncNode, List[str]]]] = defaultdict(list)
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        src_lines = _read_src_lines(py)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if node.name.startswith("__") and node.name.endswith("__"):
-                continue
-            body = _stripped_body(node)
-            if _node_count(body) < min_nodes:
-                continue
-            key = _normalized_body(body)
-            if not key:
-                continue
-            by_hash[key].append((py, node, src_lines))
-
+    by_hash = _group_by_body(root, exclude_dirs, min_nodes)
     findings: list[Finding] = []
     for occurrences in by_hash.values():
         if len(occurrences) < 2:
