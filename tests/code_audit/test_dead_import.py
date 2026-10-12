@@ -240,3 +240,35 @@ from . import helper
 """)
     findings = scan_possibly_dead_import(tmp_path)
     assert findings == []
+
+
+def test_possibly_dead_import_dunder_all_built_by_call_is_clean(tmp_path: Path):
+    """``__all__ = sorted({...})`` names the re-exports just like a literal list does."""
+    _write(tmp_path, "mod.py", """
+from os.path import join, split
+
+__all__ = sorted({"join", "split"})
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_package_init_facade_is_not_reported(tmp_path: Path):
+    """A package ``__init__.py`` import is a public facade re-export: its name is the package API."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path / "pkg", "__init__.py", """
+from os.path import join
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_ordinary_module_still_reported_next_to_init(tmp_path: Path):
+    """The ``__init__.py`` exemption must not hide a dead import in a sibling ordinary module."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path / "pkg", "__init__.py", """
+from os.path import join
+""")
+    _write(tmp_path / "pkg", "util.py", """
+import json
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    assert [f.file for f in findings] == ["pkg/util.py"]

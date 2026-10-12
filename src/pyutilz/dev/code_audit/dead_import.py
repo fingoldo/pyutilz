@@ -134,10 +134,10 @@ def _names_referenced_in_file(tree: ast.Module, skip_import_lines: set[int]) -> 
     # `__all__ = ["name", ...]` string-literal entries count as usage (an explicit re-export).
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
-            if isinstance(node.value, (ast.List, ast.Tuple, ast.Set)):
-                for elt in node.value.elts:
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                        referenced.add(elt.value)
+            # Any expression, not just a literal: ``__all__ = sorted({"a", "b"})`` names the same re-exports.
+            for elt in ast.walk(node.value):
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    referenced.add(elt.value)
     return referenced
 
 
@@ -230,6 +230,12 @@ def scan_possibly_dead_import(
     corpus_attr_names, from_import_names_by_file = _corpus_import_index(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
+        # A package ``__init__.py`` is a public facade: its imports exist to be consumed as
+        # ``package.name`` by callers outside this file, and removing one changes the package's API.
+        # Also covers side-effect imports placed there on purpose (e.g. ``import pkg.module`` that
+        # installs a patch). Dead imports inside ordinary modules are still reported.
+        if py.name == "__init__.py":
+            continue
         tree = _safe_parse(py)
         if tree is None:
             continue
