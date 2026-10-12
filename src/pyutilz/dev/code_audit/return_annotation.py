@@ -57,6 +57,30 @@ class _OwnReturnFinder(ast.NodeVisitor):
         return None
 
 
+def _mismatch_detail(func_name: str, ann_name: str, ret: ast.Return) -> str | None:
+    """Why this ``return`` contradicts the scalar annotation ``ann_name``, or None when it does not."""
+    if ret.value is None:
+        return (
+            f"`{func_name}` is annotated `-> {ann_name}` but has a bare `return` "
+            f"(implicitly returns None) -- either the annotation should be "
+            f"`Optional[{ann_name}]`, or this path should return a real {ann_name}."
+        )
+    if isinstance(ret.value, ast.Constant) and ret.value.value is None:
+        return (
+            f"`{func_name}` is annotated `-> {ann_name}` but has `return None` -- "
+            f"either the annotation should be `Optional[{ann_name}]`, or this path "
+            f"should return a real {ann_name}."
+        )
+    if isinstance(ret.value, _CONTAINER_LITERAL_TYPES):
+        container_kind = type(ret.value).__name__.lower()
+        return (
+            f"`{func_name}` is annotated `-> {ann_name}` but returns a {container_kind} "
+            f"literal here -- the declared return type doesn't match what this path "
+            f"actually hands back."
+        )
+    return None
+
+
 def scan_return_annotation_mismatch(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -94,44 +118,14 @@ def scan_return_annotation_mismatch(
             for stmt in node.body:
                 finder.visit(stmt)
             for ret in finder.hits:
-                if ret.value is None:
+                detail = _mismatch_detail(node.name, ann_name, ret)
+                if detail is not None:
                     findings.append(Finding(
                         check="return_annotation_mismatch",
                         severity="P2",
                         file=rel,
                         line=ret.lineno,
                         snippet=_line_text(src_lines, ret.lineno),
-                        detail=(
-                            f"`{node.name}` is annotated `-> {ann_name}` but has a bare `return` "
-                            f"(implicitly returns None) -- either the annotation should be "
-                            f"`Optional[{ann_name}]`, or this path should return a real {ann_name}."
-                        ),
-                    ))
-                elif isinstance(ret.value, ast.Constant) and ret.value.value is None:
-                    findings.append(Finding(
-                        check="return_annotation_mismatch",
-                        severity="P2",
-                        file=rel,
-                        line=ret.lineno,
-                        snippet=_line_text(src_lines, ret.lineno),
-                        detail=(
-                            f"`{node.name}` is annotated `-> {ann_name}` but has `return None` -- "
-                            f"either the annotation should be `Optional[{ann_name}]`, or this path "
-                            f"should return a real {ann_name}."
-                        ),
-                    ))
-                elif isinstance(ret.value, _CONTAINER_LITERAL_TYPES):
-                    container_kind = type(ret.value).__name__.lower()
-                    findings.append(Finding(
-                        check="return_annotation_mismatch",
-                        severity="P2",
-                        file=rel,
-                        line=ret.lineno,
-                        snippet=_line_text(src_lines, ret.lineno),
-                        detail=(
-                            f"`{node.name}` is annotated `-> {ann_name}` but returns a {container_kind} "
-                            f"literal here -- the declared return type doesn't match what this path "
-                            f"actually hands back."
-                        ),
+                        detail=detail,
                     ))
     return findings

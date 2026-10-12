@@ -28,6 +28,20 @@ def _short_name(target: str) -> str:
     return target.rsplit(".", 1)[-1]
 
 
+def _resolve_call_qualified(node: ast.Call, own_module: str, module_level_defs: set[str], aliases: dict[str, str]) -> str | None:
+    """The qualified name a call resolves to via this module's defs or import aliases, or None when unresolvable."""
+    if isinstance(node.func, ast.Name):
+        # A bare call names something defined in (or imported into) THIS module.
+        if node.func.id in module_level_defs:
+            return f"{own_module}.{node.func.id}"
+        if node.func.id in aliases:
+            return aliases[node.func.id]
+        return None
+    if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id in aliases:
+        return f"{aliases[node.func.value.id]}.{node.func.attr}"
+    return None
+
+
 def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str, int]:
     """Pass 1: production functions -> max positional args seen at any real call site.
 
@@ -52,17 +66,8 @@ def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if isinstance(node.func, ast.Name):
-                # A bare call names something defined in (or imported into) THIS module.
-                if node.func.id in module_level_defs:
-                    qualified = f"{own_module}.{node.func.id}"
-                elif node.func.id in aliases:
-                    qualified = aliases[node.func.id]
-                else:
-                    continue
-            elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id in aliases:
-                qualified = f"{aliases[node.func.value.id]}.{node.func.attr}"
-            else:
+            qualified = _resolve_call_qualified(node, own_module, module_level_defs, aliases)
+            if qualified is None:
                 continue
             n = _call_positional_count(node)
             if n < 0:

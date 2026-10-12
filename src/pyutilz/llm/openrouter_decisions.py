@@ -183,17 +183,25 @@ def build_payload(model: str, state: State, questions: Mapping[str, Question], *
         raise ValueError(f"{model!r} is a moving alias; pin a version such as {DEFAULT_MODEL!r} or pass allow_moving_alias=True")
     if not questions:
         raise ValueError("at least one question is required")
-    wire_state: Any
+    wire_state = _wire_state(state)
+    return {"model": model, "state": wire_state, "questions": _wire_questions(questions)}
+
+
+def _wire_state(state: State) -> Any:
+    """Validate ``state`` and return the JSON-ready form sent on the wire."""
     if isinstance(state, str):
         if not state.strip():
             raise ValueError("state must not be empty")
-        wire_state = state
-    elif isinstance(state, Mapping):
-        wire_state = dict(state)
-    elif isinstance(state, Sequence) and all(isinstance(s, str) for s in state):
-        wire_state = list(state)
-    else:
-        raise TypeError("state must be a string, a mapping or a sequence of strings")
+        return state
+    if isinstance(state, Mapping):
+        return dict(state)
+    if isinstance(state, Sequence) and all(isinstance(s, str) for s in state):
+        return list(state)
+    raise TypeError("state must be a string, a mapping or a sequence of strings")
+
+
+def _wire_questions(questions: Mapping[str, Question]) -> Dict[str, Any]:
+    """Validate each question id and type and return the ``{qid: payload}`` map sent on the wire."""
     wire_q: Dict[str, Any] = {}
     for qid, q in questions.items():
         if not isinstance(qid, str) or not qid.strip():
@@ -204,7 +212,7 @@ def build_payload(model: str, state: State, questions: Mapping[str, Question], *
             wire_q[qid] = q.to_payload()
         except (ValueError, TypeError) as exc:
             raise type(exc)(f"question {qid!r}: {exc}") from exc
-    return {"model": model, "state": wire_state, "questions": wire_q}
+    return wire_q
 
 
 def _float_map(obj: Any) -> Dict[str, float]:

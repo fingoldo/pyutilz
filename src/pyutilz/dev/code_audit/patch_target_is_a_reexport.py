@@ -142,6 +142,37 @@ def _any_calls(tree: ast.Module) -> set[str]:
     return called
 
 
+def _index_modules(root: Path, exclude_dirs: frozenset[str]) -> tuple[dict[str, ast.Module], set[str]]:
+    """Parse every module under *root* by dotted path, and the set of dotted paths that are packages (``__init__.py``)."""
+    modules: dict[str, ast.Module] = {}
+    packages: set[str] = set()
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is not None:
+            dotted = _dotted_module_path(py.relative_to(root).as_posix())
+            modules[dotted] = tree
+            if py.name == "__init__.py":
+                packages.add(dotted)
+    return modules, packages
+
+
+def _vacuous_reexport_origin(module_path: str, attribute: str, modules: dict[str, ast.Module], packages: set[str]) -> str | None:
+    """The module a facade re-exports *attribute* from when a patch on the facade would be vacuous, else None."""
+    facade = modules.get(module_path)
+    if facade is None:
+        return None
+    origin = _reexports(facade, module_path, module_path in packages).get(attribute)
+    if origin is None:
+        return None
+    # The facade reaching the name itself means the patch does land somewhere real.
+    if attribute in _any_calls(facade):
+        return None
+    source = modules.get(origin)
+    if source is None or attribute not in _bare_calls(source):
+        return None
+    return origin
+
+
 def scan_patch_target_is_a_reexport(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -158,15 +189,7 @@ def scan_patch_target_is_a_reexport(
     test means is not decidable from here.
     """
     findings: list[Finding] = []
-    modules: dict[str, ast.Module] = {}
-    packages: set[str] = set()
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is not None:
-            dotted = _dotted_module_path(py.relative_to(root).as_posix())
-            modules[dotted] = tree
-            if py.name == "__init__.py":
-                packages.add(dotted)
+    modules, packages = _index_modules(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
         if not is_test_file(py, root):
@@ -179,17 +202,8 @@ def scan_patch_target_is_a_reexport(
 
         for target, line in _patch_targets(tree):
             module_path, _, attribute = target.rpartition(".")
-            facade = modules.get(module_path)
-            if facade is None:
-                continue
-            origin = _reexports(facade, module_path, module_path in packages).get(attribute)
+            origin = _vacuous_reexport_origin(module_path, attribute, modules, packages)
             if origin is None:
-                continue
-            # The facade reaching the name itself means the patch does land somewhere real.
-            if attribute in _any_calls(facade):
-                continue
-            source = modules.get(origin)
-            if source is None or attribute not in _bare_calls(source):
                 continue
             findings.append(
                 Finding(

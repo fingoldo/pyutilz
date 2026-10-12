@@ -123,6 +123,24 @@ def _target_names(node: ast.AST) -> list[str]:
     return out
 
 
+def _assigned_pairs(tree: ast.AST) -> list[tuple[str, ast.AST, int]]:
+    """Every ``(target name, assigned value, line)`` triple in *tree*: assignments, annotated, augmented and keywords."""
+    pairs: list[tuple[str, ast.AST, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            pairs.extend((name, node.value, node.lineno) for target in node.targets for name in _target_names(target))
+        # Annotated and augmented assignments too: typed code is where unit suffixes are most
+        # used, and exempting it silently excluded the style this project's conventions mandate.
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
+        elif isinstance(node, ast.AugAssign):
+            pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
+        elif isinstance(node, ast.Call):
+            # The keyword VALUE's own line, so a multi-line call does not report the opening paren.
+            pairs.extend((kw.arg, kw.value, getattr(kw.value, "lineno", node.lineno)) for kw in node.keywords if kw.arg)
+    return pairs
+
+
 def scan_unit_suffix_mismatch(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -142,21 +160,7 @@ def scan_unit_suffix_mismatch(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        pairs: list[tuple[str, ast.AST, int]] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                pairs.extend((name, node.value, node.lineno) for target in node.targets for name in _target_names(target))
-            # Annotated and augmented assignments too: typed code is where unit suffixes are most
-            # used, and exempting it silently excluded the style this project's conventions mandate.
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
-            elif isinstance(node, ast.AugAssign):
-                pairs.extend((name, node.value, node.lineno) for name in _target_names(node.target))
-            elif isinstance(node, ast.Call):
-                # The keyword VALUE's own line, so a multi-line call does not report the opening paren.
-                pairs.extend((kw.arg, kw.value, getattr(kw.value, "lineno", node.lineno)) for kw in node.keywords if kw.arg)
-
-        for target_name, value, line in pairs:
+        for target_name, value, line in _assigned_pairs(tree):
             target_unit = _unit_of(target_name)
             if target_unit is None:
                 continue

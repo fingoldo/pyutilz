@@ -141,6 +141,30 @@ def _ancestors(
     return out
 
 
+def _collect_widened_params(index: "Dict[str, Optional[Tuple[str, ast.ClassDef]]]") -> "Dict[Tuple[str, str], Dict[str, Set[str]]]":
+    """(base class name, method name) -> parameter -> the subclasses whose override declares it but the base does not."""
+    widened: "Dict[Tuple[str, str], Dict[str, Set[str]]]" = {}
+    for name, entry in index.items():
+        if entry is None:
+            continue
+        klass = entry[1]
+        ancestors = _ancestors(klass, index)
+        if not ancestors:
+            continue
+        for method_name, method in _methods(klass).items():
+            base = next(((bn, bnode) for bn, _, bnode in ancestors if method_name in _methods(bnode)), None)
+            if base is None:
+                continue
+            base_name, base_node = base
+            base_method = _methods(base_node)[method_name]
+            if _is_stub(base_method) or _accepts_anything(base_method):
+                continue
+            extra = _declared_params(method) - _declared_params(base_method) - _placeholder_variants(base_method)
+            for param in extra:
+                widened.setdefault((base_name, method_name), {}).setdefault(param, set()).add(name)
+    return widened
+
+
 def scan_override_signature_drift(
     root: Path,
     exclude_dirs: "frozenset[str]" = _DEFAULT_EXCLUDE_DIRS,
@@ -164,27 +188,7 @@ def scan_override_signature_drift(
     differs from the override's only by a leading underscore.
     """
     index = _index_classes(root, exclude_dirs)
-    # (base class name, method name) -> parameter -> the subclasses declaring it.
-    widened: "Dict[Tuple[str, str], Dict[str, Set[str]]]" = {}
-
-    for name, entry in index.items():
-        if entry is None:
-            continue
-        klass = entry[1]
-        ancestors = _ancestors(klass, index)
-        if not ancestors:
-            continue
-        for method_name, method in _methods(klass).items():
-            base = next(((bn, bnode) for bn, _, bnode in ancestors if method_name in _methods(bnode)), None)
-            if base is None:
-                continue
-            base_name, base_node = base
-            base_method = _methods(base_node)[method_name]
-            if _is_stub(base_method) or _accepts_anything(base_method):
-                continue
-            extra = _declared_params(method) - _declared_params(base_method) - _placeholder_variants(base_method)
-            for param in extra:
-                widened.setdefault((base_name, method_name), {}).setdefault(param, set()).add(name)
+    widened = _collect_widened_params(index)
 
     findings: List[Finding] = []
     for (base_name, method_name), params in sorted(widened.items()):

@@ -77,6 +77,25 @@ def register_default_cache(path: str) -> bool:
         return False
 
 
+def _region_constraints_match(dims: dict, constraints: tuple) -> bool:
+    """True when every ``(axis_name, op, bound)`` constraint whose axis the caller supplied holds for ``dims``."""
+    for axis_name, op, bound in constraints:
+        if axis_name not in dims:
+            continue  # a region constraint on an axis the caller didn't ask about is unconstrained
+        axis_value = dims[axis_name]
+        if op == _OP_MAX:
+            # ``not (v <= cap)`` rather than ``v > cap``: a NaN dim fails every comparison, and must fail the
+            # constraint instead of passing it (it used to match the first bounded region).
+            if not axis_value <= bound:
+                return False
+        elif op == _OP_MIN:
+            if not axis_value >= bound:
+                return False
+        elif (_normalize_eq(axis_value) if isinstance(axis_value, tuple) else axis_value) != bound:  # _OP_EQ
+            return False
+    return True
+
+
 class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTuningMixin):
     """Per-host kernel-tuning cache. Single instance per process is enough;
     the class is thread-safe under a single ``threading.Lock``.
@@ -255,21 +274,7 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
             if dim_name not in known_axes:
                 self._warn_unconstrained_dim(kernel_name, dim_name)
         for constraints, payload in plan:
-            for axis_name, op, bound in constraints:
-                if axis_name not in dims:
-                    continue  # a region constraint on an axis the caller didn't ask about is unconstrained
-                axis_value = dims[axis_name]
-                if op == _OP_MAX:
-                    # ``not (v <= cap)`` rather than ``v > cap``: a NaN dim fails every comparison, and must fail the
-                    # constraint instead of passing it (it used to match the first bounded region).
-                    if not axis_value <= bound:
-                        break
-                elif op == _OP_MIN:
-                    if not axis_value >= bound:
-                        break
-                elif (_normalize_eq(axis_value) if isinstance(axis_value, tuple) else axis_value) != bound:  # _OP_EQ
-                    break
-            else:
+            if _region_constraints_match(dims, constraints):
                 return cast(Optional[dict], payload)
         return None
 

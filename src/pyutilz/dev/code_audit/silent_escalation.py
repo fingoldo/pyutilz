@@ -132,6 +132,19 @@ def _returns_failure_marker(v: ast.expr) -> bool:
     return isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys)
 
 
+def _is_log_only_handler(handler: ast.ExceptHandler, escalation_attrs: frozenset[str], lines: list[str]) -> bool:
+    """True when a broad handler logs the failure without re-raising, escalating, or carrying a documented rationale."""
+    if not _is_broad_except(handler):
+        return False
+    if not _has_log_call(handler.body):
+        return False  # scan_broad_except_swallows already covers the no-log case
+    if _has_raise(handler.body):
+        return False
+    if _escalates_to(handler, escalation_attrs):
+        return False
+    return not _handler_has_documented_rationale(handler, lines)  # nosec / opportunistic / best-effort: a reviewed, intentional decision
+
+
 def scan_log_only_except(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -181,16 +194,8 @@ def scan_log_only_except(
             if not isinstance(node, ast.Try):
                 continue
             for handler in node.handlers:
-                if not _is_broad_except(handler):
+                if not _is_log_only_handler(handler, escalation_attrs, lines):
                     continue
-                if not _has_log_call(handler.body):
-                    continue  # scan_broad_except_swallows already covers the no-log case
-                if _has_raise(handler.body):
-                    continue
-                if _escalates_to(handler, escalation_attrs):
-                    continue
-                if _handler_has_documented_rationale(handler, lines):
-                    continue  # nosec / opportunistic / best-effort -- already a reviewed, intentional decision
                 findings.append(Finding(
                     check="log_only_except",
                     severity="P2",

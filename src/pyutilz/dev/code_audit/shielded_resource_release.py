@@ -49,6 +49,18 @@ def _release_call_args_in_finally_blocks(func_node: ast.AST, exclude_subtree: as
     return found
 
 
+def _shielded_closure_name(node: ast.AST) -> str | None:
+    """The bare name ``f`` of an ``asyncio.shield(f(...))`` call, or None for any other node."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "shield"):
+        return None
+    if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "asyncio"):
+        return None
+    if not node.args or not isinstance(node.args[0], ast.Call):
+        return None
+    shielded_func = node.args[0].func
+    return shielded_func.id if isinstance(shielded_func, ast.Name) else None
+
+
 def scan_shielded_resource_release_race(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -92,16 +104,8 @@ def scan_shielded_resource_release_race(
             if not nested_async_defs:
                 continue
             for node in ast.walk(outer):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "shield"):
-                    continue
-                if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "asyncio"):
-                    continue
-                if not node.args or not isinstance(node.args[0], ast.Call):
-                    continue
-                shielded_call = node.args[0]
-                shielded_func = shielded_call.func
-                closure_name = shielded_func.id if isinstance(shielded_func, ast.Name) else None
-                if closure_name not in nested_async_defs:
+                closure_name = _shielded_closure_name(node)
+                if closure_name is None or closure_name not in nested_async_defs:
                     continue
                 closure_node = nested_async_defs[closure_name]
                 closure_reads = _names_read_in(closure_node)

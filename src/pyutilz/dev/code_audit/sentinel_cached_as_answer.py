@@ -110,6 +110,19 @@ def _sentinel_fallback_arm(node: ast.stmt) -> "list[ast.stmt]":
     return []
 
 
+def _failure_path_scopes(tree: ast.AST) -> list[tuple[list[ast.stmt], int, str]]:
+    """(scope to search, line of the construct that produced the sentinel, its description) for each failure path."""
+    scopes: list[tuple[list[ast.stmt], int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler):
+            scopes.append((node.body, node.lineno, "the handler"))
+        elif isinstance(node, ast.If):
+            arm = _sentinel_fallback_arm(node)
+            if arm:
+                scopes.append((arm, node.lineno, "the sentinel fallback arm"))
+    return scopes
+
+
 def scan_sentinel_cached_as_answer(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -133,18 +146,8 @@ def scan_sentinel_cached_as_answer(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        # (scope to search, line of the construct that produced the sentinel, its description)
-        scopes: list[tuple[list[ast.stmt], int, str]] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler):
-                scopes.append((node.body, node.lineno, "the handler"))
-            elif isinstance(node, ast.If):
-                arm = _sentinel_fallback_arm(node)
-                if arm:
-                    scopes.append((arm, node.lineno, "the sentinel fallback arm"))
-
         seen: set[int] = set()
-        for body, origin_line, origin_desc in scopes:
+        for body, origin_line, origin_desc in _failure_path_scopes(tree):
             for root_stmt in body:
                 for stmt in ast.walk(root_stmt):
                     if not isinstance(stmt, ast.stmt):

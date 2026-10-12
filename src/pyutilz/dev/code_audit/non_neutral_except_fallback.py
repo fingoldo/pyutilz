@@ -202,6 +202,28 @@ def _target_name(target: ast.AST) -> str:
     return "<target>"
 
 
+def _node_substitutions(node: ast.AST) -> list[str]:
+    """Descriptions of every non-neutral literal this single node substitutes (usually zero or one)."""
+    if isinstance(node, ast.Return) and node.value is not None:
+        desc = _describe_literal(node.value)
+        return [] if desc is None else [f"returns {desc}"]
+    if isinstance(node, ast.AnnAssign) and node.value is not None:
+        # `_max_err: float = 0.0` -- the annotated spelling this project's conventions mandate.
+        desc = _describe_literal(node.value)
+        return [] if desc is None else [f"assigns {_target_name(node.target)} = {desc}"]
+    if isinstance(node, ast.Assign) and node.targets:
+        target = node.targets[0]
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)) and len(target.elts) == len(node.value.elts):
+            for elt_target, elt_value in zip(target.elts, node.value.elts):
+                desc = _describe_literal(elt_value)
+                if desc is not None:
+                    return [f"assigns {_target_name(elt_target)} = {desc}"]
+            return []
+        desc = _describe_literal(node.value)
+        return [] if desc is None else [f"assigns {_target_name(target)} = {desc}"]
+    return []
+
+
 def _substituted_literal(handler: ast.ExceptHandler) -> str | None:
     """A short description of the non-neutral literal this handler substitutes, or None.
 
@@ -212,30 +234,21 @@ def _substituted_literal(handler: ast.ExceptHandler) -> str | None:
     candidates: list[tuple[tuple[int, int], str]] = []
     for node in _own_nodes(handler):
         pos = (getattr(node, "lineno", 0), getattr(node, "col_offset", 0))
-        if isinstance(node, ast.Return) and node.value is not None:
-            desc = _describe_literal(node.value)
-            if desc is not None:
-                candidates.append((pos, f"returns {desc}"))
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            # `_max_err: float = 0.0` -- the annotated spelling this project's conventions mandate.
-            desc = _describe_literal(node.value)
-            if desc is not None:
-                candidates.append((pos, f"assigns {_target_name(node.target)} = {desc}"))
-        elif isinstance(node, ast.Assign) and node.targets:
-            target = node.targets[0]
-            if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)) and len(target.elts) == len(node.value.elts):
-                for elt_target, elt_value in zip(target.elts, node.value.elts):
-                    desc = _describe_literal(elt_value)
-                    if desc is not None:
-                        candidates.append((pos, f"assigns {_target_name(elt_target)} = {desc}"))
-                        break
-                continue
-            desc = _describe_literal(node.value)
-            if desc is not None:
-                candidates.append((pos, f"assigns {_target_name(target)} = {desc}"))
+        candidates.extend((pos, desc) for desc in _node_substitutions(node))
     if not candidates:
         return None
     return min(candidates, key=lambda c: c[0])[1]
+
+
+def _flagged_substitution(handler: ast.ExceptHandler, try_body: list[ast.stmt], audible_log_methods: frozenset[str], audible_functions: frozenset[str]) -> str | None:
+    """The substituted literal this handler is flagged for, or None when it is excused or substitutes nothing."""
+    if _is_import_error_only(handler) or _is_audible(handler, audible_log_methods, audible_functions):
+        return None
+    if _guards_an_import(try_body):
+        return None
+    if _is_determinate_negative_only(handler) and _is_single_expression_guard(try_body):
+        return None
+    return _substituted_literal(handler)
 
 
 def scan_non_neutral_except_fallback(
@@ -265,13 +278,7 @@ def scan_non_neutral_except_fallback(
         _try_types: tuple = (ast.Try,) if getattr(ast, "TryStar", None) is None else (ast.Try, ast.TryStar)  # type: ignore[attr-defined]
         for try_node in [n for n in ast.walk(tree) if isinstance(n, _try_types)]:
             for handler in try_node.handlers:
-                if _is_import_error_only(handler) or _is_audible(handler, audible_log_methods, audible_functions):
-                    continue
-                if _guards_an_import(try_node.body):
-                    continue
-                if _is_determinate_negative_only(handler) and _is_single_expression_guard(try_node.body):
-                    continue
-                desc = _substituted_literal(handler)
+                desc = _flagged_substitution(handler, try_node.body, audible_log_methods, audible_functions)
                 if desc is None:
                     continue
                 findings.append(

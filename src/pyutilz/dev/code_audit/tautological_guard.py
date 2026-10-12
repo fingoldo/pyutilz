@@ -44,6 +44,27 @@ def _root_of(key: str) -> str:
     return key.split(".")[0].split("[")[0]
 
 
+def _classify_and_operands(node: ast.BoolOp) -> tuple[dict[str, ast.expr], dict[str, ast.expr]]:
+    """Split an ``and`` expression's comparison operands into ``(thresholded, pinned)`` maps keyed by target."""
+    thresholded: dict[str, ast.expr] = {}
+    pinned: dict[str, ast.expr] = {}
+    for operand in node.values:
+        if not (isinstance(operand, ast.Compare) and len(operand.ops) == 1):
+            continue
+        key = _target_key(operand.left)
+        if key is None:
+            continue
+        op, right = operand.ops[0], operand.comparators[0]
+        if isinstance(op, _ORDERING):
+            thresholded[key] = operand
+        elif isinstance(op, (ast.Is, ast.Eq)):
+            # `is None` / `== True` narrow a type, they do not fix a value out of an ordering.
+            if isinstance(right, ast.Constant) and (right.value is None or isinstance(right.value, bool)):
+                continue
+            pinned[key] = operand
+    return thresholded, pinned
+
+
 def scan_tautological_guards(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -71,22 +92,7 @@ def scan_tautological_guards(
             # ast.expr, not ast.AST: only ast.Compare nodes are ever stored, and the narrower
             # type is what carries `lineno` -- the wider one forced a blanket attr-defined ignore
             # on the min() below that would also have hidden any future real attribute error there.
-            thresholded: dict[str, ast.expr] = {}
-            pinned: dict[str, ast.expr] = {}
-            for operand in node.values:
-                if not (isinstance(operand, ast.Compare) and len(operand.ops) == 1):
-                    continue
-                key = _target_key(operand.left)
-                if key is None:
-                    continue
-                op, right = operand.ops[0], operand.comparators[0]
-                if isinstance(op, _ORDERING):
-                    thresholded[key] = operand
-                elif isinstance(op, (ast.Is, ast.Eq)):
-                    # `is None` / `== True` narrow a type, they do not fix a value out of an ordering.
-                    if isinstance(right, ast.Constant) and (right.value is None or isinstance(right.value, bool)):
-                        continue
-                    pinned[key] = operand
+            thresholded, pinned = _classify_and_operands(node)
             # The pin must actually fix the THRESHOLDED value: pinning `item` fixes `item.score`,
             # but pinning `item.label` constrains nothing about `item.score`. Collapsing both to
             # the root object `item` made the ordinary `if item.score > 0.5 and item.label == "ok"`

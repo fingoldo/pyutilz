@@ -132,6 +132,21 @@ def _asserted_literals(test: ast.AST) -> list[str]:
     return out
 
 
+def _is_unrenderable_literal(literal: str, formats: set[str], eager: list[list[str]]) -> bool:
+    """True when *literal* is a message-text-plus-digit assertion that no rendered log record could ever contain."""
+    if not _HAS_DIGIT.search(literal):
+        return False
+    # The literal must carry MESSAGE text, not just a value. `"j1"` is a job id the
+    # test supplied, and production logs it through an f-string, so it genuinely is
+    # in `args[0]`. Only a literal that also contains static prose can be the "I
+    # expected the format to be rendered" mistake this rule is about.
+    if not any(len(f.strip()) > 2 for f in re.split(r"\d+", literal)):
+        return False
+    if any(literal in fmt for fmt in formats):
+        return False  # a lazy format really does carry this text, digit and all
+    return not _could_be_an_eager_rendering(literal, eager)  # an f-string renders its values, so the assertion can match
+
+
 def scan_lazy_log_assertion(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -170,18 +185,8 @@ def scan_lazy_log_assertion(
             if record is None:
                 continue
             for literal in _asserted_literals(expression):
-                if not _HAS_DIGIT.search(literal):
+                if not _is_unrenderable_literal(literal, formats, eager):
                     continue
-                # The literal must carry MESSAGE text, not just a value. `"j1"` is a job id the
-                # test supplied, and production logs it through an f-string, so it genuinely is
-                # in `args[0]`. Only a literal that also contains static prose can be the "I
-                # expected the format to be rendered" mistake this rule is about.
-                if not any(len(f.strip()) > 2 for f in re.split(r"\d+", literal)):
-                    continue
-                if any(literal in fmt for fmt in formats):
-                    continue  # a lazy format really does carry this text, digit and all
-                if _could_be_an_eager_rendering(literal, eager):
-                    continue  # an f-string renders its values, so the assertion can match
                 findings.append(
                     Finding(
                         check="lazy_log_assertion",

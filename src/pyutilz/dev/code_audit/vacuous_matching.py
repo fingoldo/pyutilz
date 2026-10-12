@@ -37,6 +37,16 @@ def _is_guarded(name: str, function_source: str, module_source: str) -> bool:
     return any(p.search(function_source) for p in patterns) or any(p.search(module_source) for p in patterns)
 
 
+def _bare_name_iterable_of_all(node: ast.AST) -> tuple[ast.Call, ast.Name] | None:
+    """The ``all(... for x in NAME)`` call and its bare ``Name`` iterable, or None for any other node."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "all"):
+        return None
+    if not (node.args and isinstance(node.args[0], (ast.GeneratorExp, ast.ListComp))):
+        return None
+    iterable = node.args[0].generators[0].iter
+    return (node, iterable) if isinstance(iterable, ast.Name) else None
+
+
 def scan_vacuous_empty_pattern_match(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -65,14 +75,11 @@ def scan_vacuous_empty_pattern_match(
             # the WHOLE file on every call, so slicing eagerly per function was O(functions x file
             # size): 23.5 s over `tests/` against 0.45 s for the same 7 findings.
             fn_src: "str | None" = None
-            for call in ast.walk(fn):
-                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "all"):
+            for node in ast.walk(fn):
+                hit = _bare_name_iterable_of_all(node)
+                if hit is None:
                     continue
-                if not (call.args and isinstance(call.args[0], (ast.GeneratorExp, ast.ListComp))):
-                    continue
-                iterable = call.args[0].generators[0].iter
-                if not isinstance(iterable, ast.Name):
-                    continue
+                call, iterable = hit
                 if src is None:
                     src = "\n".join(src_lines)
                 if fn_src is None:

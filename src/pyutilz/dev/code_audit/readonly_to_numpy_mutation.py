@@ -43,6 +43,17 @@ def _is_np_inplace_mutator_call(call: ast.Call) -> "str | None":
     return first.id if isinstance(first, ast.Name) else None
 
 
+def _risky_to_numpy_names(func_node: ast.AST) -> set[str]:
+    """Names assigned directly from an uncopied ``.to_numpy()`` call within this function's own scope."""
+    risky_names: set[str] = set()
+    for node in _own_nodes(func_node):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _is_to_numpy_call_without_copy(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    risky_names.add(target.id)
+    return risky_names
+
+
 def scan_readonly_to_numpy_mutation(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -70,12 +81,7 @@ def scan_readonly_to_numpy_mutation(
         for func_node in ast.walk(tree):
             if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            risky_names: set[str] = set()
-            for node in _own_nodes(func_node):
-                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _is_to_numpy_call_without_copy(node.value):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            risky_names.add(target.id)
+            risky_names = _risky_to_numpy_names(func_node)
             for node in _own_nodes(func_node):
                 if not isinstance(node, ast.Call):
                     continue
