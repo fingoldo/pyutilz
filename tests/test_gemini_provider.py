@@ -86,7 +86,7 @@ class TestContextAndOutputLimits:
 
     def test_max_output_tokens_unknown_model_falls_back(self):
         p = _make_provider(model="some-future-model")
-        assert p.max_output_tokens == 8192
+        assert p.max_output_tokens is None, "an unlisted model has no known ceiling: max_tokens is omitted"
 
 
 class TestIsRetryableGenaiError:

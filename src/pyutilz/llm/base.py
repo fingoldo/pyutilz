@@ -307,9 +307,13 @@ class LLMProvider(ABC):
     _client = PerLoopHTTPClient()
 
     @property
-    def max_output_tokens(self) -> int:
-        """Maximum output tokens this provider/model supports."""
-        return 4096  # safe fallback
+    def max_output_tokens(self) -> int | None:
+        """The model's own output ceiling, or None when it is not known.
+
+        None means the caller OMITS ``max_tokens`` from the request and the provider decides. No number of ours
+        is ever sent as an output cap: a made-up default cuts the answer, and the owner rule forbids it.
+        """
+        return None
 
     @property
     def context_window(self) -> int:
@@ -361,7 +365,7 @@ class LLMProvider(ABC):
         staying fixed while the tokeniser-estimation error it must absorb grows right along with it."""
         return max(self._CONTEXT_RESERVE_TOKENS, int(input_tokens * self._CONTEXT_RESERVE_FRACTION))
 
-    def fit_max_tokens_to_context(self, max_tokens: int, prompt: str, system: str | None = None) -> int:
+    def fit_max_tokens_to_context(self, max_tokens: int | None, prompt: str, system: str | None = None) -> int | None:
         """Clamp an output budget so ``input + output`` fits the model's context window.
 
         ``max_output_tokens`` is a per-model output ceiling that can EXCEED
@@ -372,9 +376,10 @@ class LLMProvider(ABC):
 
         Returns ``max_tokens`` unchanged when it already fits, or when the prompt alone leaves no
         usable room — in that case the upstream's own context error is the more informative signal
-        than a silently truncated budget.
+        than a silently truncated budget. ``None`` (no known output ceiling, so nothing to clamp) and
+        ``0`` (the unset marker) come back unchanged, and the caller omits the field.
         """
-        if max_tokens <= 0:
+        if max_tokens is None or max_tokens <= 0:
             return max_tokens
         ctx = self.context_window
         if ctx <= 0:
@@ -503,7 +508,8 @@ class LLMProvider(ABC):
             prompt: User prompt.
             system: Optional system prompt.
             temperature: Sampling temperature.
-            max_tokens: Maximum tokens to generate (0 = use provider max).
+            max_tokens: Maximum tokens to generate. 0 = use the model's catalogue ceiling; when that is unknown
+                the field is omitted from the request and the provider decides (no number of ours is sent).
 
         Returns:
             Generated text.

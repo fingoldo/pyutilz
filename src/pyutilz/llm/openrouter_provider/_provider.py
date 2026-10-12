@@ -97,7 +97,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
 
     _base_url = "https://openrouter.ai/api/v1"
     _provider_name = "OpenRouter"
-    _default_max_tokens = 8192
+    _default_max_tokens = None  # no catalogue ceiling: max_tokens is omitted from the request
     # Models whose ceiling has already been reported as falling back, so the warning in
     # max_output_tokens fires once per model rather than on every read.
     _warned_default_ceiling: ClassVar[set[str]] = set()
@@ -362,55 +362,32 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         return entry if isinstance(entry, dict) else None
 
     @property
-    def max_output_tokens(self) -> int:
-        """Return the upstream-enforced output cap for the active model.
+    def max_output_tokens(self) -> int | None:
+        """The model's catalogue output ceiling, or None when the catalogue does not give one.
 
-        Pulls ``top_provider.max_completion_tokens`` from the catalogue when
-        available — ignored by some upstreams but a hard cap on others.
-        Falls back to ``_default_max_tokens`` if absent.
-
-        2026-09-06: the fallback is now logged, once per model. A transient failure of the
-        single catalogue request silently turned a 131072-token ceiling into 8192 for
-        several current models — a 16x cut, mid-run, with nothing in the log to say so.
-        Downstream that reads as a truncated response and a failed pipeline whose cause is
-        invisible; it cost two full pipeline runs to find. The fallback itself is correct
-        behaviour, so this warns rather than raising.
-
-        2026-09-14, a third run lost to the same 8192: the cause is not a flaky network but the
-        ORDER a caller reads these in. A caller computes its own ``max_tokens`` from this property
-        BEFORE calling ``generate``, so ``_async_prepare``'s warm has not run yet; asked from the
-        event-loop thread with a cold cache, ``_fetch_models_catalogue`` deliberately returns ``{}``
-        rather than blocking the loop, and this property then reported a ceiling of 8192 for a model
-        that serves 65,536. The first article of a corpus wave came back cut mid-JSON, billed in full.
-
-        **So neither fallback is a small round number any more.** The catalogue not being readable
-        yet, and the catalogue listing no ``max_completion_tokens``, are both statements that the real
-        cap is UNKNOWN — the second one positively so, since a model with no entry has no cap enforced
-        at the model level. An unknown ceiling becomes the context window: a real, generous number that
-        the caller's own fitting then clamps to what is left after the prompt. 8192 was neither
-        measured nor generous, it was small enough to truncate a long answer and large enough to look
-        deliberate. A caller that needs the exact ceiling should pin a route and read the cap off the
-        endpoint it pinned.
+        Reads ``top_provider.max_completion_tokens`` for the active model. None means the request OMITS
+        ``max_tokens`` and OpenRouter and the upstream apply their own limit; no number of ours is sent.
+        That covers both a cold catalogue (``_async_prepare`` has not warmed it yet, since a property cannot
+        block the event loop) and a catalogue entry that lists no ``max_completion_tokens``. The ceiling is
+        never guessed from the context window or a round default: both were wrong in past runs (8192 cut
+        long answers mid-JSON). A caller that needs the exact figure pins a route and reads its advertised cap.
         """
         max_out = self._smallest_known_limit(1)
         if max_out is not None:
             return max_out
-        cold = not _catalogue_is_loaded()
-        ceiling = self.context_window
         if self.model_name not in self._warned_default_ceiling:
             self._warned_default_ceiling.add(self.model_name)
             reason = (
                 "has not been read yet (asked from an event loop before the warm-up ran)"
-                if cold
-                else "lists no max_completion_tokens for this model, which means no cap is enforced at the model level"
+                if not _catalogue_is_loaded()
+                else "lists no max_completion_tokens for this model"
             )
             logger.warning(
-                "OpenRouter catalogue %s, so the real output cap for %r is UNKNOWN rather than small: "
-                "using the context window, %d. Await the provider's own prepare step before sizing a budget "
-                "if the exact number matters, or pin a route and take its advertised cap.",
-                reason, self.model_name, ceiling,
+                "OpenRouter catalogue %s, so no output ceiling is known for %r: max_tokens is omitted and the provider decides.",
+                reason,
+                self.model_name,
             )
-        return ceiling
+        return None
 
     def supports_json_mode(self) -> bool:
         """Per-model JSON-mode support: consult the OR catalogue's

@@ -140,7 +140,7 @@ class XAIProvider(OpenAICompatibleProvider):
     _base_url = "https://api.x.ai/v1"
     _provider_name = "xAI"
     _max_tokens_map = _MAX_TOKENS
-    _default_max_tokens = 30000
+    _default_max_tokens = None  # unlisted model: max_tokens is omitted, the provider decides
     _context_window_map = {  # noqa: RUF012 -- intentional shared class-level lookup table (overrides base class default), not a per-instance mutable-default bug
         "grok-4.7": 500_000,
         "grok-4.6": 500_000,
@@ -294,23 +294,23 @@ class XAIProvider(OpenAICompatibleProvider):
         """One ``POST /responses`` with the search tools (https://docs.x.ai/docs/guides/tools/search-tools)."""
         self._reset_per_call_state()
         await self._async_prepare()
-        if max_tokens <= 0:
-            max_tokens = self.max_output_tokens
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget = self.fit_max_tokens_to_context(budget, prompt, system)
         messages: list[dict[str, Any]] = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
         body: dict[str, Any] = {
             "model": self.model_name,
             "input": messages,
             "tools": [{"type": "web_search"}, {"type": "x_search"}],
-            "max_output_tokens": max_tokens,
         }
+        if budget:
+            body["max_output_tokens"] = budget
         if temperature is not None:
             body["temperature"] = temperature
         effort = self._thinking_request_field(thinking) if thinking is not None else None
         if effort is not None:
             body["reasoning"] = {"effort": effort["reasoning_effort"]}
         async with self.semaphore:
-            resp = await self._client.post("/responses", json=body, timeout=self._timeout_for({"max_tokens": max_tokens, "model": self.model_name}))
+            resp = await self._client.post("/responses", json=body, timeout=self._timeout_for({"max_tokens": budget, "model": self.model_name}))
             self._capture_rate_limit_headers(resp.headers)
             if 400 <= resp.status_code < 500 and resp.status_code != 429:
                 raise LLMProviderError(f"xAI API error {resp.status_code}: {resp.text[:500]}")

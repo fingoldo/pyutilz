@@ -56,7 +56,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         _base_url          — e.g. "https://api.deepseek.com"
         _provider_name     — e.g. "DeepSeek"
         _max_tokens_map    — dict[model_name, max_output_tokens]
-        _default_max_tokens — fallback when model not in map
+        _default_max_tokens — fallback when model not in map; None = unknown, the request omits max_tokens
         _input_cost_per_1m(model)  — input pricing
         _output_cost_per_1m(model) — output pricing
         _cache_hit_cost_per_1m(model) — cache-hit input pricing
@@ -71,7 +71,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
     _base_url: str
     _provider_name: str
     _max_tokens_map: dict[str, int] = {}  # noqa: RUF012 -- intentional shared class-level lookup table (subclasses override with their own), not a per-instance mutable-default bug
-    _default_max_tokens: int = 8192
+    _default_max_tokens: int | None = None  # None: no catalogue ceiling known, so max_tokens is omitted from the request
 
     # Per-call "last successful call" state -- backed by contextvars via PerCallAttr, NOT plain
     # instance attributes. Regression fix (2026-07-21 audit round 2, HIGH): generate_batch() fires
@@ -290,11 +290,12 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
     # ── LLMProvider interface ────────────────────────────────────────
 
     @property
-    def max_output_tokens(self) -> int:
+    def max_output_tokens(self) -> int | None:
         """Max output tokens for the current model, from ``_max_tokens_map`` or ``_default_max_tokens``.
 
-        Exact lookup: a subclass whose default is deliberately LARGER than its listed entries
-        (xAI, where the unlisted fast models carry the 2M window) must not have a shorter family
+        Returns None when neither knows the model: the caller then omits ``max_tokens`` and the provider
+        applies its own limit. Exact lookup: a subclass whose default is deliberately LARGER than its listed
+        entries (xAI, where the unlisted fast models carry the 2M window) must not have a shorter family
         prefix silently override it. Subclasses whose table is prefix-safe override this.
         """
         return self._max_tokens_map.get(self.model_name, self._default_max_tokens)
@@ -692,8 +693,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
         # (``context_window``) are sync properties that may hit the network on a catalogue miss.
         await self._async_prepare()
-        if max_tokens <= 0:
-            max_tokens = self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
         # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
         # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
         # (2026-08-08, autopsia pilot): a real ~23,617-token prompt was undercounted by `count_tokens` at
@@ -706,10 +706,10 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         # models when the field is absent - "the provider applies its own default," unspecified in detail
         # - and only one model/route was verified live before this fix landed. Widening the reserve keeps
         # the guaranteed, provider-agnostic behavior instead of an unproven cross-model assumption.)
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        budget = self.fit_max_tokens_to_context(budget, prompt, system)
         rf = self._response_format(json_mode, json_schema)
         async with self.semaphore:
-            body = self._request_body(prompt, system, temperature, max_tokens, rf, thinking, images, tools, tool_choice, extra_body)
+            body = self._request_body(prompt, system, temperature, budget, rf, thinking, images, tools, tool_choice, extra_body)
             try:
                 content = await self._post_and_unwrap(body)
             except LLMTruncationError as truncation:

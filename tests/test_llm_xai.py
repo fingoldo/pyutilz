@@ -96,7 +96,7 @@ class TestXAIConfig:
     def test_max_tokens_unknown_model(self):
         p = XAIProvider.__new__(XAIProvider)
         p.model_name = "future-model"
-        assert p.max_output_tokens == 30000
+        assert p.max_output_tokens is None, "an unlisted model has no known ceiling: max_tokens is omitted"
 
     def test_provider_name(self):
         assert XAIProvider._provider_name == "xAI"

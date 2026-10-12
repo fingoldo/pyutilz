@@ -74,10 +74,10 @@ class TestCeilingFallbackIsAnnounced:
         ), caplog.at_level(logging.WARNING):
             ceiling = provider.max_output_tokens
 
-        assert ceiling == provider.context_window
-        assert ceiling > OpenRouterProvider._default_max_tokens, "an unknown ceiling must be generous, never 8192"
+        assert ceiling is None, "no catalogue ceiling: max_tokens is omitted, never a number of ours"
+        assert OpenRouterProvider._default_max_tokens is None
         assert any("some/unlisted-model" in r.getMessage() for r in caplog.records)
-        assert any("UNKNOWN rather than small" in r.getMessage() for r in caplog.records)
+        assert any("no output ceiling is known" in r.getMessage() for r in caplog.records)
 
     def test_it_says_so_only_once_per_model(self, caplog):
         """A per-read warning would drown the log on the hot path."""
@@ -135,8 +135,8 @@ class TestAnUnreadCatalogueIsNotASmallCeiling:
         with caplog.at_level(logging.WARNING):
             ceiling, window = asyncio.run(read_before_any_warm())
 
-        assert ceiling == window == OpenRouterProvider._default_context_window
-        assert ceiling != 8192
+        assert ceiling is None, "a cold catalogue has no ceiling yet: max_tokens is omitted, never a guessed number"
+        assert window == OpenRouterProvider._default_context_window
         assert any("has not been read yet" in r.getMessage() for r in caplog.records)
 
     def test_a_catalogue_that_answered_wins_over_any_fallback(self):

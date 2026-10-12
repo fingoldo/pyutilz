@@ -131,7 +131,7 @@ class TestProviderCosts:
 
 class TestMaxOutputTokens:
     def test_base_fallback(self):
-        assert LLMProvider.max_output_tokens.fget(None) == 4096
+        assert LLMProvider.max_output_tokens.fget(None) is None, "no known ceiling: the request omits max_tokens"
 
     def test_anthropic_max_tokens(self):
         from pyutilz.llm.anthropic_provider import AnthropicProvider

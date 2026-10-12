@@ -446,7 +446,7 @@ class GeminiProvider(LLMProvider):
             prompt: The user message to send.
             system: Optional system instruction.
             temperature: Sampling temperature.
-            max_tokens: Output-token ceiling; 0 uses the model's own maximum.
+            max_tokens: Output-token ceiling; 0 uses the model's own ceiling, and when none is known the field is omitted.
             json_mode: Ask for `application/json` back.
             images: ``data:`` URIs to show the model, inlined as google-genai ``Part`` objects --
                 neither the OpenAI ``image_url`` shape nor Anthropic's ``source`` block, both of

@@ -273,7 +273,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
     _base_url = "https://api.openai.com/v1"
     _provider_name = "OpenAI"
     _max_tokens_map = _MAX_TOKENS
-    _default_max_tokens = 16_384
+    _default_max_tokens = None  # no catalogue entry: max_tokens is omitted, the provider decides
     _context_window_map = _CONTEXT_WINDOW
     _default_context_window = 128_000
 
@@ -445,15 +445,16 @@ class OpenAIProvider(OpenAICompatibleProvider):
         return self._resolve_pricing(model).output
 
     @property
-    def max_output_tokens(self) -> int:
-        """Max output tokens, resolved by longest matching prefix over ``_MAX_TOKENS``.
+    def max_output_tokens(self) -> int | None:
+        """Max output tokens, resolved by longest matching prefix over ``_MAX_TOKENS``; None when the model is unlisted.
 
         A dated snapshot id (``gpt-5-mini-2026-01-01``) used to miss the exact-match lookup and
         fall back to the 16,384 class default -- an 8x-too-small budget that made
         fit_max_tokens_to_context truncate requests that would have fit. Safe for this table
         specifically: every family prefix here shares one budget across its variants.
         """
-        return int(longest_prefix_lookup(self.model_name, self._max_tokens_map, self._default_max_tokens))
+        found = longest_prefix_lookup(self.model_name, self._max_tokens_map, self._default_max_tokens)
+        return None if found is None else int(found)
 
     @property
     def context_window(self) -> int:

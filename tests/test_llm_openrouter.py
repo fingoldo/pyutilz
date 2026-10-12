@@ -607,11 +607,10 @@ class TestModelLimitsLookup:
         assert p.max_output_tokens == 8_192
 
     def test_max_output_tokens_fallback_when_unknown(self):
-        """An unknown ceiling is the context window, never 8192: a small round fallback truncated
-        every long answer a corpus wave paid for on 2026-09-14."""
+        """An unknown ceiling is None, so max_tokens is omitted: no number of ours is sent as a cap."""
         openrouter_module._MODELS_CATALOGUE = {}
         p = _provider(model="vendor/unknown")
-        assert p.max_output_tokens == p.context_window > OpenRouterProvider._default_max_tokens
+        assert p.max_output_tokens is None
 
 
 class TestSummarizeEndpoints:
