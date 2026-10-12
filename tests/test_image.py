@@ -120,7 +120,7 @@ def _get_properties_func():
     return get_image_properties
 
 
-def test_get_image_properties_closes_handle_on_success(tmp_path):
+def test_get_image_properties_closes_handle_on_success(tmp_path, monkeypatch):
     """When given a path string, get_image_properties() must close the PIL handle it opened."""
     fake_img = MagicMock()
     fake_img.getexif.return_value = {}
@@ -129,7 +129,10 @@ def test_get_image_properties_closes_handle_on_success(tmp_path):
     fake_img.tobytes.return_value = b"\x00" * 100
 
     import pyutilz.core.image as image_mod
-    image_mod.PIL.Image.open.return_value = fake_img
+
+    pil_stub = MagicMock()
+    pil_stub.Image.open.return_value = fake_img
+    monkeypatch.setattr(image_mod, "PIL", pil_stub)
 
     fpath = tmp_path / "fake.png"
     fpath.write_bytes(b"not a real image, just needs to exist for getsize()")
@@ -141,7 +144,7 @@ def test_get_image_properties_closes_handle_on_success(tmp_path):
     fake_img.close.assert_called_once()
 
 
-def test_get_image_properties_closes_handle_on_exception(tmp_path):
+def test_get_image_properties_closes_handle_on_exception(tmp_path, monkeypatch):
     """The file handle must be closed even when processing (e.g. tobytes()) raises."""
     fake_img = MagicMock()
     fake_img.getexif.return_value = {}
@@ -150,7 +153,10 @@ def test_get_image_properties_closes_handle_on_exception(tmp_path):
     fake_img.tobytes.side_effect = OSError("corrupt image data")
 
     import pyutilz.core.image as image_mod
-    image_mod.PIL.Image.open.return_value = fake_img
+
+    pil_stub = MagicMock()
+    pil_stub.Image.open.return_value = fake_img
+    monkeypatch.setattr(image_mod, "PIL", pil_stub)
 
     fpath = tmp_path / "corrupt.png"
     fpath.write_bytes(b"corrupt bytes")

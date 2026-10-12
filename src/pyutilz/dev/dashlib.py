@@ -427,7 +427,8 @@ def create_tabs(
         no-render paths, each logged at DEBUG: ``tabsList`` is empty, the current user is not
         authenticated, or no tab survived the per-tab role filter.
     """
-    from flask import session
+    if session is None:
+        raise ImportError("create_tabs needs flask; install the dash extra")
 
     if not tabsList:
         # tabsList[0] below is unguarded; an empty list raised IndexError at render time instead of

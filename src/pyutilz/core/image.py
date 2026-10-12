@@ -26,6 +26,12 @@ from pyutilz.text.strings import remove_json_defaults
 
 from typing import Any, Optional, Tuple
 
+PIL: Any
+try:
+    import PIL.Image  # module-level PIL binding; the handle-closing tests stub and inspect it
+except ImportError:  # optional extra 'imaging': absent in a core-only install
+    PIL = None
+
 TAGS: Any
 try:
     from PIL.ExifTags import TAGS  # public re-export of Pillow's EXIF tag table, part of the module surface
@@ -142,8 +148,10 @@ def get_image_properties(
     ``ImageFile.LOAD_TRUNCATED_IMAGES`` is a process-global that changes decoding for every other
     PIL user in the process, so it is restored on exit rather than left flipped on.
     """
-    import PIL.Image
     from PIL import ImageFile
+
+    if PIL is None:
+        raise ImportError("get_image_properties needs Pillow; install the imaging extra")
 
     if skip_empty_exif is not None:
         logger.warning("get_image_properties: `skip_empty_exif` is a deprecated alias of `skip_unknown_exif_tags`; please rename the argument.")
