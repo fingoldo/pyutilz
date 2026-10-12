@@ -241,6 +241,65 @@ def _require_json_object(obj: Any, provider_name: str) -> dict[str, Any]:
     raise JSONParsingError(f"Expected a JSON object from {provider_name}, got {type(obj).__name__}")
 
 
+def _parse_fenced_object(text: str, provider_name: str) -> dict[str, Any] | None:
+    """The object inside a markdown JSON fence, or None when there is no fence or its payload does not decode.
+
+    A fenced payload that does not parse must DEGRADE into the later paths rather than abort the whole
+    extraction (2026-09-03 audit F13): models routinely emit a broken sketch in a fence followed by the real,
+    clean object. Only the decode error is swallowed -- _require_json_object's raise still propagates, so a
+    fenced top-level array remains a hard error exactly as before.
+    """
+    # The outer fences delimit the payload unambiguously, so we extract via regex (only the wrapper is regex; the JSON itself is parsed properly).
+    fence_match = re.search(r"```(?:json)?\s*\n?(\{.*?\}|\[.*?\])\s*\n?```", text, re.DOTALL)
+    if not fence_match:
+        return None
+    try:
+        return _require_json_object(jsonlib.loads(fence_match.group(1)), provider_name)
+    except jsonlib.JSONDecodeError:
+        return None
+
+
+def _strip_code_fences(text: str) -> str:
+    """``text`` without a leading ```json / ``` fence and a trailing ``` fence, even when the closing fence is missing."""
+    stripped = text
+    if stripped.startswith("```json"):
+        stripped = stripped[7:]
+    elif stripped.startswith("```"):
+        stripped = stripped[3:]
+    if stripped.endswith("```"):
+        stripped = stripped[:-3]
+    return stripped.strip()
+
+
+def _scan_first_object(stripped: str) -> dict[str, Any] | None:
+    """The first ``{...}`` span in ``stripped`` that parses to a JSON object, or None.
+
+    Each failed candidate costs O(position), not O(1): building the JSONDecodeError counts the newlines of
+    everything before the failure point. Thousands of ``{`` in a long truncated output made the scan quadratic
+    (measured 10 s on 180 KB). The scan therefore stops once the failures have cost _JSON_SCAN_BUDGET_CHARS; a
+    normal response never gets near it, and an object nested in an unterminated one (``{"a": {"b": 2}``) is still found.
+    """
+    spent = 0
+    for i, ch in enumerate(stripped):
+        if ch != "{":
+            continue
+        end = _object_span_end(stripped, i)
+        if end < 0:
+            spent += len(stripped) - i
+        else:
+            try:
+                obj = jsonlib.loads(stripped[i:end])
+            except jsonlib.JSONDecodeError:
+                spent += end - i
+            else:
+                if isinstance(obj, dict):
+                    return obj
+                continue
+        if spent >= _JSON_SCAN_BUDGET_CHARS:
+            break
+    return None
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
@@ -388,72 +447,24 @@ class LLMProvider(ABC):
         try:
             text = text.strip()
 
-            # 1. Markdown-fenced JSON wins. The outer fences delimit the
-            #    payload unambiguously, so we extract via regex (only the
-            #    wrapper is regex; the JSON itself is parsed properly).
-            fence_match = re.search(
-                r"```(?:json)?\s*\n?(\{.*?\}|\[.*?\])\s*\n?```",
-                text,
-                re.DOTALL,
-            )
-            if fence_match:
-                # A fenced payload that does not parse must DEGRADE into paths 2-5 rather than
-                # abort the whole extraction (2026-09-03 audit F13): models routinely emit a
-                # broken sketch in a fence followed by the real, clean object. Only the decode
-                # error is swallowed -- _require_json_object's raise still propagates, so a fenced
-                # top-level array remains a hard error exactly as before.
-                try:
-                    return _require_json_object(jsonlib.loads(fence_match.group(1)), provider_name)
-                except jsonlib.JSONDecodeError:
-                    pass
+            # 1. Markdown-fenced JSON wins; a fenced payload that does not parse degrades into paths 2-5.
+            fenced = _parse_fenced_object(text, provider_name)
+            if fenced is not None:
+                return fenced
 
-            # 2. Strip leading fence even without a closing fence (some
-            #    streaming LLMs forget to close).
-            stripped = text
-            if stripped.startswith("```json"):
-                stripped = stripped[7:]
-            elif stripped.startswith("```"):
-                stripped = stripped[3:]
-            if stripped.endswith("```"):
-                stripped = stripped[:-3]
-            stripped = stripped.strip()
+            # 2. Strip leading fence even without a closing fence (some streaming LLMs forget to close).
+            stripped = _strip_code_fences(text)
 
-            # 3. Try the whole stripped text first (cheap path: most
-            #    json_mode= responses are pure JSON).
+            # 3. Try the whole stripped text first (cheap path: most json_mode= responses are pure JSON).
             try:
                 return _require_json_object(jsonlib.loads(stripped), provider_name)
             except jsonlib.JSONDecodeError:
                 pass
 
-            # 4. Scan for the first parseable JSON object via raw_decode.
-            #    Walks each ``{`` candidate, asks the decoder to consume
-            #    a single JSON value, and returns the first one that
-            #    parses cleanly. Robust against prose-before-JSON,
-            #    JSON-with-trailing-prose, and nested-object boundaries.
-            #    Each failed candidate costs O(position), not O(1): building the JSONDecodeError counts the
-            #    newlines of everything before the failure point. Thousands of ``{`` in a long truncated output
-            #    made the scan quadratic (measured 10 s on 180 KB). The scan therefore stops once the failures
-            #    have cost _JSON_SCAN_BUDGET_CHARS; a normal response never gets near it, and an object nested in
-            #    an unterminated one (``{"a": {"b": 2}``) is still found.
-            spent = 0
-            for i, ch in enumerate(stripped):
-                if ch != "{":
-                    continue
-                end = _object_span_end(stripped, i)
-                if end < 0:
-                    spent += len(stripped) - i
-                    if spent >= _JSON_SCAN_BUDGET_CHARS:
-                        break
-                    continue
-                try:
-                    obj = jsonlib.loads(stripped[i:end])
-                except jsonlib.JSONDecodeError:
-                    spent += end - i
-                    if spent >= _JSON_SCAN_BUDGET_CHARS:
-                        break
-                    continue
-                if isinstance(obj, dict):
-                    return obj
+            # 4. Scan for the first parseable JSON object via raw_decode (prose-tolerant).
+            scanned = _scan_first_object(stripped)
+            if scanned is not None:
+                return scanned
 
             # 5. Last resort — re-raise via the original strict parse so
             #    the JSONDecodeError handler below produces a clean error.

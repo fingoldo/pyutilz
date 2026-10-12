@@ -162,30 +162,47 @@ def _receivers_defined_in_tree(tree: ast.Module, classes: set[str], dynamic: set
     """
     resolved: set[int] = set()
     for func in ast.walk(tree):
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        local: set[str] = set()
-        args = func.args
-        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
-            if isinstance(arg.annotation, ast.Name) and arg.annotation.id in classes and arg.annotation.id not in dynamic:
-                local.add(arg.arg)
-        for node in ast.walk(func):
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
-                if node.annotation.id in classes and node.annotation.id not in dynamic:
-                    local.add(node.target.id)
-            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                if node.value.func.id in classes and node.value.func.id not in dynamic:
-                    local.update(t.id for t in node.targets if isinstance(t, ast.Name))
-        for node in ast.walk(func):
-            if isinstance(node, ast.Name) and node.id in local:
-                resolved.add(id(node))
-    for cls in ast.walk(tree):
-        if not isinstance(cls, ast.ClassDef) or cls.name in dynamic:
-            continue
-        for node in ast.walk(cls):
-            if isinstance(node, ast.Name) and node.id == "self":
-                resolved.add(id(node))
+        if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            resolved |= _function_receiver_ids(func, classes, dynamic)
+    resolved |= _self_receiver_ids(tree, dynamic)
     return resolved
+
+
+def _is_plain_in_tree_class(name: str, classes: set[str], dynamic: set[str]) -> bool:
+    """True when ``name`` is a class defined in the scanned tree that does not bind its attributes dynamically."""
+    return name in classes and name not in dynamic
+
+
+def _function_receiver_ids(func: ast.FunctionDef | ast.AsyncFunctionDef, classes: set[str], dynamic: set[str]) -> set[int]:
+    """``id`` of every Name inside ``func`` that is bound to an in-tree class instance (annotated or constructed)."""
+    local = _in_tree_bound_names(func, classes, dynamic)
+    return {id(node) for node in ast.walk(func) if isinstance(node, ast.Name) and node.id in local}
+
+
+def _in_tree_bound_names(func: ast.FunctionDef | ast.AsyncFunctionDef, classes: set[str], dynamic: set[str]) -> set[str]:
+    """Names in ``func`` annotated with, or assigned straight from a constructor of, an in-tree class."""
+    local: set[str] = set()
+    args = func.args
+    for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+        if isinstance(arg.annotation, ast.Name) and _is_plain_in_tree_class(arg.annotation.id, classes, dynamic):
+            local.add(arg.arg)
+    for node in ast.walk(func):
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
+            if _is_plain_in_tree_class(node.annotation.id, classes, dynamic):
+                local.add(node.target.id)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+            if _is_plain_in_tree_class(node.value.func.id, classes, dynamic):
+                local.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return local
+
+
+def _self_receiver_ids(tree: ast.Module, dynamic: set[str]) -> set[int]:
+    """``id`` of every ``self`` Name inside a class defined in the tree that does not bind attributes dynamically."""
+    ids: set[int] = set()
+    for cls in ast.walk(tree):
+        if isinstance(cls, ast.ClassDef) and cls.name not in dynamic:
+            ids |= {id(node) for node in ast.walk(cls) if isinstance(node, ast.Name) and node.id == "self"}
+    return ids
 
 
 def _module_receiver_names(tree: ast.Module) -> set[str]:

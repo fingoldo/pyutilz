@@ -21,7 +21,6 @@
   "default_via_or::dev/logginglib.py::fa2fbee22fd2",
   "default_via_or::llm/anthropic_provider.py::c9bad38c4f05",
   "default_via_or::llm/base.py::8a4d0e84a46f",
-  "default_via_or::llm/claude_code_cli.py::266050b63bb0",
   "default_via_or::llm/claude_code_provider.py::fc3759893954",
   "default_via_or::llm/claude_code_provider.py::fd2a431ecc77",
   "default_via_or::llm/deepseek_provider.py::9b1a30860fbd",

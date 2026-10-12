@@ -347,6 +347,87 @@ class GeminiProvider(LLMProvider):
             "total_cost_usd": input_cost + output_cost + surcharge,
         }
 
+    def _build_generate_config(
+        self,
+        max_tokens: int,
+        temperature: float | None,
+        system: str | None,
+        json_mode: bool,
+        json_schema: dict[str, Any] | None,
+        thinking: bool | str | int | None,
+    ) -> types.GenerateContentConfig:
+        """The ``GenerateContentConfig`` for one call: sampling, system instruction, JSON constraints, thinking and cache options."""
+        config_kwargs: dict[str, Any] = {
+            **({} if temperature is None else {"temperature": temperature}),  # `None` lets Gemini apply its own
+            "max_output_tokens": max_tokens,
+            "system_instruction": system if system else None,
+            "response_mime_type": "application/json" if json_mode or json_schema is not None else None,
+        }
+        if json_schema is not None:
+            inner = json_schema.get("schema")
+            config_kwargs["response_json_schema"] = inner if isinstance(inner, dict) and ("name" in json_schema or "strict" in json_schema) else json_schema
+        # Phase-4 multi-candidate + cached-content support. Skip
+        # ``candidate_count`` when 1 (the SDK default) so the request
+        # body stays unchanged for the common path.
+        if self._candidate_count > 1:
+            config_kwargs["candidate_count"] = self._candidate_count
+        if self._cached_content:
+            config_kwargs["cached_content"] = self._cached_content
+        thinking_kwargs = gemini_thinking_config(thinking, self.model_name)
+        if thinking_kwargs is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
+        return types.GenerateContentConfig(**config_kwargs)
+
+    def _record_gemini_usage(self, response: Any) -> None:
+        """Fold the response's ``usage_metadata`` into the last-call usage and the running totals (no-op when absent)."""
+        um = getattr(response, "usage_metadata", None)
+        if um:
+            self._last_usage = {
+                "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                "reasoning_tokens": getattr(um, "thoughts_token_count", 0) or 0,
+                "cached_content_token_count": (getattr(um, "cached_content_token_count", 0) or 0),
+            }
+            self.last_cached_content_tokens = self._last_usage["cached_content_token_count"]
+            self.total_cached_content_tokens += self.last_cached_content_tokens
+            self._call_count += 1
+            self.total_prompt_tokens += self._last_usage["input_tokens"]
+            self.total_completion_tokens += self._last_usage["output_tokens"]
+            self.total_reasoning_tokens += self._last_usage["reasoning_tokens"]
+            self._add_long_context_surcharge(
+                self._last_usage["input_tokens"],
+                self._last_usage["cached_content_token_count"],
+                self._last_usage["output_tokens"] + self._last_usage["reasoning_tokens"],
+            )
+
+    def _raise_if_blocked(self, response: Any, fr: str) -> None:
+        """Raise LLMSafetyBlockError when the prompt or the response was blocked by a safety filter (``fr`` is the upper-cased finish reason)."""
+        if not response.candidates:
+            # The PROMPT was blocked before any candidate existed; the reason lives on prompt_feedback, which was
+            # never read, so the error said only "likely safety block".
+            feedback = getattr(response, "prompt_feedback", None)
+            block_reason = getattr(feedback, "block_reason", None)
+            if block_reason is not None:
+                raise LLMSafetyBlockError(
+                    f"Gemini blocked the prompt (block_reason={block_reason})",
+                    raw_text=None,
+                    details={
+                        "finish_reason": self._last_finish_reason,
+                        "block_reason": str(block_reason),
+                        "block_reason_message": getattr(feedback, "block_reason_message", None),
+                        "safety_ratings": self.last_safety_ratings,
+                    },
+                )
+        if any(marker in fr for marker in _BLOCKING_FINISH_REASONS):
+            raise LLMSafetyBlockError(
+                f"Gemini blocked response by safety filter (finish_reason={self._last_finish_reason})",
+                raw_text=None,
+                details={
+                    "finish_reason": self._last_finish_reason,
+                    "safety_ratings": self.last_safety_ratings,
+                },
+            )
+
     @lazy_retry(_generate_retry_policy)
     async def generate(
         self,
@@ -384,27 +465,7 @@ class GeminiProvider(LLMProvider):
         max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
         async with self.semaphore:
             contents = build_gemini_parts(prompt, images)
-
-            config_kwargs: dict[str, Any] = {
-                **({} if temperature is None else {"temperature": temperature}),  # `None` lets Gemini apply its own
-                "max_output_tokens": max_tokens,
-                "system_instruction": system if system else None,
-                "response_mime_type": "application/json" if json_mode or json_schema is not None else None,
-            }
-            if json_schema is not None:
-                inner = json_schema.get("schema")
-                config_kwargs["response_json_schema"] = inner if isinstance(inner, dict) and ("name" in json_schema or "strict" in json_schema) else json_schema
-            # Phase-4 multi-candidate + cached-content support. Skip
-            # ``candidate_count`` when 1 (the SDK default) so the request
-            # body stays unchanged for the common path.
-            if self._candidate_count > 1:
-                config_kwargs["candidate_count"] = self._candidate_count
-            if self._cached_content:
-                config_kwargs["cached_content"] = self._cached_content
-            thinking_kwargs = gemini_thinking_config(thinking, self.model_name)
-            if thinking_kwargs is not None:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
-            config = types.GenerateContentConfig(**config_kwargs)
+            config = self._build_generate_config(max_tokens, temperature, system, json_mode, json_schema, thinking)
 
             # Native async client (google-genai's own .aio surface) instead of offloading the
             # sync client to a dedicated ThreadPoolExecutor: avoids consuming a thread-pool
@@ -425,25 +486,7 @@ class GeminiProvider(LLMProvider):
             # response object themselves.
             self._capture_candidate_metadata(response)
 
-            um = getattr(response, "usage_metadata", None)
-            if um:
-                self._last_usage = {
-                    "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
-                    "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
-                    "reasoning_tokens": getattr(um, "thoughts_token_count", 0) or 0,
-                    "cached_content_token_count": (getattr(um, "cached_content_token_count", 0) or 0),
-                }
-                self.last_cached_content_tokens = self._last_usage["cached_content_token_count"]
-                self.total_cached_content_tokens += self.last_cached_content_tokens
-                self._call_count += 1
-                self.total_prompt_tokens += self._last_usage["input_tokens"]
-                self.total_completion_tokens += self._last_usage["output_tokens"]
-                self.total_reasoning_tokens += self._last_usage["reasoning_tokens"]
-                self._add_long_context_surcharge(
-                    self._last_usage["input_tokens"],
-                    self._last_usage["cached_content_token_count"],
-                    self._last_usage["output_tokens"] + self._last_usage["reasoning_tokens"],
-                )
+            self._record_gemini_usage(response)
 
             # Safety-filter detection: Gemini returns finish_reason=SAFETY
             # when the response is blocked. response.text may be empty or
@@ -451,31 +494,7 @@ class GeminiProvider(LLMProvider):
             # safety_ratings (HARASSMENT / HATE_SPEECH / SEXUALLY_EXPLICIT
             # / DANGEROUS_CONTENT) so callers know WHICH category fired.
             _fr = self._last_finish_reason.upper() if isinstance(self._last_finish_reason, str) else ""
-            if not response.candidates:
-                # The PROMPT was blocked before any candidate existed; the reason lives on prompt_feedback, which was
-                # never read, so the error said only "likely safety block".
-                feedback = getattr(response, "prompt_feedback", None)
-                block_reason = getattr(feedback, "block_reason", None)
-                if block_reason is not None:
-                    raise LLMSafetyBlockError(
-                        f"Gemini blocked the prompt (block_reason={block_reason})",
-                        raw_text=None,
-                        details={
-                            "finish_reason": self._last_finish_reason,
-                            "block_reason": str(block_reason),
-                            "block_reason_message": getattr(feedback, "block_reason_message", None),
-                            "safety_ratings": self.last_safety_ratings,
-                        },
-                    )
-            if any(marker in _fr for marker in _BLOCKING_FINISH_REASONS):
-                raise LLMSafetyBlockError(
-                    f"Gemini blocked response by safety filter (finish_reason={self._last_finish_reason})",
-                    raw_text=None,
-                    details={
-                        "finish_reason": self._last_finish_reason,
-                        "safety_ratings": self.last_safety_ratings,
-                    },
-                )
+            self._raise_if_blocked(response, _fr)
             # Checked BEFORE the empty-text branches below: a thinking-enabled model with a tight
             # max_tokens returns finish_reason=MAX_TOKENS with empty text, and reporting that as
             # LLMSafetyBlockError ("do not retry") permanently abandoned a call whose documented

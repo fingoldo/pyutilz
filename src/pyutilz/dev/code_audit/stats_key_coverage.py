@@ -143,20 +143,8 @@ def scan_stats_key_coverage(
         rel = py.relative_to(root).as_posix()
 
         for cls in ast.walk(tree):
-            if not isinstance(cls, ast.ClassDef):
-                continue
-            for method in cls.body:
-                if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                for attr, keys in _declared_by(method).items():
-                    if not keys:
-                        continue
-                    declared.setdefault(attr, set()).update(keys)
-                    declaring_method.setdefault(attr, f"{cls.name}.{method.name}")
-
-            for attr in _COUNTER_ATTRS:
-                for key, line in _written_keys(cls, attr).items():
-                    writes.append((attr, key, rel, line, cls.name))
+            if isinstance(cls, ast.ClassDef):
+                _record_class(cls, rel, declared, declaring_method, writes)
 
     findings: list[Finding] = []
     sources: dict[str, list[str]] = {}
@@ -169,20 +157,44 @@ def scan_stats_key_coverage(
         known = declared.get(attr)
         if known is None or key in known:
             continue
-        findings.append(
-            Finding(
-                check="stats_key_coverage",
-                severity="P2",
-                file=rel,
-                line=line,
-                snippet=_line_text(sources.get(rel, []), line),
-                detail=(
-                    f"`{cls_name}` writes `self.{attr}[{key!r}]`, which "
-                    f"`{declaring_method[attr]}` never initialises. The key is created on first "
-                    "write, so it is cumulative since process start while every sibling is "
-                    "per-cycle -- and if the write goes through an increment helper, it is a "
-                    "KeyError rather than a zero."
-                ),
-            )
-        )
+        findings.append(_undeclared_key_finding(attr, key, rel, line, cls_name, declaring_method[attr], sources.get(rel, [])))
     return findings
+
+
+def _record_class(
+    cls: ast.ClassDef,
+    rel: str,
+    declared: dict[str, set[str]],
+    declaring_method: dict[str, str],
+    writes: list[tuple[str, str, str, int, str]],
+) -> None:
+    """Add one class's declared counter keys to ``declared`` and its accumulating key writes to ``writes``."""
+    for method in cls.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for attr, keys in _declared_by(method).items():
+            if not keys:
+                continue
+            declared.setdefault(attr, set()).update(keys)
+            declaring_method.setdefault(attr, f"{cls.name}.{method.name}")
+    for attr in _COUNTER_ATTRS:
+        for key, line in _written_keys(cls, attr).items():
+            writes.append((attr, key, rel, line, cls.name))
+
+
+def _undeclared_key_finding(attr: str, key: str, rel: str, line: int, cls_name: str, declaring: str, src_lines: list[str]) -> Finding:
+    """The P2 finding for a counter key written by ``cls_name`` that ``declaring`` never initialises."""
+    return Finding(
+        check="stats_key_coverage",
+        severity="P2",
+        file=rel,
+        line=line,
+        snippet=_line_text(src_lines, line),
+        detail=(
+            f"`{cls_name}` writes `self.{attr}[{key!r}]`, which "
+            f"`{declaring}` never initialises. The key is created on first "
+            "write, so it is cumulative since process start while every sibling is "
+            "per-cycle -- and if the write goes through an increment helper, it is a "
+            "KeyError rather than a zero."
+        ),
+    )

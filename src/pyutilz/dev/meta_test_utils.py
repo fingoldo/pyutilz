@@ -428,48 +428,65 @@ def count_user_deferred_entries(
         return out
     unreadable: list[str] = []
     for py in sorted(_rglob_test_files(test_meta_dir)):
-        try:
-            src = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            unreadable.append(f"{py}: {exc}")
-            continue
-        try:
-            tree = ast.parse(src)
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            # Both ``X = {...}`` (Assign) and ``X: set[str] = {...}``
-            # (AnnAssign) need to be matched — modern code typically
-            # uses the annotated form for whitelists.
-            value: Optional[ast.expr]
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-                value = node.value
-            elif isinstance(node, ast.AnnAssign):
-                targets = [node.target] if node.target else []
-                value = node.value
-            else:
-                continue
-            if value is None:
-                continue
-            for target in targets:
-                if not isinstance(target, ast.Name):
-                    continue
-                if not target.id.startswith(prefixes):
-                    continue
-                key = f"{py.stem}::{target.id}"
-                if isinstance(value, (ast.Set, ast.List, ast.Tuple)):
-                    out[key] = len(value.elts)
-                elif isinstance(value, ast.Dict):
-                    out[key] = len(value.keys)
-                elif isinstance(value, ast.Call) and not value.args and not value.keywords:
-                    # An EMPTY ``set()`` / ``dict()`` constructor only. ``set(_LEGACY_ENTRIES)`` is
-                    # also an ast.Call, and recording it as 0 made 40 tracked entries read as none --
-                    # the drift tracker reported shrinking debt in exactly the case where it grew.
-                    out[key] = 0
+        error = _count_deferred_in_file(py, prefixes, out)
+        if error is not None:
+            unreadable.append(error)
     if unreadable:
         logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return out
+
+
+def _count_deferred_in_file(py: Path, prefixes: tuple[str, ...], out: dict[str, int]) -> Optional[str]:
+    """Add one file's deferred-entry counts to ``out``; return a read-error message when the file is unreadable."""
+    try:
+        src = py.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"{py}: {exc}"
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    _count_deferred_in_tree(tree, py.stem, prefixes, out)
+    return None
+
+
+def _count_deferred_in_tree(tree: ast.AST, stem: str, prefixes: tuple[str, ...], out: dict[str, int]) -> None:
+    """Record ``{stem::NAME: entries}`` for every prefix-matching assignment in ``tree`` with a countable literal value."""
+    for node in ast.walk(tree):
+        # Both ``X = {...}`` (Assign) and ``X: set[str] = {...}``
+        # (AnnAssign) need to be matched — modern code typically
+        # uses the annotated form for whitelists.
+        value: Optional[ast.expr]
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target] if node.target else []
+            value = node.value
+        else:
+            continue
+        if value is None:
+            continue
+        for target in targets:
+            if not isinstance(target, ast.Name) or not target.id.startswith(prefixes):
+                continue
+            count = _literal_entry_count(value)
+            if count is not None:
+                out[f"{stem}::{target.id}"] = count
+
+
+def _literal_entry_count(value: ast.expr) -> Optional[int]:
+    """Number of entries in a set/list/tuple/dict literal, 0 for an empty ``set()``/``dict()`` call, else None."""
+    if isinstance(value, (ast.Set, ast.List, ast.Tuple)):
+        return len(value.elts)
+    if isinstance(value, ast.Dict):
+        return len(value.keys)
+    if isinstance(value, ast.Call) and not value.args and not value.keywords:
+        # An EMPTY ``set()`` / ``dict()`` constructor only. ``set(_LEGACY_ENTRIES)`` is
+        # also an ast.Call, and recording it as 0 made 40 tracked entries read as none --
+        # the drift tracker reported shrinking debt in exactly the case where it grew.
+        return 0
+    return None
 
 
 # ---------------------------------------------------------------------------

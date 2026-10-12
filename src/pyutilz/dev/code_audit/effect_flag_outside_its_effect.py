@@ -8,6 +8,8 @@ from pathlib import Path
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
+_EXIT_STMTS = (ast.Continue, ast.Return, ast.Raise, ast.Break)
+
 # --- a success record set outside the conditional work it records ------------------------------
 #
 # A flag, set membership or counter says "X happened", and X itself sits inside an `if` that may
@@ -172,90 +174,93 @@ def scan_effect_flag_outside_its_effect(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-
         for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for block in _blocks(func):
-                for index, stmt in enumerate(block[:-1]):
-                    if not isinstance(stmt, ast.If) or stmt.orelse or not _calls_in(stmt):
-                        continue
-                    if _only_logs(stmt.body):
-                        continue
-                    # A lazy-initialisation guard is not the work being recorded either --
-                    # see _only_initialises. Without this the rule reports the canonical
-                    # seen-set idiom as a defect.
-                    if _only_initialises(stmt.body):
-                        continue
-                    guarded_tokens = _shared_tokens(ast.Module(body=stmt.body, type_ignores=[]))
-
-                    # The correct form records INSIDE the guarded block; if it does, say nothing.
-                    if any(_is_a_success_record(inner) for inner in stmt.body):
-                        continue
-
-                    # A guarded block ending in `continue`/`return`/`raise`/`break` never reaches
-                    # the statement after it, so the record is on the OTHER path by construction.
-                    # That is the shape the audited codebase adopted when it fixed this defect --
-                    # the breaker-skip branch ends in `continue` and `reached_uids.add()` follows
-                    # it -- and without modelling that, the rule reports the FIX as the bug.
-                    # ANY terminator anywhere in the guarded block, not just as its last
-                    # statement. The failure branch is routinely nested one level deeper --
-                    #
-                    #     if rows:
-                    #         try: write_outputs(...)
-                    #         except Exception:
-                    #             ...; continue
-                    #     prog[crawl]["completed"] = True
-                    #
-                    # -- and checking only `body[-1]` missed it, so the rule reported that fixed
-                    # form as the defect for the third time. Conservative on purpose: it costs the
-                    # true positives whose guard happens to contain an unrelated early exit, and
-                    # this rule has already spent more of its budget on false alarms than on them.
-                    if any(isinstance(sub, (ast.Continue, ast.Return, ast.Raise, ast.Break)) for sub in ast.walk(stmt)):
-                        continue
-
-                    for follower in block[index + 1 :]:
-                        # An unconditional terminator between the guard and the record means the
-                        # record is on a different path entirely. Both of this rule's remaining
-                        # hits on real code were this -- and both were the FIXED form of the very
-                        # defect it looks for, where the failure branch ends in `continue` and the
-                        # success record follows it.
-                        # A statement that CONTAINS a terminator counts, not just one that is
-                        # one. The correct form puts the early exit behind its own guard:
-                        #
-                        #     if not _write_ok:
-                        #         ...; continue
-                        #     prog[crawl]["completed"] = True
-                        #
-                        # Looking only at the statement itself walked straight past that
-                        # `if` and reported the record it protects.
-                        if any(isinstance(sub, (ast.Continue, ast.Return, ast.Raise, ast.Break)) for sub in ast.walk(follower)):
-                            break
-                        record = _is_a_success_record(follower)
-                        if record is None:
-                            continue
-                        what, record_tokens = record
-                        shared = sorted(t for t in record_tokens & guarded_tokens if len(t) > 1 and t not in _VACUOUS_TOKENS)
-                        if not shared or (rel, follower.lineno) in reported:
-                            continue
-                        # The seen-set idiom -- see _tests_membership_of.
-                        if _tests_membership_of(stmt.test, follower):
-                            continue
-                        reported.add((rel, follower.lineno))
-                        findings.append(
-                            Finding(
-                                check="effect_flag_outside_its_effect",
-                                severity="P2",
-                                file=rel,
-                                line=follower.lineno,
-                                snippet=_line_text(src_lines, follower.lineno),
-                                detail=(
-                                    f"{what} recording `{shared[0]}` is set here, outside the `if` at "
-                                    f"line {stmt.lineno} that guards the work it records. When that "
-                                    "condition is false the record is written anyway, and every "
-                                    "consumer downstream believes work was done that was not."
-                                ),
-                            )
-                        )
-                        break
+            if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                findings.extend(_function_findings(func, rel, src_lines, reported))
     return findings
+
+
+def _function_findings(func: ast.AST, rel: str, src_lines: list[str], reported: set[tuple[str, int]]) -> list[Finding]:
+    """Findings for every guard ``if`` in ``func`` whose following sibling records work it guards."""
+    out: list[Finding] = []
+    for block in _blocks(func):
+        for index, stmt in enumerate(block[:-1]):
+            if not isinstance(stmt, ast.If) or _is_exempt_guard(stmt):
+                continue
+            guarded_tokens = _shared_tokens(ast.Module(body=stmt.body, type_ignores=[]))
+            finding = _first_unguarded_record(stmt, block[index + 1 :], guarded_tokens, rel, src_lines, reported)
+            if finding is not None:
+                out.append(finding)
+    return out
+
+
+def _is_exempt_guard(stmt: ast.If) -> bool:
+    """True when this guard must not be paired with a following record (no call, log-only, lazy init, or record inside)."""
+    if stmt.orelse or not _calls_in(stmt):
+        return True
+    if _only_logs(stmt.body) or _only_initialises(stmt.body):
+        return True
+    # The correct form records INSIDE the guarded block; if it does, say nothing.
+    if any(_is_a_success_record(inner) for inner in stmt.body):
+        return True
+    # A guarded block containing any early exit (continue/return/raise/break), at any depth, means the
+    # record that follows is on the OTHER path by construction. Conservative on purpose: see _has_exit.
+    return _has_exit(stmt)
+
+
+def _has_exit(node: ast.AST) -> bool:
+    """Does this subtree contain an early exit? A guard or follower with one is not reached on the success path."""
+    return any(isinstance(sub, _EXIT_STMTS) for sub in ast.walk(node))
+
+
+def _first_unguarded_record(
+    stmt: ast.If,
+    followers: list[ast.stmt],
+    guarded_tokens: set[str],
+    rel: str,
+    src_lines: list[str],
+    reported: set[tuple[str, int]],
+) -> Finding | None:
+    """The first sibling after ``stmt`` that records the guarded work outside its guard, or None.
+
+    Scanning stops at the first follower containing an early exit: an unconditional terminator between the
+    guard and the record puts the record on a different path entirely.
+    """
+    for follower in followers:
+        if _has_exit(follower):
+            return None
+        hit = _unguarded_record(stmt, follower, guarded_tokens)
+        if hit is None or (rel, follower.lineno) in reported:
+            continue
+        reported.add((rel, follower.lineno))
+        return _effect_finding(stmt, follower, hit[0], hit[1], rel, src_lines)
+    return None
+
+
+def _unguarded_record(stmt: ast.If, follower: ast.stmt, guarded_tokens: set[str]) -> tuple[str, list[str]] | None:
+    """``(what, shared_tokens)`` when ``follower`` records a token the guard's work also names, else None."""
+    record = _is_a_success_record(follower)
+    if record is None:
+        return None
+    what, record_tokens = record
+    shared = sorted(t for t in record_tokens & guarded_tokens if len(t) > 1 and t not in _VACUOUS_TOKENS)
+    if not shared or _tests_membership_of(stmt.test, follower):
+        return None
+    return what, shared
+
+
+def _effect_finding(stmt: ast.If, follower: ast.stmt, what: str, shared: list[str], rel: str, src_lines: list[str]) -> Finding:
+    """Build the P2 finding for a record set outside the conditional work it records."""
+    return Finding(
+        check="effect_flag_outside_its_effect",
+        severity="P2",
+        file=rel,
+        line=follower.lineno,
+        snippet=_line_text(src_lines, follower.lineno),
+        detail=(
+            f"{what} recording `{shared[0]}` is set here, outside the `if` at "
+            f"line {stmt.lineno} that guards the work it records. When that "
+            "condition is false the record is written anyway, and every "
+            "consumer downstream believes work was done that was not."
+        ),
+    )

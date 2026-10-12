@@ -143,6 +143,44 @@ def _raise_on_cli_tool_use(event: dict) -> None:
             raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({block.get('name', '?')!r}); this provider is text-generation-only")
 
 
+def _result_outcome(event: dict) -> "tuple[str | None, str | None]":
+    """``(result_text, error_text)`` for a ``result`` event: the answer on success, else the error text."""
+    subtype = event.get("subtype", "")
+    if event.get("is_error"):
+        # `is_error` is the CLI's own verdict and outranks `subtype`: an API error surfaced as result text
+        # (a rate-limit notice, an overloaded upstream) used to be returned as the model's answer whenever
+        # the subtype still read "success". Raised as the error text, so the provider's rate-limit matcher sees it.
+        message = event.get("result") if event.get("result") else event.get("error")
+        return None, (str(message) if message else f"the CLI reported an error (subtype={subtype!r})")
+    if subtype == "success":
+        # An empty success is not an answer. The SDK path raises "produced no result"
+        # for exactly this shape, and returning "" here handed the caller a blank
+        # string that then failed JSON parsing with a far less informative message.
+        text_out = event.get("result", "")
+        if isinstance(text_out, str) and text_out.strip():
+            return text_out, None
+        return None, f"the CLI reported success with an empty result (subtype={subtype!r})"
+    fallback = event.get("result")
+    if not fallback:
+        fallback = event.get("error")
+    if not fallback:
+        fallback = subtype
+    return None, fallback
+
+
+def _observe_stream_event(event: dict) -> int:
+    """Handle one non-result stream event; returns the thinking-block count it carries (0 for all but ``assistant``)."""
+    etype = event.get("type")
+    if etype == "assistant":
+        _raise_on_cli_tool_use(event)
+        return _count_thinking_blocks(event)
+    if etype == "rate_limit_event":
+        logger.debug("Claude CLI rate_limit_event (continuing)")
+    elif etype == "system" and event.get("subtype") == "init":
+        logger.debug("Claude CLI initialized")
+    return 0
+
+
 def _consume_cli_stream(
     line_q: "queue.Queue[str | None]",
     timeout: float,
@@ -191,36 +229,11 @@ def _consume_cli_stream(
             logger.debug("Ignoring a stream line that is not JSON (%d chars): %.120s", len(raw), raw)
             continue
 
-        etype = event.get("type")
-        if etype == "result":
+        if event.get("type") == "result":
             result_event = event
-            subtype = event.get("subtype", "")
-            if event.get("is_error"):
-                # `is_error` is the CLI's own verdict and outranks `subtype`: an API error surfaced as result text
-                # (a rate-limit notice, an overloaded upstream) used to be returned as the model's answer whenever
-                # the subtype still read "success". Raised as the error text, so the provider's rate-limit matcher sees it.
-                message = event.get("result") if event.get("result") else event.get("error")
-                error_text = str(message) if message else f"the CLI reported an error (subtype={subtype!r})"
-            elif subtype == "success":
-                # An empty success is not an answer. The SDK path raises "produced no result"
-                # for exactly this shape, and returning "" here handed the caller a blank
-                # string that then failed JSON parsing with a far less informative message.
-                text_out = event.get("result", "")
-                if isinstance(text_out, str) and text_out.strip():
-                    result_text = text_out
-                else:
-                    error_text = f"the CLI reported success with an empty result (subtype={subtype!r})"
-
-            else:
-                error_text = event.get("result") or event.get("error") or subtype
+            result_text, error_text = _result_outcome(event)
             break
-        elif etype == "assistant":
-            _raise_on_cli_tool_use(event)
-            thinking_blocks += _count_thinking_blocks(event)
-        elif etype == "rate_limit_event":
-            logger.debug("Claude CLI rate_limit_event (continuing)")
-        elif etype == "system" and event.get("subtype") == "init":
-            logger.debug("Claude CLI initialized")
+        thinking_blocks += _observe_stream_event(event)
     else:
         return None, None, True, None
     if isinstance(result_event, dict):

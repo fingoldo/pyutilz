@@ -172,7 +172,24 @@ def scan_raising_stub_swallowed(
     is exercising the degradation path on purpose, which is the rule's main false positive.
     """
     findings: list[Finding] = []
+    production_swallows, test_files = _partition_swallowing_production(root, exclude_dirs)
+    if not production_swallows:
+        return findings
 
+    for py in test_files:
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = _read_src_lines(py)
+        rel = py.relative_to(root).as_posix()
+        for func in ast.walk(tree):
+            if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                findings.extend(_stub_swallow_findings(func, rel, src_lines, production_swallows))
+    return findings
+
+
+def _partition_swallowing_production(root: Path, exclude_dirs: frozenset[str]) -> tuple[dict[str, set[str]], list[Path]]:
+    """``({production file: swallowing call names}, test files)`` for the tree under ``root``."""
     production_swallows: dict[str, set[str]] = {}
     test_files: list[Path] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -186,44 +203,39 @@ def scan_raising_stub_swallowed(
             swallowed = _swallowing_calls(tree)
             if swallowed:
                 production_swallows[rel] = swallowed
+    return production_swallows, test_files
 
-    if not production_swallows:
-        return findings
 
-    for py in test_files:
-        tree = _safe_parse(py)
-        if tree is None:
+def _stub_swallow_findings(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    rel: str,
+    src_lines: list[str],
+    production_swallows: dict[str, set[str]],
+) -> list[Finding]:
+    """Findings for one spy-style test that patches a raising stub into a function a production broad-except swallows."""
+    if not func.name.startswith("test_"):
+        return []
+    raising_stubs = _stub_names_that_raise(func)
+    if not raising_stubs or _asserts_on_a_raise(func) or not _spy_style_assertions(func):
+        return []
+    out: list[Finding] = []
+    for attr, line in _patched_targets_of_raising_stubs(func, raising_stubs):
+        swallowers = sorted(f for f, names in production_swallows.items() if attr in names)
+        if not swallowers:
             continue
-        src_lines = _read_src_lines(py)
-        rel = py.relative_to(root).as_posix()
-
-        for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not func.name.startswith("test_"):
-                continue
-            raising_stubs = _stub_names_that_raise(func)
-            if not raising_stubs:
-                continue
-            if _asserts_on_a_raise(func) or not _spy_style_assertions(func):
-                continue
-            for attr, line in _patched_targets_of_raising_stubs(func, raising_stubs):
-                swallowers = sorted(f for f, names in production_swallows.items() if attr in names)
-                if not swallowers:
-                    continue
-                findings.append(
-                    Finding(
-                        check="raising_stub_swallowed",
-                        severity="P2",
-                        file=rel,
-                        line=line,
-                        snippet=_line_text(src_lines, line),
-                        detail=(
-                            f"`{func.name}` patches `{attr}` with a stub that raises unconditionally, "
-                            f"but {swallowers[0]} calls `{attr}` inside a broad `except` that does not "
-                            "re-raise -- the raise is converted to a benign path and the assertion "
-                            "beside it cannot fail. Assert on a RECORDED call instead of raising."
-                        ),
-                    )
-                )
-    return findings
+        out.append(
+            Finding(
+                check="raising_stub_swallowed",
+                severity="P2",
+                file=rel,
+                line=line,
+                snippet=_line_text(src_lines, line),
+                detail=(
+                    f"`{func.name}` patches `{attr}` with a stub that raises unconditionally, "
+                    f"but {swallowers[0]} calls `{attr}` inside a broad `except` that does not "
+                    "re-raise -- the raise is converted to a benign path and the assertion "
+                    "beside it cannot fail. Assert on a RECORDED call instead of raising."
+                ),
+            )
+        )
+    return out

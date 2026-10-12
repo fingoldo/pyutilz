@@ -132,67 +132,76 @@ def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
         raise ValueError("pyutilz.cloud.cloud.S3_BUCKET_NAME must be configured before calling get_from_s3_or_cache()")
     while not exists(local_object_path):
         bDownload = True
-        if s3_object_path.endswith(".zip"):
-            if exists(local_object_path + ".zip"):
-                logger.info("Zipped version of %s found in local FS", s3_object_path)
-                bDownload = False
+        if s3_object_path.endswith(".zip") and exists(local_object_path + ".zip"):
+            logger.info("Zipped version of %s found in local FS", s3_object_path)
+            bDownload = False
 
         if bDownload:
-            # If file exists in our s3
-            if s3_file_exists(s3_object_path, S3_BUCKET_NAME):
-                # Load model from our s3
-                try:
-                    if s3_object_path.endswith(".zip"):
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path + ".zip")
-                    else:
-                        s3.meta.client.download_file(Bucket=S3_BUCKET_NAME, Key=s3_object_path, Filename=local_object_path)
-                except Exception as e:
-                    # A persistent per-object failure (bad IAM perms, always-corrupt remote
-                    # object) previously retried with only network-RTT pacing -- no backoff --
-                    # unlike this function's two sibling failure branches ("not found in bucket"
-                    # and "corrupt zip", both `sleep(10)`). Matching them here closes the same
-                    # busy-loop risk class already fixed in those two branches.
-                    logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
-                    sleep(10)
-                else:
-                    logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
-            else:
-                logger.warning("Model %s not found in bucket %s", s3_object_path, S3_BUCKET_NAME)
-                sleep(10)
+            _download_model_from_s3(local_object_path, s3_object_path, S3_BUCKET_NAME)
         else:
+            _unpack_local_zip(local_object_path, s3_object_path, temp_dir)
+
+
+def _download_model_from_s3(local_object_path: str, s3_object_path: str, bucket: str) -> None:
+    """Download ``s3_object_path`` from ``bucket`` (to ``<local>.zip`` for a zip key) when it exists, else warn and sleep."""
+    # If file exists in our s3
+    if s3_file_exists(s3_object_path, bucket):
+        # Load model from our s3
+        try:
             if s3_object_path.endswith(".zip"):
-                if exists(local_object_path + ".zip"):
-                    # unpack it
-                    import shutil
-                    try:
-                        shutil.unpack_archive(local_object_path + ".zip", temp_dir)
-                    except Exception as e:
-                        # Regression fix: previously neither removed the corrupted zip nor
-                        # slept -- the `while not exists(local_object_path):` loop immediately
-                        # re-entered with the exact same on-disk state (unpack always fails the
-                        # same way), an unbounded zero-delay busy loop pinning a CPU core at
-                        # 100% forever. Removing the corrupted file lets the next iteration
-                        # re-download it instead (mirrors the "not found in bucket" branch's own
-                        # sleep(10), which this branch previously lacked entirely).
-                        logger.error("Error while unpacking model from bucket %s: %s", local_object_path + ".zip", e)
-                        try:
-                            os.remove(local_object_path + ".zip")
-                        except OSError as remove_err:
-                            logger.error("Could not remove corrupted archive %s: %s", local_object_path + ".zip", remove_err)
-                        sleep(10)
-                    else:
-                        logger.info("Unzipped model from archive %s", local_object_path + ".zip")
-                        os.remove(local_object_path + ".zip")
-                        # The archive is extracted to temp_dir, which need not be the parent of
-                        # local_object_path, and nothing verified the object actually appeared
-                        # there. When it did not, the enclosing `while not exists(...)` loop simply
-                        # re-downloaded, re-unpacked and re-deleted forever with no sleep on the
-                        # success path -- an unbounded S3 download loop incurring real transfer
-                        # charges. Fail loudly instead: no amount of retrying changes an archive
-                        # whose internal layout does not match the caller's expectation.
-                        if not exists(local_object_path):
-                            raise FileNotFoundError(
-                                f"get_from_s3_or_cache: archive {s3_object_path} was unpacked into {temp_dir!r} "
-                                f"but {local_object_path!r} still does not exist -- check the archive layout "
-                                f"and that temp_dir is the directory the object is expected in"
-                            )
+                s3.meta.client.download_file(Bucket=bucket, Key=s3_object_path, Filename=local_object_path + ".zip")
+            else:
+                s3.meta.client.download_file(Bucket=bucket, Key=s3_object_path, Filename=local_object_path)
+        except Exception as e:
+            # A persistent per-object failure (bad IAM perms, always-corrupt remote
+            # object) previously retried with only network-RTT pacing -- no backoff --
+            # unlike this function's two sibling failure branches ("not found in bucket"
+            # and "corrupt zip", both `sleep(10)`). Matching them here closes the same
+            # busy-loop risk class already fixed in those two branches.
+            logger.error("Error while downloading model %s from bucket %s: %s", s3_object_path, S3_BUCKET_NAME, e)
+            sleep(10)
+        else:
+            logger.info("Downloaded model %s from bucket %s", s3_object_path, S3_BUCKET_NAME)
+    else:
+        logger.warning("Model %s not found in bucket %s", s3_object_path, S3_BUCKET_NAME)
+        sleep(10)
+
+
+def _unpack_local_zip(local_object_path: str, s3_object_path: str, temp_dir: str) -> None:
+    """Unpack the local ``<local>.zip`` into ``temp_dir``; fail loudly if the object still does not appear there."""
+    if s3_object_path.endswith(".zip"):
+        if exists(local_object_path + ".zip"):
+            # unpack it
+            import shutil
+            try:
+                shutil.unpack_archive(local_object_path + ".zip", temp_dir)
+            except Exception as e:
+                # Regression fix: previously neither removed the corrupted zip nor
+                # slept -- the `while not exists(local_object_path):` loop immediately
+                # re-entered with the exact same on-disk state (unpack always fails the
+                # same way), an unbounded zero-delay busy loop pinning a CPU core at
+                # 100% forever. Removing the corrupted file lets the next iteration
+                # re-download it instead (mirrors the "not found in bucket" branch's own
+                # sleep(10), which this branch previously lacked entirely).
+                logger.error("Error while unpacking model from bucket %s: %s", local_object_path + ".zip", e)
+                try:
+                    os.remove(local_object_path + ".zip")
+                except OSError as remove_err:
+                    logger.error("Could not remove corrupted archive %s: %s", local_object_path + ".zip", remove_err)
+                sleep(10)
+            else:
+                logger.info("Unzipped model from archive %s", local_object_path + ".zip")
+                os.remove(local_object_path + ".zip")
+                # The archive is extracted to temp_dir, which need not be the parent of
+                # local_object_path, and nothing verified the object actually appeared
+                # there. When it did not, the enclosing `while not exists(...)` loop simply
+                # re-downloaded, re-unpacked and re-deleted forever with no sleep on the
+                # success path -- an unbounded S3 download loop incurring real transfer
+                # charges. Fail loudly instead: no amount of retrying changes an archive
+                # whose internal layout does not match the caller's expectation.
+                if not exists(local_object_path):
+                    raise FileNotFoundError(
+                        f"get_from_s3_or_cache: archive {s3_object_path} was unpacked into {temp_dir!r} "
+                        f"but {local_object_path!r} still does not exist -- check the archive layout "
+                        f"and that temp_dir is the directory the object is expected in"
+                    )

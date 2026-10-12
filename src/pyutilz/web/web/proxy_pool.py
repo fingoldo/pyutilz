@@ -84,61 +84,85 @@ def get_new_smartproxy(
         # ----------------------------------------------------------------------------------------------------------------------------
         # Get random port
         # ----------------------------------------------------------------------------------------------------------------------------
-        if fixed_port is None:
-            proxy_port = int(proxy_min_port) + int(  # nosec B311 - non-cryptographic random port pick within an allowed proxy port range, for load spreading, not security-sensitive
-                _facade.random() * (int(proxy_max_port) - int(proxy_min_port))
-            )
-        else:
-            proxy_port = fixed_port
+        proxy_port = _pick_port(fixed_port, proxy_min_port, proxy_max_port)
 
         proxies = _facade.make_proxies_dict(proxy_user, proxy_pass, proxy_server, proxy_port, proxy_type)
 
         proxy_key = joblib_hash(proxies)
-        # ----------------------------------------------------------------------------------------------------------------------------
         # Check if it's allowed for immediate use by the policies
-        # ----------------------------------------------------------------------------------------------------------------------------
-        b_time_to_check_now = True
-        for dict_to_check, min_interval in ((failed_dict, min_failed_idle_interval_minutes), (last_used_dict, min_idle_interval_minutes)):
-            if dict_to_check is not None:
-                if proxy_key in dict_to_check:
-                    # A failed proxy has its own (much longer) cooldown; comparing it against
-                    # min_idle_interval_minutes (default 0) handed a just-blocked exit IP straight back.
-                    if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_interval:
-                        if verbose:
-                            logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)
-                        b_time_to_check_now = False
-                        break
-
-        if b_time_to_check_now:
+        policies = ((failed_dict, min_failed_idle_interval_minutes), (last_used_dict, min_idle_interval_minutes))
+        if not _is_on_cooldown(proxy_key, now_time, policies, verbose, proxy_server, proxy_port):
             if verbose:
                 logger.info("Got new proxy: %s:%s", proxy_server, proxy_port)
             return proxies
-        else:
-            n = n + 1
-            if n > warn_after_n_failures:
-                # Unconditional, not gated on verbose=True: every real call site in this module
-                # invokes get_new_smartproxy() (directly or via set_proxy()) with the default
-                # verbose=False, so this was previously the ONLY diagnostic signal available for
-                # a stuck wait -- and it never fired, making an indefinite hang undiagnosable
-                # from logs alone (the only other symptom being a silent sleep(delay) every ~5
-                # attempts with no output at all).
-                logger.info(
-                    "Could not get an untouched proxy%s after %d attempts, sleeping %s sec.",
-                    "" if job_desc == "" else " for " + job_desc,
-                    n,
-                    delay,
-                )
-                if max_wait_seconds is not None:
-                    if wait_started_at is None:
-                        wait_started_at = datetime.now(timezone.utc).replace(tzinfo=None)  # naive-UTC, matches now_time's convention above
-                    elif (datetime.now(timezone.utc).replace(tzinfo=None) - wait_started_at).total_seconds() > max_wait_seconds:  # naive-UTC, matches now_time's convention above
-                        raise TimeoutError(
-                            f"get_new_smartproxy: no eligible proxy found within {max_wait_seconds}s "
-                            f"(pool [{proxy_min_port}, {proxy_max_port}] may be exhausted or too small "
-                            f"for min_idle_interval_minutes={min_idle_interval_minutes})"
-                        )
-                _facade.sleep(delay)
-                n = 0
+        n = n + 1
+        if n > warn_after_n_failures:
+            # Unconditional, not gated on verbose=True: every real call site in this module
+            # invokes get_new_smartproxy() (directly or via set_proxy()) with the default
+            # verbose=False, so this was previously the ONLY diagnostic signal available for
+            # a stuck wait -- and it never fired, making an indefinite hang undiagnosable
+            # from logs alone (the only other symptom being a silent sleep(delay) every ~5
+            # attempts with no output at all).
+            logger.info(
+                "Could not get an untouched proxy%s after %d attempts, sleeping %s sec.",
+                "" if job_desc == "" else " for " + job_desc,
+                n,
+                delay,
+            )
+            wait_started_at = _wait_budget_step(wait_started_at, max_wait_seconds, proxy_min_port, proxy_max_port, min_idle_interval_minutes)
+            _facade.sleep(delay)
+            n = 0
+
+
+def _pick_port(fixed_port: Optional[int], proxy_min_port: int, proxy_max_port: int) -> int:
+    """Return ``fixed_port`` when given, otherwise a random port within ``[proxy_min_port, proxy_max_port)``."""
+    if fixed_port is not None:
+        return fixed_port
+    port_span = int(proxy_max_port) - int(proxy_min_port)
+    offset = int(_facade.random() * port_span)  # nosec B311 - non-cryptographic random port pick within an allowed proxy port range, for load spreading, not security-sensitive
+    return int(proxy_min_port) + offset
+
+
+def _is_on_cooldown(
+    proxy_key: str,
+    now_time: datetime,
+    policies: tuple[tuple[Optional[dict], float], ...],
+    verbose: bool,
+    proxy_server: str,
+    proxy_port: int,
+) -> bool:
+    """True when any ``(last_used_dict, min_interval_minutes)`` policy still has ``proxy_key`` inside its cooldown."""
+    for dict_to_check, min_interval in policies:
+        if dict_to_check is not None and proxy_key in dict_to_check:
+            # A failed proxy has its own (much longer) cooldown; comparing it against
+            # min_idle_interval_minutes (default 0) handed a just-blocked exit IP straight back.
+            if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_interval:
+                if verbose:
+                    logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)
+                return True
+    return False
+
+
+def _wait_budget_step(
+    wait_started_at: Optional[datetime],
+    max_wait_seconds: Optional[float],
+    proxy_min_port: int,
+    proxy_max_port: int,
+    min_idle_interval_minutes: float,
+) -> Optional[datetime]:
+    """Start the wait clock on first call; raise TimeoutError once ``max_wait_seconds`` has elapsed since then."""
+    if max_wait_seconds is None:
+        return wait_started_at
+    now = datetime.now(timezone.utc).replace(tzinfo=None)  # naive-UTC, matches now_time's convention above
+    if wait_started_at is None:
+        return now
+    if (now - wait_started_at).total_seconds() > max_wait_seconds:
+        raise TimeoutError(
+            f"get_new_smartproxy: no eligible proxy found within {max_wait_seconds}s "
+            f"(pool [{proxy_min_port}, {proxy_max_port}] may be exhausted or too small "
+            f"for min_idle_interval_minutes={min_idle_interval_minutes})"
+        )
+    return wait_started_at
 
 
 def is_rotating_proxy(proxy_server: dict) -> Optional[bool]:

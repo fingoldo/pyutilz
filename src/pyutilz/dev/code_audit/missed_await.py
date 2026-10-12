@@ -67,41 +67,60 @@ def scan_missed_await(root: Path,
         # calls an async def without awaiting it exits having done nothing.
         scopes.append(tree)
         for func in scopes:
-            rebound: set[str] = set()
-            for n in (_walk_module_level(tree) if func is tree else ast.walk(func)):
-                if isinstance(n, (ast.Import, ast.ImportFrom)):
-                    for alias in n.names:
-                        rebound.add((alias.asname or alias.name).split(".")[0])
-                elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
-                    rebound.add(n.id)
-                elif isinstance(n, ast.arg):
-                    rebound.add(n.arg)
-                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func and func is not tree:
-                    # A nested def with the same name as a module-level async function is a
-                    # legitimate local shadow (same idea as the local-import shadow above).
-                    rebound.add(n.name)
-            for stmt in (_walk_module_level(tree) if func is tree else ast.walk(func)):
-                if not isinstance(stmt, ast.Expr):
-                    continue
-                call = stmt.value
-                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
-                    continue
-                name = call.func.id
-                if name in async_names and name not in rebound:
-                    findings.append(Finding(
-                        check="missed_await",
-                        severity="P1",
-                        file=rel,
-                        line=call.lineno,
-                        snippet=_line_text(src_lines, call.lineno),
-                        detail=(
-                            f"`{name}(...)` is an async def in this module, called as a "
-                            f"bare statement with the coroutine discarded -- its body "
-                            f"never runs. Add `await` (or wrap in a task) so the "
-                            f"operation actually executes."
-                        ),
-                    ))
+            findings.extend(_bare_async_call_findings(tree, func, async_names, rel, src_lines))
     return findings
+
+
+def _bare_async_call_findings(
+    tree: ast.Module,
+    func: ast.AST,
+    async_names: set[str],
+    rel: str,
+    src_lines: list[str],
+) -> list[Finding]:
+    """Findings for statement-level calls to ``async_names`` inside one scope (``func``, or the module body when ``func is tree``)."""
+    rebound = _rebound_names(tree, func)
+    out: list[Finding] = []
+    for stmt in (_walk_module_level(tree) if func is tree else ast.walk(func)):
+        if not isinstance(stmt, ast.Expr):
+            continue
+        call = stmt.value
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
+            continue
+        name = call.func.id
+        if name in async_names and name not in rebound:
+            out.append(Finding(
+                check="missed_await",
+                severity="P1",
+                file=rel,
+                line=call.lineno,
+                snippet=_line_text(src_lines, call.lineno),
+                detail=(
+                    f"`{name}(...)` is an async def in this module, called as a "
+                    f"bare statement with the coroutine discarded -- its body "
+                    f"never runs. Add `await` (or wrap in a task) so the "
+                    f"operation actually executes."
+                ),
+            ))
+    return out
+
+
+def _rebound_names(tree: ast.Module, func: ast.AST) -> set[str]:
+    """Names that shadow a module-level async function inside ``func``: local imports, assignments, parameters, nested defs."""
+    rebound: set[str] = set()
+    for n in (_walk_module_level(tree) if func is tree else ast.walk(func)):
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            for alias in n.names:
+                rebound.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            rebound.add(n.id)
+        elif isinstance(n, ast.arg):
+            rebound.add(n.arg)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not func and func is not tree:
+            # A nested def with the same name as a module-level async function is a
+            # legitimate local shadow (same idea as the local-import shadow above).
+            rebound.add(n.name)
+    return rebound
 
 
 # --- sync-blocking call inside async def ----------------------------------

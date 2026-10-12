@@ -291,6 +291,48 @@ def compose_key(*parts: str) -> str:
     return str(h.hexdigest())
 
 
+def _scan_cache_entries(cache_dir: Path) -> Optional[tuple[Dict[Path, int], Dict[Path, int], Dict[Path, float]]]:
+    """``(payload_sizes, sidecar_sizes, mtimes)`` for the cache directory; None when the directory cannot be listed.
+
+    Sidecars are keyed by the payload path they belong to, so a payload and its sidecar share one key.
+    """
+    payload_sizes: Dict[Path, int] = {}
+    sidecar_sizes: Dict[Path, int] = {}
+    mtimes: Dict[Path, float] = {}
+    try:
+        with os.scandir(cache_dir) as it:
+            for entry in it:
+                if not entry.is_file() or entry.name.startswith("tmp_"):
+                    continue
+                try:
+                    st = entry.stat()
+                except OSError:
+                    continue
+                path = Path(entry.path)
+                if entry.name.endswith(".sha256"):
+                    sidecar_sizes[Path(str(path)[: -len(".sha256")])] = st.st_size
+                else:
+                    payload_sizes[path] = st.st_size
+                    mtimes[path] = st.st_mtime
+    except OSError:
+        return None
+    return payload_sizes, sidecar_sizes, mtimes
+
+
+def _live_cache_bytes(payload_sizes: Dict[Path, int], sidecar_sizes: Dict[Path, int]) -> int:
+    """Total bytes the cache occupies, sweeping any orphan sidecar whose payload is already gone."""
+    total = sum(payload_sizes.values())
+    for owner, size in sidecar_sizes.items():
+        if owner in payload_sizes:
+            total += size
+            continue
+        try:
+            Path(str(owner) + ".sha256").unlink()
+        except OSError:
+            total += size
+    return total
+
+
 class DiskCache:
     """Content-addressable disk cache with LRU eviction.
 
@@ -506,38 +548,11 @@ class DiskCache:
         and both files are unlinked together. A sidecar whose payload is already gone is an orphan
         that no lookup can ever revive, so it is swept unconditionally.
         """
-        payload_sizes: Dict[Path, int] = {}
-        sidecar_sizes: Dict[Path, int] = {}
-        mtimes: Dict[Path, float] = {}
-        try:
-            with os.scandir(self.cache_dir) as it:
-                for entry in it:
-                    if not entry.is_file():
-                        continue
-                    if entry.name.startswith("tmp_"):
-                        continue
-                    try:
-                        st = entry.stat()
-                    except OSError:
-                        continue
-                    path = Path(entry.path)
-                    if entry.name.endswith(".sha256"):
-                        sidecar_sizes[Path(str(path)[: -len(".sha256")])] = st.st_size
-                    else:
-                        payload_sizes[path] = st.st_size
-                        mtimes[path] = st.st_mtime
-        except OSError:
+        scanned = _scan_cache_entries(self.cache_dir)
+        if scanned is None:
             return
-
-        total = sum(payload_sizes.values())
-        for owner, size in sidecar_sizes.items():
-            if owner in payload_sizes:
-                total += size
-                continue
-            try:
-                Path(str(owner) + ".sha256").unlink()
-            except OSError:
-                total += size
+        payload_sizes, sidecar_sizes, mtimes = scanned
+        total = _live_cache_bytes(payload_sizes, sidecar_sizes)
 
         if total <= self.max_size_bytes:
             return

@@ -46,32 +46,43 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int], dict[str
     writes: dict[str, int] = {}
     reads: dict[str, int] = {}
     plain_reads: dict[str, int] = {}
-
-    def note(store: dict[str, int], key: object, line: int) -> None:
-        """Record one read-without-writer site, keyed so the same field is not reported twice."""
-        if _is_field_like(key) and key not in store:
-            store[str(key)] = line
-
     for node in ast.walk(tree):
-        if isinstance(node, ast.Dict):
-            for k in node.keys:
-                if isinstance(k, ast.Constant):
-                    note(writes, k.value, k.lineno)  # the key's own line, not the literal's opening brace
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Subscript) and isinstance(key := _subscript_index(target), ast.Constant):
-                    note(writes, key.value, node.lineno)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "setdefault" and node.args and isinstance(node.args[0], ast.Constant):
-                note(writes, node.args[0].value, node.lineno)
-            elif node.func.attr == "get" and len(node.args) == 2 and isinstance(node.args[0], ast.Constant):
-                note(reads, node.args[0].value, node.lineno)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) == 3:
-            if isinstance(node.args[1], ast.Constant):
-                note(reads, node.args[1].value, node.lineno)
-        elif isinstance(node, ast.Subscript) and isinstance(key := _subscript_index(node), ast.Constant) and isinstance(node.ctx, ast.Load):
-            note(plain_reads, key.value, node.lineno)
+        _note_write_site(node, writes)
+        _note_read_site(node, reads, plain_reads)
     return writes, reads, plain_reads
+
+
+def _note_site(store: dict[str, int], key: object, line: int) -> None:
+    """Record one field-access site, keyed so the same field is not reported twice."""
+    if _is_field_like(key) and key not in store:
+        store[str(key)] = line
+
+
+def _note_write_site(node: ast.AST, writes: dict[str, int]) -> None:
+    """Record the field keys this node writes: dict literal keys, subscript assignments and ``setdefault``."""
+    if isinstance(node, ast.Dict):
+        for k in node.keys:
+            if isinstance(k, ast.Constant):
+                _note_site(writes, k.value, k.lineno)  # the key's own line, not the literal's opening brace
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Subscript) and isinstance(key := _subscript_index(target), ast.Constant):
+                _note_site(writes, key.value, node.lineno)
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "setdefault" and node.args and isinstance(node.args[0], ast.Constant):
+            _note_site(writes, node.args[0].value, node.lineno)
+
+
+def _note_read_site(node: ast.AST, reads: dict[str, int], plain_reads: dict[str, int]) -> None:
+    """Record the field keys this node reads: ``get(k, default)``, ``getattr(o, k, default)`` and plain ``d[k]`` loads."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "get" and len(node.args) == 2 and isinstance(node.args[0], ast.Constant):
+            _note_site(reads, node.args[0].value, node.lineno)
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) == 3:
+        if isinstance(node.args[1], ast.Constant):
+            _note_site(reads, node.args[1].value, node.lineno)
+    elif isinstance(node, ast.Subscript) and isinstance(key := _subscript_index(node), ast.Constant) and isinstance(node.ctx, ast.Load):
+        _note_site(plain_reads, key.value, node.lineno)
 
 
 def scan_record_field_flow(

@@ -244,58 +244,102 @@ def _visit_if_aware(
     shot = single_shot.get(id(node))
     single_shot_here = shot == "hard" or (shot == "break" and loop_depth == 1)
     if method is not None and loop_depth > 0 and not guarded and not single_shot_here:
-        if not isinstance(node, ast.Call):  # guaranteed by _is_log_call returning non-None
-            raise TypeError(f"_is_log_call matched a {type(node).__name__}, not an ast.Call")
-        findings.append(Finding(
-            check="unthrottled_hot_loop_log",
-            severity="P2",
-            file=rel,
-            line=node.lineno,
-            snippet=_line_text(src_lines, node.lineno),
-            detail=(
-                f"log.{method}(...) inside a loop (depth {loop_depth}) with no apparent throttle guard "
-                f"-- every iteration that hits this line logs, compounding into spam under load. "
-                f"Guard with a throttle helper (e.g. this project's own rate-limit debounce pattern) "
-                f"or demote to log.debug()."
-            ),
-        ))
+        findings.append(_hot_loop_log_finding(node, method, loop_depth, rel, src_lines))
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body) or _iterable_is_small_literal(node.iter)
-        # `target`/`iter` evaluate ONCE, outside the iteration, so they keep the enclosing depth --
-        # as the docstring above says. Only body/orelse run per iteration.
-        for once_evaluated in (node.target, node.iter):
-            if once_evaluated is not None:
-                _visit_if_aware(once_evaluated, loop_depth, guarded or already_throttled, findings, rel, src_lines, single_shot)
-        for stmt in node.body:
-            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
-        # A loop's `orelse` runs at most ONCE per loop entry (after the iterable is exhausted), not
-        # per iteration, so it keeps the ENCLOSING depth -- flagging it as a hot-loop log was simply
-        # wrong. Measured shape: `for ...: ... else: log.warning("stopped after N pages")`.
-        for stmt in node.orelse:
-            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+        _visit_for_loop(node, loop_depth, guarded, findings, rel, src_lines, single_shot)
     elif isinstance(node, ast.While):
-        already_throttled = (
-            _loop_looks_bounded_retry(node.test)
-            or _loop_body_has_meaningful_sleep(node.body)
-            or (_while_test_is_unconditionally_true(node.test) and _loop_body_has_bounded_retry_break(node.body))
-        )
-        # A `while` test, unlike a `for` target/iter, IS re-evaluated every iteration, so a log
-        # call in it is per-iteration spam and keeps the bumped depth.
-        _visit_if_aware(node.test, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
-        for stmt in node.body:
-            _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
-        for stmt in node.orelse:  # once per loop entry, not per iteration -- see the For branch above
-            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+        _visit_while_loop(node, loop_depth, guarded, findings, rel, src_lines, single_shot)
     elif isinstance(node, ast.If):
-        child_guarded = guarded or _guard_looks_throttled(node.test)
-        for stmt in node.body:
-            _visit_if_aware(stmt, loop_depth, child_guarded, findings, rel, src_lines, single_shot)
-        for stmt in node.orelse:
-            _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
-        _visit_if_aware(node.test, loop_depth, guarded, findings, rel, src_lines, single_shot)
+        _visit_if_branches(node, loop_depth, guarded, findings, rel, src_lines, single_shot)
     else:
         for child in ast.iter_child_nodes(node):
             _visit_if_aware(child, loop_depth, guarded, findings, rel, src_lines, single_shot)
+
+
+def _hot_loop_log_finding(node: ast.AST, method: str, loop_depth: int, rel: str, src_lines: list[str]) -> Finding:
+    """The P2 finding for an unthrottled log call at ``loop_depth``; ``node`` must be the ast.Call that matched."""
+    if not isinstance(node, ast.Call):  # guaranteed by _is_log_call returning non-None
+        raise TypeError(f"_is_log_call matched a {type(node).__name__}, not an ast.Call")
+    return Finding(
+        check="unthrottled_hot_loop_log",
+        severity="P2",
+        file=rel,
+        line=node.lineno,
+        snippet=_line_text(src_lines, node.lineno),
+        detail=(
+            f"log.{method}(...) inside a loop (depth {loop_depth}) with no apparent throttle guard "
+            f"-- every iteration that hits this line logs, compounding into spam under load. "
+            f"Guard with a throttle helper (e.g. this project's own rate-limit debounce pattern) "
+            f"or demote to log.debug()."
+        ),
+    )
+
+
+def _visit_for_loop(
+    node: ast.For | ast.AsyncFor,
+    loop_depth: int,
+    guarded: bool,
+    findings: list[Finding],
+    rel: str,
+    src_lines: list[str],
+    single_shot: dict[int, str],
+) -> None:
+    """Recurse into a for loop: target/iter at the enclosing depth, body one level deeper, orelse at the enclosing depth."""
+    already_throttled = _for_loop_looks_bounded_retry(node.iter) or _loop_body_has_meaningful_sleep(node.body) or _iterable_is_small_literal(node.iter)
+    # `target`/`iter` evaluate ONCE, outside the iteration, so they keep the enclosing depth --
+    # as the docstring above says. Only body/orelse run per iteration.
+    for once_evaluated in (node.target, node.iter):
+        if once_evaluated is not None:
+            _visit_if_aware(once_evaluated, loop_depth, guarded or already_throttled, findings, rel, src_lines, single_shot)
+    for stmt in node.body:
+        _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+    # A loop's `orelse` runs at most ONCE per loop entry (after the iterable is exhausted), not
+    # per iteration, so it keeps the ENCLOSING depth -- flagging it as a hot-loop log was simply
+    # wrong. Measured shape: `for ...: ... else: log.warning("stopped after N pages")`.
+    for stmt in node.orelse:
+        _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+
+
+def _visit_while_loop(
+    node: ast.While,
+    loop_depth: int,
+    guarded: bool,
+    findings: list[Finding],
+    rel: str,
+    src_lines: list[str],
+    single_shot: dict[int, str],
+) -> None:
+    """Recurse into a while loop: test and body one level deeper (both re-run per iteration), orelse at the enclosing depth."""
+    already_throttled = (
+        _loop_looks_bounded_retry(node.test)
+        or _loop_body_has_meaningful_sleep(node.body)
+        or (_while_test_is_unconditionally_true(node.test) and _loop_body_has_bounded_retry_break(node.body))
+    )
+    # A `while` test, unlike a `for` target/iter, IS re-evaluated every iteration, so a log
+    # call in it is per-iteration spam and keeps the bumped depth.
+    _visit_if_aware(node.test, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+    for stmt in node.body:
+        _visit_if_aware(stmt, loop_depth + 1, guarded or already_throttled, findings, rel, src_lines, single_shot)
+    for stmt in node.orelse:  # once per loop entry, not per iteration -- see _visit_for_loop
+        _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+
+
+def _visit_if_branches(
+    node: ast.If,
+    loop_depth: int,
+    guarded: bool,
+    findings: list[Finding],
+    rel: str,
+    src_lines: list[str],
+    single_shot: dict[int, str],
+) -> None:
+    """Recurse into an if: only the body inherits a throttle guard from the test; orelse and test do not."""
+    child_guarded = guarded or _guard_looks_throttled(node.test)
+    for stmt in node.body:
+        _visit_if_aware(stmt, loop_depth, child_guarded, findings, rel, src_lines, single_shot)
+    for stmt in node.orelse:
+        _visit_if_aware(stmt, loop_depth, guarded, findings, rel, src_lines, single_shot)
+    _visit_if_aware(node.test, loop_depth, guarded, findings, rel, src_lines, single_shot)
 
 
 def scan_unthrottled_hot_loop_log(

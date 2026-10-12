@@ -20,9 +20,7 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
     (``"<section>_<var>"``) to avoid a same-named variable in two different sections silently
     overwriting each other. Returns True on success, None if an exception occurred.
     """
-    import ast
     import configparser
-    from base64 import b64decode
 
     try:
         if isinstance(variables, str):
@@ -47,34 +45,49 @@ def read_config_file(file: str, object: dict, section: Optional[str] = None, var
                 cur_variables = list(config[next_section].keys())
             else:
                 cur_variables = variables
-
-            for var in cur_variables:
-                target_key = next_section.lower() + "_" + var if prepend_section_names else var
-                try:
-                    val = config[next_section][var]
-                    if isinstance(val, str):
-                        if not is_float(val):
-                            if encryption == "xor":
-                                # Fallback
-                                try:
-                                    val = b64decode(val).decode("utf-8")
-                                except Exception as e:  # nosec B110 - best-effort decode of a config value that may or may not be base64/xor-encoded; falling through to the raw string is the intended behavior, not an error to hide
-                                    logger.debug("Value for %s is not base64-encoded, using raw string: %s", var, e)
-                    try:
-                        val = ast.literal_eval(val)
-                    except Exception as e:  # nosec B110 - best-effort literal-type coercion (int/float/bool/etc.) of a config string; falling back to the plain string is the intended behavior when it isn't a Python literal
-                        logger.debug("Value for %s is not a Python literal, keeping as string: %s", var, e)
-                    object[target_key] = val
-                except Exception:
-                    # Same key shape as the success path above: the failure branch used to write the
-                    # BARE `var`, so a missing variable landed under an unprefixed key and two sections
-                    # missing the same variable collided on it.
-                    object[target_key] = None
+            _read_section_values(config, next_section, cur_variables, prepend_section_names, object, encryption)
     except Exception as e:
         logger.exception(e)
         return None
     else:
         return True
+
+
+def _read_section_values(config: Any, section_name: str, variables: Any, prepend_section_name: bool, object: dict, encryption: Optional[str]) -> None:  # noqa: A002 -- same parameter name as read_config_file
+    """Store every ``variables`` entry of one section into ``object``, decoded and literal-coerced, or None on failure."""
+    for var in variables:
+        target_key = section_name.lower() + "_" + var if prepend_section_name else var
+        try:
+            val = _maybe_b64_decode(config[section_name][var], var, encryption)
+            object[target_key] = _literal_or_raw(val, var)
+        except Exception:
+            # Same key shape as the success path above: the failure branch used to write the
+            # BARE `var`, so a missing variable landed under an unprefixed key and two sections
+            # missing the same variable collided on it.
+            object[target_key] = None
+
+
+def _maybe_b64_decode(val: Any, var: str, encryption: Optional[str]) -> Any:
+    """base64-decode a non-numeric string value when ``encryption == "xor"``; otherwise return it unchanged."""
+    from base64 import b64decode
+
+    if isinstance(val, str) and not is_float(val) and encryption == "xor":
+        try:
+            return b64decode(val).decode("utf-8")
+        except Exception as e:  # nosec B110 - best-effort decode of a config value that may or may not be base64/xor-encoded; falling through to the raw string is the intended behavior, not an error to hide
+            logger.debug("Value for %s is not base64-encoded, using raw string: %s", var, e)
+    return val
+
+
+def _literal_or_raw(val: Any, var: str) -> Any:
+    """``ast.literal_eval(val)`` when it is a Python literal, else ``val`` unchanged."""
+    import ast
+
+    try:
+        return ast.literal_eval(val)
+    except Exception as e:  # nosec B110 - best-effort literal-type coercion (int/float/bool/etc.) of a config string; falling back to the plain string is the intended behavior when it isn't a Python literal
+        logger.debug("Value for %s is not a Python literal, keeping as string: %s", var, e)
+        return val
 
 
 def write_config_file(

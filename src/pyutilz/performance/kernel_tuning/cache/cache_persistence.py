@@ -13,7 +13,7 @@ from pyutilz.core import jsonlib
 import os
 import random
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ._common import _CacheState, logger
 from .cache_base import (
@@ -152,47 +152,9 @@ class _CachePersistenceMixin(_CacheState):
         if self._in_memory or self._path is None:
             return None
         self._migrate_legacy()
-        host_dir = self._path
-        kernels: dict = {}
-        if os.path.isdir(host_dir):
-            try:
-                kernel_dirs = [d for d in os.scandir(host_dir) if d.is_dir()]
-            except OSError:
-                kernel_dirs = []
-            # Every record carries its canonical kernel_name. A directory may hold several kernels (the pre-2026-09-26
-            # lossy-slug layout) and one kernel may span two directories (its legacy one plus its current hashed one),
-            # so group by the stored name and keep the newest record per kernel across ALL directories.
-            best: dict = {}
-            for d in kernel_dirs:
-                for name, (key, entry) in self._read_kernel_dir_all(d.path).items():
-                    if name not in best or key > best[name][0]:
-                        best[name] = (key, entry)
-            for name, (_key, entry) in best.items():
-                kernels[name] = entry
+        kernels: dict = self._scan_local_kernels(self._path)
         if self._remote is not None:
-            # Read-through: pull this host's payload from the shared store + cache each kernel
-            # as an immutable local file, then they resolve normally. Gated PER-KERNEL (any
-            # remote kernel not already in the local view), not on the local store being
-            # entirely empty -- a host that already has ANY locally-tuned kernel would otherwise
-            # never learn about kernels tuned only by a peer sharing the same hw_fingerprint,
-            # and its next write-through (which serializes only its own local view) would then
-            # permanently overwrite/delete those peer-only kernels from the shared object.
-            try:
-                remote_data = self._remote.read(hw_fingerprint())
-                self._note_remote_success()
-            except Exception as e:
-                self._log_remote_failure("read", e)
-                remote_data = None
-            if remote_data and remote_data.get("schema_version") == SCHEMA_VERSION:
-                prov = remote_data.get("provenance")
-                live_prov = _build_provenance()
-                if not (prov and provenance_changed(prov, live_prov)):
-                    for name, entry in (remote_data.get("kernels", {}) or {}).items():
-                        if name in kernels:
-                            continue  # local copy already resolved (possibly newer); don't shadow it
-                        if isinstance(entry, dict):
-                            self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
-                            kernels[name] = entry
+            self._pull_remote_kernels(self._remote, kernels)
         if not kernels:
             return None
         return {
@@ -200,6 +162,55 @@ class _CachePersistenceMixin(_CacheState):
             "hw_fingerprint": hw_fingerprint(),
             "kernels": kernels,
         }
+
+    def _scan_local_kernels(self, host_dir: str) -> dict:
+        """Newest record per kernel name across every kernel directory under ``host_dir`` (empty if absent)."""
+        kernels: dict = {}
+        if not os.path.isdir(host_dir):
+            return kernels
+        try:
+            kernel_dirs = [d for d in os.scandir(host_dir) if d.is_dir()]
+        except OSError:
+            kernel_dirs = []
+        # Every record carries its canonical kernel_name. A directory may hold several kernels (the pre-2026-09-26
+        # lossy-slug layout) and one kernel may span two directories (its legacy one plus its current hashed one),
+        # so group by the stored name and keep the newest record per kernel across ALL directories.
+        best: dict = {}
+        for d in kernel_dirs:
+            for name, (key, entry) in self._read_kernel_dir_all(d.path).items():
+                if name not in best or key > best[name][0]:
+                    best[name] = (key, entry)
+        for name, (_key, entry) in best.items():
+            kernels[name] = entry
+        return kernels
+
+    def _pull_remote_kernels(self, remote: Any, kernels: dict) -> None:
+        """Read-through: pull this host's shared payload into ``kernels`` (local copies win), caching each kernel locally."""
+        # Read-through: pull this host's payload from the shared store + cache each kernel
+        # as an immutable local file, then they resolve normally. Gated PER-KERNEL (any
+        # remote kernel not already in the local view), not on the local store being
+        # entirely empty -- a host that already has ANY locally-tuned kernel would otherwise
+        # never learn about kernels tuned only by a peer sharing the same hw_fingerprint,
+        # and its next write-through (which serializes only its own local view) would then
+        # permanently overwrite/delete those peer-only kernels from the shared object.
+        try:
+            remote_data = remote.read(hw_fingerprint())
+            self._note_remote_success()
+        except Exception as e:
+            self._log_remote_failure("read", e)
+            remote_data = None
+        if not remote_data or remote_data.get("schema_version") != SCHEMA_VERSION:
+            return
+        prov = remote_data.get("provenance")
+        live_prov = _build_provenance()
+        if prov and provenance_changed(prov, live_prov):
+            return
+        for name, entry in (remote_data.get("kernels", {}) or {}).items():
+            if name in kernels:
+                continue  # local copy already resolved (possibly newer); don't shadow it
+            if isinstance(entry, dict):
+                self._persist_kernel(name, dict(entry), provenance=prov, remote=False)
+                kernels[name] = entry
 
     @staticmethod
     def _record_sort_key(entry: Optional[dict], path: str) -> tuple:

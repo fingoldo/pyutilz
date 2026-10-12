@@ -439,42 +439,65 @@ def _rank_candidates(
     if not names:
         return {}
     reps = max(1, int(repeats))
-
     if ranking == "mean":
-        out: dict[str, float] = {}
-        for name in names:
-            fn = candidates[name]
-            try:
-                t0 = timer()
-                for _ in range(reps):
-                    fn()
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                out[name] = (timer() - t0) / reps * 1e3
-            except Exception:
-                out[name] = float("inf")
-        return out
+        return _rank_mean(candidates, names, reps, synchronize_gpu)
+    return _rank_robust(candidates, names, reps, synchronize_gpu, drop_ratio, drop_min_ms)
 
-    # robust: interleave candidates within each rep, take per-candidate min over reps.
+
+def _rank_mean(candidates: "dict[str, Callable]", names: "list[str]", reps: int, synchronize_gpu: bool) -> "dict[str, float]":
+    """Legacy sequential ranking: each candidate runs all reps back-to-back and reports its mean per-call ms."""
+    out: dict[str, float] = {}
+    for name in names:
+        fn = candidates[name]
+        try:
+            t0 = timer()
+            for _ in range(reps):
+                fn()
+            if synchronize_gpu:
+                synchronize_gpu_if_available()
+            out[name] = (timer() - t0) / reps * 1e3
+        except Exception:
+            out[name] = float("inf")
+    return out
+
+
+def _rank_robust(
+    candidates: "dict[str, Callable]",
+    names: "list[str]",
+    reps: int,
+    synchronize_gpu: bool,
+    drop_ratio: float,
+    drop_min_ms: float,
+) -> "dict[str, float]":
+    """Contention-robust ranking: interleave candidates within each rep and keep the per-candidate min over reps."""
     best: dict[str, float] = {name: float("inf") for name in names}
     live = list(names)
     for _rep in range(reps):
         for name in live:
-            fn = candidates[name]
-            try:
-                t0 = timer()
-                fn()
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                ms = (timer() - t0) * 1e3
-            except Exception:
-                ms = float("inf")
+            ms = _timed_ms(candidates[name], synchronize_gpu)
             if ms < best[name]:
                 best[name] = ms
         if drop_ratio > 0.0 and _rep == 0 and len(live) > 1:
-            fastest = min(best.values())
-            live = [n for n in live if not (best[n] >= drop_ratio * fastest and best[n] >= drop_min_ms)]
+            live = _drop_slow_candidates(best, live, drop_ratio, drop_min_ms)
     return best
+
+
+def _timed_ms(fn: "Callable", synchronize_gpu: bool) -> float:
+    """Time one call in ms, returning inf if the call raises (disqualifies the candidate)."""
+    try:
+        t0 = timer()
+        fn()
+        if synchronize_gpu:
+            synchronize_gpu_if_available()
+        return (timer() - t0) * 1e3
+    except Exception:
+        return float("inf")
+
+
+def _drop_slow_candidates(best: "dict[str, float]", live: "list[str]", drop_ratio: float, drop_min_ms: float) -> "list[str]":
+    """Keep only candidates not already slower than ``drop_ratio`` x the best and at least ``drop_min_ms``."""
+    fastest = min(best.values())
+    return [n for n in live if not (best[n] >= drop_ratio * fastest and best[n] >= drop_min_ms)]
 
 
 def _gate_grid_variants(variants, names, args, ref, ref_out, ref_scale, equiv_atol, equiv_rtol, synchronize_gpu, verbose, label):
