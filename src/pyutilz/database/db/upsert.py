@@ -41,11 +41,6 @@ def _fresh_data_returning_fields(history_fields, hash_fields, fields_names, hist
     return returning_fields
 
 
-def _or_default(value: Optional[_T], default: _T) -> _T:
-    """Return ``value`` unless it is None, in which case return ``default``."""
-    return default if value is None else value
-
-
 def _normalize_hash_fields(hash_fields: Optional[Iterable[str]]) -> list:
     """Return ``hash_fields`` as a list; a bare str names a single field, and ``""`` or None means no hash fields."""
     if isinstance(hash_fields, str):
@@ -310,16 +305,16 @@ def build_upsert_query(
     pass trusted, hard-coded or internally-constructed expressions. Every other argument is
     validated as a SQL identifier.
     """
-    conflict_fields = _or_default(conflict_fields, ["id"])
-    fields_types = _or_default(fields_types, {})
-    history_fields = _or_default(history_fields, [])
-    history_fields_aliases = _or_default(history_fields_aliases, {})
-    on_conflict_update_fields = _or_default(on_conflict_update_fields, [])
-    on_conflict_update_values = _or_default(on_conflict_update_values, {})
-    returning_fields = _or_default(returning_fields, [])
-    skip_fields = _or_default(skip_fields, [])
-    timestamp_check_fields = _or_default(timestamp_check_fields, [])
-    timestamp_update_fields = _or_default(timestamp_update_fields, [])
+    conflict_fields = ["id"] if conflict_fields is None else conflict_fields
+    fields_types = {} if fields_types is None else fields_types
+    history_fields = [] if history_fields is None else history_fields
+    history_fields_aliases = {} if history_fields_aliases is None else history_fields_aliases
+    on_conflict_update_fields = [] if on_conflict_update_fields is None else on_conflict_update_fields
+    on_conflict_update_values = {} if on_conflict_update_values is None else on_conflict_update_values
+    returning_fields = [] if returning_fields is None else returning_fields
+    skip_fields = [] if skip_fields is None else skip_fields
+    timestamp_check_fields = [] if timestamp_check_fields is None else timestamp_check_fields
+    timestamp_update_fields = [] if timestamp_update_fields is None else timestamp_update_fields
     hash_fields = _normalize_hash_fields(hash_fields)
     # ------------------------------
     # Checks!

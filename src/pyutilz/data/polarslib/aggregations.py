@@ -627,10 +627,14 @@ def build_aggregate_features_polars(
     quantiles = _or_default(quantiles, POLARS_DEFAULT_QUANTILES)
     tds_quantiles = _or_default(tds_quantiles, POLARS_DEFAULT_QUANTILES)
 
-    ewm_spans = ewm_spans or []
-    ewm_time_half_lifes = ewm_time_half_lifes or []
-    ewm_basic_funcs = ewm_basic_funcs or "ewm_mean ewm_std".split()
-    ewm_final_funcs = ewm_final_funcs or "mean".split()
+    if not ewm_spans:
+        ewm_spans = []
+    if not ewm_time_half_lifes:
+        ewm_time_half_lifes = []
+    if not ewm_basic_funcs:
+        ewm_basic_funcs = "ewm_mean ewm_std".split()
+    if not ewm_final_funcs:
+        ewm_final_funcs = "mean".split()
 
     pds_numaggs = _or_default(pds_numaggs, "hmean query_abs_energy query_cid_ce query_mean_abs_change".split())  # query_permute_entropy # query_first_digit_cnt
     corr_methods = _or_default(corr_methods, ["pearson", "spearman", "xi", "kendall", "bicor"])
@@ -649,7 +653,8 @@ def build_aggregate_features_polars(
     pds_fields = _or_default(pds_fields, numerical_fields)
     linreg_fields = _or_default(linreg_fields, numerical_fields)
 
-    subgroups = subgroups or {"": [""]}  # {"action": ["buy", "sell"]}
+    if not subgroups:
+        subgroups = {"": [""]}  # {"action": ["buy", "sell"]}
 
     # Counters
 
