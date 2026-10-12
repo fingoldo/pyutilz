@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import shutil
 import subprocess  # nosec B404 - only used to spawn the trusted `claude` CLI (resolved via shutil.which / fixed install paths, never a user-supplied path), always with shell=False
 import tempfile
@@ -38,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Carved out 2026-09-07 (see claude_code_cli's docstring); re-exported here so existing importers
 # of these names keep working.
 from pyutilz.llm.claude_code_cli import usage_thinking_tokens
+from pyutilz.llm._claude_code_guards import _assert_argv_shell_safe, _check_attempt_budget, _strip_json_fence
 from pyutilz.llm.claude_code_cli import (  # re-export, placed after the logger it shares
     MAX_TIMEOUT_RETRIES,
     _CliResultMessage,
@@ -187,36 +187,6 @@ except ImportError:
 # One steer, used by both JSON entry points. They had different wordings, which split a prefix
 # that is otherwise byte-identical across calls and so cache-shared between them.
 _JSON_STEER = "\n\nRespond with valid JSON only. No markdown, no explanation. Start with { and end with }."
-
-
-def _check_attempt_budget(attempt: int, max_attempts: int) -> None:
-    """Raise once ``attempt`` exceeds ``max_attempts`` (0 means unlimited)."""
-    if max_attempts != 0 and attempt > max_attempts:
-        raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
-
-
-def _strip_json_fence(text: str) -> str:
-    """Return the body of a leading ```json fence in ``text`` when one is present, else ``text`` unchanged."""
-    if not text:
-        return text
-    stripped = text.strip()
-    fence_match = re.search(
-        r'```(?:json)?\s*([\s\S]*?)\s*```', stripped,
-    )
-    if fence_match:
-        return fence_match.group(1).strip()
-    return text
-
-
-def _assert_argv_shell_safe(cmd: list) -> None:
-    """Refuse a CLI argv carrying a shell-significant character (the prompt and system prompt never go in argv)."""
-    unsafe_argv = set('&|<>^"')
-    for arg in cmd[1:]:
-        if unsafe_argv & set(arg):
-            raise ValueError(
-                f"refusing to spawn the CLI with a shell-significant character in argv: {arg!r}. "
-                "Prompt content belongs on stdin and the system prompt in a file."
-            )
 
 
 def _remove_system_prompt_file(path: str | None) -> None:

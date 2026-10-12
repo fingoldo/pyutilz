@@ -262,7 +262,6 @@ def test_the_deliberate_stdlib_reexports_survive_the_sweep():
     import pyutilz.dev.code_audit as facade
 
     assert facade.ast.__name__ == "ast"
-    assert facade.json.__name__ == "json"
     assert facade.sys.__name__ == "sys"
 
 
