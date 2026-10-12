@@ -125,8 +125,8 @@ class TestAnthropicSessionCost:
         p.client.messages.with_raw_response = MagicMock()
         p.client.messages.with_raw_response.create = create
 
-        await p.generate("hi 1")
-        await p.generate("hi 2")
+        await p.generate("hi 1", max_tokens=4096)
+        await p.generate("hi 2", max_tokens=4096)
 
         cost = p.get_session_cost()
         # Previously calls was permanently 0 and tokens were last-call-only.

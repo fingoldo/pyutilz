@@ -261,7 +261,7 @@ class TestAnthropicNotUsedFeatures:
     async def test_structured_output_sends_the_bare_schema(self) -> None:
         p, sent = _anthropic("claude-opus-5-5", [_message(_text('{"a": 1}'))])
         schema = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"], "additionalProperties": False}
-        out = await p.generate_json("q", json_schema={"name": "x", "strict": True, "schema": schema})
+        out = await p.generate_json("q", json_schema={"name": "x", "strict": True, "schema": schema}, max_tokens=4096)
         assert out == {"a": 1}
         assert sent[0]["output_config"]["format"] == {"type": "json_schema", "schema": schema}
 

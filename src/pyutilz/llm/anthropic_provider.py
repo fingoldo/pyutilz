@@ -376,8 +376,10 @@ class AnthropicProvider(LLMProvider):
         """
         self._reset_per_call_state()
         if max_tokens <= 0:
-            max_tokens = min(self.max_output_tokens, self._STREAMING_THRESHOLD_TOKENS)
-        max_tokens = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+            max_tokens = self._required_max_output()
+        fitted = self.fit_max_tokens_to_context(max_tokens, prompt, system)
+        if fitted is not None:
+            max_tokens = fitted
         async with self.semaphore:
             kwargs = self._request_kwargs(prompt, system, temperature, max_tokens, thinking, images, json_schema)
             response = await self._create_with_learned_repairs(kwargs, thinking)
@@ -447,6 +449,10 @@ class AnthropicProvider(LLMProvider):
         if self.model in _MODELS_REJECTING_TEMPERATURE:
             kwargs.pop("temperature", None)
         return kwargs
+
+    def _required_max_output(self) -> int:
+        """The model's own output ceiling from the Claude table: Anthropic requires ``max_tokens``, and this is the documented value."""
+        return self.max_output_tokens
 
     async def _create_with_learned_repairs(self, kwargs: dict[str, Any], thinking: bool | str | None = False) -> Any:
         """Send the request, repairing (once each) a rejected ``temperature`` and a rejected thinking mode.
@@ -745,7 +751,7 @@ class AnthropicProvider(LLMProvider):
         for custom_id, req in zip(ids, requests):
             requested = req.get("max_tokens")
             # 0 / absent both mean "derive it", matching generate()'s own max_tokens <= 0 rule.
-            max_tokens = int(requested) if requested else min(self.max_output_tokens, self._STREAMING_THRESHOLD_TOKENS)
+            max_tokens = int(requested) if requested else self._required_max_output()
             params = self._request_kwargs(
                 req["prompt"], req.get("system"), req.get("temperature", 0.7), max_tokens,
                 req.get("thinking", False), req.get("images"), req.get("json_schema"),
