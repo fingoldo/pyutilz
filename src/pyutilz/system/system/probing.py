@@ -8,6 +8,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
+import dataclasses as _dataclasses
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +194,71 @@ def get_linux_board_info():
     return board_info
 
 
+@_dataclasses.dataclass
+class _DmiState:
+    """Mutable cursor state while walking dmidecode output section by section."""
+
+    summary: list = _dataclasses.field(default_factory=list)
+    section_dict: dict = _dataclasses.field(default_factory=dict)
+    features_name: _Any = None
+    features: _List[_Any] = _dataclasses.field(default_factory=list)
+    keep_section: bool = False
+    current_section: Optional[str] = None
+
+
+def _flush_features(state: _DmiState) -> None:
+    """Store the collected feature list under its key (if any) and start a fresh list."""
+    if state.features_name and state.features:
+        state.section_dict[state.features_name] = tuple(sorted(state.features))
+        state.features = []
+
+
+def _parse_dmi_value(key: str, value: str) -> _Any:
+    """Convert a dmidecode value to a float or int where it reads as a number (version/revision strings stay text)."""
+    from pyutilz.core.pythonlib import is_float, to_float
+
+    # Parsed into its own variable rather than reassigning the str-typed `value`:
+    # the parsed form is a float or an int, which reassignment would hide.
+    parsed: _Any = value.strip()
+    if "Version" not in key and "Revision" not in key and is_float(parsed):
+        parsed = to_float(parsed)
+    if isinstance(parsed, float) and parsed.is_integer():
+        parsed = int(parsed)
+    return parsed
+
+
+def _handle_indented_line(state: _DmiState, line: str, skip_keys: set, skip_values: set) -> None:
+    """Process one tab-indented dmidecode line inside the current section (a ``key: value`` pair or a feature)."""
+    if not state.keep_section:
+        return
+    if ":" in line:
+        key, value = map(str.strip, line.split(":", 1))
+        if value == "":
+            state.features_name = key
+            state.features = []
+        else:
+            _flush_features(state)
+            state.features_name = None
+        if key not in skip_keys and value not in skip_values and not (key.endswith("Handle")):
+            state.section_dict[key] = _parse_dmi_value(key, value)
+    elif state.features_name and line.startswith("\t\t"):
+        state.features.append(line.strip())
+
+
+def _emit_section(state: _DmiState) -> None:
+    """Append the finished section (tagged with its ItemType) to the summary."""
+    _flush_features(state)
+    state.features_name = None
+    state.section_dict["ItemType"] = state.current_section
+    state.summary.append(dict_to_tuple(state.section_dict))
+
+
+def _start_section(state: _DmiState, current_section: str, interesting_sections: list, sections_to_avoid: list) -> None:
+    """Begin a new top-level section, keeping it only when it is interesting and not on the avoid list."""
+    state.current_section = current_section
+    state.keep_section = any(interesting in current_section for interesting in interesting_sections) and current_section not in sections_to_avoid
+
+
 def parse_dmidecode_info(
     skip_keys: Optional[set] = None,
     skip_values: Optional[set] = None,
@@ -217,7 +283,6 @@ def parse_dmidecode_info(
             "None", "To Be Filled By O.E.M.", "", None,
         }
     from collections import Counter
-    from pyutilz.core.pythonlib import is_float, to_float
 
     try:
         # `sudo -n` (non-interactive) + DEVNULL stdin + a timeout: with stdin still attached a
@@ -242,72 +307,25 @@ def parse_dmidecode_info(
     )
     sections_to_avoid = "Memory Array Mapped Address;System Boot Information".split(";")
 
-    summary = []
-    section_dict: dict = {}
-    features_name: _Any = None
-    keep_section = False
-    current_section = None
-
+    state = _DmiState()
     for line in output.splitlines():
         if line.startswith("\t"):
-            if keep_section:
-                if ":" in line:
-                    key, value = map(str.strip, line.split(":", 1))
-                    if value == "":
-                        features_name = key
-                        features: _List[_Any] = []
-                    else:
-                        if features_name and features:
-                            section_dict[features_name] = tuple(sorted(features))
-                            features = []
-                        features_name = None
-                    if key not in skip_keys and value not in skip_values and not (key.endswith("Handle")):
-                        # Parsed into its own variable rather than reassigning the str-typed `value`:
-                        # the parsed form is a float or an int, which reassignment would hide.
-                        parsed: _Any = value.strip()
-                        if "Version" not in key and "Revision" not in key and is_float(parsed):
-                            parsed = to_float(parsed)
-                        if isinstance(parsed, float) and parsed.is_integer():
-                            parsed = int(parsed)
-                        section_dict[key] = parsed
-                else:
-                    if features_name and line.startswith("\t\t"):
-                        features.append(line.strip())
+            _handle_indented_line(state, line, skip_keys, skip_values)
         elif line.strip():
             # `keep_section`, not `section_dict`: a kept section whose every key was dropped by
             # skip_keys/skip_values left section_dict empty, so the whole item -- ItemType included --
             # silently vanished from the summary. skip_keys is documented as dropping KEYS; a caller
             # skipping the identifying fields of, say, BIOS Information still needs to see that the
             # section exists.
-            if keep_section and current_section is not None:
-                if features_name and features:
-                    section_dict[features_name] = tuple(sorted(features))
-                    features = []
-                features_name = None
-                section_dict["ItemType"] = current_section
-                summary.append(dict_to_tuple(section_dict))
-                section_dict = {}
+            if state.keep_section and state.current_section is not None:
+                _emit_section(state)
+                state.section_dict = {}
+            _start_section(state, line.strip(), interesting_sections, sections_to_avoid)
 
-            current_section = line.strip()
+    if state.keep_section and state.current_section is not None:
+        _emit_section(state)
 
-            keep_section = False
-            for interesting_section in interesting_sections:
-                if interesting_section in current_section:
-                    keep_section = True
-                    break
-            if keep_section:
-                if current_section in sections_to_avoid:
-                    keep_section = False
-
-    if keep_section and current_section is not None:
-        if features_name and features:
-            section_dict[features_name] = tuple(sorted(features))
-            features = []
-        features_name = None
-        section_dict["ItemType"] = current_section
-        summary.append(dict_to_tuple(section_dict))
-
-    return [{"item": dict(k), "Count": v} for k, v in Counter(summary).items()]
+    return [{"item": dict(k), "Count": v} for k, v in Counter(state.summary).items()]
 
 
 def summarize_system_info():

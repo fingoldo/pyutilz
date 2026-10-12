@@ -30,7 +30,7 @@ from ._common import (
 import pyutilz.data.pandaslib as _facade  # patchable-name indirection (see below)
 
 from .dtypes import optimize_dtypes, get_df_memory_consumption
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 
 def load_df(fpath: str, tail: int) -> pd.DataFrame:
@@ -91,6 +91,119 @@ def concat_and_flush_df_list(
     return None
 
 
+def _optimize_and_maybe_resave(
+    tmp_df: pd.DataFrame,
+    filename: str,
+    old_size: float,
+    write_fcn: str,
+    write_extension: str,
+    save_on_successful_optimization: bool,
+    min_size_improvement_percent: float,
+    min_size_improvement: float,
+) -> pd.DataFrame:
+    """Dtype-optimize ``tmp_df``, re-saving the source file if the size shrink passes the thresholds."""
+    tmp_df = optimize_dtypes(tmp_df)
+    gc.collect()
+    new_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
+    logger.info("After optimization, %s got size %.1f Gb", filename, new_size)
+
+    if save_on_successful_optimization:
+        if new_size <= old_size * (1 - min_size_improvement_percent) or old_size - new_size >= min_size_improvement:
+            logger.info("Re-saving file %s due to lower size", filename)
+            getattr(tmp_df, write_fcn)(f"{'.'.join(filename.split('.')[:-1])}.{write_extension}")
+    return tmp_df
+
+
+def _add_sentinel_column(tmp_df: pd.DataFrame, filename: str, sentinel_field: str, sentinel_fcn: Optional[Callable]) -> None:
+    """Add a column named ``sentinel_field`` (suffixed until unique) holding the source filename or ``sentinel_fcn(filename)``."""
+    # Use local copy to avoid mutation persisting across files
+    current_sentinel = sentinel_field
+    while current_sentinel in tmp_df:
+        logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")
+        current_sentinel += "1"
+
+    fname_part = filename.split(sep)[-1]
+    if sentinel_fcn:
+        tmp_df[current_sentinel] = sentinel_fcn(fname_part)
+    else:
+        tmp_df[current_sentinel] = fname_part
+
+
+def _collect_frames(
+    folder: str,
+    template: str,
+    max_files: int,
+    exclude: Optional[str],
+    read_fcn: str,
+    optimize: bool,
+    save_on_successful_optimization: bool,
+    min_size_improvement_percent: float,
+    min_size_improvement: float,
+    write_fcn: str,
+    write_extension: str,
+    sentinel_field: Optional[str],
+    sentinel_fcn: Optional[Callable],
+) -> Tuple[list, list]:
+    """Read matching files (in order, up to ``max_files``) and return their frames plus the file names they came from."""
+    lst = []
+    fnames = []
+    for _i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
+        if exclude:
+            if exclude in filename:
+                continue
+
+        fnames.append(filename)
+        tmp_df = getattr(pd, read_fcn)(filename)
+
+        # deep=True (byte-accurate for object/string columns) -- a shallow .memory_usage() call
+        # undercounts object-dtype columns by 30x+ (pointer size only), making the resave-trigger
+        # comparison below unreliable for exactly the string-heavy dataframes this function
+        # batch-processes.
+        old_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
+        logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
+
+        if optimize:
+            tmp_df = _optimize_and_maybe_resave(
+                tmp_df, filename, old_size, write_fcn, write_extension, save_on_successful_optimization, min_size_improvement_percent, min_size_improvement
+            )
+
+        if sentinel_field:
+            _add_sentinel_column(tmp_df, filename, sentinel_field, sentinel_fcn)
+
+        lst.append(tmp_df)
+        if max_files is not None:
+            if len(lst) >= max_files:
+                break
+        del tmp_df
+    return lst, fnames
+
+
+def _flush_and_cleanup(
+    lst: list,
+    fnames: list,
+    joint_file_name: str,
+    write_fcn: str,
+    write_extension: str,
+    set_index: Optional[str],
+    delete_after: bool,
+) -> Optional[pd.DataFrame]:
+    """Concatenate and flush ``lst`` to ``joint_file_name``, then optionally delete the source files; None on failure."""
+    try:
+        res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
+        if res is not None:
+            logger.info("Final df size (%s rows)", len(res))
+        if delete_after:
+            for _i, filename in enumerate(fnames):
+                try:
+                    os.remove(filename)
+                except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
+                    logger.debug("Failed to remove source file %s after concat: %s", filename, e)
+        return res
+    except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller
+        logger.debug("Failed to concat and flush df list: %s", e)
+        return None
+
+
 def read_stats_from_multiple_files(
     joint_file_name: str = "joint_features",
     folder: str = "features",
@@ -120,68 +233,25 @@ def read_stats_from_multiple_files(
     ``concat_and_flush_df_list`` into ``joint_file_name`` (optionally indexed by ``set_index``); source files are
     deleted afterwards if ``delete_after`` is True. Returns the merged dataframe, or None if nothing was merged.
     """
-    lst = []
-    fnames = []
-    for _i, filename in tqdmu(enumerate(glob.glob(join(folder, template)))):
-        if exclude:
-            if exclude in filename:
-                continue
-
-        fnames.append(filename)
-        tmp_df = getattr(pd, read_fcn)(filename)
-
-        # deep=True (byte-accurate for object/string columns) -- a shallow .memory_usage() call
-        # undercounts object-dtype columns by 30x+ (pointer size only), making the resave-trigger
-        # comparison below unreliable for exactly the string-heavy dataframes this function
-        # batch-processes.
-        old_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
-        logger.info("Merging %s with %s rows of size %.1f Gb", filename, len(tmp_df), old_size)
-
-        if optimize:
-            tmp_df = optimize_dtypes(tmp_df)
-            gc.collect()
-            new_size = get_df_memory_consumption(tmp_df, deep=True) / 1024**3
-            logger.info("After optimization, %s got size %.1f Gb", filename, new_size)
-
-            if save_on_successful_optimization:
-                if new_size <= old_size * (1 - min_size_improvement_percent) or old_size - new_size >= min_size_improvement:
-                    logger.info("Re-saving file %s due to lower size", filename)
-                    getattr(tmp_df, write_fcn)(f"{'.'.join(filename.split('.')[:-1])}.{write_extension}")
-
-        if sentinel_field:
-            # Use local copy to avoid mutation persisting across files
-            current_sentinel = sentinel_field
-            while current_sentinel in tmp_df:
-                logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")
-                current_sentinel += "1"
-
-            fname_part = filename.split(sep)[-1]
-            if sentinel_fcn:
-                tmp_df[current_sentinel] = sentinel_fcn(fname_part)
-            else:
-                tmp_df[current_sentinel] = fname_part
-
-        lst.append(tmp_df)
-        if max_files is not None:
-            if len(lst) >= max_files:
-                break
-        del tmp_df
+    lst, fnames = _collect_frames(
+        folder,
+        template,
+        max_files,
+        exclude,
+        read_fcn,
+        optimize,
+        save_on_successful_optimization,
+        min_size_improvement_percent,
+        min_size_improvement,
+        write_fcn,
+        write_extension,
+        sentinel_field,
+        sentinel_fcn,
+    )
     if len(lst) > 0:
-        try:
-            res = _facade.concat_and_flush_df_list(lst, file_name=joint_file_name, write_fcn=write_fcn, write_extension=write_extension, set_index=set_index)
-            if res is not None:
-                logger.info("Final df size (%s rows)", len(res))
-            if delete_after:
-                for _i, filename in enumerate(fnames):
-                    try:
-                        os.remove(filename)
-                    except Exception as e:  # nosec B110 - best-effort cleanup of already-concatenated source files; a failed remove (e.g. permissions/in-use) shouldn't abort the already-computed result  # noqa: PERF203 -- per-iteration fault isolation is intentional
-                        logger.debug("Failed to remove source file %s after concat: %s", filename, e)
-            return res
-        except Exception as e:  # nosec B110 - best-effort concat-and-flush across the file list; on failure the function simply returns None (no result to salvage) rather than crashing the caller
-            logger.debug("Failed to concat and flush df list: %s", e)
-    # Nothing collected, or the concat-and-flush above failed: an explicit None, so the
-    # documented "None if nothing was merged" is a statement in the code and not a fall-off.
+        # Nothing collected, or the concat-and-flush failed: an explicit None, so the documented
+        # "None if nothing was merged" is a statement in the code and not a fall-off.
+        return _flush_and_cleanup(lst, fnames, joint_file_name, write_fcn, write_extension, set_index, delete_after)
     return None
 
 

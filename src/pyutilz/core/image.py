@@ -51,6 +51,73 @@ def ensure_bytes_converted(obj: dict) -> dict:
     return obj
 
 
+def _decode_exif(exifdata: Any, skip_unknown_exif_tags: bool, orig_img: Any) -> dict:
+    """Map exif tag ids to readable names and decode bytes/rational values into a JSON-friendly dict."""
+    from PIL.ExifTags import TAGS
+    from PIL.TiffImagePlugin import IFDRational
+
+    decoded_exif = {}
+    for tag_id, tag_value in exifdata.items():
+        if type(tag_value) in (tuple, IFDRational):
+            tag_value = str(tag_value)
+        # get the tag name, instead of human unreadable tag id
+        tag = TAGS.get(tag_id)
+        if not tag:
+            if not skip_unknown_exif_tags:
+                decoded_exif[tag_id] = tag_value
+            continue
+        exifdata.get(tag_id)
+        # decode bytes
+        if isinstance(tag_value, bytes):
+            try:
+                tag_value = tag_value.decode("UTF-8")
+            except Exception:
+                logger.warning(
+                    "Error when decoding byte property %s: %s in image %s",
+                    tag,
+                    tag_value,
+                    orig_img if isinstance(orig_img, str) else "",
+                )
+                continue
+        decoded_exif[tag] = tag_value
+    return decoded_exif
+
+
+def _normalize_info(info: dict, decoded_exif: dict) -> dict:
+    """Clean Pillow's ``info`` mapping in place, moving its embedded exif into ``decoded_exif`` when that is empty."""
+    # Captured BEFORE normalization: ensure_bytes_converted either decodes this value to
+    # str or deletes the key, so the fallback below could never see the original mapping.
+    raw_exif: Any = info.get("exif")
+    ensure_bytes_converted(info)
+
+    remove_json_defaults(info, {"jfif": 257, "jfif_version": "(1, 1)", "jfif_density": "(1, 1)"}, warn_if_not_default=False)
+
+    if "exif" in info:
+        if not decoded_exif and hasattr(raw_exif, "copy") and not isinstance(raw_exif, (bytes, str)):
+            decoded_exif = raw_exif.copy()
+        del info["exif"]
+    return decoded_exif
+
+
+def _build_image_response(width: int, height: int, image_bytes: bytes, filesize: Optional[int], decoded_exif: dict, info: dict) -> dict:
+    """Assemble the JSON-serializable metadata dict returned alongside the raw image bytes."""
+    res: dict
+    if width == 0 and height == 0:
+        res = {"height": height, "width": width, "size": 0}
+    else:
+        res = {"height": height, "width": width, "size": getsizeof(image_bytes)}
+
+    if filesize is not None:
+        res["filesize"] = filesize
+
+    if decoded_exif:
+        res["exif"] = decoded_exif
+
+    if info:
+        res["info"] = info
+    return res
+
+
 def get_image_properties(
     img,
     skip_unknown_exif_tags: bool = True,
@@ -77,8 +144,6 @@ def get_image_properties(
     """
     import PIL.Image
     from PIL import ImageFile
-    from PIL.ExifTags import TAGS
-    from PIL.TiffImagePlugin import IFDRational
 
     if skip_empty_exif is not None:
         logger.warning("get_image_properties: `skip_empty_exif` is a deprecated alias of `skip_unknown_exif_tags`; please rename the argument.")
@@ -114,48 +179,14 @@ def get_image_properties(
 
         # decode exif
 
-        decoded_exif = {}
-        for tag_id, tag_value in exifdata.items():
-            if type(tag_value) in (tuple, IFDRational):
-                tag_value = str(tag_value)
-            # get the tag name, instead of human unreadable tag id
-            tag = TAGS.get(tag_id)
-            if tag:
-                exifdata.get(tag_id)
-                # decode bytes
-                if isinstance(tag_value, bytes):
-                    try:
-                        tag_value = tag_value.decode("UTF-8")
-                    except Exception:
-                        logger.warning(
-                            "Error when decoding byte property %s: %s in image %s",
-                            tag,
-                            tag_value,
-                            orig_img if isinstance(orig_img, str) else "",
-                        )
-                        continue
-
-                decoded_exif[tag] = tag_value
-            else:
-                if not skip_unknown_exif_tags:
-                    decoded_exif[tag_id] = tag_value
+        decoded_exif = _decode_exif(exifdata, skip_unknown_exif_tags, orig_img)
 
         width, height = img.size
 
         info = img.info
 
         if info:
-            # Captured BEFORE normalization: ensure_bytes_converted either decodes this value to
-            # str or deletes the key, so the fallback below could never see the original mapping.
-            raw_exif = info.get("exif")
-            ensure_bytes_converted(info)
-
-            remove_json_defaults(info, {"jfif": 257, "jfif_version": "(1, 1)", "jfif_density": "(1, 1)"}, warn_if_not_default=False)
-
-            if "exif" in info:
-                if not decoded_exif and hasattr(raw_exif, "copy") and not isinstance(raw_exif, (bytes, str)):
-                    decoded_exif = raw_exif.copy()
-                del info["exif"]
+            decoded_exif = _normalize_info(info, decoded_exif)
 
         # convert to bytes
 
@@ -163,20 +194,7 @@ def get_image_properties(
 
         # construct response object
 
-        if width == 0 and height == 0:
-            res = {"height": height, "width": width, "size": 0}
-        else:
-            res = {"height": height, "width": width, "size": getsizeof(image_bytes)}
-
-        if filesize is not None:
-            res["filesize"] = filesize
-
-        if decoded_exif:
-            res["exif"] = decoded_exif
-
-        if info:
-            res["info"] = info
-
+        res = _build_image_response(width, height, image_bytes, filesize, decoded_exif, info)
         return image_bytes, res
     finally:
         ImageFile.LOAD_TRUNCATED_IMAGES = prev_load_truncated

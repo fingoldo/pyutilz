@@ -106,43 +106,7 @@ class _CacheTuningMixin(_CacheState):
         # populated) on every call for a branch that was never taken.
         def _fb():
             """Consult the project-shipped DEFAULT-cache layer before falling back to ``fallback``."""
-            # DEFAULT-cache layer: a project-shipped anonymized (hw-agnostic) tuning, consulted on a local per-host
-            # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
-            # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
-            # took precedence (checked above), so this never overrides a real local result.
-            #
-            # Diagnostic branch-tagging (not just a swallowed exception): a CI-only occurrence of
-            # test_register_default_cache_loads_and_local_miss_returns_default returned the hand
-            # fallback instead of the DEFAULT cache's value, with no local repro despite exhaustive
-            # static review of every function this branch touches (code_version determinism,
-            # _ensure_loaded, lookup, _region_matches -- none raise or mismatch under same-process
-            # execution as far as static reading can show). Logging exactly which branch was taken
-            # (rather than only the previous DEBUG-level swallow) turns the next occurrence into a
-            # one-line diagnosis instead of another blind investigation.
-            # Each distinct (kernel_name, branch) logs at most once per process (guard_key already
-            # identifies kernel+cache-path uniquely) -- see _warn_default_cache_fallback_once.
-            _wf = self._warn_default_cache_fallback_once
-            dc = _facade()._DEFAULT_CACHE
-            if dc is None:
-                _wf(guard_key, "none", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
-            elif dc is self:
-                _wf(guard_key, "self", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
-            else:
-                try:
-                    if dc._code_version_stale(kernel_name, code_version):
-                        _wf(
-                            guard_key, "stale",
-                            "DEFAULT-cache consult for kernel %s: code_version stale (requested=%r, stored=%r), falling back",
-                            kernel_name, code_version, dc._ensure_loaded().get("kernels", {}).get(kernel_name, {}).get("code_version"),
-                        )
-                    else:
-                        d = dc.lookup(kernel_name, **dims)
-                        if d is not None:
-                            return d
-                        _wf(guard_key, "no_match", "DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
-                except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
-                    _wf(guard_key, "raised", "DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
-            return fallback() if callable(fallback) else fallback
+            return self._default_cache_fallback(guard_key, kernel_name, dims, code_version, fallback)
 
         with _tuned_guard_lock:
             if once_per_process and guard_key in _TUNED_THIS_PROCESS:
@@ -172,6 +136,63 @@ class _CacheTuningMixin(_CacheState):
             hk.winner_chosen(kernel_name, None, "fallback (async sweep dispatched)")
             return _fb()
 
+        return self._sync_tune_or_fallback(
+            kernel_name,
+            dims=dims,
+            tuner=tuner,
+            axes=axes,
+            code_version=code_version,
+            salt=salt,
+            equiv_tol=equiv_tol,
+            hk=hk,
+            guard_key=guard_key,
+            sweep_disabled=_sweep_disabled,
+            fb=_fb,
+        )
+
+    def _default_cache_fallback(self, guard_key, kernel_name: str, dims: dict, code_version: Optional[str], fallback):
+        """Consult the project-shipped DEFAULT-cache layer before falling back to ``fallback``."""
+        # DEFAULT-cache layer: a project-shipped anonymized (hw-agnostic) tuning, consulted on a local per-host
+        # MISS BEFORE the hand-specified fallback. Measurement-derived, so better than the heuristic; the async
+        # sweep still runs to replace it with THIS host's measured optimum. The local measured cache already
+        # took precedence (checked above), so this never overrides a real local result.
+        #
+        # Diagnostic branch-tagging (not just a swallowed exception): a CI-only occurrence of
+        # test_register_default_cache_loads_and_local_miss_returns_default returned the hand
+        # fallback instead of the DEFAULT cache's value, with no local repro despite exhaustive
+        # static review of every function this branch touches (code_version determinism,
+        # _ensure_loaded, lookup, _region_matches -- none raise or mismatch under same-process
+        # execution as far as static reading can show). Logging exactly which branch was taken
+        # (rather than only the previous DEBUG-level swallow) turns the next occurrence into a
+        # one-line diagnosis instead of another blind investigation.
+        # Each distinct (kernel_name, branch) logs at most once per process (guard_key already
+        # identifies kernel+cache-path uniquely) -- see _warn_default_cache_fallback_once.
+        _wf = self._warn_default_cache_fallback_once
+        dc = _facade()._DEFAULT_CACHE
+        if dc is None:
+            _wf(guard_key, "none", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is None, falling back", kernel_name)
+        elif dc is self:
+            _wf(guard_key, "self", "DEFAULT-cache consult for kernel %s: _DEFAULT_CACHE is this same instance, falling back", kernel_name)
+        else:
+            try:
+                if dc._code_version_stale(kernel_name, code_version):
+                    _wf(
+                        guard_key, "stale",
+                        "DEFAULT-cache consult for kernel %s: code_version stale (requested=%r, stored=%r), falling back",
+                        kernel_name, code_version, dc._ensure_loaded().get("kernels", {}).get(kernel_name, {}).get("code_version"),
+                    )
+                else:
+                    d = dc.lookup(kernel_name, **dims)
+                    if d is not None:
+                        return d
+                    _wf(guard_key, "no_match", "DEFAULT-cache consult for kernel %s: lookup(**%r) returned no matching region, falling back", kernel_name, dims)
+            except Exception as e:  # nosec B110 - best-effort consult of the optional DEFAULT-cache layer on a local miss; any failure here must fall through to the caller-supplied fallback, not raise
+                _wf(guard_key, "raised", "DEFAULT-cache consult for kernel %s raised %s: %s, falling back", kernel_name, type(e).__name__, e, exc_info=True)
+        return fallback() if callable(fallback) else fallback
+
+    def _sync_tune_or_fallback(self, kernel_name: str, *, dims: dict, tuner: Callable, axes: list[str], code_version: Optional[str], salt: int,
+                               equiv_tol: Optional[float], hk, guard_key, sweep_disabled: bool, fb: Callable):
+        """Run the synchronous sweep under the INPROGRESS claim, returning a fresh hit, else ``fb()``."""
         # SYNCHRONOUS path: explicit offline tuning (async_sweep=False) or the disable-sweep escape hatch.
         # Claim the sweep via an O_EXCL INPROGRESS marker (no filelock, no blocking, no 900s wedge). Win = own the
         # sweep; lose = another process is already sweeping this (kernel, code_version) -> we DON'T duplicate it, we
@@ -186,9 +207,9 @@ class _CacheTuningMixin(_CacheState):
                     return hit
             if not owns:
                 hk.winner_chosen(kernel_name, None, "fallback (another process is sweeping)")
-                return _fb()
+                return fb()
             _TUNED_THIS_PROCESS.add(guard_key)
-            regions = None if _sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
+            regions = None if sweep_disabled else self._run_tuner(kernel_name, tuner, axes, hk)
             if regions:
                 self.update(kernel_name, axes=axes, regions=regions, code_version=code_version, salt=salt, equiv_tol=equiv_tol, hooks=hk)
                 hk.sweep_end(kernel_name, len(regions))
@@ -197,7 +218,7 @@ class _CacheTuningMixin(_CacheState):
                     hk.winner_chosen(kernel_name, hit, "from sweep")
                     return hit
         hk.winner_chosen(kernel_name, None, "fallback")
-        return _fb()
+        return fb()
 
     def _run_tuner(self, kernel_name: str, tuner: Callable, axes: list, hooks):
         """Run a project sweep, firing the start hook and swallowing any failure (a sweep error must never

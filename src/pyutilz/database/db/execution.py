@@ -6,7 +6,7 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 ``explain_table``).
 """
 
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Optional, Tuple, Union
 
 from pyutilz.core import jsonlib
 
@@ -88,6 +88,82 @@ def _close_colliding_named_cursor(cursor_name: Optional[str]) -> None:
         logger.warning("Could not close the colliding server-side cursor %r: %s", cursor_name, close_exc)
 
 
+def _validate_retry_args(max_retries: int, auto_commit: bool) -> None:
+    """Reject a non-positive retry budget and warn that ``auto_commit=False`` is not honoured."""
+    if max_retries < 1:
+        # A non-positive budget made `while retry_count < max_retries` skip the body entirely: the
+        # statement never reached the database and the function returned None -- indistinguishable
+        # from a statement with no result set, with no log line either.
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
+    if not auto_commit:
+        # The connection runs in ISOLATION_LEVEL_AUTOCOMMIT, so every statement commits on its own;
+        # a caller batching statements under auto_commit=False has no transaction and no rollback.
+        logger.warning("basic_db_execute: auto_commit=False is not honoured (connection is in autocommit mode); each statement commits independently")
+
+
+def _execute_on_cursor(local_cur: Any, ex_type: str, statement: Any, data: Any, page_size: int) -> None:
+    """Run ``statement`` on ``local_cur`` in the mode selected by ``ex_type``."""
+    if ex_type == "execute":
+        local_cur.execute(statement, data)
+    elif ex_type == "execute_values":
+        execute_values(local_cur, statement, data, page_size=page_size)
+
+
+def _reconnect_for_retry() -> None:
+    """Re-establish the module connection from the facade's stored settings before a retry."""
+    _facade.connect_to_db(
+        m_db_name=_facade.db_name,
+        m_db_host=_facade.db_host,
+        m_db_port=_facade.db_port,
+        m_db_username=_facade.username,
+        m_db_pwd=_facade.pwd,
+        m_init_params_fn=_facade.init_params_fn,
+        m_db_flavor=_facade.db_flavor if _facade.db_flavor is not None else "postgres",
+        m_db_schema=_facade.db_schema,
+        m_db_sslmode=_facade.db_sslmode,
+    )
+
+
+def _close_cursor_after_internal_error(cursor_name: Optional[str], local_cur: Any) -> None:
+    """Close a named cursor left open by an InternalError, logging (not raising) any failure to close it."""
+    if cursor_name is not None and local_cur is not None:
+        try:
+            local_cur.close()
+        except Exception as close_exc:
+            logger.exception(close_exc)
+
+
+def _recover_from_cursor_collision(cursor_name: Optional[str], retry_count: int, max_retries: int, stmt_preview: str) -> int:
+    """Count one cursor-collision retry, close the colliding named cursor and pause; re-raises once the budget is spent."""
+    retry_count += 1
+    if retry_count >= max_retries:
+        logger.error("Max retries (%s) exceeded for database operation (cursor collision, statement=%s)", max_retries, stmt_preview)
+        raise
+    # Regression fix: the recovery used to be `_get_thread_cursors().pop(cursor_type)`,
+    # which is unconditionally a no-op -- get_cursor() never CACHES a named cursor
+    # ("_named" is excluded from both its read and its write), so nothing was ever there
+    # to pop. The retry then re-issued DECLARE <same name> and collided again, burning
+    # the whole retry budget. Close the colliding server-side cursor for real instead.
+    _close_colliding_named_cursor(cursor_name)
+    _facade.sleep(1)
+    return retry_count
+
+
+def _finish_execution(local_cur: Any, return_cursor: bool, cursor_name: Optional[str]) -> Any:
+    """Return the cursor, or its fetched rows (closing a named cursor), depending on ``return_cursor`` and the result set."""
+    # A named/server-side cursor (withhold=True) corresponds to a real Postgres
+    # `DECLARE ... CURSOR ... WITH HOLD`, kept alive across commits until explicitly
+    # closed. When this function isn't handing the cursor back to the caller
+    # (return_cursor=False), IT is the only thing that can still close it -- otherwise
+    # the server-side cursor leaks for the lifetime of the connection.
+    if return_cursor:
+        return local_cur
+    rows = local_cur.fetchall() if local_cur.description is not None else []
+    if cursor_name is not None:
+        local_cur.close()
+    return rows
+
+
 def basic_db_execute(
     ex_type,
     statement,
@@ -107,15 +183,7 @@ def basic_db_execute(
     collision; a statement with no result set yields an empty list. Server-side cursors this function
     does not hand back to the caller are closed here so they cannot leak for the connection's lifetime.
     """
-    if max_retries < 1:
-        # A non-positive budget made `while retry_count < max_retries` skip the body entirely: the
-        # statement never reached the database and the function returned None -- indistinguishable
-        # from a statement with no result set, with no log line either.
-        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
-    if not auto_commit:
-        # The connection runs in ISOLATION_LEVEL_AUTOCOMMIT, so every statement commits on its own;
-        # a caller batching statements under auto_commit=False has no transaction and no rollback.
-        logger.warning("basic_db_execute: auto_commit=False is not honoured (connection is in autocommit mode); each statement commits independently")
+    _validate_retry_args(max_retries, auto_commit)
 
     cursor_type = _facade.get_cursor_type(cursor_factory, cursor_name)
     stmt_preview = str(statement)[:500]
@@ -135,10 +203,7 @@ def basic_db_execute(
         try:
             local_cur = _facade.get_cursor(cursor_type=cursor_type, cursor_factory=cursor_factory, cursor_name=cursor_name, itersize=itersize)
 
-            if ex_type == "execute":
-                local_cur.execute(statement, data)
-            elif ex_type == "execute_values":
-                execute_values(local_cur, statement, data, page_size=page_size)
+            _execute_on_cursor(local_cur, ex_type, statement, data, page_size)
 
             # if '_named' not in cursor_type:
             # if auto_commit: conn.commit()
@@ -151,17 +216,7 @@ def basic_db_execute(
             logger.exception("Database operation failed (statement=%s): %s", stmt_preview, e)
             logger.info("Retrying database operation (%s/%s)...", retry_count, max_retries)
             _facade.sleep(1)
-            _facade.connect_to_db(
-                m_db_name=_facade.db_name,
-                m_db_host=_facade.db_host,
-                m_db_port=_facade.db_port,
-                m_db_username=_facade.username,
-                m_db_pwd=_facade.pwd,
-                m_init_params_fn=_facade.init_params_fn,
-                m_db_flavor=_facade.db_flavor if _facade.db_flavor is not None else "postgres",
-                m_db_schema=_facade.db_schema,
-                m_db_sslmode=_facade.db_sslmode,
-            )
+            _reconnect_for_retry()
             continue  # Retry the operation
         except DuplicateTable as e:
             logger.warning("DuplicateTable (statement=%s): %s", stmt_preview, e)
@@ -176,11 +231,7 @@ def basic_db_execute(
             # InternalError indicates real corruption/state issues; do not silently
             # fall through to an implicit None (indistinguishable from "no rows") or
             # spin forever in the retry loop - propagate it to the caller.
-            if cursor_name is not None and local_cur is not None:
-                try:
-                    local_cur.close()
-                except Exception as close_exc:
-                    logger.exception(close_exc)
+            _close_cursor_after_internal_error(cursor_name, local_cur)
             raise
         except Exception as e:
             logger.exception("Database operation failed (statement=%s): %s", stmt_preview, e)
@@ -194,44 +245,14 @@ def basic_db_execute(
                 # unrelated cursor, not the one that actually collided -- so `cur.close()` was
                 # closing the wrong object. The recovery below closes the colliding cursor BY NAME
                 # instead, which is the only handle this function can positively identify.
-                retry_count += 1
-                if retry_count >= max_retries:
-                    logger.error("Max retries (%s) exceeded for database operation (cursor collision, statement=%s)", max_retries, stmt_preview)
-                    raise
-                # Regression fix: the recovery used to be `_get_thread_cursors().pop(cursor_type)`,
-                # which is unconditionally a no-op -- get_cursor() never CACHES a named cursor
-                # ("_named" is excluded from both its read and its write), so nothing was ever there
-                # to pop. The retry then re-issued DECLARE <same name> and collided again, burning
-                # the whole retry budget. Close the colliding server-side cursor for real instead.
-                _close_colliding_named_cursor(cursor_name)
-                _facade.sleep(1)
+                retry_count = _recover_from_cursor_collision(cursor_name, retry_count, max_retries, stmt_preview)
                 continue
             else:
                 _close_local_named_cursor(cursor_name, local_cur)
                 raise
         else:
             _facade.cur = local_cur
-            # A named/server-side cursor (withhold=True) corresponds to a real Postgres
-            # `DECLARE ... CURSOR ... WITH HOLD`, kept alive across commits until explicitly
-            # closed. When this function isn't handing the cursor back to the caller
-            # (return_cursor=False), IT is the only thing that can still close it -- otherwise
-            # the server-side cursor leaks for the lifetime of the connection.
-            if local_cur.description is not None:
-                # cols_names = [desc[0] for desc in cur.description]
-                if return_cursor:
-                    return local_cur
-                else:
-                    rows = local_cur.fetchall()
-                    if cursor_name is not None:
-                        local_cur.close()
-                    return rows
-            else:
-                if return_cursor:
-                    return local_cur
-                else:
-                    if cursor_name is not None:
-                        local_cur.close()
-                    return []
+            return _finish_execution(local_cur, return_cursor, cursor_name)
 
     # The retry budget is exhausted: every attempt raised OperationalError/InterfaceError and
     # reconnected. Falling off the end here returned None, which a caller cannot tell apart from
@@ -298,27 +319,18 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
                 setattr(self, prefix + field, element[indices[i]])
 
 
-def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values=None, returning="*", source=None, jsonize=True, fetch_into=None, prefix=""):
-    """
-    Executes DML commands easily, looking up sql fields in main and replacement dictionaries, optionally fetching returned values into separate class or dictionary instance[prefixed, if needed]
-    This procedure is convenient when you have variables in local or global scope which names match exactly SQL table fields names. Using this sub, in your code you only mention fields names once, pass locals()
-    and do not worry about duplicated code! Also it allows fetching returned data into some object in one go. ;-)
-    """
-    if replace_values is None:
-        replace_values = {}
-    if source is None:
-        source = {}
-
+def _db_command_args_valid(mode: str, where_fields: Any, set_fields: Any) -> bool:
+    """Log and return False when the mode/field combination cannot form a statement; True otherwise."""
     # ----------------------------------------------------------------------------------------------------------------------------
     # Sanity checks
     # ----------------------------------------------------------------------------------------------------------------------------
 
     if where_fields is None and set_fields is None:
         logger.error("Either where_fields or set_fields have to be defined")
-        return
+        return False
     if mode not in ["select", "insert", "update"]:
         logger.error("Unknown mode: %s", mode)
-        return
+        return False
     # Regression fix: "select"/"update" only ever consult where_fields to build the WHERE
     # clause, but the check above only required ONE of where_fields/set_fields to be non-None --
     # where_fields=None with set_fields=[...] passed silently, then crashed inside
@@ -329,7 +341,7 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     # validation message here.
     if mode in ("select", "update") and not where_fields:
         logger.error("mode=%r requires a non-empty where_fields (got %r)", mode, where_fields)
-        return
+        return False
     # "insert" and "update" both consult set_fields (for the VALUES list / the SET clause); without
     # this guard set_fields=None crashes two frames down inside construct_templates_and_values with
     # an opaque `TypeError: 'NoneType' object is not iterable`, and set_fields=[] builds
@@ -338,13 +350,21 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     # path, so it still crashed opaquely after the "insert" half was fixed.
     if mode in ("insert", "update") and not set_fields:
         logger.error("mode=%r requires a non-empty set_fields (got %r)", mode, set_fields)
-        return
-    # `returning` is spliced into the SQL as a string; None is the natural way to say "no RETURNING".
-    if returning is None:
-        returning = ""
-    if mode == "select" and not returning:
-        returning = "*"
+        return False
+    return True
 
+
+def _build_dml_statement(
+    mode: str,
+    table_name: str,
+    where_fields: Any,
+    set_fields: Any,
+    replace_values: dict,
+    source: dict,
+    jsonize: bool,
+    returning: str,
+) -> Tuple[str, Any]:
+    """Return the SQL text and its bound values for a select/insert/update built from the field lists."""
     # ----------------------------------------------------------------------------------------------------------------------------
     # Smart params parsing
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -382,7 +402,30 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     if mode in ["insert", "update"]:
         if len(returning) > 0:
             sql += " returning " + returning
+    return sql, sql_fields_values
 
+
+def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values=None, returning="*", source=None, jsonize=True, fetch_into=None, prefix=""):
+    """
+    Executes DML commands easily, looking up sql fields in main and replacement dictionaries, optionally fetching returned values into separate class or dictionary instance[prefixed, if needed]
+    This procedure is convenient when you have variables in local or global scope which names match exactly SQL table fields names. Using this sub, in your code you only mention fields names once, pass locals()
+    and do not worry about duplicated code! Also it allows fetching returned data into some object in one go. ;-)
+    """
+    if replace_values is None:
+        replace_values = {}
+    if source is None:
+        source = {}
+
+    if not _db_command_args_valid(mode, where_fields, set_fields):
+        return
+
+    # `returning` is spliced into the SQL as a string; None is the natural way to say "no RETURNING".
+    if returning is None:
+        returning = ""
+    if mode == "select" and not returning:
+        returning = "*"
+
+    sql, sql_fields_values = _build_dml_statement(mode, table_name, where_fields, set_fields, replace_values, source, jsonize, returning)
     res = _facade.safe_execute(sql, sql_fields_values)
     if fetch_into is not None:
         if prefix == "":
@@ -392,6 +435,62 @@ def db_command(mode, table_name, where_fields=None, set_fields=None, replace_val
     return res
 
 
+def _settings_read_due(interval_minutes) -> bool:
+    """True when settings were never read or the last read is at least ``interval_minutes`` old."""
+    if _facade.last_db_settings_read_at is None:
+        return True
+    now_time = datetime.now(timezone.utc)
+    return bool((now_time - _facade.last_db_settings_read_at).total_seconds() / 60 >= interval_minutes)
+
+
+def _cast_number_setting(setting_name, typename, val, ltypename: str):
+    """Cast a numeric setting (int, or float-like types); a value that fails to parse is returned untouched."""
+    cast = int if ltypename == "int" else float
+    try:
+        return cast(val)
+    except (ValueError, TypeError):
+        kind = "an integer" if cast is int else "a number"
+        logger.warning("Setting %r has type %r but value %r is not %s -- left untouched", setting_name, typename, val, kind)
+        return val
+
+
+def _cast_json_setting(setting_name, val):
+    """Parse a json/jsonb setting; non-JSON text is returned untouched rather than crashing the settings load."""
+    raw_val = val if isinstance(val, (str, bytes, bytearray)) else str(val)
+    try:
+        return jsonlib.loads(raw_val)
+    except jsonlib.JSONDecodeError:
+        # Leave non-JSON values untouched rather than crashing settings load.
+        logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
+        return val
+
+
+def _cast_setting_value(setting_name, typename, val):
+    """Cast one settings value by its declared type; values that fail to parse are returned untouched."""
+    if typename is None:
+        typename = "string"
+    ltypename = typename.lower()
+    if val is None:
+        return val
+    # Regression fix: only the json branch used to be guarded, so ONE unparseable row
+    # ("oops" typed int, or a genuine bool value typed bool -- bool has no .lower())
+    # raised out of read_db_settings entirely, leaving the caller's namespace populated
+    # with whichever settings sorted before it and last_db_settings_read_at unset, so the
+    # very next call repeated the failure instead of being throttled by interval_minutes.
+    # The docstring already promised the value is left untouched when it fails to parse.
+    if ltypename in ("int", "float", "real", "double", "numeric"):
+        return _cast_number_setting(setting_name, typename, val, ltypename)
+    if ltypename in ["str", "string"]:
+        return str(val)
+    if ltypename in ["json", "jsonb"]:
+        return _cast_json_setting(setting_name, val)
+    if ltypename in ["bool", "boolean"]:
+        # str(val) so an already-boolean (or numeric) column value does not blow up on
+        # .lower(); True/1 still map to True via their str() forms.
+        return str(val).lower() in ["true", "1", "t", "y", "yes"]
+    return val
+
+
 def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
     """Loads the ``settings`` table into the namespace dict ``g``, keyed by setting name.
 
@@ -399,63 +498,68 @@ def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
     untouched when it fails to parse. Re-reads at most once per ``interval_minutes``; passing
     ``settings_names_contains`` restricts the load to settings whose name contains that substring.
     """
-    do_update = False
-    if _facade.last_db_settings_read_at is None:
-        do_update = True
-    else:
-        now_time = datetime.now(timezone.utc)
-        if (now_time - _facade.last_db_settings_read_at).total_seconds() / 60 >= interval_minutes:
-            do_update = True
-    if do_update:
-        sql = "select name,value,type from settings"
-        sql_params = None
-        if settings_names_contains:
-            # Use parameterized query to prevent SQL injection
-            sql += " where strpos(name,%s)>0"
-            sql_params = (settings_names_contains,)
+    if not _settings_read_due(interval_minutes):
+        return
+    sql = "select name,value,type from settings"
+    sql_params = None
+    if settings_names_contains:
+        # Use parameterized query to prevent SQL injection
+        sql += " where strpos(name,%s)>0"
+        sql_params = (settings_names_contains,)
 
-        for setting_name, val, typename in _facade.safe_execute(sql, sql_params):
-            if typename is None:
-                typename = "string"
-            ltypename = typename.lower()
-            if val is not None:
-                # Regression fix: only the json branch used to be guarded, so ONE unparseable row
-                # ("oops" typed int, or a genuine bool value typed bool -- bool has no .lower())
-                # raised out of read_db_settings entirely, leaving the caller's namespace populated
-                # with whichever settings sorted before it and last_db_settings_read_at unset, so the
-                # very next call repeated the failure instead of being throttled by interval_minutes.
-                # The docstring already promised the value is left untouched when it fails to parse.
-                if ltypename == "int":
-                    try:
-                        val = int(val)
-                    except (ValueError, TypeError):
-                        logger.warning("Setting %r has type %r but value %r is not an integer -- left untouched", setting_name, typename, val)
-                elif ltypename in ["float", "real", "double", "numeric"]:
-                    try:
-                        val = float(val)
-                    except (ValueError, TypeError):
-                        logger.warning("Setting %r has type %r but value %r is not a number -- left untouched", setting_name, typename, val)
-                elif ltypename in ["str", "string"]:
-                    val = str(val)
-                elif ltypename in ["json", "jsonb"]:
-                    raw_val = val if isinstance(val, (str, bytes, bytearray)) else str(val)
-                    try:
-                        val = jsonlib.loads(raw_val)
-                    except jsonlib.JSONDecodeError:
-                        # Leave non-JSON values untouched rather than crashing settings load.
-                        logger.warning("Setting %r has json/jsonb type but value is not valid JSON: %r", setting_name, val)
-                elif ltypename in ["bool", "boolean"]:
-                    # str(val) so an already-boolean (or numeric) column value does not blow up on
-                    # .lower(); True/1 still map to True via their str() forms.
-                    val = str(val).lower() in ["true", "1", "t", "y", "yes"]
-            g[setting_name] = val
-        _facade.last_db_settings_read_at = datetime.now(timezone.utc)
+    for setting_name, val, typename in _facade.safe_execute(sql, sql_params):
+        g[setting_name] = _cast_setting_value(setting_name, typename, val)
+    _facade.last_db_settings_read_at = datetime.now(timezone.utc)
 
 
 _LOG_TO_DB_KNOWN_LEVELS = frozenset({"info", "warning", "warn", "error", "critical", "fatal"})
 
 # Accepts only quoted JSON keys and array indices chained with -> / ->> , e.g. 'a'->'b'->>2
 _JSON_PATH_RE = re.compile(r"^(?:'[A-Za-z0-9_ .-]+'|[0-9]+)(?:->>?(?:'[A-Za-z0-9_ .-]+'|[0-9]+))*$")
+
+
+def _compose_log_text(message, details, more_details) -> Any:
+    """Append ``details``/``more_details`` to ``message`` in brackets for the Python log line."""
+    s = message
+    if details:
+        if more_details:
+            s = s + " [" + str(details) + "/" + str(more_details) + "]"
+        else:
+            s = s + " [" + str(details) + "]"
+    else:
+        if more_details:
+            s = s + " [" + str(more_details) + "]"
+    return s
+
+
+def _log_level_to_severity(level, s: str, message: str, append_severity: bool) -> Tuple[int, str]:
+    """Emit ``s`` at the logger method matching ``level``; returns ``(severity, message)`` with the optional severity prefix."""
+    cInfo = 1
+    cWarning = 2
+    cError = 3
+    if level in ["warning", "warn"]:
+        logger.warning(s)
+        if append_severity:
+            message = "[Warning] " + message
+        return cWarning, message
+    if level in ("error", "critical", "fatal"):
+        logger.error(s)
+        if append_severity:
+            message = "[ERROR] " + message
+        return cError, message
+    logger.info(s)
+    return cInfo, message
+
+
+def _resolve_node_and_application(application):
+    """Return ``(node, application)``, filling any missing value from the facade or the caller's stack."""
+    node = _facade.node_id
+    if node is None or application is None:
+        if node is None:
+            node = _facade.lookup_in_stack("node_id")
+        if application is None:
+            application = _facade.lookup_in_stack("app_name")
+    return node, application
 
 
 def log_to_db(message, details=None, more_details=None, level="info", append_severity=False, application=None, table_name="logs"):
@@ -467,61 +571,29 @@ def log_to_db(message, details=None, more_details=None, level="info", append_sev
     The originating node and application default to the values found on the facade or in the caller's
     stack when not supplied.
     """
-    cInfo = 1
-    cWarning = 2
-    cError = 3
-
     # A falsy level (None, "") used to skip the entire body: no Python log record, no DB row, no
     # warning -- a wrapper forwarding an absent config key silently dropped every message.
     if not level:
         level = "info"
 
-    if level:
-        if level not in _LOG_TO_DB_KNOWN_LEVELS:
-            # Regression fix: an unrecognized level (typo, case mismatch, a caller-invented
-            # string like "critical" before it was added to the map below) used to fall through
-            # to the `else` branch SILENTLY -- logged and persisted as plain "info" severity with
-            # no signal the requested level wasn't honored. Now at least a warning marks the
-            # mismatch, even though the message itself still degrades to info (log_to_db must not
-            # raise over a bad level string and abort the caller's actual operation).
-            logger.warning("log_to_db: unrecognized level %r, treating as 'info' (known levels: %s)", level, sorted(_LOG_TO_DB_KNOWN_LEVELS))
-        s = message
-        if details:
-            if more_details:
-                s = s + " [" + str(details) + "/" + str(more_details) + "]"
-            else:
-                s = s + " [" + str(details) + "]"
-        else:
-            if more_details:
-                s = s + " [" + str(more_details) + "]"
+    # Regression fix: an unrecognized level (typo, case mismatch, a caller-invented
+    # string like "critical" before it was added to the map below) used to fall through
+    # to the `else` branch SILENTLY -- logged and persisted as plain "info" severity with
+    # no signal the requested level wasn't honored. Now at least a warning marks the
+    # mismatch, even though the message itself still degrades to info (log_to_db must not
+    # raise over a bad level string and abort the caller's actual operation).
+    if level not in _LOG_TO_DB_KNOWN_LEVELS:
+        logger.warning("log_to_db: unrecognized level %r, treating as 'info' (known levels: %s)", level, sorted(_LOG_TO_DB_KNOWN_LEVELS))
+    s = _compose_log_text(message, details, more_details)
+    severity, message = _log_level_to_severity(level, s, message, append_severity)
+    node, application = _resolve_node_and_application(application)
 
-        if level in ["warning", "warn"]:
-            logger.warning(s)
-            severity = cWarning
-            if append_severity:
-                message = "[Warning] " + message
-        elif level in ("error", "critical", "fatal"):
-            logger.error(s)
-            severity = cError
-            if append_severity:
-                message = "[ERROR] " + message
-        else:
-            logger.info(s)
-            severity = cInfo
-
-        node = _facade.node_id
-        if node is None or application is None:
-            if node is None:
-                node = _facade.lookup_in_stack("node_id")
-            if application is None:
-                application = _facade.lookup_in_stack("app_name")
-
-        # Validate table name to prevent SQL injection
-        validate_sql_identifier(table_name)
-        _facade.safe_execute(
-            "insert into " + table_name + "(node,message,details,more_details,severity,application) values (%s,%s,%s,%s,%s,%s)",  # nosec B608 - table_name validated above
-            (node, message, details, more_details, severity, application),
-        )
+    # Validate table name to prevent SQL injection
+    validate_sql_identifier(table_name)
+    _facade.safe_execute(
+        "insert into " + table_name + "(node,message,details,more_details,severity,application) values (%s,%s,%s,%s,%s,%s)",  # nosec B608 - table_name validated above
+        (node, message, details, more_details, severity, application),
+    )
 
 
 def explain_table(table_name: str) -> Optional[object]:

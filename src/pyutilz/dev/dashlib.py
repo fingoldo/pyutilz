@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 session: Any
 try:
@@ -283,6 +283,123 @@ def get_active_tab_var_name(tabsName: str, prefix: str = "tab"):
     return prefix + "s" + tabsName + "ActiveTab"
 
 
+def _resolve_current_user(tabsName: str) -> Tuple[bool, Any]:
+    """Return ``(False, None)`` for an unauthenticated user, else ``(True, user_or_None)``; ``user`` is None when flask_login is unavailable."""
+    # user starts unauthenticated (None), not just unassigned: if flask_login is absent (or
+    # there's no request/session context) the except branch below must still leave a defined,
+    # falsy-role value for the "any role-restricted tab" check further down -- previously `user`
+    # was only ever assigned inside the try block, so that exact (explicitly tolerated) failure
+    # path left it unbound, raising NameError the moment a role-restricted tab was reached.
+    user = None
+    try:
+        from flask_login import current_user
+
+        # `is_authenticated` is read BEFORE `user` is bound: the LocalProxy's own attribute access
+        # raises outside an app/request context, and binding the proxy first put that raise outside
+        # the fallback, so the anonymous view could not render.
+        if not current_user.is_authenticated:
+            logger.debug("create_tabs(%s): current user is not authenticated, nothing to render", tabsName)
+            return False, None
+        user = current_user
+    except Exception as e:
+        # Legitimate best-effort: flask_login may not be installed, or there may be no request/session
+        # context (e.g. called outside a Dash callback); tab rendering should proceed either way.
+        logger.debug("create_tabs: flask_login current_user check skipped (%s)", e)  # nosec B110
+    return True, user
+
+
+def _unpack_tab_extras(tabClassNames: list) -> Tuple[Any, Any, Any]:
+    """Return ``(tabClassName, labelClassName, tabTooltip)`` from the optional trailing tab-spec entries."""
+    tabClassName = tabClassNames[0] if len(tabClassNames) > 0 else None
+    labelClassName = tabClassNames[1] if len(tabClassNames) > 1 else None
+    tabTooltip = tabClassNames[2] if len(tabClassNames) > 2 else None
+    return tabClassName, labelClassName, tabTooltip
+
+
+def _build_tab_entries(
+    tabsList: list,
+    user: Any,
+    content: str,
+    prefix: str,
+    roles_separator: str,
+    activeLabelClassName: Optional[str],
+    active_tab: str,
+) -> Tuple[list, list]:
+    """Build the ``dbc.Tab`` headers and tooltips for every tab in ``tabsList`` the current user may see."""
+    import dash_bootstrap_components as dbc
+
+    tabs = []
+    tooltips = []
+    for tab in tabsList:
+        tabUsers = None
+        tabLabel, tabId, tabUsers, *tabClassNames = tab
+        tabClassName, labelClassName, tabTooltip = _unpack_tab_extras(tabClassNames) if tabClassNames else (None, None, None)
+        if tabId is None:
+            tabId = tabLabel
+        if tabLabel is None:
+            tabLabel = tabId
+        if isinstance(tabUsers, str):
+            tabUsers = tabUsers.split(roles_separator)
+
+        if (tabUsers is None) or (user is not None and user.role in tabUsers):
+
+            logger.debug("tabLabel=%s, tabId=%s, tabUsers=%s", tabLabel, tabId, tabUsers)
+
+            tabs.append(
+                dbc.Tab(
+                    content,
+                    label=tabLabel,
+                    tab_id=prefix + tabId,
+                    tabClassName=tabClassName,
+                    # `labelClassName or ""`: an absent value was interpolated straight into the
+                    # attribute, emitting the literal CSS class "None " on every such tab.
+                    labelClassName=f"{labelClassName or ''} {activeLabelClassName if prefix+tabId==active_tab and activeLabelClassName else ''}".strip(),
+                )
+            )
+            if tabTooltip:
+                tooltips.append(dbc.Tooltip(tabTooltip, target=prefix + tabId))
+    return tabs, tooltips
+
+
+def _assemble_tabs(
+    tabsName: str,
+    tabs: list,
+    tooltips: list,
+    draw_tab_content_function,
+    active_tab: str,
+    prefix: str,
+    tabsClassName: Optional[str],
+    contentClassName: Optional[str],
+    use_cardstyle: bool,
+    show_loading: bool,
+) -> Any:
+    """Wrap the tab headers and the active tab's body (optionally in a loading overlay) into the returned container."""
+    from dash import html, dcc
+    from dash.development.base_component import Component
+    import dash_bootstrap_components as dbc
+
+    header = dbc.Tabs(tabs, id=prefix + "s" + tabsName, active_tab=active_tab, className=tabsClassName)  # , card=use_cardstyle : deprecated
+    content_div = html.Div(draw_tab_content_function(active_tab), id=prefix + "s" + tabsName + "Content")
+    # 2026-08-25: the tab HEADER switches the instant it is clicked, because that is pure
+    # client-side state, while the body waits on the callback -- which can be seconds when a tab
+    # queries a large database. The user is shown a tab that has visibly switched while still
+    # displaying the PREVIOUS tab's content, which reads as "this is the new tab and it looks
+    # like the old one" rather than "still loading".
+    #
+    # dcc.Loading must WRAP the component whose children the callback replaces, so it goes here
+    # rather than around the returned content -- by the time the content exists, the wait is over.
+    #
+    # delay_show suppresses the spinner for callbacks that finish quickly, so tabs that are
+    # already fast do not gain a distracting flash.
+    body: Component = dcc.Loading(content_div, delay_show=250, overlay_style={"visibility": "visible", "opacity": 0.45}) if show_loading else content_div
+    if use_cardstyle:
+        data = dbc.Card([dbc.CardHeader(header, className="pt-0"), dbc.CardBody(body, className="px-2 py-0")], className="p-0")
+    else:
+        data = [header, body]
+    data = [*data, *tooltips] if isinstance(data, list) else [data, *tooltips]
+    return dbc.Container(data, fluid=True, className=contentClassName)
+
+
 def create_tabs(
     tabsName: str,
     tabsList: list,
@@ -311,9 +428,6 @@ def create_tabs(
         authenticated, or no tab survived the per-tab role filter.
     """
     from flask import session
-    from dash import html, dcc
-    from dash.development.base_component import Component
-    import dash_bootstrap_components as dbc
 
     if not tabsList:
         # tabsList[0] below is unguarded; an empty list raised IndexError at render time instead of
@@ -321,26 +435,9 @@ def create_tabs(
         logger.debug("create_tabs(%s): empty tabsList, nothing to render", tabsName)
         return None
     # print('In create_tabs of %s' % tabsName)
-    # user starts unauthenticated (None), not just unassigned: if flask_login is absent (or
-    # there's no request/session context) the except branch below must still leave a defined,
-    # falsy-role value for the "any role-restricted tab" check further down -- previously `user`
-    # was only ever assigned inside the try block, so that exact (explicitly tolerated) failure
-    # path left it unbound, raising NameError the moment a role-restricted tab was reached.
-    user = None
-    try:
-        from flask_login import current_user
-
-        # `is_authenticated` is read BEFORE `user` is bound: the LocalProxy's own attribute access
-        # raises outside an app/request context, and binding the proxy first put that raise outside
-        # the fallback, so the anonymous view could not render.
-        if not current_user.is_authenticated:
-            logger.debug("create_tabs(%s): current user is not authenticated, nothing to render", tabsName)
-            return None
-        user = current_user
-    except Exception as e:
-        # Legitimate best-effort: flask_login may not be installed, or there may be no request/session
-        # context (e.g. called outside a Dash callback); tab rendering should proceed either way.
-        logger.debug("create_tabs: flask_login current_user check skipped (%s)", e)  # nosec B110
+    authenticated, user = _resolve_current_user(tabsName)
+    if not authenticated:
+        return None
 
     varName = get_active_tab_var_name(tabsName, prefix=prefix)
 
@@ -352,65 +449,8 @@ def create_tabs(
         session[varName] = prefix + (tabsList[0][1] or tabsList[0][0])
 
     active_tab = session[varName]
-    tabs = []
-    tooltips = []
-    for tab in tabsList:
-        tabClassName, labelClassName, tabTooltip = None, None, None
-        tabUsers = None
-        tabLabel, tabId, tabUsers, *tabClassNames = tab
-
-        if tabClassNames:
-            if len(tabClassNames) > 0:
-                tabClassName = tabClassNames[0]
-            if len(tabClassNames) > 1:
-                labelClassName = tabClassNames[1]
-            if len(tabClassNames) > 2:
-                tabTooltip = tabClassNames[2]
-        if tabId is None:
-            tabId = tabLabel
-        if tabLabel is None:
-            tabLabel = tabId
-        if isinstance(tabUsers, str):
-            tabUsers = tabUsers.split(roles_separator)
-
-        if (tabUsers is None) or (user is not None and user.role in tabUsers):
-
-            logger.debug("tabLabel=%s, tabId=%s, tabUsers=%s", tabLabel, tabId, tabUsers)
-
-            tabs.append(
-                dbc.Tab(
-                    content,
-                    label=tabLabel,
-                    tab_id=prefix + tabId,
-                    tabClassName=tabClassName,
-                    # `labelClassName or ""`: an absent value was interpolated straight into the
-                    # attribute, emitting the literal CSS class "None " on every such tab.
-                    labelClassName=f"{labelClassName or ''} {activeLabelClassName if prefix+tabId==active_tab and activeLabelClassName else ''}".strip(),
-                )
-            )
-            if tabTooltip:
-                tooltips.append(dbc.Tooltip(tabTooltip, target=prefix + tabId))
-
+    tabs, tooltips = _build_tab_entries(tabsList, user, content, prefix, roles_separator, activeLabelClassName, active_tab)
     if len(tabs) > 0:
-        header = dbc.Tabs(tabs, id=prefix + "s" + tabsName, active_tab=active_tab, className=tabsClassName)  # , card=use_cardstyle : deprecated
-        content_div = html.Div(draw_tab_content_function(active_tab), id=prefix + "s" + tabsName + "Content")
-        # 2026-08-25: the tab HEADER switches the instant it is clicked, because that is pure
-        # client-side state, while the body waits on the callback -- which can be seconds when a tab
-        # queries a large database. The user is shown a tab that has visibly switched while still
-        # displaying the PREVIOUS tab's content, which reads as "this is the new tab and it looks
-        # like the old one" rather than "still loading".
-        #
-        # dcc.Loading must WRAP the component whose children the callback replaces, so it goes here
-        # rather than around the returned content -- by the time the content exists, the wait is over.
-        #
-        # delay_show suppresses the spinner for callbacks that finish quickly, so tabs that are
-        # already fast do not gain a distracting flash.
-        body: Component = dcc.Loading(content_div, delay_show=250, overlay_style={"visibility": "visible", "opacity": 0.45}) if show_loading else content_div
-        if use_cardstyle:
-            data = dbc.Card([dbc.CardHeader(header, className="pt-0"), dbc.CardBody(body, className="px-2 py-0")], className="p-0")
-        else:
-            data = [header, body]
-        data = [*data, *tooltips] if isinstance(data, list) else [data, *tooltips]
-        return dbc.Container(data, fluid=True, className=contentClassName)
+        return _assemble_tabs(tabsName, tabs, tooltips, draw_tab_content_function, active_tab, prefix, tabsClassName, contentClassName, use_cardstyle, show_loading)
     logger.debug("create_tabs(%s): no tab passed the role filter for the current user, nothing to render", tabsName)
     return None

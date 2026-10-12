@@ -41,7 +41,7 @@ import textwrap
 import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 # ``match`` statements exist from 3.10; on older interpreters there is no such node to meet.
 _MATCH: "tuple[type, ...]" = (ast.Match,) if hasattr(ast, "Match") else ()
@@ -339,21 +339,18 @@ def _module_names(tree: ast.Module) -> set:
     return names
 
 
-def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> ExtractionPlan:
-    """Plan lifting the statements of ``func`` spanning lines ``[start, end]`` (one body, whole statements) into a helper."""
-    path = Path(path)
-    src_text = path.read_text(encoding="utf-8")
-    tree = ast.parse(src_text, filename=str(path))
-    fn = _find_function(tree, func)
-    stmts, in_loop = _container(fn, start, end)
-    plan = ExtractionPlan(path=path, func=func, start=start, end=end, in_loop=in_loop)
-    if stmts is None:
-        plan.problems.append(f"lines {start}-{end} are not whole statements of one body of {func}")
-        return plan
-    block = [s for s in stmts if s.lineno >= start and s.end_lineno <= end]
-    params = _Events._params(fn.args)
-    events = name_events(fn.body)
-    block_ev = name_events(block)
+def _plan_block_io(
+    plan: ExtractionPlan,
+    fn: Any,
+    block: list,
+    events: list,
+    block_ev: list,
+    params: set,
+    start: int,
+    end: int,
+    in_loop: bool,
+) -> None:
+    """Fill ``plan.inputs``, ``plan.outputs`` and ``plan.problems`` for the block's reads and bindings."""
     outside = [e for e in events if not (start <= e[0] <= end)]
     before = outside if in_loop else [e for e in outside if e[0] < start]
     after = outside if in_loop else [e for e in outside if e[0] > end]
@@ -379,23 +376,35 @@ def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> 
     if risky:
         plan.problems.append(f"new names bound only on some paths and read later: {risky}")
     plan.problems += _control_problems(block)
-    module = _module_names(tree)
-    fn_bound = {n for _, k, n in events if k == "store"} | params
-    loads = {n for _, k, n in block_ev if k == "load"}
-    plan.module_names = sorted(n for n in loads - bound - set(plan.inputs) if n in module and not hasattr(builtins, n))
-    # An input the function binds ONLY through a function-level (lazy) import is re-imported inside the helper, lazily,
-    # instead of becoming a parameter: the lazy import usually exists to break a cycle, and a helper should get its own.
-    imports: dict = {}
-    other_binding: set = set()
-    guarded: set = set()  # imports inside ``try:`` (optional dependencies) stay parameters: re-importing them unguarded could raise
+
+
+def _guarded_import_ids(fn: ast.AST) -> set:
+    """ids of every import node nested under a ``try:`` body (optional dependencies)."""
+    guarded: set = set()
     for node in ast.walk(fn):
         if isinstance(node, ast.Try):
             for sub in node.body:
                 guarded |= {id(n) for n in ast.walk(sub) if isinstance(n, (ast.Import, ast.ImportFrom))}
+    return guarded
+
+
+def _function_imports(fn: ast.AST, src_text: str, guarded: set) -> dict:
+    """Map each unguarded name bound by an import inside ``fn`` to the source text of its first such import."""
+    imports: dict = {}
     for st in ast.walk(fn):
         if isinstance(st, (ast.Import, ast.ImportFrom)) and id(st) not in guarded:
             for alias in st.names:
                 imports.setdefault((alias.asname or alias.name).split(".")[0], ast.get_source_segment(src_text, st))
+    return imports
+
+
+def _move_lazy_imports_out_of_inputs(plan: ExtractionPlan, fn: ast.AST, src_text: str, params: set) -> dict:
+    """Drop function-level (lazy) imports from ``plan.inputs`` into ``plan.lazy_imports``; returns the import map."""
+    # An input the function binds ONLY through a function-level (lazy) import is re-imported inside the helper, lazily,
+    # instead of becoming a parameter: the lazy import usually exists to break a cycle, and a helper should get its own.
+    # imports inside ``try:`` (optional dependencies) stay parameters: re-importing them unguarded could raise
+    imports = _function_imports(fn, src_text, _guarded_import_ids(fn))
+    other_binding: set = set()
     for node in ast.walk(fn):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             other_binding.add(node.id)
@@ -404,6 +413,31 @@ def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> 
             plan.inputs.remove(n)
             if imports[n] not in plan.lazy_imports:
                 plan.lazy_imports.append(imports[n])
+    return imports
+
+
+def plan_extraction(path: Union[str, Path], func: str, start: int, end: int) -> ExtractionPlan:
+    """Plan lifting the statements of ``func`` spanning lines ``[start, end]`` (one body, whole statements) into a helper."""
+    path = Path(path)
+    src_text = path.read_text(encoding="utf-8")
+    tree = ast.parse(src_text, filename=str(path))
+    fn = _find_function(tree, func)
+    stmts, in_loop = _container(fn, start, end)
+    plan = ExtractionPlan(path=path, func=func, start=start, end=end, in_loop=in_loop)
+    if stmts is None:
+        plan.problems.append(f"lines {start}-{end} are not whole statements of one body of {func}")
+        return plan
+    block = [s for s in stmts if s.lineno >= start and s.end_lineno <= end]
+    params = _Events._params(fn.args)
+    events = name_events(fn.body)
+    block_ev = name_events(block)
+    _plan_block_io(plan, fn, block, events, block_ev, params, start, end, in_loop)
+    module = _module_names(tree)
+    bound = {n for _, k, n in block_ev if k == "store"}
+    loads = {n for _, k, n in block_ev if k == "load"}
+    plan.module_names = sorted(n for n in loads - bound - set(plan.inputs) if n in module and not hasattr(builtins, n))
+    imports = _move_lazy_imports_out_of_inputs(plan, fn, src_text, params)
+    fn_bound = {n for _, k, n in events if k == "store"} | params
     unknown = sorted(n for n in loads - bound - set(plan.inputs) if n in fn_bound and n not in module and n not in imports)
     if unknown:
         plan.problems.append(f"reads names of {func} not available at the block: {unknown}")

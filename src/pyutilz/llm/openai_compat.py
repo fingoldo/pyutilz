@@ -333,6 +333,93 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
             except Exception as exc:
                 logger.debug("Closing a per-loop HTTP client failed: %s", exc)
 
+    async def _stream_attempt(self, body: dict[str, Any], attempt_state: dict[str, Any], box: dict[str, Any]):
+        """Open one streaming request and yield its content deltas; usage and streamed text are left in ``box``."""
+        async with self.semaphore:
+            # The derived timeout, as on the buffered path: without it the stream inherits the
+            # client's 240 s and dies mid-thought (glm-5.3-flash thinks 393 s before its first
+            # content byte, 2026-09-13). See `_timeout_for` -- written for this same model.
+            async with self._client.stream(
+                "POST", "/chat/completions", json=body, timeout=self._timeout_for(body),
+            ) as resp:
+                self._capture_rate_limit_headers(resp.headers)
+                aread = getattr(resp, "aread", None)
+                if resp.status_code >= 400 and aread is not None:
+                    # An error body is small; reading it lets `_handle_special_status` classify the error by
+                    # its body (OpenAI's exhausted-credit 429) exactly as on the buffered path.
+                    await aread()
+                self._handle_special_status(resp)
+                resp.raise_for_status()
+                attempt_state["response_started"] = True
+                first_chunk: dict[str, Any] | None = None
+                last_chunk: dict[str, Any] | None = None
+                # Truncation / tool-call / citation state, previously never written on the
+                # streaming path at all: _reset_per_call_state() zeroed them at the top and
+                # nothing here filled them in, so a stream cut off by max_tokens returned
+                # normally with _last_finish_reason None and the documented "double
+                # max_tokens and re-issue" contract never engaged, while a tool-call-only
+                # reply reported last_tool_calls == [] as fact (2026-09-03 audit F11).
+                streamed_text: list[str] = box["streamed_text"]
+                tool_call_fragments: dict[int, dict[str, Any]] = {}
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_part = line[5:].strip()
+                    if data_part == "[DONE]":
+                        break
+                    try:
+                        chunk = _json_loads(data_part)
+                    except _JSONDecodeError:
+                        continue
+                    if first_chunk is None:
+                        first_chunk = chunk
+                        # Now, not only after the loop: a stream dying mid-answer never gets there, and without its id its cost reads 0.
+                        self._track_provider_specific_response(chunk)
+                    # `_apply_stream_chunk` returns None for a chunk without choices, so an error chunk used to be
+                    # skipped: the stream ended empty or cut short with no exception.
+                    self._raise_for_error_in_body(chunk, resp.request, streamed_text)
+                    last_chunk = chunk
+                    self._note_stream_chunk(attempt_state, chunk, first=chunk is first_chunk)
+                    # Usage block tends to arrive on a chunk with empty
+                    # choices AFTER the last content delta; track it
+                    # whenever it's seen.
+                    usage = chunk.get("usage")
+                    if usage:
+                        box["latest_usage"] = usage
+                    content = self._apply_stream_chunk(chunk, tool_call_fragments)
+                    if content:
+                        streamed_text.append(content)
+                        yield content
+                # Response-level metadata (id, model, provider) usually rides on the FIRST
+                # chunk; some upstreams send it on the last. BOTH are consulted now --
+                # passing only the last chunk (typically the usage-only trailer, whose
+                # choices are empty) left last_generation_id None after every streamed
+                # call, so the fetch_generation_stats() reconciliation OpenRouter's own
+                # docstring recommends for streams raised ValueError (audit F36).
+                self._finish_stream_metadata(first_chunk, last_chunk, tool_call_fragments)
+
+    def _finish_stream_metadata(self, first_chunk: dict[str, Any] | None, last_chunk: dict[str, Any] | None, tool_call_fragments: dict[int, dict[str, Any]]) -> None:
+        """Record response metadata from the first and last chunks, and the assembled tool calls, once a stream ends."""
+        for meta_chunk in (first_chunk, last_chunk):
+            if meta_chunk is not None:
+                self._track_provider_specific_response(meta_chunk)
+        if tool_call_fragments:
+            self.last_tool_calls = [tool_call_fragments[i] for i in sorted(tool_call_fragments)]
+
+    @staticmethod
+    def _stream_retry_backoff(exc: BaseException, attempt: int) -> float:
+        """Seconds to wait before re-opening a failed stream: exponential backoff with jitter, floored by any Retry-After."""
+        # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
+        # (multiplier=2, min=5, max=300) plus random jitter [0,5).
+        backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
+        # Honour a server-supplied Retry-After when present on a 429,
+        # taking the larger of (server hint, exponential floor) so we
+        # never retry sooner than the server asked and re-trigger the
+        # rate limit. This is the one live caller of parse_retry_after.
+        resp_obj = getattr(exc, "response", None)
+        server_hint = parse_retry_after(resp_obj)
+        return float(max(backoff, server_hint) if server_hint is not None else backoff)
+
     async def generate_stream(
         self,
         prompt: str,
@@ -388,82 +475,23 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         usage_recorded = False
         while True:
             attempt += 1
-            latest_usage: dict[str, Any] | None = None
             # Any chunk of this attempt that carried a choice (a reasoning delta included) means the upstream was generating,
             # and generating is billed: such a stream is never re-opened. A stream dropped mid-reasoning used to be retried up
             # to MAX_RETRY_ATTEMPTS times, each attempt paid for and none recorded (glossum refsuite audit O-P0-4).
             attempt_state: dict[str, Any] = {"generation_id": None, "response_started": False, "generated_chunks": 0}
+            box: dict[str, Any] = {"latest_usage": None, "streamed_text": []}
             try:
-                async with self.semaphore:
-                    # The derived timeout, as on the buffered path: without it the stream inherits the
-                    # client's 240 s and dies mid-thought (glm-5.3-flash thinks 393 s before its first
-                    # content byte, 2026-09-13). See `_timeout_for` -- written for this same model.
-                    async with self._client.stream(
-                        "POST", "/chat/completions", json=body, timeout=self._timeout_for(body),
-                    ) as resp:
-                        self._capture_rate_limit_headers(resp.headers)
-                        aread = getattr(resp, "aread", None)
-                        if resp.status_code >= 400 and aread is not None:
-                            # An error body is small; reading it lets `_handle_special_status` classify the error by
-                            # its body (OpenAI's exhausted-credit 429) exactly as on the buffered path.
-                            await aread()
-                        self._handle_special_status(resp)
-                        resp.raise_for_status()
-                        attempt_state["response_started"] = True
-                        first_chunk: dict[str, Any] | None = None
-                        last_chunk: dict[str, Any] | None = None
-                        # Truncation / tool-call / citation state, previously never written on the
-                        # streaming path at all: _reset_per_call_state() zeroed them at the top and
-                        # nothing here filled them in, so a stream cut off by max_tokens returned
-                        # normally with _last_finish_reason None and the documented "double
-                        # max_tokens and re-issue" contract never engaged, while a tool-call-only
-                        # reply reported last_tool_calls == [] as fact (2026-09-03 audit F11).
-                        streamed_text: list[str] = []
-                        tool_call_fragments: dict[int, dict[str, Any]] = {}
-                        async for line in resp.aiter_lines():
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data_part = line[5:].strip()
-                            if data_part == "[DONE]":
-                                break
-                            try:
-                                chunk = _json_loads(data_part)
-                            except _JSONDecodeError:
-                                continue
-                            if first_chunk is None:
-                                first_chunk = chunk
-                                # Now, not only after the loop: a stream dying mid-answer never gets there, and without its id its cost reads 0.
-                                self._track_provider_specific_response(chunk)
-                            # `_apply_stream_chunk` returns None for a chunk without choices, so an error chunk used to be
-                            # skipped: the stream ended empty or cut short with no exception.
-                            self._raise_for_error_in_body(chunk, resp.request, streamed_text)
-                            last_chunk = chunk
-                            self._note_stream_chunk(attempt_state, chunk, first=chunk is first_chunk)
-                            # Usage block tends to arrive on a chunk with empty
-                            # choices AFTER the last content delta; track it
-                            # whenever it's seen.
-                            usage = chunk.get("usage")
-                            if usage:
-                                latest_usage = usage
-                            content = self._apply_stream_chunk(chunk, tool_call_fragments)
-                            if content:
-                                streamed_text.append(content)
-                                yield content
-                        # Response-level metadata (id, model, provider) usually rides on the FIRST
-                        # chunk; some upstreams send it on the last. BOTH are consulted now --
-                        # passing only the last chunk (typically the usage-only trailer, whose
-                        # choices are empty) left last_generation_id None after every streamed
-                        # call, so the fetch_generation_stats() reconciliation OpenRouter's own
-                        # docstring recommends for streams raised ValueError (audit F36).
-                        for meta_chunk in (first_chunk, last_chunk):
-                            if meta_chunk is not None:
-                                self._track_provider_specific_response(meta_chunk)
-                        if tool_call_fragments:
-                            self.last_tool_calls = [tool_call_fragments[i] for i in sorted(tool_call_fragments)]
+                stream = self._stream_attempt(body, attempt_state, box)
+                try:
+                    async for content in stream:
+                        yield content
+                finally:
+                    await stream.aclose()
+                latest_usage = box["latest_usage"]
                 if latest_usage is not None and not usage_recorded:
                     usage_recorded = True
                     self._track_streaming_usage(latest_usage)
-                self._raise_for_stream_finish("".join(streamed_text))
+                self._raise_for_stream_finish("".join(box["streamed_text"]))
                 return
             except BaseException as exc:
                 # Only the stream-open / pre-first-token phase is safely
@@ -489,16 +517,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
                     raise
                 if MAX_RETRY_ATTEMPTS != 0 and attempt >= MAX_RETRY_ATTEMPTS:
                     raise
-                # Mirror _retry.RETRY_WAIT: exponential 5->10->20->...->300s
-                # (multiplier=2, min=5, max=300) plus random jitter [0,5).
-                backoff = min(300.0, max(5.0, 2.0 * (2 ** (attempt - 1)))) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
-                # Honour a server-supplied Retry-After when present on a 429,
-                # taking the larger of (server hint, exponential floor) so we
-                # never retry sooner than the server asked and re-trigger the
-                # rate limit. This is the one live caller of parse_retry_after.
-                resp_obj = getattr(exc, "response", None)
-                server_hint = parse_retry_after(resp_obj)
-                wait_s = max(backoff, server_hint) if server_hint is not None else backoff
+                wait_s = self._stream_retry_backoff(exc, attempt)
                 logger.warning(
                     "Streaming attempt %d failed (%s: %s), retrying in %.0fs...",
                     attempt, type(exc).__name__, str(exc)[:200], wait_s,

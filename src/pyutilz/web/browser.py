@@ -264,44 +264,123 @@ def _should_disable_sandbox() -> bool:
     return False
 
 
-def start_selenium() -> "WebDriver":
-    """Launches a Chrome Selenium webdriver (undetected or standard), applying module-level config (proxy, user agent, data dir), and stores it in the module-level `browser`."""
+def _remove_if_exists(path: str) -> None:
+    """Delete the file at ``path`` if it still exists."""
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def _add_authenticated_proxy(options: Any, proxy_server: dict) -> str:
+    """Write a proxy-auth Chrome extension zip for ``proxy_server`` and add it to ``options``; returns the zip path."""
     import zipfile
     import tempfile
     import atexit
 
+    manifest_json = """
+    {
+        "version": "1.0.0",
+        "manifest_version": 2,
+        "name": "Chrome Proxy",
+        "permissions": [
+            "proxy",
+            "tabs",
+            "unlimitedStorage",
+            "storage",
+            "<all_urls>",
+            "webRequest",
+            "webRequestBlocking"
+        ],
+        "background": {
+            "scripts": ["background.js"]
+        },
+        "minimum_chrome_version":"22.0.0"
+    }
+    """
+
+    background_js = _build_proxy_extension_js(proxy_server)
+    # Regression fix: previously written to a hardcoded "proxy_auth_plugin.zip" in the
+    # process's current working directory, with no cleanup anywhere in this file -- the
+    # plaintext proxy password (embedded in background.js above) sat on disk
+    # indefinitely in a commonly backed-up / accidentally `git add .`-ed location,
+    # readable by any other local process/user on a shared host, and two concurrent
+    # scraping workers (this package explicitly supports parallelism) could race on the
+    # same filename. tempfile.mkstemp gives an unpredictable path with restrictive
+    # default permissions (further tightened via chmod below); atexit is a defensive
+    # backstop in case the immediate cleanup below is ever skipped (e.g. an exception
+    # between here and webdriver.Chrome() starting) -- the PRIMARY cleanup is the
+    # explicit os.remove() right after Chrome has loaded the extension, a few lines down,
+    # since relying on atexit alone would leave the file on disk for a long-running
+    # scraper's entire process lifetime.
+    plugin_fd, pluginfile = tempfile.mkstemp(suffix=".zip", prefix="pyutilz_proxy_auth_")
+    os.close(plugin_fd)
+    os.chmod(pluginfile, 0o600)
+    atexit.register(_remove_if_exists, pluginfile)
+
+    with zipfile.ZipFile(pluginfile, "w") as zp:
+        zp.writestr("manifest.json", manifest_json)
+        zp.writestr("background.js", background_js)
+    options.add_extension(pluginfile)
+    return pluginfile
+
+
+def _add_unauthenticated_proxy(options: Any, proxy_server: dict) -> None:
+    """Add a plain ``--proxy-server`` argument for an unauthenticated ``proxy_server``."""
+    if not proxy_server.get("PROXY_HOST") or not proxy_server.get("PROXY_PORT"):
+        raise ValueError(f"start_selenium: proxy_server is missing PROXY_HOST/PROXY_PORT: {proxy_server!r}")
+    options.add_argument(f"--proxy-server={proxy_server['PROXY_HOST']}:{proxy_server['PROXY_PORT']}")  # example: "localhost:8118"
+
+
+def _configure_proxy(options: Any, proxy_server: dict) -> Optional[str]:
+    """Apply ``proxy_server`` to ``options``; returns the temporary proxy-auth zip path, or None if none was written."""
+    # Truthiness, not len(): a present-but-None PROXY_PASS (the JSON way of saying
+    # "unauthenticated proxy") made len() raise TypeError.
+    if proxy_server.get("PROXY_PASS"):
+        return _add_authenticated_proxy(options, proxy_server)
+    _add_unauthenticated_proxy(options, proxy_server)
+    return None
+
+
+def _create_chrome_options(kwargs: Dict[str, Any]) -> Tuple[Any, Any]:
+    """Build the driver module and ChromeOptions for the configured mode, filling ``kwargs`` with driver arguments."""
+    if not undetectable:
+        logger.info("Standard mode")
+        from selenium import webdriver
+
+        return webdriver, webdriver.ChromeOptions()  # webdriver.chrome.options.Options()
+
+    logger.info("Undetectable mode")
+    try:
+        import undetected_chromedriver as uc_driver
+        try:
+            uc_driver.install()
+        except Exception as e:  # nosec B110 - undetected_chromedriver.install() is a best-effort driver-binary fetch; if it fails (e.g. already installed, offline), webdriver.Chrome() below will still attempt to use whatever driver is on PATH
+            logger.debug("undetected_chromedriver install() failed, continuing: %s", e)
+        options = uc_driver.ChromeOptions()
+        kwargs["version_main"] = version_main
+        kwargs["use_subprocess"] = use_subprocess
+
+        if find_executable:
+            try:
+                uc_driver.find_chrome_executable = find_chrome_executable
+            except Exception as e:  # nosec B110 - optional monkeypatch of the driver's executable-finder only applied when find_executable=True; if the attribute assignment fails, the driver's own default lookup still applies
+                logger.debug("Could not patch find_chrome_executable, using driver default: %s", e)
+        return uc_driver, options
+    except Exception as e:
+        logger.exception(e)
+        from selenium import webdriver as selenium_driver
+
+        return selenium_driver, selenium_driver.ChromeOptions()
+
+
+def start_selenium() -> "WebDriver":
+    """Launches a Chrome Selenium webdriver (undetected or standard), applying module-level config (proxy, user agent, data dir), and stores it in the module-level `browser`."""
     global browser
 
     # if "PROGRAMFILES(X86)" not in os.environ: os.environ["PROGRAMFILES(X86)"] = ""
 
     logger.info("Starting Selenium for %s", target)
     kwargs: Dict[str, Any] = {}
-    if undetectable:
-        logger.info("Undetectable mode")
-        try:
-            import undetected_chromedriver as webdriver
-            try:
-                webdriver.install()
-            except Exception as e:  # nosec B110 - undetected_chromedriver.install() is a best-effort driver-binary fetch; if it fails (e.g. already installed, offline), webdriver.Chrome() below will still attempt to use whatever driver is on PATH
-                logger.debug("undetected_chromedriver install() failed, continuing: %s", e)
-            options = webdriver.ChromeOptions()
-            kwargs["version_main"] = version_main
-            kwargs["use_subprocess"] = use_subprocess
-
-            if find_executable:
-                try:
-                    webdriver.find_chrome_executable = find_chrome_executable
-                except Exception as e:  # nosec B110 - optional monkeypatch of the driver's executable-finder only applied when find_executable=True; if the attribute assignment fails, the driver's own default lookup still applies
-                    logger.debug("Could not patch find_chrome_executable, using driver default: %s", e)
-        except Exception as e:
-            logger.exception(e)
-            from selenium import webdriver
-            options = webdriver.ChromeOptions()
-    else:
-        logger.info("Standard mode")
-        from selenium import webdriver
-
-        options = webdriver.ChromeOptions()  # webdriver.chrome.options.Options()
+    webdriver, options = _create_chrome_options(kwargs)
 
     if user_agent:
         options.add_argument(f"--user-agent={user_agent}")
@@ -309,73 +388,7 @@ def start_selenium() -> "WebDriver":
     if data_dir:
         options.add_argument(f"--user-data-dir={data_dir}")
 
-    if proxy_server:
-        # Truthiness, not len(): a present-but-None PROXY_PASS (the JSON way of saying
-        # "unauthenticated proxy") made len() raise TypeError.
-        if proxy_server.get("PROXY_PASS"):
-            # Validated up front (matches the unauthenticated branch's guard below) -- bare
-            # proxy_server["PROXY_HOST"]/["PROXY_PORT"]/["PROXY_USER"] indexing a few lines down
-            # would otherwise raise an unguarded KeyError on a missing key instead of this clear
-            # error naming exactly what's missing.
-            missing = [k for k in ("PROXY_HOST", "PROXY_PORT", "PROXY_USER") if not proxy_server.get(k)]
-            if missing:
-                raise ValueError(f"start_selenium: proxy_server is missing {missing}: {proxy_server!r}")
-            manifest_json = """
-            {
-                "version": "1.0.0",
-                "manifest_version": 2,
-                "name": "Chrome Proxy",
-                "permissions": [
-                    "proxy",
-                    "tabs",
-                    "unlimitedStorage",
-                    "storage",
-                    "<all_urls>",
-                    "webRequest",
-                    "webRequestBlocking"
-                ],
-                "background": {
-                    "scripts": ["background.js"]
-                },
-                "minimum_chrome_version":"22.0.0"
-            }
-            """
-
-            background_js = _build_proxy_extension_js(proxy_server)
-            # Regression fix: previously written to a hardcoded "proxy_auth_plugin.zip" in the
-            # process's current working directory, with no cleanup anywhere in this file -- the
-            # plaintext proxy password (embedded in background.js above) sat on disk
-            # indefinitely in a commonly backed-up / accidentally `git add .`-ed location,
-            # readable by any other local process/user on a shared host, and two concurrent
-            # scraping workers (this package explicitly supports parallelism) could race on the
-            # same filename. tempfile.mkstemp gives an unpredictable path with restrictive
-            # default permissions (further tightened via chmod below); atexit is a defensive
-            # backstop in case the immediate cleanup below is ever skipped (e.g. an exception
-            # between here and webdriver.Chrome() starting) -- the PRIMARY cleanup is the
-            # explicit os.remove() right after Chrome has loaded the extension, a few lines down,
-            # since relying on atexit alone would leave the file on disk for a long-running
-            # scraper's entire process lifetime.
-            plugin_fd, pluginfile = tempfile.mkstemp(suffix=".zip", prefix="pyutilz_proxy_auth_")
-            os.close(plugin_fd)
-            os.chmod(pluginfile, 0o600)
-            def _remove_plugin_file(p: str = pluginfile) -> None:
-                """Delete the temp proxy-auth extension zip at interpreter exit, if it still exists."""
-                if os.path.exists(p):
-                    os.remove(p)
-
-            atexit.register(_remove_plugin_file)
-
-            with zipfile.ZipFile(pluginfile, "w") as zp:
-                zp.writestr("manifest.json", manifest_json)
-                zp.writestr("background.js", background_js)
-            options.add_extension(pluginfile)
-        else:
-            pluginfile = None
-            if not proxy_server.get("PROXY_HOST") or not proxy_server.get("PROXY_PORT"):
-                raise ValueError(f"start_selenium: proxy_server is missing PROXY_HOST/PROXY_PORT: {proxy_server!r}")
-            options.add_argument(f"--proxy-server={proxy_server['PROXY_HOST']}:{proxy_server['PROXY_PORT']}")  # example: "localhost:8118"
-    else:
-        pluginfile = None
+    pluginfile = _configure_proxy(options, proxy_server) if proxy_server else None
 
     if _should_disable_sandbox():
         options.add_argument("--no-sandbox")

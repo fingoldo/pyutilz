@@ -40,6 +40,71 @@ def sub_elem(parent: Any, tag: str, text: Optional[str] = None, attribs: Optiona
     return new_elem
 
 
+def _within_recursion_limit(recursion_level: int, max_recursion_level: Optional[int]) -> bool:
+    """Return True while the nesting depth has not exceeded ``max_recursion_level`` (None means unlimited)."""
+    return max_recursion_level is None or max_recursion_level >= recursion_level
+
+
+def _jsonize_mapping(obj: dict, exclude: list, strip: Optional[bool], skip_functions: Optional[bool], recursion_level: int, max_recursion_level: Optional[int]) -> dict:
+    """Recursively jsonize every value of a plain dict, keeping its keys."""
+    res: dict = {}
+    for key, value in obj.items():
+        res[key] = jsonize_atrtributes(
+            obj=value,
+            exclude=exclude,
+            strip=strip,
+            skip_functions=skip_functions,
+            recursion_level=recursion_level + 1,
+            max_recursion_level=max_recursion_level,
+        )
+    return res
+
+
+def _jsonize_sequence(obj: Any, exclude: list, strip: Optional[bool], skip_functions: Optional[bool], recursion_level: int, max_recursion_level: Optional[int]) -> list:
+    """Recursively jsonize every element of a list, set or tuple, returning a list."""
+    return [
+        jsonize_atrtributes(
+            obj=elem,
+            exclude=exclude,
+            strip=strip,
+            skip_functions=skip_functions,
+            recursion_level=recursion_level + 1,
+            max_recursion_level=max_recursion_level,
+        )
+        for elem in obj
+    ]
+
+
+def _jsonize_public_attributes(obj: Any, exclude: list, strip: Optional[bool], skip_functions: Optional[bool], recursion_level: int, max_recursion_level: Optional[int]) -> dict:
+    """Recursively jsonize the public (non-underscore) attributes of an arbitrary object, skipping failures."""
+    res: dict = dict()
+    for attr in dir(obj):
+        if attr in exclude or attr.startswith("_"):
+            continue
+        try:
+            val = getattr(obj, attr)
+            if skip_functions and type(val).__name__ == "builtin_function_or_method":
+                continue
+            res[attr] = jsonize_atrtributes(
+                obj=val,
+                exclude=exclude,
+                strip=strip,
+                skip_functions=skip_functions,
+                recursion_level=recursion_level + 1,
+                max_recursion_level=max_recursion_level,
+            )
+        except Exception as e:
+            # debug, not exception/warning: this runs once per attribute name returned by
+            # dir(obj), recursively over the whole object graph -- an object with a large or
+            # deeply-nested attribute surface (or one whose properties routinely raise, e.g. a
+            # lazy/proxy object) would otherwise emit one full traceback PER attribute, per
+            # nesting level, flooding the log for what is normal, expected, per-attribute
+            # skip-and-continue behavior (see the `continue` right below).
+            logger.debug("Failed to jsonize attribute %r of %r: %s", attr, obj, e)
+            continue
+    return res
+
+
 def jsonize_atrtributes(
     obj: Any,
     exclude: Optional[list] = None,
@@ -59,70 +124,21 @@ def jsonize_atrtributes(
 
     res: Any = None
     if isinstance(obj, str):
-        if strip:
-            res = obj.strip()
-        else:
-            res = obj
+        res = obj.strip() if strip else obj
     elif isinstance(obj, numbers.Number):
         res = obj
     elif type(obj) in (dict,):
-        if max_recursion_level is None or (max_recursion_level is not None and max_recursion_level >= recursion_level):
-            res = {}
-            for key, value in obj.items():
-                res[key] = jsonize_atrtributes(
-                    obj=value,
-                    exclude=exclude,
-                    strip=strip,
-                    skip_functions=skip_functions,
-                    recursion_level=recursion_level + 1,
-                    max_recursion_level=max_recursion_level,
-                )
+        if _within_recursion_limit(recursion_level, max_recursion_level):
+            res = _jsonize_mapping(obj, exclude, strip, skip_functions, recursion_level, max_recursion_level)
         else:
             res = obj
     elif type(obj) in (list, set, tuple):
-        if max_recursion_level is None or (max_recursion_level is not None and max_recursion_level >= recursion_level):
-            res = []
-            for elem in obj:
-                res.append(
-                    jsonize_atrtributes(
-                        obj=elem,
-                        exclude=exclude,
-                        strip=strip,
-                        skip_functions=skip_functions,
-                        recursion_level=recursion_level + 1,
-                        max_recursion_level=max_recursion_level,
-                    )
-                )
+        if _within_recursion_limit(recursion_level, max_recursion_level):
+            res = _jsonize_sequence(obj, exclude, strip, skip_functions, recursion_level, max_recursion_level)
         else:
             res = obj
     else:
-        attribslist = dir(obj)
-        res = dict()
-        for attr in attribslist:
-            if attr not in exclude:
-                if not attr.startswith("_"):
-                    try:
-                        val = getattr(obj, attr)
-                        if skip_functions:
-                            if type(val).__name__ == "builtin_function_or_method":
-                                continue
-                        res[attr] = jsonize_atrtributes(
-                            obj=val,
-                            exclude=exclude,
-                            strip=strip,
-                            skip_functions=skip_functions,
-                            recursion_level=recursion_level + 1,
-                            max_recursion_level=max_recursion_level,
-                        )
-                    except Exception as e:
-                        # debug, not exception/warning: this runs once per attribute name returned by
-                        # dir(obj), recursively over the whole object graph -- an object with a large or
-                        # deeply-nested attribute surface (or one whose properties routinely raise, e.g. a
-                        # lazy/proxy object) would otherwise emit one full traceback PER attribute, per
-                        # nesting level, flooding the log for what is normal, expected, per-attribute
-                        # skip-and-continue behavior (see the `continue` right below).
-                        logger.debug("Failed to jsonize attribute %r of %r: %s", attr, obj, e)
-                        continue
+        res = _jsonize_public_attributes(obj, exclude, strip, skip_functions, recursion_level, max_recursion_level)
     return res  # type: ignore[no-any-return]  # res is genuinely a dict on this path; typed Any to accommodate the str/dict/list branches elsewhere in this function
 
 

@@ -189,6 +189,24 @@ except ImportError:
 _JSON_STEER = "\n\nRespond with valid JSON only. No markdown, no explanation. Start with { and end with }."
 
 
+def _check_attempt_budget(attempt: int, max_attempts: int) -> None:
+    """Raise once ``attempt`` exceeds ``max_attempts`` (0 means unlimited)."""
+    if max_attempts != 0 and attempt > max_attempts:
+        raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
+
+
+def _strip_json_fence(text: str) -> str:
+    """Return the body of a leading ```json fence in ``text`` when one is present, else ``text`` unchanged."""
+    if not text:
+        return text
+    stripped = text.strip()
+    fence_match = re.search(
+        r'```(?:json)?\s*([\s\S]*?)\s*```', stripped,
+    )
+    if fence_match:
+        return fence_match.group(1).strip()
+    return text
+
 class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
     """LLM provider that uses Claude Code for LLM calls (your Max subscription).
 
@@ -378,120 +396,125 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
         timeout_attempts = 0
         while True:
             attempt += 1
-            if max_attempts != 0 and attempt > max_attempts:
-                raise RuntimeError(f"ClaudeCodeProvider: exceeded {max_attempts} retry attempts")
+            _check_attempt_budget(attempt, max_attempts)
             try:
-                if _HAS_SDK:
-                    result = await self._generate_sdk(prompt, system, **transport_kwargs)
-                else:
-                    result = await self._generate_cli(prompt, system, **transport_kwargs)
-                if json_mode and result:
-                    stripped = result.strip()
-                    fence_match = re.search(
-                        r'```(?:json)?\s*([\s\S]*?)\s*```', stripped,
-                    )
-                    if fence_match:
-                        result = fence_match.group(1).strip()
-                # Prefer the SDK's ResultMessage usage / cost over a
-                # tiktoken estimate (wrong tokenizer for Claude). Falls
-                # back to tiktoken on the CLI path or if the SDK didn't
-                # surface a ResultMessage with usage.
-                rm = getattr(self, "_last_result_message", None)
-                rm_usage = getattr(rm, "usage", None) if rm is not None else None
-                if rm_usage is not None:
-                    in_tok = usage_int(rm_usage, "input_tokens")
-                    out_tok = usage_int(rm_usage, "output_tokens")
-                    cache_create = usage_int(rm_usage, "cache_creation_input_tokens")
-                    cache_read = usage_int(rm_usage, "cache_read_input_tokens")
-                    cost = float(getattr(rm, "total_cost_usd", 0.0) or 0.0)
-                    sid = getattr(rm, "session_id", None)
-                    nturns = getattr(rm, "num_turns", None)
-                    self.last_cache_creation_input_tokens = cache_create
-                    self.last_cache_read_input_tokens = cache_read
-                    self.total_cache_creation_input_tokens += cache_create
-                    self.total_cache_read_input_tokens += cache_read
-                    self.last_cost_usd = cost
-                    self.total_cost_usd += cost
-                    if isinstance(sid, str):
-                        self.last_session_id = sid
-                    if isinstance(nturns, int):
-                        self.last_num_turns = nturns
-                else:
-                    from pyutilz.llm.token_counter import count_tokens as _count_tok
-                    in_tok = _count_tok(prompt) + _count_tok(system or "")
-                    out_tok = _count_tok(result)
-                    self.last_cache_creation_input_tokens = 0
-                    self.last_cache_read_input_tokens = 0
-                # The billed count when the result carries it (the CLI withholds the thinking TEXT, so an estimate from it is 0).
-                reported = usage_thinking_tokens(rm_usage) if rm_usage is not None else None
-                reasoning_tok = reported if reported is not None else _reasoning.estimate_tokens(self.last_reasoning_text)
-                self._last_usage = {
-                    "input_tokens": in_tok,
-                    "output_tokens": out_tok,
-                    "reasoning_tokens": reasoning_tok,
-                    "cache_creation_input_tokens": self.last_cache_creation_input_tokens,
-                    "cache_read_input_tokens": self.last_cache_read_input_tokens,
-                }
-                self.total_prompt_tokens += in_tok
-                self.total_completion_tokens += out_tok
-                self.total_reasoning_tokens += reasoning_tok
+                transport = self._generate_sdk if _HAS_SDK else self._generate_cli
+                result = await transport(prompt, system, **transport_kwargs)
+                if json_mode:
+                    result = _strip_json_fence(result)
+                self._record_call_usage(prompt, system, result)
                 self._successful_call_count += 1
                 return result
             except (OSError, subprocess.TimeoutExpired) as e:
                 # ConnectionError and TimeoutError are OSError subclasses; naming them here too
                 # only made the tuple look narrower than it is. _is_transient_subprocess_error
                 # is what actually narrows it.
-                if not _is_transient_subprocess_error(e):
-                    logger.error(
-                        "Claude Code call failed permanently (%s: %s); not retrying.",
-                        type(e).__name__, str(e)[:200],
-                    )
-                    raise
-                if isinstance(e, subprocess.TimeoutExpired):
-                    timeout_attempts += 1
-                    if timeout_attempts >= MAX_TIMEOUT_RETRIES:
-                        logger.error(
-                            "Claude CLI timed out %d times at %ss; giving up rather than spending another %s seconds.",
-                            timeout_attempts, self.timeout, self.timeout * (max_attempts or 0),
-                        )
-                        raise
-                # subprocess.TimeoutExpired (raised by run_cli() on a CLI hang past self.timeout)
-                # is a SubprocessError subclass, NOT a TimeoutError/OSError/ConnectionError
-                # subclass -- it previously fell through to the generic `except Exception` below,
-                # never matched _is_rate_limit_error, and re-raised immediately with zero retries
-                # despite being exactly the transient-failure shape this except clause exists for.
-                # Jitter added (matching _retry.py's RETRY_WAIT) so several ClaudeCodeProvider
-                # workers hitting a transient error at the same moment (a shared network blip)
-                # don't all retry in lockstep -- a classic thundering-herd pattern.
-                wait = min(5 * (2 ** (attempt - 1)), 300) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
-                logger.warning(
-                    "LLM call attempt %d failed (%s: %s), retrying in %.0fs...",
-                    attempt, type(e).__name__, str(e)[:200], wait,
-                )
-                await asyncio.sleep(wait)
+                timeout_attempts = await self._retry_after_transient_error(e, attempt, timeout_attempts, max_attempts)
             except Exception as e:
                 if not _is_rate_limit_error(e):
                     raise
-                error_msg = str(e)
-                stderr = getattr(e, "stderr", "")
-                full_msg = f"{error_msg} {stderr}"
-                wait_seconds = _parse_reset_wait_seconds(full_msg)
-                if wait_seconds is None:
-                    wait_seconds = 3600
-                    logger.warning(
-                        "[RateLimit] Hit rate limit but couldn't parse reset time: %s. " "Waiting %d seconds (default).",
-                        error_msg[:200],
-                        wait_seconds,
-                    )
-                else:
-                    reset_dt = datetime.now() + timedelta(seconds=wait_seconds)  # noqa: DTZ005 -- intentional local time for a human-facing log message (logged as %H:%M:%S wall-clock, not compared/stored)
-                    logger.warning(
-                        "[RateLimit] Hit rate limit. Pausing until %s (%d seconds). "
-                        "Will retry automatically. Error: %s",
-                        reset_dt.strftime("%H:%M:%S"), wait_seconds, error_msg[:200],
-                    )
-                await asyncio.sleep(wait_seconds)
+                await self._pause_for_rate_limit(e)
                 logger.info("[RateLimit] Resuming after rate limit pause (attempt %d).", attempt + 1)
+
+    async def _retry_after_transient_error(self, e: BaseException, attempt: int, timeout_attempts: int, max_attempts: int) -> int:
+        """Back off after a transient subprocess failure, or re-raise a permanent one; returns the updated timeout count."""
+        if not _is_transient_subprocess_error(e):
+            logger.error(
+                "Claude Code call failed permanently (%s: %s); not retrying.",
+                type(e).__name__, str(e)[:200],
+            )
+            raise
+        if isinstance(e, subprocess.TimeoutExpired):
+            timeout_attempts += 1
+            if timeout_attempts >= MAX_TIMEOUT_RETRIES:
+                logger.error(
+                    "Claude CLI timed out %d times at %ss; giving up rather than spending another %s seconds.",
+                    timeout_attempts, self.timeout, self.timeout * (max_attempts or 0),
+                )
+                raise
+        # subprocess.TimeoutExpired (raised by run_cli() on a CLI hang past self.timeout)
+        # is a SubprocessError subclass, NOT a TimeoutError/OSError/ConnectionError
+        # subclass -- it previously fell through to the generic `except Exception` below,
+        # never matched _is_rate_limit_error, and re-raised immediately with zero retries
+        # despite being exactly the transient-failure shape this except clause exists for.
+        # Jitter added (matching _retry.py's RETRY_WAIT) so several ClaudeCodeProvider
+        # workers hitting a transient error at the same moment (a shared network blip)
+        # don't all retry in lockstep -- a classic thundering-herd pattern.
+        wait = min(5 * (2 ** (attempt - 1)), 300) + random.uniform(0, 5)  # nosec B311 - retry-jitter timing only, not security/cryptographic use
+        logger.warning(
+            "LLM call attempt %d failed (%s: %s), retrying in %.0fs...",
+            attempt, type(e).__name__, str(e)[:200], wait,
+        )
+        await asyncio.sleep(wait)
+        return timeout_attempts
+
+    async def _pause_for_rate_limit(self, e: Exception) -> None:
+        """Sleep until the rate-limit window reported by ``e`` resets (one hour when the reset time cannot be parsed)."""
+        error_msg = str(e)
+        stderr = getattr(e, "stderr", "")
+        full_msg = f"{error_msg} {stderr}"
+        wait_seconds = _parse_reset_wait_seconds(full_msg)
+        if wait_seconds is None:
+            wait_seconds = 3600
+            logger.warning(
+                "[RateLimit] Hit rate limit but couldn't parse reset time: %s. " "Waiting %d seconds (default).",
+                error_msg[:200],
+                wait_seconds,
+            )
+        else:
+            reset_dt = datetime.now() + timedelta(seconds=wait_seconds)  # noqa: DTZ005 -- intentional local time for a human-facing log message (logged as %H:%M:%S wall-clock, not compared/stored)
+            logger.warning(
+                "[RateLimit] Hit rate limit. Pausing until %s (%d seconds). "
+                "Will retry automatically. Error: %s",
+                reset_dt.strftime("%H:%M:%S"), wait_seconds, error_msg[:200],
+            )
+        await asyncio.sleep(wait_seconds)
+
+    def _record_call_usage(self, prompt: str, system: str | None, result: str) -> None:
+        """Record token counts, cost and session metadata for a finished call (SDK ResultMessage when present, else tiktoken)."""
+        # Prefer the SDK's ResultMessage usage / cost over a
+        # tiktoken estimate (wrong tokenizer for Claude). Falls
+        # back to tiktoken on the CLI path or if the SDK didn't
+        # surface a ResultMessage with usage.
+        rm = getattr(self, "_last_result_message", None)
+        rm_usage = getattr(rm, "usage", None) if rm is not None else None
+        if rm_usage is not None:
+            in_tok = usage_int(rm_usage, "input_tokens")
+            out_tok = usage_int(rm_usage, "output_tokens")
+            cache_create = usage_int(rm_usage, "cache_creation_input_tokens")
+            cache_read = usage_int(rm_usage, "cache_read_input_tokens")
+            cost = float(getattr(rm, "total_cost_usd", 0.0) or 0.0)
+            sid = getattr(rm, "session_id", None)
+            nturns = getattr(rm, "num_turns", None)
+            self.last_cache_creation_input_tokens = cache_create
+            self.last_cache_read_input_tokens = cache_read
+            self.total_cache_creation_input_tokens += cache_create
+            self.total_cache_read_input_tokens += cache_read
+            self.last_cost_usd = cost
+            self.total_cost_usd += cost
+            if isinstance(sid, str):
+                self.last_session_id = sid
+            if isinstance(nturns, int):
+                self.last_num_turns = nturns
+        else:
+            from pyutilz.llm.token_counter import count_tokens as _count_tok
+            in_tok = _count_tok(prompt) + _count_tok(system or "")
+            out_tok = _count_tok(result)
+            self.last_cache_creation_input_tokens = 0
+            self.last_cache_read_input_tokens = 0
+        # The billed count when the result carries it (the CLI withholds the thinking TEXT, so an estimate from it is 0).
+        reported = usage_thinking_tokens(rm_usage) if rm_usage is not None else None
+        reasoning_tok = reported if reported is not None else _reasoning.estimate_tokens(self.last_reasoning_text)
+        self._last_usage = {
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "reasoning_tokens": reasoning_tok,
+            "cache_creation_input_tokens": self.last_cache_creation_input_tokens,
+            "cache_read_input_tokens": self.last_cache_read_input_tokens,
+        }
+        self.total_prompt_tokens += in_tok
+        self.total_completion_tokens += out_tok
+        self.total_reasoning_tokens += reasoning_tok
 
     def _thinking_transport_kwargs(self, thinking: bool | str | int | None) -> dict[str, Any]:
         """``thinking_tokens`` (MAX_THINKING_TOKENS) and/or ``effort`` (``--effort``) for a ``thinking=`` request.
@@ -530,42 +553,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             if thinking_tokens is not None:
                 override_env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
-            # The system prompt stays where it belongs. 2026-09-07: this used to fold it into
-            # the user message above 6000 combined characters -- so on every real call, the
-            # system prompt here being tens of kilobytes -- and set system to "". That throws
-            # away the prompt cache: the system prompt is the prefix that gets cached, and two
-            # identical CLI invocations measured 14813 cache-creation tokens then 14813
-            # cache-read, $0.14824 then $0.00752. The threshold reads like a workaround for the
-            # 32767-character command-line limit the CLI path hit as WinError 206, but the SDK
-            # builds no command line: it passes the system prompt through its options object.
-
-            opts = ClaudeCodeOptions(
-                model=self.model,
-                system_prompt=system or "",
-                permission_mode="bypassPermissions",
-                max_turns=1,
-                env=override_env,
-                # "strict-mcp-config" (a valueless CLI flag: the SDK emits `--strict-mcp-config` for a
-                # None value) makes the session use ONLY MCP servers passed via --mcp-config -- none are
-                # passed here, so no MCP server at all is loaded. Without it, every MCP server configured
-                # in the INVOKING USER's global/project config is loaded into this session, and since
-                # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
-                # them: it scopes only the built-in tool set. This provider is text-generation-only, so
-                # no ambient MCP configuration is ever wanted.
-                extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {})},
-            )
-
-            _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
-            if _tools_val != "":
-                logger.warning(
-                    'ClaudeCodeProvider: extra_args["tools"] was %r -- forcing to "" ' "to disable built-in tools and preserve JSON compliance.",
-                    _tools_val,
-                )
-                if opts.extra_args is None:
-                    # The SDK types extra_args as non-Optional, but it is a third-party object we
-                    # do not control, so the defensive guard stays.
-                    opts.extra_args = {}  # type: ignore[unreachable]
-                opts.extra_args["tools"] = ""
+            opts = self._build_sdk_options(system, effort, override_env)
 
             logger.info("SDK call: model=%s prompt=%d system=%d", self.model, len(prompt), len(system or ""))
 
@@ -595,42 +583,93 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                     # against a wrong tokenizer.
                     self._last_result_message = msg
                 elif msg_type == "AssistantMessage":
-                    if hasattr(msg, "content") and msg.content:
-                        parts = []
-                        for block in msg.content:
-                            bt = type(block).__name__
-                            if isinstance(block, TextBlock):
-                                parts.append(block.text)
-                            elif bt == "ToolUseBlock":
-                                tool_name = getattr(block, "name", "?")
-                                # A tool-use block must be impossible here: built-in tools are off
-                                # (`--tools ""`) and no MCP server is loaded (`--strict-mcp-config`).
-                                # If one appears anyway, the sandbox this provider relies on is not
-                                # holding -- most plausibly prompt injection in caller-supplied text
-                                # reaching a tool that permission bypass then auto-approves. Fail hard
-                                # instead of logging "(blocked)" while the turn continues.
-                                raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({tool_name!r}); this provider is text-generation-only")
-                            elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
-                                if bt != "ThinkingBlock":
-                                    parts.append(block.text)
-                                else:
-                                    # Kept out of the ANSWER, as before, but no longer thrown away:
-                                    # Anthropic bills thinking as output tokens, and a caller that
-                                    # cannot see it is comparing models on a number it cannot split.
-                                    self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, block.text)
-                        if parts:
-                            text = "\n".join(parts)
-                            if result_text is None:
-                                result_text = text
-                            else:
-                                result_text += text
-            if result_text is None:
-                logger.error("SDK produced no result after %d messages: %s", msg_count, msg_types)
-                raise RuntimeError("Claude Code SDK produced no result")
-            stripped = result_text.strip()
-            if not stripped:
-                logger.warning("SDK returned empty response: model=%s prompt_len=%d msgs=%d types=%s", self.model, len(prompt), msg_count, msg_types)
-            return stripped
+                    text = self._assistant_message_text(msg)
+                    if text is not None:
+                        if result_text is None:
+                            result_text = text
+                        else:
+                            result_text += text
+            return self._finalize_sdk_text(prompt, result_text, msg_count, msg_types)
+
+    def _build_sdk_options(self, system: str | None, effort: str | None, override_env: dict[str, str]) -> ClaudeCodeOptions:
+        """Build the SDK options for one call: no system-prompt folding, no tools, no ambient MCP servers."""
+        # The system prompt stays where it belongs. 2026-09-07: this used to fold it into
+        # the user message above 6000 combined characters -- so on every real call, the
+        # system prompt here being tens of kilobytes -- and set system to "". That throws
+        # away the prompt cache: the system prompt is the prefix that gets cached, and two
+        # identical CLI invocations measured 14813 cache-creation tokens then 14813
+        # cache-read, $0.14824 then $0.00752. The threshold reads like a workaround for the
+        # 32767-character command-line limit the CLI path hit as WinError 206, but the SDK
+        # builds no command line: it passes the system prompt through its options object.
+
+        opts = ClaudeCodeOptions(
+            model=self.model,
+            system_prompt=system or "",
+            permission_mode="bypassPermissions",
+            max_turns=1,
+            env=override_env,
+            # "strict-mcp-config" (a valueless CLI flag: the SDK emits `--strict-mcp-config` for a
+            # None value) makes the session use ONLY MCP servers passed via --mcp-config -- none are
+            # passed here, so no MCP server at all is loaded. Without it, every MCP server configured
+            # in the INVOKING USER's global/project config is loaded into this session, and since
+            # permissions are bypassed its tools would be auto-approved. `--tools ""` does not cover
+            # them: it scopes only the built-in tool set. This provider is text-generation-only, so
+            # no ambient MCP configuration is ever wanted.
+            extra_args={"tools": "", "strict-mcp-config": None, **({"effort": effort} if effort else {})},
+        )
+
+        _tools_val = opts.extra_args.get("tools") if opts.extra_args else None
+        if _tools_val != "":
+            logger.warning(
+                'ClaudeCodeProvider: extra_args["tools"] was %r -- forcing to "" ' "to disable built-in tools and preserve JSON compliance.",
+                _tools_val,
+            )
+            if opts.extra_args is None:
+                # The SDK types extra_args as non-Optional, but it is a third-party object we
+                # do not control, so the defensive guard stays.
+                opts.extra_args = {}  # type: ignore[unreachable]
+            opts.extra_args["tools"] = ""
+        return opts
+
+    def _assistant_message_text(self, msg) -> str | None:
+        """Join the text blocks of an AssistantMessage (None when it has none); raises on a tool-use block."""
+        if not (hasattr(msg, "content") and msg.content):
+            return None
+        parts = []
+        for block in msg.content:
+            bt = type(block).__name__
+            if isinstance(block, TextBlock):
+                parts.append(block.text)
+            elif bt == "ToolUseBlock":
+                tool_name = getattr(block, "name", "?")
+                # A tool-use block must be impossible here: built-in tools are off
+                # (`--tools ""`) and no MCP server is loaded (`--strict-mcp-config`).
+                # If one appears anyway, the sandbox this provider relies on is not
+                # holding -- most plausibly prompt injection in caller-supplied text
+                # reaching a tool that permission bypass then auto-approves. Fail hard
+                # instead of logging "(blocked)" while the turn continues.
+                raise ClaudeCodeToolUseError(f"Claude Code returned a tool-use block ({tool_name!r}); this provider is text-generation-only")
+            elif hasattr(block, "text") and isinstance(getattr(block, "text"), str):
+                if bt != "ThinkingBlock":
+                    parts.append(block.text)
+                else:
+                    # Kept out of the ANSWER, as before, but no longer thrown away:
+                    # Anthropic bills thinking as output tokens, and a caller that
+                    # cannot see it is comparing models on a number it cannot split.
+                    self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, block.text)
+        if not parts:
+            return None
+        return "\n".join(parts)
+
+    def _finalize_sdk_text(self, prompt: str, result_text: str | None, msg_count: int, msg_types: list) -> str:
+        """Return the stripped answer, raising when the SDK produced no result at all."""
+        if result_text is None:
+            logger.error("SDK produced no result after %d messages: %s", msg_count, msg_types)
+            raise RuntimeError("Claude Code SDK produced no result")
+        stripped = result_text.strip()
+        if not stripped:
+            logger.warning("SDK returned empty response: model=%s prompt_len=%d msgs=%d types=%s", self.model, len(prompt), msg_count, msg_types)
+        return stripped
 
     async def _generate_cli(
         self,

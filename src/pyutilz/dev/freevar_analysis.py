@@ -79,7 +79,7 @@ import builtins
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Tuple, Union
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Core
@@ -127,6 +127,96 @@ class FreeVarReport:
         return sorted({n for n in self.free_names} | {u.name for u in self.needs_incoming_value})
 
 
+class _OccurrenceVisitor(ast.NodeVisitor):
+    """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier."""
+
+    def __init__(self, start_line: int, end_line: int, occurrences: dict) -> None:
+        """Start outside any statement and outside an assignment target, recording into ``occurrences``."""
+        self.start_line = start_line
+        self.end_line = end_line
+        self.occurrences = occurrences
+        self.stmt_lineno = 0
+        self.in_assign_target = False
+
+    def visit(self, node: ast.AST) -> Any:
+        """Track the enclosing statement's line so occurrences sort by statement, not by column."""
+        if isinstance(node, ast.stmt):
+            self.stmt_lineno = node.lineno
+        return super().visit(node)
+
+    def _record(self, name: str, lineno: int, col: int, is_store: bool) -> None:
+        """Append one occurrence tuple for ``name``."""
+        self.occurrences.setdefault(name, []).append((self.stmt_lineno or lineno, int(is_store and self.in_assign_target), col, lineno, is_store))
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Record one ``ast.Name`` node's position and Store/Load-ness if it falls inside the analysed line range."""
+        if self.start_line <= node.lineno <= self.end_line:
+            self._record(node.id, node.lineno, node.col_offset, isinstance(node.ctx, (ast.Store, ast.Del)))
+        self.generic_visit(node)
+
+    def _visit_assignment(self, node) -> None:
+        """Visit an assignment's VALUE before its targets, so a same-statement read is seen first."""
+        self.stmt_lineno = node.lineno
+        value = getattr(node, "value", None)
+        if value is not None:
+            self.visit(value)
+        was_target = self.in_assign_target
+        self.in_assign_target = True
+        try:
+            targets = getattr(node, "targets", None) or [node.target]
+            for target in targets:
+                self.visit(target)
+        finally:
+            self.in_assign_target = was_target
+
+    visit_Assign = _visit_assignment  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
+    visit_AnnAssign = _visit_assignment  # noqa: N815
+    visit_AugAssign = _visit_assignment  # noqa: N815
+
+    def _visit_def(self, node) -> None:
+        """Record a ``def``/``async def``/``class`` statement's own name -- and, for a function, its
+        PARAMETERS -- as Store occurrences when its header line falls inside the analysed range.
+
+        Parameters are ``ast.arg`` nodes, never ``ast.Name``, so they were never seen as bound and a
+        moved function's own parameters were reported as free names, making split_out_module refuse
+        a perfectly valid move.
+        """
+        if self.start_line <= node.lineno <= self.end_line:
+            self.stmt_lineno = node.lineno
+            self._record(node.name, node.lineno, node.col_offset, True)
+            args = getattr(node, "args", None)
+            if args is not None:
+                every_arg = [
+                    *getattr(args, "posonlyargs", []),
+                    *args.args,
+                    *([args.vararg] if args.vararg else []),
+                    *args.kwonlyargs,
+                    *([args.kwarg] if args.kwarg else []),
+                ]
+                for a in every_arg:
+                    self._record(a.arg, a.lineno, a.col_offset, True)
+        self.generic_visit(node)
+
+    visit_FunctionDef = _visit_def  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
+    visit_AsyncFunctionDef = _visit_def  # noqa: N815
+    visit_ClassDef = _visit_def  # noqa: N815
+
+
+def _classify_occurrences(occurrences: dict) -> Tuple[list, list]:
+    """Split name occurrences into names never bound in the range (free) and names read before their first store (needs incoming)."""
+    free_names: list = []
+    needs_incoming: list = []
+    for name, occs in occurrences.items():
+        occs.sort(key=lambda o: (o[0], o[1], o[2]))
+        has_store = any(occ[4] for occ in occs)
+        first_is_store = occs[0][4]
+        if not has_store:
+            free_names.append(name)
+        elif not first_is_store:
+            needs_incoming.append(IncomingNameUse(name=name, first_load_lineno=occs[0][3]))
+    return free_names, needs_incoming
+
+
 def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> FreeVarReport:
     """Compute the :class:`FreeVarReport` for the 1-indexed inclusive line range ``[start_line, end_line]``
     of the Python source file at ``path``.
@@ -156,89 +246,9 @@ def analyze_range(path: Union[str, Path], start_line: int, end_line: int) -> Fre
     # ordered after every Load of the same statement.
     occurrences: dict = {}
 
-    class _Visitor(ast.NodeVisitor):
-        """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier."""
+    _OccurrenceVisitor(start_line, end_line, occurrences).visit(tree)
 
-        def __init__(self) -> None:
-            """Start outside any statement and outside an assignment target."""
-            self.stmt_lineno = 0
-            self.in_assign_target = False
-
-        def visit(self, node: ast.AST) -> Any:
-            """Track the enclosing statement's line so occurrences sort by statement, not by column."""
-            if isinstance(node, ast.stmt):
-                self.stmt_lineno = node.lineno
-            return super().visit(node)
-
-        def _record(self, name: str, lineno: int, col: int, is_store: bool) -> None:
-            """Append one occurrence tuple for ``name``."""
-            occurrences.setdefault(name, []).append((self.stmt_lineno or lineno, int(is_store and self.in_assign_target), col, lineno, is_store))
-
-        def visit_Name(self, node: ast.Name) -> None:
-            """Record one ``ast.Name`` node's position and Store/Load-ness if it falls inside the analysed line range."""
-            if start_line <= node.lineno <= end_line:
-                self._record(node.id, node.lineno, node.col_offset, isinstance(node.ctx, (ast.Store, ast.Del)))
-            self.generic_visit(node)
-
-        def _visit_assignment(self, node) -> None:
-            """Visit an assignment's VALUE before its targets, so a same-statement read is seen first."""
-            self.stmt_lineno = node.lineno
-            value = getattr(node, "value", None)
-            if value is not None:
-                self.visit(value)
-            was_target = self.in_assign_target
-            self.in_assign_target = True
-            try:
-                targets = getattr(node, "targets", None) or [node.target]
-                for target in targets:
-                    self.visit(target)
-            finally:
-                self.in_assign_target = was_target
-
-        visit_Assign = _visit_assignment  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
-        visit_AnnAssign = _visit_assignment  # noqa: N815
-        visit_AugAssign = _visit_assignment  # noqa: N815
-
-        def _visit_def(self, node) -> None:
-            """Record a ``def``/``async def``/``class`` statement's own name -- and, for a function, its
-            PARAMETERS -- as Store occurrences when its header line falls inside the analysed range.
-
-            Parameters are ``ast.arg`` nodes, never ``ast.Name``, so they were never seen as bound and a
-            moved function's own parameters were reported as free names, making split_out_module refuse
-            a perfectly valid move.
-            """
-            if start_line <= node.lineno <= end_line:
-                self.stmt_lineno = node.lineno
-                self._record(node.name, node.lineno, node.col_offset, True)
-                args = getattr(node, "args", None)
-                if args is not None:
-                    every_arg = [
-                        *getattr(args, "posonlyargs", []),
-                        *args.args,
-                        *([args.vararg] if args.vararg else []),
-                        *args.kwonlyargs,
-                        *([args.kwarg] if args.kwarg else []),
-                    ]
-                    for a in every_arg:
-                        self._record(a.arg, a.lineno, a.col_offset, True)
-            self.generic_visit(node)
-
-        visit_FunctionDef = _visit_def  # noqa: N815 -- ast.NodeVisitor's own dispatch-method naming convention
-        visit_AsyncFunctionDef = _visit_def  # noqa: N815
-        visit_ClassDef = _visit_def  # noqa: N815
-
-    _Visitor().visit(tree)
-
-    free_names: list = []
-    needs_incoming: list = []
-    for name, occs in occurrences.items():
-        occs.sort(key=lambda o: (o[0], o[1], o[2]))
-        has_store = any(occ[4] for occ in occs)
-        first_is_store = occs[0][4]
-        if not has_store:
-            free_names.append(name)
-        elif not first_is_store:
-            needs_incoming.append(IncomingNameUse(name=name, first_load_lineno=occs[0][3]))
+    free_names, needs_incoming = _classify_occurrences(occurrences)
 
     return FreeVarReport(
         free_names=sorted(free_names),
