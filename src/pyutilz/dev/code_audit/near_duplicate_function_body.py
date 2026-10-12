@@ -11,6 +11,7 @@ import re
 from collections import Counter, defaultdict
 from itertools import chain
 from pathlib import Path
+from typing import Optional as _Optional
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 from .duplicate_function_body import _stripped_body, _node_count, _normalized_body
@@ -175,6 +176,168 @@ def _shingles(tokens: tuple[str, ...], k: int = _SHINGLE_SIZE) -> set[int]:
     return {hash(window) for window in zip(*(tokens[i:] for i in range(k)))}
 
 
+def _collect_entries(
+    root: Path,
+    exclude_dirs: frozenset[str],
+    min_nodes: int,
+) -> list[tuple[Path, "ast.FunctionDef | ast.AsyncFunctionDef", list[str], tuple[str, ...]]]:
+    """Return ``(path, node, source lines, tokens)`` for every non-dunder function whose body is large enough to compare."""
+    entries: list[tuple[Path, "ast.FunctionDef | ast.AsyncFunctionDef", list[str], tuple[str, ...]]] = []
+    for py in _iter_py_files(root, exclude_dirs):
+        tree = _safe_parse(py)
+        if tree is None:
+            continue
+        src_lines = _read_src_lines(py)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name.startswith("__") and node.name.endswith("__"):
+                continue
+            body = _stripped_body(node)
+            if _node_count(body) < min_nodes:
+                continue
+            normalized = _normalized_body(body)
+            if not normalized:
+                continue
+            tokens = _tokenize(normalized)
+            if not tokens:
+                continue
+            entries.append((py, node, src_lines, tokens))
+    return entries
+
+
+def _candidate_pairs(entries: list) -> set[tuple[int, int]]:
+    """Return index pairs of entries that share enough shingles to be worth an exact comparison."""
+    shingle_index: dict[int, list[int]] = defaultdict(list)
+    entry_shingles: list[set[int]] = []
+    for idx, (_py, _node, _src, tokens) in enumerate(entries):
+        sh = _shingles(tokens)
+        entry_shingles.append(sh)
+        for h in sh:
+            shingle_index[h].append(idx)
+
+    generic_shingles = {h for h, postings in shingle_index.items() if len(postings) > _MAX_POSTING_LIST}
+    for h in generic_shingles:
+        del shingle_index[h]
+
+    candidate_pairs: set[tuple[int, int]] = set()
+    for idx, sh in enumerate(entry_shingles):
+        if not sh:
+            continue
+        # Counter.update over a flat chain counts in C; the self-match is dropped afterwards.
+        shared_counts = Counter(chain.from_iterable(shingle_index.get(h, ()) for h in sh))
+        shared_counts.pop(idx, None)
+        for other, count in shared_counts.items():
+            threshold = _MIN_SHARED_SHINGLE_FRACTION * min(len(sh), len(entry_shingles[other]))
+            if count >= threshold:
+                candidate_pairs.add((idx, other) if idx < other else (other, idx))
+    return candidate_pairs
+
+
+def _near_duplicate_finding(
+    rel_i: str,
+    rel_j: str,
+    node_i: "ast.FunctionDef | ast.AsyncFunctionDef",
+    node_j: "ast.FunctionDef | ast.AsyncFunctionDef",
+    src_j: list[str],
+    ratio: float,
+) -> _Optional[Finding]:
+    """Build the near-duplicate finding for two similarly sized bodies, or None for a deprecated-alias shim pair."""
+    if _is_deprecated_alias_boilerplate(node_i) and _is_deprecated_alias_boilerplate(node_j):
+        return None  # both are independent deprecated-alias shims -- see docstring
+    return Finding(
+        check="near_duplicate_function_body",
+        severity="Low",
+        file=rel_j,
+        line=node_j.lineno,
+        snippet=_line_text(src_j, node_j.lineno),
+        detail=(
+            f"def {node_j.name}(...) is {ratio:.0%} structurally similar to "
+            f"{rel_i}:{node_i.lineno} (def {node_i.name}) -- likely copy-paste that "
+            "then drifted; consider unifying into one shared function, or confirm "
+            "these are genuinely independent implementations that happen to look alike."
+        ),
+    )
+
+
+def _subset_finding(
+    rel_i: str,
+    rel_j: str,
+    node_i: "ast.FunctionDef | ast.AsyncFunctionDef",
+    node_j: "ast.FunctionDef | ast.AsyncFunctionDef",
+    src_i: list[str],
+    src_j: list[str],
+    len_i: int,
+    len_j: int,
+    containment: float,
+) -> _Optional[Finding]:
+    """Build the subset finding when the shorter body sits verbatim inside the longer one, or None for a suppressed pair."""
+    # Whichever body is SHORTER is the one (near-)wholly embedded in the longer one.
+    if len_i <= len_j:
+        sub_node, sub_rel = node_i, rel_i
+        sup_node, sup_src, sup_rel = node_j, src_j, rel_j
+    else:
+        sub_node, sub_rel = node_j, rel_j
+        sup_node, sup_src, sup_rel = node_i, src_i, rel_i
+
+    if _delegates_to_shared_helper(sub_node, sup_node):
+        return None  # both funnel through one already-shared helper -- see docstring
+    if _is_deprecated_alias_boilerplate(sub_node) and _is_deprecated_alias_boilerplate(sup_node):
+        return None  # both are independent deprecated-alias shims -- see docstring
+
+    return Finding(
+        check="duplicate_function_body_subset",
+        severity="Low",
+        file=sup_rel,
+        line=sup_node.lineno,
+        snippet=_line_text(sup_src, sup_node.lineno),
+        detail=(
+            f"def {sup_node.name}(...) contains {containment:.0%} of "
+            f"{sub_rel}:{sub_node.lineno} (def {sub_node.name})'s body verbatim -- "
+            "looks like that helper's whole logic was inlined here instead of called; "
+            "consider extracting the shared part into one function both use."
+        ),
+    )
+
+
+def _pair_finding(
+    root: Path,
+    entry_i: tuple,
+    entry_j: tuple,
+    min_similarity: float,
+    min_containment: float,
+) -> _Optional[Finding]:
+    """Compare one candidate pair and return its near-duplicate or subset finding, or None when it is not reported."""
+    py_i, node_i, src_i, tokens_i = entry_i
+    py_j, node_j, src_j, tokens_j = entry_j
+    if tokens_i == tokens_j:
+        return None  # exact duplicate: scan_duplicate_function_body's job, not ours
+    if max(len(tokens_i), len(tokens_j)) > _MAX_TOKENS_FOR_EXACT_CHECK:
+        return None
+    if py_i == py_j and (_is_nested(node_i, node_j) or _is_nested(node_j, node_i)):
+        # A nested def is trivially "contained" in its enclosing function's AST -- that's
+        # not copy-paste, it's just lexical scope. Confirmed in the wild: this was the
+        # dominant false-positive source before the check existed (e.g. a closure factory
+        # whose inner builder function got reported as "inlining" the outer function).
+        return None
+
+    matcher = difflib.SequenceMatcher(None, tokens_i, tokens_j, autojunk=False)
+    ratio = matcher.ratio()
+    matched = sum(block.size for block in matcher.get_matching_blocks())
+    len_i, len_j = len(tokens_i), len(tokens_j)
+    shorter_len = min(len_i, len_j)
+    containment = (matched / shorter_len) if shorter_len else 0.0
+
+    rel_i = py_i.relative_to(root).as_posix()
+    rel_j = py_j.relative_to(root).as_posix()
+
+    if ratio >= min_similarity:
+        return _near_duplicate_finding(rel_i, rel_j, node_i, node_j, src_j, ratio)
+    if containment >= min_containment:
+        return _subset_finding(rel_i, rel_j, node_i, node_j, src_i, src_j, len_i, len_j, containment)
+    return None
+
+
 def scan_near_duplicate_function_body(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -226,122 +389,10 @@ def scan_near_duplicate_function_body(
     exact comparison, which is intractable at real-codebase scale (see the same constant's
     comment for the concrete blowups measured without it).
     """
-    entries: list[tuple[Path, "ast.FunctionDef | ast.AsyncFunctionDef", list[str], tuple[str, ...]]] = []
-    for py in _iter_py_files(root, exclude_dirs):
-        tree = _safe_parse(py)
-        if tree is None:
-            continue
-        src_lines = _read_src_lines(py)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if node.name.startswith("__") and node.name.endswith("__"):
-                continue
-            body = _stripped_body(node)
-            if _node_count(body) < min_nodes:
-                continue
-            normalized = _normalized_body(body)
-            if not normalized:
-                continue
-            tokens = _tokenize(normalized)
-            if not tokens:
-                continue
-            entries.append((py, node, src_lines, tokens))
-
-    shingle_index: dict[int, list[int]] = defaultdict(list)
-    entry_shingles: list[set[int]] = []
-    for idx, (_py, _node, _src, tokens) in enumerate(entries):
-        sh = _shingles(tokens)
-        entry_shingles.append(sh)
-        for h in sh:
-            shingle_index[h].append(idx)
-
-    generic_shingles = {h for h, postings in shingle_index.items() if len(postings) > _MAX_POSTING_LIST}
-    for h in generic_shingles:
-        del shingle_index[h]
-
-    candidate_pairs: set[tuple[int, int]] = set()
-    for idx, sh in enumerate(entry_shingles):
-        if not sh:
-            continue
-        # Counter.update over a flat chain counts in C; the self-match is dropped afterwards.
-        shared_counts = Counter(chain.from_iterable(shingle_index.get(h, ()) for h in sh))
-        shared_counts.pop(idx, None)
-        for other, count in shared_counts.items():
-            threshold = _MIN_SHARED_SHINGLE_FRACTION * min(len(sh), len(entry_shingles[other]))
-            if count >= threshold:
-                candidate_pairs.add((idx, other) if idx < other else (other, idx))
-
+    entries = _collect_entries(root, exclude_dirs, min_nodes)
     findings: list[Finding] = []
-    for i, j in sorted(candidate_pairs):
-        py_i, node_i, src_i, tokens_i = entries[i]
-        py_j, node_j, src_j, tokens_j = entries[j]
-        if tokens_i == tokens_j:
-            continue  # exact duplicate: scan_duplicate_function_body's job, not ours
-        if max(len(tokens_i), len(tokens_j)) > _MAX_TOKENS_FOR_EXACT_CHECK:
-            continue
-        if py_i == py_j and (_is_nested(node_i, node_j) or _is_nested(node_j, node_i)):
-            # A nested def is trivially "contained" in its enclosing function's AST -- that's
-            # not copy-paste, it's just lexical scope. Confirmed in the wild: this was the
-            # dominant false-positive source before the check existed (e.g. a closure factory
-            # whose inner builder function got reported as "inlining" the outer function).
-            continue
-
-        matcher = difflib.SequenceMatcher(None, tokens_i, tokens_j, autojunk=False)
-        ratio = matcher.ratio()
-        matched = sum(block.size for block in matcher.get_matching_blocks())
-        len_i, len_j = len(tokens_i), len(tokens_j)
-        shorter_len = min(len_i, len_j)
-        containment = (matched / shorter_len) if shorter_len else 0.0
-
-        rel_i = py_i.relative_to(root).as_posix()
-        rel_j = py_j.relative_to(root).as_posix()
-
-        if ratio >= min_similarity:
-            if _is_deprecated_alias_boilerplate(node_i) and _is_deprecated_alias_boilerplate(node_j):
-                continue  # both are independent deprecated-alias shims -- see docstring
-            findings.append(
-                Finding(
-                    check="near_duplicate_function_body",
-                    severity="Low",
-                    file=rel_j,
-                    line=node_j.lineno,
-                    snippet=_line_text(src_j, node_j.lineno),
-                    detail=(
-                        f"def {node_j.name}(...) is {ratio:.0%} structurally similar to "
-                        f"{rel_i}:{node_i.lineno} (def {node_i.name}) -- likely copy-paste that "
-                        "then drifted; consider unifying into one shared function, or confirm "
-                        "these are genuinely independent implementations that happen to look alike."
-                    ),
-                )
-            )
-        elif containment >= min_containment:
-            # Whichever body is SHORTER is the one (near-)wholly embedded in the longer one.
-            if len_i <= len_j:
-                sub_node, sub_rel = node_i, rel_i
-                sup_node, sup_src, sup_rel = node_j, src_j, rel_j
-            else:
-                sub_node, sub_rel = node_j, rel_j
-                sup_node, sup_src, sup_rel = node_i, src_i, rel_i
-
-            if _delegates_to_shared_helper(sub_node, sup_node):
-                continue  # both funnel through one already-shared helper -- see docstring
-            if _is_deprecated_alias_boilerplate(sub_node) and _is_deprecated_alias_boilerplate(sup_node):
-                continue  # both are independent deprecated-alias shims -- see docstring
-
-            findings.append(
-                Finding(
-                    check="duplicate_function_body_subset",
-                    severity="Low",
-                    file=sup_rel,
-                    line=sup_node.lineno,
-                    snippet=_line_text(sup_src, sup_node.lineno),
-                    detail=(
-                        f"def {sup_node.name}(...) contains {containment:.0%} of "
-                        f"{sub_rel}:{sub_node.lineno} (def {sub_node.name})'s body verbatim -- "
-                        "looks like that helper's whole logic was inlined here instead of called; "
-                        "consider extracting the shared part into one function both use."
-                    ),
-                )
-            )
+    for i, j in sorted(_candidate_pairs(entries)):
+        finding = _pair_finding(root, entries[i], entries[j], min_similarity, min_containment)
+        if finding is not None:
+            findings.append(finding)
     return findings

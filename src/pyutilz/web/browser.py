@@ -430,22 +430,9 @@ def ensure_session_is_valid(interval_minutes: Optional[int] = 10) -> None:
         last_session_updated_at = datetime.now(timezone.utc)
 
 
-def LoginAndGetCookies(
-    default_headers: bool = True,
-    seconds_to_sleep_on_error: int = 60,
-    restart_on_no_cookie=False,
-    _restart_attempt: int = 0,
-    _max_restart_attempts: int = 50,
-) -> bool:
-    """
-    Ensures Selenium is started
-    Logins, if not logged in already (detected by opening a home page)
-    Extracts (or updates) desired cookies from Selenium browser instance into global headers dict.
-
-    ``_restart_attempt``/``_max_restart_attempts`` are internal bookkeeping for the
-    restart_on_no_cookie retry below -- not meant to be passed by external callers.
-    """
-    global browser, TheCookies, headers
+def _ensure_browser() -> None:
+    """Start Selenium when no browser exists; otherwise refresh the current page and hide the webdriver flag."""
+    global browser
     _session_refresh_attempts = 0
     while True:
         if browser is None:
@@ -488,11 +475,14 @@ def LoginAndGetCookies(
                     sleep(min(2**_session_refresh_attempts, 30) * random())  # nosec B311 - jittered backoff on an unrecognized session-refresh error, not security-sensitive
             else:
                 break
-    if home_page is None:
-        raise ValueError("pyutilz.web.browser.home_page must be set (e.g. `browser.home_page = url`) before calling LoginAndGetCookies()")
+
+
+def _navigate_home(page: str) -> bool:
+    """Open ``page``, restarting Selenium on a dead window; return False on any other error."""
+    global browser
     while True:
         try:
-            browser_get(home_page)
+            browser_get(page)
             pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=10, b_force=True)
         except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             ste = str(e)
@@ -506,131 +496,192 @@ def LoginAndGetCookies(
                 logger.exception(e)
                 return False
         else:
-            break
-    res = False
+            return True
 
-    from selenium.webdriver.common.keys import Keys
 
-    Ret = Keys.RETURN
+def _submit_credentials(keys: Any) -> bool:
+    """Fill the login and password fields and submit them; return True when the title shows a successful login."""
+    drv = cast("WebDriver", browser)
+    pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+    elem_login = None
+    try:
+        elem_login = find_element_by_name(drv, login_input_name)
+        elem_login.send_keys(keys.CONTROL, "a")
+        elem_login.send_keys(keys.DELETE)
+        # `login`/`pwd` are module-level Optionals set by the caller; sending None types the literal
+        # string "None" into the field, which fails the login with no diagnosis.
+        elem_login.send_keys(login or "")
+        pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+        elem_login.send_keys(keys.RETURN)
+    except Exception as e:  # nosec B110 - best-effort login-by-name-field attempt; the code below explicitly falls back to find_element_by_xpath, and if elem_login stays None it is logged and reported as an error a few lines down
+        logger.debug("find_element_by_name login attempt failed, will try xpath fallback: %s", e)
+    if elem_login is None:
+        try:
+            # `login` is a module-level global the caller sets via init(); str() keeps the xpath
+            # well-formed (and the lookup merely failing) instead of raising AttributeError out of
+            # the fallback when it was never configured.
+            elem_login = find_element_by_xpath(drv, "//div[text()='" + str(login).lower() + "']")
+        except Exception as e:  # nosec B110 - best-effort xpath fallback for locating the login element; if elem_login is still None afterward it is explicitly checked and logged as an error two lines below
+            logger.debug("find_element_by_xpath login fallback failed: %s", e)
+    if elem_login is None:
+        logger.error("Could not login to %s: elem_login %s not located.", target, login_input_name)
+        return False
 
-    if pythonlib.anyof_elements_in_string(("Cloudflare",), browser.title):
+    pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
+    elem_pwd = None
+    try:
+        elem_pwd = find_element_by_name(drv, password_input_name)
+        elem_pwd.send_keys(keys.CONTROL, "a")
+        elem_pwd.send_keys(keys.DELETE)
+        elem_pwd.send_keys(pwd or "")
+    except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
+        logger.debug("find_element_by_name password attempt failed: %s", e)
+    if elem_pwd is None:
+        logger.error("Could not login to %s: elem_pwd %s not located.", target, password_input_name)
+        return False
+
+    pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
+    elem_pwd.send_keys(keys.RETURN)
+
+    pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=15, b_force=True)
+
+    title = drv.title
+    if not pythonlib.anyof_elements_in_string(successful_login_signs, title):
+        logger.critical("Can't login to %s,got page %s", target, title)
+        return False
+    logger.info("Logged in to %s", target)
+    return True
+
+
+def _check_login_state(keys: Any) -> bool:
+    """Return True when the page shows a successful login, submitting credentials first if a logout sign is shown."""
+    drv = cast("WebDriver", browser)
+    if pythonlib.anyof_elements_in_string(("Cloudflare",), drv.title):
         logger.warning("Ddos or captcha protection on %s. Waiting for operator to solve it...", target)
         sleep(120)
 
-    if pythonlib.anyof_elements_in_string(logout_signs, browser.title):
-        pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
-        elem_login = None
-        try:
-            elem_login = find_element_by_name(browser, login_input_name)
-            elem_login.send_keys(Keys.CONTROL, "a")
-            elem_login.send_keys(Keys.DELETE)
-            # `login`/`pwd` are module-level Optionals set by the caller; sending None types the literal
-            # string "None" into the field, which fails the login with no diagnosis.
-            elem_login.send_keys(login or "")
-            pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
-            elem_login.send_keys(Ret)
-        except Exception as e:  # nosec B110 - best-effort login-by-name-field attempt; the code below explicitly falls back to find_element_by_xpath, and if elem_login stays None it is logged and reported as an error a few lines down
-            logger.debug("find_element_by_name login attempt failed, will try xpath fallback: %s", e)
-        if elem_login is None:
-            try:
-                # `login` is a module-level global the caller sets via init(); str() keeps the xpath
-                # well-formed (and the lookup merely failing) instead of raising AttributeError out of
-                # the fallback when it was never configured.
-                elem_login = find_element_by_xpath(browser, "//div[text()='" + str(login).lower() + "']")
-            except Exception as e:  # nosec B110 - best-effort xpath fallback for locating the login element; if elem_login is still None afterward it is explicitly checked and logged as an error two lines below
-                logger.debug("find_element_by_xpath login fallback failed: %s", e)
-        if elem_login is None:
-            logger.error("Could not login to %s: elem_login %s not located.", target, login_input_name)
-            return False
+    if pythonlib.anyof_elements_in_string(logout_signs, drv.title):
+        return _submit_credentials(keys)
+    return bool(pythonlib.anyof_elements_in_string(successful_login_signs, drv.title))
 
-        pythonlib.imitate_delay(min_delay_seconds=2, max_delay_seconds=5, b_force=True)
-        elem_pwd = None
-        try:
-            elem_pwd = find_element_by_name(browser, password_input_name)
-            elem_pwd.send_keys(Keys.CONTROL, "a")
-            elem_pwd.send_keys(Keys.DELETE)
-            elem_pwd.send_keys(pwd or "")
-        except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
-            logger.debug("find_element_by_name password attempt failed: %s", e)
-        if elem_pwd is None:
-            logger.error("Could not login to %s: elem_pwd %s not located.", target, password_input_name)
-            return False
 
-        pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
-        elem_pwd.send_keys(Ret)
-
-        pythonlib.imitate_delay(min_delay_seconds=5, max_delay_seconds=15, b_force=True)
-
-        title = browser.title
-        if not pythonlib.anyof_elements_in_string(successful_login_signs, title):
-            logger.critical("Can't login to %s,got page %s", target, title)
+def _collect_required_cookies(cookies_vals: dict, seconds_to_sleep_on_error: int, restart_on_no_cookie: bool) -> Optional[Any]:
+    """Read every required cookie into ``cookies_vals``; return the name of a missing cookie when a restart is requested."""
+    drv = cast("WebDriver", browser)
+    for c in required_cookies:
+        cook = drv.get_cookie(c)
+        if cook is None:
+            logger.error(
+                "Unexpected: required cookie %s is missing when getting cookies from %s. Sleeping %s seconds...",
+                c,
+                target,
+                seconds_to_sleep_on_error,
+            )
+            sleep(seconds_to_sleep_on_error)
+            if restart_on_no_cookie:
+                return c
         else:
-            logger.info("Logged in to %s", target)
-            res = True
-    else:
-        if pythonlib.anyof_elements_in_string(successful_login_signs, browser.title):
-            res = True
+            cook = cook.get("value")
+            cookies_vals[c] = cook
+    return None
+
+
+def _publish_cookies(cookies_vals: dict, default_headers: bool) -> None:
+    """Store the cookie string in ``TheCookies`` and, when ``default_headers``, rebuild the global ``headers``."""
+    global TheCookies, headers
+    drv = cast("WebDriver", browser)
+    TheCookies = ""
+    for cookie, val in cookies_vals.items():
+        TheCookies = TheCookies + cookie + "=" + str(val) + "; "
+
+    if default_headers:
+        # A copy, not the shared global: mutating basic_headers in place left the documented
+        # neutral default header set permanently carrying the last session's cookie and
+        # Bearer token, and leaked them to every other consumer of it.
+        headers = dict(basic_headers)
+        # Drop any authorization inherited from a previous login: without this, a session
+        # that yields no oauth2_global_js_token keeps sending the PREVIOUS account's token.
+        headers.pop("authorization", None)
+        if use_real_useragent:
+            headers["user-agent"] = drv.execute_script("return navigator.userAgent;")
+
+        headers["cookie"] = TheCookies
+        if "oauth2_global_js_token" in cookies_vals:
+            headers["authorization"] = "Bearer " + str(cookies_vals["oauth2_global_js_token"])
+
+
+def _restart_for_missing_cookie(
+    missing: str,
+    default_headers: bool,
+    seconds_to_sleep_on_error: int,
+    restart_on_no_cookie: bool,
+    restart_attempt: int,
+    max_restart_attempts: int,
+) -> bool:
+    """Quit the browser after a missing required cookie and retry the whole login, bounded by ``max_restart_attempts``."""
+    global browser
+    # Regression fix: this recursive retry previously (a) called
+    # LoginAndGetCookies(default_headers=default_headers) only, silently
+    # dropping the caller's own seconds_to_sleep_on_error/restart_on_no_cookie
+    # overrides back to their defaults on every subsequent retry level, and
+    # (b) had no depth limit, so a persistently-failing cookie check would
+    # eventually hit Python's own opaque RecursionError after ~1000 frames
+    # (many hours later, given the seconds_to_sleep_on_error sleep each level)
+    # instead of failing with a clear, actionable error.
+    if restart_attempt >= max_restart_attempts:
+        raise RuntimeError(f"LoginAndGetCookies: exceeded {max_restart_attempts} restart attempts without obtaining required cookie {missing!r} for {target}")
+    logger.warning("Trying to restart Selenium...")
+    try:
+        cast("WebDriver", browser).quit()
+    except Exception as e:  # nosec B110 - best-effort cleanup before forcing a Selenium restart; the next line unconditionally sets browser=None regardless of whether quit() succeeded
+        logger.debug("Ignoring error while closing browser before restart: %s", e)
+    browser = None
+    return LoginAndGetCookies(
+        default_headers=default_headers,
+        seconds_to_sleep_on_error=seconds_to_sleep_on_error,
+        restart_on_no_cookie=restart_on_no_cookie,
+        _restart_attempt=restart_attempt + 1,
+        _max_restart_attempts=max_restart_attempts,
+    )
+
+
+def LoginAndGetCookies(
+    default_headers: bool = True,
+    seconds_to_sleep_on_error: int = 60,
+    restart_on_no_cookie=False,
+    _restart_attempt: int = 0,
+    _max_restart_attempts: int = 50,
+) -> bool:
+    """
+    Ensures Selenium is started
+    Logins, if not logged in already (detected by opening a home page)
+    Extracts (or updates) desired cookies from Selenium browser instance into global headers dict.
+
+    ``_restart_attempt``/``_max_restart_attempts`` are internal bookkeeping for the
+    restart_on_no_cookie retry below -- not meant to be passed by external callers.
+    """
+    _ensure_browser()
+    if home_page is None:
+        raise ValueError("pyutilz.web.browser.home_page must be set (e.g. `browser.home_page = url`) before calling LoginAndGetCookies()")
+    if not _navigate_home(home_page):
+        return False
+
+    from selenium.webdriver.common.keys import Keys
+
+    res = _check_login_state(Keys)
 
     if res:
         cookies_vals = fixed_cookies.copy()
         if len(required_cookies) > 0:
-            for c in required_cookies:
-                cook = browser.get_cookie(c)
-                if cook is None:
-                    logger.error(
-                        "Unexpected: required cookie %s is missing when getting cookies from %s. Sleeping %s seconds...",
-                        c,
-                        target,
-                        seconds_to_sleep_on_error,
-                    )
-                    sleep(seconds_to_sleep_on_error)
-                    if restart_on_no_cookie:
-                        # Regression fix: this recursive retry previously (a) called
-                        # LoginAndGetCookies(default_headers=default_headers) only, silently
-                        # dropping the caller's own seconds_to_sleep_on_error/restart_on_no_cookie
-                        # overrides back to their defaults on every subsequent retry level, and
-                        # (b) had no depth limit, so a persistently-failing cookie check would
-                        # eventually hit Python's own opaque RecursionError after ~1000 frames
-                        # (many hours later, given the seconds_to_sleep_on_error sleep each level)
-                        # instead of failing with a clear, actionable error.
-                        if _restart_attempt >= _max_restart_attempts:
-                            raise RuntimeError(
-                                f"LoginAndGetCookies: exceeded {_max_restart_attempts} restart attempts "
-                                f"without obtaining required cookie {c!r} for {target}"
-                            )
-                        logger.warning("Trying to restart Selenium...")
-                        try:
-                            browser.quit()
-                        except Exception as e:  # nosec B110 - best-effort cleanup before forcing a Selenium restart; the next line unconditionally sets browser=None regardless of whether quit() succeeded
-                            logger.debug("Ignoring error while closing browser before restart: %s", e)
-                        browser = None
-                    return LoginAndGetCookies(
-                        default_headers=default_headers,
-                        seconds_to_sleep_on_error=seconds_to_sleep_on_error,
-                        restart_on_no_cookie=restart_on_no_cookie,
-                        _restart_attempt=_restart_attempt + 1,
-                        _max_restart_attempts=_max_restart_attempts,
-                    )
-                else:
-                    cook = cook.get("value")
-                    cookies_vals[c] = cook
-
-        TheCookies = ""
-        for cookie, val in cookies_vals.items():
-            TheCookies = TheCookies + cookie + "=" + str(val) + "; "
-
-        if default_headers:
-            # A copy, not the shared global: mutating basic_headers in place left the documented
-            # neutral default header set permanently carrying the last session's cookie and
-            # Bearer token, and leaked them to every other consumer of it.
-            headers = dict(basic_headers)
-            # Drop any authorization inherited from a previous login: without this, a session
-            # that yields no oauth2_global_js_token keeps sending the PREVIOUS account's token.
-            headers.pop("authorization", None)
-            if use_real_useragent:
-                headers["user-agent"] = browser.execute_script("return navigator.userAgent;")
-
-            headers["cookie"] = TheCookies
-            if "oauth2_global_js_token" in cookies_vals:
-                headers["authorization"] = "Bearer " + str(cookies_vals["oauth2_global_js_token"])
+            missing = _collect_required_cookies(cookies_vals, seconds_to_sleep_on_error, restart_on_no_cookie)
+            if missing is not None:
+                return _restart_for_missing_cookie(
+                    missing,
+                    default_headers,
+                    seconds_to_sleep_on_error,
+                    restart_on_no_cookie,
+                    _restart_attempt,
+                    _max_restart_attempts,
+                )
+        _publish_cookies(cookies_vals, default_headers)
     return res

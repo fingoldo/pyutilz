@@ -9,6 +9,7 @@
 
 import logging
 from typing import Any as _Any
+from typing import List as _List, Tuple as _Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,271 @@ def _reraise_if_identity_incomplete(info: dict, return_sensitive_info: bool) -> 
         raise
 
 
+def _import_optional_modules() -> _Tuple[_Any, _Any]:
+    """Import numba and pyutilz.web when available; return ``None`` in place of any that cannot be imported."""
+    numba: _Any
+    web: _Any
+    try:
+        import numba  # type: ignore[no-redef]  # mypy quirk: unaliased self-name import after a bare pre-declaration annotation
+    except ImportError:
+        numba = None
+    try:
+        from pyutilz.web import web
+    except ImportError:
+        web = None
+    return numba, web
+
+
+def _sample_cpu_and_ram() -> _Tuple[_Any, _Any]:
+    """Return ``(cpu_freq, ram)`` as psutil reports them; ``cpu_freq`` may be None on platforms without support."""
+    # psutil.cpu_freq does not exist on every platform (macOS has none), and where it does
+    # it may still return None. Calling it unguarded raised AttributeError here, which the
+    # function-wide except swallowed -- so a single missing capability silently truncated
+    # the ENTIRE system-info dict, usage stats and all. Absent frequency now costs only the
+    # frequency fields.
+    cpu_freq = _get_cpu_freq(psutil_module=psutil)
+    ram = psutil.virtual_memory()
+    return cpu_freq, ram
+
+
+def _query_nvcc_version() -> _List[str]:
+    """Return the nvcc version matches, or ``[""]`` when nvcc cannot be run."""
+    try:
+        # list-style argv (not a single "nvcc --version" string): with shell=False (the
+        # default), a string args is the literal executable name/path with NO whitespace
+        # splitting on POSIX -- there is no executable named "nvcc --version", so the old
+        # form always raised FileNotFoundError on Linux/macOS regardless of whether nvcc was
+        # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
+        # "\n" on Linux/macOS, not "\r\n".
+        return re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output([_resolve_binary("nvcc"), "--version"])))  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+    except Exception:
+        return [""]
+
+
+def _collect_gpu_usage_stats(info: dict) -> None:
+    """Add the nvidia-smi and GPUtil current usage stats, each best-effort."""
+    # Use new GPU detection
+    try:
+        gpu_stats = get_nvidia_smi_info(include_stats=True)
+        if gpu_stats:
+            info["gpu_current_stats_nvidia_smi"] = gpu_stats
+    except Exception as e:  # nosec B110 - best-effort GPU usage stats; absent/misbehaving nvidia-smi must not break overall system_info collection
+        logger.debug("Could not get nvidia-smi GPU stats: %s", e)
+
+    # Keep legacy gpuutil for backward compatibility with usage stats
+    try:
+        info["gpu_current_stats"] = get_gpuutil_gpu_info()
+    except Exception as e:  # nosec B110 - best-effort legacy GPUtil stats; absent GPUtil/driver must not break overall system_info collection
+        logger.debug("Could not get GPUtil GPU stats: %s", e)
+
+
+def _collect_cuda_info(info: dict, numba: _Any, only_stats: bool) -> None:
+    """Add the CUDA version and, unless ``only_stats``, the GPU usage stats when numba reports CUDA."""
+    if numba is not None and "cuda" in dir(numba):
+        if numba.cuda.is_available():
+            cuda_version = _query_nvcc_version()
+            if len(cuda_version) > 0 and len(cuda_version[0].split(".")) == 3 and not only_stats:
+                info["cuda_version"] = cuda_version[0]
+            if not only_stats:
+                _collect_gpu_usage_stats(info)
+
+
+def _collect_hdd_info(info: dict) -> None:
+    """Add the aggregate and best-single-disk free space fields."""
+    (
+        max_singledisk_free_space,
+        singledisk_usage_percent,
+        best_disk,
+        cumulative_disks_usage_total,
+        cumulative_disks_usage_free,
+    ) = get_max_singledisk_free_space_gb()
+
+    info["hdd_free_space_gb"] = cumulative_disks_usage_free
+    info["hdd_total_space_gb"] = cumulative_disks_usage_total
+    info["hdd_max_singledisk_free_space_gb"] = max_singledisk_free_space
+    # Previously computed but silently discarded (found 2026-07-09 deptry/vulture
+    # triage): which mountpoint has the most free space, and what fraction of IT is
+    # free -- distinct from the aggregate hdd_max_singledisk_free_space_gb, which is
+    # capacity-in-GB with no per-disk usage-percent context.
+    info["hdd_best_disk"] = best_disk
+    info["hdd_best_disk_usage_percent"] = singledisk_usage_percent
+
+
+def _collect_hardware_details(info: dict, current_system: str) -> None:
+    """Add the WMI summary on Windows, or the dmidecode info and Linux device list elsewhere."""
+    # psutil.boot_time() #1564925068.0
+    # psutil.users() #[suser(name='TheLocalCommander', terminal=None, host='0.0.0.0', started=1564925062.0, pid=None)]
+    # psutil.disk_io_counters(perdisk=True) #{'PhysicalDrive0': sdiskio(read_count=1073232, write_count=9990341, read_bytes=43034913280, write_bytes=203126582272, read_time=1536, write_time=8487)}
+    if current_system == "Windows":
+        # Use enhanced WMI summary
+        system_wmi_summary = summarize_system_info()
+        if system_wmi_summary:
+            info["system_wmi_summary"] = system_wmi_summary
+    else:
+        # Linux: dmidecode info
+        dmidecode_info = parse_dmidecode_info()
+        if dmidecode_info:
+            info["dmidecode_info"] = dmidecode_info
+
+        # Linux devices list
+        try:
+            info["devices_list"] = list_linux_devices()
+        except Exception as e:  # nosec B110 - best-effort optional Linux devices listing (needs pylspci); must not break overall system_info collection
+            logger.debug("Could not list Linux devices: %s", e)
+
+
+def _collect_gpu_info(info: dict) -> None:
+    """Add the nvidia-smi GPU details, their CUDA capabilities, and the large-pages support flag."""
+    # GPU - Use new nvidia-smi based detection
+    gpu_nvidia_smi_info = get_nvidia_smi_info(include_stats=False)
+    if gpu_nvidia_smi_info:
+        info["gpu_nvidia_smi_info"] = gpu_nvidia_smi_info
+        gpu_cuda_capabilities = get_cuda_gpu_details(gpu_nvidia_smi_info)
+        if gpu_cuda_capabilities:
+            info["gpu_cuda_capabilities"] = gpu_cuda_capabilities
+
+    # Large pages support
+    large_pages_support = check_large_pages_support()
+    if large_pages_support is not None:
+        info["large_pages_support"] = large_pages_support
+
+
+def _collect_cpu_info(info: dict, current_system: str, cpu_freq: _Any, ram: _Any) -> None:
+    """Add CPU identity, socket/core/thread counts, frequency limits, total RAM and GPU details."""
+    # CPU
+    cpu_info = get_cpu_info()
+    if cpu_info:
+        info["cpu"] = cpu_info
+
+    # Platform-specific CPU info
+    if current_system == "Windows":
+        cpu_wmi_info = get_wmi_cpuinfo()
+        if cpu_wmi_info:
+            info["cpu_wmi_info"] = cpu_wmi_info
+    else:
+        cpu_lscpu_info = get_lscpu_info()
+        if cpu_lscpu_info:
+            info["cpu_lscpu_info"] = cpu_lscpu_info
+        cpu_board_info = get_linux_board_info()
+        if cpu_board_info:
+            info["cpu_board_info"] = cpu_board_info
+
+    if current_system != "Windows":
+        info["cpu_num_sockets"] = get_nix_cpu_sockets_number()
+    info["cpu_num_cores"] = psutil.cpu_count(logical=False)
+    info["cpu_num_threads"] = psutil.cpu_count(logical=True)
+
+    info["cpu_min_frequency_hz"] = cpu_freq.min if cpu_freq is not None else None
+    info["cpu_max_frequency_hz"] = cpu_freq.max if cpu_freq is not None else None
+
+    # RAM
+    info["ram_total_gb"] = ram.total / 2**30
+
+    _collect_gpu_info(info)
+
+
+def _collect_usage_stats(info: dict, cpu_freq: _Any, ram: _Any) -> None:
+    """Add the current CPU frequency, CPU load and free RAM."""
+    info["cpu_current_frequency_hz"] = cpu_freq.current if cpu_freq is not None else None
+    info["cpu_current_load_percent"] = psutil.cpu_percent(percpu=False)
+    info["cpu_current_threads_load_percents"] = psutil.cpu_percent(percpu=True)
+
+    info["ram_free_gb"] = ram.free / 2**30
+
+
+def _collect_machine_identity(info: dict, current_system: str) -> None:
+    """Fill ``os_machine_guid`` and ``os_serial`` with the platform's machine identity, falling back to the GUID."""
+    # (Almost) Constant features - REQUIRED for distributed.py
+    info["os_machine_guid"] = str(uuid.UUID(int=uuid.getnode()))
+    if current_system == "Windows":
+        try:
+            # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
+            os_serial = _decode_child_output(subprocess.check_output([_resolve_binary("wmic"), "csproduct", "get", "uuid"])).split("\n")[1].strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+            info["os_machine_guid"] = os_serial
+            info["os_serial"] = os_serial  # Also store as separate field for distributed.py
+        except Exception:
+            logger.warning("Could not extract Windows serial!")
+            # Keep the schema consistent (distributed.py requires os_serial): fall back to the machine GUID.
+            info["os_serial"] = info.get("os_machine_guid", "")
+
+    elif current_system == "Linux":
+        try:
+            machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/var/lib/dbus/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+            info["os_machine_guid"] = machine_id
+            info["os_serial"] = machine_id
+        except Exception:
+            try:
+                machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/etc/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+                info["os_machine_guid"] = machine_id
+                info["os_serial"] = machine_id
+            except Exception:
+                logger.warning("Could not extract Linux machine-id")
+                info["os_serial"] = info.get("os_machine_guid", "")
+    elif current_system == "Android":
+        try:
+            serial = _decode_child_output(subprocess.check_output([_resolve_binary("getprop"), "ril.serialnumber"])[:-1]).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+            info["os_machine_guid"] = serial
+            info["os_serial"] = serial
+        except Exception:
+            logger.warning("Could not extract Android serial")
+            info["os_serial"] = info.get("os_machine_guid", "")
+    elif current_system == "Darwin":  # platform.system() reports "Darwin" on macOS, never "Mac"
+        try:
+            # Pipeline ``ioreg | grep`` — both Popen handles
+            # bound to context managers so they're terminated
+            # cleanly on exit / exception (was a bare
+            # subprocess.Popen pair before, leaking processes
+            # if grep_proc.communicate() raised).
+            with subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
+                [_resolve_binary("ioreg"), "-rd1", "-c", "IOPlatformExpertDevice"],
+                stdout=subprocess.PIPE,
+            ) as ioreg_proc, subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, piped from ioreg's stdout, no shell, no external input
+                [_resolve_binary("grep"), "-E", "(UUID)"],
+                stdin=ioreg_proc.stdout,
+                stdout=subprocess.PIPE,
+            ) as grep_proc:
+                assert ioreg_proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
+                ioreg_proc.stdout.close()
+                output = grep_proc.communicate()[0]
+            guid = _decode_child_output(output).split('"')[-2]
+            info["os_machine_guid"] = guid
+            info["os_serial"] = guid
+        except Exception:
+            logger.warning("Could not extract Mac UUID")
+            info["os_serial"] = info.get("os_machine_guid", "")
+    else:
+        # Unrecognized platform.system() value: still fill os_serial (distributed.py's
+        # register_scraper() unconditionally expects the field) via the generic fallback.
+        logger.warning("Unrecognized platform %r; using machine GUID fallback for os_serial", current_system)
+        info["os_serial"] = info.get("os_machine_guid", "")
+
+
+def _collect_os_info(info: dict, current_system: str, return_sensitive_info: bool, return_network_info: bool, web: _Any) -> None:
+    """Add OS details, power plan, battery and, when requested, the sensitive identity fields and external IP."""
+    # OS - Use enhanced get_os_info()
+    os_info_dict = get_os_info()
+    if os_info_dict:
+        info.update(os_info_dict)
+
+    # Power plan and battery
+    power_plan = get_power_plan()
+    if power_plan:
+        info["power_plan"] = power_plan
+
+    battery_info = get_battery_info()
+    if battery_info:
+        info["battery_info"] = battery_info
+
+    if return_sensitive_info:
+        _collect_machine_identity(info, current_system)
+
+        # host_name is also required for distributed.py
+        info["host_name"] = socket.gethostname()
+
+        if return_network_info and web is not None:
+            info["host_external_ip"] = web.get_external_ip()
+
+
 def get_system_info(
     return_hdd_info: bool = False,
     return_os_info: bool = False,
@@ -116,244 +382,33 @@ def get_system_info(
         return_sensitive_info = True
         return_os_info = True  # Needed to trigger sensitive info collection
 
-    numba: _Any
-    web: _Any
-    try:
-        import numba  # type: ignore[no-redef]  # mypy quirk: unaliased self-name import after a bare pre-declaration annotation
-    except ImportError:
-        numba = None
-    try:
-        from pyutilz.web import web
-    except ImportError:
-        web = None
+    numba, web = _import_optional_modules()
 
-    info = dict()
+    info: dict = dict()
     try:
         current_system = platform.system()
         if return_os_info:
-            # OS - Use enhanced get_os_info()
-            os_info_dict = get_os_info()
-            if os_info_dict:
-                info.update(os_info_dict)
-
-            # Power plan and battery
-            power_plan = get_power_plan()
-            if power_plan:
-                info["power_plan"] = power_plan
-
-            battery_info = get_battery_info()
-            if battery_info:
-                info["battery_info"] = battery_info
-
-            if return_sensitive_info:
-
-                # (Almost) Constant features - REQUIRED for distributed.py
-                info["os_machine_guid"] = str(uuid.UUID(int=uuid.getnode()))
-                if current_system == "Windows":
-                    os_serial = None
-                    try:
-                        # wmic is deprecated and absent on Windows 11 24H2+; fall back to the machine GUID below.
-                        os_serial = _decode_child_output(subprocess.check_output([_resolve_binary("wmic"), "csproduct", "get", "uuid"])).split("\n")[1].strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                        info["os_machine_guid"] = os_serial
-                        info["os_serial"] = os_serial  # Also store as separate field for distributed.py
-                    except Exception:
-                        logger.warning("Could not extract Windows serial!")
-                        # Keep the schema consistent (distributed.py requires os_serial): fall back to the machine GUID.
-                        info["os_serial"] = info.get("os_machine_guid", "")
-
-                elif current_system == "Linux":
-                    try:
-                        machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/var/lib/dbus/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                        info["os_machine_guid"] = machine_id
-                        info["os_serial"] = machine_id
-                    except Exception:
-                        try:
-                            machine_id = _decode_child_output(subprocess.check_output([_resolve_binary("cat"), "/etc/machine-id"])).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                            info["os_machine_guid"] = machine_id
-                            info["os_serial"] = machine_id
-                        except Exception:
-                            logger.warning("Could not extract Linux machine-id")
-                            info["os_serial"] = info.get("os_machine_guid", "")
-                elif current_system == "Android":
-                    try:
-                        serial = _decode_child_output(subprocess.check_output([_resolve_binary("getprop"), "ril.serialnumber"])[:-1]).strip()  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                        info["os_machine_guid"] = serial
-                        info["os_serial"] = serial
-                    except Exception:
-                        logger.warning("Could not extract Android serial")
-                        info["os_serial"] = info.get("os_machine_guid", "")
-                elif current_system == "Darwin":  # platform.system() reports "Darwin" on macOS, never "Mac"
-                    try:
-                        # Pipeline ``ioreg | grep`` — both Popen handles
-                        # bound to context managers so they're terminated
-                        # cleanly on exit / exception (was a bare
-                        # subprocess.Popen pair before, leaking processes
-                        # if grep_proc.communicate() raised).
-                        with subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                            [_resolve_binary("ioreg"), "-rd1", "-c", "IOPlatformExpertDevice"],
-                            stdout=subprocess.PIPE,
-                        ) as ioreg_proc, subprocess.Popen(  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, piped from ioreg's stdout, no shell, no external input
-                            [_resolve_binary("grep"), "-E", "(UUID)"],
-                            stdin=ioreg_proc.stdout,
-                            stdout=subprocess.PIPE,
-                        ) as grep_proc:
-                            assert ioreg_proc.stdout is not None  # guaranteed by stdout=subprocess.PIPE above
-                            ioreg_proc.stdout.close()
-                            output = grep_proc.communicate()[0]
-                        guid = _decode_child_output(output).split('"')[-2]
-                        info["os_machine_guid"] = guid
-                        info["os_serial"] = guid
-                    except Exception:
-                        logger.warning("Could not extract Mac UUID")
-                        info["os_serial"] = info.get("os_machine_guid", "")
-                else:
-                    # Unrecognized platform.system() value: still fill os_serial (distributed.py's
-                    # register_scraper() unconditionally expects the field) via the generic fallback.
-                    logger.warning("Unrecognized platform %r; using machine GUID fallback for os_serial", current_system)
-                    info["os_serial"] = info.get("os_machine_guid", "")
-
-                # host_name is also required for distributed.py
-                info["host_name"] = socket.gethostname()
-
-                if return_network_info and web is not None:
-                    info["host_external_ip"] = web.get_external_ip()
+            _collect_os_info(info, current_system, return_sensitive_info, return_network_info, web)
 
         if return_hardware_info or return_usage_stats:
-            # psutil.cpu_freq does not exist on every platform (macOS has none), and where it does
-            # it may still return None. Calling it unguarded raised AttributeError here, which the
-            # function-wide except swallowed -- so a single missing capability silently truncated
-            # the ENTIRE system-info dict, usage stats and all. Absent frequency now costs only the
-            # frequency fields.
-            cpu_freq = _get_cpu_freq(psutil_module=psutil)
-            ram = psutil.virtual_memory()
-
+            cpu_freq, ram = _sample_cpu_and_ram()
         if return_hardware_info:
-            # CPU
-            cpu_info = get_cpu_info()
-            if cpu_info:
-                info["cpu"] = cpu_info
-
-            # Platform-specific CPU info
-            if current_system == "Windows":
-                cpu_wmi_info = get_wmi_cpuinfo()
-                if cpu_wmi_info:
-                    info["cpu_wmi_info"] = cpu_wmi_info
-            else:
-                cpu_lscpu_info = get_lscpu_info()
-                if cpu_lscpu_info:
-                    info["cpu_lscpu_info"] = cpu_lscpu_info
-                cpu_board_info = get_linux_board_info()
-                if cpu_board_info:
-                    info["cpu_board_info"] = cpu_board_info
-
-            if current_system != "Windows":
-                info["cpu_num_sockets"] = get_nix_cpu_sockets_number()
-            info["cpu_num_cores"] = psutil.cpu_count(logical=False)
-            info["cpu_num_threads"] = psutil.cpu_count(logical=True)
-
-            info["cpu_min_frequency_hz"] = cpu_freq.min if cpu_freq is not None else None
-            info["cpu_max_frequency_hz"] = cpu_freq.max if cpu_freq is not None else None
-
-            # RAM
-            info["ram_total_gb"] = ram.total / 2**30
-
-            # GPU - Use new nvidia-smi based detection
-            gpu_nvidia_smi_info = get_nvidia_smi_info(include_stats=False)
-            if gpu_nvidia_smi_info:
-                info["gpu_nvidia_smi_info"] = gpu_nvidia_smi_info
-                gpu_cuda_capabilities = get_cuda_gpu_details(gpu_nvidia_smi_info)
-                if gpu_cuda_capabilities:
-                    info["gpu_cuda_capabilities"] = gpu_cuda_capabilities
-
-            # Large pages support
-            large_pages_support = check_large_pages_support()
-            if large_pages_support is not None:
-                info["large_pages_support"] = large_pages_support
-
+            _collect_cpu_info(info, current_system, cpu_freq, ram)
         # info['os_user_name']=os.environ.get('USER')
         # info['os_user_name']=os.environ.get('USERNAME')
 
         if return_usage_stats:
-
-            info["cpu_current_frequency_hz"] = cpu_freq.current if cpu_freq is not None else None
-            info["cpu_current_load_percent"] = psutil.cpu_percent(percpu=False)
-            info["cpu_current_threads_load_percents"] = psutil.cpu_percent(percpu=True)
-
-            info["ram_free_gb"] = ram.free / 2**30
+            _collect_usage_stats(info, cpu_freq, ram)
 
         # Soft+GPU
         info["python_version"] = platform.python_implementation() + " " + platform.python_version()
-        if numba is not None and "cuda" in dir(numba):
-            if numba.cuda.is_available():
-                try:
-                    # list-style argv (not a single "nvcc --version" string): with shell=False (the
-                    # default), a string args is the literal executable name/path with NO whitespace
-                    # splitting on POSIX -- there is no executable named "nvcc --version", so the old
-                    # form always raised FileNotFoundError on Linux/macOS regardless of whether nvcc was
-                    # genuinely on PATH. Line-ending-agnostic pattern too: real nvcc output uses bare
-                    # "\n" on Linux/macOS, not "\r\n".
-                    cuda_version = re.findall(r", V(\S+)", _decode_child_output(subprocess.check_output([_resolve_binary("nvcc"), "--version"])))  # nosec B603 B607 - absolute path resolved via shutil.which (_resolve_binary), hardcoded argv, no shell, no external input
-                except Exception:
-                    cuda_version = [""]
-
-                if len(cuda_version) > 0:
-                    if len(cuda_version[0].split(".")) == 3:
-                        if not only_stats:
-                            info["cuda_version"] = cuda_version[0]
-                if not only_stats:
-                    # Use new GPU detection
-                    try:
-                        gpu_stats = get_nvidia_smi_info(include_stats=True)
-                        if gpu_stats:
-                            info["gpu_current_stats_nvidia_smi"] = gpu_stats
-                    except Exception as e:  # nosec B110 - best-effort GPU usage stats; absent/misbehaving nvidia-smi must not break overall system_info collection
-                        logger.debug("Could not get nvidia-smi GPU stats: %s", e)
-
-                    # Keep legacy gpuutil for backward compatibility with usage stats
-                    try:
-                        info["gpu_current_stats"] = get_gpuutil_gpu_info()
-                    except Exception as e:  # nosec B110 - best-effort legacy GPUtil stats; absent GPUtil/driver must not break overall system_info collection
-                        logger.debug("Could not get GPUtil GPU stats: %s", e)
+        _collect_cuda_info(info, numba, only_stats)
 
         if return_hdd_info:
-            (
-                max_singledisk_free_space,
-                singledisk_usage_percent,
-                best_disk,
-                cumulative_disks_usage_total,
-                cumulative_disks_usage_free,
-            ) = get_max_singledisk_free_space_gb()
+            _collect_hdd_info(info)
 
-            info["hdd_free_space_gb"] = cumulative_disks_usage_free
-            info["hdd_total_space_gb"] = cumulative_disks_usage_total
-            info["hdd_max_singledisk_free_space_gb"] = max_singledisk_free_space
-            # Previously computed but silently discarded (found 2026-07-09 deptry/vulture
-            # triage): which mountpoint has the most free space, and what fraction of IT is
-            # free -- distinct from the aggregate hdd_max_singledisk_free_space_gb, which is
-            # capacity-in-GB with no per-disk usage-percent context.
-            info["hdd_best_disk"] = best_disk
-            info["hdd_best_disk_usage_percent"] = singledisk_usage_percent
-
-        # psutil.boot_time() #1564925068.0
-        # psutil.users() #[suser(name='TheLocalCommander', terminal=None, host='0.0.0.0', started=1564925062.0, pid=None)]
-        # psutil.disk_io_counters(perdisk=True) #{'PhysicalDrive0': sdiskio(read_count=1073232, write_count=9990341, read_bytes=43034913280, write_bytes=203126582272, read_time=1536, write_time=8487)}
         if return_hardware_details:
-            if current_system == "Windows":
-                # Use enhanced WMI summary
-                system_wmi_summary = summarize_system_info()
-                if system_wmi_summary:
-                    info["system_wmi_summary"] = system_wmi_summary
-            else:
-                # Linux: dmidecode info
-                dmidecode_info = parse_dmidecode_info()
-                if dmidecode_info:
-                    info["dmidecode_info"] = dmidecode_info
-
-                # Linux devices list
-                try:
-                    info["devices_list"] = list_linux_devices()
-                except Exception as e:  # nosec B110 - best-effort optional Linux devices listing (needs pylspci); must not break overall system_info collection
-                    logger.debug("Could not list Linux devices: %s", e)
+            _collect_hardware_details(info, current_system)
         return info
     except Exception as e:
         logger.exception(e)

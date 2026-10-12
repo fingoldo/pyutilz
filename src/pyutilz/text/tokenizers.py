@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # pyutilz.database.db.__init__ unconditionally imports sqlalchemy/psycopg2/pymysql regardless
 # of this file's own deferred psycopg2.extras import a few lines below (fixed 2026-07-21 audit:
 # broke `pip install pyutilz[nlp]` alone, since [nlp] doesn't declare the [database] stack).
-from typing import Optional
+from typing import List, Optional
 
 from pyutilz.text.strings import (
     merge_punctuation_signs,
@@ -112,6 +112,83 @@ class AdvancedTokenizer:
         self.NUM_PREV_WORDS = dict()  # defaultdict(lambda: defaultdict(int))
         self.NUM_PREV_SENTENCE_WORDS = dict()  # defaultdict(lambda: defaultdict(int))
 
+    def _count_morpheme_occurrence(
+        self,
+        base_morpheme: str,
+        i: int,
+        w: int,
+        k: int,
+        word_len: int,
+        first_letter_capital: bool,
+        all_letters_capital: bool,
+    ) -> None:
+        """Count one occurrence of ``base_morpheme`` starting at offset ``i`` of word ``w`` (of ``k`` words) in its sentence."""
+        # stats
+        if w == 0:
+            self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
+        # Independent `if`, not `elif`: in a ONE-word sentence w == 0 == k - 1, and
+        # the elif made every such word first-word-only, so NUM_LASTWORD_INSENTENCE
+        # stayed at zero for a corpus of headlines/titles.
+        if w == k - 1:
+            self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
+
+        if first_letter_capital:
+            self.NUM_FIRSTLETTER_CAPITAL[base_morpheme] += 1
+        if all_letters_capital:
+            self.NUM_ALLLETTERS_CAPITAL[base_morpheme] += 1
+
+        self.INWORD_ABSOLUTE_POSITION[base_morpheme] += i + 1
+        self.INWORD_RELATIVE_POSITION[base_morpheme] += (i + 1) / word_len
+
+        self.INSENTENCE_ABSOLUTE_POSITION[base_morpheme] += w + 1
+        self.INSENTENCE_RELATIVE_POSITION[base_morpheme] += (w + 1) / k
+
+        self.NUM_OCCS[base_morpheme] += 1
+
+    def _count_separate_word(self, base_morpheme: str, last_word: Optional[str]) -> str:
+        """Count ``base_morpheme`` as a standalone word, link it to ``last_word``, and return it as the new previous word."""
+        self.NUM_AS_SEPARATE_WORD[base_morpheme] += 1
+        if last_word:
+            if base_morpheme not in self.NUM_PREV_WORDS:
+                self.NUM_PREV_WORDS[base_morpheme] = defaultdict(int)
+            self.NUM_PREV_WORDS[base_morpheme][last_word] += 1
+        return base_morpheme
+
+    def _tokenize_word(self, word: str, w: int, k: int, last_word: Optional[str]) -> Optional[str]:
+        """Accumulate the morpheme statistics of one genuine word and return the updated previous-word link."""
+        word_len = len(word)
+        # Both flags describe the WORD, computed once, which is what their names say and
+        # what the counters below are meant to measure. Recomputing them per (i, j) offset
+        # made a camelCase-ish token like "aBCDE" contribute to both counters, and left
+        # them entirely unassigned (NameError on the first word) whenever
+        # MIN_MORPHEME_LENGTH > 1 skipped the j == 1 branch that used to define them.
+        first_letter_capital = word[0].isupper()
+        all_letters_capital = word.isupper()
+        for i in range(word_len):
+            max_j = min(word_len - i, self.MAX_MORPHEME_LENGTH)
+            for j in range(self.MIN_MORPHEME_LENGTH, max_j + 1):
+                base_morpheme = word[i : i + j].lower()
+                self._count_morpheme_occurrence(base_morpheme, i, w, k, word_len, first_letter_capital, all_letters_capital)
+                if i == 0 and j == word_len:
+                    last_word = self._count_separate_word(base_morpheme, last_word)
+        if self.MAX_MORPHEME_LENGTH < word_len <= self.MAX_WORD_LENGTH:
+            # The capped loop above never reaches i=0, j=word_len for a word longer than
+            # MAX_MORPHEME_LENGTH, so the whole-word statistics that iteration would have
+            # recorded (NUM_AS_SEPARATE_WORD / the NUM_PREV_WORDS chain) are recorded here
+            # instead -- reusing first_letter_capital/all_letters_capital, already computed
+            # from the i=0, j=MIN_MORPHEME_LENGTH iteration above.
+            base_morpheme = word.lower()
+            self._count_morpheme_occurrence(base_morpheme, 0, w, k, word_len, first_letter_capital, all_letters_capital)
+            last_word = self._count_separate_word(base_morpheme, last_word)
+        return last_word
+
+    def _link_sentence_first_word(self, last_word: Optional[str], last_sentence_word: Optional[str]) -> None:
+        """Count the (first word of this sentence, last word of the previous sentence) pair."""
+        if last_sentence_word:
+            if last_word not in self.NUM_PREV_SENTENCE_WORDS:
+                self.NUM_PREV_SENTENCE_WORDS[last_word] = defaultdict(int)
+            self.NUM_PREV_SENTENCE_WORDS[last_word][last_sentence_word] += 1
+
     def tokenize(self, text):
         """
         Sentence- and word-tokenizes text (via nltk) and accumulates per-morpheme statistics (occurrence
@@ -138,99 +215,32 @@ class AdvancedTokenizer:
 
         cur_sentences = nltk.sent_tokenize(text)
         last_sentence_word = None
-        for _s, sent in enumerate(cur_sentences):
-            stext = sent.strip()
-            words = merge_punctuation_signs(nltk.word_tokenize(stext))
-            k = len(words)
-            last_word = None
-            for w, word in enumerate(words):
-                word_len = len(word)
-                if word_len == 0:
-                    continue
-                if word_len > self.MAX_WORD_LENGTH:
-                    # Not genuine language content at this length (a long URL, a base64/JS blob
-                    # that survived fix_html, an unbroken run of scraped text) -- skip entirely
-                    # rather than pay the substring-enumeration cost below. Breaks the
-                    # prev-word chain across the skipped word rather than linking across it.
-                    logger.debug("Skipping %d-char word in morpheme extraction (exceeds MAX_WORD_LENGTH=%d)", word_len, self.MAX_WORD_LENGTH)
-                    last_word = None
-                    continue
-                # Both flags describe the WORD, computed once, which is what their names say and
-                # what the counters below are meant to measure. Recomputing them per (i, j) offset
-                # made a camelCase-ish token like "aBCDE" contribute to both counters, and left
-                # them entirely unassigned (NameError on the first word) whenever
-                # MIN_MORPHEME_LENGTH > 1 skipped the j == 1 branch that used to define them.
-                FIRSTLETTER_CAPITAL = word[0].isupper()
-                ALLLETTERS_CAPITAL = word.isupper()
-                for i in range(word_len):
-                    max_j = min(word_len - i, self.MAX_MORPHEME_LENGTH)
-                    for j in range(self.MIN_MORPHEME_LENGTH, max_j + 1):
-                        morpheme = word[i : i + j]
-                        base_morpheme = morpheme.lower()
-                        # stats
-                        if w == 0:
-                            self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
-                        # Independent `if`, not `elif`: in a ONE-word sentence w == 0 == k - 1, and
-                        # the elif made every such word first-word-only, so NUM_LASTWORD_INSENTENCE
-                        # stayed at zero for a corpus of headlines/titles.
-                        if w == k - 1:
-                            self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
+        for sent in cur_sentences:
+            words = merge_punctuation_signs(nltk.word_tokenize(sent.strip()))
+            last_sentence_word = self._tokenize_sentence(words, last_sentence_word)
 
-                        if FIRSTLETTER_CAPITAL:
-                            self.NUM_FIRSTLETTER_CAPITAL[base_morpheme] += 1
-                        if ALLLETTERS_CAPITAL:
-                            self.NUM_ALLLETTERS_CAPITAL[base_morpheme] += 1
-
-                        self.INWORD_ABSOLUTE_POSITION[base_morpheme] += i + 1
-                        self.INWORD_RELATIVE_POSITION[base_morpheme] += (i + 1) / word_len
-
-                        self.INSENTENCE_ABSOLUTE_POSITION[base_morpheme] += w + 1
-                        self.INSENTENCE_RELATIVE_POSITION[base_morpheme] += (w + 1) / k
-
-                        self.NUM_OCCS[base_morpheme] += 1
-
-                        if i == 0:
-                            if j == word_len:
-                                self.NUM_AS_SEPARATE_WORD[base_morpheme] += 1
-                                if last_word:
-                                    if base_morpheme not in self.NUM_PREV_WORDS:
-                                        self.NUM_PREV_WORDS[base_morpheme] = defaultdict(int)
-                                    self.NUM_PREV_WORDS[base_morpheme][last_word] += 1
-                                last_word = base_morpheme
-                if self.MAX_MORPHEME_LENGTH < word_len <= self.MAX_WORD_LENGTH:
-                    # The capped loop above never reaches i=0, j=word_len for a word longer than
-                    # MAX_MORPHEME_LENGTH, so the whole-word statistics that iteration would have
-                    # recorded (NUM_AS_SEPARATE_WORD / the NUM_PREV_WORDS chain) are recorded here
-                    # instead -- reusing FIRSTLETTER_CAPITAL/ALLLETTERS_CAPITAL, already computed
-                    # from the i=0, j=MIN_MORPHEME_LENGTH iteration above.
-                    base_morpheme = word.lower()
-                    if w == 0:
-                        self.NUM_FIRSTWORD_INSENTENCE[base_morpheme] += 1
-                    # Independent `if` for the same one-word-sentence reason as the loop above.
-                    if w == k - 1:
-                        self.NUM_LASTWORD_INSENTENCE[base_morpheme] += 1
-                    if FIRSTLETTER_CAPITAL:
-                        self.NUM_FIRSTLETTER_CAPITAL[base_morpheme] += 1
-                    if ALLLETTERS_CAPITAL:
-                        self.NUM_ALLLETTERS_CAPITAL[base_morpheme] += 1
-                    self.INWORD_ABSOLUTE_POSITION[base_morpheme] += 1
-                    self.INWORD_RELATIVE_POSITION[base_morpheme] += 1 / word_len
-                    self.INSENTENCE_ABSOLUTE_POSITION[base_morpheme] += w + 1
-                    self.INSENTENCE_RELATIVE_POSITION[base_morpheme] += (w + 1) / k
-                    self.NUM_OCCS[base_morpheme] += 1
-                    self.NUM_AS_SEPARATE_WORD[base_morpheme] += 1
-                    if last_word:
-                        if base_morpheme not in self.NUM_PREV_WORDS:
-                            self.NUM_PREV_WORDS[base_morpheme] = defaultdict(int)
-                        self.NUM_PREV_WORDS[base_morpheme][last_word] += 1
-                    last_word = base_morpheme
-                if w == 0:
-                    if last_sentence_word:
-                        if last_word not in self.NUM_PREV_SENTENCE_WORDS:
-                            self.NUM_PREV_SENTENCE_WORDS[last_word] = defaultdict(int)
-                        self.NUM_PREV_SENTENCE_WORDS[last_word][last_sentence_word] += 1
-                if last_word is not None and (last_word.isalpha() or last_word.isnumeric()):
-                    last_sentence_word = last_word
+    def _tokenize_sentence(self, words: List[str], last_sentence_word: Optional[str]) -> Optional[str]:
+        """Accumulate the morpheme statistics of one sentence's words and return the last genuine word seen (for the next sentence's link)."""
+        k = len(words)
+        last_word = None
+        for w, word in enumerate(words):
+            word_len = len(word)
+            if word_len == 0:
+                continue
+            if word_len > self.MAX_WORD_LENGTH:
+                # Not genuine language content at this length (a long URL, a base64/JS blob
+                # that survived fix_html, an unbroken run of scraped text) -- skip entirely
+                # rather than pay the substring-enumeration cost below. Breaks the
+                # prev-word chain across the skipped word rather than linking across it.
+                logger.debug("Skipping %d-char word in morpheme extraction (exceeds MAX_WORD_LENGTH=%d)", word_len, self.MAX_WORD_LENGTH)
+                last_word = None
+                continue
+            last_word = self._tokenize_word(word, w, k, last_word)
+            if w == 0:
+                self._link_sentence_first_word(last_word, last_sentence_word)
+            if last_word is not None and (last_word.isalpha() or last_word.isnumeric()):
+                last_sentence_word = last_word
+        return last_sentence_word
 
     def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
         """

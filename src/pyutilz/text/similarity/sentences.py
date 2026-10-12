@@ -7,6 +7,8 @@ variants of this function live in ``_numba_api``/``_numba_kernels``.
 
 from __future__ import annotations
 
+from typing import List as _List, Tuple as _Tuple
+
 from ._common import (
     Optional,
     SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
@@ -17,6 +19,141 @@ from ._common import (
     levenshtein_distance,
     logger,
 )
+
+
+def _best_gliding_distance(short: str, long: str, short_len: int, long_len: int) -> int:
+    """Return the smallest Levenshtein distance between ``short`` and any window of ``long`` of the same length."""
+    best_gliding_perf = short_len  # worst case = all chars different
+    # L-S+1 windows of length S exist; the old `range(L-S)` never tested the SUFFIX window,
+    # so an exact suffix match (MADRID vs REALMADRID) scored as unrelated.
+    for k in range(long_len - short_len + 1):
+        t_sim = levenshtein_distance(short, long[k : k + short_len])
+        if t_sim < best_gliding_perf:
+            best_gliding_perf = t_sim
+            if t_sim == 0:
+                break  # perfect substring match
+    return best_gliding_perf
+
+
+def _word_pair_similarity(a: str, b: str, cMinLenTHreshold: int) -> float:
+    """Return the similarity of two words (0.0 when either is empty or below the minimum length)."""
+    cur_a_len = len(a)
+    cur_b_len = len(b)
+    if cur_a_len == 0 or cur_b_len == 0:
+        return 0.0
+
+    t = max(cur_a_len, cur_b_len)
+    lminLen = min(cur_a_len, cur_b_len)
+
+    # Exact match — early exit (most common case for matching words)
+    if a == b:
+        return 1.0
+
+    if lminLen < cMinLenTHreshold:
+        return 0.0
+
+    # Check if starts match (one is prefix of another)
+    # Чтобы "Almeria B"<>"Al-Budaiya": a single shared character must not earn the 0.9
+    # floor -- "A" vs "ANDERSON" scored 0.9125, above a correct suffix match.
+    if lminLen >= 2 and a[:lminLen] == b[:lminLen]:
+        return 0.9 + 0.1 * lminLen / t
+
+    # Levenshtein distance
+    sim_min = float(1 - levenshtein_distance(a, b) / t)
+    if cur_a_len == cur_b_len:
+        return sim_min
+    # Скольжение меньшего слова вдоль большего
+    if cur_a_len < cur_b_len:
+        short, long, short_len, long_len = a, b, cur_a_len, cur_b_len
+    else:
+        short, long, short_len, long_len = b, a, cur_b_len, cur_a_len
+
+    sim_max = 1 - _best_gliding_distance(short, long, short_len, long_len) / short_len
+    return 0.5 * (sim_max + sim_min)
+
+
+def _similarity_matrix(SentenceA: list, SentenceB: list, cMinLenTHreshold: int) -> _List[_List[float]]:
+    """Return the N_a x N_b matrix of pairwise word similarities as plain lists."""
+    N_a = len(SentenceA)
+    N_b = len(SentenceB)
+    # Plain lists instead of numpy for typical small inputs (3-10 words)
+    Sim_res = [[0.0] * N_b for _ in range(N_a)]
+    for i in range(N_a):
+        for j in range(N_b):
+            Sim_res[i][j] = _word_pair_similarity(SentenceA[i], SentenceB[j], cMinLenTHreshold)
+    return Sim_res
+
+
+def _greedy_match(Sim_res: _List[_List[float]], N_a: int, N_b: int, w_min: int) -> _Tuple[float, list, list]:
+    """Greedily pick ``w_min`` best pairs; return ``(total, per-word matched similarity for A, for B)``."""
+    # Greedy best-pair matching: pick highest similarity pair, exclude both words, repeat
+    excluded_a = [False] * N_a
+    excluded_b = [False] * N_b
+    res = 0.0
+    # Per-word achieved match similarity (0.0 for any word left unmatched after w_min picks - true
+    # for every word on the w_max side by construction, since the greedy pass never picks more than
+    # w_min pairs). Only READ when the coverage gate is active; the O(N) allocation/writes cost
+    # nothing next to the O(w*N^2) matching pass either way, so no need to special-case them off.
+    matched_sim_a: list = [0.0] * N_a
+    matched_sim_b: list = [0.0] * N_b
+
+    for _ in range(w_min):
+        best_perf = 0.0
+        best_i = 0
+        best_j = 0
+        for i in range(N_a):
+            if excluded_a[i]:
+                continue
+            row = Sim_res[i]
+            for j in range(N_b):
+                if not excluded_b[j] and row[j] >= best_perf:
+                    best_perf = row[j]
+                    best_i = i
+                    best_j = j
+
+        res += Sim_res[best_i][best_j]
+        matched_sim_a[best_i] = Sim_res[best_i][best_j]
+        matched_sim_b[best_j] = Sim_res[best_i][best_j]
+        excluded_a[best_i] = True
+        excluded_b[best_j] = True
+    return res, matched_sim_a, matched_sim_b
+
+
+def _coverage_gate_passes(
+    SentenceA: list,
+    SentenceB: list,
+    matched_sim_a: list,
+    matched_sim_b: list,
+    coverage_side: str,
+    min_word_similarity: float,
+    required_coverage: Optional[float],
+    required_matched_words: Optional[int],
+    stop_words: Optional[list],
+) -> bool:
+    """Return True when the requested side(s) of the coverage requirement are met by the greedy matches."""
+    N_a = len(SentenceA)
+    N_b = len(SentenceB)
+    stop_set = set(stop_words) if stop_words else set()
+    ok = True
+    if coverage_side in ("max", "both"):
+        words, matched = (SentenceA, matched_sim_a) if N_a >= N_b else (SentenceB, matched_sim_b)
+        ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+    if ok and coverage_side in ("min", "both"):
+        words, matched = (SentenceB, matched_sim_b) if N_a >= N_b else (SentenceA, matched_sim_a)
+        ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
+    return ok
+
+
+def _warn_if_oversized(N_a: int, N_b: int) -> None:
+    """Log a warning when either sentence exceeds SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD tokens."""
+    if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
+        logger.warning(
+            "sentences_similarity called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
+            "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
+            N_a,
+            N_b,
+            SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
+        )
 
 
 def sentences_similarity(
@@ -81,108 +218,12 @@ def sentences_similarity(
     coverage_active = required_coverage is not None or required_matched_words is not None
     if coverage_active:
         _validate_coverage_side(coverage_side)
-    if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
-        logger.warning(
-            "sentences_similarity called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
-            "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
-            N_a,
-            N_b,
-            SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD,
-        )
-    if N_a < N_b:
-        w_min = N_a
-        w_max = N_b
-    else:
-        w_min = N_b
-        w_max = N_a
+    _warn_if_oversized(N_a, N_b)
+    w_min = min(N_a, N_b)
+    w_max = max(N_a, N_b)
 
-    # Plain lists instead of numpy for typical small inputs (3-10 words)
-    Sim_res = [[0.0] * N_b for _ in range(N_a)]
-
-    for i in range(N_a):
-        a = SentenceA[i]
-        cur_a_len = len(a)
-        if cur_a_len == 0:
-            continue
-        for j in range(N_b):
-            b = SentenceB[j]
-            cur_b_len = len(b)
-            if cur_b_len == 0:
-                continue
-
-            t = max(cur_a_len, cur_b_len)
-            lminLen = min(cur_a_len, cur_b_len)
-
-            # Exact match — early exit (most common case for matching words)
-            if a == b:
-                Sim_res[i][j] = 1.0
-                continue
-
-            if lminLen < cMinLenTHreshold:
-                continue
-
-            # Check if starts match (one is prefix of another)
-            # Чтобы "Almeria B"<>"Al-Budaiya": a single shared character must not earn the 0.9
-            # floor -- "A" vs "ANDERSON" scored 0.9125, above a correct suffix match.
-            if lminLen >= 2 and a[:lminLen] == b[:lminLen]:
-                sim = 0.9 + 0.1 * lminLen / t
-                Sim_res[i][j] = sim
-                continue
-
-            # Levenshtein distance
-            sim_min = 1 - levenshtein_distance(a, b) / t
-            if cur_a_len == cur_b_len:
-                Sim_res[i][j] = sim_min
-            else:
-                # Скольжение меньшего слова вдоль большего
-                if cur_a_len < cur_b_len:
-                    short, long, short_len, long_len = a, b, cur_a_len, cur_b_len
-                else:
-                    short, long, short_len, long_len = b, a, cur_b_len, cur_a_len
-
-                best_gliding_perf = short_len  # worst case = all chars different
-                # L-S+1 windows of length S exist; the old `range(L-S)` never tested the SUFFIX window,
-                # so an exact suffix match (MADRID vs REALMADRID) scored as unrelated.
-                for k in range(long_len - short_len + 1):
-                    t_sim = levenshtein_distance(short, long[k : k + short_len])
-                    if t_sim < best_gliding_perf:
-                        best_gliding_perf = t_sim
-                        if t_sim == 0:
-                            break  # perfect substring match
-
-                sim_max = 1 - best_gliding_perf / short_len
-                Sim_res[i][j] = 0.5 * (sim_max + sim_min)
-
-    # Greedy best-pair matching: pick highest similarity pair, exclude both words, repeat
-    excluded_a = [False] * N_a
-    excluded_b = [False] * N_b
-    res = 0.0
-    # Per-word achieved match similarity (0.0 for any word left unmatched after w_min picks - true
-    # for every word on the w_max side by construction, since the greedy pass never picks more than
-    # w_min pairs). Only READ when the coverage gate is active; the O(N) allocation/writes cost
-    # nothing next to the O(w*N^2) matching pass either way, so no need to special-case them off.
-    matched_sim_a: list = [0.0] * N_a
-    matched_sim_b: list = [0.0] * N_b
-
-    for _ in range(w_min):
-        best_perf = 0.0
-        best_i = 0
-        best_j = 0
-        for i in range(N_a):
-            if excluded_a[i]:
-                continue
-            row = Sim_res[i]
-            for j in range(N_b):
-                if not excluded_b[j] and row[j] >= best_perf:
-                    best_perf = row[j]
-                    best_i = i
-                    best_j = j
-
-        res += Sim_res[best_i][best_j]
-        matched_sim_a[best_i] = Sim_res[best_i][best_j]
-        matched_sim_b[best_j] = Sim_res[best_i][best_j]
-        excluded_a[best_i] = True
-        excluded_b[best_j] = True
+    Sim_res = _similarity_matrix(SentenceA, SentenceB, cMinLenTHreshold)
+    res, matched_sim_a, matched_sim_b = _greedy_match(Sim_res, N_a, N_b, w_min)
 
     # Normalized by w_max (the LONGER sentence), not w_min: the greedy pass above only ever picks
     # w_min pairs, so a short candidate needs to explain few words to average high under a w_min
@@ -204,16 +245,17 @@ def sentences_similarity(
     else:
         res = 0
 
-    if coverage_active:
-        stop_set = set(stop_words) if stop_words else set()
-        ok = True
-        if coverage_side in ("max", "both"):
-            words, matched = (SentenceA, matched_sim_a) if N_a >= N_b else (SentenceB, matched_sim_b)
-            ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
-        if ok and coverage_side in ("min", "both"):
-            words, matched = (SentenceB, matched_sim_b) if N_a >= N_b else (SentenceA, matched_sim_a)
-            ok = ok and _check_word_coverage(words, matched, min_word_similarity, required_coverage, required_matched_words, stop_set)
-        if not ok:
-            return None
+    if coverage_active and not _coverage_gate_passes(
+        SentenceA,
+        SentenceB,
+        matched_sim_a,
+        matched_sim_b,
+        coverage_side,
+        min_word_similarity,
+        required_coverage,
+        required_matched_words,
+        stop_words,
+    ):
+        return None
 
     return res

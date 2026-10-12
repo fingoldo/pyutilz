@@ -135,47 +135,33 @@ def _float_binning_inputs(col_expr: pl.Expr, min_val: Any, max_val: Any, is_deci
     return col_expr.cast(pl.Float64), float(min_val), float(max_val)
 
 
-def bin_numerical_columns(
-    df: pl.DataFrame,
-    target_columns: list,
-    binned_targets: Optional[pl.DataFrame] = None,
-    clean_features: bool = True,
-    clean_targets: bool = True,
-    num_bins: int = 10,
-    bin_dtype: Any = pl.Int8,
-    exclude_columns: Optional[list] = None,
-    min_nuniques_to_clip: int = 10,
-    tukey_fences_multiplier: float = 3.0,
-    fill_nulls: bool = True,
-    fill_nans: bool = True,
-    max_log_text_width: int = 300,
-    verbose: bool = False,
-) -> Tuple[pl.DataFrame, Optional[pl.DataFrame], dict, list, dict]:
-    """Computes min, max, and quantiles of all numerical columns in one go.
-    Decides which are outliers and adds clipping.
-    Converts values into integer uniform bin ids.
-    Suggest for dropping columns that do not change.
-    """
-    if exclude_columns is None:
-        exclude_columns = []
-
+def _resolve_bin_dtype(bin_dtype: Any, num_bins: int, verbose: bool) -> Any:
+    """Return ``bin_dtype``, widened to the smallest signed integer type that can hold ``num_bins - 1``."""
     needed_max = num_bins - 1
     if bin_dtype in _BIN_DTYPE_MAX and needed_max > _BIN_DTYPE_MAX[bin_dtype]:
         for candidate in (pl.Int8, pl.Int16, pl.Int32, pl.Int64):
             if needed_max <= _BIN_DTYPE_MAX[candidate]:
                 if verbose:
                     logger.warning("bin_dtype=%s can't hold num_bins-1=%s; auto-widening to %s", bin_dtype, needed_max, candidate)
-                bin_dtype = candidate
-                break
-        else:
-            raise ValueError(f"num_bins={num_bins} exceeds the range even of Int64 bin_dtype")
+                return candidate
+        raise ValueError(f"num_bins={num_bins} exceeds the range even of Int64 bin_dtype")
+    return bin_dtype
 
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Inits
-    # ----------------------------------------------------------------------------------------------------------------------------
 
-    columns_to_drop = []
+def _log_progress(verbose: bool, message: str) -> None:
+    """Log a progress message when verbosity is above 1."""
+    if verbose > 1:
+        logger.info(message)
 
+
+def _select_binning_columns(
+    df: pl.DataFrame,
+    target_columns: list,
+    exclude_columns: list,
+    binned_targets: Optional[pl.DataFrame],
+    verbose: bool,
+) -> tuple:
+    """Return ``(existing_target_columns, all_num_cols)``: the targets present in ``df`` and the numeric selector to bin."""
     # Get existing columns from dataframe schema (works for both DataFrame and LazyFrame)
     df_columns = set(df.collect_schema().names()) if hasattr(df, "collect_schema") else set(df.columns)
 
@@ -193,16 +179,18 @@ def bin_numerical_columns(
             all_num_cols = all_num_cols - cs.by_name(existing_exclude)
     if binned_targets is not None and existing_target_columns:
         all_num_cols = all_num_cols - cs.by_name(existing_target_columns)
+    return existing_target_columns, all_num_cols
 
-    _facade.clean_ram()
 
-    # ----------------------------------------------------------------------------------------------------------------------------
-    # Compute stats for every column
-    # ----------------------------------------------------------------------------------------------------------------------------
-
-    if verbose > 1:
-        logger.info("Computing Min/Max/Quantiles...")
-
+def _compute_binning_stats(
+    df: pl.DataFrame,
+    all_num_cols: Any,
+    clean_features: bool,
+    clean_targets: bool,
+    binned_targets: Optional[pl.DataFrame],
+    existing_target_columns: list,
+) -> dict:
+    """Collect min, max and (when clipping may apply) the Q1/Q3 quartiles of the selected columns in one pass."""
     stats_expr = [
         all_num_cols.min().name.suffix("_min"),
         all_num_cols.max().name.suffix("_max"),
@@ -225,6 +213,269 @@ def bin_numerical_columns(
         stats = stats_df.row(0, named=True)
     else:
         stats = {}
+    return stats
+
+
+def _find_no_change_columns(df: pl.DataFrame, all_num_cols: Any, stats: dict) -> list:
+    """Columns whose min equals max (or whose bounds are missing), i.e. carry no information."""
+    dead_columns = []
+    for col in cs.expand_selector(df.head(), all_num_cols):
+        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
+        if (min_val is None or max_val is None) or min_val == max_val:
+            dead_columns.append(col)
+    return dead_columns
+
+
+def _drop_no_change_columns(
+    df: pl.DataFrame,
+    dead_columns: list,
+    columns_to_drop: list,
+    verbose: bool,
+    max_log_text_width: int,
+    free_ram: bool,
+) -> pl.DataFrame:
+    """Report and drop the no-change columns (a no-op when there are none); ``free_ram`` also releases memory after the drop."""
+    if not dead_columns:
+        return df
+    if verbose:
+        logger.warning(
+            "Dropping %s columns with no change: %s",
+            format(len(dead_columns), "_"),
+            textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
+        )
+    df = df.drop(dead_columns)
+    columns_to_drop.extend(dead_columns)
+    if free_ram:
+        _facade.clean_ram()
+    return df
+
+
+def _clip_bounds(col: str, stats: dict, tukey_fences_multiplier: float) -> Optional[tuple]:
+    """Tukey-fence bounds of ``col`` when it has outliers (updating ``stats`` to the fences), otherwise None."""
+    q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
+    min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
+    assert (
+        q1 is not None and q3 is not None and min_val is not None and max_val is not None
+    ), f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
+
+    iqr = q3 - q1
+
+    lower_fence = q1 - tukey_fences_multiplier * iqr
+    upper_fence = q3 + tukey_fences_multiplier * iqr
+
+    if not (upper_fence > lower_fence or (np.isneginf(min_val) or np.isinf(max_val))):
+        return None
+    is_outlier = False
+    lower_bound = min_val
+    upper_bound = max_val
+    if max_val > upper_fence:
+        stats[f"{col}_max"] = upper_fence
+        upper_bound = upper_fence
+        is_outlier = True
+    if min_val < lower_fence:
+        stats[f"{col}_min"] = lower_fence
+        lower_bound = lower_fence
+        is_outlier = True
+    return (lower_bound, upper_bound) if is_outlier else None
+
+
+def _should_clip_column(col: str, clean_features: bool, clean_targets: bool, existing_target_columns: list) -> bool:
+    """Whether ``col`` is in scope for outlier clipping given the feature/target cleaning flags."""
+    if not clean_targets and col in existing_target_columns:
+        return False
+    if not clean_features and clean_targets and col not in existing_target_columns:
+        return False
+    return True
+
+
+def _compute_clips(
+    df: pl.DataFrame,
+    all_num_cols: Any,
+    stats: dict,
+    clean_features: bool,
+    clean_targets: bool,
+    existing_target_columns: list,
+    tukey_fences_multiplier: float,
+) -> tuple:
+    """Outlier clip expressions (and their public bounds) for every column in scope; ``stats`` is updated to the fences."""
+    public_clips: dict = {}
+    clips: dict = {}
+    if clean_features or clean_targets:
+        for col in cs.expand_selector(df.head(), all_num_cols):
+            if not _should_clip_column(col, clean_features, clean_targets, existing_target_columns):
+                continue
+            bounds = _clip_bounds(col, stats, tukey_fences_multiplier)
+            if bounds is not None:
+                lower_bound, upper_bound = bounds
+                public_clips[col] = dict(lower_bound=lower_bound, upper_bound=upper_bound)
+                clips[col] = pl.col(col).clip(lower_bound=lower_bound, upper_bound=upper_bound)
+    return public_clips, clips
+
+
+def _drop_low_nunique_clips(
+    df: pl.DataFrame,
+    clips: dict,
+    public_clips: dict,
+    stats: dict,
+    orig_stats: dict,
+    min_nuniques_to_clip: int,
+) -> list:
+    """Remove clips of columns with too few distinct values (restoring their original bounds); returns the skipped columns."""
+    skipped_clips: list = []
+    if min_nuniques_to_clip:
+        # do not apply clipping if # of unique values is too low (under 10)
+        # Cast before counting: older polars refuses n_unique on Decimal, and the count is
+        # identical either way because the cast is value-preserving for the widths used here.
+        n_uniques_dict = df.lazy().select(pl.col(clips.keys()).cast(pl.Float64).n_unique()).collect().row(0, named=True)
+        for col, nuniques in n_uniques_dict.items():
+            if nuniques < min_nuniques_to_clip:
+                for field in "min max".split():
+                    stats[f"{col}_{field}"] = orig_stats[f"{col}_{field}"]
+                skipped_clips.append(col)
+                del public_clips[col]
+                del clips[col]
+    return skipped_clips
+
+
+def _report_clipping(clips: dict, skipped_clips: list, min_nuniques_to_clip: int, verbose: bool, max_log_text_width: int) -> None:
+    """Log which columns are clipped and which were skipped for having too few unique values."""
+    if not verbose:
+        return
+    if clips:
+        logger.warning(
+            "Clipping %s columns with outliers: %s",
+            format(len(clips), "_"),
+            textwrap.shorten(", ".join(clips.keys()), width=max_log_text_width),
+        )
+    if skipped_clips:
+        logger.warning(
+            "Clipping of %s columns skipped due to nuniques<%s: %s",
+            format(len(skipped_clips), "_"),
+            format(min_nuniques_to_clip, "_"),
+            textwrap.shorten(", ".join(skipped_clips), width=max_log_text_width),
+        )
+
+
+def _bin_expression(
+    col: str,
+    clip_expr: pl.Expr,
+    min_val: Any,
+    max_val: Any,
+    num_bins: int,
+    bin_dtype: Any,
+    fill_nulls: bool,
+    fill_nans: bool,
+    cols_with_nulls: list,
+    cols_with_floats: list,
+    cols_with_decimals: set,
+) -> pl.Expr:
+    """Expression mapping ``col`` onto ``num_bins`` uniform integer bin ids between ``min_val`` and ``max_val``."""
+    col_expr, min_val, max_val = _float_binning_inputs(clip_expr, min_val, max_val, col in cols_with_decimals)
+    bin_width = (max_val - min_val) / num_bins
+    if fill_nulls and (col in cols_with_nulls):
+        col_expr = col_expr.fill_null(min_val)
+    if fill_nans and (col in cols_with_floats):
+        col_expr = clean_numeric(col_expr, nans_filler=min_val)
+
+    binned_col = ((col_expr - min_val) / bin_width).floor()
+    if col in cols_with_floats:
+        # Bin 0 is where the column's true minimum lands, so folding NaN into it makes a missing
+        # value indistinguishable from the smallest real observation -- and it used to happen even
+        # with fill_nans=False, which is exactly what that flag asks not to happen. With filling on,
+        # clean_numeric above has already mapped NaN to min_val (hence bin 0) so this is a no-op
+        # agreeing with that path; with filling off, NaN becomes null, matching what fill_nulls=False
+        # yields for a missing value and what .cast() needs to not raise on NaN.
+        binned_col = binned_col.fill_nan(0 if fill_nans else None)
+    return binned_col.clip(0, num_bins - 1).cast(bin_dtype)
+
+
+def _bin_expressions(
+    df: pl.DataFrame,
+    all_num_cols: Any,
+    stats: dict,
+    clips: dict,
+    num_bins: int,
+    bin_dtype: Any,
+    fill_nulls: bool,
+    fill_nans: bool,
+    binned_targets: Optional[pl.DataFrame],
+    existing_target_columns: list,
+    cols_with_nulls: list,
+    cols_with_floats: list,
+    cols_with_decimals: set,
+) -> tuple:
+    """Binning expressions for every column that still varies, plus the columns found to be constant."""
+    bin_expressions: list = []
+    dead_columns: list = []
+    for col in cs.expand_selector(df.head(), all_num_cols):
+        if binned_targets is not None and col in existing_target_columns:
+            continue
+
+        # Calculate bin edges based on min and max values
+        min_val = stats.get(f"{col}_min")
+        max_val = stats.get(f"{col}_max")
+        assert min_val is not None and max_val is not None, f"stats missing min/max entries for column {col!r}"
+
+        if min_val == max_val:
+            dead_columns.append(col)
+            continue
+        bin_expressions.append(
+            _bin_expression(
+                col,
+                clips.get(col, pl.col(col)),
+                min_val,
+                max_val,
+                num_bins,
+                bin_dtype,
+                fill_nulls,
+                fill_nans,
+                cols_with_nulls,
+                cols_with_floats,
+                cols_with_decimals,
+            )
+        )
+    return bin_expressions, dead_columns
+
+
+def bin_numerical_columns(
+    df: pl.DataFrame,
+    target_columns: list,
+    binned_targets: Optional[pl.DataFrame] = None,
+    clean_features: bool = True,
+    clean_targets: bool = True,
+    num_bins: int = 10,
+    bin_dtype: Any = pl.Int8,
+    exclude_columns: Optional[list] = None,
+    min_nuniques_to_clip: int = 10,
+    tukey_fences_multiplier: float = 3.0,
+    fill_nulls: bool = True,
+    fill_nans: bool = True,
+    max_log_text_width: int = 300,
+    verbose: bool = False,
+) -> Tuple[pl.DataFrame, Optional[pl.DataFrame], dict, list, dict]:
+    """Computes min, max, and quantiles of all numerical columns in one go.
+    Decides which are outliers and adds clipping.
+    Converts values into integer uniform bin ids.
+    Suggest for dropping columns that do not change.
+    """
+    exclude_columns = [] if exclude_columns is None else exclude_columns
+    bin_dtype = _resolve_bin_dtype(bin_dtype, num_bins, verbose)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Inits
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    columns_to_drop: list = []
+    existing_target_columns, all_num_cols = _select_binning_columns(df, target_columns, exclude_columns, binned_targets, verbose)
+
+    _facade.clean_ram()
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Compute stats for every column
+    # ----------------------------------------------------------------------------------------------------------------------------
+
+    _log_progress(verbose, "Computing Min/Max/Quantiles...")
+    stats = _compute_binning_stats(df, all_num_cols, clean_features, clean_targets, binned_targets, existing_target_columns)
     orig_stats = stats.copy()
 
     _facade.clean_ram()
@@ -233,100 +484,23 @@ def bin_numerical_columns(
     # Features with no change (min==max) are reported & dropped.
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    dead_columns = []
-    for col in cs.expand_selector(df.head(), all_num_cols):
-        min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-        if (min_val is None or max_val is None) or min_val == max_val:
-            dead_columns.append(col)
-    if dead_columns:
-        if verbose:
-            logger.warning(
-                "Dropping %s columns with no change: %s",
-                format(len(dead_columns), "_"),
-                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
-            )
-        df = df.drop(dead_columns)
-        columns_to_drop.extend(dead_columns)
-
-        _facade.clean_ram()
+    dead_columns = _find_no_change_columns(df, all_num_cols, stats)
+    df = _drop_no_change_columns(df, dead_columns, columns_to_drop, verbose, max_log_text_width, free_ram=True)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Outliers are clipped & reported.
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    public_clips = {}
-    clips = {}
-    if clean_features or clean_targets:
-        for col in cs.expand_selector(df.head(), all_num_cols):
-            if not clean_targets:
-                if col in existing_target_columns:
-                    continue
-            if not clean_features:
-                if clean_targets and col not in existing_target_columns:
-                    continue
-
-            q1, q3 = stats.get(f"{col}_q1"), stats.get(f"{col}_q3")
-            min_val, max_val = stats.get(f"{col}_min"), stats.get(f"{col}_max")
-            assert (
-                q1 is not None and q3 is not None and min_val is not None and max_val is not None
-            ), f"stats missing quantile/min/max entries for column {col!r} -- stats_expr and target_cols disagree"
-
-            iqr = q3 - q1
-
-            lower_fence = q1 - tukey_fences_multiplier * iqr
-            upper_fence = q3 + tukey_fences_multiplier * iqr
-
-            if upper_fence > lower_fence or (np.isneginf(min_val) or np.isinf(max_val)):
-                is_outlier = False
-                lower_bound = min_val
-                upper_bound = max_val
-                if max_val > upper_fence:
-                    stats[f"{col}_max"] = upper_fence
-                    upper_bound = upper_fence
-                    is_outlier = True
-                if min_val < lower_fence:
-                    stats[f"{col}_min"] = lower_fence
-                    lower_bound = lower_fence
-                    is_outlier = True
-                if is_outlier:
-                    public_clips[col] = dict(lower_bound=lower_bound, upper_bound=upper_bound)
-                    clips[col] = pl.col(col).clip(lower_bound=lower_bound, upper_bound=upper_bound)
-
+    public_clips, clips = _compute_clips(df, all_num_cols, stats, clean_features, clean_targets, existing_target_columns, tukey_fences_multiplier)
     if clips:
-        skipped_clips = []
-        if min_nuniques_to_clip:
-            # do not apply clipping if # of unique values is too low (under 10)
-            # Cast before counting: older polars refuses n_unique on Decimal, and the count is
-            # identical either way because the cast is value-preserving for the widths used here.
-            n_uniques_dict = df.lazy().select(pl.col(clips.keys()).cast(pl.Float64).n_unique()).collect().row(0, named=True)
-            for col, nuniques in n_uniques_dict.items():
-                if nuniques < min_nuniques_to_clip:
-                    for field in "min max".split():
-                        stats[f"{col}_{field}"] = orig_stats[f"{col}_{field}"]
-                    skipped_clips.append(col)
-                    del public_clips[col]
-                    del clips[col]
-        if verbose:
-            if clips:
-                logger.warning(
-                    "Clipping %s columns with outliers: %s",
-                    format(len(clips), "_"),
-                    textwrap.shorten(", ".join(clips.keys()), width=max_log_text_width),
-                )
-            if skipped_clips:
-                logger.warning(
-                    "Clipping of %s columns skipped due to nuniques<%s: %s",
-                    format(len(skipped_clips), "_"),
-                    format(min_nuniques_to_clip, "_"),
-                    textwrap.shorten(", ".join(skipped_clips), width=max_log_text_width),
-                )
+        skipped_clips = _drop_low_nunique_clips(df, clips, public_clips, stats, orig_stats, min_nuniques_to_clip)
+        _report_clipping(clips, skipped_clips, min_nuniques_to_clip, verbose, max_log_text_width)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Binning performed.
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if verbose > 1:
-        logger.info("Binning columns...")
+    _log_progress(verbose, "Binning columns...")
 
     # collect_schema().len() rather than .width: on a LazyFrame the latter emits a PerformanceWarning
     # for resolving the schema it resolves anyway.
@@ -337,63 +511,31 @@ def bin_numerical_columns(
         # distinguish from a polars bug.
         return pl.DataFrame(), binned_targets, public_clips, columns_to_drop, stats
 
-    dead_columns = []
-    bin_expressions = []
-
-    if fill_nulls:
-        cols_with_nulls = [key for key, value in df.lazy().select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0]
     # Needed whether or not fill_nans is set: only float columns can hold NaN at all, so they are also
     # the only ones the NaN handling below may touch. cs.numeric() includes Decimal, for which every
     # NaN predicate (is_nan/is_not_nan, and therefore fill_nan) raises InvalidOperationError -- a
     # Decimal column is what pl.read_database returns for a SQL NUMERIC, i.e. an entirely ordinary input.
+    cols_with_nulls = [key for key, value in df.lazy().select(pl.all().null_count()).collect().row(0, named=True).items() if value > 0] if fill_nulls else []
     cols_with_floats = cs.expand_selector(df.head(), all_num_cols & cs.float())
     # Decimal is likewise unusable with `.floor()` below -- see `_float_binning_inputs`.
     cols_with_decimals = _decimal_columns(df)
 
-    for col in cs.expand_selector(df.head(), all_num_cols):
-        if binned_targets is not None:
-            if col in existing_target_columns:
-                continue
-
-        # Calculate bin edges based on min and max values
-        min_val = stats.get(f"{col}_min")
-        max_val = stats.get(f"{col}_max")
-        assert min_val is not None and max_val is not None, f"stats missing min/max entries for column {col!r}"
-
-        if min_val == max_val:
-            dead_columns.append(col)
-        else:
-
-            # Define the binning expression
-            col_expr, min_val, max_val = _float_binning_inputs(clips.get(col, pl.col(col)), min_val, max_val, col in cols_with_decimals)
-            bin_width = (max_val - min_val) / num_bins
-            if fill_nulls and (col in cols_with_nulls):
-                col_expr = col_expr.fill_null(min_val)
-            if fill_nans and (col in cols_with_floats):
-                col_expr = clean_numeric(col_expr, nans_filler=min_val)
-
-            binned_col = ((col_expr - min_val) / bin_width).floor()
-            if col in cols_with_floats:
-                # Bin 0 is where the column's true minimum lands, so folding NaN into it makes a missing
-                # value indistinguishable from the smallest real observation -- and it used to happen even
-                # with fill_nans=False, which is exactly what that flag asks not to happen. With filling on,
-                # clean_numeric above has already mapped NaN to min_val (hence bin 0) so this is a no-op
-                # agreeing with that path; with filling off, NaN becomes null, matching what fill_nulls=False
-                # yields for a missing value and what .cast() needs to not raise on NaN.
-                binned_col = binned_col.fill_nan(0 if fill_nans else None)
-            binned_col = binned_col.clip(0, num_bins - 1).cast(bin_dtype)
-
-            bin_expressions.append(binned_col)
-
-    if dead_columns:
-        if verbose:
-            logger.warning(
-                "Dropping %s columns with no change: %s",
-                format(len(dead_columns), "_"),
-                textwrap.shorten(", ".join(dead_columns), width=max_log_text_width),
-            )
-        df = df.drop(dead_columns)
-        columns_to_drop.extend(dead_columns)
+    bin_expressions, dead_columns = _bin_expressions(
+        df,
+        all_num_cols,
+        stats,
+        clips,
+        num_bins,
+        bin_dtype,
+        fill_nulls,
+        fill_nans,
+        binned_targets,
+        existing_target_columns,
+        cols_with_nulls,
+        cols_with_floats,
+        cols_with_decimals,
+    )
+    df = _drop_no_change_columns(df, dead_columns, columns_to_drop, verbose, max_log_text_width, free_ram=False)
 
     # Apply all binning expressions in parallel
     bins = df.lazy().select(bin_expressions).collect()

@@ -6,7 +6,7 @@
 
 from ._logproxy import logger
 
-from typing import List, Optional
+from typing import List, Optional, Tuple as _Tuple
 import string
 # pandas is imported INSIDE the one function that needs it. `pyutilz/system/__init__.py` eagerly imports
 # its lightweight psutil helpers, and that chain reaches this module through `system/probing.py`, so a
@@ -135,6 +135,118 @@ def fix_spaces(text: Optional[str], tokens: Optional[list] = None) -> Optional[s
     return text
 
 
+def _previous_non_whitespace(text: str, p: int, whitespaces: list) -> int:
+    """Return the index of the last non-whitespace character before position ``p``, or -1 when there is none."""
+    # p == 0 leaves no previous character at all: i = -1 used to
+    # index from the END of the string and walk backwards from there.
+    i = p - 1 if p > 0 else -1
+    while i > 0:
+        if text[i] not in whitespaces:
+            break
+        i = i - 1
+    return i
+
+
+def _handle_break_before_space(text: str, p: int, j: int, token_len: int, whitespaces: list, eos: tuple, new_text: str, s: int) -> _Tuple[str, int]:
+    """Repair a linebreak at ``p`` followed by a space and a capital or number, inserting a period when no sentence end precedes it."""
+    text_len = len(text)
+    if j + 1 >= text_len:
+        return new_text, s
+    next_next_symbol = text[j + 1]
+    # followed by a capital or number
+    if not (next_next_symbol.isnumeric() or next_next_symbol.isupper()):
+        return new_text, s
+    i = _previous_non_whitespace(text, p, whitespaces)
+    if i >= 0:
+        # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace)
+        prev_symb = text[i]
+        if prev_symb not in eos:
+            new_text = new_text + text[s:p] + "."
+            s = p + token_len
+    return new_text, s
+
+
+def _handle_break_before_word(text: str, p: int, token_len: int, whitespaces: list, eos: tuple, new_text: str, s: int) -> _Tuple[str, int]:
+    """Repair a linebreak at ``p`` directly followed by a capital or number, choosing between a period, a space or nothing."""
+    i = _previous_non_whitespace(text, p, whitespaces)
+    if i >= 0:
+        # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace)
+        prev_symb = text[i]
+        if prev_symb == " ":
+            if i >= 1:
+                prev_prev_symb = text[i - 1]
+                if prev_prev_symb in eos:
+                    new_text = new_text + text[s:p]
+                    s = p + token_len
+        elif prev_symb not in eos:
+            new_text = new_text + text[s:p] + ". "
+            s = p + token_len
+        else:
+            new_text = new_text + text[s:p] + " "
+            s = p + token_len
+    return new_text, s
+
+
+def _handle_break_before_alpha(text: str, p: int, token_len: int, whitespaces: list, punctuation: str, new_text: str, s: int) -> _Tuple[str, int]:
+    """Repair a linebreak at ``p`` directly followed by a letter, inserting a space after a non-punctuation word."""
+    #'I Love My Mom - Over 50 Cute Animal Babies with Their Mothers: A Celebration of Motherhood Kindle Edition\nby Bob Frothingham.'
+    i = _previous_non_whitespace(text, p, whitespaces)
+    if i >= 0:
+        prev_symb = text[i]
+        if prev_symb not in punctuation and prev_symb not in string.whitespace:
+            new_text = new_text + text[s:p] + " "
+            s = p + token_len
+    return new_text, s
+
+
+def _repair_token_occurrences(text: str, token: str, whitespaces: list, eos: tuple, punctuation: str) -> _Tuple[str, int]:
+    """Scan every occurrence of linebreak ``token`` and return the rebuilt text with the last splice offset ``s``."""
+    text_len = len(text)
+    new_text = ""
+    s = 0
+    # if token==' ': token='\r\n'
+    p = 0
+    while p >= 0:
+        p = text.find(token, p)
+        if p >= 0:
+            # print(ord(token),p)
+            # there is a newline in text,
+            j = p + len(token)
+            if j < text_len:
+                next_symbol = text[j]
+                # next symbol is space
+                if next_symbol == " ":
+                    new_text, s = _handle_break_before_space(text, p, j, len(token), whitespaces, eos, new_text, s)
+                # next symbol is a capital or number
+                elif next_symbol.isnumeric() or next_symbol.isupper():
+                    new_text, s = _handle_break_before_word(text, p, len(token), whitespaces, eos, new_text, s)
+                elif next_symbol.isalpha():
+                    new_text, s = _handle_break_before_alpha(text, p, len(token), whitespaces, punctuation, new_text, s)
+
+            p = j
+    return new_text, s
+
+
+def _fix_linebreak_token(text: str, token: str, whitespaces: list, eos: tuple, punctuation: str) -> str:
+    """Apply the sentence-boundary repairs for one whitespace token, then append a period if the text ends on a letter."""
+    if token != " ":  # nosec B105 - comparison against a literal space character used as a whitespace-token delimiter in text scanning, not a credential
+        # fixes cases where there is a newline in text, next symbol is a capital or number,
+        # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace). If such case is found, a dot (+opt whitespace)
+        # is inserted instead of newline.
+        new_text, s = _repair_token_occurrences(text, token, whitespaces, eos, punctuation)
+        if s > 0:
+            text_len = len(text)
+            if s < text_len:
+                new_text = new_text + text[s:text_len]
+            text = new_text
+    # also if last symbol is not eos mark but letter, add a dot.
+    if len(text) > 0:
+        if text[-1] not in eos:
+            if text[-1].isalpha():
+                text = text + "."
+    return text
+
+
 def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Optional[str]:  # nosec B107 - default "\n" is a literal newline delimiter used for text-normalization scanning, not a credential
     """Heuristically repair sentences broken by stray linebreaks/whitespace.
 
@@ -145,97 +257,12 @@ def fix_broken_sentences(text: Optional[str], token: Optional[str] = "\n") -> Op
     """
     if not text:
         return text
-    if text:
-        punctuation, eos = string.punctuation, ("!", ".", "?")
-        whitespaces = list(string.whitespace)
-        whitespaces.remove(" ")
-        whitespaces = ["\r\n", *whitespaces]
-        for token in whitespaces:
-            text_len = len(text)
-            new_text = ""
-            s = 0
-            # if token==' ': token='\r\n'
-            if token != " ":  # nosec B105 - comparison against a literal space character used as a whitespace-token delimiter in text scanning, not a credential
-                # fixes cases where there is a newline in text, next symbol is a capital or number,
-                # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace). If such case is found, a dot (+opt whitespace)
-                # is inserted instead of newline.
-                p = 0
-                while p >= 0:
-                    p = text.find(token, p)
-                    if p >= 0:
-                        # print(ord(token),p)
-                        # there is a newline in text,
-                        j = p + len(token)
-                        if j < text_len:
-                            next_symbol = text[j]
-                            # next symbol is space
-                            if next_symbol == " ":
-                                if j + 1 < text_len:
-                                    next_next_symbol = text[j + 1]
-                                    # followed by a capital or number
-                                    if next_next_symbol.isnumeric() or next_next_symbol.isupper():
-                                        # p == 0 leaves no previous character at all: i = -1 used to
-                                        # index from the END of the string and walk backwards from there.
-                                        i = p - 1 if p > 0 else -1
-                                        while i > 0:
-                                            if text[i] not in whitespaces:
-                                                break
-                                            i = i - 1
-                                        if i >= 0:
-                                            # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace)
-                                            prev_symb = text[i]
-                                            if prev_symb not in eos:
-                                                new_text = new_text + text[s:p] + "."
-                                                s = p + len(token)
-                            # next symbol is a capital or number
-                            elif next_symbol.isnumeric() or next_symbol.isupper():
-                                # p == 0 leaves no previous character at all: i = -1 used to
-                                # index from the END of the string and walk backwards from there.
-                                i = p - 1 if p > 0 else -1
-                                while i > 0:
-                                    if text[i] not in whitespaces:
-                                        break
-                                    i = i - 1
-                                if i >= 0:
-                                    # but previous symbol is not the end of a sentence (not in (!,.,?)+whitespace)
-                                    prev_symb = text[i]
-                                    if prev_symb == " ":
-                                        if i >= 1:
-                                            prev_prev_symb = text[i - 1]
-                                            if prev_prev_symb in eos:
-                                                new_text = new_text + text[s:p]
-                                                s = p + len(token)
-                                    elif prev_symb not in eos:
-                                        new_text = new_text + text[s:p] + ". "
-                                        s = p + len(token)
-                                    else:
-                                        new_text = new_text + text[s:p] + " "
-                                        s = p + len(token)
-                            elif next_symbol.isalpha():
-                                #'I Love My Mom - Over 50 Cute Animal Babies with Their Mothers: A Celebration of Motherhood Kindle Edition\nby Bob Frothingham.'
-                                # p == 0 leaves no previous character at all: i = -1 used to
-                                # index from the END of the string and walk backwards from there.
-                                i = p - 1 if p > 0 else -1
-                                while i > 0:
-                                    if text[i] not in whitespaces:
-                                        break
-                                    i = i - 1
-                                if i >= 0:
-                                    prev_symb = text[i]
-                                    if prev_symb not in punctuation and prev_symb not in string.whitespace:
-                                        new_text = new_text + text[s:p] + " "
-                                        s = p + len(token)
-
-                        p = j
-            if s > 0:
-                if s < text_len:
-                    new_text = new_text + text[s:text_len]
-                text = new_text
-            # also if last symbol is not eos mark but letter, add a dot.
-            if len(text) > 0:
-                if text[-1] not in eos:
-                    if text[-1].isalpha():
-                        text = text + "."
+    punctuation, eos = string.punctuation, ("!", ".", "?")
+    whitespaces = list(string.whitespace)
+    whitespaces.remove(" ")
+    whitespaces = ["\r\n", *whitespaces]
+    for token in whitespaces:
+        text = _fix_linebreak_token(text, token, whitespaces, eos, punctuation)
     return text
 
 

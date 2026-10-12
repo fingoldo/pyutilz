@@ -145,6 +145,210 @@ def _promote_object_columns(
                         pass  # to avoid stumbling on lists like [1]
 
 
+def _bucket_fields(df: pd.DataFrame, skip_columns: Sequence, old_dtypes: Dict[Any, str]) -> tuple:
+    """Record each non-skipped column's dtype name and return ``(int_fields, float_fields)``."""
+    int_fields: list = []
+    float_fields: list = []
+    for field, the_type in df.dtypes.to_dict().items():
+        if field not in skip_columns:
+            old_dtypes[field] = the_type.name
+            if "int" in the_type.name:
+                int_fields.append(field)
+            elif "float" in the_type.name:
+                float_fields.append(field)
+    return int_fields, float_fields
+
+
+def _find_possibly_integer_floats(df: pd.DataFrame, float_fields: list) -> list:
+    """Return the float columns that have no NaNs and no fractional digits, so they can be made ints."""
+    # -----------------------------------------------------------------------------------------------------------------------------------------------------
+    # Checks for each float if it has no fractional digits and NaNs, and, therefore, can be made an int
+    # ----------------------------------------------------------------------------------------------------------------------------------------------------
+    possibly_integer = []
+    for col in tqdmu(float_fields, desc="checking float2int", leave=False):
+        if not df[col].isna().any():  # NAs can't be converted to int
+            fract_part, _ = np.modf(df[col])
+            if (fract_part == 0.0).all():
+                possibly_integer.append(col)
+    return possibly_integer
+
+
+def _build_conversions(
+    df: pd.DataFrame,
+    int_fields: list,
+    float_fields: list,
+    use_uint: bool,
+    float_to_int: bool,
+    float_to_float: bool,
+) -> list:
+    """Return the ordered ``(fields, type_name)`` candidate conversions for the size-reduction pass."""
+    if use_uint:
+        conversions = [
+            (int_fields, "uint"),
+            (int_fields, "int"),
+        ]
+    else:
+        conversions = [
+            (int_fields, "int"),
+        ]
+    if float_to_int:
+        possibly_integer = _find_possibly_integer_floats(df, float_fields)
+        if possibly_integer:
+            if use_uint:
+                conversions.append((possibly_integer, "uint"))
+            conversions.append((possibly_integer, "int"))
+    if float_to_float:
+        conversions.append((float_fields, "float"))
+    return conversions
+
+
+def _float_precision_ok(
+    df: pd.DataFrame,
+    col: Any,
+    p: int,
+    src_dtype: str,
+    mantissas: Dict[Any, Any],
+    verbose: bool,
+    exact_float_roundtrip: bool,
+) -> bool:
+    """Return True when float column ``col`` survives a downcast to float``p`` without losing precision."""
+    # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float32) must not pass here, for example.
+    if col not in mantissas:
+        values = df[col].values
+        # invalid="ignore" also suppresses the "invalid value encountered in
+        # divide" RuntimeWarning from 0.0/0.0 (exact 0.0 values: log10(0)==-inf,
+        # 10**-inf==0.0) -- a different warning category than "divide", which
+        # errstate(divide=...) alone doesn't cover. The resulting NaN is already
+        # masked out downstream via np.ma.array, so this only silences noise.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _, int_part = np.modf(np.log10(np.abs(values)))
+            mantissa = np.round(values / 10**int_part, np.finfo(src_dtype).precision - 1)
+
+        mantissas[col] = mantissa
+    else:
+        mantissa = mantissas[col]
+
+    fract_part, _ = np.modf(mantissa * 10 ** (np.finfo("float" + str(p)).precision + 1))
+    fract_part, _ = np.modf(np.round(fract_part, np.finfo("float" + str(p)).precision - 1))
+    if (np.ma.array(fract_part, mask=np.isnan(fract_part)) != 0).any():  # masking so that NaNs do not count
+        if verbose:
+            logger.info("Column %s can't be converted to float%s due to precision loss.", col, p)
+        return False
+    if exact_float_roundtrip:
+        # The mantissa heuristic above rounds to 15 significant decimals, so
+        # differences living in float64's last bits are erased BEFORE it looks;
+        # near-tied values used as ranking keys would silently become exact ties.
+        orig = df[col].values
+        if not np.array_equal(orig.astype("float" + str(p)).astype(np.float64), orig.astype(np.float64), equal_nan=True):
+            if verbose:
+                logger.info("Column %s can't be converted to float%s: float64 round-trip is not exact.", col, p)
+            return False
+    return True
+
+
+def _select_target_power(
+    df: pd.DataFrame,
+    col: Any,
+    r: Any,
+    type_name: str,
+    powers: Sequence[int],
+    topvals: Any,
+    cur_power: int,
+    src_dtype: str,
+    float_fields: list,
+    mantissas: Dict[Any, Any],
+    ensure_float64_precision: bool,
+    exact_float_roundtrip: bool,
+    verbose: bool,
+) -> Optional[int]:
+    """Return the smallest power whose type holds column ``col``'s observed range safely, or None when no such power exists."""
+    for j, p in enumerate(powers):
+        if p >= cur_power and not (col in float_fields and type_name != "float"):
+            break
+        if r.max <= topvals[j].max and r.min >= topvals[j].min:
+            if ensure_float64_precision and type_name == "float":
+                if not _float_precision_ok(df, col, p, src_dtype, mantissas, verbose, exact_float_roundtrip):
+                    return None
+            return p
+    return None
+
+
+def _record_conversion(
+    df: pd.DataFrame,
+    col: Any,
+    type_name: str,
+    p: int,
+    old_dtypes: Dict[Any, str],
+    new_dtypes: Dict[Any, str],
+    uint_fields: list,
+    verbose: bool,
+    inplace: bool,
+) -> None:
+    """Record the chosen dtype for ``col`` and, when ``inplace``, cast the column to it right away."""
+    if type_name in ("uint", "int"):
+        uint_fields.append(col)  # successfully converted, so won't need to consider anymore
+    if verbose:
+        logger.info("%s [%s]->[%s%s]", col, old_dtypes[col], type_name, p)
+    new_dtypes[col] = type_name + str(p)
+    if inplace:
+        df[col] = df[col].astype(new_dtypes[col])
+
+
+def _reduce_group(
+    df: pd.DataFrame,
+    fields: list,
+    type_name: str,
+    old_dtypes: Dict[Any, str],
+    new_dtypes: Dict[Any, str],
+    float_fields: list,
+    uint_fields: list,
+    mantissas: Dict[Any, Any],
+    skip_halffloat: bool,
+    ensure_float64_precision: bool,
+    exact_float_roundtrip: bool,
+    verbose: bool,
+    inplace: bool,
+) -> None:
+    """Downcast each column of one conversion group to the smallest type that holds its range without loss."""
+    # Compute min and max in single pass for efficiency
+    stats = df[fields].agg(["min", "max"])
+    min_vals = stats.loc["min"]
+    max_vals = stats.loc["max"]
+
+    topvals: Any
+    if type_name in ("int", "uint"):
+        powers = [8, 16, 32, 64]
+        topvals = [np.iinfo(type_name + str(p)) for p in powers]
+    elif type_name == "float":
+        powers = [32, 64] if skip_halffloat else [16, 32, 64]  # no float8
+        topvals = [np.finfo(type_name + str(p)) for p in powers]
+
+    min_max = pd.concat([min_vals, max_vals], axis=1)
+    min_max.columns = ["min", "max"]
+
+    for r in min_max.itertuples():
+        col = r.Index
+        src_dtype = old_dtypes[col]
+        cur_power = int(src_dtype.replace("uint", "").replace("int", "").replace("float", ""))
+        p = _select_target_power(
+            df,
+            col,
+            r,
+            type_name,
+            powers,
+            topvals,
+            cur_power,
+            src_dtype,
+            float_fields,
+            mantissas,
+            ensure_float64_precision,
+            exact_float_roundtrip,
+            verbose,
+        )
+        if p is not None:
+            _record_conversion(df, col, type_name, p, old_dtypes, new_dtypes, uint_fields, verbose, inplace)
+
+
 def optimize_dtypes(
     df: pd.DataFrame,
     max_categories: Optional[int] = 100,
@@ -184,15 +388,7 @@ def optimize_dtypes(
 
     old_dtypes: Dict[Any, str] = {}
     new_dtypes: Dict[Any, str] = {}
-    int_fields: list = []
-    float_fields: list = []
-    for field, the_type in df.dtypes.to_dict().items():
-        if field not in skip_columns:
-            old_dtypes[field] = the_type.name
-            if "int" in the_type.name:
-                int_fields.append(field)
-            elif "float" in the_type.name:
-                float_fields.append(field)
+    int_fields, float_fields = _bucket_fields(df, skip_columns, old_dtypes)
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Every object var with too few categories must become a Category
@@ -206,102 +402,27 @@ def optimize_dtypes(
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
 
     if reduce_size:
-        mantissas = {}
-        uint_fields = []
-        if use_uint:
-            conversions = [
-                (int_fields, "uint"),
-                (int_fields, "int"),
-            ]
-        else:
-            conversions = [
-                (int_fields, "int"),
-            ]
-        if float_to_int:
-
-            # -----------------------------------------------------------------------------------------------------------------------------------------------------
-            # Checks for each float if it has no fractional digits and NaNs, and, therefore, can be made an int
-            # ----------------------------------------------------------------------------------------------------------------------------------------------------
-
-            possibly_integer = []
-            for col in tqdmu(float_fields, desc="checking float2int", leave=False):
-                if not df[col].isna().any():  # NAs can't be converted to int
-                    fract_part, _ = np.modf(df[col])
-                    if (fract_part == 0.0).all():
-                        possibly_integer.append(col)
-            if possibly_integer:
-                if use_uint:
-                    conversions.append((possibly_integer, "uint"))
-                conversions.append((possibly_integer, "int"))
-        if float_to_float:
-            conversions.append((float_fields, "float"))
+        mantissas: Dict[Any, Any] = {}
+        uint_fields: list = []
+        conversions = _build_conversions(df, int_fields, float_fields, use_uint, float_to_int, float_to_float)
         for fields, type_name in tqdmu(conversions, desc="size reduction", leave=False):
             fields = [el for el in fields if el not in uint_fields]
             if len(fields) > 0:
-                # Compute min and max in single pass for efficiency
-                stats = df[fields].agg(["min", "max"])
-                min_vals = stats.loc["min"]
-                max_vals = stats.loc["max"]
-
-                topvals: Any
-                if type_name in ("int", "uint"):
-                    powers = [8, 16, 32, 64]
-                    topvals = [np.iinfo(type_name + str(p)) for p in powers]
-                elif type_name == "float":
-                    powers = [32, 64] if skip_halffloat else [16, 32, 64]  # no float8
-                    topvals = [np.finfo(type_name + str(p)) for p in powers]
-
-                min_max = pd.concat([min_vals, max_vals], axis=1)
-                min_max.columns = ["min", "max"]
-
-                for r in min_max.itertuples():
-                    col = r.Index
-                    cur_power = int(old_dtypes[col].replace("uint", "").replace("int", "").replace("float", ""))
-                    for j, p in enumerate(powers):
-                        if p >= cur_power:
-                            if not (col in float_fields and type_name != "float"):
-                                break
-                        if r.max <= topvals[j].max and r.min >= topvals[j].min:
-                            if ensure_float64_precision and type_name == "float":
-                                # need to ensure we are not losing precision! np.array([2.205001270000e09]).astype(np.float32) must not pass here, for example.
-                                if col not in mantissas:
-                                    values = df[col].values
-                                    # invalid="ignore" also suppresses the "invalid value encountered in
-                                    # divide" RuntimeWarning from 0.0/0.0 (exact 0.0 values: log10(0)==-inf,
-                                    # 10**-inf==0.0) -- a different warning category than "divide", which
-                                    # errstate(divide=...) alone doesn't cover. The resulting NaN is already
-                                    # masked out downstream via np.ma.array, so this only silences noise.
-                                    with np.errstate(divide="ignore", invalid="ignore"):
-                                        _, int_part = np.modf(np.log10(np.abs(values)))
-                                        mantissa = np.round(values / 10**int_part, np.finfo(old_dtypes[col]).precision - 1)
-
-                                    mantissas[col] = mantissa
-                                else:
-                                    mantissa = mantissas[col]
-
-                                fract_part, _ = np.modf(mantissa * 10 ** (np.finfo("float" + str(p)).precision + 1))
-                                fract_part, _ = np.modf(np.round(fract_part, np.finfo("float" + str(p)).precision - 1))
-                                if (np.ma.array(fract_part, mask=np.isnan(fract_part)) != 0).any():  # masking so that NaNs do not count
-                                    if verbose:
-                                        logger.info("Column %s can't be converted to float%s due to precision loss.", col, p)
-                                    break
-                                if exact_float_roundtrip:
-                                    # The mantissa heuristic above rounds to 15 significant decimals, so
-                                    # differences living in float64's last bits are erased BEFORE it looks;
-                                    # near-tied values used as ranking keys would silently become exact ties.
-                                    orig = df[col].values
-                                    if not np.array_equal(orig.astype("float" + str(p)).astype(np.float64), orig.astype(np.float64), equal_nan=True):
-                                        if verbose:
-                                            logger.info("Column %s can't be converted to float%s: float64 round-trip is not exact.", col, p)
-                                        break
-                            if type_name in ("uint", "int"):
-                                uint_fields.append(col)  # successfully converted, so won't need to consider anymore
-                            if verbose:
-                                logger.info("%s [%s]->[%s%s]", col, old_dtypes[col], type_name, p)
-                            new_dtypes[col] = type_name + str(p)
-                            if inplace:
-                                df[col] = df[col].astype(new_dtypes[col])
-                            break
+                _reduce_group(
+                    df,
+                    fields,
+                    type_name,
+                    old_dtypes,
+                    new_dtypes,
+                    float_fields,
+                    uint_fields,
+                    mantissas,
+                    skip_halffloat,
+                    ensure_float64_precision,
+                    exact_float_roundtrip,
+                    verbose,
+                    inplace,
+                )
 
     # -----------------------------------------------------------------------------------------------------------------------------------------------------
     # Actual converting & reporting.

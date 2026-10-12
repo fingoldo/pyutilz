@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import sys
+from dataclasses import dataclass as _dataclass, field as _field
 from typing import Any, Callable, Optional
 import numpy as np
 from timeit import default_timer as timer
@@ -533,6 +534,141 @@ class _DominanceTracker:
         return winner
 
 
+def _grid_default_to_device(args):
+    """Move any numpy-array arguments to a CuPy device array, leaving other argument types unchanged."""
+    import cupy as cp
+
+    return tuple(cp.asarray(a) if isinstance(a, np.ndarray) else a for a in args)
+
+
+@_dataclass
+class _GridSweepCtx:
+    """Shared state of one ``sweep_backend_grid`` call, passed to its per-cell helpers."""
+
+    variants: dict
+    names: list
+    ref: str
+    dim_names: list
+    residencies: tuple
+    mover: Callable
+    make_inputs: Callable
+    decision_key: str
+    prune_dominated: bool
+    prune_ratio: float
+    prune_min_ms: float
+    repeats: int
+    equiv_atol: float
+    equiv_rtol: float
+    synchronize_gpu: bool
+    ranking: str
+    verbose: int
+    max_combo: tuple
+    tracker: _DominanceTracker
+    regions: list = _field(default_factory=list)
+    catchall: dict = _field(default_factory=dict)
+
+
+def _grid_region(ctx: _GridSweepCtx, dims: dict, res: str, decision: str) -> dict:
+    """Build one region dict for ``dims`` (tagged with its residency when several are swept) carrying ``decision``."""
+    region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in ctx.dim_names}
+    if len(ctx.residencies) > 1:
+        region["location_eq"] = res
+    region[ctx.decision_key] = decision
+    return region
+
+
+def _measure_grid_cell(ctx: _GridSweepCtx, args: tuple, dims: dict, res: str) -> Optional[tuple]:
+    """Gate, time and rank the variants for one cell and residency; None when the reference variant raised."""
+    try:
+        ref_out = _to_host(ctx.variants[ctx.ref](*args))
+        if ctx.synchronize_gpu:
+            synchronize_gpu_if_available()
+        ref_scale = _output_scale(ref_out) if ref_out is not None else 1.0  # see sweep_backend_crossover
+    except Exception as exc:
+        # Same reasoning as sweep_backend_crossover: no reference output means no
+        # equivalence gate, and an ungated winner must never be emitted as tuned.
+        logger.warning("grid %s res=%s: reference variant %r raised (%s) -> combination skipped", dims, res, ctx.ref, exc)
+        return None
+    best_name, best_ms, best_diff = None, float("inf"), 0.0
+    # Pass 1: warm up + equivalence-gate every variant; a divergent-but-faster variant is a bug, never a winner, so it is dropped BEFORE timing.
+    survivors, diffs = _gate_grid_variants(
+        ctx.variants,
+        ctx.names,
+        args,
+        ctx.ref,
+        ref_out,
+        ref_scale,
+        ctx.equiv_atol,
+        ctx.equiv_rtol,
+        ctx.synchronize_gpu,
+        ctx.verbose,
+        f"grid {dims} res={res}",
+    )
+    # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
+    # which is contention-robust; mean=legacy sequential per-candidate mean).
+    timings = _rank_candidates(
+        survivors,
+        repeats=ctx.repeats,
+        synchronize_gpu=ctx.synchronize_gpu,
+        ranking=ctx.ranking,
+        drop_ratio=ctx.prune_ratio if ctx.prune_dominated else 0.0,
+        drop_min_ms=ctx.prune_min_ms,
+    )
+    for name in ctx.names:  # iterate in declared order so ties prefer the earlier (e.g. reference) variant
+        if name not in timings:
+            continue
+        ms = timings[name]
+        if ms < best_ms:
+            best_name, best_ms, best_diff = name, ms, diffs[name]
+    return best_name, best_ms, best_diff, timings
+
+
+def _record_pruned_cell(ctx: _GridSweepCtx, idx: tuple, combo: tuple, dims: dict, res: str, winner: str) -> None:
+    """Record a cell that was skipped as dominated, taking the dominating variant as its decision."""
+    ctx.tracker.record(idx, res, winner, None)
+    ctx.regions.append(_grid_region(ctx, dims, res, winner))
+    if combo == ctx.max_combo:
+        ctx.catchall[res] = winner
+    if ctx.verbose:
+        logger.info("grid %s res=%s -> %s (skipped: dominated in every smaller neighbour)", dims, res, winner)
+
+
+def _record_measured_cell(ctx: _GridSweepCtx, idx: tuple, combo: tuple, dims: dict, res: str, measured: tuple) -> None:
+    """Record a measured cell's winner, its region, and the catch-all candidate when it is the all-max corner."""
+    best_name, best_ms, best_diff, timings = measured
+    if best_name is not None:
+        ctx.tracker.record(idx, res, best_name, dict(timings))
+    region = _grid_region(ctx, dims, res, best_name or ctx.ref)
+    if np.isfinite(best_diff):
+        region["max_abs_diff"] = float(best_diff)
+    ctx.regions.append(region)
+    if combo == ctx.max_combo:
+        ctx.catchall[res] = region[ctx.decision_key]
+    if ctx.verbose:
+        logger.info("grid %s res=%s -> %s (%.3f ms)", dims, res, best_name, best_ms)
+
+
+def _sweep_grid_cell(ctx: _GridSweepCtx, idx: tuple, combo: tuple, dims: dict) -> None:
+    """Sweep one grid cell across every residency, appending its regions to ``ctx.regions``."""
+    host_args = None
+    for res in ctx.residencies:
+        skipped = ctx.tracker.dominated_winner(idx, res) if ctx.prune_dominated else None
+        if skipped is not None:
+            _record_pruned_cell(ctx, idx, combo, dims, res, skipped)
+            continue
+        if host_args is None:
+            host_args = ctx.make_inputs(dims)
+        try:
+            args = ctx.mover(host_args) if res == "device" else host_args
+        except Exception as e:
+            if ctx.verbose:
+                logger.info("grid %s res=%s: to_device failed (%s) -> skip residency", dims, res, e)
+            continue
+        measured = _measure_grid_cell(ctx, args, dims, res)
+        if measured is not None:
+            _record_measured_cell(ctx, idx, combo, dims, res, measured)
+
+
 def sweep_backend_grid(
     variants: "dict[str, Callable]",
     axes: "dict[str, list]",
@@ -628,98 +764,45 @@ def sweep_backend_grid(
     axes = {d: sorted(axes[d]) for d in dim_names}
     _max_combo = tuple(axes[d][-1] for d in dim_names)
 
-    def _default_to_device(args):
-        """Move any numpy-array arguments to a CuPy device array, leaving other argument types unchanged."""
-        import cupy as cp
-
-        return tuple(cp.asarray(a) if isinstance(a, np.ndarray) else a for a in args)
-
-    mover = to_device or _default_to_device
-    regions: list = []
     # Decision at the all-max corner per residency -> emitted as a catch-all
     # (all caps None) so inputs LARGER than the swept grid still resolve to the
     # largest-measured winner instead of falling through to None (the heuristic).
-    catchall: dict = {}
-
-    tracker = _DominanceTracker(prune_ratio, prune_min_ms)
+    ctx = _GridSweepCtx(
+        variants=variants,
+        names=names,
+        ref=ref,
+        dim_names=dim_names,
+        residencies=residencies,
+        mover=to_device or _grid_default_to_device,
+        make_inputs=make_inputs,
+        decision_key=decision_key,
+        prune_dominated=prune_dominated,
+        prune_ratio=prune_ratio,
+        prune_min_ms=prune_min_ms,
+        repeats=repeats,
+        equiv_atol=equiv_atol,
+        equiv_rtol=equiv_rtol,
+        synchronize_gpu=synchronize_gpu,
+        ranking=ranking,
+        verbose=verbose,
+        max_combo=_max_combo,
+        tracker=_DominanceTracker(prune_ratio, prune_min_ms),
+    )
 
     cells = itertools.product(*(range(len(axes[d])) for d in dim_names))
     for idx in tqdmu(list(cells), desc="grid sweep", leave=False):
         combo = tuple(axes[d][i] for d, i in zip(dim_names, idx))
-        dims = dict(zip(dim_names, combo))
-        host_args = None
-        for res in residencies:
-            skipped = tracker.dominated_winner(idx, res) if prune_dominated else None
-            if skipped is not None:
-                tracker.record(idx, res, skipped, None)
-                region: dict = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
-                if len(residencies) > 1:
-                    region["location_eq"] = res
-                region[decision_key] = skipped
-                regions.append(region)
-                if combo == _max_combo:
-                    catchall[res] = skipped
-                if verbose:
-                    logger.info("grid %s res=%s -> %s (skipped: dominated in every smaller neighbour)", dims, res, skipped)
-                continue
-            if host_args is None:
-                host_args = make_inputs(dims)
-            try:
-                args = mover(host_args) if res == "device" else host_args
-            except Exception as e:
-                if verbose:
-                    logger.info("grid %s res=%s: to_device failed (%s) -> skip residency", dims, res, e)
-                continue
-            try:
-                ref_out = _to_host(variants[ref](*args))
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                ref_scale = _output_scale(ref_out) if ref_out is not None else 1.0  # see sweep_backend_crossover
-            except Exception as exc:
-                # Same reasoning as sweep_backend_crossover: no reference output means no
-                # equivalence gate, and an ungated winner must never be emitted as tuned.
-                logger.warning("grid %s res=%s: reference variant %r raised (%s) -> combination skipped", dims, res, ref, exc)
-                continue
-            best_name, best_ms, best_diff = None, float("inf"), 0.0
-            # Pass 1: warm up + equivalence-gate every variant; a divergent-but-faster variant is a bug, never a winner, so it is dropped BEFORE timing.
-            survivors, diffs = _gate_grid_variants(
-                variants, names, args, ref, ref_out, ref_scale, equiv_atol, equiv_rtol, synchronize_gpu, verbose, f"grid {dims} res={res}"
-            )
-            # Pass 2: rank survivors under the chosen metric (robust=interleaved min over reps,
-            # which is contention-robust; mean=legacy sequential per-candidate mean).
-            timings = _rank_candidates(
-                survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking,
-                drop_ratio=prune_ratio if prune_dominated else 0.0, drop_min_ms=prune_min_ms,
-            )
-            for name in names:  # iterate in declared order so ties prefer the earlier (e.g. reference) variant
-                if name not in timings:
-                    continue
-                ms = timings[name]
-                if ms < best_ms:
-                    best_name, best_ms, best_diff = name, ms, diffs[name]
-            if best_name is not None:
-                tracker.record(idx, res, best_name, dict(timings))
-            region = {f"{d}_max": _preserve_axis_value(dims[d]) for d in dim_names}
-            if len(residencies) > 1:
-                region["location_eq"] = res
-            region[decision_key] = best_name or ref
-            if np.isfinite(best_diff):
-                region["max_abs_diff"] = float(best_diff)
-            regions.append(region)
-            if combo == _max_combo:
-                catchall[res] = region[decision_key]
-            if verbose:
-                logger.info("grid %s res=%s -> %s (%.3f ms)", dims, res, best_name, best_ms)
+        _sweep_grid_cell(ctx, idx, combo, dict(zip(dim_names, combo)))
 
     # Catch-all per residency: all caps None -> matches any input beyond the
     # grid, carrying the largest-cell winner. Appended LAST so the specific
     # per-cell bands match first (the matcher returns the first match in order).
     for res in residencies:
-        if res not in catchall:
+        if res not in ctx.catchall:
             continue
         region = {f"{d}_max": None for d in dim_names}
         if len(residencies) > 1:
             region["location_eq"] = res
-        region[decision_key] = catchall[res]
-        regions.append(region)
-    return regions
+        region[decision_key] = ctx.catchall[res]
+        ctx.regions.append(region)
+    return ctx.regions

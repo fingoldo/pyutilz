@@ -10,7 +10,9 @@ module-level connection globals. Re-exported by the db.__init__ facade.
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from pyutilz.database.db.sql_helpers import validate_sql_identifier
-from typing import Iterable, Optional
+from typing import Iterable, Optional, TypeVar as _TypeVar
+
+_T = _TypeVar("_T")
 
 
 def _fresh_data_returning_fields(history_fields, hash_fields, fields_names, history_table_name, conflict_fields) -> list:
@@ -37,6 +39,241 @@ def _fresh_data_returning_fields(history_fields, hash_fields, fields_names, hist
     if history_table_name:
         returning_fields = list(dict.fromkeys(returning_fields + list(conflict_fields)))
     return returning_fields
+
+
+def _or_default(value: Optional[_T], default: _T) -> _T:
+    """Return ``value`` unless it is None, in which case return ``default``."""
+    return default if value is None else value
+
+
+def _normalize_hash_fields(hash_fields: Optional[Iterable[str]]) -> list:
+    """Return ``hash_fields`` as a list; a bare str names a single field, and ``""`` or None means no hash fields."""
+    if isinstance(hash_fields, str):
+        # A bare str would otherwise be iterated character-by-character below (for hash_field in
+        # hash_fields), silently corrupting the generated SQL. "" (the default/no-op) stays as-is;
+        # any other bare str is treated as a single field name, matching the pre-fix behavior most
+        # callers actually relied on when they passed a single hash column.
+        return [hash_fields] if hash_fields else []
+    return list(hash_fields) if hash_fields is not None else []
+
+
+def _validate_identifiers(
+    table_name: str,
+    history_table_name: Optional[str],
+    history_fields: list,
+    fields_names: list,
+    conflict_fields: list,
+    on_conflict_update_fields: list,
+    returning_fields: list,
+    timestamp_check_fields: list,
+    timestamp_update_fields: list,
+    skip_fields: list,
+    history_fields_aliases: dict,
+    hash_fields: list,
+) -> None:
+    """Validate every identifier spliced into the raw SQL and reject a history table without history fields."""
+    # Validate every identifier that ends up spliced into the raw SQL below (table/history table/column names).
+    # ``custom_onconflict``, ``on_conflict_update_values`` values and ``default_timestamp`` are accepted as raw SQL
+    # fragments by design (see the WARNING in the docstring).
+    validate_sql_identifier(table_name)
+    if history_table_name:
+        validate_sql_identifier(history_table_name)
+        # Without history_fields the fresh_data CTE gets no RETURNING clause, so the history INSERT
+        # below would emit `insert into <hist>() select  from fresh_data` -- a syntax error only
+        # discovered at execution time.
+        if not history_fields:
+            raise ValueError("history_table_name requires a non-empty history_fields list")
+    for _identifier_list in (
+        fields_names,
+        conflict_fields,
+        on_conflict_update_fields,
+        returning_fields,
+        history_fields,
+        timestamp_check_fields,
+        timestamp_update_fields,
+        skip_fields,
+        list(history_fields_aliases.keys()),
+        list(history_fields_aliases.values()),
+    ):
+        for _field in _identifier_list:
+            validate_sql_identifier(_field)
+    if hash_fields:
+        for hash_field in hash_fields:
+            validate_sql_identifier(hash_field)
+
+
+def _validate_fields_types(fields_names: list, fields_types: dict, timestamp_check_fields: list) -> None:
+    """Check the duplicate-column invariants and that every field type is on the allow-list."""
+    for field in timestamp_check_fields:
+        assert field not in fields_names  # nosec B101 - both lists were already identifier-validated above; this only guards against duplicate columns in the generated SELECT list, not injection
+        assert field not in fields_types  # nosec B101 - same duplicate-column guard as above; fields_types keys are matched against already-validated fields_names
+
+    for field_name, field_type in fields_types.items():
+        assert field_name in fields_names  # nosec B101 - field_name is only ever used via membership tests below (loop iterates actual_fields_names, not fields_types keys), so a stray key here cannot reach the generated SQL
+        if field_type not in "int bigint smallint float real numeric json jsonb text timestamp".split(" "):
+            # field_type is spliced verbatim into the SQL as "field::<field_type>" below (line ~119/146); under
+            # `python -O` a skipped assert would let an unvalidated field_type inject arbitrary SQL, so this must
+            # be a real, non-disable-able check rather than an assert.
+            raise ValueError(f"Invalid field_type for {field_name!r}: {field_type!r}")
+
+
+def _actual_insert_fields(fields_names: list, timestamp_check_fields: list, skip_fields: list) -> list:
+    """Return the insert column list: the data fields plus timestamp-check fields, minus skipped ones."""
+    if len(timestamp_check_fields) > 0:
+        actual_fields_names = fields_names + timestamp_check_fields
+    else:
+        actual_fields_names = fields_names.copy()
+
+    for field in skip_fields:
+        if field in actual_fields_names:
+            actual_fields_names.remove(field)
+    return actual_fields_names
+
+
+def _select_values(actual_fields_names: list, fields_types: dict, timestamp_check_fields: list, default_timestamp: str) -> list:
+    """Return the SELECT-list expressions for the insert columns, casting typed fields and stamping timestamp-check fields."""
+    values = []
+    conversion_clause = " at time zone 'utc' " if ("now" in default_timestamp.lower() or "to_timestamp" in default_timestamp.lower()) else ""
+    for field in actual_fields_names:
+        if field in fields_types:
+            values.append(field + "::" + fields_types[field])
+        elif field in timestamp_check_fields:
+            values.append(f"{default_timestamp}::timestamptz {conversion_clause}")
+        else:
+            values.append(field)
+    return values
+
+
+def _on_conflict_clause(
+    fields_names: list,
+    conflict_fields: list,
+    fields_types: dict,
+    on_conflict_update_fields: list,
+    on_conflict_update_values: dict,
+    custom_onconflict: Optional[str],
+) -> str:
+    """Return the ON CONFLICT fragment appended to the fresh_data insert."""
+    if custom_onconflict or (conflict_fields is not None and len(conflict_fields) > 0 and len(on_conflict_update_fields) > 0):
+        if custom_onconflict:
+            return custom_onconflict
+        for field in conflict_fields:
+            assert field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces that ON CONFLICT targets are also insert columns, a business-logic invariant
+
+        update_values = _conflict_update_values(fields_types, on_conflict_update_fields, on_conflict_update_values)
+        # conflict_fields validated above; update_values entries are "field=..." fragments built from validated
+        # field names plus on_conflict_update_values entries, which are accepted raw SQL fragments by design
+        return f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"  # nosec B608
+    if conflict_fields:
+        # Regression fix: a caller wanting "skip duplicates on this specific key, but still
+        # error on other unique-constraint violations" (conflict_fields=["id"],
+        # on_conflict_update_fields=[] -- the natural way to express a targeted DO NOTHING)
+        # previously fell all the way to the bare "on conflict do nothing" branch below,
+        # completely ignoring conflict_fields. A bare ON CONFLICT DO NOTHING matches ANY
+        # unique/exclusion constraint violation on the table, not just the intended one -- e.g.
+        # a genuine duplicate-email bug on an unrelated unique constraint would be silently
+        # swallowed too, when the caller only asked to tolerate collisions on `conflict_fields`.
+        return f"on conflict ({','.join(conflict_fields)}) do nothing "  # nosec B608 - conflict_fields validated above
+    return "on conflict do nothing "
+
+
+def _conflict_update_values(fields_types: dict, on_conflict_update_fields: list, on_conflict_update_values: dict) -> list:
+    """Return the ``field=...`` assignments for the ON CONFLICT DO UPDATE SET list."""
+    update_values = []
+    for field in on_conflict_update_fields:
+        # assert field in actual_fields_names,f"{field} not in actual_fields_names"
+        if field in on_conflict_update_values:
+            update_values.append(field + "=" + on_conflict_update_values[field])
+        elif field in fields_types:
+            update_values.append(field + "=excluded." + field + "::" + fields_types[field])
+        else:
+            update_values.append(field + "=excluded." + field)
+    return update_values
+
+
+def _changed_data_returning(
+    history_fields_aliases: dict,
+    conflict_fields: list,
+    timestamp_check_fields: list,
+    timestamp_update_fields: list,
+) -> list:
+    """Return the RETURNING projection of changed_data: the conflict key plus any timestamp-check fields."""
+    if len(timestamp_update_fields) > 0:
+        the_list = conflict_fields + timestamp_check_fields
+    else:
+        the_list = conflict_fields
+
+    # Regression fix: an aliased field used to be DROPPED from changed_data's RETURNING list, yet
+    # the trailing `update ... from changed_data as c where u.<key>=c.<key>` still referenced it
+    # under its ORIGINAL name -- `ERROR: column c.<key> does not exist`, and only on the second
+    # statement, after the first had already inserted into both tables. Project it back under the
+    # original name instead, the same `<alias> as <field>` form used for timestamp_check_fields below.
+    f_ = [f"{history_fields_aliases[field]} as {field}" if field in history_fields_aliases else field for field in the_list]
+    if len(timestamp_update_fields) > 0:
+        for field in timestamp_check_fields:
+            new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
+            if new_field not in f_:
+                f_ = [*f_, new_field]
+    return f_
+
+
+def _history_query(
+    query: str,
+    table_name: str,
+    history_table_name: str,
+    history_fields: list,
+    history_fields_aliases: dict,
+    timestamp_update_fields: list,
+    timestamp_check_fields: list,
+    conflict_fields: list,
+    hash_fields: list,
+) -> str:
+    """Append the changed_data history CTE, and the timestamp UPDATE when requested, to ``query``."""
+    assert len(conflict_fields) > 0  # nosec B101 - arity guard: a history table needs a conflict key to join against, not an identifier check
+
+    # history_fields validated above; history_fields_final entries come from history_fields_aliases (also validated) or
+    # history_fields itself, so every element here is a validated identifier
+    history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
+    hist_query = f"""
+    ,changed_data as (insert into {history_table_name}({','.join(history_fields_final)}) select {','.join(['u.'+field for field in history_fields])} from fresh_data u
+    """  # nosec B608
+    f_ = _changed_data_returning(history_fields_aliases, conflict_fields, timestamp_check_fields, timestamp_update_fields)
+
+    # The join predicate is the conflict key in BOTH branches: without it the trailing
+    # UPDATE ... FROM changed_data below degenerates into a cross join that overwrites the
+    # timestamp column on every row of the table.
+    join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
+
+    if hash_fields:
+        hash_changing_conds = [
+            f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
+            for hash_field in hash_fields
+        ]
+        hash_changing_cond = " OR ".join(hash_changing_conds)
+
+        hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
+    else:
+        hist_query += f" returning {','.join(f_)}"
+
+    hist_query += ")"
+    query += hist_query
+
+    if len(timestamp_update_fields) > 0:
+        if len(timestamp_update_fields) != len(timestamp_check_fields):
+            raise ValueError(
+                f"timestamp_update_fields ({len(timestamp_update_fields)}) and timestamp_check_fields ({len(timestamp_check_fields)}) must pair 1:1"
+            )
+
+        upd_fields_and_vals = ",".join([f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields)])
+
+        the_join_condtion = f"where {join_condtion}" if join_condtion else ""
+
+        # table_name/upd_fields_and_vals built from validated identifiers above
+        query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"  # nosec B608
+
+        query = "create temp table changed_data ON COMMIT DROP as (" + query
+    else:
+        query += " select 1 from changed_data"
+    return query
 
 
 def build_upsert_query(
@@ -73,80 +310,38 @@ def build_upsert_query(
     pass trusted, hard-coded or internally-constructed expressions. Every other argument is
     validated as a SQL identifier.
     """
-    if conflict_fields is None:
-        conflict_fields = ["id"]
-    if fields_types is None:
-        fields_types = {}
-    if history_fields is None:
-        history_fields = []
-    if history_fields_aliases is None:
-        history_fields_aliases = {}
-    if on_conflict_update_fields is None:
-        on_conflict_update_fields = []
-    if on_conflict_update_values is None:
-        on_conflict_update_values = {}
-    if returning_fields is None:
-        returning_fields = []
-    if skip_fields is None:
-        skip_fields = []
-    if timestamp_check_fields is None:
-        timestamp_check_fields = []
-    if timestamp_update_fields is None:
-        timestamp_update_fields = []
-    if isinstance(hash_fields, str):
-        # A bare str would otherwise be iterated character-by-character below (for hash_field in
-        # hash_fields), silently corrupting the generated SQL. "" (the default/no-op) stays as-is;
-        # any other bare str is treated as a single field name, matching the pre-fix behavior most
-        # callers actually relied on when they passed a single hash column.
-        hash_fields = [hash_fields] if hash_fields else []
-    else:
-        hash_fields = list(hash_fields) if hash_fields is not None else []
+    conflict_fields = _or_default(conflict_fields, ["id"])
+    fields_types = _or_default(fields_types, {})
+    history_fields = _or_default(history_fields, [])
+    history_fields_aliases = _or_default(history_fields_aliases, {})
+    on_conflict_update_fields = _or_default(on_conflict_update_fields, [])
+    on_conflict_update_values = _or_default(on_conflict_update_values, {})
+    returning_fields = _or_default(returning_fields, [])
+    skip_fields = _or_default(skip_fields, [])
+    timestamp_check_fields = _or_default(timestamp_check_fields, [])
+    timestamp_update_fields = _or_default(timestamp_update_fields, [])
+    hash_fields = _normalize_hash_fields(hash_fields)
     # ------------------------------
     # Checks!
     # ------------------------------
 
     assert len(fields_names) > 0  # nosec B101 - trivial arity guard against building a query with zero columns, not an identifier check
 
-    # Validate every identifier that ends up spliced into the raw SQL below (table/history table/column names).
-    # ``custom_onconflict``, ``on_conflict_update_values`` values and ``default_timestamp`` are accepted as raw SQL
-    # fragments by design (see the WARNING in the docstring).
-    validate_sql_identifier(table_name)
-    if history_table_name:
-        validate_sql_identifier(history_table_name)
-        # Without history_fields the fresh_data CTE gets no RETURNING clause, so the history INSERT
-        # below would emit `insert into <hist>() select  from fresh_data` -- a syntax error only
-        # discovered at execution time.
-        if not history_fields:
-            raise ValueError("history_table_name requires a non-empty history_fields list")
-    for _identifier_list in (
+    _validate_identifiers(
+        table_name,
+        history_table_name,
+        history_fields,
         fields_names,
         conflict_fields,
         on_conflict_update_fields,
         returning_fields,
-        history_fields,
         timestamp_check_fields,
         timestamp_update_fields,
         skip_fields,
-        list(history_fields_aliases.keys()),
-        list(history_fields_aliases.values()),
-    ):
-        for _field in _identifier_list:
-            validate_sql_identifier(_field)
-    if hash_fields:
-        for hash_field in hash_fields:
-            validate_sql_identifier(hash_field)
-
-    for field in timestamp_check_fields:
-        assert field not in fields_names  # nosec B101 - both lists were already identifier-validated above; this only guards against duplicate columns in the generated SELECT list, not injection
-        assert field not in fields_types  # nosec B101 - same duplicate-column guard as above; fields_types keys are matched against already-validated fields_names
-
-    for field_name, field_type in fields_types.items():
-        assert field_name in fields_names  # nosec B101 - field_name is only ever used via membership tests below (loop iterates actual_fields_names, not fields_types keys), so a stray key here cannot reach the generated SQL
-        if field_type not in "int bigint smallint float real numeric json jsonb text timestamp".split(" "):
-            # field_type is spliced verbatim into the SQL as "field::<field_type>" below (line ~119/146); under
-            # `python -O` a skipped assert would let an unvalidated field_type inject arbitrary SQL, so this must
-            # be a real, non-disable-able check rather than an assert.
-            raise ValueError(f"Invalid field_type for {field_name!r}: {field_type!r}")
+        history_fields_aliases,
+        hash_fields,
+    )
+    _validate_fields_types(fields_names, fields_types, timestamp_check_fields)
 
     # ------------------------------
     # Building query
@@ -154,24 +349,8 @@ def build_upsert_query(
 
     query = f"with data({','.join(fields_names)}) as (VALUES %s)"
 
-    if len(timestamp_check_fields) > 0:
-        actual_fields_names = fields_names + timestamp_check_fields
-    else:
-        actual_fields_names = fields_names.copy()
-
-    for field in skip_fields:
-        if field in actual_fields_names:
-            actual_fields_names.remove(field)
-
-    values = []
-    conversion_clause = " at time zone 'utc' " if ("now" in default_timestamp.lower() or "to_timestamp" in default_timestamp.lower()) else ""
-    for field in actual_fields_names:
-        if field in fields_types:
-            values.append(field + "::" + fields_types[field])
-        elif field in timestamp_check_fields:
-            values.append(f"{default_timestamp}::timestamptz {conversion_clause}")
-        else:
-            values.append(field)
+    actual_fields_names = _actual_insert_fields(fields_names, timestamp_check_fields, skip_fields)
+    values = _select_values(actual_fields_names, fields_types, timestamp_check_fields, default_timestamp)
     # table_name/actual_fields_names validated above (actual_fields_names is derived from fields_names/timestamp_check_fields,
     # minus skip_fields, so its members were already validated as identifiers)
     fresh_query = f"""
@@ -183,38 +362,14 @@ def build_upsert_query(
     # On conflict
     # ------------------------------
 
-    if custom_onconflict or (conflict_fields is not None and len(conflict_fields) > 0 and len(on_conflict_update_fields) > 0):
-        if not custom_onconflict:
-            for field in conflict_fields:
-                assert field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces that ON CONFLICT targets are also insert columns, a business-logic invariant
-
-            update_values = []
-            for field in on_conflict_update_fields:
-                # assert field in actual_fields_names,f"{field} not in actual_fields_names"
-                if field in on_conflict_update_values:
-                    update_values.append(field + "=" + on_conflict_update_values[field])
-                elif field in fields_types:
-                    update_values.append(field + "=excluded." + field + "::" + fields_types[field])
-                else:
-                    update_values.append(field + "=excluded." + field)
-
-            # conflict_fields validated above; update_values entries are "field=..." fragments built from validated
-            # field names plus on_conflict_update_values entries, which are accepted raw SQL fragments by design
-            fresh_query += f"on conflict ({','.join(conflict_fields)}) do update set {','.join(update_values)}"  # nosec B608
-        else:
-            fresh_query += custom_onconflict
-    elif conflict_fields:
-        # Regression fix: a caller wanting "skip duplicates on this specific key, but still
-        # error on other unique-constraint violations" (conflict_fields=["id"],
-        # on_conflict_update_fields=[] -- the natural way to express a targeted DO NOTHING)
-        # previously fell all the way to the bare "on conflict do nothing" branch below,
-        # completely ignoring conflict_fields. A bare ON CONFLICT DO NOTHING matches ANY
-        # unique/exclusion constraint violation on the table, not just the intended one -- e.g.
-        # a genuine duplicate-email bug on an unrelated unique constraint would be silently
-        # swallowed too, when the caller only asked to tolerate collisions on `conflict_fields`.
-        fresh_query += f"on conflict ({','.join(conflict_fields)}) do nothing "  # nosec B608 - conflict_fields validated above
-    else:
-        fresh_query += "on conflict do nothing "
+    fresh_query += _on_conflict_clause(
+        fields_names,
+        conflict_fields,
+        fields_types,
+        on_conflict_update_fields,
+        on_conflict_update_values,
+        custom_onconflict,
+    )
 
     if len(history_fields) > 0:
         # Regression fix: `returning_fields = history_fields` bound returning_fields to the SAME
@@ -230,66 +385,17 @@ def build_upsert_query(
     query += ", fresh_data as (" + fresh_query + ")"
 
     if history_table_name and len(history_table_name) > 0:
-        assert len(conflict_fields) > 0  # nosec B101 - arity guard: a history table needs a conflict key to join against, not an identifier check
-
-        # history_fields validated above; history_fields_final entries come from history_fields_aliases (also validated) or
-        # history_fields itself, so every element here is a validated identifier
-        history_fields_final = [history_fields_aliases.get(field, field) for field in history_fields]
-        hist_query = f"""
-        ,changed_data as (insert into {history_table_name}({','.join(history_fields_final)}) select {','.join(['u.'+field for field in history_fields])} from fresh_data u
-        """  # nosec B608
-        if len(timestamp_update_fields) > 0:
-            the_list = conflict_fields + timestamp_check_fields
-        else:
-            the_list = conflict_fields
-
-        # Regression fix: an aliased field used to be DROPPED from changed_data's RETURNING list, yet
-        # the trailing `update ... from changed_data as c where u.<key>=c.<key>` still referenced it
-        # under its ORIGINAL name -- `ERROR: column c.<key> does not exist`, and only on the second
-        # statement, after the first had already inserted into both tables. Project it back under the
-        # original name instead, the same `<alias> as <field>` form used for timestamp_check_fields below.
-        f_ = [f"{history_fields_aliases[field]} as {field}" if field in history_fields_aliases else field for field in the_list]
-        if len(timestamp_update_fields) > 0:
-            for field in timestamp_check_fields:
-                new_field = f"{history_fields_aliases.get(field)} as {field}" if field in history_fields_aliases else field
-                if new_field not in f_:
-                    f_ = [*f_, new_field]
-
-        # The join predicate is the conflict key in BOTH branches: without it the trailing
-        # UPDATE ... FROM changed_data below degenerates into a cross join that overwrites the
-        # timestamp column on every row of the table.
-        join_condtion = " and ".join([f"u.{field}=c.{field}" for field in conflict_fields])
-
-        if hash_fields:
-            hash_changing_conds = [
-                f"((c.{hash_field} is null and u.{hash_field} is not null) or (c.{hash_field} is not null and u.{hash_field} is null) or (c.{hash_field}<>u.{hash_field}))"
-                for hash_field in hash_fields
-            ]
-            hash_changing_cond = " OR ".join(hash_changing_conds)
-
-            hist_query += f"left join {table_name} c on {join_condtion} where ({hash_changing_cond}) returning {','.join(f_)}"
-        else:
-            hist_query += f" returning {','.join(f_)}"
-
-        hist_query += ")"
-        query += hist_query
-
-        if len(timestamp_update_fields) > 0:
-            if len(timestamp_update_fields) != len(timestamp_check_fields):
-                raise ValueError(
-                    f"timestamp_update_fields ({len(timestamp_update_fields)}) and timestamp_check_fields ({len(timestamp_check_fields)}) must pair 1:1"
-                )
-
-            upd_fields_and_vals = ",".join([f"{ufield}=c.{cfield}" for ufield, cfield in zip(timestamp_update_fields, timestamp_check_fields)])
-
-            the_join_condtion = f"where {join_condtion}" if join_condtion else ""
-
-            # table_name/upd_fields_and_vals built from validated identifiers above
-            query += f" select * from changed_data); with tmp as (update {table_name} AS u set {upd_fields_and_vals} from changed_data as c {the_join_condtion}) select count(*) from changed_data;"  # nosec B608
-
-            query = "create temp table changed_data ON COMMIT DROP as (" + query
-        else:
-            query += " select 1 from changed_data"
+        query = _history_query(
+            query,
+            table_name,
+            history_table_name,
+            history_fields,
+            history_fields_aliases,
+            timestamp_update_fields,
+            timestamp_check_fields,
+            conflict_fields,
+            hash_fields,
+        )
     else:
         query += " select 1 from fresh_data"
     return query

@@ -295,6 +295,117 @@ def _warn_if_still_waiting(waited: float, now: float, last_warned_at: float, eve
     return now
 
 
+def _cpu_initial_conditions_ok(min_cpu_free_ram_gb: float) -> bool:
+    """Verify the requested minimum free CPU RAM does not exceed total installed RAM."""
+    total_cpu_ram_gb = psutil.virtual_memory().total / (1024**3)
+    if min_cpu_free_ram_gb > total_cpu_ram_gb:
+        logger.warning("Requested CPU free RAM (%s GB) exceeds total available RAM (%.2f GB)", min_cpu_free_ram_gb, total_cpu_ram_gb)
+        return False
+    return True
+
+
+def _gpu_initial_conditions_ok(min_gpu_free_ram_gb: float, gpu_ids: list) -> bool:
+    """Verify the requested minimum free GPU RAM does not exceed each monitored GPU's total RAM."""
+    try:
+        import GPUtil
+    except ImportError:
+        logger.warning("GPUtil not available, skipping GPU checks")
+        return True
+
+    gpus = GPUtil.getGPUs()
+    for gpu in gpus:
+        if gpu_ids and gpu.id not in gpu_ids:
+            continue
+        total_gpu_ram_gb = gpu.memoryTotal / 1024
+        if min_gpu_free_ram_gb > total_gpu_ram_gb:
+            logger.warning("Requested GPU %s free RAM (%s GB) exceeds total available RAM (%.2f GB)", gpu.id, min_gpu_free_ram_gb, total_gpu_ram_gb)
+            return False
+    return True
+
+
+def _cpu_conditions_met(max_cpu_load_percent: float, min_cpu_free_ram_gb: float) -> bool:
+    """Return True if current CPU load and free RAM satisfy the configured thresholds, logging a debug message when they don't."""
+    cpu_load_percent = psutil.cpu_percent(percpu=False)
+    cpu_free_ram_gb = psutil.virtual_memory().available / (1024**3)
+    mes = ""
+    if cpu_load_percent > max_cpu_load_percent:
+        mes += f"CPU load too high: {cpu_load_percent:.2f}% > {max_cpu_load_percent:.2f}%"
+    if cpu_free_ram_gb < min_cpu_free_ram_gb:
+        if mes:
+            mes += " "
+        mes += f"CPU free RAM too low: {cpu_free_ram_gb:.2f} GB < {min_cpu_free_ram_gb:.2f} GB"
+    if mes:
+        logger.debug(mes)
+    return bool(cpu_load_percent <= max_cpu_load_percent and cpu_free_ram_gb >= min_cpu_free_ram_gb)
+
+
+def _gpu_conditions_met(max_gpu_load_percent: float, min_gpu_free_ram_gb: float, gpu_ids: list) -> bool:
+    """Return True if current GPU load and free RAM satisfy the configured thresholds for every monitored GPU, logging a debug message when they don't."""
+    try:
+        import GPUtil
+    except ImportError:
+        return True  # Skip GPU checks if GPUtil not available
+
+    gpus = GPUtil.getGPUs()
+    all_conditions_met = True
+    for gpu in gpus:
+        if gpu_ids and gpu.id not in gpu_ids:
+            continue
+        gpu_load_percent = gpu.load * 100
+        gpu_free_ram_gb = gpu.memoryFree / 1024
+        mes = ""
+        if gpu_load_percent > max_gpu_load_percent:
+            mes += f"GPU {gpu.id} load too high: {gpu_load_percent:.2f}% > {max_gpu_load_percent:.2f}%"
+            all_conditions_met = False
+        if gpu_free_ram_gb < min_gpu_free_ram_gb:
+            if mes:
+                mes += " "
+            mes += f"GPU {gpu.id} free RAM too low: {gpu_free_ram_gb:.2f} GB < {min_gpu_free_ram_gb:.2f} GB"
+            all_conditions_met = False
+        if mes:
+            logger.debug(mes)
+    return all_conditions_met
+
+
+def _validate_load_limits(max_cpu_load_percent: float, max_gpu_load_percent: float) -> None:
+    """Raise ValueError when either load limit falls outside the 0-100 percent range."""
+    if not (0 <= max_cpu_load_percent <= 100):
+        raise ValueError("max_cpu_load_percent must be between 0 and 100")
+    if not (0 <= max_gpu_load_percent <= 100):
+        raise ValueError("max_gpu_load_percent must be between 0 and 100")
+
+
+def _log_idle_request(
+    duration_seconds: int,
+    max_cpu_load_percent: float,
+    min_cpu_free_ram_gb: float,
+    max_gpu_load_percent: float,
+    min_gpu_free_ram_gb: float,
+    gpu_ids: list,
+) -> None:
+    """Log the idle-device conditions that ensure_idle_devices is about to enforce."""
+    logger.info("Ensuring idle devices for %s seconds with the following conditions:", duration_seconds)
+    logger.info(
+        "  Max CPU load: %s%%, Min CPU free RAM: %s GB, Max GPU load: %s%%, Min GPU free RAM: %s GB. GPU IDs to check: %s.",
+        max_cpu_load_percent,
+        min_cpu_free_ram_gb,
+        max_gpu_load_percent,
+        min_gpu_free_ram_gb,
+        gpu_ids if gpu_ids else "All",
+    )
+
+
+def _devices_idle(
+    max_cpu_load_percent: float,
+    min_cpu_free_ram_gb: float,
+    max_gpu_load_percent: float,
+    min_gpu_free_ram_gb: float,
+    gpu_ids: list,
+) -> bool:
+    """Return True when the CPU and every monitored GPU currently satisfy the idle thresholds."""
+    return _cpu_conditions_met(max_cpu_load_percent, min_cpu_free_ram_gb) and _gpu_conditions_met(max_gpu_load_percent, min_gpu_free_ram_gb, gpu_ids)
+
+
 def ensure_idle_devices(
     duration_seconds: int = 5,
     max_cpu_load_percent: float = 10.0,
@@ -327,91 +438,11 @@ def ensure_idle_devices(
         gpu_ids = []
     import time
 
-    if not (0 <= max_cpu_load_percent <= 100):
-        raise ValueError("max_cpu_load_percent must be between 0 and 100")
-    if not (0 <= max_gpu_load_percent <= 100):
-        raise ValueError("max_gpu_load_percent must be between 0 and 100")
+    _validate_load_limits(max_cpu_load_percent, max_gpu_load_percent)
+    _log_idle_request(duration_seconds, max_cpu_load_percent, min_cpu_free_ram_gb, max_gpu_load_percent, min_gpu_free_ram_gb, gpu_ids)
 
-    logger.info("Ensuring idle devices for %s seconds with the following conditions:", duration_seconds)
-    logger.info(
-        "  Max CPU load: %s%%, Min CPU free RAM: %s GB, Max GPU load: %s%%, Min GPU free RAM: %s GB. GPU IDs to check: %s.",
-        max_cpu_load_percent,
-        min_cpu_free_ram_gb,
-        max_gpu_load_percent,
-        min_gpu_free_ram_gb,
-        gpu_ids if gpu_ids else "All",
-    )
-
-    def check_cpu_initial_conditions():
-        """Verify the requested minimum free CPU RAM does not exceed total installed RAM."""
-        total_cpu_ram_gb = psutil.virtual_memory().total / (1024**3)
-        if min_cpu_free_ram_gb > total_cpu_ram_gb:
-            logger.warning("Requested CPU free RAM (%s GB) exceeds total available RAM (%.2f GB)", min_cpu_free_ram_gb, total_cpu_ram_gb)
-            return False
-        return True
-
-    def check_gpu_initial_conditions():
-        """Verify the requested minimum free GPU RAM does not exceed each monitored GPU's total RAM."""
-        try:
-            import GPUtil
-        except ImportError:
-            logger.warning("GPUtil not available, skipping GPU checks")
-            return True
-
-        gpus = GPUtil.getGPUs()
-        for gpu in gpus:
-            if gpu_ids and gpu.id not in gpu_ids:
-                continue
-            total_gpu_ram_gb = gpu.memoryTotal / 1024
-            if min_gpu_free_ram_gb > total_gpu_ram_gb:
-                logger.warning("Requested GPU %s free RAM (%s GB) exceeds total available RAM (%.2f GB)", gpu.id, min_gpu_free_ram_gb, total_gpu_ram_gb)
-                return False
-        return True
-
-    if not check_cpu_initial_conditions() or not check_gpu_initial_conditions():
+    if not _cpu_initial_conditions_ok(min_cpu_free_ram_gb) or not _gpu_initial_conditions_ok(min_gpu_free_ram_gb, gpu_ids):
         return False
-
-    def check_cpu_conditions():
-        """Return True if current CPU load and free RAM satisfy the configured thresholds, logging a debug message when they don't."""
-        cpu_load_percent = psutil.cpu_percent(percpu=False)
-        cpu_free_ram_gb = psutil.virtual_memory().available / (1024**3)
-        mes = ""
-        if cpu_load_percent > max_cpu_load_percent:
-            mes += f"CPU load too high: {cpu_load_percent:.2f}% > {max_cpu_load_percent:.2f}%"
-        if cpu_free_ram_gb < min_cpu_free_ram_gb:
-            if mes:
-                mes += " "
-            mes += f"CPU free RAM too low: {cpu_free_ram_gb:.2f} GB < {min_cpu_free_ram_gb:.2f} GB"
-        if mes:
-            logger.debug(mes)
-        return cpu_load_percent <= max_cpu_load_percent and cpu_free_ram_gb >= min_cpu_free_ram_gb
-
-    def check_gpu_conditions():
-        """Return True if current GPU load and free RAM satisfy the configured thresholds for every monitored GPU, logging a debug message when they don't."""
-        try:
-            import GPUtil
-        except ImportError:
-            return True  # Skip GPU checks if GPUtil not available
-
-        gpus = GPUtil.getGPUs()
-        all_conditions_met = True
-        for gpu in gpus:
-            if gpu_ids and gpu.id not in gpu_ids:
-                continue
-            gpu_load_percent = gpu.load * 100
-            gpu_free_ram_gb = gpu.memoryFree / 1024
-            mes = ""
-            if gpu_load_percent > max_gpu_load_percent:
-                mes += f"GPU {gpu.id} load too high: {gpu_load_percent:.2f}% > {max_gpu_load_percent:.2f}%"
-                all_conditions_met = False
-            if gpu_free_ram_gb < min_gpu_free_ram_gb:
-                if mes:
-                    mes += " "
-                mes += f"GPU {gpu.id} free RAM too low: {gpu_free_ram_gb:.2f} GB < {min_gpu_free_ram_gb:.2f} GB"
-                all_conditions_met = False
-            if mes:
-                logger.debug(mes)
-        return all_conditions_met
 
     start_time = time.time()
     wait_started_at = start_time
@@ -422,7 +453,7 @@ def ensure_idle_devices(
     now = start_time
 
     while now < deadline:
-        if check_cpu_conditions() and check_gpu_conditions():
+        if _devices_idle(max_cpu_load_percent, min_cpu_free_ram_gb, max_gpu_load_percent, min_gpu_free_ram_gb, gpu_ids):
             if now - start_time >= duration_seconds:
                 logger.info("Devices are idle and ready for benchmarking")
                 return True

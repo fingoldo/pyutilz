@@ -146,6 +146,412 @@ def add_weighted_aggregates(
     return wcols
 
 
+def _or_default(value: Any, default: Any) -> Any:
+    """Return ``value`` unless it is None, in which case return ``default``."""
+    return default if value is None else value
+
+
+def _expand_default_fields(
+    df: pl.DataFrame,
+    boolean_fields: Optional[list],
+    ts_diff_fields: Optional[list],
+    numerical_fields: Optional[list],
+    categorical_fields: Optional[list],
+) -> tuple:
+    """Fill each unspecified field group with the columns of the matching dtype found in ``df``."""
+    return (
+        list(cs.expand_selector(df.head(), cs.by_dtype(pl.Boolean))) if boolean_fields is None else boolean_fields,
+        list(cs.expand_selector(df.head(), cs.by_dtype(pl.Datetime))) if ts_diff_fields is None else ts_diff_fields,
+        list(cs.expand_selector(df.head(), cs.numeric())) if numerical_fields is None else numerical_fields,
+        list(cs.expand_selector(df.head(), cs.by_dtype(pl.Categorical, pl.Utf8))) if categorical_fields is None else categorical_fields,
+    )
+
+
+def _subgroup_categoricals(orig_categorical_fields: list, filter_field: str) -> list:
+    """Return a copy of the categorical fields without the subgroup's own filter field."""
+    categorical_fields = orig_categorical_fields.copy()
+    if filter_field in categorical_fields:
+        categorical_fields.remove(filter_field)
+    return categorical_fields
+
+
+def _without(fields: Optional[list], excluded: list) -> Optional[list]:
+    """Return ``fields`` minus ``excluded`` as a list; a falsy ``fields`` is returned unchanged."""
+    return list(set(fields) - set(excluded)) if fields else fields
+
+
+def _import_polars_ds_for_avx2() -> None:
+    """Import polars_ds when the CPU supports AVX2 (the pds-backed features are AVX2-only)."""
+    if _facade.check_cpu_flag("avx2"):
+        import polars_ds  # noqa: F401 -- import-time side effect: a missing polars_ds must surface here, as before
+
+
+def _warn_if_cuda_unavailable(engine: str) -> None:
+    """Warn when the GPU feature-engineering engine is requested but CUDA is not available."""
+    if engine == "gpu" and not _facade.is_cuda_available():
+        logger.warning("GPU FE path chosen, but CUDA seems to be unavailable on this system")
+
+
+def _apply_exclusions(
+    boolean_fields: Optional[list],
+    ts_diff_fields: Optional[list],
+    numerical_fields: Optional[list],
+    categorical_fields: Optional[list],
+    exclude_fields: Optional[list],
+) -> tuple:
+    """Drop the excluded fields from each field group; without exclusions the groups are returned unchanged."""
+    if not exclude_fields:
+        return boolean_fields, ts_diff_fields, numerical_fields, categorical_fields
+    return (
+        _without(boolean_fields, exclude_fields),
+        _without(ts_diff_fields, exclude_fields),
+        _without(numerical_fields, exclude_fields),
+        _without(categorical_fields, exclude_fields),
+    )
+
+
+def _boolean_feature_exprs(af: Callable, fpref: str, boolean_fields: list, fields_remap: dict) -> list:
+    """Mean expressions for the boolean columns, plus their Lempel-Ziv ratio on AVX2 CPUs."""
+    exprs: list = []
+    if boolean_fields:
+        exprs.extend(
+            [getattr(af(pl.col(field)), func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}") for field in boolean_fields for func in ["mean"]]
+        )
+        # +lziv
+        if _facade.check_cpu_flag("avx2"):
+            import polars_ds as pds
+
+            exprs.extend(
+                [pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lziv") for field in boolean_fields]
+            )
+    return exprs
+
+
+def _peak_feature_exprs(af: Callable, fpref: str, numerical_fields: list, fields_remap: dict, dtype: Any) -> list:
+    """Mean of the peak-min/peak-max statistics, plus their Lempel-Ziv ratio on AVX2 CPUs."""
+    # Means
+    exprs = [
+        getattr(af(pl.col(field)), func)().mean().cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_mean")
+        for field in numerical_fields
+        for func in ["peak_min", "peak_max"]
+    ]
+    # +lziv
+    if _facade.check_cpu_flag("avx2"):
+        import polars_ds as pds
+
+        exprs.extend(
+            [
+                pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
+                for field in numerical_fields
+                for func in ["peak_min", "peak_max"]
+            ]
+        )
+    return exprs
+
+
+def _numagg_quantile_exprs(af: Callable, fpref: str, numerical_fields: list, numaggs: list, quantiles: list, fields_remap: dict) -> list:
+    """Numerical aggregations and quantiles over the numerical columns."""
+    # Numaggs over numerical columns
+    exprs = [getattr(af(pl.col(field)), func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}") for field in numerical_fields for func in numaggs]
+    # Quantiles
+    exprs.extend([af(pl.col(field)).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_quantile_{q}") for field in numerical_fields for q in quantiles])
+    return exprs
+
+
+def _othersvals_exprs(
+    af: Callable,
+    fpref: str,
+    numerical_fields: list,
+    filter_field: Optional[str],
+    exclude_fields: Optional[list],
+    othersvals_basic_fields: Optional[list],
+    othersvals_other_fields: Optional[list],
+    othersvals_excluded_fields: Optional[list],
+) -> list:
+    """Values of the other columns at each numerical column's arg-max and arg-min."""
+    exprs: list = []
+    for col in numerical_fields:
+        if not othersvals_basic_fields or col in othersvals_basic_fields:
+            if othersvals_other_fields:
+                other_columns = cs.by_name(othersvals_other_fields) - cs.by_name(col)
+            else:
+                other_columns = cs.all() - cs.by_name(col)
+
+            if exclude_fields:
+                other_columns = other_columns - cs.by_name(exclude_fields)
+
+            if othersvals_excluded_fields:
+                other_columns = other_columns - cs.by_name(othersvals_excluded_fields)
+
+            if filter_field:
+                other_columns = other_columns - cs.by_name(filter_field)
+
+            # Both sides must be restricted to the active subgroup: an arg_max computed over
+            # the whole group indexes a row the filtered `other_columns` no longer contains.
+            exprs.append(af(other_columns).get(af(pl.col(col)).arg_max().alias("arg_max")).name.suffix(f"_{fpref}at_{col}_max"))
+            exprs.append(af(other_columns).get(af(pl.col(col)).arg_min().alias("arg_min")).name.suffix(f"_{fpref}at_{col}_min"))
+    return exprs
+
+
+def _ewm_feature_exprs(
+    af: Callable,
+    fpref: str,
+    numerical_fields: list,
+    ewm_basic_funcs: list,
+    ewm_spans: list,
+    ewm_final_funcs: list,
+    ewm_timestamp: Optional[str],
+    ewm_time_half_lifes: list,
+    fields_remap: dict,
+) -> list:
+    """Exponentially weighted mean/std over spans, plus time-weighted EWM when a timestamp and half-lives are given."""
+    # Exponentially weighted mean/std
+    exprs = [
+        getattr(getattr(af(pl.col(field)), func)(span=span), agg_func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}_span={span}_{agg_func}")
+        for field in numerical_fields
+        for func in ewm_basic_funcs
+        for span in ewm_spans
+        for agg_func in ewm_final_funcs
+    ]
+
+    if ewm_timestamp and ewm_time_half_lifes:  # careful: causes a bug sometimes (lengths mismatch)
+        exprs.extend(
+            [
+                getattr(af(pl.col(field)).ewm_mean_by(by=ewm_timestamp, half_life=half_life), agg_func)().alias(
+                    f"{fpref}{fields_remap.get(field,field)}_ewm_ts_hl={half_life}_{agg_func}"
+                )
+                for field in numerical_fields
+                for half_life in ewm_time_half_lifes
+                for agg_func in ewm_final_funcs
+            ]
+        )
+    return exprs
+
+
+def _nunique_exprs(af: Callable, fpref: str, categorical_fields: list, fields_remap: dict) -> list:
+    """Number of distinct values of each categorical column."""
+    return [af(pl.col(field)).n_unique().alias(f"{fpref}{fields_remap.get(field,field)}_nunique") for field in categorical_fields]
+
+
+def _mode_exprs(af: Callable, fpref: str, numerical_fields: list, fields_remap: dict) -> list:
+    """Min, max and mean of the mode of each numerical column."""
+    # Modes require special treatment
+    return [
+        getattr(af(pl.col(field)).mode(), func)().alias(f"{fpref}{fields_remap.get(field,field)}_mode_{func}")
+        for field in numerical_fields
+        for func in ["min", "max", "mean"]
+    ]
+
+
+def _concentration_exprs(
+    af: Callable,
+    fpref: str,
+    categorical_fields: list,
+    fields_remap: dict,
+    dtype: Any,
+    concentration_top_n: int,
+    concentrations_params: dict,
+) -> tuple:
+    """Top-N value proportions of each categorical column, with the unnest rules that split them into columns."""
+    exprs: list = []
+    columns_to_unnest: list = []
+    unnest_rules: list = []
+    if concentration_top_n > 0:
+        for field in categorical_fields:
+            field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
+            # Validate field_concentration_top_n
+            if not isinstance(field_concentration_top_n, int) or field_concentration_top_n <= 0:
+                logger.warning("Skipping field %s: invalid top_n=%s", field, field_concentration_top_n)
+                continue
+            alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
+            exprs.append(af(pl.col(field)).value_counts(sort=True, normalize=True).head(field_concentration_top_n).struct.field("proportion").alias(alias))
+
+            columns_to_unnest.extend(
+                [
+                    pl.col(alias).list.mean().cast(dtype).alias(f"{alias}_avg_conc"),
+                    pl.col(alias).list.to_struct(
+                        fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(field_concentration_top_n)],
+                    ),
+                ]
+            )
+            unnest_rules.append(alias)
+    return exprs, columns_to_unnest, unnest_rules
+
+
+def _tsd_exprs(
+    af: Callable,
+    fpref: str,
+    ts_diff_fields: list,
+    ts_numaggs: list,
+    nans_filler: float,
+    dtype: Any,
+    fields_remap: dict,
+    tds_quantiles: list,
+) -> list:
+    """Aggregations and quantiles of the per-row time differences (in minutes) of each datetime column."""
+    # Time diffs: numaggs
+    exprs = [
+        getattr(apply_agg_func_safe(af(pl.col(field)).diff().dt.total_seconds() / 60, func_name=func, nans_filler=nans_filler), func)()
+        .cast(dtype)
+        .alias(f"{fpref}{fields_remap.get(field,field)}_tsd_{func}")
+        for field in ts_diff_fields
+        for func in ts_numaggs
+    ]
+    if tds_quantiles:
+        # Time diffs: Quantiles
+        exprs.extend(
+            [
+                (af(pl.col(field)).diff().dt.total_seconds() / 60).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_tsd_quantile={q}")
+                for field in ts_diff_fields
+                for q in tds_quantiles
+            ]
+        )
+    return exprs
+
+
+def _pds_stat_exprs(
+    af: Callable,
+    fpref: str,
+    pds_fields: list,
+    pds_numaggs: list,
+    fields_remap: dict,
+    dtype: Any,
+    pds_params: dict,
+    use_parametrized_pds_features: bool,
+) -> tuple:
+    """polars-ds simple stats per field and, when enabled, the parametrized stats; returns expressions and unnest rules."""
+    import polars_ds as pds
+
+    exprs: list = []
+    columns_to_unnest: list = []
+    unnest_rules: list = []
+    # simple stats with no params
+    for field in pds_fields:
+        exprs.extend(
+            [getattr(pds, func)(af(pl.col(field))).alias(f"{fpref}{fields_remap.get(field,field)}_{func.replace('query_','')}") for func in pds_numaggs]
+        )
+        if "query_first_digit_cnt" in pds_numaggs:
+            NDIGITS = 9
+            alias = f"{fpref}{fields_remap.get(field,field)}_{'query_first_digit_cnt'.replace('query_','')}"
+            columns_to_unnest.append(pl.col(alias).list.to_struct(fields=[f"{alias}_{i+1}" for i in range(NDIGITS)]))
+            unnest_rules.append(alias)
+
+    # stats with params
+    if use_parametrized_pds_features:
+        lag, n_maxima, n_lags = pds_params.get("lag", 1), pds_params.get("n_maxima", 1), pds_params.get("n_lags", 1)
+        for field in pds_fields:
+            exprs.extend(
+                [
+                    pds.query_c3_stats(af(pl.col(field)), lag=lag).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_c3_stats-{lag}"),
+                    pds.query_mean_n_abs_max(af(pl.col(field)), n_maxima=n_maxima).alias(f"{fpref}{fields_remap.get(field,field)}_mean_n_abs_max-{n_maxima}"),
+                    pds.query_time_reversal_asymmetry_stats(af(pl.col(field)), n_lags=n_lags).alias(f"{fpref}{fields_remap.get(field,field)}_tras-{n_lags}"),
+                ]
+            )
+    return exprs, columns_to_unnest, unnest_rules
+
+
+def _corr_exprs(af: Callable, fpref: str, corr_fields: Optional[dict], corr_methods: list, dtype: Any) -> list:
+    """Pairwise correlations between the configured field pairs, for every correlation method."""
+    import polars_ds as pds
+
+    # Expressions, not bare column names: a name carries no filter, so the
+    # correlation would be the whole-group one under a subgroup alias.
+    return [
+        pds.corr(af(pl.col(corr_x)), af(pl.col(corr_y)), method=corr_method).cast(dtype).alias(f"{fpref}corr_{corr_x}-{corr_y}-{corr_method}")
+        for corr_x, corr_y in (corr_fields or {}).items()
+        for corr_method in corr_methods
+    ]
+
+
+def _linreg_exprs(
+    af: Callable,
+    fpref: str,
+    linreg_fields: list,
+    fields_remap: dict,
+    linreg_timestamp_field: Optional[str],
+) -> tuple:
+    """Linear regressions of each field on its row index (and, optionally, on elapsed seconds of a timestamp field)."""
+    import polars_ds as pds
+
+    exprs: list = []
+    columns_to_unnest: list = []
+    unnest_rules: list = []
+    for field in linreg_fields:
+        alias = f"{fpref}{fields_remap.get(field,field)}_linreg"
+        # pl.len() and the target both have to see the subgroup only, otherwise the fit is
+        # the whole-group one and gets emitted identically under every subgroup's alias.
+        exprs.append(pds.simple_lin_reg(pl.int_range(af(pl.col(field)).len()), target=af(pl.col(field)), add_bias=True).alias(alias))
+        columns_to_unnest.extend(
+            [
+                pl.col(alias).list.to_struct(
+                    fields=[f"{alias}_k", f"{alias}_b"],
+                )
+            ]
+        )
+        unnest_rules.append(alias)
+        if linreg_timestamp_field:
+            alias = f"{fpref}{fields_remap.get(field,field)}_linregby_{linreg_timestamp_field}"
+            exprs.append(
+                pds.simple_lin_reg(
+                    (af(pl.col(linreg_timestamp_field)) - af(pl.col(linreg_timestamp_field)).min()).dt.total_seconds(),
+                    target=af(pl.col(field)),
+                    add_bias=True,
+                ).alias(alias)
+            )
+            columns_to_unnest.extend(
+                [
+                    pl.col(alias).list.to_struct(
+                        fields=[f"{alias}_k", f"{alias}_b"],
+                    )
+                ]
+            )
+            unnest_rules.append(alias)
+    return exprs, columns_to_unnest, unnest_rules
+
+
+def _cpu_only_exprs(
+    af: Callable,
+    fpref: str,
+    numerical_fields: list,
+    categorical_fields: list,
+    ts_diff_fields: list,
+    pds_fields: list,
+    linreg_fields: list,
+    fields_remap: dict,
+    dtype: Any,
+    nans_filler: float,
+    ts_numaggs: list,
+    tds_quantiles: list,
+    pds_numaggs: list,
+    pds_params: dict,
+    use_parametrized_pds_features: bool,
+    corr_methods: list,
+    corr_fields: Optional[dict],
+    linreg_timestamp_field: Optional[str],
+    concentration_top_n: int,
+    concentrations_params: dict,
+) -> tuple:
+    """Features that are computed only on the CPU engine (modes, concentrations, time diffs, polars-ds stats)."""
+    exprs = _mode_exprs(af, fpref, numerical_fields, fields_remap)
+    conc_exprs, columns_to_unnest, unnest_rules = _concentration_exprs(
+        af, fpref, categorical_fields, fields_remap, dtype, concentration_top_n, concentrations_params
+    )
+    exprs.extend(conc_exprs)
+    exprs.extend(_tsd_exprs(af, fpref, ts_diff_fields, ts_numaggs, nans_filler, dtype, fields_remap, tds_quantiles))
+
+    if _facade.check_cpu_flag("avx2"):
+        pds_exprs, pds_unnest, pds_rules = _pds_stat_exprs(af, fpref, pds_fields, pds_numaggs, fields_remap, dtype, pds_params, use_parametrized_pds_features)
+        exprs.extend(pds_exprs)
+        columns_to_unnest.extend(pds_unnest)
+        unnest_rules.extend(pds_rules)
+        exprs.extend(_corr_exprs(af, fpref, corr_fields, corr_methods, dtype))
+        lin_exprs, lin_unnest, lin_rules = _linreg_exprs(af, fpref, linreg_fields, fields_remap, linreg_timestamp_field)
+        exprs.extend(lin_exprs)
+        columns_to_unnest.extend(lin_unnest)
+        unnest_rules.extend(lin_rules)
+    return exprs, columns_to_unnest, unnest_rules
+
+
 def build_aggregate_features_polars(
     df: pl.DataFrame,
     #
@@ -205,85 +611,50 @@ def build_aggregate_features_polars(
 
     assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
 
-    if engine == "gpu" and not _facade.is_cuda_available():
-        logger.warning("GPU FE path chosen, but CUDA seems to be unavailable on this system")
+    _warn_if_cuda_unavailable(engine)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Inits
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    if _facade.check_cpu_flag("avx2"):
-        import polars_ds as pds
+    _import_polars_ds_for_avx2()
 
     # Params
 
-    if fields_remap is None:
-        fields_remap = {}
+    fields_remap = _or_default(fields_remap, {})
+    concentrations_params = concentrations_params or {}
+    numaggs = _or_default(numaggs, POLARS_DEFAULT_NUMAGGS)
+    quantiles = _or_default(quantiles, POLARS_DEFAULT_QUANTILES)
+    tds_quantiles = _or_default(tds_quantiles, POLARS_DEFAULT_QUANTILES)
 
-    if not concentrations_params:
-        concentrations_params = {}
+    ewm_spans = ewm_spans or []
+    ewm_time_half_lifes = ewm_time_half_lifes or []
+    ewm_basic_funcs = ewm_basic_funcs or "ewm_mean ewm_std".split()
+    ewm_final_funcs = ewm_final_funcs or "mean".split()
 
-    if numaggs is None:
-        numaggs = POLARS_DEFAULT_NUMAGGS
-
-    if quantiles is None:
-        quantiles = POLARS_DEFAULT_QUANTILES
-
-    if tds_quantiles is None:
-        tds_quantiles = POLARS_DEFAULT_QUANTILES
-
-    if not ewm_spans:
-        ewm_spans = []
-    if not ewm_time_half_lifes:
-        ewm_time_half_lifes = []
-    if not ewm_basic_funcs:
-        ewm_basic_funcs = "ewm_mean ewm_std".split()
-    if not ewm_final_funcs:
-        ewm_final_funcs = "mean".split()
-
-    if pds_numaggs is None:
-        pds_numaggs = "hmean query_abs_energy query_cid_ce query_mean_abs_change".split()  # query_permute_entropy # query_first_digit_cnt
-    if corr_methods is None:
-        corr_methods = ["pearson", "spearman", "xi", "kendall", "bicor"]
-
-    if pds_params is None:
-        pds_params = dict(lag=1, n_maxima=1, n_lags=1)
+    pds_numaggs = _or_default(pds_numaggs, "hmean query_abs_energy query_cid_ce query_mean_abs_change".split())  # query_permute_entropy # query_first_digit_cnt
+    corr_methods = _or_default(corr_methods, ["pearson", "spearman", "xi", "kendall", "bicor"])
+    pds_params = _or_default(pds_params, dict(lag=1, n_maxima=1, n_lags=1))
 
     # Fields
 
-    if boolean_fields is None:
-        boolean_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Boolean)))
-    if ts_diff_fields is None:
-        ts_diff_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Datetime)))
-    if numerical_fields is None:
-        numerical_fields = list(cs.expand_selector(df.head(), cs.numeric()))
-    if categorical_fields is None:
-        categorical_fields = list(cs.expand_selector(df.head(), cs.by_dtype(pl.Categorical, pl.Utf8)))
+    boolean_fields, ts_diff_fields, numerical_fields, categorical_fields = _expand_default_fields(
+        df, boolean_fields, ts_diff_fields, numerical_fields, categorical_fields
+    )
 
-    if exclude_fields:
-        if boolean_fields:
-            boolean_fields = list(set(boolean_fields) - set(exclude_fields))
-        if ts_diff_fields:
-            ts_diff_fields = list(set(ts_diff_fields) - set(exclude_fields))
-        if numerical_fields:
-            numerical_fields = list(set(numerical_fields) - set(exclude_fields))
-        if categorical_fields:
-            categorical_fields = list(set(categorical_fields) - set(exclude_fields))
+    boolean_fields, ts_diff_fields, numerical_fields, categorical_fields = _apply_exclusions(
+        boolean_fields, ts_diff_fields, numerical_fields, categorical_fields, exclude_fields
+    )
 
-    if pds_fields is None:
-        pds_fields = numerical_fields
-    if linreg_fields is None:
-        linreg_fields = numerical_fields
+    pds_fields = _or_default(pds_fields, numerical_fields)
+    linreg_fields = _or_default(linreg_fields, numerical_fields)
 
-    if not subgroups:
-        subgroups = {"": [""]}  # {"action": ["buy", "sell"]}
+    subgroups = subgroups or {"": [""]}  # {"action": ["buy", "sell"]}
 
     # Counters
 
-    feature_expressions, columns_to_unnest, unnest_rules = [], [], []
-
-    if custom_expressions:
-        feature_expressions = [expr for expr in custom_expressions]
+    feature_expressions = list(custom_expressions) if custom_expressions else []
+    columns_to_unnest, unnest_rules = [], []
 
     ts_numaggs = [el for el in numaggs if el not in ("first",)]
 
@@ -310,10 +681,7 @@ def build_aggregate_features_polars(
             assert (
                 num_no_filter <= 1
             )  # nosec B101 - internal invariant: at most one "no filter" (falsy filter_field) entry is expected in subgroups, not a security boundary
-        else:
-            categorical_fields = orig_categorical_fields.copy()
-            if filter_field in categorical_fields:
-                categorical_fields.remove(filter_field)
+        categorical_fields = _subgroup_categoricals(orig_categorical_fields, filter_field) if filter_field else categorical_fields
 
         for filter_value in filter_values:
 
@@ -324,53 +692,12 @@ def build_aggregate_features_polars(
             fpref = "" if not filter_field else f"{filter_field}_{filter_value}_"
 
             feature_expressions.append(af(cs.first()).len().alias(f"{fpref}nrecs"))
-
-            if boolean_fields:
-                # Means for boolean columns
-                feature_expressions.extend(
-                    [
-                        getattr(af(pl.col(field)), func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}")
-                        for field in boolean_fields
-                        for func in ["mean"]
-                    ]
-                )
-                # +lziv
-                if _facade.check_cpu_flag("avx2"):
-                    feature_expressions.extend(
-                        [
-                            pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lziv")
-                            for field in boolean_fields
-                        ]
-                    )
+            feature_expressions.extend(_boolean_feature_exprs(af, fpref, boolean_fields, fields_remap))
 
             if add_peaks_stats:
-                # Means
-                feature_expressions.extend(
-                    [
-                        getattr(af(pl.col(field)), func)().mean().cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_mean")
-                        for field in numerical_fields
-                        for func in ["peak_min", "peak_max"]
-                    ]
-                )
-                # +lziv
-                if _facade.check_cpu_flag("avx2"):
-                    feature_expressions.extend(
-                        [
-                            pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
-                            for field in numerical_fields
-                            for func in ["peak_min", "peak_max"]
-                        ]
-                    )
+                feature_expressions.extend(_peak_feature_exprs(af, fpref, numerical_fields, fields_remap, dtype))
 
-            # Numaggs over numerical columns
-            feature_expressions.extend(
-                [getattr(af(pl.col(field)), func)().alias(f"{fpref}{fields_remap.get(field,field)}_{func}") for field in numerical_fields for func in numaggs]
-            )
-
-            # Quantiles
-            feature_expressions.extend(
-                [af(pl.col(field)).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_quantile_{q}") for field in numerical_fields for q in quantiles]
-            )
+            feature_expressions.extend(_numagg_quantile_exprs(af, fpref, numerical_fields, numaggs, quantiles, fields_remap))
 
             # Weighting
             if weighting_fields:
@@ -384,184 +711,62 @@ def build_aggregate_features_polars(
                 feature_expressions.extend(wcols)
 
             if othersvals_at_extremums:
-                for col in numerical_fields:
-                    if not othersvals_basic_fields or col in othersvals_basic_fields:
-                        if othersvals_other_fields:
-                            other_columns = cs.by_name(othersvals_other_fields) - cs.by_name(col)
-                        else:
-                            other_columns = cs.all() - cs.by_name(col)
-
-                        if exclude_fields:
-                            other_columns = other_columns - cs.by_name(exclude_fields)
-
-                        if othersvals_excluded_fields:
-                            other_columns = other_columns - cs.by_name(othersvals_excluded_fields)
-
-                        if filter_field:
-                            other_columns = other_columns - cs.by_name(filter_field)
-
-                        # Both sides must be restricted to the active subgroup: an arg_max computed over
-                        # the whole group indexes a row the filtered `other_columns` no longer contains.
-                        feature_expressions.append(af(other_columns).get(af(pl.col(col)).arg_max().alias("arg_max")).name.suffix(f"_{fpref}at_{col}_max"))
-                        feature_expressions.append(af(other_columns).get(af(pl.col(col)).arg_min().alias("arg_min")).name.suffix(f"_{fpref}at_{col}_min"))
-
-            # Exponentially weighted mean/std
-            feature_expressions.extend(
-                [
-                    getattr(getattr(af(pl.col(field)), func)(span=span), agg_func)().alias(
-                        f"{fpref}{fields_remap.get(field,field)}_{func}_span={span}_{agg_func}"
+                feature_expressions.extend(
+                    _othersvals_exprs(
+                        af,
+                        fpref,
+                        numerical_fields,
+                        filter_field,
+                        exclude_fields,
+                        othersvals_basic_fields,
+                        othersvals_other_fields,
+                        othersvals_excluded_fields,
                     )
-                    for field in numerical_fields
-                    for func in ewm_basic_funcs
-                    for span in ewm_spans
-                    for agg_func in ewm_final_funcs
-                ]
+                )
+
+            feature_expressions.extend(
+                _ewm_feature_exprs(
+                    af,
+                    fpref,
+                    numerical_fields,
+                    ewm_basic_funcs,
+                    ewm_spans,
+                    ewm_final_funcs,
+                    ewm_timestamp,
+                    ewm_time_half_lifes,
+                    fields_remap,
+                )
             )
 
-            if ewm_timestamp and ewm_time_half_lifes:  # careful: causes a bug sometimes (lengths mismatch)
-                feature_expressions.extend(
-                    [
-                        getattr(af(pl.col(field)).ewm_mean_by(by=ewm_timestamp, half_life=half_life), agg_func)().alias(
-                            f"{fpref}{fields_remap.get(field,field)}_ewm_ts_hl={half_life}_{agg_func}"
-                        )
-                        for field in numerical_fields
-                        for half_life in ewm_time_half_lifes
-                        for agg_func in ewm_final_funcs
-                    ]
-                )
-
             # Categorical stats. For gpu mode, categoricals need to be converted to String upfront.
-            feature_expressions.extend([af(pl.col(field)).n_unique().alias(f"{fpref}{fields_remap.get(field,field)}_nunique") for field in categorical_fields])
+            feature_expressions.extend(_nunique_exprs(af, fpref, categorical_fields, fields_remap))
 
             if engine != "gpu":
-                # Modes require special treatment
-                feature_expressions.extend(
-                    [
-                        getattr(af(pl.col(field)).mode(), func)().alias(f"{fpref}{fields_remap.get(field,field)}_mode_{func}")
-                        for field in numerical_fields
-                        for func in ["min", "max", "mean"]
-                    ]
+                cpu_exprs, cpu_unnest, cpu_rules = _cpu_only_exprs(
+                    af,
+                    fpref,
+                    numerical_fields,
+                    categorical_fields,
+                    ts_diff_fields,
+                    pds_fields,
+                    linreg_fields,
+                    fields_remap,
+                    dtype,
+                    nans_filler,
+                    ts_numaggs,
+                    tds_quantiles,
+                    pds_numaggs,
+                    pds_params,
+                    use_parametrized_pds_features,
+                    corr_methods,
+                    corr_fields,
+                    linreg_timestamp_field,
+                    concentration_top_n,
+                    concentrations_params,
                 )
-
-                if concentration_top_n > 0:
-                    for field in categorical_fields:
-                        field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
-                        # Validate field_concentration_top_n
-                        if not isinstance(field_concentration_top_n, int) or field_concentration_top_n <= 0:
-                            logger.warning("Skipping field %s: invalid top_n=%s", field, field_concentration_top_n)
-                            continue
-                        alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
-                        feature_expressions.append(
-                            af(pl.col(field)).value_counts(sort=True, normalize=True).head(field_concentration_top_n).struct.field("proportion").alias(alias)
-                        )
-
-                        columns_to_unnest.extend(
-                            [
-                                pl.col(alias).list.mean().cast(dtype).alias(f"{alias}_avg_conc"),
-                                pl.col(alias).list.to_struct(
-                                    fields=[f"{fpref}{fields_remap.get(field,field)}_top{i+1}_conc" for i in range(field_concentration_top_n)],
-                                ),
-                            ]
-                        )
-                        unnest_rules.append(alias)
-
-                # Time diffs: numaggs
-                feature_expressions.extend(
-                    [
-                        getattr(apply_agg_func_safe(af(pl.col(field)).diff().dt.total_seconds() / 60, func_name=func, nans_filler=nans_filler), func)()
-                        .cast(dtype)
-                        .alias(f"{fpref}{fields_remap.get(field,field)}_tsd_{func}")
-                        for field in ts_diff_fields
-                        for func in ts_numaggs
-                    ]
-                )
-                if tds_quantiles:
-                    # Time diffs: Quantiles
-                    feature_expressions.extend(
-                        [
-                            (af(pl.col(field)).diff().dt.total_seconds() / 60).quantile(q).alias(f"{fpref}{fields_remap.get(field,field)}_tsd_quantile={q}")
-                            for field in ts_diff_fields
-                            for q in tds_quantiles
-                        ]
-                    )
-
-                if _facade.check_cpu_flag("avx2"):
-
-                    # simple stats with no params
-                    for field in pds_fields:
-                        feature_expressions.extend(
-                            [
-                                getattr(pds, func)(af(pl.col(field))).alias(f"{fpref}{fields_remap.get(field,field)}_{func.replace('query_','')}")
-                                for func in pds_numaggs
-                            ]
-                        )
-                        if "query_first_digit_cnt" in pds_numaggs:
-                            NDIGITS = 9
-                            alias = f"{fpref}{fields_remap.get(field,field)}_{'query_first_digit_cnt'.replace('query_','')}"
-                            columns_to_unnest.append(pl.col(alias).list.to_struct(fields=[f"{alias}_{i+1}" for i in range(NDIGITS)]))
-                            unnest_rules.append(alias)
-
-                    # stats with params
-                    if use_parametrized_pds_features:
-                        lag, n_maxima, n_lags = pds_params.get("lag", 1), pds_params.get("n_maxima", 1), pds_params.get("n_lags", 1)
-                        for field in pds_fields:
-                            feature_expressions.extend(
-                                [
-                                    pds.query_c3_stats(af(pl.col(field)), lag=lag).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_c3_stats-{lag}"),
-                                    pds.query_mean_n_abs_max(af(pl.col(field)), n_maxima=n_maxima).alias(
-                                        f"{fpref}{fields_remap.get(field,field)}_mean_n_abs_max-{n_maxima}"
-                                    ),
-                                    pds.query_time_reversal_asymmetry_stats(af(pl.col(field)), n_lags=n_lags).alias(
-                                        f"{fpref}{fields_remap.get(field,field)}_tras-{n_lags}"
-                                    ),
-                                ]
-                            )
-
-                    # Corrs
-                    if corr_fields:
-                        for corr_x, corr_y in corr_fields.items():
-                            for corr_method in corr_methods:
-                                feature_expressions.append(
-                                    # Expressions, not bare column names: a name carries no filter, so the
-                                    # correlation would be the whole-group one under a subgroup alias.
-                                    pds.corr(af(pl.col(corr_x)), af(pl.col(corr_y)), method=corr_method)
-                                    .cast(dtype)
-                                    .alias(f"{fpref}corr_{corr_x}-{corr_y}-{corr_method}")
-                                )
-
-                    # Linregs
-                    for field in linreg_fields:
-                        alias = f"{fpref}{fields_remap.get(field,field)}_linreg"
-                        # pl.len() and the target both have to see the subgroup only, otherwise the fit is
-                        # the whole-group one and gets emitted identically under every subgroup's alias.
-                        feature_expressions.append(
-                            pds.simple_lin_reg(pl.int_range(af(pl.col(field)).len()), target=af(pl.col(field)), add_bias=True).alias(alias)
-                        )
-                        columns_to_unnest.extend(
-                            [
-                                pl.col(alias).list.to_struct(
-                                    fields=[f"{alias}_k", f"{alias}_b"],
-                                )
-                            ]
-                        )
-                        unnest_rules.append(alias)
-                        if linreg_timestamp_field:
-                            alias = f"{fpref}{fields_remap.get(field,field)}_linregby_{linreg_timestamp_field}"
-                            feature_expressions.append(
-                                pds.simple_lin_reg(
-                                    (af(pl.col(linreg_timestamp_field)) - af(pl.col(linreg_timestamp_field)).min()).dt.total_seconds(),
-                                    target=af(pl.col(field)),
-                                    add_bias=True,
-                                ).alias(alias)
-                            )
-                            columns_to_unnest.extend(
-                                [
-                                    pl.col(alias).list.to_struct(
-                                        fields=[f"{alias}_k", f"{alias}_b"],
-                                    )
-                                ]
-                            )
-                            unnest_rules.append(alias)
+                feature_expressions.extend(cpu_exprs)
+                columns_to_unnest.extend(cpu_unnest)
+                unnest_rules.extend(cpu_rules)
 
     return feature_expressions, columns_to_unnest, unnest_rules
 
