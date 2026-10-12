@@ -475,55 +475,65 @@ def archive_provider(
     archiver = _Archiver(provider, store, sink, is_truncated, fetch_stats=fetch_stats)
     generate = getattr(provider, "generate", None)
     if callable(generate):
-
-        @functools.wraps(generate)
-        async def archived_generate(*args: Any, **kwargs: Any) -> Any:
-            """``generate``, with its text stored and its attempt recorded before it returns or raises."""
-            started, started_at = time.monotonic(), datetime.now(timezone.utc).isoformat()
-            try:
-                result = await generate(*args, **kwargs)
-            except BaseException as exc:
-                # The partial answer lives on the EXCEPTION: `LLMTruncationError` carries `partial_text`, and
-                # a buffered call that stops on the output limit raises it with everything it had written. The
-                # first version of this line read `provider.last_partial_text`, an attribute no provider in
-                # pyutilz defines - so the branch was dead and a truncated buffered call archived the
-                # reasoning it was billed for while dropping the answer it was billed for, which is the exact
-                # loss this module's own docstring opens with. Found by a reviewer, 2026-09-14.
-                partial = getattr(exc, "partial_text", None) or getattr(provider, "last_partial_text", None)
-                await archiver.keep(partial if isinstance(partial, str) else None, started, started_at, error=exc)
-                raise
-            await archiver.keep(result if isinstance(result, str) else None, started, started_at)
-            return result
-
-        provider.generate = archived_generate
+        provider.generate = _archived_generate(generate, provider, archiver)
     stream = getattr(provider, "generate_stream", None)
     if callable(stream):
-
-        @functools.wraps(stream)
-        async def archived_stream(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
-            """``generate_stream``, recording the whole text, or the part produced before it broke off."""
-            started, started_at = time.monotonic(), datetime.now(timezone.utc).isoformat()
-            parts: List[str] = []
-            failure: Optional[BaseException] = None
-            first_token_at: Optional[float] = None
-            try:
-                async for chunk in stream(*args, **kwargs):
-                    if isinstance(chunk, str):
-                        if first_token_at is None:
-                            # Time to first token, measured rather than asked for: a route that never starts
-                            # and a model that thinks for minutes both look like silence until this is on the row.
-                            first_token_at = time.monotonic()
-                        parts.append(chunk)
-                    yield chunk
-            except BaseException as exc:
-                failure = exc
-                raise
-            finally:
-                await archiver.keep("".join(parts) or None, started, started_at, error=failure, first_token_at=first_token_at)
-
-        provider.generate_stream = archived_stream
+        provider.generate_stream = _archived_stream(stream, archiver)
     setattr(provider, _ARCHIVED_FLAG, True)
     return provider
+
+
+def _archived_generate(generate: Callable[..., Any], provider: Any, archiver: _Archiver) -> Callable[..., Any]:
+    """Wrap a buffered ``generate`` so its text is stored and its attempt recorded before it returns or raises."""
+
+    @functools.wraps(generate)
+    async def archived_generate(*args: Any, **kwargs: Any) -> Any:
+        """``generate``, with its text stored and its attempt recorded before it returns or raises."""
+        started, started_at = time.monotonic(), datetime.now(timezone.utc).isoformat()
+        try:
+            result = await generate(*args, **kwargs)
+        except BaseException as exc:
+            # The partial answer lives on the EXCEPTION: `LLMTruncationError` carries `partial_text`, and
+            # a buffered call that stops on the output limit raises it with everything it had written. The
+            # first version of this line read `provider.last_partial_text`, an attribute no provider in
+            # pyutilz defines - so the branch was dead and a truncated buffered call archived the
+            # reasoning it was billed for while dropping the answer it was billed for, which is the exact
+            # loss this module's own docstring opens with. Found by a reviewer, 2026-09-14.
+            partial = getattr(exc, "partial_text", None) or getattr(provider, "last_partial_text", None)
+            await archiver.keep(partial if isinstance(partial, str) else None, started, started_at, error=exc)
+            raise
+        await archiver.keep(result if isinstance(result, str) else None, started, started_at)
+        return result
+
+    return archived_generate
+
+
+def _archived_stream(stream: Callable[..., Any], archiver: _Archiver) -> Callable[..., Any]:
+    """Wrap a ``generate_stream`` so the whole text, or the part produced before it broke off, is recorded."""
+
+    @functools.wraps(stream)
+    async def archived_stream(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        """``generate_stream``, recording the whole text, or the part produced before it broke off."""
+        started, started_at = time.monotonic(), datetime.now(timezone.utc).isoformat()
+        parts: List[str] = []
+        failure: Optional[BaseException] = None
+        first_token_at: Optional[float] = None
+        try:
+            async for chunk in stream(*args, **kwargs):
+                if isinstance(chunk, str):
+                    if first_token_at is None:
+                        # Time to first token, measured rather than asked for: a route that never starts
+                        # and a model that thinks for minutes both look like silence until this is on the row.
+                        first_token_at = time.monotonic()
+                    parts.append(chunk)
+                yield chunk
+        except BaseException as exc:
+            failure = exc
+            raise
+        finally:
+            await archiver.keep("".join(parts) or None, started, started_at, error=failure, first_token_at=first_token_at)
+
+    return archived_stream
 
 
 # Kept for callers that type-annotate stores and sinks without importing a Protocol (3.8 has typing.Protocol,

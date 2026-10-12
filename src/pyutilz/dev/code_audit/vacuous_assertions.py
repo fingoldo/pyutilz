@@ -27,50 +27,47 @@ def _looks_like_full_domain_or(node: ast.BoolOp) -> bool:
     if not isinstance(node.op, ast.Or) or len(node.values) < 2:
         return False
     targets: set[str] = set()
-    shapes = 0
     for operand in node.values:
-        # X is None / X == {} / X == [] / X == ""
-        if isinstance(operand, ast.Compare) and len(operand.ops) == 1:
-            left = operand.left
-            op = operand.ops[0]
-            right = operand.comparators[0]
-            target_src = ast.dump(left)
-            if isinstance(op, ast.Is) and isinstance(right, ast.Constant) and right.value is None:
-                targets.add(target_src)
-                shapes += 1
-                continue
-            if isinstance(op, ast.Eq) and isinstance(right, (ast.Dict, ast.List, ast.Constant)):
-                if isinstance(right, ast.Dict) and right.keys:
-                    continue  # non-empty literal -- not a vacuous "any empty" shape
-                if isinstance(right, ast.List) and right.elts:
-                    continue
-                if isinstance(right, ast.Constant) and right.value not in (None, "", 0):
-                    continue
-                targets.add(target_src)
-                shapes += 1
-                continue
-        # Shape: an isinstance call on some subject X with a type T.
-        if isinstance(operand, ast.Call) and isinstance(operand.func, ast.Name) and operand.func.id == "isinstance" and len(operand.args) == 2:
-            targets.add(ast.dump(operand.args[0]))
-            shapes += 1
-            continue
-        # Shape: the length of X compared as greater than zero (paired with X == {} elsewhere -- tautology for any Sized)
-        if (
-            isinstance(operand, ast.Compare)
-            and len(operand.ops) == 1
-            and isinstance(operand.ops[0], (ast.Gt, ast.GtE))
-            and isinstance(operand.left, ast.Call)
-            and isinstance(operand.left.func, ast.Name)
-            and operand.left.func.id == "len"
-            and operand.left.args
-        ):
-            targets.add(ast.dump(operand.left.args[0]))
-            shapes += 1
-            continue
-        return False
+        target = _vacuous_operand_target(operand)
+        if target is None:
+            return False
+        targets.add(target)
     # All operands matched a known-vacuous shape AND they all refer to the same target
     # (otherwise it's a legitimate multi-variable check, not a single-value "accept anything").
-    return shapes == len(node.values) and len(targets) == 1
+    return len(targets) == 1
+
+
+def _vacuous_operand_target(operand: ast.expr) -> str | None:
+    """The dumped target of an operand in a known-vacuous shape (``X is None``, ``X == {}``, ``isinstance(X, T)``,
+    ``len(X) > 0``), or None when the operand is not one of those shapes."""
+    if isinstance(operand, ast.Compare) and len(operand.ops) == 1:
+        left = operand.left
+        op = operand.ops[0]
+        right = operand.comparators[0]
+        # X is None / X == {} / X == [] / X == ""
+        if isinstance(op, ast.Is) and isinstance(right, ast.Constant) and right.value is None:
+            return ast.dump(left)
+        if isinstance(op, ast.Eq) and isinstance(right, (ast.Dict, ast.List, ast.Constant)) and _is_empty_literal(right):
+            return ast.dump(left)
+        # Shape: the length of X compared as greater than zero (paired with X == {} elsewhere -- tautology for any Sized)
+        if isinstance(op, (ast.Gt, ast.GtE)) and isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id == "len" and left.args:
+            return ast.dump(left.args[0])
+        return None
+    # Shape: an isinstance call on some subject X with a type T.
+    if isinstance(operand, ast.Call) and isinstance(operand.func, ast.Name) and operand.func.id == "isinstance" and len(operand.args) == 2:
+        return ast.dump(operand.args[0])
+    return None
+
+
+def _is_empty_literal(right: ast.expr) -> bool:
+    """True for ``{}``, ``[]``, ``None``, ``""`` and ``0`` -- the literals a vacuous "any empty" shape compares to."""
+    if isinstance(right, ast.Dict):
+        return not right.keys  # a non-empty literal is not a vacuous "any empty" shape
+    if isinstance(right, ast.List):
+        return not right.elts
+    if isinstance(right, ast.Constant):
+        return right.value in (None, "", 0)
+    return False
 
 
 def _is_bare_is_not_none(test: ast.AST) -> bool:

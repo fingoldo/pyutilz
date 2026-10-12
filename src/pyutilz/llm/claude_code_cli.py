@@ -24,7 +24,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -487,48 +487,17 @@ def _parse_reset_wait_seconds(error_text: str) -> int | None:
     if not m:
         return None
 
-    hour = int(m.group("hour"))
+    hour = _hour_24(int(m.group("hour")), m.group("ampm"))
     minute = int(m.group("min")) if m.group("min") else 0
-    ampm = m.group("ampm")
 
-    if ampm:
-        ampm = ampm.lower()
-        if ampm == "pm" and hour != 12:
-            hour += 12
-        elif ampm == "am" and hour == 12:
-            hour = 0
-
-    tz_match = _TIMEZONE_PATTERN.search(error_text)
-    tz = None
-    if tz_match:
-        try:
-            import zoneinfo
-            tz = zoneinfo.ZoneInfo(tz_match.group(1))
-        except (ImportError, KeyError):
-            logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
-
+    tz = _reset_timezone(error_text)
     now = datetime.now(tz) if tz else datetime.now()  # noqa: DTZ005 -- error text has no explicit timezone; falls back to local wall-clock, consistent with reset_time being derived from the same `now` a few lines below
 
     month_str = m.group("month")
     day_str = m.group("day")
     if month_str and day_str:
-        _MONTHS = {
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-        }
-        month = _MONTHS[month_str.lower()]
-        day = int(day_str)
-        try:
-            reset_time = now.replace(
-                month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
-            )
-            if reset_time <= now:
-                reset_time = reset_time.replace(year=now.year + 1)
-        except ValueError:
-            # An impossible date ("resets Feb 30", or Feb 29 rolled into a non-leap year) must not
-            # turn a recoverable rate-limit pause into a hard failure of generate(); fall through
-            # to the caller's default wait instead.
-            logger.warning("Could not interpret rate-limit reset date %r-%r; using the default wait", month_str, day_str)
+        reset_time = _absolute_reset_time(now, hour, minute, month_str, day_str)
+        if reset_time is None:
             return None
     else:
         reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -537,6 +506,53 @@ def _parse_reset_wait_seconds(error_text: str) -> int | None:
 
     wait = (reset_time - now).total_seconds() + 60
     return int(wait)
+
+
+def _hour_24(hour: int, ampm: Optional[str]) -> int:
+    """Convert a 12-hour clock reading to 24-hour form; unchanged when ``ampm`` is absent."""
+    if ampm:
+        ampm = ampm.lower()
+        if ampm == "pm" and hour != 12:
+            return hour + 12
+        if ampm == "am" and hour == 12:
+            return 0
+    return hour
+
+
+def _reset_timezone(error_text: str) -> Any:
+    """The ``zoneinfo`` zone named in the error text, or None when absent or unloadable."""
+    tz_match = _TIMEZONE_PATTERN.search(error_text)
+    if not tz_match:
+        return None
+    try:
+        import zoneinfo
+        return zoneinfo.ZoneInfo(tz_match.group(1))
+    except (ImportError, KeyError):
+        logger.debug("Could not load timezone %s, using local time", tz_match.group(1))
+        return None
+
+
+def _absolute_reset_time(now: datetime, hour: int, minute: int, month_str: str, day_str: str) -> Optional[datetime]:
+    """The next occurrence of an explicit ``Mon D`` reset date, or None for an impossible date."""
+    _MONTHS = {
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+    }
+    month = _MONTHS[month_str.lower()]
+    day = int(day_str)
+    try:
+        reset_time = now.replace(
+            month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0,
+        )
+        if reset_time <= now:
+            reset_time = reset_time.replace(year=now.year + 1)
+    except ValueError:
+        # An impossible date ("resets Feb 30", or Feb 29 rolled into a non-leap year) must not
+        # turn a recoverable rate-limit pause into a hard failure of generate(); fall through
+        # to the caller's default wait instead.
+        logger.warning("Could not interpret rate-limit reset date %r-%r; using the default wait", month_str, day_str)
+        return None
+    return reset_time
 
 
 def _is_rate_limit_error(error: BaseException) -> bool:

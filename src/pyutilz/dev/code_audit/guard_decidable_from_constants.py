@@ -81,28 +81,47 @@ def _externally_written_names(trees: dict[str, ast.Module]) -> tuple[set[str], d
     subscript_keys: dict[str, set[str]] = {}
     for rel, tree in trees.items():
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                written.add(node.attr)
-            elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-                index = _subscript_index(node)
-                if isinstance(index, ast.Constant) and isinstance(index.value, str):
-                    # Per FILE. A string-keyed store is evidence about a name only where the two can
-                    # plausibly be the same thing; collected package-wide, `d['_ENABLED'] = 1` in an
-                    # unrelated module silenced `if _ENABLED:` everywhere.
-                    subscript_keys.setdefault(rel, set()).add(index.value)
-            elif isinstance(node, ast.Call):
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-                if name in {"setattr", "delattr", "setdefault", "update", "monkeypatch"}:
-                    for arg in node.args:
-                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                            written.add(arg.value)
-                    # Keyword names count only for these rebinding calls: read from EVERY call,
-                    # an ordinary `helper(_ENABLED=1)` anywhere in the tree exempted the constant.
-                    for kw in node.keywords:
-                        if kw.arg:
-                            written.add(kw.arg)
+            _collect_external_write(rel, node, written, subscript_keys)
     return written, subscript_keys
+
+
+def _collect_external_write(rel: str, node: ast.AST, written: set[str], subscript_keys: dict[str, set[str]]) -> None:
+    """Record the names one AST node writes from outside its defining module."""
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        written.add(node.attr)
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+        index = _subscript_index(node)
+        if isinstance(index, ast.Constant) and isinstance(index.value, str):
+            # Per FILE. A string-keyed store is evidence about a name only where the two can
+            # plausibly be the same thing; collected package-wide, `d['_ENABLED'] = 1` in an
+            # unrelated module silenced `if _ENABLED:` everywhere.
+            subscript_keys.setdefault(rel, set()).add(index.value)
+    elif isinstance(node, ast.Call):
+        _collect_call_writes(node, written)
+
+
+def _collect_call_writes(node: ast.Call, written: set[str]) -> None:
+    """Record names bound by a setattr/setdefault/update-style call."""
+    func = node.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if name in {"setattr", "delattr", "setdefault", "update", "monkeypatch"}:
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                written.add(arg.value)
+        # Keyword names count only for these rebinding calls: read from EVERY call,
+        # an ordinary `helper(_ENABLED=1)` anywhere in the tree exempted the constant.
+        for kw in node.keywords:
+            if kw.arg:
+                written.add(kw.arg)
+
+
+def _assignment_targets(stmt: ast.stmt) -> tuple[list[ast.expr], ast.expr | None]:
+    """The assignment targets and bound value of a plain or annotated module-level assignment."""
+    if isinstance(stmt, ast.Assign):
+        return list(stmt.targets), stmt.value
+    if isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+        return [stmt.target], stmt.value
+    return [], None
 
 
 def _module_constants(tree: ast.Module) -> dict[str, object]:
@@ -110,12 +129,7 @@ def _module_constants(tree: ast.Module) -> dict[str, object]:
     counts, params = _all_bindings(tree)
     constants: dict[str, object] = {}
     for stmt in tree.body:
-        targets: list[ast.expr] = []
-        value: ast.expr | None = None
-        if isinstance(stmt, ast.Assign):
-            targets, value = list(stmt.targets), stmt.value
-        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-            targets, value = [stmt.target], stmt.value
+        targets, value = _assignment_targets(stmt)
         for target in targets:
             if not isinstance(target, ast.Name) or not isinstance(value, ast.Constant):
                 continue

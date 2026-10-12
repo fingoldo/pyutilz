@@ -5,7 +5,7 @@ generation from a table, and the JSON-column optimization advisor. Everything he
 through the facade's ``safe_execute``, so it carries no connection state of its own.
 """
 
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from ._common import (
     logger,
@@ -367,6 +367,33 @@ def create_enum_from_table(enum_name: str, table_name: str, id_field_name: str, 
     return Enum(enum_name, dct)
 
 
+def _json_field_path(table_field: str, path: str) -> str:
+    """The SQL expression that navigates to a JSON sub-path, or the bare column when ``path`` is empty."""
+    if path == "" or path is None:
+        return table_field
+    # `path` is spliced verbatim into the query; restrict it to a JSON-navigation
+    # fragment so it cannot close the surrounding expression.
+    if not _facade._JSON_PATH_RE.match(path):
+        raise ValueError(f"Invalid JSON navigation path: {path!r}")
+    return table_field + "->" + path
+
+
+def _value_distribution(vals) -> tuple[bool, Any, int, int]:
+    """``(has_none, most_frequent_value, its_count, total_count)`` over ``(value, count)`` rows."""
+    has_none = False
+    max_occurences = -1
+    total_occurences = 0
+    best_val = None
+    for val, occs in vals:
+        if val is None:
+            has_none = True
+        total_occurences += occs
+        if occs > max_occurences:
+            max_occurences = occs
+            best_val = val
+    return has_none, best_val, max_occurences, total_occurences
+
+
 def suggest_json_optimization(table: str, table_field: str, path: str = "", fields: Optional[list] = None, min_occurence_percent: float = 0.5, max_vals: int = 5) -> dict:
     """
     Aim is to remove lengthy fields that mostly holds a default value from the JSON.
@@ -390,15 +417,7 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
         # Validate the JSON field key: it is spliced (quoted) directly into the query below
         validate_sql_identifier(field)
 
-        # Prepare params
-        if path == "" or path is None:
-            full_path = table_field
-        else:
-            # `path` is spliced verbatim into the query below; restrict it to a JSON-navigation
-            # fragment so it cannot close the surrounding expression.
-            if not _facade._JSON_PATH_RE.match(path):
-                raise ValueError(f"Invalid JSON navigation path: {path!r}")
-            full_path = table_field + "->" + path
+        full_path = _json_field_path(table_field, path)
 
         # Ask DB
         # table/table_field/field/path all validated above (field is validated even though quoted, since it's spliced
@@ -410,17 +429,7 @@ def suggest_json_optimization(table: str, table_field: str, path: str = "", fiel
             continue
 
         # Compute distributiuon %
-        has_none = False
-        max_occurences = -1
-        total_occurences = 0
-
-        for val, occs in vals:
-            if val is None:
-                has_none = True
-            total_occurences += occs
-            if occs > max_occurences:
-                max_occurences = occs
-                best_val = val
+        has_none, best_val, max_occurences, total_occurences = _value_distribution(vals)
 
         # Print native values, if not too many
         if len(vals) <= max_vals:

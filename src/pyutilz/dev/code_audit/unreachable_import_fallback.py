@@ -100,6 +100,25 @@ def _statements_in(body: "list[ast.stmt]") -> "Iterator[ast.stmt]":
         todo.extend(child for child in ast.iter_child_nodes(node) if isinstance(child, ast.stmt))
 
 
+def _catches_import_error(node: ast.Try) -> bool:
+    """True if any handler of ``node`` names ``ImportError`` or ``ModuleNotFoundError``."""
+    return any(
+        (isinstance(h.type, ast.Name) and h.type.id in ("ImportError", "ModuleNotFoundError"))
+        or (isinstance(h.type, ast.Tuple) and any(isinstance(e, ast.Name) and e.id in ("ImportError", "ModuleNotFoundError") for e in h.type.elts))
+        for h in node.handlers
+    )
+
+
+def _statement_modules(stmt: ast.stmt, package: str) -> set[str]:
+    """The dotted module names a single import statement brings in (empty for any other statement)."""
+    if isinstance(stmt, ast.Import):
+        return {a.name for a in stmt.names}
+    if isinstance(stmt, ast.ImportFrom):
+        resolved = _resolved_module(stmt, package)
+        return {resolved} if resolved else set()
+    return set()
+
+
 def scan_unreachable_import_fallback(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -130,23 +149,13 @@ def scan_unreachable_import_fallback(
         for node in ast.walk(tree):
             if not isinstance(node, ast.Try):
                 continue
-            catches_import_error = any(
-                (isinstance(h.type, ast.Name) and h.type.id in ("ImportError", "ModuleNotFoundError"))
-                or (isinstance(h.type, ast.Tuple) and any(isinstance(e, ast.Name) and e.id in ("ImportError", "ModuleNotFoundError") for e in h.type.elts))
-                for h in node.handlers
-            )
-            if not catches_import_error:
+            if not _catches_import_error(node):
                 continue
 
             # The whole guarded block, not only its direct children: `try:` / `if True:` /
             # `import numpy` is the same guarded import one level deeper.
             for stmt in _statements_in(node.body):
-                modules: set[str] = set()
-                if isinstance(stmt, ast.Import):
-                    modules = {a.name for a in stmt.names}
-                elif isinstance(stmt, ast.ImportFrom):
-                    resolved = _resolved_module(stmt, package)
-                    modules = {resolved} if resolved else set()
+                modules = _statement_modules(stmt, package)
                 already = sorted(modules & certain)
                 if not already:
                     continue

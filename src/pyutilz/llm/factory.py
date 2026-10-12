@@ -15,7 +15,7 @@ import sys
 import threading
 import weakref
 from collections import OrderedDict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from pyutilz.llm.config import get_llm_settings
 from pyutilz.llm.base import LLMProvider
@@ -215,31 +215,42 @@ def _warn_shutdown_once(message: str, *args: object) -> None:
 
 def _close_provider(provider: LLMProvider, shutdown_loop: "asyncio.AbstractEventLoop") -> None:
     """Close one provider on the loop that owns its sockets when that loop still runs, else on ``shutdown_loop``."""
-    from pyutilz.llm.base import _NO_REBIND, PerLoopHTTPClient
+    from pyutilz.llm.base import PerLoopHTTPClient
 
     close = getattr(provider, "_close", None)
     descriptor = type(provider).__dict__.get("_client") or LLMProvider.__dict__.get("_client")
     home = descriptor.home_loop(provider) if isinstance(descriptor, PerLoopHTTPClient) else None
     if close is not None:
-        if home is not None and home.is_running() and not home.is_closed():
-            # The owning loop still runs in another thread: close there, where the transports belong.
-            try:
-                asyncio.run_coroutine_threadsafe(close(), home).result(timeout=10)
-            except Exception as exc:
-                _warn_shutdown_once("Provider close on its own loop failed during shutdown: %s", exc)
-        elif isinstance(descriptor, PerLoopHTTPClient) and descriptor.home_loop_gone(provider):
-            logger.debug("Skipping close of %s: the loop that opened its connections is closed", type(provider).__name__)
-        else:
-            token = _NO_REBIND.set(True)
-            try:
-                shutdown_loop.run_until_complete(close())
-            except Exception as exc:
-                _warn_shutdown_once("Provider close error during shutdown: %s", exc)
-            finally:
-                _NO_REBIND.reset(token)
+        _close_own_client(provider, close, home, descriptor, shutdown_loop)
     if not isinstance(descriptor, PerLoopHTTPClient):
         return
-    # Per-loop clones (see PerLoopHTTPClient) are not reached by a provider's own _close, which sees one client.
+    _close_per_loop_clones(provider, descriptor, shutdown_loop)
+
+
+def _close_own_client(provider: LLMProvider, close: Callable, home: "asyncio.AbstractEventLoop | None", descriptor: Any, shutdown_loop: "asyncio.AbstractEventLoop") -> None:
+    """Run the provider's own ``_close`` on its home loop when that loop runs, else on ``shutdown_loop``."""
+    from pyutilz.llm.base import _NO_REBIND, PerLoopHTTPClient
+
+    if home is not None and home.is_running() and not home.is_closed():
+        # The owning loop still runs in another thread: close there, where the transports belong.
+        try:
+            asyncio.run_coroutine_threadsafe(close(), home).result(timeout=10)
+        except Exception as exc:
+            _warn_shutdown_once("Provider close on its own loop failed during shutdown: %s", exc)
+    elif isinstance(descriptor, PerLoopHTTPClient) and descriptor.home_loop_gone(provider):
+        logger.debug("Skipping close of %s: the loop that opened its connections is closed", type(provider).__name__)
+    else:
+        token = _NO_REBIND.set(True)
+        try:
+            shutdown_loop.run_until_complete(close())
+        except Exception as exc:
+            _warn_shutdown_once("Provider close error during shutdown: %s", exc)
+        finally:
+            _NO_REBIND.reset(token)
+
+
+def _close_per_loop_clones(provider: LLMProvider, descriptor: Any, shutdown_loop: "asyncio.AbstractEventLoop") -> None:
+    """Close the per-loop HTTP clones (see PerLoopHTTPClient) that a provider's own _close does not reach."""
     per_loop = provider.__dict__.get(descriptor._per_loop_key)
     for loop, client in list(per_loop.items()) if per_loop is not None else []:
         if getattr(client, "is_closed", True) or loop.is_closed():

@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 
 from pathlib import Path
+from typing import Any
 
 
 from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
@@ -178,62 +179,51 @@ def _assigns_by_method(methods: list, init: ast.AST, bound: dict) -> "dict[str, 
 def _overwrite_candidates(methods: list, init: ast.AST, bound: dict) -> "list[tuple[str, str, str, int]]":
     """(reader method, via method, attribute, line) for every config-sourced overwrite.
 
-
     The config read has to REACH the value being stored -- either it is in the assigned expression
-
     itself, or it is in an argument handed to the sibling method that stores it (`_refresh_rate`
-
     reading `cfg()` and calling `update_rate(new)`, the worked example). Accepting any mention of
-
     `config`/`settings`/`environ` anywhere in the method reported a method that merely LOGS
-
     `self.config` and separately assigns an unrelated parameter.
-
     """
-
     assigns = _assigns_by_method(methods, init, bound)
 
     candidates: "list[tuple[str, str, str, int]]" = []
 
     for method in methods:
-
         if method is init:
-
             continue
-
-        for stmt in ast.walk(method):
-
-            if not isinstance(stmt, (ast.Assign, ast.AugAssign)):
-
-                continue
-
-            if stmt.value is None or not _reads_config(stmt.value):
-
-                continue
-
-            for attr in sorted(_self_attr_targets(stmt) & set(bound)):
-
-                candidates.append((method.name, method.name, attr, stmt.lineno))
-
-        for call in ast.walk(method):
-
-            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
-
-                continue
-
-            if not (isinstance(call.func.value, ast.Name) and call.func.value.id == "self"):
-
-                continue
-
-            if not any(_reads_config(arg) for arg in [*call.args, *(kw.value for kw in call.keywords)]):
-
-                continue
-
-            for attr, line in assigns.get(call.func.attr, []):
-
-                candidates.append((method.name, call.func.attr, attr, line))
+        candidates.extend(_direct_config_overwrites(method, bound))
+        candidates.extend(_config_via_sibling_calls(method, assigns))
 
     return candidates
+
+
+def _direct_config_overwrites(method: Any, bound: dict) -> "list[tuple[str, str, str, int]]":
+    """Overwrites inside ``method`` whose assigned expression itself reads config."""
+    out: "list[tuple[str, str, str, int]]" = []
+    for stmt in ast.walk(method):
+        if not isinstance(stmt, (ast.Assign, ast.AugAssign)):
+            continue
+        if stmt.value is None or not _reads_config(stmt.value):
+            continue
+        for attr in sorted(_self_attr_targets(stmt) & set(bound)):
+            out.append((method.name, method.name, attr, stmt.lineno))
+    return out
+
+
+def _config_via_sibling_calls(method: Any, assigns: dict) -> "list[tuple[str, str, str, int]]":
+    """Overwrites ``method`` makes indirectly: a ``self.<sibling>(...)`` call fed a config read."""
+    out: "list[tuple[str, str, str, int]]" = []
+    for call in ast.walk(method):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
+            continue
+        if not (isinstance(call.func.value, ast.Name) and call.func.value.id == "self"):
+            continue
+        if not any(_reads_config(arg) for arg in [*call.args, *(kw.value for kw in call.keywords)]):
+            continue
+        for attr, line in assigns.get(call.func.attr, []):
+            out.append((method.name, call.func.attr, attr, line))
+    return out
 
 
 def scan_constructor_param_overwritten(

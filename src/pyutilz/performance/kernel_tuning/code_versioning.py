@@ -55,6 +55,30 @@ def _canonical(node: ast.AST) -> str:
     return ast.dump(node, include_attributes=False)  # 3.8 fallback (less version-stable)
 
 
+def _find_named_def(tree: ast.AST, name: Any) -> Any:
+    """The first function definition in ``tree`` called ``name``, or None."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    return None
+
+
+def _decorator_call_args(target: Any) -> list:
+    """Canonical text of every decorator-call argument, folded into the hash.
+
+    Keeps decorator CALL-ARGS but not the decorator's identity/import path (B5):
+    a numba directive change (@njit(parallel=True) -> fastmath=True) alters
+    codegen AND the optimal tuning, so it must invalidate the cache; a bare
+    decorator rename / import move must not.
+    """
+    deco_args: list = []
+    for deco in target.decorator_list:
+        if isinstance(deco, ast.Call):
+            deco_args += [_canonical(a) for a in deco.args]
+            deco_args += [f"{kw.arg}={_canonical(kw.value)}" for kw in deco.keywords]
+    return deco_args
+
+
 def _normalized_source(fn: Callable) -> str:
     """Comment/whitespace/docstring/decorator-insensitive canonical source of ``fn``.
 
@@ -75,23 +99,10 @@ def _normalized_source(fn: Callable) -> str:
     except SyntaxError as e:
         logger.debug("code_versioning: parse failed for %r (%s); hashing raw source", fn, e)
         return src
-    target = None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            target = node
-            break
+    target = _find_named_def(tree, name)
     if target is None:  # lambda / unusual def -- hash the whole parsed module canonically
         return _canonical(tree)
-    # Keep decorator CALL-ARGS but not the decorator's identity/import path (B5):
-    # a numba directive change (@njit(parallel=True) -> fastmath=True) alters
-    # codegen AND the optimal tuning, so it must invalidate the cache; a bare
-    # decorator rename / import move must not. We fold the sorted arg text into
-    # the hash and then drop the decorator nodes themselves.
-    deco_args: list = []
-    for deco in target.decorator_list:
-        if isinstance(deco, ast.Call):
-            deco_args += [_canonical(a) for a in deco.args]
-            deco_args += [f"{kw.arg}={_canonical(kw.value)}" for kw in deco.keywords]
+    deco_args = _decorator_call_args(target)
     target.decorator_list = []
     if target.body and isinstance(target.body[0], ast.Expr) and isinstance(target.body[0].value, ast.Constant) and isinstance(target.body[0].value.value, str):
         target.body = target.body[1:] or [ast.Pass()]

@@ -222,6 +222,35 @@ def _module_functions(tree: ast.Module) -> dict[str, _FuncDef]:
     return out
 
 
+def _function_findings(fn: _FuncDef, rel: str, src_lines: list[str], module_constants: dict, helpers: dict[str, _FuncDef]) -> list[Finding]:
+    """Findings for the counters assigned directly in one function's own statements."""
+    out: list[Finding] = []
+    body = _docless(fn.body)
+    # Nested functions are their own scope; each is visited by the outer walk.
+    own = [s for s in body if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    assignments = _counter_assignments(own)
+    if not assignments:
+        return out
+    constants = {**module_constants, **_string_constants_in_body(body)}
+    for stmt, target, name in assignments:
+        if not _writes_lossily(own, {name}, constants, helpers, hops=1):
+            continue
+        out.append(Finding(
+            check="write_counted_from_input",
+            severity="P2",
+            file=rel,
+            line=stmt.lineno,
+            snippet=_line_text(src_lines, stmt.lineno),
+            detail=(
+                f"`{getattr(ast, 'unparse', ast.dump)(target)}` counts len({name}), the rows handed to an insert that can skip "
+                f"rows (ON CONFLICT DO NOTHING / DO UPDATE ... WHERE / INSERT IGNORE); a re-run reports them "
+                f"all again while writing none. Count what the statement wrote (rowcount, RETURNING, or the "
+                f"table before and after), or name the counter for what it holds (`..._read`)."
+            ),
+        ))
+    return out
+
+
 def scan_write_counted_from_input(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -270,29 +299,7 @@ def scan_write_counted_from_input(
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            body = _docless(fn.body)
-            # Nested functions are their own scope; each is visited by the outer walk.
-            own = [s for s in body if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-            assignments = _counter_assignments(own)
-            if not assignments:
-                continue
-            constants = {**module_constants, **_string_constants_in_body(body)}
-            for stmt, target, name in assignments:
-                if not _writes_lossily(own, {name}, constants, helpers, hops=1):
-                    continue
-                findings.append(Finding(
-                    check="write_counted_from_input",
-                    severity="P2",
-                    file=rel,
-                    line=stmt.lineno,
-                    snippet=_line_text(src_lines, stmt.lineno),
-                    detail=(
-                        f"`{getattr(ast, 'unparse', ast.dump)(target)}` counts len({name}), the rows handed to an insert that can skip "
-                        f"rows (ON CONFLICT DO NOTHING / DO UPDATE ... WHERE / INSERT IGNORE); a re-run reports them "
-                        f"all again while writing none. Count what the statement wrote (rowcount, RETURNING, or the "
-                        f"table before and after), or name the counter for what it holds (`..._read`)."
-                    ),
-                ))
+            findings.extend(_function_findings(fn, rel, src_lines, module_constants, helpers))
     if unreadable:
         logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
     return findings

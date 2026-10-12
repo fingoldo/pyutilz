@@ -44,6 +44,32 @@ def _callers_within(tree: ast.AST) -> dict[str, set[str]]:
     return callers
 
 
+def _test_corpus(test_roots: tuple[Path, ...], exclude_dirs: frozenset[str]) -> str:
+    """Concatenated source of every Python file under the existing ``test_roots``."""
+    test_corpus = ""
+    for troot in test_roots:
+        troot = Path(troot)
+        if not troot.exists():
+            continue
+        for py in _iter_py_files(troot, exclude_dirs):
+            test_corpus += py.read_text(encoding="utf-8", errors="replace")
+    return test_corpus
+
+
+def _is_unenforced_claim(name: str, doc: str, callers_of: dict[str, set[str]], test_corpus: str) -> bool:
+    """True when ``doc`` states an absolute claim and neither ``name`` nor a one-hop caller appears in tests."""
+    if not _CLAIM_RE.search(doc):
+        return False
+    if name in test_corpus:
+        return False
+    return not any(caller in test_corpus for caller in callers_of.get(name, ()))
+
+
+def _claim_sentence(doc: str) -> str:
+    """The first sentence of ``doc`` that carries an absolute-claim phrase, or its first 120 chars."""
+    return next((s.strip() for s in re.split(r"(?<=[.;])\s", doc) if _CLAIM_RE.search(s)), doc[:120])
+
+
 def scan_unenforced_docstring_invariants(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -74,13 +100,7 @@ def scan_unenforced_docstring_invariants(
     if not test_roots:
         return []
 
-    test_corpus = ""
-    for troot in test_roots:
-        troot = Path(troot)
-        if not troot.exists():
-            continue
-        for py in _iter_py_files(troot, exclude_dirs):
-            test_corpus += py.read_text(encoding="utf-8", errors="replace")
+    test_corpus = _test_corpus(test_roots, exclude_dirs)
 
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
@@ -94,14 +114,9 @@ def scan_unenforced_docstring_invariants(
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
             doc = ast.get_docstring(node) or ""
-            match = _CLAIM_RE.search(doc)
-            if not match:
+            if not _is_unenforced_claim(node.name, doc, callers_of, test_corpus):
                 continue
-            if node.name in test_corpus:
-                continue
-            if any(caller in test_corpus for caller in callers_of.get(node.name, ())):
-                continue
-            sentence = next((s.strip() for s in re.split(r"(?<=[.;])\s", doc) if _CLAIM_RE.search(s)), doc[:120])
+            sentence = _claim_sentence(doc)
             findings.append(
                 Finding(
                     check="unenforced_docstring_invariant",

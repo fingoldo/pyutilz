@@ -55,6 +55,42 @@ def _is_self_handling_action(call: ast.Call) -> bool:
     return False
 
 
+def _attribute_corpus(py_files: list[Path]) -> set[str]:
+    """Every `.attr` name and getattr/vars dynamic-access name read anywhere in ``py_files``."""
+    used_attrs: set[str] = set()
+    unreadable: list[str] = []
+    for py in py_files:
+        try:
+            src = py.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            unreadable.append(f"{py}: {exc}")
+            continue
+        used_attrs.update(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)\b", src))
+        # getattr(args, "name") / vars(args)["name"] dynamic-access shapes.
+        used_attrs.update(re.findall(r"""getattr\s*\([^,]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']""", src))
+        used_attrs.update(re.findall(r"""vars\s*\([^)]*\)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]""", src))
+    if unreadable:
+        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
+    return used_attrs
+
+
+def _dead_flag_name(node: ast.Call, used_attrs: set[str]) -> str | None:
+    """The bound attribute name of an unreferenced argparse flag, or None when the call is not one."""
+    # audit-2026-07-22 false-positive fix: Selenium's ChromeOptions/FirefoxOptions
+    # expose an UNRELATED add_argument(flag_string) method (appends a raw CLI flag to a
+    # list passed to the external Chrome/Firefox binary) -- no dest=/action=/etc. concept
+    # at all. Real argparse declarations in this codebase always carry at least one
+    # keyword; a call with ZERO keywords is syntactically indistinguishable from
+    # Selenium's, so it's no longer flagged even if genuinely dead (a narrow, low-risk
+    # gap traded for eliminating a confirmed, concrete false-positive class).
+    if not node.keywords or _is_self_handling_action(node):
+        return None
+    name = _flag_dest_name(node)
+    if not name or name == "help" or name in used_attrs:
+        return None
+    return name
+
+
 def scan_dead_cli_flags(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -90,20 +126,7 @@ def scan_dead_cli_flags(
     py_files = list(_iter_py_files(root, exclude_dirs))
 
     # Build corpus of `.attr` usages across the whole tree once, up front.
-    used_attrs: set[str] = set()
-    unreadable: list[str] = []
-    for py in py_files:
-        try:
-            src = py.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            unreadable.append(f"{py}: {exc}")
-            continue
-        used_attrs.update(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)\b", src))
-        # getattr(args, "name") / vars(args)["name"] dynamic-access shapes.
-        used_attrs.update(re.findall(r"""getattr\s*\([^,]+,\s*["']([A-Za-z_][A-Za-z0-9_]*)["']""", src))
-        used_attrs.update(re.findall(r"""vars\s*\([^)]*\)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]""", src))
-    if unreadable:
-        logger.warning("%d file(s) could not be read and were not scanned: %s", len(unreadable), "; ".join(unreadable))
+    used_attrs = _attribute_corpus(py_files)
 
     for py in py_files:
         tree = _safe_parse(py)
@@ -114,21 +137,8 @@ def scan_dead_cli_flags(
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not _is_add_argument_call(node):
                 continue
-            # audit-2026-07-22 false-positive fix: Selenium's ChromeOptions/FirefoxOptions
-            # expose an UNRELATED add_argument(flag_string) method (appends a raw CLI flag to a
-            # list passed to the external Chrome/Firefox binary) -- no dest=/action=/etc. concept
-            # at all. Real argparse declarations in this codebase always carry at least one
-            # keyword; a call with ZERO keywords is syntactically indistinguishable from
-            # Selenium's, so it's no longer flagged even if genuinely dead (a narrow, low-risk
-            # gap traded for eliminating a confirmed, concrete false-positive class).
-            if not node.keywords:
-                continue
-            if _is_self_handling_action(node):
-                continue
-            name = _flag_dest_name(node)
-            if not name or name == "help":
-                continue
-            if name in used_attrs:
+            name = _dead_flag_name(node, used_attrs)
+            if name is None:
                 continue
             findings.append(Finding(
                 check="dead_cli_flag",

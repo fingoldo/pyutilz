@@ -104,6 +104,22 @@ def _resolve(ref: str, citing: Path, root: Path, index: tuple[dict[str, list[Pat
     return None, True
 
 
+def _citation_problem(m: re.Match, py: Path, root: Path, index: tuple[dict[str, list[Path]], frozenset[str]]) -> str | None:
+    """Why citation ``m`` is demonstrably wrong now, or None when it resolves or cannot be decided."""
+    ref = m.group(1).replace("\\", "/")
+    cited_line = int(m.group(3) or m.group(2))
+    target, decidable = _resolve(ref, py, root, index)
+    if not decidable:
+        return None
+    if target is None:
+        return f"cites `{ref}:{m.group(2)}`, and no file in the tree resolves to `{ref}`"
+    with target.open(encoding="utf-8", errors="replace") as handle:
+        length = sum(1 for _ in handle)
+    if cited_line <= length:
+        return None
+    return f"cites `{ref}:{cited_line}`, and `{target.relative_to(root).as_posix()}` has {length} lines"
+
+
 def scan_stale_source_citations(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -151,21 +167,11 @@ def scan_stale_source_citations(
         rel = py.relative_to(root).as_posix()
         for lineno, text in _comment_and_docstring_tokens(src):
             for m in _CITATION.finditer(text):
-                ref = m.group(1).replace("\\", "/")
-                cited_line = int(m.group(3) or m.group(2))
                 if index is None:
                     index = _index_tree(root, exclude_dirs)  # built only once a citation needs it
-                target, decidable = _resolve(ref, py, root, index)
-                if not decidable:
+                problem = _citation_problem(m, py, root, index)
+                if problem is None:
                     continue
-                if target is None:
-                    problem = f"cites `{ref}:{m.group(2)}`, and no file in the tree resolves to `{ref}`"
-                else:
-                    with target.open(encoding="utf-8", errors="replace") as handle:
-                        length = sum(1 for _ in handle)
-                    if cited_line <= length:
-                        continue
-                    problem = f"cites `{ref}:{cited_line}`, and `{target.relative_to(root).as_posix()}` has {length} lines"
                 findings.append(Finding(
                     check="stale_source_citation",
                     severity="P2",

@@ -60,8 +60,8 @@ def _cache_name(node: ast.expr) -> str | None:
     return text if any(hint in text.lower() for hint in _CACHE_HINTS) else None
 
 
-def _cache_write(stmt: ast.stmt) -> tuple[str, str] | None:
-    """(cache name, sentinel) if this statement stores a failure sentinel into a cache."""
+def _subscript_cache_write(stmt: ast.stmt) -> tuple[str, str] | None:
+    """(cache name, sentinel) for a single-target ``cache[k] = <sentinel>`` assignment."""
     if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
         target = stmt.targets[0]
         if isinstance(target, ast.Subscript):
@@ -69,17 +69,24 @@ def _cache_write(stmt: ast.stmt) -> tuple[str, str] | None:
             sentinel = _is_failure_sentinel(stmt.value)
             if name and sentinel:
                 return name, sentinel
+    return None
+
+
+def _statement_value(stmt: ast.stmt) -> ast.expr | None:
+    """The expression an expression, return, assignment or annotated-assignment statement carries."""
+    if isinstance(stmt, (ast.Expr, ast.Return, ast.Assign, ast.AnnAssign)):
+        return stmt.value
+    return None
+
+
+def _cache_write(stmt: ast.stmt) -> tuple[str, str] | None:
+    """(cache name, sentinel) if this statement stores a failure sentinel into a cache."""
+    subscript_write = _subscript_cache_write(stmt)
+    if subscript_write is not None:
+        return subscript_write
     # A `cache.set(k, None)` write counts wherever the call sits -- a bare statement, but also
     # `return cache.set(k, None)` or `ok = cache.set(k, None)`.
-    call: ast.expr | None = None
-    if isinstance(stmt, ast.Expr):
-        call = stmt.value
-    elif isinstance(stmt, ast.Return):
-        call = stmt.value
-    elif isinstance(stmt, ast.Assign):
-        call = stmt.value
-    elif isinstance(stmt, ast.AnnAssign):
-        call = stmt.value
+    call = _statement_value(stmt)
     if isinstance(call, ast.Call):
         func = call.func
         if isinstance(func, ast.Attribute) and func.attr in _WRITE_METHODS and len(call.args) == 2:

@@ -44,7 +44,7 @@ def download_in_parallel(
     # unconditional) and the final "Finished!" summary still report the true total either way.
     _MAX_LOGGED_ERRORS = 20
     n_processed = 0
-    errored_urls = []
+    errored_urls: List = []
     # request_timeout=: grequests.get() previously had no timeout at all -- a single stalled URL
     # (server accepts the connection but never responds) blocked grequests.map() from ever
     # returning, hanging the whole batch regardless of how many OTHER urls had already succeeded.
@@ -53,33 +53,38 @@ def download_in_parallel(
     # pbar=tqdmu(urls_to_process)
     for resp, sub_url in zip(grequests.map(rs, size=nparallel_downloads), urls_to_process):
         n_processed = n_processed + 1
-        # None-check MUST come before touching any attribute of resp: grequests.map() puts None
-        # into the results for a request that raised (no exception_handler passed here), exactly
-        # the case this function's own docstring says it handles ("None response"). Previously
-        # `resp.history` was dereferenced first, raising an uncaught AttributeError that aborted
-        # the ENTIRE batch (including URLs not yet processed) instead of recording just this one
-        # URL as errored.
-        if resp is None:
-            errored_urls.append(sub_url)
-            if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
-                logger.error("Response is None for url %s", sub_url)
-        else:
-            final_status_code = resp.history[-1].status_code if len(resp.history) > 0 else resp.status_code
-            if resp.status_code == http.HTTPStatus.OK:
-                try:
-                    func(resp, sub_url)
-                except Exception as e:
-                    errored_urls.append(sub_url)
-                    if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
-                        logger.error("Error processing url %s: %s", sub_url, e)
-            else:
-                errored_urls.append(sub_url)
-                if _error_log_throttle(len(errored_urls), _MAX_LOGGED_ERRORS):
-                    logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
+        _handle_parallel_response(resp, sub_url, func, errored_urls, _MAX_LOGGED_ERRORS)
         if (n_processed % report_each) == 0:
             logger.info("Processed %d urls,n_errored=%d", n_processed, len(errored_urls))
     logger.info("Finished! n_processed=%d,n_errored=%d", n_processed, len(errored_urls))
     return errored_urls
+
+
+def _handle_parallel_response(resp, sub_url, func: Callable, errored_urls: List, max_logged_errors: int) -> None:
+    """Route one grequests response: call ``func`` on HTTP 200, otherwise record ``sub_url`` in ``errored_urls``."""
+    # None-check MUST come before touching any attribute of resp: grequests.map() puts None
+    # into the results for a request that raised (no exception_handler passed here), exactly
+    # the case this function's own docstring says it handles ("None response"). Previously
+    # `resp.history` was dereferenced first, raising an uncaught AttributeError that aborted
+    # the ENTIRE batch (including URLs not yet processed) instead of recording just this one
+    # URL as errored.
+    if resp is None:
+        errored_urls.append(sub_url)
+        if _error_log_throttle(len(errored_urls), max_logged_errors):
+            logger.error("Response is None for url %s", sub_url)
+        return
+    final_status_code = resp.history[-1].status_code if len(resp.history) > 0 else resp.status_code
+    if resp.status_code == http.HTTPStatus.OK:
+        try:
+            func(resp, sub_url)
+        except Exception as e:
+            errored_urls.append(sub_url)
+            if _error_log_throttle(len(errored_urls), max_logged_errors):
+                logger.error("Error processing url %s: %s", sub_url, e)
+    else:
+        errored_urls.append(sub_url)
+        if _error_log_throttle(len(errored_urls), max_logged_errors):
+            logger.error("Error fetching url %s: status_code=%s", sub_url, final_status_code)
 
 
 def download_to_file(
