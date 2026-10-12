@@ -397,6 +397,20 @@ def get_unicode_emojies() -> dict:
     return res
 
 
+def _strip_tilda_bullets(text: str) -> str:
+    """Drop a leading ``~ `` / ``- `` and a trailing `` ~`` / `` -`` marker from *text*."""
+    # Also handle tildas!!!
+    for tilda in ["~", "-"]:
+        if tilda in text:
+            # Slice, don't `replace`: an uncounted replace also removed every INTERIOR occurrence,
+            # so "- Great product - really" lost its internal clause separator too.
+            if text.startswith(tilda + " "):
+                text = text[len(tilda) + 1 :]
+            if text.endswith(" " + tilda):
+                text = text[: -(len(tilda) + 1)]
+    return text
+
+
 def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[bool] = False) -> str:
     """
     >>>sentencize_text("Not sure what to make of the included love note, it did make me smile though :)")
@@ -410,15 +424,7 @@ def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[boo
     if not text or not text.strip():
         return text
 
-    # Also handle tildas!!!
-    for tilda in ["~", "-"]:
-        if tilda in text:
-            # Slice, don't `replace`: an uncounted replace also removed every INTERIOR occurrence,
-            # so "- Great product - really" lost its internal clause separator too.
-            if text.startswith(tilda + " "):
-                text = text[len(tilda) + 1 :]
-            if text.endswith(" " + tilda):
-                text = text[: -(len(tilda) + 1)]
+    text = _strip_tilda_bullets(text)
 
     last_char = text[-1]
     last_2chars = text[-2:]

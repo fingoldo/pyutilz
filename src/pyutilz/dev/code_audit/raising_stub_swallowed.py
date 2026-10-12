@@ -126,6 +126,24 @@ def _swallowing_calls(tree: ast.AST) -> set[str]:
     return swallowed
 
 
+def _installs_raiser(node: ast.Call, raising_stubs: set[str]) -> bool:
+    """True when one of the call's arguments is a name bound to a raising stub."""
+    return any(isinstance(arg, ast.Name) and arg.id in raising_stubs for arg in [*node.args, *(kw.value for kw in node.keywords)])
+
+
+def _patched_attr_of(node: ast.Call) -> str | None:
+    """The attribute a patch call targets: the dotted string's last segment, else the first attribute argument."""
+    attr = None
+    for arg in node.args:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            attr = arg.value.rsplit(".", 1)[-1]
+    if attr is None:
+        for arg in node.args:
+            if isinstance(arg, ast.Attribute):
+                attr = arg.attr
+    return attr
+
+
 def _patched_targets_of_raising_stubs(func: ast.AST, raising_stubs: set[str]) -> list[tuple[str, int]]:
     """(patched attribute name, line) for every patch installing one of *raising_stubs*."""
     out: list[tuple[str, int]] = []
@@ -134,24 +152,9 @@ def _patched_targets_of_raising_stubs(func: ast.AST, raising_stubs: set[str]) ->
             continue
         target = node.func
         fname = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
-        if fname not in _PATCH_FUNCS:
+        if fname not in _PATCH_FUNCS or not _installs_raiser(node, raising_stubs):
             continue
-
-        replacement_is_a_raiser = False
-        for arg in list(node.args) + [kw.value for kw in node.keywords]:
-            if isinstance(arg, ast.Name) and arg.id in raising_stubs:
-                replacement_is_a_raiser = True
-        if not replacement_is_a_raiser:
-            continue
-
-        attr = None
-        for arg in node.args:
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                attr = arg.value.rsplit(".", 1)[-1]
-        if attr is None:
-            for arg in node.args:
-                if isinstance(arg, ast.Attribute):
-                    attr = arg.attr
+        attr = _patched_attr_of(node)
         if attr:
             out.append((attr, node.lineno))
     return out

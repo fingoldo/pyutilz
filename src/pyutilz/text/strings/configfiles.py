@@ -90,6 +90,36 @@ def _literal_or_raw(val: Any, var: str) -> Any:
         return val
 
 
+def _normalize_variables(variables: Any, values: dict) -> list:
+    """The variable names to write: a comma string split, or every key of *values* when none are given."""
+    if isinstance(variables, str):
+        variables = variables.split(",")
+    elif variables is None or variables == []:
+        variables = list(values.keys())
+    assert isinstance(variables, list)  # nosec B101 - internal type invariant on a locally-derived variable (already normalized above), not a security/permission gate
+    return variables
+
+
+def _fill_config_section(config: Any, section: str, values: dict, variables: list, encryption: Optional[str]) -> None:
+    """Write each named variable of *values* into ``config[section]``, base64-encoding it under ``encryption="xor"``."""
+    from base64 import b64encode
+
+    for var in variables:
+        if var in values:
+            # No "%%" escaping: read_config_file builds its parser with interpolation=None and
+            # therefore never un-escapes, so escaping here doubled every "%" on each write/read
+            # cycle ("50% off" -> "50%% off" -> "50%%%% off"). The writer's parser below also
+            # disables interpolation, keeping the round trip symmetric.
+            val = str(values[var])
+
+            if encryption == "xor":
+                val = b64encode(val.encode("utf-8")).decode("utf-8")
+
+            config[section][var] = val
+        else:
+            logger.warning("No variable %s" % var)
+
+
 def write_config_file(
     file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode="append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
 ) -> Optional[bool]:
@@ -103,17 +133,12 @@ def write_config_file(
     """
     import os
     import configparser
-    from base64 import b64encode
 
     try:
         if section is None:
             section = "MAIN"
 
-        if isinstance(variables, str):
-            variables = variables.split(",")
-        elif variables is None or variables == []:
-            variables = list(object.keys())
-        assert isinstance(variables, list)  # nosec B101 - internal type invariant on a locally-derived variable (already normalized above), not a security/permission gate
+        variables = _normalize_variables(variables, object)
 
         config = configparser.ConfigParser(interpolation=None)
 
@@ -129,20 +154,7 @@ def write_config_file(
         if section not in config:
             config[section] = {}
 
-        for var in variables:
-            if var in object:
-                # No "%%" escaping: read_config_file builds its parser with interpolation=None and
-                # therefore never un-escapes, so escaping here doubled every "%" on each write/read
-                # cycle ("50% off" -> "50%% off" -> "50%%%% off"). The writer's parser below also
-                # disables interpolation, keeping the round trip symmetric.
-                val = str(object[var])
-
-                if encryption == "xor":
-                    val = b64encode(val.encode("utf-8")).decode("utf-8")
-
-                config[section][var] = val
-            else:
-                logger.warning("No variable %s" % var)
+        _fill_config_section(config, section, object, variables, encryption)
 
         with open(file, "w", encoding="utf-8") as configfile:
             config.write(configfile)

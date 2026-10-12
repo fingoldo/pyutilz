@@ -437,6 +437,33 @@ def _is_predicate_name(name: str) -> bool:
     return name.startswith("can_") or name.startswith("should_") or name.startswith("was_") or name.startswith("uses_")
 
 
+def _bool_declared_params(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.arg]:
+    """Parameters of *node* annotated ``bool`` or defaulting to a bool literal."""
+    a = node.args
+    positional = (*a.posonlyargs, *a.args)
+    declared = [arg for arg in (*positional, *a.kwonlyargs) if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "bool"]
+    for default, arg in zip(a.defaults, positional[len(positional) - len(a.defaults) :]):
+        if isinstance(default, ast.Constant) and isinstance(default.value, bool):
+            declared.append(arg)
+    for kw_arg, kw_default in zip(a.kwonlyargs, a.kw_defaults):
+        if isinstance(kw_default, ast.Constant) and isinstance(kw_default.value, bool):
+            declared.append(kw_arg)
+    return declared
+
+
+def _assigned_names_and_values(node: ast.AST) -> list[tuple[str, ast.AST]]:
+    """``(name, value expression)`` pairs a single statement or loop binds; an augmented assign or loop target is its own value."""
+    if isinstance(node, ast.Assign) and node.value is not None:
+        return [(t.id, node.value) for t in node.targets if isinstance(t, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+        return [(node.target.id, node.value)]
+    if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+        return [(node.target.id, node)]  # an augmented assign is never a bool
+    if isinstance(node, (ast.For, ast.comprehension)):
+        return [(t.id, node) for t in ast.walk(node.target) if isinstance(t, ast.Name)]
+    return []
+
+
 def _module_boolean_names(tree: ast.AST) -> frozenset[str]:
     """Names this module only ever assigns a BOOLEAN-valued expression to.
 
@@ -452,28 +479,9 @@ def _module_boolean_names(tree: ast.AST) -> frozenset[str]:
         # ``def _visit(node, guarded: bool = False)`` then ``guarded or _guard_looks_throttled(t)``
         # is boolean logic, and nothing in the OR's own operands can say so.
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            a = node.args
-            positional = (*a.posonlyargs, *a.args)
-            declared = [arg for arg in (*positional, *a.kwonlyargs) if isinstance(arg.annotation, ast.Name) and arg.annotation.id == "bool"]
-            for default, arg in zip(a.defaults, positional[len(positional) - len(a.defaults) :]):
-                if isinstance(default, ast.Constant) and isinstance(default.value, bool):
-                    declared.append(arg)
-            for kw_arg, kw_default in zip(a.kwonlyargs, a.kw_defaults):
-                if isinstance(kw_default, ast.Constant) and isinstance(kw_default.value, bool):
-                    declared.append(kw_arg)
-            for arg in declared:
+            for arg in _bool_declared_params(node):
                 assigned.setdefault(arg.arg, []).append(ast.Constant(value=True))
-        values: list[tuple[str, ast.AST]] = []
-        if isinstance(node, ast.Assign) and node.value is not None:
-            values = [(t.id, node.value) for t in node.targets if isinstance(t, ast.Name)]
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
-            values = [(node.target.id, node.value)]
-        elif isinstance(node, (ast.AugAssign,)) and isinstance(node.target, ast.Name):
-            values = [(node.target.id, node)]  # an augmented assign is never a bool
-        elif isinstance(node, (ast.For, ast.comprehension)):
-            target = node.target
-            values = [(t.id, node) for t in ast.walk(target) if isinstance(t, ast.Name)]
-        for name, value in values:
+        for name, value in _assigned_names_and_values(node):
             assigned.setdefault(name, []).append(value)
     return frozenset(
         name for name, values in assigned.items() if all((isinstance(v, ast.Constant) and isinstance(v.value, bool)) or _is_boolean_valued(v) for v in values)

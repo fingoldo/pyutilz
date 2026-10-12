@@ -67,6 +67,40 @@ def _queries_in(func: ast.AST, constants: dict[str, str]) -> list[tuple[str, int
     return sorted(found, key=lambda pair: pair[1])
 
 
+def _first_redundant_fetch_line(queries: list[tuple[str, int]], index: int, table: str) -> int | None:
+    """Line of the first unpaginated fetch of *table* that answers the COUNT at *index*, else None.
+
+    The whole list, not only the suffix: the redundancy and the TOCTOU race are the same when the
+    fetch is written BEFORE the COUNT.
+    """
+    for other_index, (other_sql, other_line) in enumerate(queries):
+        if other_index == index:
+            continue
+        if _COUNT.search(other_sql) or _sql_table_of(other_sql) != table:
+            continue
+        if _PAGINATED.search(_outer_query(other_sql)):
+            continue
+        return other_line
+    return None
+
+
+def _count_fetch_finding(rel: str, src_lines: list[str], line: int, table: str, other_line: int) -> Finding:
+    """The P2 finding for a COUNT at *line* answered by the fetch at *other_line*."""
+    return Finding(
+        check="count_then_fetch_same_table",
+        severity="P2",
+        file=rel,
+        line=line,
+        snippet=_line_text(src_lines, line),
+        detail=(
+            f"this COUNT over `{table}` is answered by the unpaginated fetch of "
+            f"the same table at line {other_line}: `len(rows)` is the count "
+            "exactly. Two round trips for one answer, and outside a "
+            "transaction the count can describe a state the rows never had."
+        ),
+    )
+
+
 def scan_count_then_fetch_same_table(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -103,33 +137,12 @@ def scan_count_then_fetch_same_table(
                 table = _sql_table_of(sql)
                 if table is None:
                     continue
-                # The whole list, not only the suffix: the redundancy and the TOCTOU race are the
-                # same when the fetch is written BEFORE the COUNT.
-                for other_index, (other_sql, other_line) in enumerate(queries):
-                    if other_index == index:
-                        continue
-                    if _COUNT.search(other_sql) or _sql_table_of(other_sql) != table:
-                        continue
-                    if _PAGINATED.search(_outer_query(other_sql)):
-                        continue
-                    key = (rel, line, other_line, table)
-                    if key in reported:
-                        break
-                    reported.add(key)
-                    findings.append(
-                        Finding(
-                            check="count_then_fetch_same_table",
-                            severity="P2",
-                            file=rel,
-                            line=line,
-                            snippet=_line_text(src_lines, line),
-                            detail=(
-                                f"this COUNT over `{table}` is answered by the unpaginated fetch of "
-                                f"the same table at line {other_line}: `len(rows)` is the count "
-                                "exactly. Two round trips for one answer, and outside a "
-                                "transaction the count can describe a state the rows never had."
-                            ),
-                        )
-                    )
-                    break
+                other_line = _first_redundant_fetch_line(queries, index, table)
+                if other_line is None:
+                    continue
+                key = (rel, line, other_line, table)
+                if key in reported:
+                    continue
+                reported.add(key)
+                findings.append(_count_fetch_finding(rel, src_lines, line, table, other_line))
     return findings

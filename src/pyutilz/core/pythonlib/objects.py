@@ -63,29 +63,10 @@ def flatten_keys_to_set(
     max_chars: int = 10,
 ) -> Set[Any]:
     """Recursively walks content of an object, bringing all the key-value keys to the top level set."""
-    res: Set[Any] = set()
     if isinstance(obj, dict):
-        for key, value in obj.items():
-            if isinstance(value, (dict, Iterable)) and not isinstance(value, (str, bytes)):
-                # str/bytes are Iterable, so a string VALUE used to recurse and reach the
-                # ``res.add(obj)`` branch below -- dropping its KEY entirely ({"a": "b"} -> {'b'}),
-                # which made two configs differing only in key name compare equal.
-                res.update(
-                    flatten_keys_to_set(
-                        value,
-                        dict_merge_symbol=dict_merge_symbol,
-                        stringify=stringify,
-                        verbose=verbose,
-                        max_chars=max_chars,
-                    )
-                )
-            else:
-                if dict_merge_symbol:
-                    res.add(str(key) + dict_merge_symbol + str(value))
-                else:
-                    res.add(str(key))
-                    res.add(str(value))
-    elif isinstance(obj, str):
+        return _flatten_mapping(obj, dict_merge_symbol, stringify, verbose, max_chars)
+    res: Set[Any] = set()
+    if isinstance(obj, str):
         res.add(obj)
     elif isinstance(obj, numbers.Number):
         if stringify:
@@ -104,15 +85,46 @@ def flatten_keys_to_set(
                 )
             )
     else:
-        if stringify:
-            if verbose:
-                tmp_str = str(obj)
-                logger.info("Processing object of type %s, size %s as a string.", type(obj), len(tmp_str))
-            res.add(str(obj))
+        res.update(_opaque_object_keys(obj, stringify, verbose, max_chars))
+    return res
+
+
+def _flatten_mapping(obj: dict, dict_merge_symbol: str, stringify: bool, verbose: bool, max_chars: int) -> Set[Any]:
+    """Keys of a mapping: each key-value pair becomes ``key<symbol>value``, nested containers recurse."""
+    res: Set[Any] = set()
+    for key, value in obj.items():
+        if isinstance(value, (dict, Iterable)) and not isinstance(value, (str, bytes)):
+            # str/bytes are Iterable, so a string VALUE used to recurse and reach the
+            # ``res.add(obj)`` branch below -- dropping its KEY entirely ({"a": "b"} -> {'b'}),
+            # which made two configs differing only in key name compare equal.
+            res.update(
+                flatten_keys_to_set(
+                    value,
+                    dict_merge_symbol=dict_merge_symbol,
+                    stringify=stringify,
+                    verbose=verbose,
+                    max_chars=max_chars,
+                )
+            )
+        elif dict_merge_symbol:
+            res.add(str(key) + dict_merge_symbol + str(value))
         else:
-            if verbose:
-                tmp_str = str(obj)
-                logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[:max_chars])
+            res.add(str(key))
+            res.add(str(value))
+    return res
+
+
+def _opaque_object_keys(obj: object, stringify: bool, verbose: bool, max_chars: int) -> Set[Any]:
+    """Keys of an object that is neither a mapping, a string, a number nor iterable: its ``str`` or nothing."""
+    res: Set[Any] = set()
+    if stringify:
+        if verbose:
+            tmp_str = str(obj)
+            logger.info("Processing object of type %s, size %s as a string.", type(obj), len(tmp_str))
+        res.add(str(obj))
+    elif verbose:
+        tmp_str = str(obj)
+        logger.info("Skipping object of type %s, size %s: %s .", type(obj), len(tmp_str), tmp_str[:max_chars])
     return res
 
 

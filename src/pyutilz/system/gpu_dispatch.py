@@ -572,6 +572,32 @@ CC_MAX_BLOCKS_PER_SM: dict[tuple[int, int], int] = {
 }
 
 
+def _search_ceiling(max_threads: Optional[int], stated: int, min_threads: int) -> int:
+    """Widest block the search may reach: the caller's ``max_threads``, else the device's stated limit (floored at *min_threads*)."""
+    if max_threads is not None:
+        return int(max_threads)
+    return stated if stated > 0 else min_threads
+
+
+def _resident_threads_at(
+    width: int,
+    shared: int,
+    shared_per_sm: int,
+    threads_per_sm: int,
+    blocks_per_sm: int,
+    reserved_per_block: int,
+) -> Optional[int]:
+    """Resident threads per SM for blocks of *width* using *shared* bytes each; None when not even one block fits."""
+    # The driver's own per-block reservation counts against the SM's shared memory just as the kernel's
+    # own bytes do, so a block occupies `shared + reserved`. Ignoring it overcounts resident blocks.
+    occupied = shared + reserved_per_block if shared else 0
+    by_shared = shared_per_sm // occupied if occupied else blocks_per_sm
+    resident_blocks = min(blocks_per_sm, threads_per_sm // width, by_shared)
+    if resident_blocks >= 1:
+        return resident_blocks * width
+    return None
+
+
 def occupancy_aware_block_size(
     bytes_per_thread: int,
     caps: Optional[dict] = None,
@@ -636,11 +662,7 @@ def occupancy_aware_block_size(
     threads_per_sm = _limit("max_threads_per_sm", 0)
     blocks_per_sm = _limit("max_blocks_per_sm", 0)
     reserved_per_block = _limit("reserved_shared_mem_per_block", 0)
-    if max_threads is not None:
-        ceiling = int(max_threads)
-    else:
-        stated_ceiling = _limit("max_threads_per_block", 0)
-        ceiling = stated_ceiling if stated_ceiling > 0 else min_threads
+    ceiling = _search_ceiling(max_threads, _limit("max_threads_per_block", 0), min_threads)
     # shared_per_sm is only REQUIRED when shared memory actually binds: with bytes_per_thread == 0
     # (this code's own definition of "does not bind") a device reporting max_shared_mem_per_sm: 0
     # used to bail to a single warp, silently crippling occupancy the other limits fully determine.
@@ -656,15 +678,9 @@ def occupancy_aware_block_size(
         shared = int(bytes_per_thread) * width
         if shared_per_block and shared > shared_per_block:
             break  # every wider block needs more, so nothing past here fits either
-        # The driver's own per-block reservation counts against the SM's shared memory just as the kernel's
-        # own bytes do, so a block occupies `shared + reserved`. Ignoring it overcounts resident blocks.
-        occupied = shared + reserved_per_block if shared else 0
-        by_shared = shared_per_sm // occupied if occupied else blocks_per_sm
-        resident_blocks = min(blocks_per_sm, threads_per_sm // width, by_shared)
-        if resident_blocks >= 1:
-            resident = resident_blocks * width
-            if resident >= best[0]:  # >=, not >: a tie prefers the wider block reached later
-                best = (resident, width, shared)
+        resident = _resident_threads_at(width, shared, shared_per_sm, threads_per_sm, blocks_per_sm, reserved_per_block)
+        if resident is not None and resident >= best[0]:  # >=, not >: a tie prefers the wider block reached later
+            best = (resident, width, shared)
         width = width * 2 if power_of_two else width + warp
     if best[1] == 0:
         floor_width = max(min_threads, warp)

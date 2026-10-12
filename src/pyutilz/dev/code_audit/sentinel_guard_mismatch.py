@@ -106,6 +106,60 @@ def _assigned_from_call(tree: ast.AST) -> dict[str, set[str]]:
     return out
 
 
+def _sentinel_returners_in(tree: ast.Module, rel: str) -> dict[str, tuple[str, object, int]]:
+    """``{function name: (file, sentinel, line)}`` for the functions in *tree* that return a falsy sentinel from except."""
+    out: dict[str, tuple[str, object, int]] = {}
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _returns_none_anywhere(func):
+            continue
+        sentinels = _returns_falsy_from_except(func)
+        if sentinels:
+            value, line = sentinels[0]
+            out[func.name] = (rel, value, line)
+    return out
+
+
+def _guard_mismatch_findings(
+    py: Path,
+    tree: ast.Module,
+    rel: str,
+    sentinel_returners: dict[str, tuple[str, object, int]],
+) -> list[Finding]:
+    """Findings for the ``is None`` guards in one file whose guarded name comes from a sentinel returner."""
+    guards = _is_none_guards(tree)
+    if not guards:
+        return []
+    assigned = _assigned_from_call(tree)
+    src_lines = _read_src_lines(py)
+    out: list[Finding] = []
+    for callee, names in sorted(assigned.items()):
+        if callee not in sentinel_returners:
+            continue
+        guarded = sorted(names & set(guards))
+        if not guarded:
+            continue
+        name = guarded[0]
+        where, value, ret_line = sentinel_returners[callee]
+        out.append(
+            Finding(
+                check="sentinel_guard_mismatch",
+                severity="P1",
+                file=rel,
+                line=guards[name],
+                snippet=_line_text(src_lines, guards[name]),
+                detail=(
+                    f"`{name}` comes from `{callee}`, which returns {value!r} from an except "
+                    f"handler ({where}:{ret_line}) and never returns None -- so this `is None` "
+                    "guard cannot see the failure, and it reads as a legitimate value. Return "
+                    "None for the failure, or test for the sentinel the function actually uses."
+                ),
+            )
+        )
+    return out
+
+
 def scan_sentinel_guard_mismatch(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -130,47 +184,11 @@ def scan_sentinel_guard_mismatch(
             continue
         rel = py.relative_to(root).as_posix()
         parsed.append((py, tree, rel))
-        for func in ast.walk(tree):
-            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if _returns_none_anywhere(func):
-                continue
-            sentinels = _returns_falsy_from_except(func)
-            if sentinels:
-                value, line = sentinels[0]
-                sentinel_returners[func.name] = (rel, value, line)
+        sentinel_returners.update(_sentinel_returners_in(tree, rel))
 
     if not sentinel_returners:
         return findings
 
     for py, tree, rel in parsed:
-        guards = _is_none_guards(tree)
-        if not guards:
-            continue
-        assigned = _assigned_from_call(tree)
-        src_lines = _read_src_lines(py)
-
-        for callee, names in sorted(assigned.items()):
-            if callee not in sentinel_returners:
-                continue
-            guarded = sorted(names & set(guards))
-            if not guarded:
-                continue
-            name = guarded[0]
-            where, value, ret_line = sentinel_returners[callee]
-            findings.append(
-                Finding(
-                    check="sentinel_guard_mismatch",
-                    severity="P1",
-                    file=rel,
-                    line=guards[name],
-                    snippet=_line_text(src_lines, guards[name]),
-                    detail=(
-                        f"`{name}` comes from `{callee}`, which returns {value!r} from an except "
-                        f"handler ({where}:{ret_line}) and never returns None -- so this `is None` "
-                        "guard cannot see the failure, and it reads as a legitimate value. Return "
-                        "None for the failure, or test for the sentinel the function actually uses."
-                    ),
-                )
-            )
+        findings.extend(_guard_mismatch_findings(py, tree, rel, sentinel_returners))
     return findings

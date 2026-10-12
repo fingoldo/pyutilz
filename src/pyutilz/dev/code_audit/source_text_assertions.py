@@ -187,6 +187,23 @@ def _fails_in_body(node: ast.If) -> bool:
     return False
 
 
+def _assertion_reader(test: ast.AST, aliases: set[str], bound_here: dict[str, str]) -> str | None:
+    """How an assertion's condition reads program text (``None`` when it does not)."""
+    reader = _reads_source(test, aliases)
+    if reader is None and _reads_a_python_file(test):
+        reader = "reading a .py/.sql file"
+    if reader is None:
+        # The far more common spelling: read into a variable, assert on the variable.
+        #
+        # A name that is CALLED in the assertion is exempt: calling it exercises
+        # behaviour, which is the thing this check wants tests to do.
+        called = {c.func.id for c in ast.walk(test) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        for used in ast.walk(test):
+            if isinstance(used, ast.Name) and used.id in bound_here and used.id not in called:
+                return f"{bound_here[used.id]} via `{used.id}`"
+    return reader
+
+
 def scan_source_text_assertions(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -230,24 +247,11 @@ def scan_source_text_assertions(
                 if not (isinstance(node, ast.Assert) or (isinstance(node, ast.If) and _fails_in_body(node))) or id(node) in seen:
                     continue
                 seen.add(id(node))
-                reader = _reads_source(node.test, aliases)
-                if reader is None and _reads_a_python_file(node.test):
-                    reader = "reading a .py/.sql file"
-                if reader is None:
-                    # The far more common spelling: read into a variable, assert on the variable.
-                    #
-                    # A name that is CALLED in the assertion is exempt: calling it exercises
-                    # behaviour, which is the thing this check wants tests to do.
-                    called = {c.func.id for c in ast.walk(node.test) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-                    for used in ast.walk(node.test):
-                        if isinstance(used, ast.Name) and used.id in bound_here and used.id not in called:
-                            reader = f"{bound_here[used.id]} via `{used.id}`"
-                            break
-                if reader is None:
+                how = _assertion_reader(node.test, aliases, bound_here)
+                if how is None:
                     continue
                 if not _is_membership_or_match(node.test):
                     continue
-                how = reader
                 findings.append(Finding(
                     check="source_text_assertion",
                     severity="P2",

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 from time import sleep
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 client = None
 
@@ -92,6 +92,20 @@ def get_flows_and_runs(flow_fields:str="id,name",run_fields:str="id,state,labels
         return flows  # type: ignore[no-any-return]  # prefect GraphQL response: nested .get() chain over an untyped dict
     return []
 
+def _flow_selected(cur_flow_id: Any, flow_id: Optional[str], except_flow_id: Optional[str]) -> bool:
+    """True when a flow passes the ``flow_id`` (must match) and ``except_flow_id`` (must not match) filters."""
+    if flow_id and cur_flow_id != flow_id:
+        return False
+    return not (except_flow_id and cur_flow_id == except_flow_id)
+
+
+def _labels_match(flow_labels: set, anyof_labels: Union[set, frozenset], allof_labels: Union[set, frozenset]) -> bool:
+    """True when a run's labels satisfy both label filters; each filter applies only when it is non-empty."""
+    if len(anyof_labels) > 0 and not anyof_labels.intersection(flow_labels):
+        return False
+    return not (len(allof_labels) > 0 and not allof_labels.issubset(flow_labels))
+
+
 def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=None,except_flowrun_id:Optional[str]=None,allof_labels:Union[set,frozenset]=frozenset(),anyof_labels:Union[set,frozenset]=frozenset())->list:
     """
     flow_id - can be used to check if an instance of the same flow is already running.
@@ -113,19 +127,15 @@ def get_running_flows(flow_id:Optional[str]=None,except_flow_id:Optional[str]=No
         results = []
         for flow in flows:
             cur_flow_id = flow.get("id")
-            if flow_id:
-                if cur_flow_id!=flow_id: continue
-            if except_flow_id:
-                if cur_flow_id==except_flow_id: continue
+            if not _flow_selected(cur_flow_id, flow_id, except_flow_id):
+                continue
 
             for flow_run in flow.get("flow_runs", []):
                 flow_run_id = flow_run.get("id")
                 if except_flowrun_id:
                     if except_flowrun_id==flow_run_id: continue
                 flow_labels=set(flow_run.get("labels",[]))
-                if len(anyof_labels) > 0 and not anyof_labels.intersection(flow_labels):
-                    continue
-                if len(allof_labels) > 0 and not allof_labels.issubset(flow_labels):
+                if not _labels_match(flow_labels, anyof_labels, allof_labels):
                     continue
                 results.append(flow)
                 break

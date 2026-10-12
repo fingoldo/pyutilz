@@ -122,6 +122,28 @@ def _matching_probe(dotted: str) -> "tuple[str, str] | None":
     return None
 
 
+def _probe_call(node: ast.Call, probe_imports: dict[str, str]) -> tuple[str, str] | None:
+    """``(dotted name to report, cost)`` when this call is a constant-cost probe, else None."""
+    dotted = _dotted_name_or_partial(node.func)
+    if not dotted:
+        return None
+    match = _matching_probe(dotted)
+    if match is None and isinstance(node.func, ast.Name) and node.func.id in probe_imports:
+        match = _matching_probe(probe_imports[node.func.id])
+    if match is None and isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir":
+        # `p.mkdir(...)` / `Path(x).mkdir(...)` -- the spelling that is actually written.
+        # `_dotted_name_or_partial` renders the receiver as "" for anything but a Name chain, so the
+        # registered `Path.mkdir` entry could only ever match `Path.mkdir(p)`, which nobody writes.
+        receiver = node.func.value
+        receiver_name = receiver.func.id if isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Name) else (receiver.id if isinstance(receiver, ast.Name) else None)
+        if receiver_name in (None, "Path") or receiver_name not in {"os", "shutil", "subprocess"}:
+            match = ("Path.mkdir", "hits the filesystem")
+            dotted = f"{receiver_name}.mkdir" if receiver_name else "Path(...).mkdir"
+    if match is None:
+        return None
+    return dotted, match[1]
+
+
 def scan_uncached_constant_cost_probe(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -165,24 +187,10 @@ def scan_uncached_constant_cost_probe(
             for node in _own_nodes(func):
                 if not isinstance(node, ast.Call):
                     continue
-                dotted = _dotted_name_or_partial(node.func)
-                if not dotted:
+                hit = _probe_call(node, probe_imports)
+                if hit is None:
                     continue
-                match = _matching_probe(dotted)
-                if match is None and isinstance(node.func, ast.Name) and node.func.id in probe_imports:
-                    match = _matching_probe(probe_imports[node.func.id])
-                if match is None and isinstance(node.func, ast.Attribute) and node.func.attr == "mkdir":
-                    # `p.mkdir(...)` / `Path(x).mkdir(...)` -- the spelling that is actually written.
-                    # `_dotted_name_or_partial` renders the receiver as "" for anything but a Name chain, so the
-                    # registered `Path.mkdir` entry could only ever match `Path.mkdir(p)`, which nobody writes.
-                    receiver = node.func.value
-                    receiver_name = receiver.func.id if isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Name) else (receiver.id if isinstance(receiver, ast.Name) else None)
-                    if receiver_name in (None, "Path") or receiver_name not in {"os", "shutil", "subprocess"}:
-                        match = ("Path.mkdir", "hits the filesystem")
-                        dotted = f"{receiver_name}.mkdir" if receiver_name else "Path(...).mkdir"
-                if match is None:
-                    continue
-                _probe, cost = match
+                dotted, cost = hit
                 findings.append(
                     Finding(
                         check="uncached_constant_cost_probe",

@@ -295,6 +295,34 @@ atexit.register(_RETRIER.flush)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
+def _heartbeat_target(
+    job_id: str,
+    status: int,
+    data: _HeartbeatData,
+    provider: str,
+    api_key: Optional[str],
+) -> Tuple[str, _HeartbeatData, Optional[Dict[str, Any]]]:
+    """``(endpoint, data to send, query params)`` for a provider; the endpoint is empty for an unknown one."""
+    if provider == "healthchecks.io":
+        if data:
+            data = str(data)
+        if api_key:
+            return f"https://hc-ping.com/{api_key}/{job_id}/{status}", data, None
+        return f"https://hc-ping.com/{job_id}/{status}", data, None
+    if provider == "cronitor.io":
+        state: Any
+        if status == 0:
+            state = "complete"
+        else:
+            state = status
+
+        params: Dict[str, Any] = dict(state=state)
+        if data:
+            params["msg"] = str(data)
+        return f"https://cronitor.link/p/{api_key}/{job_id}", data, params
+    return "", data, None
+
+
 def job_completed(
     job_id: str,
     status: int = 0,
@@ -329,27 +357,7 @@ def job_completed(
     change (403, 404, ...) is not retried. Pass ``retry=False`` for the old single-shot behaviour.
     """
 
-    endpoint = ""
-    params = None
-
-    if provider == "healthchecks.io":
-        if data:
-            data = str(data)
-        if api_key:
-            endpoint = f"https://hc-ping.com/{api_key}/{job_id}/{status}"
-        else:
-            endpoint = f"https://hc-ping.com/{job_id}/{status}"
-    elif provider == "cronitor.io":
-        endpoint = f"https://cronitor.link/p/{api_key}/{job_id}"
-        state: Any
-        if status == 0:
-            state = "complete"
-        else:
-            state = status
-
-        params = dict(state=state)
-        if data:
-            params["msg"] = str(data)
+    endpoint, data, params = _heartbeat_target(job_id, status, data, provider, api_key)
 
     if endpoint:
 

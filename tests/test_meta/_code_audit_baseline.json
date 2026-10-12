@@ -75,8 +75,6 @@
   "non_neutral_except_fallback::performance/kernel_tuning/cache/cache_sweeping.py::d90ff5f45b51#1",
   "non_neutral_except_fallback::performance/kernel_tuning/code_versioning.py::0bb52624679e",
   "non_neutral_except_fallback::system/parallel.py::5d33047b0fef",
-  "possibly_dead_import::dev/code_audit/__init__.py::5b35ea2d8f1e",
-  "possibly_dead_import::llm/openrouter_provider/__init__.py::68676225c47c",
   "resource_handle_safety::core/image.py::ab09232ee3c5",
   "resource_handle_safety::core/pythonlib/filesystem.py::4753087d599b",
   "resource_handle_safety::core/serialization.py::e9c5f8fad3c2",

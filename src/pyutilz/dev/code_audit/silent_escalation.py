@@ -93,30 +93,43 @@ def _escalates_to(handler: ast.ExceptHandler, escalation_attrs: frozenset[str]) 
       (``return {"error": str(e)}``) -- the Phase0-style bool/dict-return
       escalation contract.
     """
-    for node in ast.walk(handler):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES:
-            if node.func.attr in ("warn", "add_error", "add_warning"):
-                return True
-            base = node.func.value
-            if isinstance(base, ast.Attribute) and base.attr in escalation_attrs:
-                return True
-            if isinstance(base, ast.Name) and base.id in escalation_attrs:
-                return True
-            if _looks_like_error_target(base):
-                return True
-        elif isinstance(node, ast.AugAssign) and _looks_like_error_target(node.target):
-            return True
-        elif isinstance(node, ast.Assign) and any(_looks_like_error_target(t) for t in node.targets):
-            return True
-        elif isinstance(node, ast.Return) and node.value is not None:
-            v = node.value
-            if isinstance(v, ast.Constant) and v.value is False:
-                return True
-            if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Constant) and e.value is False for e in v.elts):
-                return True
-            if isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys):
-                return True
+    return any(_node_escalates(node, escalation_attrs) for node in ast.walk(handler))
+
+
+def _node_escalates(node: ast.AST, escalation_attrs: frozenset[str]) -> bool:
+    """True when this single AST node is one of the escalation shapes ``_escalates_to`` recognises."""
+    if isinstance(node, ast.Call):
+        return _call_escalates(node, escalation_attrs)
+    if isinstance(node, ast.AugAssign):
+        return _looks_like_error_target(node.target)
+    if isinstance(node, ast.Assign):
+        return any(_looks_like_error_target(t) for t in node.targets)
+    if isinstance(node, ast.Return) and node.value is not None:
+        return _returns_failure_marker(node.value)
     return False
+
+
+def _call_escalates(node: ast.Call, escalation_attrs: frozenset[str]) -> bool:
+    """True when this call appends/extends an escalation collection, or is a warn/add_error/add_warning."""
+    if not (isinstance(node.func, ast.Attribute) and node.func.attr in _ESCALATION_METHOD_NAMES):
+        return False
+    if node.func.attr in ("warn", "add_error", "add_warning"):
+        return True
+    base = node.func.value
+    if isinstance(base, ast.Attribute) and base.attr in escalation_attrs:
+        return True
+    if isinstance(base, ast.Name) and base.id in escalation_attrs:
+        return True
+    return _looks_like_error_target(base)
+
+
+def _returns_failure_marker(v: ast.expr) -> bool:
+    """True for a returned falsy ``False``, a tuple holding ``False``, or a dict with an error-named key."""
+    if isinstance(v, ast.Constant) and v.value is False:
+        return True
+    if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Constant) and e.value is False for e in v.elts):
+        return True
+    return isinstance(v, ast.Dict) and any(isinstance(k, ast.Constant) and isinstance(k.value, str) and "error" in k.value.lower() for k in v.keys)
 
 
 def scan_log_only_except(

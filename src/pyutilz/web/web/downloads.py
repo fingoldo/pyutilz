@@ -91,6 +91,7 @@ def download_to_file(
     max_attempts: int = 5,
     headers: Optional[dict] = None,
     exit_codes: tuple = (),
+    retry_jitter_seconds: float = 10.0,
 ) -> bool:
     """Dropin replacement for urllib.request.urlretrieve(url, filename) that can hand for indefinitely long.
 
@@ -104,6 +105,18 @@ def download_to_file(
     ``rewrite_existing=False`` skips the download entirely when ``filename`` already exists, returning True
     without touching the file - the point of the flag is to make a re-run of a large batch cheap, so the
     request must not be issued at all rather than issued and its body discarded.
+
+    Args:
+        url: Address to GET.
+        filename: Local path the body is written to.
+        rewrite_existing: When False and ``filename`` exists, skip the request entirely.
+        timeout: Socket timeout in seconds for each request.
+        chunk_size: Read size in KiB per streamed chunk.
+        max_attempts: Total attempts before giving up.
+        headers: Extra request headers.
+        exit_codes: HTTP statuses that fail immediately without retrying.
+        retry_jitter_seconds: Upper bound of the random backoff slept between failed attempts (the sleep is
+            ``retry_jitter_seconds * random()``). The default of 10.0 is the historical behaviour.
     """
     if not rewrite_existing and os.path.exists(filename):
         logger.debug("Skipping download of %s: %s already exists and rewrite_existing=False", url, filename)
@@ -114,39 +127,14 @@ def download_to_file(
 
     last_error: Optional[BaseException] = None
     for attempt in range(max_attempts):
-        request: Optional[requests.Response] = None
-        try:
-            request = _facade.requests.get(url, timeout=timeout, headers=headers, stream=True)
-            if request.status_code in exit_codes:
-                # A caller-designated fatal status (e.g. 404): requests.get() does not raise on
-                # 4xx/5xx, so without this the error page's body would be written as the file.
-                logger.error("download_to_file: fatal status %s for %s", request.status_code, url)
-                return False
-            if not (200 <= request.status_code < 300):
-                # Every OTHER non-2xx used to fall straight into the write loop, so a 500/502
-                # error PAGE became the file and the function reported exactly what a successful
-                # download reports -- a batch behind a flaky gateway ended up with a directory of
-                # small HTML files that rewrite_existing=False then skipped forever. Treat it as
-                # an attempt failure so the retry/cleanup path below applies.
-                raise requests.HTTPError(f"unexpected status {request.status_code} for {url}")
-            # The GET must be re-issued on every attempt: a requests body is a single-use stream,
-            # so retrying only the write loop iterates an already-consumed response, yields
-            # nothing, and leaves the (already truncated by open(..., "wb")) file at 0 bytes while
-            # the function returns the same value as a successful download.
-            with open(filename, "wb") as fh:
-                for chunk in request.iter_content(chunk_size * 1024):
-                    fh.write(chunk)
-        except Exception as e:
-            last_error = e
-            logger.exception(e)
-            if attempt < max_attempts - 1:
-                _facade.sleep(10 * _facade.random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
-                logger.info("Making another attempt")
-        else:
-            return True
-        finally:
-            if request is not None:
-                request.close()
+        written, error = _try_attempt(url, filename, timeout, chunk_size, headers, exit_codes)
+        if error is None:
+            return written
+        last_error = error
+        logger.error(error, exc_info=error)
+        if attempt < max_attempts - 1:
+            _facade.sleep(retry_jitter_seconds * _facade.random())  # nosec B311 - random jitter on the download-retry backoff sleep, not security-sensitive
+            logger.info("Making another attempt")
 
     # Every attempt failed. Remove whatever partial/truncated bytes are on disk so that
     # "no file" reliably signals failure instead of a plausible-looking empty artifact.
@@ -156,3 +144,55 @@ def download_to_file(
         pass
     logger.error("download_to_file: all %d attempts failed for %s: %s", max_attempts, url, last_error)
     return False
+
+
+def _try_attempt(
+    url: str,
+    filename: str,
+    timeout: int,
+    chunk_size: int,
+    headers: dict,
+    exit_codes: tuple,
+) -> tuple[bool, Optional[Exception]]:
+    """``(result, None)`` from :func:`_download_attempt`, or ``(False, error)`` when it raised."""
+    try:
+        return _download_attempt(url, filename, timeout, chunk_size, headers, exit_codes), None
+    except Exception as e:
+        return False, e
+
+
+def _download_attempt(
+    url: str,
+    filename: str,
+    timeout: int,
+    chunk_size: int,
+    headers: dict,
+    exit_codes: tuple,
+) -> bool:
+    """One GET-and-write attempt: True once ``filename`` is written, False on a fatal ``exit_codes`` status; raises otherwise."""
+    request: Optional[requests.Response] = None
+    try:
+        request = _facade.requests.get(url, timeout=timeout, headers=headers, stream=True)
+        if request.status_code in exit_codes:
+            # A caller-designated fatal status (e.g. 404): requests.get() does not raise on
+            # 4xx/5xx, so without this the error page's body would be written as the file.
+            logger.error("download_to_file: fatal status %s for %s", request.status_code, url)
+            return False
+        if not (200 <= request.status_code < 300):
+            # Every OTHER non-2xx used to fall straight into the write loop, so a 500/502
+            # error PAGE became the file and the function reported exactly what a successful
+            # download reports -- a batch behind a flaky gateway ended up with a directory of
+            # small HTML files that rewrite_existing=False then skipped forever. Treat it as
+            # an attempt failure so the retry/cleanup path below applies.
+            raise requests.HTTPError(f"unexpected status {request.status_code} for {url}")
+        # The GET must be re-issued on every attempt: a requests body is a single-use stream,
+        # so retrying only the write loop iterates an already-consumed response, yields
+        # nothing, and leaves the (already truncated by open(..., "wb")) file at 0 bytes while
+        # the function returns the same value as a successful download.
+        with open(filename, "wb") as fh:
+            for chunk in request.iter_content(chunk_size * 1024):
+                fh.write(chunk)
+        return True
+    finally:
+        if request is not None:
+            request.close()
