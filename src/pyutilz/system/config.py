@@ -127,7 +127,8 @@ class TomlLiveConfig:
                 pass
             return
 
-        self._data = new_data
+        with self._lock:
+            self._data = new_data
         try:
             self._mtime = self._path.stat().st_mtime
         except OSError:

@@ -217,8 +217,9 @@ class CircuitBreaker:
         self.recovery_timeout_sec = recovery_timeout_sec
         self.half_open_successes_to_close = half_open_successes_to_close
 
-        self.state = CircuitState()
         self._lock = threading.Lock()
+        with self._lock:
+            self.state = CircuitState()
 
     def __getstate__(self) -> Dict[str, Any]:
         # threading.Lock is unpicklable; drop it and rebuild on unpickle.
