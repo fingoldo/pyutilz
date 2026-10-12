@@ -220,8 +220,8 @@ def hash_object(obj: Any) -> str:
     return str(h.hexdigest())
 
 
-def _feed(h: Any, obj: Any) -> None:
-    """Recursively feed an object into the hasher with a stable byte encoding."""
+def _feed_leaf(h: Any, obj: Any) -> bool:
+    """Feed a None, bool, int, float, bytes-like or str; False when ``obj`` is none of those."""
     if obj is None:
         h.update(b"N\0")
     elif isinstance(obj, bool):
@@ -243,7 +243,14 @@ def _feed(h: Any, obj: Any) -> None:
     elif isinstance(obj, str):
         b = obj.encode("utf-8")
         h.update(b"s" + struct.pack("<Q", len(b)) + b)
-    elif isinstance(obj, dict):
+    else:
+        return False
+    return True
+
+
+def _feed_container(h: Any, obj: Any) -> bool:
+    """Feed a dict, list, tuple, set, frozenset, ndarray or tolist()-able value; False otherwise."""
+    if isinstance(obj, dict):
         h.update(b"D" + struct.pack("<Q", len(obj)))
         for k in sorted(obj, key=lambda x: repr(x)):
             _feed(h, k)
@@ -268,10 +275,18 @@ def _feed(h: Any, obj: Any) -> None:
         # numpy scalars (np.int64, np.float32, ...) and 0-D arrays.
         _feed(h, obj.tolist())
     else:
-        # Last resort: repr() the object. Not stable across Python runs for arbitrary types --
-        # caller should only pass hashable primitives.
-        h.update(b"R")
-        h.update(repr(obj).encode("utf-8", errors="replace"))
+        return False
+    return True
+
+
+def _feed(h: Any, obj: Any) -> None:
+    """Recursively feed an object into the hasher with a stable byte encoding."""
+    if _feed_leaf(h, obj) or _feed_container(h, obj):
+        return
+    # Last resort: repr() the object. Not stable across Python runs for arbitrary types --
+    # caller should only pass hashable primitives.
+    h.update(b"R")
+    h.update(repr(obj).encode("utf-8", errors="replace"))
 
 
 def compose_key(*parts: str) -> str:

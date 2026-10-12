@@ -63,6 +63,30 @@ def build_provider_field(
     by :func:`auto_require_parameters`, which needs the whole body.
     """
     field: dict[str, Any] = {}
+    _set_routing_lists(field, order=order, only=only, ignore=ignore, sort=sort, allow_fallbacks=allow_fallbacks, require_parameters=require_parameters)
+    _set_routing_policy(
+        field,
+        data_collection=data_collection,
+        zdr=zdr,
+        quantizations=quantizations,
+        max_price=max_price,
+        preferred_min_throughput=preferred_min_throughput,
+        preferred_max_latency=preferred_max_latency,
+    )
+    return field
+
+
+def _set_routing_lists(
+    field: dict[str, Any],
+    *,
+    order: Optional[Tuple[str, ...]],
+    only: Optional[Tuple[str, ...]],
+    ignore: Optional[Tuple[str, ...]],
+    sort: Optional[str],
+    allow_fallbacks: bool,
+    require_parameters: Optional[bool],
+) -> None:
+    """Set the provider order/only/ignore lists, sort, fallback and explicit require_parameters on ``field``."""
     if order:
         field["order"] = list(order)
     if only:
@@ -76,6 +100,19 @@ def build_provider_field(
         field["allow_fallbacks"] = False
     if require_parameters is True:
         field["require_parameters"] = True
+
+
+def _set_routing_policy(
+    field: dict[str, Any],
+    *,
+    data_collection: Optional[str],
+    zdr: Optional[bool],
+    quantizations: Optional[Tuple[str, ...]],
+    max_price: Any,
+    preferred_min_throughput: Any,
+    preferred_max_latency: Any,
+) -> None:
+    """Set the data-collection, ZDR, quantization and price/performance preference fields on ``field``."""
     if data_collection is not None:
         if data_collection not in ("allow", "deny"):
             raise ValueError(f"provider_data_collection must be 'allow' or 'deny', got {data_collection!r}")
@@ -90,7 +127,6 @@ def build_provider_field(
         field["preferred_min_throughput"] = as_plain(preferred_min_throughput)
     if preferred_max_latency is not None:
         field["preferred_max_latency"] = as_plain(preferred_max_latency)
-    return field
 
 
 def build_plugins(enable_web_search: bool, web_search_engine: Optional[str], web_search_max_results: Optional[int], pdf_engine: Optional[str]) -> list:

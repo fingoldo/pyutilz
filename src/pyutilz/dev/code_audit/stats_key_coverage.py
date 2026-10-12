@@ -69,42 +69,55 @@ def _declared_by(method: ast.AST) -> dict[str, set[str]]:
     return declared
 
 
+def _note_key(written: dict[str, int], key: ast.AST, line: int) -> None:
+    """Note a string-literal key write; a computed key cannot be checked statically."""
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        written.setdefault(key.value, line)
+
+
+def _written_by_augassign(node: ast.AST, attr: str, written: dict[str, int]) -> None:
+    """Record ``self.<attr>[k] += n`` as an accumulating write of ``k``."""
+    if isinstance(node, ast.AugAssign):
+        target = node.target
+        if isinstance(target, ast.Subscript) and _is_counter_attribute(target.value) == attr:
+            _note_key(written, _subscript_index(target), node.lineno)
+
+
+def _written_by_read_modify_write(node: ast.AST, attr: str, written: dict[str, int]) -> None:
+    """Record ``self.<attr>[k] = self.<attr>.get(k, 0) + n`` as an accumulating write; a bare read is not one."""
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        store = node.targets[0]
+        if isinstance(store, ast.Subscript) and _is_counter_attribute(store.value) == attr:
+            for sub in ast.walk(node.value):
+                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "get" and _is_counter_attribute(sub.func.value) == attr:
+                    _note_key(written, _subscript_index(store), node.lineno)
+
+
+def _written_by_call(node: ast.AST, attr: str, written: dict[str, int]) -> None:
+    """Record a ``setdefault`` on the counter attribute, or an increment helper, as registering its key argument."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
+            if node.args:
+                _note_key(written, node.args[0], node.lineno)
+        # the increment-helper form: the first argument names the key
+        elif node.func.attr in _INC_HELPERS and node.args:
+            _note_key(written, node.args[0], node.lineno)
+
+
 def _written_keys(cls: ast.ClassDef, attr: str) -> dict[str, int]:
     """{key: line} written to `self.<attr>` anywhere in this class, by any spelling."""
     written: dict[str, int] = {}
-
-    def _record(key: ast.AST, line: int) -> None:
-        """Note a string-literal key write; a computed key cannot be checked statically."""
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            written.setdefault(key.value, line)
-
     # ACCUMULATING writes only. `self.stats["k"] = value` overwrites completely every cycle and
     # is therefore safe without a declaration -- the four such keys in the audited crawler were
     # this rule's only false positives. `+=`, `.get(k, 0) + n`, `.setdefault(k, ...)` and an
     # increment helper all ACCUMULATE, which is where "cumulative since process start while its
     # siblings are per-cycle" comes from.
     for node in ast.walk(cls):
-        if isinstance(node, ast.AugAssign):
-            target = node.target
-            if isinstance(target, ast.Subscript) and _is_counter_attribute(target.value) == attr:
-                _record(_subscript_index(target), node.lineno)
+        _written_by_augassign(node, attr, written)
         # `self.stats[k] = self.stats.get(k, 0) + n` -- a read-modify-write, so it accumulates.
-        # A BARE `self.stats.get(k, 0)` is a READ and must not count: counting it reported a
-        # read-only accessor as the writer of a key nothing writes.
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            store = node.targets[0]
-            if isinstance(store, ast.Subscript) and _is_counter_attribute(store.value) == attr:
-                for sub in ast.walk(node.value):
-                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "get" and _is_counter_attribute(sub.func.value) == attr:
-                        _record(_subscript_index(store), node.lineno)
+        _written_by_read_modify_write(node, attr, written)
         # a setdefault call on the counter attribute registers its first argument as a key
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr == "setdefault" and _is_counter_attribute(node.func.value) == attr:
-                if node.args:
-                    _record(node.args[0], node.lineno)
-            # the increment-helper form: the first argument names the key
-            elif node.func.attr in _INC_HELPERS and node.args:
-                _record(node.args[0], node.lineno)
+        _written_by_call(node, attr, written)
     return written
 
 

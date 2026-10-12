@@ -254,6 +254,58 @@ def _augassign_target_is_a_scalar_counter(func: ast.AST, local_name: str, node: 
     return False
 
 
+def _track_param_alias(
+    node: ast.AST,
+    aliases: dict[str, str],
+    alias_paths: dict[str, tuple[tuple[int, int], ...]],
+    param_names: set[str],
+    node_path: tuple[tuple[int, int], ...],
+) -> bool:
+    """Update the alias maps for a ``local = ...`` statement; True when the node was an assignment and needs no mutation check."""
+    if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
+        return False
+    local_name = node.targets[0].id
+    if isinstance(node.value, ast.Name) and node.value.id in param_names:
+        aliases[local_name] = node.value.id
+        alias_paths[local_name] = node_path
+        return True
+    if local_name in aliases:
+        del aliases[local_name]  # reassigned to something else -- no longer a bare alias
+        return True
+    return False
+
+
+def _mutated_alias(
+    node: ast.AST,
+    aliases: dict[str, str],
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    param_annotations: dict[str, ast.expr | None],
+) -> tuple[str | None, int]:
+    """``(aliased local, line)`` when ``node`` mutates a local that aliases a parameter in place; ``(None, 0)`` otherwise."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+        if node.func.value.id in aliases and node.func.attr in _MUTATING_METHODS:
+            return node.func.value.id, node.lineno
+        return None, 0
+    if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id in aliases:
+        aliased_param = aliases[node.target.id]
+        if (
+            not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param))
+            and not _param_default_looks_like_immutable_scalar(func, aliased_param)
+            and not _augassign_target_is_a_scalar_counter(func, node.target.id, node)
+        ):
+            return node.target.id, node.lineno
+        return None, 0
+    if isinstance(node, ast.Assign):
+        target_name = None
+        lineno = 0
+        for t in node.targets:
+            if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id in aliases:
+                target_name = t.value.id
+                lineno = node.lineno
+        return target_name, lineno
+    return None, 0
+
+
 def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tuple[str, str, int]]:
     """Find ``local = param`` (bare Name-to-Name rebind, no ``.copy()``/``list()``/``dict()``/
     ``[*...]`` wrapping) followed later in the SAME function by an in-place mutation of ``local``
@@ -287,37 +339,11 @@ def _find_param_aliasing_mutation(func: ast.FunctionDef | ast.AsyncFunctionDef) 
     nodes = sorted(ast.walk(func), key=lambda n: getattr(n, "lineno", 0))
     for node in nodes:
         node_path = paths.get(id(node), ())
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            local_name = node.targets[0].id
-            if isinstance(node.value, ast.Name) and node.value.id in param_names:
-                aliases[local_name] = node.value.id
-                alias_paths[local_name] = node_path
-                continue
-            elif local_name in aliases:
-                del aliases[local_name]  # reassigned to something else -- no longer a bare alias
-                continue
+        if _track_param_alias(node, aliases, alias_paths, param_names, node_path):
+            continue
         if not aliases:
             continue
-        target_name = None
-        lineno = 0
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            if node.func.value.id in aliases and node.func.attr in _MUTATING_METHODS:
-                target_name = node.func.value.id
-                lineno = node.lineno
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id in aliases:
-            aliased_param = aliases[node.target.id]
-            if (
-                not _is_known_immutable_scalar_annotation(param_annotations.get(aliased_param))
-                and not _param_default_looks_like_immutable_scalar(func, aliased_param)
-                and not _augassign_target_is_a_scalar_counter(func, node.target.id, node)
-            ):
-                target_name = node.target.id
-                lineno = node.lineno
-        elif isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id in aliases:
-                    target_name = t.value.id
-                    lineno = node.lineno
+        target_name, lineno = _mutated_alias(node, aliases, func, param_annotations)
         if target_name is not None and not _branches_are_exclusive(alias_paths.get(target_name, ()), node_path):
             hits.append((aliases[target_name], target_name, lineno))
     return hits

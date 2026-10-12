@@ -405,6 +405,49 @@ def _redact_parameters(params: dict) -> dict:
     return redacted
 
 
+_SESSION_VARS = ("current_proxy", "current_proxy_resolved", "login")
+
+
+def _call_params(args: tuple, kwargs: dict, explicit_only: bool, allowed_types: tuple) -> dict:
+    """The call's loggable parameters: keyword args only when ``explicit_only``, else positional and keyword args."""
+    f_kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
+    assert isinstance(f_kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
+    if explicit_only:
+        return f_kwargs
+    f_params = filter_elements_by_type(obj={i: val for i, val in enumerate(args)}, allowed_types=allowed_types)
+    assert isinstance(f_params, dict)
+    return {**f_params, **f_kwargs}
+
+
+def _fill_call_header(results_log: dict, module_name: str, function_name: str, params: dict, include_node_ip: bool) -> None:
+    """Write module, function, redacted parameters and (optionally) the node IP into ``results_log``."""
+    results_log["module"] = basename(module_name)
+    results_log["function"] = function_name
+    # Redacted, not merely name-filtered: ``special_vars`` protected exactly three
+    # hardcoded names, so any OTHER credential-bearing argument (``password=``, ``api_key=``,
+    # ``token=``, a DSN in ``dsn=``/``url=``) was written verbatim into the persisted
+    # ``parameters`` column on every call, success or failure.
+    results_log["parameters"] = _redact_parameters({key: value for key, value in params.items() if key not in _SESSION_VARS})
+    if include_node_ip:
+        results_log["node"] = {"ip": get_node_external_ip()}
+
+
+def _record_session(results_log: dict, kwargs: dict) -> None:
+    """Copy the truthy session variables (proxy/login) from ``kwargs`` into ``results_log["session"]``, redacted."""
+    for var in _SESSION_VARS:
+        if var in kwargs:
+            if kwargs[var]:
+                results_log["session"] = {}
+                break
+    for var in _SESSION_VARS:
+        if var in kwargs:
+            if kwargs[var]:
+                # Redacted, not just relocated: these are credential-bearing by
+                # convention (proxy URLs / login), and results_log["session"] is
+                # persisted to db_path and/or printed just like ["parameters"] is.
+                results_log["session"][var] = _redact_credential_shaped_value(kwargs[var])
+
+
 def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
     """Decorator factory that logs a function call's parameters, timing, and result.
 
@@ -420,50 +463,18 @@ def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_t
         @functools.wraps(func)
         def wrapper_logged(*args, **kwargs):
             """Log call parameters/timing, invoke ``func``, finalize the log, and return its result."""
-            special_vars = ("current_proxy", "current_proxy_resolved", "login")
-
             function_name = func.__name__
             _this_frame = inspect.currentframe()
             current_frame = _this_frame.f_back if _this_frame is not None else None
             module_name = inspect.getfile(current_frame) if current_frame is not None else ""
 
-            f_kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
-            assert isinstance(f_kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
-            if explicit_only:
-                params = f_kwargs
-            else:
-                f_params = filter_elements_by_type(obj={i: val for i, val in enumerate(args)}, allowed_types=allowed_types)
-                assert isinstance(f_params, dict)
-                params = {**f_params, **f_kwargs}
-
+            params = _call_params(args, kwargs, explicit_only, allowed_types)
             if "results_log" not in kwargs:
                 kwargs["results_log"] = {}
 
             results_log = kwargs["results_log"]
-
-            results_log["module"] = basename(module_name)
-            results_log["function"] = function_name
-            # Redacted, not merely name-filtered: ``special_vars`` protected exactly three
-            # hardcoded names, so any OTHER credential-bearing argument (``password=``, ``api_key=``,
-            # ``token=``, a DSN in ``dsn=``/``url=``) was written verbatim into the persisted
-            # ``parameters`` column on every call, success or failure.
-            results_log["parameters"] = _redact_parameters({key: value for key, value in params.items() if key not in special_vars})
-
-            if include_node_ip:
-                results_log["node"] = {"ip": get_node_external_ip()}
-
-            for var in special_vars:
-                if var in kwargs:
-                    if kwargs[var]:
-                        results_log["session"] = {}
-                        break
-            for var in special_vars:
-                if var in kwargs:
-                    if kwargs[var]:
-                        # Redacted, not just relocated: these are credential-bearing by
-                        # convention (proxy URLs / login), and results_log["session"] is
-                        # persisted to db_path and/or printed just like ["parameters"] is.
-                        results_log["session"][var] = _redact_credential_shaped_value(kwargs[var])
+            _fill_call_header(results_log, module_name, function_name, params, include_node_ip)
+            _record_session(results_log, kwargs)
 
             results_log["results"] = {"timing": {}}
             _init_clocks(results_log["results"]["timing"])

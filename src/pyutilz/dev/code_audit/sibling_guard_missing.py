@@ -111,6 +111,47 @@ def _shared_resource(guarded: list[ast.FunctionDef | ast.AsyncFunctionDef], watc
     return shared - watched - _VACUOUS_TOKENS
 
 
+def _guard_group_findings(
+    klass: ast.ClassDef,
+    methods: list[ast.FunctionDef | ast.AsyncFunctionDef],
+    occurrences: list[ast.stmt],
+    rel: str,
+    src_lines: list[str],
+) -> list[Finding]:
+    """One P2 finding per sibling that uses the guarded resource but does not open with the shared guard."""
+    guarded_ids = {id(occurrence) for occurrence in occurrences}
+    watched = _names_in(occurrences[0]) - _VACUOUS_TOKENS
+    guarded_methods = [m for m in methods if (g := _leading_guard(m)) and id(g[1]) in guarded_ids]
+    resource = _shared_resource(guarded_methods, watched)
+    if not resource:
+        return []
+    findings: list[Finding] = []
+    for method in methods:
+        found = _leading_guard(method)
+        if found is not None and id(found[1]) in guarded_ids:
+            continue
+        if not (_self_attributes(method) & resource) or _tests_any_of(method, watched):
+            continue
+        guard_text = _line_text(src_lines, occurrences[0].lineno)
+        findings.append(
+            Finding(
+                check="sibling_guard_missing",
+                severity="P2",
+                file=rel,
+                line=method.lineno,
+                snippet=_line_text(src_lines, method.lineno),
+                detail=(
+                    f"`{klass.name}.{method.name}` touches {sorted(resource)} but does not "
+                    f"open with `{guard_text}`, which {len(occurrences)} of its "
+                    "siblings do and nothing else documents. A convention recorded "
+                    "only by repetition reads the same with one hole in it as without."
+                ),
+            )
+        )
+        break
+    return findings
+
+
 def scan_sibling_guard_missing(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -150,33 +191,5 @@ def scan_sibling_guard_missing(
             for occurrences in guards.values():
                 if len(occurrences) < _MIN_SIBLINGS:
                     continue
-                guarded_ids = {id(occurrence) for occurrence in occurrences}
-                watched = _names_in(occurrences[0]) - _VACUOUS_TOKENS
-                guarded_methods = [m for m in methods if (g := _leading_guard(m)) and id(g[1]) in guarded_ids]
-                resource = _shared_resource(guarded_methods, watched)
-                if not resource:
-                    continue
-                for method in methods:
-                    found = _leading_guard(method)
-                    if found is not None and id(found[1]) in guarded_ids:
-                        continue
-                    if not (_self_attributes(method) & resource) or _tests_any_of(method, watched):
-                        continue
-                    guard_text = _line_text(src_lines, occurrences[0].lineno)
-                    findings.append(
-                        Finding(
-                            check="sibling_guard_missing",
-                            severity="P2",
-                            file=rel,
-                            line=method.lineno,
-                            snippet=_line_text(src_lines, method.lineno),
-                            detail=(
-                                f"`{klass.name}.{method.name}` touches {sorted(resource)} but does not "
-                                f"open with `{guard_text}`, which {len(occurrences)} of its "
-                                "siblings do and nothing else documents. A convention recorded "
-                                "only by repetition reads the same with one hole in it as without."
-                            ),
-                        )
-                    )
-                    break
+                findings.extend(_guard_group_findings(klass, methods, occurrences, rel, src_lines))
     return findings

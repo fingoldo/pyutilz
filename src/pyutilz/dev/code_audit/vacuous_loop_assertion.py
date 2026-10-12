@@ -114,6 +114,58 @@ def _cannot_be_empty(node: ast.expr, known: set[str]) -> bool:
     return False
 
 
+def _vacuous_loop_findings(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    module_constants: set[str],
+    rel: str,
+    src_lines: list[str],
+) -> list[Finding]:
+    """P2 findings for a test whose every assertion sits in a loop over a collection that may be empty."""
+    known = module_constants | _nonempty_literal_names([func])
+    assertions = _assertion_nodes(func)
+    if not assertions:
+        return []
+    loops = [node for node in ast.walk(func) if isinstance(node, (ast.For, ast.AsyncFor))]
+    if not loops:
+        return []
+
+    inside: set[int] = set()
+    for loop in loops:
+        inside |= {id(sub) for sub in ast.walk(loop)} - {id(loop)}
+    if any(id(node) not in inside for node in assertions):
+        return []
+
+    findings: list[Finding] = []
+    for loop in loops:
+        owned = [node for node in assertions if id(node) in {id(sub) for sub in ast.walk(loop)}]
+        if not owned or _cannot_be_empty(loop.iter, known):
+            continue
+        # Only a collection PRODUCED here: a call, or a comprehension. Iterating a name
+        # handed in by a fixture or imported from a registry is where every one of this
+        # rule's 344 remaining hits lived, and its emptiness is decided somewhere this
+        # cannot see. A query result can be empty in a way the reader can act on.
+        if not isinstance(loop.iter, (ast.Call, ast.ListComp, ast.GeneratorExp, ast.SetComp, ast.DictComp)):
+            continue
+        findings.append(
+            Finding(
+                check="vacuous_loop_assertion",
+                severity="P2",
+                file=rel,
+                line=loop.lineno,
+                snippet=_line_text(src_lines, loop.lineno),
+                detail=(
+                    f"every assertion in `{func.name}` is inside this loop, and nothing "
+                    "establishes that it iterates at all. If the collection comes back "
+                    "empty the test passes having asserted nothing, and it will keep "
+                    "passing. One line before the loop -- `assert <collection>`, or a "
+                    "count -- is the whole fix."
+                ),
+            )
+        )
+        break
+    return findings
+
+
 def scan_vacuous_loop_assertion(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -156,45 +208,5 @@ def scan_vacuous_loop_assertion(
             # was right to flag.
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) or not func.name.startswith("test_"):
                 continue
-            known = module_constants | _nonempty_literal_names([func])
-            assertions = _assertion_nodes(func)
-            if not assertions:
-                continue
-            loops = [node for node in ast.walk(func) if isinstance(node, (ast.For, ast.AsyncFor))]
-            if not loops:
-                continue
-
-            inside: set[int] = set()
-            for loop in loops:
-                inside |= {id(sub) for sub in ast.walk(loop)} - {id(loop)}
-            if any(id(node) not in inside for node in assertions):
-                continue
-
-            for loop in loops:
-                owned = [node for node in assertions if id(node) in {id(sub) for sub in ast.walk(loop)}]
-                if not owned or _cannot_be_empty(loop.iter, known):
-                    continue
-                # Only a collection PRODUCED here: a call, or a comprehension. Iterating a name
-                # handed in by a fixture or imported from a registry is where every one of this
-                # rule's 344 remaining hits lived, and its emptiness is decided somewhere this
-                # cannot see. A query result can be empty in a way the reader can act on.
-                if not isinstance(loop.iter, (ast.Call, ast.ListComp, ast.GeneratorExp, ast.SetComp, ast.DictComp)):
-                    continue
-                findings.append(
-                    Finding(
-                        check="vacuous_loop_assertion",
-                        severity="P2",
-                        file=rel,
-                        line=loop.lineno,
-                        snippet=_line_text(src_lines, loop.lineno),
-                        detail=(
-                            f"every assertion in `{func.name}` is inside this loop, and nothing "
-                            "establishes that it iterates at all. If the collection comes back "
-                            "empty the test passes having asserted nothing, and it will keep "
-                            "passing. One line before the loop -- `assert <collection>`, or a "
-                            "count -- is the whole fix."
-                        ),
-                    )
-                )
-                break
+            findings.extend(_vacuous_loop_findings(func, module_constants, rel, src_lines))
     return findings

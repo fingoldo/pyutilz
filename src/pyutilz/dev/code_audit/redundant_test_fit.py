@@ -113,6 +113,58 @@ def _call_signature(call: ast.Call) -> str | None:
     return f"{call.func.id}({parts})"
 
 
+def _literal_call_occurrences(tree: ast.Module) -> dict[str, list[tuple[str, int]]]:
+    """``{call signature: [(test name, line), ...]}`` for helper calls with literal arguments made inside test functions."""
+    cached_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (is_cached(node) or _is_literal_data_factory(node))
+    }
+    # signature -> [(test_qualname, lineno), ...]
+    occurrences: dict[str, list[tuple[str, int]]] = {}
+    for test_fn in _enclosing_test_functions(tree):
+        loop_bound = _iteration_bound_names(test_fn)
+        for node in ast.walk(test_fn):
+            if not isinstance(node, ast.Call):
+                continue
+            sig = _call_signature(node)
+            if sig is None:
+                continue
+            if any(isinstance(n, ast.Name) and n.id in loop_bound for arg in (*node.args, *(kw.value for kw in node.keywords)) for n in ast.walk(arg)):
+                continue
+            func_name = sig.split("(", 1)[0]
+            if func_name in cached_names:
+                continue
+            occurrences.setdefault(sig, []).append((test_fn.name, node.lineno))
+    return occurrences
+
+
+def _duplicate_call_findings(rel: str, src_lines: list[str], occurrences: dict[str, list[tuple[str, int]]]) -> list[Finding]:
+    """One Low finding per call signature made from two or more distinct test functions."""
+    findings: list[Finding] = []
+    for sig, hits in occurrences.items():
+        distinct_tests = {name for name, _ in hits}
+        if len(distinct_tests) < 2:
+            continue
+        _last_test, last_line = hits[-1]
+        findings.append(
+            Finding(
+                check="redundant_test_fit_call",
+                severity="Low",
+                file=rel,
+                line=last_line,
+                snippet=_line_text(src_lines, last_line),
+                detail=(
+                    f"identical call `{sig}` made from {len(distinct_tests)} different test "
+                    f"functions ({', '.join(sorted(distinct_tests))}) -- deterministic, so every "
+                    f"call after the first recomputes the same result. Consider a module-level "
+                    f"@cache-decorated wrapper shared across the test functions."
+                ),
+            )
+        )
+    return findings
+
+
 def scan_redundant_test_fit_calls(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -144,47 +196,6 @@ def scan_redundant_test_fit_calls(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        cached_names = {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (is_cached(node) or _is_literal_data_factory(node))
-        }
-
-        # signature -> [(test_qualname, lineno), ...]
-        occurrences: dict[str, list[tuple[str, int]]] = {}
-        for test_fn in _enclosing_test_functions(tree):
-            loop_bound = _iteration_bound_names(test_fn)
-            for node in ast.walk(test_fn):
-                if not isinstance(node, ast.Call):
-                    continue
-                sig = _call_signature(node)
-                if sig is None:
-                    continue
-                if any(isinstance(n, ast.Name) and n.id in loop_bound for arg in (*node.args, *(kw.value for kw in node.keywords)) for n in ast.walk(arg)):
-                    continue
-                func_name = sig.split("(", 1)[0]
-                if func_name in cached_names:
-                    continue
-                occurrences.setdefault(sig, []).append((test_fn.name, node.lineno))
-
-        for sig, hits in occurrences.items():
-            distinct_tests = {name for name, _ in hits}
-            if len(distinct_tests) < 2:
-                continue
-            _last_test, last_line = hits[-1]
-            findings.append(
-                Finding(
-                    check="redundant_test_fit_call",
-                    severity="Low",
-                    file=rel,
-                    line=last_line,
-                    snippet=_line_text(src_lines, last_line),
-                    detail=(
-                        f"identical call `{sig}` made from {len(distinct_tests)} different test "
-                        f"functions ({', '.join(sorted(distinct_tests))}) -- deterministic, so every "
-                        f"call after the first recomputes the same result. Consider a module-level "
-                        f"@cache-decorated wrapper shared across the test functions."
-                    ),
-                )
-            )
+        occurrences = _literal_call_occurrences(tree)
+        findings.extend(_duplicate_call_findings(rel, src_lines, occurrences))
     return findings

@@ -88,26 +88,17 @@ def _written_names(texts: list[str]) -> set[str]:
     return written
 
 
-def scan_column_no_write_path(
-    root: Path,
-    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
-    sql_dir: str = "sql",
-) -> list[Finding]:
-    """Find a declared column that no INSERT or UPDATE in the tree can fill.
+def _select_names(text: str) -> set[str]:
+    """Every word in a statement chunk that contains a SELECT -- the columns something reads."""
+    names: set[str] = set()
+    for chunk in re.split(r";|\n\s*\n", text):
+        if re.search(r"\bSELECT\b", chunk, re.I):
+            names.update(word.lower() for word in re.findall(r"[A-Za-z_][\w]*", chunk))
+    return names
 
-    It reads NULL forever, and a NULL in a telemetry column cannot be told apart from "this never
-    happened" -- so the panel built on it shows a flat line and everyone believes the thing being
-    measured does not occur. It happens because the DDL lands in one change and the writing code
-    in another, and nothing fails when a table has more columns than a statement names.
 
-    Columns that fill themselves (DEFAULT, GENERATED, serial, identity, primary keys) are skipped,
-    Reported only when the column IS named in a SELECT somewhere: an unread column reading NULL
-    forever fools nobody, whereas a read one is exactly the flat-panel failure above.
-    """
-    sql_root = root / sql_dir
-    if not sql_root.is_dir():
-        return []
-
+def _collect_sql_declarations(root: Path, sql_root: Path) -> tuple[dict[str, list[tuple[str, int, str]]], list[str]]:
+    """`{table: [(column, line, rel_path)]}` over every .sql file, plus each file's comment-stripped text."""
     declarations: dict[str, list[tuple[str, int, str]]] = {}
     sql_texts: list[str] = []
     for path in sorted(sql_root.rglob("*.sql")):
@@ -116,24 +107,27 @@ def scan_column_no_write_path(
         for table, columns in _declared_columns(text).items():
             for column, line in columns:
                 declarations.setdefault(table, []).append((column, line, path.relative_to(root).as_posix()))
+    return declarations, sql_texts
 
-    if not declarations:
-        return []
 
-    corpus = list(sql_texts)
+def _collect_py_corpus(root: Path, exclude_dirs: frozenset[str]) -> tuple[list[str], set[str]]:
+    """Every .py source text under root, plus the names read by a SELECT in those sources."""
+    corpus: list[str] = []
     read_names: set[str] = set()
     for py in _iter_py_files(root, exclude_dirs):
         text = py.read_text(encoding="utf-8", errors="replace")
         corpus.append(text)
-        for chunk in re.split(r";|\n\s*\n", text):
-            if re.search(r"\bSELECT\b", chunk, re.I):
-                read_names.update(word.lower() for word in re.findall(r"[A-Za-z_][\w]*", chunk))
-    for text in sql_texts:
-        for chunk in re.split(r";|\n\s*\n", text):
-            if re.search(r"\bSELECT\b", chunk, re.I):
-                read_names.update(word.lower() for word in re.findall(r"[A-Za-z_][\w]*", chunk))
+        read_names.update(_select_names(text))
+    return corpus, read_names
 
-    written = _written_names(corpus)
+
+def _findings_for_unwritten(
+    root: Path,
+    declarations: dict[str, list[tuple[str, int, str]]],
+    written: set[str],
+    read_names: set[str],
+) -> list[Finding]:
+    """One P1 finding per declared column that is read somewhere but written nowhere."""
     findings: list[Finding] = []
     for table, sites in sorted(declarations.items()):
         for column, line, rel in sorted(set(sites)):
@@ -157,3 +151,35 @@ def scan_column_no_write_path(
                 )
             )
     return findings
+
+
+def scan_column_no_write_path(
+    root: Path,
+    exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
+    sql_dir: str = "sql",
+) -> list[Finding]:
+    """Find a declared column that no INSERT or UPDATE in the tree can fill.
+
+    It reads NULL forever, and a NULL in a telemetry column cannot be told apart from "this never
+    happened" -- so the panel built on it shows a flat line and everyone believes the thing being
+    measured does not occur. It happens because the DDL lands in one change and the writing code
+    in another, and nothing fails when a table has more columns than a statement names.
+
+    Columns that fill themselves (DEFAULT, GENERATED, serial, identity, primary keys) are skipped,
+    Reported only when the column IS named in a SELECT somewhere: an unread column reading NULL
+    forever fools nobody, whereas a read one is exactly the flat-panel failure above.
+    """
+    sql_root = root / sql_dir
+    if not sql_root.is_dir():
+        return []
+
+    declarations, sql_texts = _collect_sql_declarations(root, sql_root)
+    if not declarations:
+        return []
+
+    py_corpus, read_names = _collect_py_corpus(root, exclude_dirs)
+    for text in sql_texts:
+        read_names.update(_select_names(text))
+
+    written = _written_names(sql_texts + py_corpus)
+    return _findings_for_unwritten(root, declarations, written, read_names)

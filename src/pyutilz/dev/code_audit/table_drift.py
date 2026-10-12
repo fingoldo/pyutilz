@@ -50,32 +50,45 @@ def _dictwriter_headers(fn: ast.AST) -> "tuple[dict[str, tuple[set[str], int]], 
     """
     writers: "dict[str, tuple[set[str], int]]" = {}
     anonymous: "list[tuple[set[str], int]]" = []
+    _collect_assigned_dictwriters(fn, writers, anonymous)
+    _collect_unbound_dictwriters(fn, writers, anonymous)
+    return writers, anonymous
+
+
+def _fieldnames_literal(ctor: ast.Call) -> set[str] | None:
+    """The literal ``fieldnames=`` of a DictWriter call, or None when absent or computed."""
+    for kw in ctor.keywords:
+        if kw.arg == "fieldnames":
+            return _literal_str_list(kw.value)
+    return None
+
+
+def _collect_assigned_dictwriters(fn: ast.AST, writers: "dict[str, tuple[set[str], int]]", anonymous: "list[tuple[set[str], int]]") -> None:
+    """Record DictWriter headers bound by an assignment: a plain name into ``writers``, anything else into ``anonymous``."""
     for stmt in ast.walk(fn):
         if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Call):
             continue
         ctor = stmt.value
         if not (isinstance(ctor.func, ast.Attribute) and ctor.func.attr == "DictWriter"):
             continue
-        for kw in ctor.keywords:
-            if kw.arg != "fieldnames":
-                continue
-            literal = _literal_str_list(kw.value)
-            if literal is None:
-                continue
-            target = stmt.targets[0] if stmt.targets else None
-            if isinstance(target, ast.Name):
-                writers[target.id] = (literal, ctor.lineno)
-            else:
-                anonymous.append((literal, ctor.lineno))
+        literal = _fieldnames_literal(ctor)
+        if literal is None:
+            continue
+        target = stmt.targets[0] if stmt.targets else None
+        if isinstance(target, ast.Name):
+            writers[target.id] = (literal, ctor.lineno)
+        else:
+            anonymous.append((literal, ctor.lineno))
+
+
+def _collect_unbound_dictwriters(fn: ast.AST, writers: "dict[str, tuple[set[str], int]]", anonymous: "list[tuple[set[str], int]]") -> None:
+    """Record DictWriter headers on calls never bound to a name, skipping any already recorded by line."""
     for call in ast.walk(fn):
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "DictWriter":
             if not any(call.lineno == line for _h, line in list(writers.values()) + anonymous):
-                for kw in call.keywords:
-                    if kw.arg == "fieldnames":
-                        literal = _literal_str_list(kw.value)
-                        if literal is not None:
-                            anonymous.append((literal, call.lineno))
-    return writers, anonymous
+                literal = _fieldnames_literal(call)
+                if literal is not None:
+                    anonymous.append((literal, call.lineno))
 
 
 def _dictwriter_drifts(fn: ast.AST) -> "list[tuple[int, set[str], set[str]]]":

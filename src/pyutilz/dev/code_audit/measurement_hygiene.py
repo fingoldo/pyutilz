@@ -83,6 +83,34 @@ def scan_regex_integer_parse(
     return findings
 
 
+def _documented_claim(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> int | None:
+    """The number a test docstring states ("N of M", "at least N", "all N"), or None when it states none."""
+    match = _NUMBER_CLAIM_RE.search(ast.get_docstring(fn) or "")
+    if not match:
+        return None
+    return int(re.sub(r"[,_ ]", "", next(g for g in match.groups() if g is not None)))
+
+
+def _assert_lower_bounds(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Compare]:
+    """Every ``>=`` / ``>`` comparison against an int literal inside an assert of ``fn``."""
+    # Only a comparison INSIDE an assert is "what the test gates on" -- an ordinary loop
+    # guard such as `if i > 0:` says nothing about the documented quantity, and comparing
+    # the docstring claim against every `>`/`>=` in the function reports it at the wrong
+    # line. Of the real assert bounds, only the weakest (minimum) one is the effective gate.
+    bounds: list[ast.Compare] = []
+    for assert_node in ast.walk(fn):
+        if not isinstance(assert_node, ast.Assert):
+            continue
+        for cmp_node in ast.walk(assert_node.test):
+            if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
+                continue
+            right = cmp_node.comparators[0]
+            if not (isinstance(right, ast.Constant) and isinstance(right.value, int) and not isinstance(right.value, bool)):
+                continue
+            bounds.append(cmp_node)
+    return bounds
+
+
 def scan_thresholds_below_documented_result(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -108,25 +136,10 @@ def scan_thresholds_below_documented_result(
         for fn in ast.walk(tree):
             if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name.startswith("test_")):
                 continue
-            match = _NUMBER_CLAIM_RE.search(ast.get_docstring(fn) or "")
-            if not match:
+            claimed = _documented_claim(fn)
+            if claimed is None:
                 continue
-            claimed = int(re.sub(r"[,_ ]", "", next(g for g in match.groups() if g is not None)))
-            # Only a comparison INSIDE an assert is "what the test gates on" -- an ordinary loop
-            # guard such as `if i > 0:` says nothing about the documented quantity, and comparing
-            # the docstring claim against every `>`/`>=` in the function reports it at the wrong
-            # line. Of the real assert bounds, only the weakest (minimum) one is the effective gate.
-            bounds: list[ast.Compare] = []
-            for assert_node in ast.walk(fn):
-                if not isinstance(assert_node, ast.Assert):
-                    continue
-                for cmp_node in ast.walk(assert_node.test):
-                    if not (isinstance(cmp_node, ast.Compare) and len(cmp_node.ops) == 1 and isinstance(cmp_node.ops[0], (ast.Gt, ast.GtE))):
-                        continue
-                    right = cmp_node.comparators[0]
-                    if not (isinstance(right, ast.Constant) and isinstance(right.value, int) and not isinstance(right.value, bool)):
-                        continue
-                    bounds.append(cmp_node)
+            bounds = _assert_lower_bounds(fn)
             if not bounds:
                 continue
             weakest = min(bounds, key=lambda c: c.comparators[0].value)  # type: ignore[attr-defined,union-attr]

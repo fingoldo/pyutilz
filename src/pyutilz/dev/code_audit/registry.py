@@ -528,6 +528,54 @@ def render_check_catalogue() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _select_scanners(checks: Optional[Iterable[str]]) -> list[str]:
+    """The scanner names to run: every non-opt-in scanner by default, else the requested ones resolved and de-duplicated."""
+    if checks is None:
+        return [n for n in _SCANNERS if n not in OPT_IN_ONLY]
+    selected: list[str] = []
+    for requested in checks:
+        resolved = resolve_check(requested)
+        if resolved is None:
+            raise ValueError(f"unknown check {requested!r}; available: {sorted(_SCANNERS) + sorted(_CHECK_ALIASES)}")
+        if resolved not in selected:  # two emitted ids can name the same scanner
+            selected.append(resolved)
+    return selected
+
+
+def _run_scanners_parallel(selected: list[str], root: Path, exclude_dirs: frozenset[str]) -> list[Finding]:
+    """Run the selected scanners across a process pool; any the pool cannot take are run in this process."""
+    import concurrent.futures
+
+    # See _MIN_SCANNERS_PER_WORKER: cap by physical cores AND by "enough scanners per
+    # worker to amortize its fixed spawn+import+re-parse cost", never by the raw
+    # scanner count (which used to spawn one interpreter per scanner on a big machine).
+    max_workers = max(2, min(_physical_cpu_count(), len(selected) // _MIN_SCANNERS_PER_WORKER))
+    # A worker resolves a built-in from its own re-imported registry (nothing to pickle); a
+    # scanner registered at runtime by the parent exists only here, so its callable is sent.
+    # An unpicklable one (a closure, a bound method) can't cross at all - it runs in-process.
+    tasks: list[tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]] = []
+    local_only: list[str] = []
+    for name in selected:
+        fn = _SCANNERS[name]
+        if _module_registered(name, fn):
+            tasks.append((name, None, root, exclude_dirs))
+        elif _is_picklable(fn):
+            tasks.append((name, fn, root, exclude_dirs))
+        else:
+            local_only.append(name)
+    out: list[Finding] = []
+    if tasks:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
+            for (name, *_), findings in zip(tasks, pool.map(_run_one, tasks)):
+                if findings is None:
+                    local_only.append(name)
+                else:
+                    out.extend(findings)
+    for name in local_only:
+        out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
+    return out
+
+
 def run_all(
     root: Path,
     checks: Optional[Iterable[str]] = None,
@@ -549,47 +597,11 @@ def run_all(
     (workers don't share memory), a real but much smaller cost than the AST-walk time saved
     by running scanners concurrently across cores.
     """
-    if checks is None:
-        selected = [n for n in _SCANNERS if n not in OPT_IN_ONLY]
-    else:
-        selected = []
-        for requested in checks:
-            resolved = resolve_check(requested)
-            if resolved is None:
-                raise ValueError(f"unknown check {requested!r}; available: {sorted(_SCANNERS) + sorted(_CHECK_ALIASES)}")
-            if resolved not in selected:  # two emitted ids can name the same scanner
-                selected.append(resolved)
+    selected = _select_scanners(checks)
 
     out: list[Finding] = []
     if parallel and len(selected) >= _MIN_SCANNERS_FOR_PARALLEL:
-        import concurrent.futures
-
-        # See _MIN_SCANNERS_PER_WORKER: cap by physical cores AND by "enough scanners per
-        # worker to amortize its fixed spawn+import+re-parse cost", never by the raw
-        # scanner count (which used to spawn one interpreter per scanner on a big machine).
-        max_workers = max(2, min(_physical_cpu_count(), len(selected) // _MIN_SCANNERS_PER_WORKER))
-        # A worker resolves a built-in from its own re-imported registry (nothing to pickle); a
-        # scanner registered at runtime by the parent exists only here, so its callable is sent.
-        # An unpicklable one (a closure, a bound method) can't cross at all - it runs in-process.
-        tasks: list[tuple[str, Optional[Callable[..., list[Finding]]], Path, frozenset[str]]] = []
-        local_only: list[str] = []
-        for name in selected:
-            fn = _SCANNERS[name]
-            if _module_registered(name, fn):
-                tasks.append((name, None, root, exclude_dirs))
-            elif _is_picklable(fn):
-                tasks.append((name, fn, root, exclude_dirs))
-            else:
-                local_only.append(name)
-        if tasks:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
-                for (name, *_), findings in zip(tasks, pool.map(_run_one, tasks)):
-                    if findings is None:
-                        local_only.append(name)
-                    else:
-                        out.extend(findings)
-        for name in local_only:
-            out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))
+        out.extend(_run_scanners_parallel(selected, root, exclude_dirs))
     else:
         for name in selected:
             out.extend(_run_scanner(name, _SCANNERS[name], root, exclude_dirs))

@@ -100,6 +100,32 @@ def _references_outside_imports(tree: ast.Module, name: str) -> bool:
     return False
 
 
+def _module_file(dotted: str, roots: list[Path]) -> Path | None:
+    """The source file for a dotted module name, searched under each configured package root."""
+    rel = Path(*dotted.split("."))
+    for base in roots:
+        for candidate in (base / rel.with_suffix(".py"), base.parent / rel.with_suffix(".py")):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _reexport_origin(dotted: str, attr: str, roots: list[Path]) -> str | None:
+    """The module ``attr`` is re-exported from by ``dotted``, or None when the target is unambiguous or unresolvable."""
+    target_file = _module_file(dotted, roots)
+    if target_file is None:
+        return None
+    target_tree = _safe_parse(target_file)
+    if target_tree is None:
+        return None
+    origin = _reexported_names(target_tree).get(attr)
+    if origin is None:
+        return None  # the patched module defines the name itself - the target is unambiguous
+    if _references_outside_imports(target_tree, attr):
+        return None  # it re-exports the name AND calls it, so patching it here changes its own behaviour
+    return origin
+
+
 def scan_reexport_patch_target(
     root: Path | str,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -128,15 +154,6 @@ def scan_reexport_patch_target(
     root = Path(root)
     roots = [Path(p) for p in package_roots] if package_roots else [root]
 
-    def _module_file(dotted: str) -> Path | None:
-        """The source file for a dotted module name, searched under each configured package root."""
-        rel = Path(*dotted.split("."))
-        for base in roots:
-            for candidate in (base / rel.with_suffix(".py"), base.parent / rel.with_suffix(".py")):
-                if candidate.is_file():
-                    return candidate
-        return None
-
     findings: list[Finding] = []
     for py in _iter_py_files(root, exclude_dirs):
         tree = _safe_parse(py)
@@ -153,17 +170,9 @@ def scan_reexport_patch_target(
             dotted = aliases.get(module_expr)
             if not dotted:
                 continue
-            target_file = _module_file(dotted)
-            if target_file is None:
-                continue
-            target_tree = _safe_parse(target_file)
-            if target_tree is None:
-                continue
-            origin = _reexported_names(target_tree).get(attr)
+            origin = _reexport_origin(dotted, attr, roots)
             if origin is None:
-                continue  # the patched module defines the name itself - the target is unambiguous
-            if _references_outside_imports(target_tree, attr):
-                continue  # it re-exports the name AND calls it, so patching it here changes its own behaviour
+                continue
             findings.append(
                 Finding(
                     check="reexport_patch_target",

@@ -265,6 +265,42 @@ def capture_signature(obj: object) -> str:
 _TYPING_ABSENT = object()
 
 
+def _is_foreign_symbol(obj: object) -> bool:
+    """True for a class, function or typing re-export that lives outside pyutilz and so is not part of its surface."""
+    owner = getattr(obj, "__module__", None)
+    if inspect.isclass(obj):
+        if owner and not owner.startswith("pyutilz"):
+            return True
+        return False
+    # Skip ``typing.*`` symbols entirely -- typing has flipped ``Union``/``Optional``/``Any``/``Tuple`` between
+    # ``_SpecialForm`` instances and real classes across Python 3.10/3.11/3.14, producing phantom diffs.
+    if owner == "typing":
+        return True
+    # Skip callables (functions / methods) imported from stdlib -- their parameter names drift across Python
+    # versions (``os.path.join(path, *paths)`` -> ``join(a, *p)``).
+    if inspect.isfunction(obj) or inspect.isbuiltin(obj):
+        if owner and not owner.startswith("pyutilz"):
+            return True
+    return False
+
+
+def _surface_kind(obj: object) -> str:
+    """The snapshot kind string for one public pyutilz symbol: class path, callable signature or the plain-value marker."""
+    if inspect.isclass(obj):
+        return f"class:{getattr(obj, '__module__', '?')}.{obj.__name__}"
+    if callable(obj):
+        return "callable" + capture_signature(obj)
+    # Plain values are captured WITHOUT their concrete type. Several pyutilz modules use a
+    # `_singleton = None` module global that a lazy-init function replaces with a real
+    # instance on first use (e.g. webtext.inflect_engine, webtext.nlp) -- whether that has
+    # happened yet depends on pytest's execution order within the process, so pinning
+    # "value:NoneType" vs "value:engine" produces an order-dependent flake, not a real API
+    # change. The test's own stated purpose is catching symbol REMOVAL/RENAME, not a
+    # value's type drifting, so dropping the type here is a deliberate narrowing of scope,
+    # not a loss of a guarantee this test ever meant to provide.
+    return "value"
+
+
 def capture_module_surface(mod: object) -> dict[str, str]:
     """Return ``{public_name: kind_string}`` for every public symbol
     on a module (skips dunders + private). Used by API-stability
@@ -285,7 +321,7 @@ def capture_module_surface(mod: object) -> dict[str, str]:
     # Names the module itself declares as lazily-populated caches (``__lazy_globals__``). Whether
     # one still holds its ``None`` placeholder or the real object depends on whether some earlier
     # test in the same process happened to trigger the lazy init, so their captured kind is pinned
-    # to "value" regardless -- see the comment on the plain-value branch below for the full
+    # to "value" regardless -- see ``_surface_kind`` for the full
     # rationale. Without this, ``webtext.nlp`` flipped from "value" to a spaCy Language
     # ``callable(text, ...)`` (a CALLABLE, so the value-branch narrowing did not cover it) on
     # whichever CI leg both installs spaCy and runs a sentencizing test first (2026-09-03).
@@ -303,47 +339,20 @@ def capture_module_surface(mod: object) -> dict[str, str]:
             continue
         if inspect.ismodule(obj):
             continue
+        # A typing re-export identified by IDENTITY, not by __module__: `TYPE_CHECKING` is a plain
+        # bool, so it carries no module and slipped past the `owner == "typing"` filter below into
+        # the public snapshot of any module doing `from typing import TYPE_CHECKING`.
+        if getattr(typing, name, _TYPING_ABSENT) is obj:
+            continue
         # Skip CLASSES re-exported from outside pyutilz; their identity
         # (typing.Any class-vs-_SpecialForm) flips across Python versions
         # and isn't part of our public API. Don't filter callables /
         # instances — we WANT to track ``logger = logging.getLogger(...)``,
         # ``client = SomeClient()``, etc. as part of the surface even
         # though their ``__module__`` is outside pyutilz.
-        # A typing re-export identified by IDENTITY, not by __module__: `TYPE_CHECKING` is a plain
-        # bool, so it carries no module and slipped past the `owner == "typing"` filter below into
-        # the public snapshot of any module doing `from typing import TYPE_CHECKING`.
-        if getattr(typing, name, _TYPING_ABSENT) is obj:
+        if _is_foreign_symbol(obj):
             continue
-        owner = getattr(obj, "__module__", None)
-        if inspect.isclass(obj):
-            if owner and not owner.startswith("pyutilz"):
-                continue
-        # Skip ``typing.*`` symbols entirely — typing has flipped
-        # ``Union``/``Optional``/``Any``/``Tuple`` between
-        # ``_SpecialForm`` instances and real classes across Python
-        # 3.10/3.11/3.14, producing phantom diffs.
-        elif owner == "typing":
-            continue
-        # Skip callables (functions / methods) imported from stdlib —
-        # their parameter names drift across Python versions
-        # (``os.path.join(path, *paths)`` -> ``join(a, *p)``).
-        elif inspect.isfunction(obj) or inspect.isbuiltin(obj):
-            if owner and not owner.startswith("pyutilz"):
-                continue
-        if inspect.isclass(obj):
-            out[name] = f"class:{getattr(obj, '__module__', '?')}.{obj.__name__}"
-        elif callable(obj):
-            out[name] = "callable" + capture_signature(obj)
-        else:
-            # Plain values are captured WITHOUT their concrete type. Several pyutilz modules use a
-            # `_singleton = None` module global that a lazy-init function replaces with a real
-            # instance on first use (e.g. webtext.inflect_engine, webtext.nlp) -- whether that has
-            # happened yet depends on pytest's execution order within the process, so pinning
-            # "value:NoneType" vs "value:engine" produces an order-dependent flake, not a real API
-            # change. The test's own stated purpose is catching symbol REMOVAL/RENAME, not a
-            # value's type drifting, so dropping the type here is a deliberate narrowing of scope,
-            # not a loss of a guarantee this test ever meant to provide.
-            out[name] = "value"
+        out[name] = _surface_kind(obj)
     return out
 
 
@@ -796,6 +805,22 @@ def _names_a_repo_symbol(citation: str, repo_root: Path) -> bool:
     return name in symbols or name.rsplit(".", 1)[-1] in symbols
 
 
+def _citation_is_backed(cite: str, repo_root: Path, test_name_prefix: str, test_corpus: str, by_name: frozenset[str]) -> bool:
+    """True when one backtick citation names an artefact that exists (test, path, filename, commit or repo symbol)."""
+    cite = cite.strip().split(":")[0].split("::")[0]
+    if cite.startswith(test_name_prefix) and f"def {cite}" in test_corpus:
+        return True
+    if cite and (repo_root / cite).exists():
+        return True
+    if cite and PurePosixPath(cite).name in by_name:
+        return True
+    if _is_a_commit_this_repo_has(cite, repo_root):
+        return True
+    if cite in _repo_symbols(repo_root):
+        return True
+    return _names_a_repo_symbol(cite, repo_root)
+
+
 def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_prefix: str = "test_") -> list[str]:
     """Find audit rows marked RESOLVED that cite nothing which exists.
 
@@ -831,21 +856,7 @@ def unbacked_audit_dispositions(audit_dir: Path, repo_root: Path, test_name_pref
             if len(cells) == 2 and _TALLY_VERDICT_RE.match(cells[0]) and _TALLY_COUNT_RE.match(cells[1]):
                 continue
             citations = _CITATION_RE.findall(line)
-            backed = False
-            for cite in citations:
-                cite = cite.strip().split(":")[0].split("::")[0]
-                if cite.startswith(test_name_prefix) and f"def {cite}" in test_corpus:
-                    backed = True
-                elif cite and (repo_root / cite).exists():
-                    backed = True
-                elif cite and PurePosixPath(cite).name in by_name:
-                    backed = True
-                elif _is_a_commit_this_repo_has(cite, repo_root):
-                    backed = True
-                elif cite in _repo_symbols(repo_root):
-                    backed = True
-                elif _names_a_repo_symbol(cite, repo_root):
-                    backed = True
+            backed = any(_citation_is_backed(cite, repo_root, test_name_prefix, test_corpus, by_name) for cite in citations)
             if not backed:
                 cited = ", ".join(citations) if citations else "nothing"
                 unbacked.append(f"{doc.relative_to(repo_root).as_posix()}:{lineno} RESOLVED cites {cited}")
