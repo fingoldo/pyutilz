@@ -8,6 +8,7 @@ from ._logproxy import logger
 
 from typing import Any, Dict, Iterable, Optional, Sequence, Union
 import math
+import re
 
 import orjson as _orjson
 
@@ -17,6 +18,9 @@ from pyutilz.core import jsonlib
 # json/jsonb text, so its presence (or, conservatively, that of a legitimately-escaped backslash
 # sequence that merely LOOKS like one) is what forces the slow normalize-the-object path.
 _ESCAPED_NUL = "\\u0000"
+# A lone UTF-16 surrogate is not valid Unicode: orjson refuses it and postgres rejects its escape.
+_LONE_SURROGATE = re.compile("[\ud800-\udfff]")
+
 
 def json_serial(obj: Any) -> str:
     """JSON serializer for objects not serializable by default json code. Sample: json.dumps(oProduct,default=json_serial)"""
@@ -277,7 +281,10 @@ def _normalize_for_pg_json(obj: Any) -> Any:
         # could not tell a postgres-hostile NUL escape from a value that legitimately contains the
         # six literal characters backslash-u-0-0-0-0 -- a code snippet, regex or Windows path --
         # and mangled such a value into unparseable JSON.
-        return obj.replace("\x00", "") if "\x00" in obj else obj
+        if "\x00" in obj:
+            obj = obj.replace("\x00", "")
+        # Lone surrogates become U+FFFD; otherwise the serializer raises on the whole document.
+        return _LONE_SURROGATE.sub("�", obj)
     if isinstance(obj, dict):
         return {(_normalize_for_pg_json(k) if isinstance(k, str) else k): _normalize_for_pg_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):

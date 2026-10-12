@@ -265,8 +265,8 @@ def test_f29_interior_separators_survive_leading_or_trailing_stripping(_no_emoji
 @pytest.mark.parametrize(
     ("obj", "expected"),
     [
-        ({1: "intkey"}, '{"1": "intkey"}'),
-        ({"s": "\ud800"}, '{"s": "\\ud800"}'),
+        ({1: "intkey"}, '{"1":"intkey"}'),
+        ({"s": "\ud800"}, '{"s":"�"}'),
     ],
 )
 def test_f30_json_pg_dumps_handles_shapes_orjson_rejects(obj: dict, expected: str) -> None:
