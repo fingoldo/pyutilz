@@ -12,7 +12,7 @@
 # the marker keeps this file usable on a py3.8 interpreter, where those hooks are not needed.
 # Pinned to one full SHA shared with every workflow `uses:` ref, the reusable workflows' py-ci-shared-ref input and the
 # pre-commit rev: an unpinned install tracked master, so any py-ci-shared push could change this repo's gates unreviewed.
-py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared@8c19f17a4537e66db1c86245502fc6883791d632 ; python_version >= '3.9'  # v1.22.5  # pragma: allowlist secret
+py-ci-shared @ git+https://github.com/fingoldo/py-ci-shared@c9c6a89d15ce265e80c5c0d0467f3d384a33adba ; python_version >= '3.9'  # v1.22.6  # pragma: allowlist secret
 
 # pytest-randomly moved to pyproject.toml's [dev] extra on 2026-09-03 (packaging audit 03/F02).
 # It was declared here alone, and no workflow installed this file then (ci.yml and mypy-full.yml do
