@@ -252,11 +252,32 @@ __all__ = sorted({"join", "split"})
     assert scan_possibly_dead_import(tmp_path) == []
 
 
-def test_possibly_dead_import_package_init_facade_is_not_reported(tmp_path: Path):
-    """A package ``__init__.py`` import is a public facade re-export: its name is the package API."""
+def test_possibly_dead_import_init_from_reexport_nothing_consumes_is_reported(tmp_path: Path):
+    """A ``from X import Y`` re-export in ``__init__.py`` that is not in ``__all__`` and never consumed is dead."""
     (tmp_path / "pkg").mkdir()
     _write(tmp_path / "pkg", "__init__.py", """
 from os.path import join
+""")
+    findings = scan_possibly_dead_import(tmp_path)
+    assert [f.file for f in findings] == ["pkg/__init__.py"]
+
+
+def test_possibly_dead_import_init_reexport_listed_in_all_is_not_reported(tmp_path: Path):
+    """A re-export in ``__all__`` is public API and must not be reported."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path / "pkg", "__init__.py", """
+from os.path import join
+
+__all__ = ["join"]
+""")
+    assert scan_possibly_dead_import(tmp_path) == []
+
+
+def test_possibly_dead_import_init_plain_import_is_not_reported(tmp_path: Path):
+    """A plain ``import pkg.module`` in ``__init__.py`` is kept on purpose (side effects such as a patch)."""
+    (tmp_path / "pkg").mkdir()
+    _write(tmp_path / "pkg", "__init__.py", """
+import os.path
 """)
     assert scan_possibly_dead_import(tmp_path) == []
 
@@ -265,7 +286,7 @@ def test_possibly_dead_import_ordinary_module_still_reported_next_to_init(tmp_pa
     """The ``__init__.py`` exemption must not hide a dead import in a sibling ordinary module."""
     (tmp_path / "pkg").mkdir()
     _write(tmp_path / "pkg", "__init__.py", """
-from os.path import join
+import os.path
 """)
     _write(tmp_path / "pkg", "util.py", """
 import json

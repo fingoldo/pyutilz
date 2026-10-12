@@ -230,17 +230,19 @@ def scan_possibly_dead_import(
     corpus_attr_names, from_import_names_by_file = _corpus_import_index(root, exclude_dirs)
 
     for py in _iter_py_files(root, exclude_dirs):
-        # A package ``__init__.py`` is a public facade: its imports exist to be consumed as
-        # ``package.name`` by callers outside this file, and removing one changes the package's API.
-        # Also covers side-effect imports placed there on purpose (e.g. ``import pkg.module`` that
-        # installs a patch). Dead imports inside ordinary modules are still reported.
-        if py.name == "__init__.py":
-            continue
         tree = _safe_parse(py)
         if tree is None:
             continue
         src_lines = _read_src_lines(py)
         bindings = _imported_bindings(tree, src_lines)
+        if py.name == "__init__.py":
+            # A package ``__init__.py`` is a public facade. A plain ``import pkg.module`` there is kept on
+            # purpose (it often installs a patch as a side effect), so only ``from X import Y`` re-exports
+            # are checked. A re-export listed in ``__all__`` already counts as used (see
+            # ``_names_referenced_in_file``), and one consumed as ``package.name`` is caught by the corpus
+            # attribute check, so what remains is a re-export nothing consumes.
+            plain_import_lines = {node.lineno for node in tree.body if isinstance(node, ast.Import)}
+            bindings = [b for b in bindings if b[1] not in plain_import_lines]
         if not bindings:
             continue
         skip_lines = {lineno for _, lineno, _ in bindings}
