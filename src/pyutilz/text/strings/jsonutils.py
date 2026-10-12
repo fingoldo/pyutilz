@@ -194,36 +194,41 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
         attribute = [attribute]
     elems: Any = {}
     if isinstance(json_obj, list):
-
-        elems = []
-        for elem in json_obj:
-            found = False
-            for next_attribute in attribute:
-                if next_attribute in elem and elem[next_attribute] is not None:
-                    elems.append(elem[next_attribute])
-                    found = True
-                    break
-
-            if not found:
-                elems.append(elem)
-
+        elems = _extract_from_list(json_obj, attribute)
     elif isinstance(json_obj, dict):
-        elems = {}
-        for key, item in json_obj.items():
-            if isinstance(item, dict):
-                found = False
-                for next_attribute in attribute:
-                    if next_attribute in item and item.get(next_attribute) is not None:
-                        elems[key] = item[next_attribute]
-                        found = True
-                        break
-                if not found:
-                    elems[key] = item
-            elif isinstance(item, str):
-                elems[key] = item
-            elif isinstance(item, list):
-                elems[key] = extract_json_attribute(item, attribute)
+        elems = _extract_from_dict(json_obj, attribute)
     return elems  # type: ignore[no-any-return]  # elems is built from arbitrary decoded JSON
+
+
+def _first_present_attribute(elem: Any, attribute: list) -> tuple[bool, Any]:
+    """Return ``(True, value)`` for the first non-null attribute of ``elem`` in priority order, else ``(False, None)``."""
+    for next_attribute in attribute:
+        if next_attribute in elem and elem[next_attribute] is not None:
+            return True, elem[next_attribute]
+    return False, None
+
+
+def _extract_from_list(json_obj: list, attribute: list) -> list:
+    """Replace each list element by its first present attribute, keeping the element when none is present."""
+    elems: list = []
+    for elem in json_obj:
+        found, value = _first_present_attribute(elem, attribute)
+        elems.append(value if found else elem)
+    return elems
+
+
+def _extract_from_dict(json_obj: dict, attribute: list) -> dict:
+    """Map each dict value to its extracted attribute (dicts), itself (strings) or recursed value (lists)."""
+    elems: dict = {}
+    for key, item in json_obj.items():
+        if isinstance(item, dict):
+            found, value = _first_present_attribute(item, attribute)
+            elems[key] = value if found else item
+        elif isinstance(item, str):
+            elems[key] = item
+        elif isinstance(item, list):
+            elems[key] = extract_json_attribute(item, attribute)
+    return elems
 
 
 def remove_json_empty_attributes(json_obj: dict, attributes: Sequence) -> None:

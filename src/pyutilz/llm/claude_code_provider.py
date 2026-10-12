@@ -207,6 +207,36 @@ def _strip_json_fence(text: str) -> str:
         return fence_match.group(1).strip()
     return text
 
+
+def _assert_argv_shell_safe(cmd: list) -> None:
+    """Refuse a CLI argv carrying a shell-significant character (the prompt and system prompt never go in argv)."""
+    unsafe_argv = set('&|<>^"')
+    for arg in cmd[1:]:
+        if unsafe_argv & set(arg):
+            raise ValueError(
+                f"refusing to spawn the CLI with a shell-significant character in argv: {arg!r}. "
+                "Prompt content belongs on stdin and the system prompt in a file."
+            )
+
+
+def _remove_system_prompt_file(path: str | None) -> None:
+    """Best-effort delete of the temporary system-prompt file, if one was created."""
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:  # pragma: no cover -- best-effort cleanup
+            logger.debug("Could not remove the temporary system-prompt file %s", path)
+
+
+def _kill_proc_holder(proc_holder: list) -> None:
+    """Kill every child process recorded in ``proc_holder`` (the whole tree, not just the PID)."""
+    for child in proc_holder:
+        # The tree, not the PID: a surviving grandchild holds the inherited pipes
+        # open, so the reader threads never reach EOF and the cancelled call leaks
+        # one of each.
+        _kill_process_tree(child)
+
+
 class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
     """LLM provider that uses Claude Code for LLM calls (your Max subscription).
 
@@ -760,13 +790,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             # on argv carrying no untrusted text, not on shell=False alone. That property holds
             # by construction (the prompt goes through stdin, the system prompt through a file),
             # and is checked here so a future argument cannot quietly break it.
-            _UNSAFE_ARGV = set('&|<>^"')
-            for _arg in cmd[1:]:
-                if _UNSAFE_ARGV & set(_arg):
-                    raise ValueError(
-                        f"refusing to spawn the CLI with a shell-significant character in argv: {_arg!r}. "
-                        "Prompt content belongs on stdin and the system prompt in a file."
-                    )
+            _assert_argv_shell_safe(cmd)
 
             logger.debug("Running Claude CLI: %s...", cmd[0])
 
@@ -807,18 +831,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 # cancelled, but with the child dead its stdout closes, the reader hits EOF and
                 # the consumer returns within its one-second poll.
                 cancel_evt.set()
-                for child in proc_holder:
-                    # The tree, not the PID: a surviving grandchild holds the inherited pipes
-                    # open, so the reader threads never reach EOF and the cancelled call leaks
-                    # one of each.
-                    _kill_process_tree(child)
+                _kill_proc_holder(proc_holder)
                 raise
             finally:
-                if system_prompt_file:
-                    try:
-                        os.unlink(system_prompt_file)
-                    except OSError:  # pragma: no cover -- best-effort cleanup
-                        logger.debug("Could not remove the temporary system-prompt file %s", system_prompt_file)
+                _remove_system_prompt_file(system_prompt_file)
                 shutil.rmtree(child_cwd, ignore_errors=True)
 
             if returncode != 0:

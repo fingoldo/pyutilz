@@ -55,6 +55,114 @@ def _looks_dict_like(iter_node: ast.AST) -> bool:
     return isinstance(iter_node, ast.Call) and isinstance(iter_node.func, ast.Attribute) and iter_node.func.attr in {"items", "keys", "values"}
 
 
+def _delete_findings(child: ast.Delete, node: ast.For | ast.AsyncFor, iter_chain: str, rel: str, src_lines: list[str]) -> list[Finding]:
+    """P0 findings for ``del d[...]`` on the collection being iterated by loop ``node``."""
+    findings: list[Finding] = []
+    for tgt in child.targets:
+        if isinstance(tgt, ast.Subscript):
+            sub_chain = _iter_target_chain(tgt.value)
+            if sub_chain == iter_chain:
+                findings.append(Finding(
+                    check="mutation_during_iteration",
+                    severity="P0",
+                    file=rel,
+                    line=child.lineno,
+                    snippet=_line_text(src_lines, child.lineno),
+                    detail=(
+                        f"``del {iter_chain}[...]`` while iterating "
+                        f"the same collection at line {node.lineno}. "
+                        f"Dict / set mutation raises RuntimeError; "
+                        f"list mutation silently skips elements. "
+                        f"Iterate over ``list({iter_chain})`` or "
+                        f"``{iter_chain}.copy()`` instead."
+                    ),
+                ))
+    return findings
+
+
+def _assign_findings(child: ast.Assign, node: ast.For | ast.AsyncFor, iter_chain: str, rel: str, src_lines: list[str]) -> list[Finding]:
+    """P1 findings for ``d[k] = v`` on the collection being iterated by loop ``node``."""
+    # d[k] = v  -- only when adding a new key (size change)
+    # The safe case is reassignment of an existing key, which
+    # is size-preserving and not raised by CPython. We can't
+    # statically tell new vs existing, so flag conservatively
+    # at severity P1 (one rung lower than del / .pop).
+    findings: list[Finding] = []
+    for tgt in child.targets:
+        if isinstance(tgt, ast.Subscript):
+            sub_chain = _iter_target_chain(tgt.value)
+            if sub_chain == iter_chain:
+                if _looks_dict_like(node.iter):
+                    detail = (
+                        f"``{iter_chain}[...] = ...`` while iterating "
+                        f"the same collection at line {node.lineno}. "
+                        f"Reassigning an EXISTING key is size-preserving "
+                        f"and safe (CPython); ADDING a new key changes "
+                        f"size and raises RuntimeError on dict / set. "
+                        f"Statically indistinguishable -- inspect."
+                    )
+                else:
+                    detail = (
+                        f"``{iter_chain}[...] = ...`` while iterating "
+                        f"the same collection at line {node.lineno}. "
+                        f"If this is a dict/set, adding a new key raises "
+                        f"RuntimeError; if a list, subscript-assignment can't "
+                        f"change size (in-range succeeds, out-of-range raises "
+                        f"IndexError) but verify the index is still meaningful "
+                        f"relative to the in-progress iteration."
+                    )
+                findings.append(Finding(
+                    check="mutation_during_iteration",
+                    severity="P1",
+                    file=rel,
+                    line=child.lineno,
+                    snippet=_line_text(src_lines, child.lineno),
+                    detail=detail,
+                ))
+    return findings
+
+
+def _call_findings(child: ast.Call, node: ast.For | ast.AsyncFor, iter_chain: str, rel: str, src_lines: list[str]) -> list[Finding]:
+    """P0 findings for a mutating method call (``d.append``, ``d.pop``, ...) on the iterated collection."""
+    # d.append(...) / d.pop(...) / etc.
+    if not isinstance(child.func, ast.Attribute):
+        return []
+    method = child.func.attr
+    receiver_chain = _iter_target_chain(child.func.value)
+    if receiver_chain == iter_chain and method in (_MUTATING_DICT_METHODS | _MUTATING_LIST_METHODS | _MUTATING_SET_METHODS):
+        return [
+            Finding(
+                check="mutation_during_iteration",
+                severity="P0",
+                file=rel,
+                line=child.lineno,
+                snippet=_line_text(src_lines, child.lineno),
+                detail=(
+                    f"``{iter_chain}.{method}(...)`` while iterating "
+                    f"the same collection at line {node.lineno}. "
+                    f"Iterate over a copy: ``for x in list({iter_chain}):`` "
+                    f"or ``{iter_chain}.copy()``."
+                ),
+            )
+        ]
+    return []
+
+
+def _loop_mutation_findings(node: ast.For | ast.AsyncFor, iter_chain: str, rel: str, src_lines: list[str]) -> list[Finding]:
+    """Every mutation of ``iter_chain`` inside the body of loop ``node``."""
+    findings: list[Finding] = []
+    for child in ast.walk(node):
+        if child is node:
+            continue
+        if isinstance(child, ast.Delete):
+            findings.extend(_delete_findings(child, node, iter_chain, rel, src_lines))
+        if isinstance(child, ast.Assign):
+            findings.extend(_assign_findings(child, node, iter_chain, rel, src_lines))
+        if isinstance(child, ast.Call):
+            findings.extend(_call_findings(child, node, iter_chain, rel, src_lines))
+    return findings
+
+
 def scan_mutation_during_iteration(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -86,85 +194,5 @@ def scan_mutation_during_iteration(
             iter_chain = _iter_target_chain(node.iter)
             if iter_chain is None:
                 continue  # Iterated chain wasn't a live view we can track.
-            for child in ast.walk(node):
-                if child is node:
-                    continue
-                # del d[...]
-                if isinstance(child, ast.Delete):
-                    for tgt in child.targets:
-                        if isinstance(tgt, ast.Subscript):
-                            sub_chain = _iter_target_chain(tgt.value)
-                            if sub_chain == iter_chain:
-                                findings.append(Finding(
-                                    check="mutation_during_iteration",
-                                    severity="P0",
-                                    file=rel,
-                                    line=child.lineno,
-                                    snippet=_line_text(src_lines, child.lineno),
-                                    detail=(
-                                        f"``del {iter_chain}[...]`` while iterating "
-                                        f"the same collection at line {node.lineno}. "
-                                        f"Dict / set mutation raises RuntimeError; "
-                                        f"list mutation silently skips elements. "
-                                        f"Iterate over ``list({iter_chain})`` or "
-                                        f"``{iter_chain}.copy()`` instead."
-                                    ),
-                                ))
-                # d[k] = v  -- only when adding a new key (size change)
-                # The safe case is reassignment of an existing key, which
-                # is size-preserving and not raised by CPython. We can't
-                # statically tell new vs existing, so flag conservatively
-                # at severity P1 (one rung lower than del / .pop).
-                if isinstance(child, ast.Assign):
-                    for tgt in child.targets:
-                        if isinstance(tgt, ast.Subscript):
-                            sub_chain = _iter_target_chain(tgt.value)
-                            if sub_chain == iter_chain:
-                                if _looks_dict_like(node.iter):
-                                    detail = (
-                                        f"``{iter_chain}[...] = ...`` while iterating "
-                                        f"the same collection at line {node.lineno}. "
-                                        f"Reassigning an EXISTING key is size-preserving "
-                                        f"and safe (CPython); ADDING a new key changes "
-                                        f"size and raises RuntimeError on dict / set. "
-                                        f"Statically indistinguishable -- inspect."
-                                    )
-                                else:
-                                    detail = (
-                                        f"``{iter_chain}[...] = ...`` while iterating "
-                                        f"the same collection at line {node.lineno}. "
-                                        f"If this is a dict/set, adding a new key raises "
-                                        f"RuntimeError; if a list, subscript-assignment can't "
-                                        f"change size (in-range succeeds, out-of-range raises "
-                                        f"IndexError) but verify the index is still meaningful "
-                                        f"relative to the in-progress iteration."
-                                    )
-                                findings.append(Finding(
-                                    check="mutation_during_iteration",
-                                    severity="P1",
-                                    file=rel,
-                                    line=child.lineno,
-                                    snippet=_line_text(src_lines, child.lineno),
-                                    detail=detail,
-                                ))
-                # d.append(...) / d.pop(...) / etc.
-                if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
-                    method = child.func.attr
-                    receiver_chain = _iter_target_chain(child.func.value)
-                    if receiver_chain == iter_chain and method in (_MUTATING_DICT_METHODS | _MUTATING_LIST_METHODS | _MUTATING_SET_METHODS):
-                        findings.append(
-                            Finding(
-                                check="mutation_during_iteration",
-                                severity="P0",
-                                file=rel,
-                                line=child.lineno,
-                                snippet=_line_text(src_lines, child.lineno),
-                                detail=(
-                                    f"``{iter_chain}.{method}(...)`` while iterating "
-                                    f"the same collection at line {node.lineno}. "
-                                    f"Iterate over a copy: ``for x in list({iter_chain}):`` "
-                                    f"or ``{iter_chain}.copy()``."
-                                ),
-                            )
-                        )
+            findings.extend(_loop_mutation_findings(node, iter_chain, rel, src_lines))
     return findings

@@ -298,29 +298,11 @@ def sweep_backend_crossover(
             continue
         best_name, best_ms, best_diff = None, float("inf"), 0.0
         # Pass 1: warm up + equivalence-gate; survivors go into the timed rank.
-        survivors: dict = {}
-        diffs: dict = {}
-        for name in names:
-            fn = variants[name]
-            try:
-                fn(*args)  # warmup (jit / cudagraph / alloc)
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                out = fn(*args)
-                if synchronize_gpu:
-                    synchronize_gpu_if_available()
-                diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, out)
-                # equivalence gate: a faster-but-divergent variant is a bug, not a winner
-                if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
-                    if verbose:
-                        logger.info("sweep %s=%d: %s DIVERGES (maxdiff=%.2e) -> skip", primary_axis, size, name, diff)
-                    continue
-            except Exception as e:
-                if verbose:
-                    logger.info("sweep %s=%d: %s failed warmup (%s) -> skip", primary_axis, size, name, e)
-                continue
-            diffs[name] = diff
-            survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
+        survivors, diffs = _gate_size_survivors(
+            variants, names, ref, ref_out, ref_scale, args,
+            size=size, primary_axis=primary_axis, synchronize_gpu=synchronize_gpu,
+            equiv_atol=equiv_atol, equiv_rtol=equiv_rtol, verbose=verbose,
+        )
         # Pass 2: rank survivors (robust=interleaved min over reps; mean=legacy).
         timings = _rank_candidates(survivors, repeats=repeats, synchronize_gpu=synchronize_gpu, ranking=ranking)
         for name in names:  # declared order -> ties prefer the earlier (reference) variant
@@ -335,7 +317,53 @@ def sweep_backend_crossover(
         if verbose:
             logger.info("sweep %s=%d -> %s (%.3f ms)", primary_axis, size, best_name, best_ms)
 
-    # Collapse consecutive equal-winner sizes into <axis>_max bands.
+    return _collapse_winner_bands(per_size_winner, primary_axis, decision_key, extra)
+
+
+def _gate_size_survivors(
+    variants: "dict[str, Callable]",
+    names: list,
+    ref: str,
+    ref_out: Any,
+    ref_scale: float,
+    args: tuple,
+    *,
+    size: int,
+    primary_axis: str,
+    synchronize_gpu: bool,
+    equiv_atol: float,
+    equiv_rtol: float,
+    verbose: int,
+) -> "tuple[dict, dict]":
+    """Warm up each variant at one size and keep those that run and match the reference; return ``(survivors, diffs)``."""
+    survivors: dict = {}
+    diffs: dict = {}
+    for name in names:
+        fn = variants[name]
+        try:
+            fn(*args)  # warmup (jit / cudagraph / alloc)
+            if synchronize_gpu:
+                synchronize_gpu_if_available()
+            out = fn(*args)
+            if synchronize_gpu:
+                synchronize_gpu_if_available()
+            diff = 0.0 if (name == ref or ref_out is None) else _max_abs_diff(ref_out, out)
+            # equivalence gate: a faster-but-divergent variant is a bug, not a winner
+            if name != ref and not (diff <= equiv_atol + equiv_rtol * ref_scale):
+                if verbose:
+                    logger.info("sweep %s=%d: %s DIVERGES (maxdiff=%.2e) -> skip", primary_axis, size, name, diff)
+                continue
+        except Exception as e:
+            if verbose:
+                logger.info("sweep %s=%d: %s failed warmup (%s) -> skip", primary_axis, size, name, e)
+            continue
+        diffs[name] = diff
+        survivors[name] = lambda _fn=fn, _a=args: _fn(*_a)
+    return survivors, diffs
+
+
+def _collapse_winner_bands(per_size_winner: list, primary_axis: str, decision_key: str, extra: dict) -> list:
+    """Collapse consecutive equal-winner sizes into ``<axis>_max`` region bands (last band is the catch-all)."""
     regions: list = []
     i = 0
     while i < len(per_size_winner):

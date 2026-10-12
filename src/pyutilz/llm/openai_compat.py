@@ -781,19 +781,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         self._handle_special_status(resp)
 
         if resp.status_code in _NON_RETRYABLE_STATUSES:
-            try:
-                err_body = resp.json()
-                detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
-            except (ValueError, _JSONDecodeError):
-                detail = resp.text
-            repaired = self._body_after_rejected_request(body, resp.status_code, detail)
-            if repaired is not None and not repairing:
-                logger.warning(
-                    "%s/%s rejected a request parameter (HTTP %s) - re-issuing once with it adjusted: %s",
-                    self._provider_name, self.model_name, resp.status_code, detail[:160],
-                )
-                return await self._post_and_unwrap(repaired, repairing=True)
-            raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
+            return await self._post_and_unwrap(self._repaired_body_or_raise(resp, body, repairing), repairing=True)
         resp.raise_for_status()
         data = parse_response_envelope(resp, self._provider_name)
 
@@ -806,6 +794,42 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         if usage:
             self._record_usage(usage)
 
+        return self._unwrap_completion(data, resp)
+
+    def _repaired_body_or_raise(self, resp: httpx.Response, body: dict[str, Any], repairing: bool) -> dict[str, Any]:
+        """Return the adjusted body for a parameter-rejection (once), or raise the API error for a non-retryable status."""
+        try:
+            err_body = resp.json()
+            detail = err_body.get("error", {}).get("message", resp.text) if isinstance(err_body, dict) else str(err_body)
+        except (ValueError, _JSONDecodeError):
+            detail = resp.text
+        repaired = self._body_after_rejected_request(body, resp.status_code, detail)
+        if repaired is not None and not repairing:
+            logger.warning(
+                "%s/%s rejected a request parameter (HTTP %s) - re-issuing once with it adjusted: %s",
+                self._provider_name, self.model_name, resp.status_code, detail[:160],
+            )
+            return repaired
+        raise LLMProviderError(f"{self._provider_name} API error {resp.status_code}: {detail}")
+
+    def _capture_message_extras(self, message: dict[str, Any]) -> None:
+        """Store tool calls, citations and reasoning fragments read off a completion message."""
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            self.last_tool_calls = tool_calls
+        else:
+            self.last_tool_calls = []
+        # xAI live-search citations + OpenAI annotations (which OR also
+        # uses for web-search) live on the message.
+        citations = message.get("citations")
+        if isinstance(citations, list):
+            self.last_citations = citations
+        else:
+            self.last_citations = []
+        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, _reasoning.from_message(message))
+
+    def _unwrap_completion(self, data: dict[str, Any], resp: httpx.Response) -> str | None:
+        """Turn a parsed completion envelope into its text (``""`` for tool-call-only, ``None`` for empty)."""
         choices = data.get("choices", [])
         message = (choices[0].get("message") or {}) if choices else {}
         content_so_far = message.get("content")
@@ -827,19 +851,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         # Capture function-calling output before unwrapping content -- these
         # silently disappeared previously; pyutilz returned only the bare
         # text (often empty when the model chose tool_calls path).
-        tool_calls = message.get("tool_calls")
-        if isinstance(tool_calls, list):
-            self.last_tool_calls = tool_calls
-        else:
-            self.last_tool_calls = []
-        # xAI live-search citations + OpenAI annotations (which OR also
-        # uses for web-search) live on the message.
-        citations = message.get("citations")
-        if isinstance(citations, list):
-            self.last_citations = citations
-        else:
-            self.last_citations = []
-        self._reasoning_fragments = _reasoning.collect(self._reasoning_fragments, _reasoning.from_message(message))
+        self._capture_message_extras(message)
         content = message.get("content")
         if content is None and self.last_tool_calls:
             # Tool-call-only response (no assistant text). Return empty

@@ -63,29 +63,10 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
         tree = _safe_parse(py)
         if tree is None:
             continue
-        for item in tree.body:
-            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                names.add(item.target.id)
-            elif isinstance(item, ast.Assign):
-                names.update(t.id for t in item.targets if isinstance(t, ast.Name))
-            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(item.name)
-            elif isinstance(item, ast.Import):
-                names.update((a.asname or a.name.split(".")[0]) for a in item.names)
-            elif isinstance(item, ast.ImportFrom):
-                names.update((a.asname or a.name) for a in item.names if a.name != "*")
+        _add_module_level_names(tree, names)
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                for item in node.body:
-                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                        names.add(item.target.id)
-                    elif isinstance(item, ast.Assign):
-                        names.update(t.id for t in item.targets if isinstance(t, ast.Name))
-                    elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        names.add(item.name)
-                        if item.name == "__init__":
-                            _args = item.args
-                            names.update(a.arg for a in (*_args.posonlyargs, *_args.args, *_args.kwonlyargs) if a.arg != "self")
+                _add_class_body_names(node, names)
             elif isinstance(node, ast.Assign):
                 names.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
@@ -93,6 +74,35 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
             elif isinstance(node, ast.Attribute):
                 names.add(node.attr)
     return names
+
+
+def _add_module_level_names(tree: ast.Module, names: set[str]) -> None:
+    """Add the module-level bindings of one file (annotated/plain assignments, defs, classes, imports) to ``names``."""
+    for item in tree.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            names.add(item.target.id)
+        elif isinstance(item, ast.Assign):
+            names.update(t.id for t in item.targets if isinstance(t, ast.Name))
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(item.name)
+        elif isinstance(item, ast.Import):
+            names.update((a.asname or a.name.split(".")[0]) for a in item.names)
+        elif isinstance(item, ast.ImportFrom):
+            names.update((a.asname or a.name) for a in item.names if a.name != "*")
+
+
+def _add_class_body_names(node: ast.ClassDef, names: set[str]) -> None:
+    """Add the fields, methods and ``__init__`` parameter names declared in one class body to ``names``."""
+    for item in node.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            names.add(item.target.id)
+        elif isinstance(item, ast.Assign):
+            names.update(t.id for t in item.targets if isinstance(t, ast.Name))
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(item.name)
+            if item.name == "__init__":
+                _args = item.args
+                names.update(a.arg for a in (*_args.posonlyargs, *_args.args, *_args.kwonlyargs) if a.arg != "self")
 
 
 def _dynamic_attribute_classes(tree: ast.Module) -> set[str]:

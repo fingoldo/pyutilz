@@ -387,6 +387,42 @@ def _module_level_def_line(tree: ast.Module, name: str) -> int:
     return 1 << 30
 
 
+def _module_level_bindings(tree: ast.Module, imported: set) -> set:
+    """Return every name bound at module level: imports plus top-level defs, assignments and annotated targets."""
+    module_level = set(imported)
+    for node in tree.body:
+        name = getattr(node, "name", None)
+        if name is not None:
+            module_level.add(name)
+        elif isinstance(node, ast.Assign):
+            module_level.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            module_level.add(node.target.id)
+    return module_level
+
+
+def _back_import_for(source: Path, tree: ast.Module, left_behind: list, start: int) -> "tuple[str, list]":
+    """Build the back-import block for the names defined above the split point; refuse when any is defined below it."""
+    # A back-import is only sound when the name is already BOUND by the time the new module is loaded.
+    # `source` imports `target` at the split point, so `source` has executed everything above it; a name
+    # defined above the split point is therefore available, and one defined below is not - that would be
+    # a genuine circular-import failure, not a style question, so it still refuses.
+    defined_above = [n for n in left_behind if _module_level_def_line(tree, n) < start]
+    still_missing = [n for n in left_behind if n not in defined_above]
+    if still_missing:
+        raise ValueError(
+            f"refusing to split {source}: {len(still_missing)} name(s) the moved range reads are defined BELOW the split "
+            f"point ({', '.join(still_missing[:8])}), so importing them back would be a real circular import. Move the "
+            f"split point above them, or move them too."
+        )
+    back_import = (
+        f"# Imported back from `{source.stem}`, which is mid-import when this module loads: every name below is\n"
+        f"# defined above the split point, so it is already bound by then. Verified by the splitter, not assumed.\n"
+        f"from .{source.stem} import (\n" + "".join(f"    {n},\n" for n in sorted(defined_above)) + ")\n"
+    )
+    return back_import, []
+
+
 def split_out_module(
     source: Union[str, Path], target: Union[str, Path], first: str, last: str, *, apply: bool = True, back_import_ok: bool = False
 ) -> "list[str]":
@@ -468,15 +504,7 @@ def split_out_module(
     # The question that actually decides this move is narrower: does the range read a name bound at MODULE
     # level that is staying behind? Intersecting with the module's own top-level bindings answers exactly
     # that, and parameters/locals fall out on their own because they are not module-level names.
-    module_level = set(imported)
-    for node in tree.body:
-        name = getattr(node, "name", None)
-        if name is not None:
-            module_level.add(name)
-        elif isinstance(node, ast.Assign):
-            module_level.update(t.id for t in node.targets if isinstance(t, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            module_level.add(node.target.id)
+    module_level = _module_level_bindings(tree, imported)
 
     report = analyze_range(source, start, end)
     left_behind = sorted(
@@ -484,24 +512,7 @@ def split_out_module(
     )
     back_import = ""
     if left_behind and back_import_ok:
-        # A back-import is only sound when the name is already BOUND by the time the new module is loaded.
-        # `source` imports `target` at the split point, so `source` has executed everything above it; a name
-        # defined above the split point is therefore available, and one defined below is not - that would be
-        # a genuine circular-import failure, not a style question, so it still refuses.
-        defined_above = [n for n in left_behind if _module_level_def_line(tree, n) < start]
-        still_missing = [n for n in left_behind if n not in defined_above]
-        if still_missing:
-            raise ValueError(
-                f"refusing to split {source}: {len(still_missing)} name(s) the moved range reads are defined BELOW the split "
-                f"point ({', '.join(still_missing[:8])}), so importing them back would be a real circular import. Move the "
-                f"split point above them, or move them too."
-            )
-        back_import = (
-            f"# Imported back from `{source.stem}`, which is mid-import when this module loads: every name below is\n"
-            f"# defined above the split point, so it is already bound by then. Verified by the splitter, not assumed.\n"
-            f"from .{source.stem} import (\n" + "".join(f"    {n},\n" for n in sorted(defined_above)) + ")\n"
-        )
-        left_behind = []
+        back_import, left_behind = _back_import_for(source, tree, left_behind, start)
     if left_behind:
         raise ValueError(
             f"refusing to split {source}: the moved range reads {len(left_behind)} module-level name(s) that would stay behind "

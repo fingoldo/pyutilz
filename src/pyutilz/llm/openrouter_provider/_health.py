@@ -253,6 +253,92 @@ def _summarize_endpoints(endpoints: list[dict[str, Any]]) -> dict[str, Any]:
         "best_throughput_p50_tps": _best("throughput_p50_tps", max),
     }
 
+
+def _split_cached_rows(rows: list[dict[str, Any]], health_ttl_seconds: float, now: float) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Split ``rows`` into (cached health by id, rows still needing a fetch) under the TTL."""
+    cached_health: dict[str, dict[str, Any]] = {}
+    to_fetch: list[dict[str, Any]] = []
+    if health_ttl_seconds > 0:
+        with _pkg()._HEALTH_CACHE_LOCK:
+            for r in rows:
+                mid = r.get("id", "")
+                entry = _pkg()._HEALTH_CACHE.get(mid)
+                if entry is not None and (now - entry[0]) < health_ttl_seconds:
+                    cached_health[mid] = entry[1]
+                else:
+                    to_fetch.append(r)
+    else:
+        to_fetch = list(rows)
+    return cached_health, to_fetch
+
+
+def _fetch_fresh_health(to_fetch: list[dict[str, Any]], api_key: str, max_workers: int, timeout: float) -> dict[str, dict[str, Any]]:
+    """Fetch /endpoints for each row over one shared pool and summarise it; failed models are left out."""
+    fresh_health: dict[str, dict[str, Any]] = {}
+    # max_keepalive_connections >= max_workers so threads don't fight
+    # over a too-small pool and force fresh handshakes.
+    limits = httpx.Limits(
+        max_keepalive_connections=max_workers,
+        max_connections=max_workers,
+    )
+    client_headers = {"Authorization": f"Bearer {api_key}"}
+    # Regression fix (2026-07-21 audit round 2, MEDIUM): failures used to log one WARNING
+    # per model with no aggregation -- a single shared root cause (e.g. an expired/revoked
+    # API key) fails EVERY one of potentially 200+ concurrent /endpoints calls, producing
+    # 200+ near-identical WARNING lines that bury the actual signal. Per-model detail moves
+    # to DEBUG; one aggregated WARNING is emitted after the fan-out completes.
+    failures: list[tuple[str, BaseException]] = []
+    with httpx.Client(
+        timeout=timeout, headers=client_headers, limits=limits,
+    ) as client:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = {
+                ex.submit(
+                    _fetch_endpoints_for_model,
+                    r.get("id", ""), None, timeout, client,
+                ): r
+                for r in to_fetch
+            }
+            for fut in as_completed(futs):
+                row = futs[fut]
+                mid = row.get("id", "")
+                try:
+                    endpoints = fut.result()
+                except Exception as exc:
+                    logger.debug(
+                        "Health check failed for %s (%s); excluding from results.",
+                        mid, exc,
+                    )
+                    failures.append((mid, exc))
+                    continue
+                fresh_health[mid] = _summarize_endpoints(endpoints)
+
+    if failures:
+        example_mid, example_exc = failures[0]
+        logger.warning(
+            "Health check failed for %d/%d models, e.g. %s: %s",
+            len(failures), len(to_fetch), example_mid, example_exc,
+        )
+    return fresh_health
+
+
+def _write_health_cache(fresh_health: dict[str, dict[str, Any]]) -> None:
+    """Store freshly fetched health in the TTL cache, keeping any newer entry a parallel call wrote."""
+    # Re-take monotonic at write time. The original `now` was taken
+    # before the (potentially multi-second) HTTP fan-out, so writing
+    # with `now` would age every fresh entry by however long the
+    # fetch took. Plus a parallel call could have written a newer
+    # entry in the meantime — preserve the newer one.
+    write_time = time.monotonic()
+    with _pkg()._HEALTH_CACHE_LOCK:
+        for mid, h in fresh_health.items():
+            existing = _pkg()._HEALTH_CACHE.get(mid)
+            if existing is not None and existing[0] >= write_time:
+                continue
+            _pkg()._HEALTH_CACHE[mid] = (write_time, h)
+        _sweep_health_cache_locked(write_time)
+
+
 def _enrich_with_health(
     rows: list[dict[str, Any]],
     api_key: str,
@@ -284,19 +370,7 @@ def _enrich_with_health(
 
     # ── Stage 2a: cache lookup ──────────────────────────────────────
     now = time.monotonic()
-    cached_health: dict[str, dict[str, Any]] = {}
-    to_fetch: list[dict[str, Any]] = []
-    if health_ttl_seconds > 0:
-        with _pkg()._HEALTH_CACHE_LOCK:
-            for r in rows:
-                mid = r.get("id", "")
-                entry = _pkg()._HEALTH_CACHE.get(mid)
-                if entry is not None and (now - entry[0]) < health_ttl_seconds:
-                    cached_health[mid] = entry[1]
-                else:
-                    to_fetch.append(r)
-    else:
-        to_fetch = list(rows)
+    cached_health, to_fetch = _split_cached_rows(rows, health_ttl_seconds, now)
 
     if cached_health:
         logger.debug(
@@ -307,65 +381,9 @@ def _enrich_with_health(
     # ── Stage 2b: parallel fetch with a shared connection pool ──────
     fresh_health: dict[str, dict[str, Any]] = {}
     if to_fetch:
-        # max_keepalive_connections >= max_workers so threads don't fight
-        # over a too-small pool and force fresh handshakes.
-        limits = httpx.Limits(
-            max_keepalive_connections=max_workers,
-            max_connections=max_workers,
-        )
-        client_headers = {"Authorization": f"Bearer {api_key}"}
-        # Regression fix (2026-07-21 audit round 2, MEDIUM): failures used to log one WARNING
-        # per model with no aggregation -- a single shared root cause (e.g. an expired/revoked
-        # API key) fails EVERY one of potentially 200+ concurrent /endpoints calls, producing
-        # 200+ near-identical WARNING lines that bury the actual signal. Per-model detail moves
-        # to DEBUG; one aggregated WARNING is emitted after the fan-out completes.
-        failures: list[tuple[str, BaseException]] = []
-        with httpx.Client(
-            timeout=timeout, headers=client_headers, limits=limits,
-        ) as client:
-            with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                futs = {
-                    ex.submit(
-                        _fetch_endpoints_for_model,
-                        r.get("id", ""), None, timeout, client,
-                    ): r
-                    for r in to_fetch
-                }
-                for fut in as_completed(futs):
-                    row = futs[fut]
-                    mid = row.get("id", "")
-                    try:
-                        endpoints = fut.result()
-                    except Exception as exc:
-                        logger.debug(
-                            "Health check failed for %s (%s); excluding from results.",
-                            mid, exc,
-                        )
-                        failures.append((mid, exc))
-                        continue
-                    fresh_health[mid] = _summarize_endpoints(endpoints)
-
-        if failures:
-            example_mid, example_exc = failures[0]
-            logger.warning(
-                "Health check failed for %d/%d models, e.g. %s: %s",
-                len(failures), len(to_fetch), example_mid, example_exc,
-            )
-
+        fresh_health = _fetch_fresh_health(to_fetch, api_key, max_workers, timeout)
         if health_ttl_seconds > 0 and fresh_health:
-            # Re-take monotonic at write time. The original `now` was taken
-            # before the (potentially multi-second) HTTP fan-out, so writing
-            # with `now` would age every fresh entry by however long the
-            # fetch took. Plus a parallel call could have written a newer
-            # entry in the meantime — preserve the newer one.
-            write_time = time.monotonic()
-            with _pkg()._HEALTH_CACHE_LOCK:
-                for mid, h in fresh_health.items():
-                    existing = _pkg()._HEALTH_CACHE.get(mid)
-                    if existing is not None and existing[0] >= write_time:
-                        continue
-                    _pkg()._HEALTH_CACHE[mid] = (write_time, h)
-                _sweep_health_cache_locked(write_time)
+            _write_health_cache(fresh_health)
 
     # ── Stage 2c: combine + filter by min_uptime ────────────────────
     for r in rows:
@@ -381,6 +399,86 @@ def _enrich_with_health(
         enriched["health"] = health
         out.append(enriched)
     return out
+
+def _price_per_1m(r: dict, pricing_key: str) -> float:
+    """Return `r`'s ``pricing_key`` price per 1M tokens (USD), or infinity if the pricing
+    field is missing/unparsable.
+
+    2026-08-02 near-duplicate-function-body finding: the input/output price lookups
+    independently duplicated this parse-and-scale step, differing only in which pricing
+    key ("prompt" vs "completion") they read.
+    """
+    try:
+        return float((r.get("pricing") or {}).get(pricing_key, "0") or "0") * 1_000_000
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _metric_raw(r: dict, field: str) -> float | int | str:
+    """Raw (non-negated) value of `field` on row `r` - shared by the `sort_by` ordering key
+    and the `group_by_provider` per-provider ranking step, so the two can never drift on what a
+    field name means (2026-08-08: extracted from `sort_by`'s own `_key`, which used to be the only
+    caller of this field-name -> value mapping)."""
+    pricing = r.get("pricing") or {}
+    try:
+        in_price = float(pricing.get("prompt", "0") or "0")
+        out_price = float(pricing.get("completion", "0") or "0")
+    except (TypeError, ValueError):
+        in_price = out_price = float("inf")
+    ctx = r.get("context_length") or 0
+    health = r.get("health") or {}
+    # `or`, not a None-check, would treat a genuinely-fastest 0ms latency as "missing" and sort it
+    # to the end -- the opposite of the intended behaviour, which only applies to an ACTUALLY
+    # missing measurement.
+    raw_latency = health.get("best_latency_p50_ms")
+    latency: float = float(raw_latency) if raw_latency is not None else float("inf")
+    values: dict[str, float | int | str] = {
+        "input_price": in_price,
+        "output_price": out_price,
+        "context": int(ctx),
+        "name": str(r.get("id", "")),
+        # Stage-2 metrics. Missing health -> lowest-priority raw value (0.0), same "sorts to the
+        # end under a descending rank" intent `sort_by`'s own comment states, just expressed as a
+        # raw magnitude here instead of a pre-negated one.
+        "uptime": float(health.get("best_uptime_30m") or 0.0),
+        "latency": latency,
+        "throughput": float(health.get("best_throughput_p50_tps") or 0.0),
+    }
+    return values.get(field, str(r.get("id", "")))
+
+
+def _top_rows_per_provider(rows: list[dict], group_by_provider: int, group_sort_by: str, group_sort_desc: bool) -> list[dict]:
+    """Keep at most ``group_by_provider`` rows per provider, ranked by ``group_sort_by``; a pure filter."""
+    # Groups by the `id` substring before its first "/" (e.g. "openai" for "openai/gpt-5-mini").
+    # Ranks each provider's rows independently by `group_sort_by`/`group_sort_desc`, keeps at most
+    # `group_by_provider` of them, then flattens - a pure FILTER step, so the final `sort_by` block
+    # still controls the returned list's overall order.
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(str(r.get("id", "")).split("/", 1)[0], []).append(r)
+    survivors: list[dict] = []
+    for provider_rows in grouped.values():
+        provider_rows.sort(key=lambda r: _metric_raw(r, group_sort_by), reverse=group_sort_desc)
+        survivors.extend(provider_rows[:group_by_provider])
+    return survivors
+
+
+def _sort_rows(rows: list[dict], sort_by: str) -> None:
+    """Sort ``rows`` in place by the ``sort_by`` metric, highest-first for context/uptime/throughput."""
+    # `context`/`uptime`/`throughput` want their HIGHEST value first under a plain ascending sort,
+    # so those three (and only those three) get negated here - `_metric_raw` itself stays
+    # direction-agnostic so `group_by_provider` above can pick its own direction per call.
+    _descending_by_default = {"context", "uptime", "throughput"}
+
+    def _key(r: dict) -> float | int | str:
+        """Sort key for row `r` under the enclosing `sort_by` field - `_metric_raw`'s raw value,
+        negated for the three fields whose most-useful default is descending."""
+        value = _metric_raw(r, sort_by)
+        if sort_by in _descending_by_default and isinstance(value, (int, float)):
+            return -value
+        return value
+    rows.sort(key=_key)
+
 
 def list_openrouter_models(
     refresh: bool = False,
@@ -515,19 +613,6 @@ def list_openrouter_models(
         needle = name_contains.lower()
         rows = [r for r in rows if needle in str(r.get("id", "")).lower()]
 
-    def _price_per_1m(r: dict, pricing_key: str) -> float:
-        """Return `r`'s ``pricing_key`` price per 1M tokens (USD), or infinity if the pricing
-        field is missing/unparsable.
-
-        2026-08-02 near-duplicate-function-body finding: the input/output price lookups
-        independently duplicated this parse-and-scale step, differing only in which pricing
-        key ("prompt" vs "completion") they read.
-        """
-        try:
-            return float((r.get("pricing") or {}).get(pricing_key, "0") or "0") * 1_000_000
-        except (TypeError, ValueError):
-            return float("inf")
-
     if max_input_per_1m is not None:
         rows = [r for r in rows if _price_per_1m(r, "prompt") <= max_input_per_1m]
 
@@ -547,64 +632,9 @@ def list_openrouter_models(
                 rows, key, min_uptime, max_workers, timeout, health_ttl_seconds,
             )
 
-    def _metric_raw(r: dict, field: str) -> float | int | str:
-        """Raw (non-negated) value of `field` on row `r` - shared by the `sort_by` ordering key below
-        and the `group_by_provider` per-provider ranking step, so the two can never drift on what a
-        field name means (2026-08-08: extracted from `sort_by`'s own `_key`, which used to be the only
-        caller of this field-name -> value mapping)."""
-        pricing = r.get("pricing") or {}
-        try:
-            in_price = float(pricing.get("prompt", "0") or "0")
-            out_price = float(pricing.get("completion", "0") or "0")
-        except (TypeError, ValueError):
-            in_price = out_price = float("inf")
-        ctx = r.get("context_length") or 0
-        health = r.get("health") or {}
-        # `or`, not a None-check, would treat a genuinely-fastest 0ms latency as "missing" and sort it
-        # to the end -- the opposite of the intended behaviour, which only applies to an ACTUALLY
-        # missing measurement.
-        raw_latency = health.get("best_latency_p50_ms")
-        latency: float = float(raw_latency) if raw_latency is not None else float("inf")
-        values: dict[str, float | int | str] = {
-            "input_price": in_price,
-            "output_price": out_price,
-            "context": int(ctx),
-            "name": str(r.get("id", "")),
-            # Stage-2 metrics. Missing health -> lowest-priority raw value (0.0), same "sorts to the
-            # end under a descending rank" intent `sort_by`'s own comment states, just expressed as a
-            # raw magnitude here instead of a pre-negated one.
-            "uptime": float(health.get("best_uptime_30m") or 0.0),
-            "latency": latency,
-            "throughput": float(health.get("best_throughput_p50_tps") or 0.0),
-        }
-        return values.get(field, str(r.get("id", "")))
-
     if group_by_provider:
-        # Groups by the `id` substring before its first "/" (e.g. "openai" for "openai/gpt-5-mini").
-        # Ranks each provider's rows independently by `group_sort_by`/`group_sort_desc`, keeps at most
-        # `group_by_provider` of them, then flattens - a pure FILTER step, so the final `sort_by` block
-        # below still controls the returned list's overall order.
-        grouped: dict[str, list[dict]] = {}
-        for r in rows:
-            grouped.setdefault(str(r.get("id", "")).split("/", 1)[0], []).append(r)
-        survivors: list[dict] = []
-        for provider_rows in grouped.values():
-            provider_rows.sort(key=lambda r: _metric_raw(r, group_sort_by), reverse=group_sort_desc)
-            survivors.extend(provider_rows[:group_by_provider])
-        rows = survivors
+        rows = _top_rows_per_provider(rows, group_by_provider, group_sort_by, group_sort_desc)
 
     if sort_by:
-        # `context`/`uptime`/`throughput` want their HIGHEST value first under a plain ascending sort,
-        # so those three (and only those three) get negated here - `_metric_raw` itself stays
-        # direction-agnostic so `group_by_provider` above can pick its own direction per call.
-        _descending_by_default = {"context", "uptime", "throughput"}
-
-        def _key(r: dict) -> float | int | str:
-            """Sort key for row `r` under the enclosing `sort_by` field - `_metric_raw`'s raw value,
-            negated for the three fields whose most-useful default is descending."""
-            value = _metric_raw(r, sort_by)
-            if sort_by in _descending_by_default and isinstance(value, (int, float)):
-                return -value
-            return value
-        rows.sort(key=_key)
+        _sort_rows(rows, sort_by)
     return rows

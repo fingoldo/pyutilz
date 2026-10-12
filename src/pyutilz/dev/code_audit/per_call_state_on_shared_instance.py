@@ -80,6 +80,103 @@ def _first_arg_name(func: ast.AST) -> str:
     return "self"
 
 
+def _shared_from_stores_and_caches(trees: dict[Path, ast.Module]) -> set[str]:
+    """Signals 1 and 2: classes constructed into a container subscript or inside an ``lru_cache`` factory."""
+    shared: set[str] = set()
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Subscript) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+                        shared.add(node.value.func.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                decorators = " ".join(ast.dump(d) for d in node.decorator_list)
+                if "lru_cache" in decorators or "'cache'" in decorators or '"cache"' in decorators:
+                    for inner in ast.walk(node):
+                        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                            shared.add(inner.func.id)
+    return shared
+
+
+def _registry_container_names(trees: dict[Path, ast.Module]) -> set[str]:
+    """Signal 3: capitalised identifier strings inside MODULE-LEVEL containers (the registry shape)."""
+    # Signal 3 is deliberately restricted to MODULE-LEVEL containers (the registry shape). Walking the
+    # whole tree instead let any capitalised identifier-shaped string in any local list -- e.g.
+    # `labels = ["Worker", "Other"]` in an unrelated function -- mark a class as shared.
+    names: set[str] = set()
+    for tree in trees.values():
+        for stmt in tree.body:
+            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+                continue
+            for container in ast.walk(stmt.value):
+                if not isinstance(container, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+                    continue
+                for element in ast.walk(container):
+                    if isinstance(element, ast.Constant) and isinstance(element.value, str) and element.value.isidentifier() and element.value[:1].isupper():
+                        names.add(element.value)
+    return names
+
+
+def _inherit_shared_bases(trees: dict[Path, ast.Module], shared_names: set[str]) -> None:
+    """Grow ``shared_names`` with the in-tree bases of every shared class (bounded transitive closure)."""
+    # A shared subclass makes its in-tree bases shared too: the attributes usually live on the base
+    # (OpenAICompatibleProvider), while only the concrete subclass is ever named in a registry.
+    for _ in range(4):  # bounded transitive closure; provider hierarchies here are 2-3 deep
+        grew = False
+        for tree in trees.values():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name in shared_names:
+                    for base in node.bases:
+                        name = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else None)
+                        if name and name not in shared_names:
+                            shared_names.add(name)
+                            grew = True
+        if not grew:
+            break
+
+
+def _per_call_findings_for_class(node: ast.ClassDef, rel: str, src_lines: list[str]) -> list[Finding]:
+    """Findings for unguarded per-call attribute stores inside the async methods of one shared class."""
+    methods = [m for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    async_methods = [m for m in methods if isinstance(m, ast.AsyncFunctionDef)]
+    if not async_methods:
+        return []
+
+    reads_elsewhere: dict[str, set[str]] = {}
+    for method in methods:
+        for attr in _self_attr_loads(method, _first_arg_name(method)):
+            reads_elsewhere.setdefault(attr, set()).add(method.name)
+
+    findings: list[Finding] = []
+    for method in async_methods:
+        for attr, (line, guarded) in _self_attr_stores(method, _first_arg_name(method)).items():
+            if guarded:
+                continue
+            readers = reads_elsewhere.get(attr, set()) - {method.name}
+            per_call_shaped = attr.startswith(_PERCALL_PREFIXES)
+            if not readers and not per_call_shaped:
+                continue
+            reader_text = f"read back by {sorted(readers)[0]}()" if readers else "per-call-shaped name"
+            findings.append(
+                Finding(
+                    check="per_call_state_on_shared_instance",
+                    severity="P2",
+                    file=rel,
+                    line=line,
+                    snippet=_line_text(src_lines, line),
+                    detail=(
+                        f"`self.{attr}` is written during the in-flight `async def "
+                        f"{method.name}()` of `{node.name}`, whose instances are shared "
+                        f"between callers, with no lock held ({reader_text}). Two concurrent "
+                        f"calls interleave and the value is attributed to the wrong request. "
+                        f"Return it in that call's own result (or snapshot it per call) "
+                        f"instead of storing it on the instance."
+                    ),
+                )
+            )
+    return findings
+
+
 def _collect_shared_class_names(trees: dict[Path, ast.Module]) -> set[str]:
     """Class names whose instances are SHARED rather than constructed per use.
 
@@ -94,32 +191,8 @@ def _collect_shared_class_names(trees: dict[Path, ast.Module]) -> set[str]:
     Signal 3 is what makes the check see provider classes at all: nothing ever writes
     ``_provider_cache[key] = OpenRouterProvider(...)`` literally.
     """
-    shared: set[str] = set()
-    for tree in trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Subscript) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                        shared.add(node.value.func.id)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                decorators = " ".join(ast.dump(d) for d in node.decorator_list)
-                if "lru_cache" in decorators or "'cache'" in decorators or '"cache"' in decorators:
-                    for inner in ast.walk(node):
-                        if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
-                            shared.add(inner.func.id)
-    # Signal 3 is deliberately restricted to MODULE-LEVEL containers (the registry shape). Walking the
-    # whole tree instead let any capitalised identifier-shaped string in any local list -- e.g.
-    # `labels = ["Worker", "Other"]` in an unrelated function -- mark a class as shared.
-    for tree in trees.values():
-        for stmt in tree.body:
-            if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
-                continue
-            for container in ast.walk(stmt.value):
-                if not isinstance(container, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
-                    continue
-                for element in ast.walk(container):
-                    if isinstance(element, ast.Constant) and isinstance(element.value, str) and element.value.isidentifier() and element.value[:1].isupper():
-                        shared.add(element.value)
+    shared = _shared_from_stores_and_caches(trees)
+    shared |= _registry_container_names(trees)
     return shared
 
 
@@ -157,62 +230,12 @@ def scan_per_call_state_on_shared_instance(
             trees[py] = tree
 
     shared_names = _collect_shared_class_names(trees)
-
-    # A shared subclass makes its in-tree bases shared too: the attributes usually live on the base
-    # (OpenAICompatibleProvider), while only the concrete subclass is ever named in a registry.
-    for _ in range(4):  # bounded transitive closure; provider hierarchies here are 2-3 deep
-        grew = False
-        for tree in trees.values():
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef) and node.name in shared_names:
-                    for base in node.bases:
-                        name = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else None)
-                        if name and name not in shared_names:
-                            shared_names.add(name)
-                            grew = True
-        if not grew:
-            break
+    _inherit_shared_bases(trees, shared_names)
 
     for py, tree in trees.items():
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef) or node.name not in shared_names:
-                continue
-            methods = [m for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            async_methods = [m for m in methods if isinstance(m, ast.AsyncFunctionDef)]
-            if not async_methods:
-                continue
-
-            reads_elsewhere: dict[str, set[str]] = {}
-            for method in methods:
-                for attr in _self_attr_loads(method, _first_arg_name(method)):
-                    reads_elsewhere.setdefault(attr, set()).add(method.name)
-
-            for method in async_methods:
-                for attr, (line, guarded) in _self_attr_stores(method, _first_arg_name(method)).items():
-                    if guarded:
-                        continue
-                    readers = reads_elsewhere.get(attr, set()) - {method.name}
-                    per_call_shaped = attr.startswith(_PERCALL_PREFIXES)
-                    if not readers and not per_call_shaped:
-                        continue
-                    reader_text = f"read back by {sorted(readers)[0]}()" if readers else "per-call-shaped name"
-                    findings.append(
-                        Finding(
-                            check="per_call_state_on_shared_instance",
-                            severity="P2",
-                            file=rel,
-                            line=line,
-                            snippet=_line_text(src_lines, line),
-                            detail=(
-                                f"`self.{attr}` is written during the in-flight `async def "
-                                f"{method.name}()` of `{node.name}`, whose instances are shared "
-                                f"between callers, with no lock held ({reader_text}). Two concurrent "
-                                f"calls interleave and the value is attributed to the wrong request. "
-                                f"Return it in that call's own result (or snapshot it per call) "
-                                f"instead of storing it on the instance."
-                            ),
-                        )
-                    )
+            if isinstance(node, ast.ClassDef) and node.name in shared_names:
+                findings.extend(_per_call_findings_for_class(node, rel, src_lines))
     return findings

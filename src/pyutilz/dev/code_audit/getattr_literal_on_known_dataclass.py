@@ -75,6 +75,22 @@ def _is_dataclass_decorator(dec: ast.expr) -> bool:
     return False
 
 
+def _assigned_dataclass_types(func: ast.AST, known: dict[str, set[str]]) -> dict[str, str]:
+    """``{local name -> dataclass name}`` for names assigned from a known dataclass constructor or annotated with one."""
+    types: dict[str, str] = {}
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+            cls_name = node.value.func.id
+            if cls_name in known:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        types[target.id] = cls_name
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
+            if node.annotation.id in known:
+                types[node.target.id] = node.annotation.id
+    return types
+
+
 def _local_dataclass_types(func: ast.AST, known: dict[str, set[str]]) -> dict[str, str]:
     """``{local variable name -> dataclass class name}`` inferred within ONE function body.
 
@@ -90,17 +106,60 @@ def _local_dataclass_types(func: ast.AST, known: dict[str, set[str]]) -> dict[st
     for arg in all_args:
         if isinstance(arg.annotation, ast.Name) and arg.annotation.id in known:
             types[arg.arg] = arg.annotation.id
-    for node in ast.walk(func):
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-            cls_name = node.value.func.id
-            if cls_name in known:
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        types[target.id] = cls_name
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
-            if node.annotation.id in known:
-                types[node.target.id] = node.annotation.id
+    types.update(_assigned_dataclass_types(func, known))
     return types
+
+
+def _attribute_store_names(tree: ast.Module) -> set[str]:
+    """Names assigned as attributes somewhere in one module (``anything.name = ...``)."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            names.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
+            names.add(node.target.attr)
+    return names
+
+
+def _getattr_literal_findings(
+    func: ast.AST,
+    local_types: dict[str, str],
+    known: dict[str, set[str]],
+    dynamic_attrs: set[str],
+    rel: str,
+    src_lines: list[str],
+) -> list[Finding]:
+    """P1 findings for three-argument ``getattr`` on a typed local whose literal name the dataclass lacks."""
+    findings: list[Finding] = []
+    for node in ast.walk(func):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"):
+            continue
+        if len(node.args) != 3 or node.keywords:
+            continue
+        obj_arg, name_arg = node.args[0], node.args[1]
+        if not isinstance(obj_arg, ast.Name) or obj_arg.id not in local_types:
+            continue
+        if not (isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str)):
+            continue
+        cls_name = local_types[obj_arg.id]
+        literal = name_arg.value
+        if literal.startswith("__") or literal in known[cls_name] or literal in dynamic_attrs:
+            continue
+        findings.append(
+            Finding(
+                check="getattr_literal_on_known_dataclass",
+                severity="P1",
+                file=rel,
+                line=node.lineno,
+                snippet=_line_text(src_lines, node.lineno),
+                detail=(
+                    f"getattr({obj_arg.id}, {literal!r}, default): {obj_arg.id} is a {cls_name!r} "
+                    f"instance and {cls_name!r} has no attribute named {literal!r} ({sorted(known[cls_name])!r} "
+                    "are its known attributes, inherited ones included) - this call can only ever return the default."
+                ),
+            )
+        )
+    return findings
 
 
 def scan_getattr_literal_on_known_dataclass(
@@ -156,11 +215,7 @@ def scan_getattr_literal_on_known_dataclass(
         for cls, parents in module_bases.items():
             all_bases.setdefault(cls, set()).update(parents)
         decorated |= module_decorated
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                dynamic_attrs.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
-                dynamic_attrs.add(node.target.attr)
+        dynamic_attrs |= _attribute_store_names(tree)
 
     # Base classes resolve across the whole scanned tree, not just within one module.
     known = {cls: _resolved_members(cls, all_members, all_bases) for cls in decorated}
@@ -175,32 +230,5 @@ def scan_getattr_literal_on_known_dataclass(
             local_types = _local_dataclass_types(func, known)
             if not local_types:
                 continue
-            for node in ast.walk(func):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"):
-                    continue
-                if len(node.args) != 3 or node.keywords:
-                    continue
-                obj_arg, name_arg = node.args[0], node.args[1]
-                if not isinstance(obj_arg, ast.Name) or obj_arg.id not in local_types:
-                    continue
-                if not (isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str)):
-                    continue
-                cls_name = local_types[obj_arg.id]
-                literal = name_arg.value
-                if literal.startswith("__") or literal in known[cls_name] or literal in dynamic_attrs:
-                    continue
-                findings.append(
-                    Finding(
-                        check="getattr_literal_on_known_dataclass",
-                        severity="P1",
-                        file=rel,
-                        line=node.lineno,
-                        snippet=_line_text(src_lines, node.lineno),
-                        detail=(
-                            f"getattr({obj_arg.id}, {literal!r}, default): {obj_arg.id} is a {cls_name!r} "
-                            f"instance and {cls_name!r} has no attribute named {literal!r} ({sorted(known[cls_name])!r} "
-                            "are its known attributes, inherited ones included) - this call can only ever return the default."
-                        ),
-                    )
-                )
+            findings.extend(_getattr_literal_findings(func, local_types, known, dynamic_attrs, rel, src_lines))
     return findings

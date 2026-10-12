@@ -40,6 +40,64 @@ def _names_mentioned(node: ast.AST) -> set[str]:
     return out
 
 
+def _collect_top_level_functions(
+    audited: list[Path], trees: dict[Path, ast.Module]
+) -> tuple[dict[tuple[Path, str], ast.FunctionDef | ast.AsyncFunctionDef], dict[Path, set[str]]]:
+    """Top-level functions of the audited files, plus the names each file mentions at module scope."""
+    funcs: dict[tuple[Path, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    module_scope: dict[Path, set[str]] = {}
+    for path in audited:
+        tree = trees.get(path)
+        if tree is None:
+            continue
+        scope: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                funcs[(path, node.name)] = node
+            else:
+                scope |= _names_mentioned(node)
+        module_scope[path] = scope
+    return funcs, module_scope
+
+
+def _seed_live(
+    funcs: dict[tuple[Path, str], ast.FunctionDef | ast.AsyncFunctionDef],
+    module_scope: dict[Path, set[str]],
+    external: dict[Path, set[str]],
+    entry_point_names: frozenset[str],
+) -> set[tuple[Path, str]]:
+    """Functions reachable directly: entry points, decorated, module-scope referenced, or called from a consumer."""
+    seed: set[tuple[Path, str]] = set()
+    for (path, name), node in funcs.items():
+        if name in entry_point_names or getattr(node, "decorator_list", []):
+            seed.add((path, name))
+        elif any(name in scope for scope in module_scope.values()):
+            # Module scope in ANY audited file still seeds (`__all__`, a dispatch table, a default
+            # argument) -- that is a wiring statement, not a call from a possibly-dead function.
+            seed.add((path, name))
+        elif any(name in names for names in external.values()):
+            seed.add((path, name))
+    return seed
+
+
+def _propagate_live(seed: set[tuple[Path, str]], funcs: dict[tuple[Path, str], ast.FunctionDef | ast.AsyncFunctionDef]) -> set[tuple[Path, str]]:
+    """Close ``seed`` over the names each live function mentions."""
+    by_name: dict[str, list[tuple[Path, str]]] = {}
+    for key in funcs:
+        by_name.setdefault(key[1], []).append(key)
+
+    live: set[tuple[Path, str]] = set()
+    stack = list(seed)
+    while stack:
+        key = stack.pop()
+        if key in live:
+            continue
+        live.add(key)
+        for mentioned in _names_mentioned(funcs[key]):
+            stack.extend(target for target in by_name.get(mentioned, ()) if target not in live)
+    return live
+
+
 def scan_dead_public_callables(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -73,19 +131,7 @@ def scan_dead_public_callables(
         if tree is not None:
             trees[path] = tree
 
-    funcs: dict[tuple[Path, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
-    module_scope: dict[Path, set[str]] = {}
-    for path in audited:
-        tree = trees.get(path)
-        if tree is None:
-            continue
-        scope: set[str] = set()
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                funcs[(path, node.name)] = node
-            else:
-                scope |= _names_mentioned(node)
-        module_scope[path] = scope
+    funcs, module_scope = _collect_top_level_functions(audited, trees)
 
     # Seeded from the CONSUMER files only. Built from every tree, an audited sibling merely naming
     # a callee seeded it live before propagation ran, so "a public function called only by another
@@ -93,30 +139,8 @@ def scan_dead_public_callables(
     audited_paths = set(audited)
     external = {path: _names_mentioned(tree) for path, tree in trees.items() if path not in audited_paths}
 
-    seed: set[tuple[Path, str]] = set()
-    for (path, name), node in funcs.items():
-        if name in entry_point_names or getattr(node, "decorator_list", []):
-            seed.add((path, name))
-        elif any(name in scope for scope in module_scope.values()):
-            # Module scope in ANY audited file still seeds (`__all__`, a dispatch table, a default
-            # argument) -- that is a wiring statement, not a call from a possibly-dead function.
-            seed.add((path, name))
-        elif any(name in names for names in external.values()):
-            seed.add((path, name))
-
-    by_name: dict[str, list[tuple[Path, str]]] = {}
-    for key in funcs:
-        by_name.setdefault(key[1], []).append(key)
-
-    live: set[tuple[Path, str]] = set()
-    stack = list(seed)
-    while stack:
-        key = stack.pop()
-        if key in live:
-            continue
-        live.add(key)
-        for mentioned in _names_mentioned(funcs[key]):
-            stack.extend(target for target in by_name.get(mentioned, ()) if target not in live)
+    seed = _seed_live(funcs, module_scope, external, entry_point_names)
+    live = _propagate_live(seed, funcs)
 
     findings: list[Finding] = []
     for (path, name), node in sorted(funcs.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):

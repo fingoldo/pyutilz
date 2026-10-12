@@ -639,6 +639,64 @@ CUDA_SM_TO_CORES = {
 }
 
 
+def _clean_nvidia_gpu(gpu: dict, include_ids: bool, include_stats: bool) -> None:
+    """Strip defaults and noisy attributes from one parsed nvidia-smi GPU entry, in place."""
+    remove_json_defaults(
+        gpu,
+        {
+            "addressing_mode": "None",
+            "mig_devices": "None",
+            "accounting_mode": "Disabled",
+            "minor_number": "0",
+            "multigpu_board": "No",
+            "display_mode": "Enabled",
+            "display_active": "Enabled",
+            "persistence_mode": "Enabled",
+            "gpu_virtualization_mode": {
+                "virtualization_mode": "None",
+                "host_vgpu_mode": "N/A",
+                "vgpu_heterogeneous_mode": "N/A",
+            },
+            "gpu_reset_status": {"reset_required": "No", "drain_and_reset_recommended": "N/A"},
+            "cc_protected_memory_usage": {"total": "0 MiB", "used": "0 MiB", "free": "0 MiB"},
+            "encoder_stats": {"session_count": "0", "average_fps": "0", "average_latency": "0"},
+            "fbc_stats": {"session_count": "0", "average_fps": "0", "average_latency": "0"},
+        },
+    )
+    remove_json_defaults(gpu, {"gpu_virtualization_mode": {"virtualization_mode": "None", "host_vgpu_mode": "N/A"}})
+
+    remove_json_attributes(
+        gpu,
+        "processes accounted_processes pci clocks_event_reasons clocks_throttle_reasons ecc_errors retired_pages remapped_rows module_power_readings gpu_memory_power_readings supported_clocks".split(),
+    )
+
+    if not include_ids:
+        remove_json_attributes(gpu, "@id serial uuid board_id".split())
+
+    if not include_stats:
+        _strip_nvidia_gpu_stats(gpu)
+
+
+def _strip_nvidia_gpu_stats(gpu: dict) -> None:
+    """Remove the live utilization/temperature/power sub-trees from one GPU entry, in place."""
+    remove_json_attributes(
+        gpu,
+        "bar1_memory_usage fan_speed utilization clocks applications_clocks default_applications_clocks".split(),
+    )
+    fb_memory_usage = gpu.get("fb_memory_usage", {})
+    if fb_memory_usage:
+        remove_json_attributes(fb_memory_usage, "reserved used free".split())
+    temperature = gpu.get("temperature", {})
+    if temperature:
+        remove_json_attributes(temperature, "gpu_temp memory_temp".split())
+    power_readings = gpu.get("power_readings", {})
+    if power_readings:
+        remove_json_attributes(power_readings, "power_state power_draw".split())
+    gpu_power_readings = gpu.get("gpu_power_readings", {})
+    if gpu_power_readings:
+        remove_json_attributes(gpu_power_readings, "power_state power_draw".split())
+
+
 def get_nvidia_smi_info(
     include_ids: bool = False,
     include_stats: bool = True,
@@ -692,56 +750,7 @@ def get_nvidia_smi_info(
     # on a card reporting e.g. power_draw: N/A.
     gpu_list = res.get("gpu", [])
     for gpu_idx, gpu in enumerate(gpu_list):
-        remove_json_defaults(
-            gpu,
-            {
-                "addressing_mode": "None",
-                "mig_devices": "None",
-                "accounting_mode": "Disabled",
-                "minor_number": "0",
-                "multigpu_board": "No",
-                "display_mode": "Enabled",
-                "display_active": "Enabled",
-                "persistence_mode": "Enabled",
-                "gpu_virtualization_mode": {
-                    "virtualization_mode": "None",
-                    "host_vgpu_mode": "N/A",
-                    "vgpu_heterogeneous_mode": "N/A",
-                },
-                "gpu_reset_status": {"reset_required": "No", "drain_and_reset_recommended": "N/A"},
-                "cc_protected_memory_usage": {"total": "0 MiB", "used": "0 MiB", "free": "0 MiB"},
-                "encoder_stats": {"session_count": "0", "average_fps": "0", "average_latency": "0"},
-                "fbc_stats": {"session_count": "0", "average_fps": "0", "average_latency": "0"},
-            },
-        )
-        remove_json_defaults(gpu, {"gpu_virtualization_mode": {"virtualization_mode": "None", "host_vgpu_mode": "N/A"}})
-
-        remove_json_attributes(
-            gpu,
-            "processes accounted_processes pci clocks_event_reasons clocks_throttle_reasons ecc_errors retired_pages remapped_rows module_power_readings gpu_memory_power_readings supported_clocks".split(),
-        )
-
-        if not include_ids:
-            remove_json_attributes(gpu, "@id serial uuid board_id".split())
-
-        if not include_stats:
-            remove_json_attributes(
-                gpu,
-                "bar1_memory_usage fan_speed utilization clocks applications_clocks default_applications_clocks".split(),
-            )
-            fb_memory_usage = gpu.get("fb_memory_usage", {})
-            if fb_memory_usage:
-                remove_json_attributes(fb_memory_usage, "reserved used free".split())
-            temperature = gpu.get("temperature", {})
-            if temperature:
-                remove_json_attributes(temperature, "gpu_temp memory_temp".split())
-            power_readings = gpu.get("power_readings", {})
-            if power_readings:
-                remove_json_attributes(power_readings, "power_state power_draw".split())
-            gpu_power_readings = gpu.get("gpu_power_readings", {})
-            if gpu_power_readings:
-                remove_json_attributes(gpu_power_readings, "power_state power_draw".split())
-
+        _clean_nvidia_gpu(gpu, include_ids, include_stats)
         gpu_list[gpu_idx] = remove_nas(gpu)
 
     if "gpu" in res:
@@ -821,6 +830,19 @@ def get_cuda_gpu_details(cuda_gpu_info: Optional[dict]) -> dict:
     return cuda_details
 
 
+def _read_gpu_attrs(gpu: _Any, attrs: list) -> dict:
+    """Read the requested attributes off one GPUtil device, scaling memory to GB and load to percent."""
+    cur_device = dict()
+    for attr in attrs:
+        val = getattr(gpu, attr)
+        if "memory" in attr:
+            val = val / 1024
+        elif attr == "load":
+            val = val * 100
+        cur_device[attr] = val
+    return cur_device
+
+
 def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,load,driver,id,temperature,uuid") -> list:
     """Get GPU utilization stats using GPUtil (lightweight nvidia-smi wrapper).
 
@@ -853,15 +875,7 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
 
     for gpu in gpus:
         try:
-            cur_device = dict()
-            for attr in attrs:
-                val = getattr(gpu, attr)
-                if "memory" in attr:
-                    val = val / 1024
-                elif attr == "load":
-                    val = val * 100
-                cur_device[attr] = val
-            devices.append(cur_device)
+            devices.append(_read_gpu_attrs(gpu, attrs))
         except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one bad GPU shouldn't truncate the rest)
             # One bad GPU's attribute read must not silently truncate the whole result --
             # compute_total_gpus_ram() sums this list directly, so a partial list would

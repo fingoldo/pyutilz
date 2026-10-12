@@ -98,6 +98,86 @@ def _from_cursor(expr: ast.expr, cursor_names: "set[str]") -> bool:
     return False
 
 
+_SELECT_CALLS = frozenset({"execute", "execute_query", "fetch", "fetchall", "query"})
+
+
+def _executed_selects(func: ast.AST, constants: dict[str, str]) -> tuple[list[tuple[list[str], int]], set[str]]:
+    """Return the SELECT lists ``func`` executes (with their call lines) and the cursor names they run on."""
+    executed: list[tuple[list[str], int]] = []
+    cursor_names: set[str] = set()
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        if not (isinstance(callee, ast.Attribute) and callee.attr in _SELECT_CALLS):
+            continue
+        if not node.args:
+            continue
+        sql = _sql_text(node.args[0], constants)
+        columns = _select_columns(sql) if sql else None
+        if columns:
+            executed.append((columns, node.lineno))
+            if isinstance(callee.value, ast.Name):
+                cursor_names.add(callee.value.id)
+    return executed, cursor_names
+
+
+def _row_names_of_query(func: ast.AST, cursor_names: set[str]) -> set[str]:
+    """Names that carry rows OF THIS QUERY: `rows = cur.fetchall()`, `row = cur.fetchone()`."""
+    # Without this link the check matched ANY same-arity unpacking in the function -- an
+    # unrelated `lo, hi = compute()` was reported as "this query fetches `name`".
+    row_names: set[str] = set()
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign) and node.targets and isinstance(node.targets[0], ast.Name) and _from_cursor(node.value, cursor_names):
+            row_names.add(node.targets[0].id)
+    return row_names
+
+
+def _unpack_target_and_source(node: ast.AST) -> tuple[ast.expr, ast.expr, int] | None:
+    """Return ``(target, source, line)`` for a for-loop or a single-target assignment, else ``None``."""
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return node.target, node.iter, node.lineno
+    if isinstance(node, ast.Assign) and node.targets:
+        return node.targets[0], node.value, node.lineno
+    return None
+
+
+def _query_unpack_names(target: ast.expr, source: ast.expr, columns: list[str], cursor_names: set[str], row_names: set[str]) -> list[str] | None:
+    """Return the flat target names when ``source`` comes from this query's cursor and arity matches, else ``None``."""
+    # the unpacked value must actually come from this query's cursor
+    if not (_from_cursor(source, cursor_names) or (isinstance(source, ast.Name) and source.id in row_names)):
+        return None
+    names = _plain_targets(target)
+    if names is None or len(names) != len(columns):
+        return None
+    return names
+
+
+def _unread_bindings(func: ast.AST, target: ast.expr, names: list[str], columns: list[str]) -> list[tuple[str, str]]:
+    """Return ``(name, column)`` pairs for fetched columns whose binding the function never reads."""
+    used = _read_names(func, target)
+    return [(name, column) for name, column in zip(names, columns) if name not in used and not name.startswith("_")]
+
+
+def _unread_column_finding(rel: str, sql_line: int, src_lines: list[str], unread: list[tuple[str, str]], unpack_line: int) -> Finding:
+    """Build the P2 finding for a SELECT whose unpacked columns are never read."""
+    fetched = ", ".join(f"`{column}` (bound to `{name}`)" for name, column in unread)
+    return Finding(
+        check="sql_selects_unread_column",
+        severity="P2",
+        file=rel,
+        line=sql_line,
+        snippet=_line_text(src_lines, sql_line),
+        detail=(
+            f"this query fetches {fetched}, which the unpacking at line "
+            f"{unpack_line} binds and nothing in the function reads. The server "
+            "materialises it, the driver decodes it and it crosses the wire on "
+            "every row. Drop it from the SELECT list, or rename the binding to "
+            "`_` to say the waste is deliberate."
+        ),
+    )
+
+
 def scan_sql_selects_unread_column(
     root: Path,
     exclude_dirs: frozenset[str] = _DEFAULT_EXCLUDE_DIRS,
@@ -124,69 +204,23 @@ def scan_sql_selects_unread_column(
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            # The SELECT lists this function executes, in order.
-            executed: list[tuple[list[str], int]] = []
-            cursor_names: set[str] = set()
-            for node in ast.walk(func):
-                if not isinstance(node, ast.Call):
-                    continue
-                callee = node.func
-                if not (isinstance(callee, ast.Attribute) and callee.attr in {"execute", "execute_query", "fetch", "fetchall", "query"}):
-                    continue
-                if not node.args:
-                    continue
-                sql = _sql_text(node.args[0], constants)
-                columns = _select_columns(sql) if sql else None
-                if columns:
-                    executed.append((columns, node.lineno))
-                    if isinstance(callee.value, ast.Name):
-                        cursor_names.add(callee.value.id)
+            executed, cursor_names = _executed_selects(func, constants)
             if len(executed) != 1:
                 # More than one SELECT in a function, and this cannot say which unpacking belongs
                 # to which query without following the cursor. Silence beats a coin flip.
                 continue
             columns, sql_line = executed[0]
-            # Names that carry rows OF THIS QUERY: `rows = cur.fetchall()`, `row = cur.fetchone()`.
-            # Without this link the check matched ANY same-arity unpacking in the function -- an
-            # unrelated `lo, hi = compute()` was reported as "this query fetches `name`".
-            row_names: set[str] = set()
-            for node in ast.walk(func):
-                if isinstance(node, ast.Assign) and node.targets and isinstance(node.targets[0], ast.Name) and _from_cursor(node.value, cursor_names):
-                    row_names.add(node.targets[0].id)
+            row_names = _row_names_of_query(func, cursor_names)
 
             for node in ast.walk(func):
-                if isinstance(node, (ast.For, ast.AsyncFor)):
-                    target: ast.expr = node.target
-                    source: ast.expr = node.iter
-                elif isinstance(node, ast.Assign) and node.targets:
-                    target = node.targets[0]
-                    source = node.value
-                else:
+                unpack = _unpack_target_and_source(node)
+                if unpack is None:
                     continue
-                if not (_from_cursor(source, cursor_names) or (isinstance(source, ast.Name) and source.id in row_names)):
-                    continue  # the unpacked value must actually come from this query's cursor
-                names = _plain_targets(target)
-                if names is None or len(names) != len(columns):
+                target, source, unpack_line = unpack
+                names = _query_unpack_names(target, source, columns, cursor_names, row_names)
+                if names is None:
                     continue
-                used = _read_names(func, target)
-                unread = [(name, column) for name, column in zip(names, columns) if name not in used and not name.startswith("_")]
-                if not unread:
-                    continue
-                fetched = ", ".join(f"`{column}` (bound to `{name}`)" for name, column in unread)
-                findings.append(
-                    Finding(
-                        check="sql_selects_unread_column",
-                        severity="P2",
-                        file=rel,
-                        line=sql_line,
-                        snippet=_line_text(src_lines, sql_line),
-                        detail=(
-                            f"this query fetches {fetched}, which the unpacking at line "
-                            f"{node.lineno} binds and nothing in the function reads. The server "
-                            "materialises it, the driver decodes it and it crosses the wire on "
-                            "every row. Drop it from the SELECT list, or rename the binding to "
-                            "`_` to say the waste is deliberate."
-                        ),
-                    )
-                )
+                unread = _unread_bindings(func, target, names, columns)
+                if unread:
+                    findings.append(_unread_column_finding(rel, sql_line, src_lines, unread, unpack_line))
     return findings
