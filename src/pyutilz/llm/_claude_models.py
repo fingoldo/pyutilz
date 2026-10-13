@@ -183,7 +183,7 @@ def _openrouter_claude_spec(name: str) -> tuple[str, ClaudeModelSpec] | None:
             found = (listing_id, spec)
             break
     if len(_openrouter_specs) >= _OPENROUTER_LOOKUPS_MAX_SIZE:
-        _openrouter_specs.clear()  # bounded: one entry per distinct model name, and a clear only costs a re-lookup
+        _openrouter_specs.pop(next(iter(_openrouter_specs)))  # bounded FIFO: evict the oldest name, which costs at most one re-lookup
     _openrouter_specs[name] = found
     return found
 
