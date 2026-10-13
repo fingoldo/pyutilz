@@ -55,7 +55,26 @@ import importlib.util, subprocess  # nosec B404 - only used below to shell out t
 
 import shelve  # nosec B403 - open_safe_shelve below only opens a locally-supplied, lock-protected db_path; no untrusted/network data is ever unpickled from an unknown source
 import contextlib
-import portalocker
+
+
+def _lazy_import(name: str) -> Any:
+    """Bind a module now and execute it on first attribute access.
+
+    portalocker imports redis eagerly, which dominates the import time of every pyutilz module that imports this package.
+    Only filesystem.open_safe_shelve needs the lock, so the cost is paid on first use instead.
+    """
+    spec = importlib.util.find_spec(name)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"No module named {name!r}")
+    loader = importlib.util.LazyLoader(spec.loader)
+    spec.loader = loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
+portalocker = _lazy_import("portalocker")
 
 # Declared explicitly because most of these names are unused HERE by construction -- this module
 # exists so the split submodules and the package facade bind them from one place, reproducing the
