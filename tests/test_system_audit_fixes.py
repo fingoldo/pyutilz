@@ -440,3 +440,14 @@ def test_get_schema_delegates_to_graphql_when_a_client_is_connected(prefect_help
     monkeypatch.setattr(prefect_helpers, "client", object())
     monkeypatch.setattr(graphql, "query_schema", lambda: {"__schema": {"types": []}})
     assert prefect_helpers.get_schema() == {"__schema": {"types": []}}
+
+
+def test_lossy_int_cast_warning_names_type_float_fix(tmp_path, caplog):
+    """The truncation warning tells the reader to pass type_=float; that call must keep the precision."""
+    p = tmp_path / "cfg.toml"
+    p.write_text("[http]\ntimeout_sec = 0.5\n", encoding="utf-8")
+    cfg = TomlLiveConfig(p, check_interval=0.0)
+    with caplog.at_level("WARNING"):
+        cfg.get("http", "timeout_sec")
+    assert any("pass type_=float to keep precision" in r.getMessage() for r in caplog.records)
+    assert cfg.get("http", "timeout_sec", type_=float) == 0.5

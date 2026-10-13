@@ -817,7 +817,7 @@ class TestHealthEnrichment:
             client.__enter__ = lambda self_: self_
             client.__exit__ = lambda *a: None
 
-            def _fake_get(url, timeout=None):
+            def _fake_get(url, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
                 prefix = "https://openrouter.ai/api/v1/models/"
                 assert url.startswith(prefix), url
                 assert url.endswith("/endpoints"), url
@@ -885,7 +885,7 @@ class TestHealthEnrichment:
             client.__enter__ = lambda self_: self_
             client.__exit__ = lambda *a: None
 
-            def _flaky_get(url, timeout=None):
+            def _flaky_get(url, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
                 if "broken" in url:
                     raise httpx.ConnectError("boom")
                 prefix = "https://openrouter.ai/api/v1/models/"
@@ -935,3 +935,11 @@ class TestHealthEnrichment:
             )
         # gpt-4o-mini (120 t/s) > claude (80 t/s)
         assert rows[0]["id"] == "openai/gpt-4o-mini"
+
+
+def test_missing_api_key_error_names_pass_api_key_fallback():
+    mock_settings = MagicMock()
+    mock_settings.openrouter_api_key = None
+    with patch("pyutilz.llm.openrouter_provider.get_llm_settings", return_value=mock_settings):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            OpenRouterProvider(api_key=None)

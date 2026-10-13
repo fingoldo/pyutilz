@@ -159,7 +159,7 @@ def test_instance_survives_pickle_roundtrip(tmp_path):
     hit a TypeError the first time, far from wherever the lock was created."""
     client = CachedHttpClient(cache_dir=tmp_path, min_interval=0.5)
     client._last_call["example.org"] = 123.0
-    restored = pickle.loads(pickle.dumps(client))
+    restored = pickle.loads(pickle.dumps(client))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     assert restored.cache_dir == tmp_path
     assert restored.min_interval == 0.5
     assert restored._last_call == {}  # per-host timestamps are meaningless across a pickle boundary

@@ -67,7 +67,7 @@ class _FakeProc:
         # the tree-kill helper checks this first, so no taskkill is spawned against a fake PID.
         return 0
 
-    def wait(self, timeout=None):
+    def wait(self, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         return 0
 
     def __enter__(self):

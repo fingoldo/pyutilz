@@ -586,7 +586,7 @@ def test_f25_traffic_report_pages_past_the_first_page(monkeypatch):
     }
     seen_pages = []
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         seen_pages.append(json["page"])
         resp = Mock()
         resp.raise_for_status = lambda: None

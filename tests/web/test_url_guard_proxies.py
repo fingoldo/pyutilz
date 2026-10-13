@@ -26,7 +26,7 @@ def _handlers_for(**kwargs) -> list:
     captured: list = []
 
     class _Opener:
-        def open(self, target, timeout=None):
+        def open(self, target, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
             return None
 
     def _build(*handlers):

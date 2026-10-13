@@ -163,7 +163,7 @@ def test_picklable():
     sfc: SingleFlightCache[str, int] = SingleFlightCache()
     sfc.hits = 3
     sfc.misses = 1
-    restored = pickle.loads(pickle.dumps(sfc))
+    restored = pickle.loads(pickle.dumps(sfc))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     assert restored.hits == 3
     assert restored.misses == 1
     assert restored.get_cache_metrics()["hit_rate"] == 75.0
@@ -172,7 +172,7 @@ def test_picklable():
 @pytest.mark.asyncio
 async def test_usable_after_pickle_roundtrip():
     sfc: SingleFlightCache[str, int] = SingleFlightCache()
-    restored = pickle.loads(pickle.dumps(sfc))
+    restored = pickle.loads(pickle.dumps(sfc))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     cache: dict[str, int] = {}
 
     async def fetcher():

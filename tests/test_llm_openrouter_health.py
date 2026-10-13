@@ -76,7 +76,7 @@ class TestHealthCheckLogDedup:
         client.__enter__ = lambda self_: self_
         client.__exit__ = lambda *a: None
 
-        def _get(url, timeout=None):
+        def _get(url, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
             raise httpx.ConnectError("boom")
 
         client.get = MagicMock(side_effect=_get)
@@ -103,7 +103,7 @@ class TestHealthCheckLogDedup:
             client.__enter__ = lambda self_: self_
             client.__exit__ = lambda *a: None
 
-            def _get(url, timeout=None):
+            def _get(url, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
                 resp = MagicMock()
                 resp.json.return_value = {"data": {"endpoints": []}}
                 resp.raise_for_status = MagicMock()
@@ -144,7 +144,7 @@ class TestHealthTTLCache:
             client.__enter__ = lambda self_: self_
             client.__exit__ = lambda *a: None
 
-            def _fake_get(url, timeout=None):
+            def _fake_get(url, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
                 resp = MagicMock()
                 resp.json.return_value = {
                     "data": {

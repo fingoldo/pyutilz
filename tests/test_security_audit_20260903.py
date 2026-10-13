@@ -413,7 +413,7 @@ class _FakeProc:
     def kill(self):
         pass
 
-    def wait(self, timeout=None):
+    def wait(self, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         return 0
 
 
@@ -454,3 +454,16 @@ class TestCliToolUseTripwire:
             {"type": "result", "subtype": "success", "result": "hello"},
         ]
         assert self._run(events) == "hello"
+
+
+def test_decompression_cap_error_names_a_working_unbounded_escape_hatch():
+    """The cap error tells the reader to pass max_output_bytes=None; that spelling must really lift the cap."""
+    import zlib
+
+    from pyutilz.core.serialization import _decompress_capped
+
+    raw = b"a" * 4096
+    blob = zlib.compress(raw)
+    with pytest.raises(ValueError, match=r"pass max_output_bytes=None"):
+        _decompress_capped(blob, 1024)
+    assert _decompress_capped(blob, None) == raw

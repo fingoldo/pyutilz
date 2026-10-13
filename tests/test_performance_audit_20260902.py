@@ -370,7 +370,7 @@ def test_f06_plan_cache_is_not_pickled_and_the_cache_still_works_after_a_round_t
     assert c._plan_cache, "plan should have been compiled"
     state = c.__getstate__()
     assert state["_plan_cache"] == {}
-    restored = pickle.loads(pickle.dumps(c))
+    restored = pickle.loads(pickle.dumps(c))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     assert restored._plan_cache == {}
     assert isinstance(restored._lock, type(threading.RLock()))
     assert restored.lookup("k", n=500) == {"variant": "small", "block_size": 128}

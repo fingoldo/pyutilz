@@ -261,7 +261,6 @@ def test_module_sql_constants_sees_class_body_constants():
 def test_every_shared_gate_counterpart_is_a_registered_scanner_whose_module_names_its_gate():
     """Each scanner with a py-ci-shared gate for the same class says so in its module docstring, and says it the same
     way the table does: a renamed gate, or a scanner dropped from the table, makes the two disagree here."""
-    import ast
     import sys
 
     from pyutilz.dev.code_audit import get_scanners
@@ -273,7 +272,7 @@ def test_every_shared_gate_counterpart_is_a_registered_scanner_whose_module_name
         assert name in scanners, f"{name} is in SHARED_GATE_COUNTERPARTS but is not a registered scanner"
         assert gate.startswith("py_ci_shared.") and gate.count(".") == 1, gate
         module = sys.modules[_scanner_function(scanners[name]).__module__]
-        doc = ast.get_docstring(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))) or ""
+        doc = module.__doc__ or ""
         assert (
             f"Shared-gate counterpart: {gate} " in doc or f"Shared-gate counterpart for {name}: {gate} " in doc
         ), f"{module.__name__}'s docstring does not name {gate} as the counterpart of {name}"
@@ -292,3 +291,26 @@ def test_every_module_that_names_a_shared_gate_is_in_the_table():
         named.update(re.findall(r"Shared-gate counterpart(?: for \w+)?: (py_ci_shared\.\w+)", path.read_text(encoding="utf-8")))
     assert named, "no scanner module names a shared gate; the docstring pattern changed"
     assert named - gates == set(), "a module names a gate the table does not list"
+
+
+def test_duplicate_scanner_registration_error_names_allow_override():
+    """The refusal tells the caller to pass allow_override=True; that flag must replace the scanner it names."""
+    from pyutilz.dev.code_audit import register_scanner
+    from pyutilz.dev.code_audit.registry import _SCANNERS
+
+    name = "printed_advice_duplicate_probe"
+
+    def first(root, exclude_dirs=None):
+        return []
+
+    def second(root, exclude_dirs=None):
+        return []
+
+    register_scanner(name, first)
+    try:
+        with pytest.raises(ValueError, match=r"pass allow_override=True"):
+            register_scanner(name, second)
+        register_scanner(name, second, allow_override=True)
+        assert _SCANNERS[name] is second
+    finally:
+        _SCANNERS.pop(name, None)

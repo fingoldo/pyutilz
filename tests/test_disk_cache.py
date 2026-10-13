@@ -258,7 +258,7 @@ def test_disk_cache_picklable(tmp_path: Path):
 
     cache = DiskCache(tmp_path)
     cache.put("k", np.array([1, 2, 3]))
-    restored = pickle.loads(pickle.dumps(cache))
+    restored = pickle.loads(pickle.dumps(cache))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     out = restored.get("k")
     np.testing.assert_array_equal(out, np.array([1, 2, 3]))
     restored.put("k2", np.array([4, 5]))

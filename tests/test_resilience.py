@@ -181,7 +181,7 @@ class TestCircuitBreaker:
 
     def test_picklable(self):
         cb = CircuitBreaker("test", failure_threshold=3)
-        restored = pickle.loads(pickle.dumps(cb))
+        restored = pickle.loads(pickle.dumps(cb))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
         assert restored.name == "test"
         assert restored.failure_threshold == 3
 
@@ -259,7 +259,7 @@ class TestDeadLetterQueue:
     def test_picklable(self):
         dlq = DeadLetterQueue()
         dlq.add("op1", {}, ValueError("a"))
-        restored = pickle.loads(pickle.dumps(dlq))
+        restored = pickle.loads(pickle.dumps(dlq))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
         assert restored.size() == 1
         restored.add("op2", {}, ValueError("b"))
         assert restored.size() == 2

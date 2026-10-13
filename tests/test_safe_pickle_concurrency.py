@@ -56,7 +56,7 @@ def test_safe_dump_concurrent_same_path_never_corrupts(tmp_path, run):
     # Also confirm raw pickle.load succeeds (belt-and-suspenders vs. safe_load's
     # own verification masking a subtly-corrupt-but-hash-matching file).
     with open(path, "rb") as f:
-        raw = pickle.load(f)
+        raw = pickle.load(f)  # deserialize-ok: reads back a file this test wrote itself via safe_dump under tmp_path; no untrusted input
     assert raw == result
 
 

@@ -111,3 +111,13 @@ class TestXAIConfig:
         with patch("pyutilz.llm.xai_provider.get_llm_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="API key not provided"):
                 XAIProvider(api_key=None)
+
+
+def test_missing_api_key_error_names_pass_api_key_fallback():
+    from unittest.mock import patch, MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.xai_api_key = None
+    with patch("pyutilz.llm.xai_provider.get_llm_settings", return_value=mock_settings):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            XAIProvider(api_key=None)

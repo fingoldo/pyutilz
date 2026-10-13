@@ -319,3 +319,14 @@ class TestIdentityRaceCondition:
             node_id_seen, pid_seen, version_seen, scraper_name_seen, status_seen, ip_seen, app_name_seen = params
             combo = (node_id_seen, version_seen, scraper_name_seen, app_name_seen, ip_seen)
             assert combo in valid_combinations, f"Torn/mixed identity in heartbeat payload: {params}"
+
+
+def test_content_version_without_a_module_file_names_version_kwarg(monkeypatch):
+    """When the caller's module has no file, the error tells the reader to pass version=; that kwarg must be accepted."""
+    import inspect
+
+    from pyutilz.system.distributed import _content_version
+
+    monkeypatch.setattr(inspect, "getmodule", lambda frame: None)
+    with pytest.raises(ValueError, match=r"pass version="):
+        _content_version(object())

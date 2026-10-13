@@ -193,7 +193,7 @@ def test_safe_delta_write_uses_platform_tempdir(monkeypatch, tmp_path):
         def __init__(self, path):
             captured["path"] = path
 
-        def acquire(self, timeout=None):
+        def acquire(self, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
             return self
 
         def __enter__(self):
@@ -232,7 +232,7 @@ def test_safe_delta_write_lock_key_is_case_insensitive_on_windows(monkeypatch, t
         def __init__(self, path):
             captured_paths.append(path)
 
-        def acquire(self, timeout=None):
+        def acquire(self, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
             return self
 
         def __enter__(self):

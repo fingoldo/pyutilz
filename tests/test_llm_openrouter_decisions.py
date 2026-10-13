@@ -209,3 +209,21 @@ def test_bad_state_and_string_levels_raise_type_error() -> None:
         build_payload(DEFAULT_MODEL, [1, 2], {"q": NoulQuestion("i", "y", "n")})  # type: ignore[list-item]
     with pytest.raises(TypeError):
         build_payload(DEFAULT_MODEL, "s", {"q": ScoreQuestion("i", "abc")})
+
+
+def test_build_payload_moving_alias_error_names_allow_moving_alias_opt_in() -> None:
+    """The refusal tells the caller to pin a version or pass allow_moving_alias=True; the opt-in must build."""
+    with pytest.raises(ValueError, match=r"pass allow_moving_alias=True"):
+        build_payload("~typesafe/jev-latest", {"k": 1}, {"q": NoulQuestion("i", "y", "n")})
+    assert build_payload("~typesafe/jev-latest", {"k": 1}, {"q": NoulQuestion("i", "y", "n")}, allow_moving_alias=True)
+
+
+def test_resolve_api_key_error_names_pass_api_key_fallback() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from pyutilz.llm.openrouter_decisions import _resolve_api_key
+
+    with patch("pyutilz.llm.config.get_llm_settings", return_value=SimpleNamespace(openrouter_api_key=None)):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            _resolve_api_key(None)

@@ -235,7 +235,7 @@ class TestInitLogging:
         from pyutilz.dev.logginglib import _log_filename
         from pyutilz.dev.logginglib import init_logging
 
-        forced = str(tmp_path / "test.py")
+        forced = str(tmp_path / "test_caller")
         expected = Path(_log_filename(forced))
 
         returned = init_logging(log_to_file=True, forced_filename=forced, level=logging.DEBUG)
@@ -276,3 +276,36 @@ class TestEdgeCases:
 
         # Should not crash
         assert isinstance(log, dict)
+
+
+class TestInitLoggingStderrAdvice:
+    """The debug line for a stderr that cannot be reconfigured must actually be emitted."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_root_logger(self):
+        root = logging.getLogger()
+        saved_handlers = list(root.handlers)
+        saved_level = root.level
+        yield
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            if handler not in saved_handlers:
+                handler.close()
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
+
+    def test_failed_stderr_reconfigure_is_logged_with_its_errors_replace_note(self, monkeypatch, caplog):
+        import io
+        import sys
+
+        from pyutilz.dev.logginglib import init_logging
+
+        class _NoReconfigure(io.StringIO):
+            def reconfigure(self, **kwargs):
+                raise ValueError("stream does not support reconfigure")
+
+        monkeypatch.setattr(sys, "stderr", _NoReconfigure())
+        with caplog.at_level(logging.DEBUG):
+            init_logging(log_to_file=False, level=logging.DEBUG)
+        assert any("Could not set errors='replace' on sys.stderr" in r.getMessage() for r in caplog.records)

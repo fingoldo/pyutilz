@@ -179,3 +179,13 @@ class TestDeepSeekConfig:
         with patch("pyutilz.llm.deepseek_provider.get_llm_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="API key not provided"):
                 DeepSeekProvider(api_key=None)
+
+
+def test_missing_api_key_error_names_pass_api_key_fallback():
+    from unittest.mock import MagicMock, patch
+
+    mock_settings = MagicMock()
+    mock_settings.deepseek_api_key = None
+    with patch("pyutilz.llm.deepseek_provider.get_llm_settings", return_value=mock_settings):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            DeepSeekProvider(api_key=None)

@@ -187,3 +187,12 @@ def test_parse_results_content_parts_and_null_content() -> None:
     out = parse_results({"results": items})
     assert out["p"].text == "hello" and out["p"].cost_usd is None
     assert not out["n"].ok and "length" in (out["n"].error or "")
+
+
+def test_missing_api_key_error_names_pass_api_key_fallback():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    with patch("pyutilz.llm.config.get_llm_settings", return_value=SimpleNamespace(openrouter_api_key=None)):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            OpenRouterBatchClient(None)

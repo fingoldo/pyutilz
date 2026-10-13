@@ -309,3 +309,11 @@ class TestUnsupportedEndpoints:
     async def test_close_is_a_noop(self):
         p = _make_provider()
         assert await p._close() is None
+
+
+def test_missing_api_key_error_names_pass_api_key_fallback():
+    mock_settings = MagicMock()
+    mock_settings.gemini_api_key = None
+    with patch("pyutilz.llm.gemini_provider.get_llm_settings", return_value=mock_settings), patch("pyutilz.llm.gemini_provider.GENAI_AVAILABLE", True):
+        with pytest.raises(ValueError, match=r"pass api_key="):
+            GeminiProvider(api_key=None)

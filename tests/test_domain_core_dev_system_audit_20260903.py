@@ -394,7 +394,7 @@ def test_f34_used_instance_is_picklable():
         await cache.get_or_fetch(store, "k", _ready)
 
     asyncio.run(_use())
-    restored = pickle.loads(pickle.dumps(cache))
+    restored = pickle.loads(pickle.dumps(cache))  # deserialize-ok: round-trips a pickle this test just produced in-process; the bytes never leave the test, no untrusted input
     assert restored._loop is None
 
 

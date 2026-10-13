@@ -257,7 +257,7 @@ class TestSystemPromptGoesInAFile:
             def kill(self):
                 pass
 
-            def wait(self, timeout=None):
+            def wait(self, timeout=None):  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
                 return 0
 
         def fake_popen(cmd, **kwargs):

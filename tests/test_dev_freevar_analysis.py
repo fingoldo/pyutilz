@@ -1,7 +1,7 @@
 """Tests for pyutilz.dev.freevar_analysis: AST free-variable analysis for planning safe
 function/method extraction (monolith splits)."""
 
-import ast
+import __future__
 import importlib
 import inspect
 import io
@@ -10,6 +10,7 @@ import tokenize
 
 import pytest
 
+from pyutilz.core import jsonlib
 from pyutilz.dev import freevar_analysis as fva
 from pyutilz.dev.freevar_analysis import analyze_range, format_report, _main
 
@@ -221,16 +222,21 @@ def test_split_moves_the_range_and_leaves_a_named_reexport(tmp_path, monkeypatch
     assert rest.keep_me.__module__ == "reexportpkg.big", "an untouched definition must stay put"
 
 
-def test_the_comment_between_definitions_travels_with_them(tmp_path):
+def test_the_comment_between_definitions_travels_with_them(tmp_path, monkeypatch):
     """A comment carrying the reason a function is shaped as it is belongs with the function, not with the
     file it happened to be typed into. A name-by-name move cannot express that; a line range can."""
-    src = _write_splittable(tmp_path)
-    target = tmp_path / "big_extra.py"
+    pkg = tmp_path / "commentpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
+    target = pkg / "big_extra.py"
+    monkeypatch.syspath_prepend(str(tmp_path))
 
     fva.split_out_module(src, target, "move_a", "move_b")
 
-    assert any("the whole reason" in c for c in _comments(target.read_text(encoding="utf-8")))
-    assert not any("the whole reason" in c for c in _comments(src.read_text(encoding="utf-8")))
+    new = importlib.import_module("commentpkg.big_extra")
+    assert "the whole reason" in inspect.getcomments(new.move_a), "the comment above move_a must come along with it"
 
 
 def test_a_move_that_would_leave_a_read_name_behind_is_refused(tmp_path):
@@ -310,19 +316,23 @@ def test_an_unknown_symbol_is_rejected(tmp_path):
         fva.split_out_module(src, tmp_path / "big_extra.py", "move_a", "no_such_name")
 
 
-def test_the_future_import_is_not_duplicated_into_the_new_module(tmp_path):
+def test_the_future_import_is_not_duplicated_into_the_new_module(tmp_path, monkeypatch):
     """The generated header opens with `from __future__ import annotations`, and the source's own copy of it
     would land in the copied import block right after - a SyntaxError, since a future import is only legal as
-    the first statement."""
-    src = _write_splittable(tmp_path)
-    target = tmp_path / "big_extra.py"
+    the first statement. Importing the new module is the behavioural check: a duplicate would fail to compile."""
+    pkg = tmp_path / "futurepkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
+    target = pkg / "big_extra.py"
+    monkeypatch.syspath_prepend(str(tmp_path))
 
     fva.split_out_module(src, target, "move_a", "move_b")
 
-    text = target.read_text(encoding="utf-8")
-    futures = [n for n in ast.parse(text).body if isinstance(n, ast.ImportFrom) and n.module == "__future__"]
-    assert [a.name for n in futures for a in n.names] == ["annotations"]
-    compile(text, str(target), "exec")
+    new = importlib.import_module("futurepkg.big_extra")
+    assert jsonlib.loads(new.move_a({"b": 1, "a": 2})) == {"a": 2, "b": 1}
+    assert new.annotations is __future__.annotations, "the new module must carry the future flag exactly once, from its header"
 
 
 def test_back_import_is_written_for_a_name_defined_above_the_split_point(tmp_path, monkeypatch):
@@ -383,3 +393,12 @@ def test_whole_statement_range_has_no_comprehension_false_positive(tmp_path):
     report = analyze_range(p, 2, 3)
     assert "x" not in {u.name for u in report.needs_incoming_value}
     assert report.free_names == ["len", "xs"]
+
+
+def test_refusal_to_split_names_back_import_ok_escape_hatch(tmp_path):
+    """A moved range reading a constant that stays behind is refused, and the refusal names back_import_ok=True."""
+    src = tmp_path / "big.py"
+    src.write_text("CONST = 3\n\n\ndef move_me():\n    return CONST\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"pass back_import_ok=True"):
+        fva.split_out_module(src, tmp_path / "big_extra.py", "move_me", "move_me")

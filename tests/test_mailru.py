@@ -27,7 +27,7 @@ def _stub_json(monkeypatch: pytest.MonkeyPatch, responses: Dict[str, Dict[str, A
     """Replace the module's one JSON GET, recording the URLs asked for."""
     asked: List[str] = []
 
-    def _fake(url: str, timeout: int = 60) -> Dict[str, Any]:
+    def _fake(url: str, timeout: int = 60) -> Dict[str, Any]:  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         asked.append(url)
         for fragment, payload in responses.items():
             if fragment in url:
@@ -73,7 +73,7 @@ def test_listing_pages_through_the_whole_folder(monkeypatch: pytest.MonkeyPatch)
     first = [{"name": f"f{i}", "type": "file"} for i in range(500)]
     second = [{"name": f"g{i}", "type": "file"} for i in range(100)]
 
-    def _fake(url: str, timeout: int = 60) -> Dict[str, Any]:
+    def _fake(url: str, timeout: int = 60) -> Dict[str, Any]:  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         page = second if "offset=500" in url else first
         return {"body": {"list": page, "count": {"files": 600, "folders": 0}}}
 
@@ -98,7 +98,7 @@ def test_the_agent_header_is_set_because_the_cdn_refuses_requests_without_one(mo
     captured: Dict[str, Any] = {}
     _stub_json(monkeypatch, {"dispatcher": {"body": {"weblink_get": [{"url": "https://host/x"}]}}})
 
-    def _fake_urlopen(request: Any, timeout: int = 0) -> str:
+    def _fake_urlopen(request: Any, timeout: int = 0) -> str:  # unused-ok: fake keeps the real API signature (timeout accepted, nothing to wait on in-memory)
         captured["headers"] = dict(request.headers)
         return "response"
 
