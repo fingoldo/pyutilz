@@ -20,7 +20,6 @@ from ._common import (
     joblib,
     logger,
     os,
-    portalocker,
     re,
     shelve,
     sys,
@@ -281,6 +280,8 @@ def open_safe_shelve(
     On exit, closes/syncs the shelve database, then flushes the lock file and fsyncs it to disk
     before releasing the lock -- both run even if the caller's `with`-block body raises.
     """
+    # Imported here, not from _common: the top-level import would pull redis (via portalocker) into every pythonlib import.
+    import portalocker
 
     with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
         db = shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)  # audit-exempt: resource_handle_safety -- the @contextmanager finally block closes the shelve
