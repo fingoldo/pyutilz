@@ -192,6 +192,30 @@ jobs:
       py-ci-shared-ref: c9c6a89d15ce265e80c5c0d0467f3d384a33adba  # v1.22.6  # pragma: allowlist secret
       ignore: "C901"
 
+  # The shared ruff-blocking job above ignores C901 (its default). This job enforces the complexity
+  # threshold on its own: it selects C901 only, so it cannot replace the rule set of the main gate.
+  complexity-blocking:
+    name: McCabe complexity (blocking, max 10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run ruff C901 at the configured threshold
+        run: |
+          python -m pip install "ruff==0.16.1"
+          python -m ruff check --select C901 --no-cache src scripts tests
+
   lint-blocking:
     name: lint + security (blocking, triaged clean)
     uses: fingoldo/py-ci-shared/.github/workflows/lint-blocking.yml@c9c6a89d15ce265e80c5c0d0467f3d384a33adba  # v1.22.6  # pragma: allowlist secret
@@ -271,7 +295,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test, ruff-blocking, lint-blocking, build]
+    needs: [test, ruff-blocking, complexity-blocking, lint-blocking, build]
     steps:
       - name: Check all required jobs succeeded
         env:

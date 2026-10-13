@@ -27,13 +27,7 @@ _MARKERS = ("TODO", "FIXME", "XXX", "HACK")
 
 # Grandfathered un-attributed markers — drain over time. Each entry is
 # "rel/path.py:lineno".
-_GRANDFATHERED: set[str] = {
-    # ``meta_test_utils.py`` documents marker keywords in section
-    # headers and docstrings — pattern-matching tooling, not actual
-    # work-items. Excluded permanently.
-    "dev/meta_test_utils.py:261",
-    "dev/meta_test_utils.py:285",
-}
+_GRANDFATHERED: set[str] = set()
 
 
 def _scan_markers() -> list[tuple[Path, int, str, str]]:

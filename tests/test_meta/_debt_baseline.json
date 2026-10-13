@@ -1,4 +1,3 @@
 {
-  "test_dead_helpers::_USER_DEFERRED_DEAD_HELPERS": 2,
-  "test_todo_hygiene::_GRANDFATHERED": 2
+  "test_dead_helpers::_USER_DEFERRED_DEAD_HELPERS": 2
 }

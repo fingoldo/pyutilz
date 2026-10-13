@@ -108,7 +108,6 @@ _PERMITTED_SYS_MODULES_WRITE_SITES: dict[str, str] = {
     "tests/test_system_audit_fixes.py:393": "the prefect_helpers fixture's stub install; its "
     "finally block pops both the stub key and (when the fixture built it) "
     "pyutilz.system.scheduling.prefect plus the parent-package attribute.",
-    "tests/test_web_extra.py:465": "a grequests stub inside a try/finally whose finally does " '`del sys.modules["grequests"]` before the assertions run.',
 }
 
 

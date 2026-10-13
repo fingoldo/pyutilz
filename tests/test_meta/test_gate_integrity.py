@@ -53,12 +53,8 @@ _GATE_CONFIG_TABLES = (
 # insertion above does not invalidate a reviewed decision.
 _DECLARED_NARROWINGS = {
     # -- ruff -------------------------------------------------------------------------
-    "pre-commit::ruff-real-bugs::--ignore=C901": (
-        "C901 (mccabe complexity) is advisory, not a bug class: 17 findings survive at the "
-        "measured threshold of 20 and each is a judgement call about a dispatch function's "
-        "shape. Surfaced by the full-select advisory pass instead."
-    ),
-    "ci.yml::ruff-blocking::with::ignore=C901": "The CI half of the same decision; the two venues must stay in step, which is why both keys are listed.",
+    "ci.yml::complexity-blocking::Run ruff C901 at the configured threshold::run::--select=C901": "A separate job that selects only the McCabe rule, so the threshold is blocking in CI without replacing the main gate rule set (which --select would do).",
+    "ci.yml::ruff-blocking::with::ignore=C901": "The shared ruff-blocking job keeps C901 out of its set; the threshold is enforced by the separate complexity-blocking job (ruff --select C901, max-complexity 10).",
     "pre-commit::pytest-smoke-on-push::-m=not gpu and not slow": "Pre-push smoke run over tests/stats only; the full suite is the ci.yml job. Not a merge gate, a local early-warning subset.",
     "pyproject::[tool.ruff]::exclude": "VCS/build artifact dirs only. tests/ and scripts/ were REMOVED from this list 2026-09-02 and _benchmarks/ on 2026-09-03 (audit 06/F09), along with the pre-commit hook's mirror of it; all three are linted, with their idiomatic codes exempted per-file instead.",
     "pyproject::[tool.ruff.lint]::per-file-ignores": "Each entry carries its own inline reason at the call site in pyproject.toml; the exemptions are per-file and per-code, never whole-directory.",
