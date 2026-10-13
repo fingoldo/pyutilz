@@ -32,7 +32,7 @@ def test_f01_no_batch_stamped_type_ignore_justification():
         for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if "untyped upstream source (json/external lib/dynamic attr)" in line
     ]
-    assert stamped == [], f"batch-stamped type-ignore justification is back at: {stamped}"
+    assert stamped == [], f"batch-stamped type-ignore justification is back at: {stamped}"  # audit-exempt: source_text_assertion -- regression guard scanning src for a banned justification string; reading source is its job
 
 
 def test_f01_sparse_memory_usage_returns_a_real_int():

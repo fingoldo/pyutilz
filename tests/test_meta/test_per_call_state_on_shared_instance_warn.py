@@ -32,7 +32,7 @@ from pyutilz.dev.code_audit import scan_per_call_state_on_shared_instance
 SRC_DIR = Path(pyutilz.__file__).resolve().parent
 
 
-def test_per_call_state_on_shared_instance_advisory_report(capsys) -> None:
+def test_per_call_state_on_shared_instance_advisory_report(capsys) -> None:  # audit-exempt: nondiscriminating_test -- advisory report, never fails by design; test_per_call_state_on_shared_instance is the gate
     """Report, never fail. An empty result is a clean report, not a skipped one."""
     findings = scan_per_call_state_on_shared_instance(SRC_DIR)
     if findings:

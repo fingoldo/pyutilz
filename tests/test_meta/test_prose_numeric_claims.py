@@ -179,7 +179,7 @@ _REVIEWED_NON_MEASUREMENTS = (
 )
 
 
-def test_volatile_prose_figures_carry_a_date_qualifier():
+def test_volatile_prose_figures_carry_a_date_qualifier():  # audit-exempt: nondiscriminating_test -- advisory undated-figure warning; test_prose_numeric_claims_match_the_repo is the gate
     """WARN-only: a measured percentage or runtime in prose should say when it was measured.
 
     Deliberately non-blocking. Measured on this repo's four prose files, the rule's raw

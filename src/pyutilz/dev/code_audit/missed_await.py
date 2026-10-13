@@ -221,7 +221,8 @@ def scan_sync_blocking_in_async(
             for stmt in func.body:
                 finder.visit(stmt)
             for call in finder.hits:
-                assert isinstance(call.func, ast.Attribute)  # nosec B101 - _is_blocking_call only ever appends Calls whose .func is an Attribute; narrows the type for the access below, not a security check
+                if not isinstance(call.func, ast.Attribute):  # _is_blocking_call only appends Calls whose .func is an Attribute; not a security check
+                    raise AssertionError(f"expected Attribute callee, got {type(call.func).__name__}")
                 attr = call.func.attr
                 findings.append(Finding(
                     check="sync_blocking_in_async",

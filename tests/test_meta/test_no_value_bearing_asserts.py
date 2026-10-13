@@ -30,5 +30,7 @@ def regenerate_baseline(path: Path = _BASELINE_PATH) -> None:
 
 def test_no_new_value_bearing_asserts():
     """No production assert checks a value beyond the recorded debt, and the debt holds no stale entry."""
-    # 49 asserts in src/pyutilz today; a walk that saw fewer than 20 has stopped reaching the package.
-    assert_no_value_bearing_asserts(PACKAGE_ROOT, min_asserts_seen=20, baseline_path=_BASELINE_PATH)
+    # 18 asserts in src/pyutilz on 2026-10-13, down from 49: the value checks that were asserts became explicit
+    # if not ...: raise AssertionError guards (they survive python -O), so the floor follows the count.
+    # A walk that sees fewer than 15 has stopped reaching the package.
+    assert_no_value_bearing_asserts(PACKAGE_ROOT, min_asserts_seen=15, baseline_path=_BASELINE_PATH)

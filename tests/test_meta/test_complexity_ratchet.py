@@ -44,7 +44,7 @@ def _collect() -> dict[str, int]:
     )
     if proc.returncode not in (0, 1) or not proc.stdout.strip():
         pytest.skip(f"ruff C901 scan unavailable in this environment (rc={proc.returncode}): {proc.stderr.strip()[:400]}")
-    try:
+    try:  # audit-exempt: except_skip_masks_call_under_test -- helper skips when ruff is absent from PATH or emits non-JSON; neither is the code under test
         findings = jsonlib.loads(proc.stdout)
     except jsonlib.JSONDecodeError:  # pragma: no cover - defensive
         pytest.skip("ruff produced non-JSON output; C901 ratchet cannot run here")

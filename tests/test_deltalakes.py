@@ -42,5 +42,5 @@ def test_other_remote_schemes_are_not_local(path):
 def test_windows_drive_letter_is_local_not_a_uri_scheme():
     """``urlparse("R:/data")`` reports scheme "r" -- without the single-letter special case a
     perfectly ordinary Windows path would be classified as a remote store."""
-    assert is_local_path(r"R:\data	able") is True
-    assert is_local_path("C:/data/table") is True
+    assert is_local_path(r"R:\data	able") is True  # audit-exempt: hardcoded_absolute_path_in_test -- is_local_path classifies Windows paths; the literal is input data, no filesystem access
+    assert is_local_path("C:/data/table") is True  # audit-exempt: hardcoded_absolute_path_in_test -- is_local_path classifies Windows paths; the literal is input data, no filesystem access

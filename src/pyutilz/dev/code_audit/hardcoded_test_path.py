@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # A Windows drive-letter path ("D:\Machine Learning\...", "C:/Users/...") or a
 # POSIX developer-home path ("/home/alice/...", "/Users/bob/...", "/root/...").
@@ -56,6 +56,8 @@ def scan_hardcoded_absolute_path_in_test(
             if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
                 continue
             if not _ABS_PATH_RE.match(node.value):
+                continue
+            if is_line_exempt(src_lines, node.lineno, "hardcoded_absolute_path_in_test"):
                 continue
             findings.append(Finding(
                 check="hardcoded_absolute_path_in_test",

@@ -84,7 +84,7 @@ def test_documented_pytest_markers_are_declared():
     assert_no_inventory_drift(find_undeclared_markers(PROSE_FILES, PYPROJECT), "documented pytest marker(s) that are not declared")
 
 
-def test_every_shipped_module_appears_in_some_documentation():
+def test_every_shipped_module_appears_in_some_documentation():  # audit-exempt: nondiscriminating_test -- advisory WARN-only documentation-coverage report; a blocking sibling enforces it
     """WARN-only: a module documented nowhere is a module nobody can find."""
     from py_ci_shared.docs_inventory_parity import find_undocumented_modules
 

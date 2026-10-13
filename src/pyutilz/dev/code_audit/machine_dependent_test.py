@@ -10,7 +10,7 @@ import ast
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 _FunctionDef = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -115,6 +115,8 @@ def _wall_clock_findings_in_fn(fn: _FunctionDef, rel: str, src_lines: List[str])
                 continue
             if not (_is_duration(cmp_node.left, elapsed_names) or any(_is_duration(c, elapsed_names) for c in cmp_node.comparators)):
                 continue
+            if is_line_exempt(src_lines, node.lineno, "wall_clock_assertion"):
+                break
             findings.append(
                 Finding(
                     check="wall_clock_assertion",

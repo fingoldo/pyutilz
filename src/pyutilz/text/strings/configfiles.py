@@ -96,7 +96,8 @@ def _normalize_variables(variables: Any, values: dict) -> list:
         variables = variables.split(",")
     elif variables is None or variables == []:
         variables = list(values.keys())
-    assert isinstance(variables, list)  # nosec B101 - internal type invariant on a locally-derived variable (already normalized above), not a security/permission gate
+    if not isinstance(variables, list):  # locally-derived variable, already normalized above; not a security/permission gate
+        raise AssertionError(f"expected list of variables, got {type(variables).__name__}")
     return variables
 
 

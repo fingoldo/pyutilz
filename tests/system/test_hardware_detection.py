@@ -251,20 +251,17 @@ class TestPowerAndLargePages:
         else:
             print("[WARN] Large pages check not supported on this OS")
 
-    def test_get_power_plan(self):
-        """get_power_plan() returns None or a dict/list -- and always the right platform probe.
+    def test_get_power_plan_reports_no_data_as_none(self, monkeypatch):
+        """A platform probe with no data makes get_power_plan() return None, not an empty container or a crash.
 
-        A desktop/VM legitimately has no power-plan data, so "None" is a valid ANSWER here, not
-        an excuse to assert nothing: the shape is pinned unconditionally, and a second,
-        deterministic half asserts the platform dispatch itself (which the old
-        ``if power_plan: ... else: print("[WARN] ...")`` never touched).
+        Hardware-independent: the Linux probe is stubbed to report nothing, so the value is fixed.
         """
-        from pyutilz.system.system import get_power_plan
+        from pyutilz.system.system import probing as probing_mod
 
-        power_plan = get_power_plan()
-        assert power_plan is None or isinstance(power_plan, (dict, list))
-        if isinstance(power_plan, dict):
-            assert power_plan, "a returned power-plan dict must not be empty"
+        monkeypatch.setattr(probing_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(probing_mod, "get_linux_power_plan", lambda: None)
+
+        assert probing_mod.get_power_plan() is None
 
     @pytest.mark.parametrize(
         "system_name,expected_delegate",
@@ -283,18 +280,19 @@ class TestPowerAndLargePages:
         assert probing_mod.get_power_plan() == sentinel
         assert called == [expected_delegate]
 
-    def test_get_battery_info(self):
-        """get_battery_info() returns None (no battery) or a dict carrying the documented keys.
+    def test_get_battery_info_agrees_with_psutil_on_this_machine(self):
+        """get_battery_info() is None exactly when psutil reports no battery, and otherwise carries the documented keys.
 
-        Both outcomes are real answers on different hardware, so both are asserted -- unlike the
-        old ``if battery_info: ... else: print("[WARN] No battery detected")``, which passed
-        even when a laptop's probe silently started returning None.
+        Whether this machine has a battery is hardware-dependent, but the answer must match psutil's own view of it.
         """
+        import psutil
+
         from pyutilz.system.system import get_battery_info
 
+        psutil_battery = psutil.sensors_battery()
         battery_info = get_battery_info()
 
-        assert battery_info is None or isinstance(battery_info, dict)
+        assert (battery_info is None) == (psutil_battery is None)
         if battery_info is not None:
             assert {"percent", "secsleft", "power_plugged"} <= set(battery_info)
             assert 0 <= battery_info["percent"] <= 100

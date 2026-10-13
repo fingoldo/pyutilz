@@ -30,7 +30,7 @@ from pyutilz.dev.code_audit import scan_uncached_constant_cost_probe
 SRC_DIR = Path(pyutilz.__file__).resolve().parent
 
 
-def test_uncached_constant_cost_probe_advisory_report(capsys) -> None:
+def test_uncached_constant_cost_probe_advisory_report(capsys) -> None:  # audit-exempt: nondiscriminating_test -- advisory report, never fails by design; test_uncached_constant_cost_probe is the gate
     """Report, never fail. An empty result is a clean report, not a skipped one."""
     findings = scan_uncached_constant_cost_probe(SRC_DIR)
     if findings:

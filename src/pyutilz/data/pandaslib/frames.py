@@ -256,7 +256,8 @@ def _showcase_pandas_columns(
             print(f"{var.upper()} {df[var].dtype}")  # noqa: T201 -- use_print is an explicit stdout-display contract, doctest-verified above
         stats = df[var].value_counts(dropna=dropna)
         if max_vars is not None:
-            assert max_vars >= 0  # nosec B101 - internal invariant on a display-row-count parameter (only used to slice a printed head()), not a security boundary
+            if max_vars < 0:  # display-row-count parameter, only used to slice a printed head(); not a security boundary
+                raise AssertionError(f"max_vars must be >= 0, got {max_vars}")
         _print_value_counts(stats, should_print, max_vars)
 
         # Rare/uninformative analysis -- gate respects `dropna` (matches the value_counts
@@ -433,7 +434,8 @@ def showcase_df_columns(
             df, target_cols, dropna, use_markdown, should_print, max_vars, max_cat_uniq_qty, max_unique_percent
         )
     else:
-        assert isinstance(df, pd.DataFrame)  # nosec B101 - the polars branch above is the only other DataFrame flavour this function accepts
+        if not isinstance(df, pd.DataFrame):  # the polars branch above is the only other DataFrame flavour this function accepts
+            raise AssertionError(f"expected pandas DataFrame, got {type(df).__name__}")
         rare_categories, uninformative_features = _showcase_pandas_columns(
             df, target_cols, dropna, use_markdown, should_print, max_vars, max_cat_uniq_qty, max_unique_percent
         )

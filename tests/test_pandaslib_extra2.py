@@ -240,7 +240,7 @@ def _pyarrow_array(values, dtype: str):
     outside any handler.
     """
     pytest.importorskip("pyarrow")
-    try:
+    try:  # audit-exempt: except_skip_masks_call_under_test -- except covers the pd.array(...) construction only; the function under test is outside it
         return pd.array(values, dtype=dtype)
     except TypeError as e:  # pandas too old to express this pyarrow-backed dtype
         pytest.skip(f"pyarrow-backed dtype {dtype!r} unsupported by this pandas/pyarrow pair ({e})")

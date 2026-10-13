@@ -179,7 +179,7 @@ async def test_openai_minimal_call(openai_key, assert_under_budget):
     # ``asyncio.wait_for`` short-circuits to a clean test SKIP so a
     # rate-limited key doesn't block CI / dev iteration.
     p = OpenAIProvider(api_key=openai_key, model="gpt-4o-mini")
-    try:
+    try:  # audit-exempt: except_skip_masks_call_under_test -- catches only TimeoutError (tenacity retries a rate limit forever); sibling re-raises the rest
         out = await asyncio.wait_for(
             p.generate(
                 "Reply with exactly the word OK.",
@@ -202,7 +202,7 @@ async def test_gemini_minimal_call(gemini_key, assert_under_budget):
     from pyutilz.llm.gemini_provider import GeminiProvider
 
     p = GeminiProvider(api_key=gemini_key, model="gemini-2.5-flash")
-    try:
+    try:  # audit-exempt: except_skip_masks_call_under_test -- catches only TimeoutError (tenacity retries a rate limit forever); sibling re-raises the rest
         out = await p.generate(
             "Reply with exactly the word OK.",
             max_tokens=10,

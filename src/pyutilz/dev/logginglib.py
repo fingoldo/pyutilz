@@ -189,12 +189,14 @@ def initialize_function_log(explicit_only: bool = False, allowed_types: tuple = 
         params = inspect.getargvalues(current_frame).locals
         kwargs = params.get("kwargs", {})
         kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
-        assert isinstance(kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
+        if not isinstance(kwargs, dict):  # a dict input always returns a dict from filter_elements_by_type
+            raise AssertionError(f"expected dict kwargs, got {type(kwargs).__name__}")
         if explicit_only:
             params = kwargs
         else:
             filtered_params = filter_elements_by_type(obj=params, allowed_types=allowed_types)
-            assert isinstance(filtered_params, dict)
+            if not isinstance(filtered_params, dict):
+                raise AssertionError(f"expected dict params, got {type(filtered_params).__name__}")
             params = {**filtered_params, **kwargs}
     except (AttributeError, TypeError) as e:
         logger.exception(e)
@@ -321,7 +323,8 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
         # unconditionally -- otherwise the documented default always raised KeyError.
         results_log = {"results": {}}
     ensure_dict_elem(obj=results_log, name="results", value={})
-    assert source_type in ("db_table", "file")  # nosec B101 - source_type only selects a display-message template below, never touches SQL/file paths
+    if source_type not in ("db_table", "file"):  # source_type only selects a display-message template below, never touches SQL/file paths
+        raise AssertionError(f"source_type must be 'db_table' or 'file', got {source_type!r}")
     if lang is None:
         # globals() inside this module always resolves to pyutilz.dev.logginglib's OWN
         # namespace, never the caller's -- so this used to be a very roundabout way of always
@@ -411,11 +414,13 @@ _SESSION_VARS = ("current_proxy", "current_proxy_resolved", "login")
 def _call_params(args: tuple, kwargs: dict, explicit_only: bool, allowed_types: tuple) -> dict:
     """The call's loggable parameters: keyword args only when ``explicit_only``, else positional and keyword args."""
     f_kwargs = filter_elements_by_type(obj=kwargs, allowed_types=allowed_types)
-    assert isinstance(f_kwargs, dict)  # a dict input always returns a dict from filter_elements_by_type
+    if not isinstance(f_kwargs, dict):  # a dict input always returns a dict from filter_elements_by_type
+        raise AssertionError(f"expected dict kwargs, got {type(f_kwargs).__name__}")
     if explicit_only:
         return f_kwargs
     f_params = filter_elements_by_type(obj={i: val for i, val in enumerate(args)}, allowed_types=allowed_types)
-    assert isinstance(f_params, dict)
+    if not isinstance(f_params, dict):
+        raise AssertionError(f"expected dict params, got {type(f_params).__name__}")
     return {**f_params, **f_kwargs}
 
 

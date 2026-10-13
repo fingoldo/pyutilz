@@ -258,11 +258,10 @@ def scan_async_primitive_reinit_per_call(
                     continue
                 if id(node) in default_nodes:
                     continue
-                if not _is_asyncio_primitive_call(node, primitive_names, module_aliases, direct_names):
+                if not isinstance(node, ast.Call) or not _is_asyncio_primitive_call(node, primitive_names, module_aliases, direct_names):
                     continue
                 if node in attr_assigned or node in fanout_exempt:
                     continue
-                assert isinstance(node, ast.Call)
                 callee = node.func
                 primitive = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "?")
                 findings.append(Finding(

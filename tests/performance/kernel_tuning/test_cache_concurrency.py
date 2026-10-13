@@ -271,7 +271,7 @@ def test_lookup_never_blocks_during_inprogress_sweep(host_dir):
             assert fresh.lookup("kx", n=1) == {"backend": "v"}
         elapsed = time.perf_counter() - t0
         # 50 lookups while a marker is held must be near-instant (no lock wait).
-        assert elapsed < 5.0, f"lookup appears to block during sweep: {elapsed:.2f}s"
+        assert elapsed < 5.0, f"lookup appears to block during sweep: {elapsed:.2f}s"  # audit-exempt: wall_clock_assertion -- performance smoke test: 50 lock-free lookups, bound far above the regression guarded
     finally:
         os.remove(marker)
 

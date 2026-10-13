@@ -747,7 +747,8 @@ def build_aggregate_features_polars(
     # Checks
     # ----------------------------------------------------------------------------------------------------------------------------
 
-    assert engine in ("cpu", "gpu")  # nosec B101 - internal API-misuse guard on a developer-supplied engine-selection parameter, not a security boundary
+    if engine not in ("cpu", "gpu"):  # developer-supplied engine-selection parameter; API-misuse guard, not a security boundary
+        raise AssertionError(f"engine must be 'cpu' or 'gpu', got {engine!r}")
 
     _warn_if_cuda_unavailable(engine)
 
@@ -808,15 +809,13 @@ def build_aggregate_features_polars(
         assert ewm_spans is not None and ewm_basic_funcs is not None and ewm_final_funcs is not None
         assert pds_fields is not None and pds_numaggs is not None and linreg_fields is not None
 
-        assert isinstance(
-            filter_values, list
-        )  # nosec B101 - internal invariant on the shape of the caller-supplied subgroups dict values, not a security boundary
+        if not isinstance(filter_values, list):  # shape of the caller-supplied subgroups dict values; not a security boundary
+            raise AssertionError(f"subgroup filter values must be a list, got {type(filter_values).__name__}")
 
         if not filter_field:
             num_no_filter += 1
-            assert (
-                num_no_filter <= 1
-            )  # nosec B101 - internal invariant: at most one "no filter" (falsy filter_field) entry is expected in subgroups, not a security boundary
+            if num_no_filter > 1:  # at most one "no filter" (falsy filter_field) subgroup entry is expected; not a security boundary
+                raise AssertionError(f"at most one subgroup may have no filter field, found {num_no_filter}")
         categorical_fields = _subgroup_categoricals(orig_categorical_fields, filter_field) if filter_field else categorical_fields
 
         for filter_value in filter_values:

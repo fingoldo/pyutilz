@@ -9,7 +9,7 @@ import ast
 from typing import Iterator
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- tests that assert on SOURCE TEXT rather than on behaviour -----------
 #
@@ -251,6 +251,8 @@ def scan_source_text_assertions(
                 if how is None:
                     continue
                 if not _is_membership_or_match(node.test):
+                    continue
+                if is_line_exempt(src_lines, node.lineno, "source_text_assertion"):
                     continue
                 findings.append(Finding(
                     check="source_text_assertion",

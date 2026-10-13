@@ -265,7 +265,8 @@ def _iter_partition_dates(from_date: date, to_date: date, partition_size: str):
     2026-08-02 near-duplicate-function-body finding: create_postgres_range_partitions and
     delete_postgres_range_partitions independently duplicated this date-walk loop.
     """
-    assert partition_size in ("day", "week", "month", "year")  # nosec B101 - partition_size only selects a relativedelta branch below, never spliced into SQL
+    if partition_size not in ("day", "week", "month", "year"):  # only selects a relativedelta branch below, never spliced into SQL
+        raise AssertionError(f"partition_size must be day/week/month/year, got {partition_size!r}")
     d = from_date
     while d <= to_date:
         if partition_size == "day":

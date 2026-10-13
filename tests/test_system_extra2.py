@@ -644,7 +644,7 @@ class TestGetMaxSinglediskFreeSpaceGb:
     @patch("pyutilz.system.system.fsutils.psutil")
     def test_basic(self, mock_psutil):
         from pyutilz.system.system import get_max_singledisk_free_space_gb
-        disk = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")
+        disk = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")  # audit-exempt: hardcoded_absolute_path_in_test -- psutil disk-partition mock needs a real mountpoint string; no filesystem access
         mock_psutil.disk_partitions.return_value = [disk]
         mock_psutil.disk_usage.return_value = MagicMock(total=500 * 2**30, free=200 * 2**30)
         max_free, pct, best, total, free = get_max_singledisk_free_space_gb()
@@ -654,7 +654,7 @@ class TestGetMaxSinglediskFreeSpaceGb:
     @patch("pyutilz.system.system.fsutils.psutil")
     def test_required_filesystem_filter(self, mock_psutil):
         from pyutilz.system.system import get_max_singledisk_free_space_gb
-        disk1 = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")
+        disk1 = MagicMock(opts="rw", fstype="ntfs", mountpoint="C:\\")  # audit-exempt: hardcoded_absolute_path_in_test -- psutil disk-partition mock needs a real mountpoint string; no filesystem access
         disk2 = MagicMock(opts="rw", fstype="ext4", mountpoint="/data")
         mock_psutil.disk_partitions.return_value = [disk1, disk2]
         mock_psutil.disk_usage.return_value = MagicMock(total=100 * 2**30, free=50 * 2**30)

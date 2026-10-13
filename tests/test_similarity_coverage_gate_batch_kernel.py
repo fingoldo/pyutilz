@@ -110,4 +110,4 @@ class TestBatchWithMatchesKernelScalesBeyondPurePythonLoop:
         start = time.perf_counter()
         idx.query(QUERY)
         elapsed = time.perf_counter() - start
-        assert elapsed < 5.0, f"coverage-gated batch query over 3000 candidates took {elapsed:.2f}s, expected well under 5s"
+        assert elapsed < 5.0, f"coverage-gated batch query over 3000 candidates took {elapsed:.2f}s, expected well under 5s"  # audit-exempt: wall_clock_assertion -- 3000-candidate coverage-gated batch query, bound far above the regression guarded

@@ -116,6 +116,12 @@ def _setup_mysql_engine(username: Any, pwd: Any, db_host: Any, db_port: Any, db_
     _facade.conn_alchemy = _facade.sqlalchemy.create_engine(f"mysql+pymysql://{username}:{pwd}@{db_host}:{db_port}/{db_name}")
 
 
+def _check_db_flavor(db_flavor: str) -> None:
+    """Reject a db_flavor other than postgres/mysql; it only steers if/elif branching, never spliced into SQL."""
+    if db_flavor not in ("postgres", "mysql"):
+        raise AssertionError(f"db_flavor must be 'postgres' or 'mysql', got {db_flavor!r}")
+
+
 def connect_to_db(
     m_db_name,
     m_db_host,
@@ -162,7 +168,7 @@ def connect_to_db(
     _facade.init_params_fn = init_params_fn = m_init_params_fn
     _facade.db_sslmode = db_sslmode = m_db_sslmode
 
-    assert db_flavor in ("postgres", "mysql")  # nosec B101 - db_flavor only steers if/elif branching below, never spliced into SQL
+    _check_db_flavor(db_flavor)
 
     attempt = 0
     while True:

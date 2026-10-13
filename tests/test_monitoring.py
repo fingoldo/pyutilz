@@ -68,7 +68,7 @@ class TestTimeoutWrapper:
         elapsed = time.perf_counter() - start
 
         assert result is None, "Should return None on timeout"
-        assert elapsed < 2.0, f"Should timeout around 1s, took {elapsed:.2f}s"
+        assert elapsed < 2.0, f"Should timeout around 1s, took {elapsed:.2f}s"  # audit-exempt: wall_clock_assertion -- performance smoke test: timeout-wrapper bound, generous against the ~1s timeout
 
     def test_timeout_wrapper_does_not_block_fast_functions(self):
         """Test that fast functions complete before timeout"""
@@ -84,7 +84,7 @@ class TestTimeoutWrapper:
         elapsed = time.perf_counter() - start
 
         assert result == "completed"
-        assert elapsed < 1.0  # Should complete quickly, not wait for full timeout
+        assert elapsed < 1.0  # Should complete quickly, not wait for full timeout  # audit-exempt: wall_clock_assertion -- performance smoke test: completes quickly rather than waiting out the full timeout
 
     def test_timeout_wrapper_with_arguments(self):
         """Test that wrapped function receives arguments correctly"""
@@ -102,11 +102,11 @@ class TestTimeoutWrapper:
         from pyutilz.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
-        def test_function(x):
+        def _echo(x):
             return x
 
         # Call multiple times
-        results = [test_function(i) for i in range(10)]
+        results = [_echo(i) for i in range(10)]
 
         # Should succeed without creating multiple executors
         assert results == list(range(10))

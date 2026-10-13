@@ -505,7 +505,7 @@ class TestSpacySentTokenize:
         """Requires the spaCy English small model, which is a heavyweight optional asset -- the
         precondition is an explicit skip naming exactly what is missing, not an if/else."""
         spacy = pytest.importorskip("spacy")
-        try:
+        try:  # audit-exempt: except_skip_masks_call_under_test -- spacy helper guards spacy.load() of an undownloaded model; the code under test is outside it
             spacy.load("en_core_web_sm")
         except OSError:
             pytest.skip("spaCy model 'en_core_web_sm' is not downloaded on this host")

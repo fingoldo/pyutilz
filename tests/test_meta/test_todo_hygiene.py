@@ -53,7 +53,7 @@ def test_every_todo_marker_has_attribution():
         )
 
 
-def test_todo_marker_count_summary_warning():
+def test_todo_marker_count_summary_warning():  # audit-exempt: nondiscriminating_test -- advisory marker-count summary; test_every_todo_marker_has_attribution is the gate
     """Warning-only — print marker totals so the curation prompt stays
     visible."""
     counts: dict[str, int] = {kw: 0 for kw in _MARKERS}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- except-block that masks a real test failure as a skip ---------------
 
@@ -69,6 +69,8 @@ def scan_except_skip_masks_call_under_test(
                 continue
             for handler in node.handlers:
                 if not _except_body_calls_pytest_skip(handler):
+                    continue
+                if is_line_exempt(src_lines, node.lineno, "except_skip_masks_call_under_test"):
                     continue
                 findings.append(Finding(
                     check="except_skip_masks_call_under_test",

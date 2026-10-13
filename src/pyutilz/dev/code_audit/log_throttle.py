@@ -158,7 +158,8 @@ def _collect_log_calls(stmt: ast.stmt) -> "list[ast.Call]":
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             continue
         if _is_log_call(node):
-            assert isinstance(node, ast.Call)
+            if not isinstance(node, ast.Call):
+                raise AssertionError(f"expected ast.Call, got {type(node).__name__}")
             out.append(node)
         todo.extend(ast.iter_child_nodes(node))
     return out

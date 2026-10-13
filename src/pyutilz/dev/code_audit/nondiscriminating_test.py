@@ -10,7 +10,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, is_line_exempt, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- test functions that cannot fail -------------------------------------
 #
@@ -175,7 +175,7 @@ def scan_nondiscriminating_test_functions(
             if not isinstance(func, _FUNC_NODES) or not func.name.startswith(test_prefix):
                 continue
             reasons = _reasons(func, asserting_calls)
-            if not reasons:
+            if not reasons or is_line_exempt(src_lines, func.lineno, "nondiscriminating_test"):
                 continue
             findings.append(
                 Finding(

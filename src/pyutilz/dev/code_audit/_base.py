@@ -364,6 +364,24 @@ def _line_text(src_lines: list[str], lineno: int) -> str:
     return ""
 
 
+# Inline exemption marker: ``# audit-exempt: <check_id> -- <reason>`` on the finding's own line.
+# The reason is mandatory and must be non-empty; a marker without one is not an exemption.
+_EXEMPT_RE = re.compile(r"#\s*audit-exempt:\s*(?P<check>[A-Za-z0-9_]+)\s*--\s*(?P<reason>\S.*?)\s*$")
+
+
+def is_line_exempt(src_lines: list[str], lineno: int, check: str) -> bool:
+    """Whether 1-based line ``lineno`` carries a valid ``audit-exempt`` marker naming ``check``.
+
+    A marker for a different check does not suppress, and a marker whose reason is empty or missing
+    does not suppress either. Scanners call this on the line they would report, so the exemption
+    lives beside the code it excuses and survives edits elsewhere in the file.
+    """
+    if not 1 <= lineno <= len(src_lines):
+        return False
+    match = _EXEMPT_RE.search(src_lines[lineno - 1])
+    return match is not None and match.group("check") == check
+
+
 def _arg_names(func_node: ast.AST) -> list[str]:
     """Extract every parameter name from a FunctionDef / AsyncFunctionDef."""
     args: list[str] = []

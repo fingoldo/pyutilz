@@ -33,7 +33,8 @@ def _fresh_data_returning_fields(history_fields, hash_fields, fields_names, hist
     returning_fields = list(history_fields)
     if hash_fields:
         for hash_field in hash_fields:
-            assert hash_field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces hash_fields is a subset of the insert columns, a business-logic invariant
+            if hash_field not in fields_names:  # both lists already identifier-validated; hash_fields must be a subset of the insert columns
+                raise AssertionError(f"hash field {hash_field!r} is not an insert column")
             if hash_field not in history_fields:
                 returning_fields += [hash_field]
     if history_table_name:
@@ -100,11 +101,14 @@ def _validate_identifiers(
 def _validate_fields_types(fields_names: list, fields_types: dict, timestamp_check_fields: list) -> None:
     """Check the duplicate-column invariants and that every field type is on the allow-list."""
     for field in timestamp_check_fields:
-        assert field not in fields_names  # nosec B101 - both lists were already identifier-validated above; this only guards against duplicate columns in the generated SELECT list, not injection
-        assert field not in fields_types  # nosec B101 - same duplicate-column guard as above; fields_types keys are matched against already-validated fields_names
+        if field in fields_names:  # duplicate column in the generated SELECT list; not injection
+            raise AssertionError(f"timestamp check field {field!r} duplicates an insert column")
+        if field in fields_types:  # same duplicate-column guard; fields_types keys are matched against validated fields_names
+            raise AssertionError(f"timestamp check field {field!r} duplicates a field type entry")
 
     for field_name, field_type in fields_types.items():
-        assert field_name in fields_names  # nosec B101 - field_name is only ever used via membership tests below (loop iterates actual_fields_names, not fields_types keys), so a stray key here cannot reach the generated SQL
+        if field_name not in fields_names:  # field_name only used via membership tests below, so a stray key cannot reach the generated SQL
+            raise AssertionError(f"field type entry {field_name!r} is not an insert column")
         if field_type not in "int bigint smallint float real numeric json jsonb text timestamp".split(" "):
             # field_type is spliced verbatim into the SQL as "field::<field_type>" below (line ~119/146); under
             # `python -O` a skipped assert would let an unvalidated field_type inject arbitrary SQL, so this must
@@ -152,7 +156,8 @@ def _on_conflict_clause(
         if custom_onconflict:
             return custom_onconflict
         for field in conflict_fields:
-            assert field in fields_names  # nosec B101 - both lists were already identifier-validated above; this only enforces that ON CONFLICT targets are also insert columns, a business-logic invariant
+            if field not in fields_names:  # both lists already identifier-validated; ON CONFLICT targets must also be insert columns
+                raise AssertionError(f"ON CONFLICT field {field!r} is not an insert column")
 
         update_values = _conflict_update_values(fields_types, on_conflict_update_fields, on_conflict_update_values)
         # conflict_fields validated above; update_values entries are "field=..." fragments built from validated
@@ -223,7 +228,8 @@ def _history_query(
     hash_fields: list,
 ) -> str:
     """Append the changed_data history CTE, and the timestamp UPDATE when requested, to ``query``."""
-    assert len(conflict_fields) > 0  # nosec B101 - arity guard: a history table needs a conflict key to join against, not an identifier check
+    if not conflict_fields:  # arity guard: a history table needs a conflict key to join against, not an identifier check
+        raise AssertionError("conflict_fields must not be empty")
 
     # history_fields validated above; history_fields_final entries come from history_fields_aliases (also validated) or
     # history_fields itself, so every element here is a validated identifier
@@ -320,7 +326,8 @@ def build_upsert_query(
     # Checks!
     # ------------------------------
 
-    assert len(fields_names) > 0  # nosec B101 - trivial arity guard against building a query with zero columns, not an identifier check
+    if not fields_names:  # arity guard against building a query with zero columns, not an identifier check
+        raise AssertionError("fields_names must not be empty")
 
     _validate_identifiers(
         table_name,

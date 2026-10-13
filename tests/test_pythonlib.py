@@ -551,7 +551,7 @@ class TestDelayFunctions:
         # sleep for a nonzero interval", and 5s still catches any real regression (e.g. a
         # min/max mix-up falling back to a default delay) while a half-second budget was close
         # enough to scheduler noise on a loaded runner to go red for no code reason.
-        assert elapsed < 5.0
+        assert elapsed < 5.0  # audit-exempt: wall_clock_assertion -- imitate_delay timing pair: generously bounded performance smoke test
 
     def test_imitate_delay_small(self):
         """Test with small delay"""
@@ -567,5 +567,5 @@ class TestDelayFunctions:
         # The LOWER bound is the real contract (the delay actually happened) and stays tight.
         # The upper bound is loosened to 5s for the same flakiness reason as the zero-delay case
         # above -- it only needs to rule out a wildly wrong scale, not to time the scheduler.
-        assert elapsed >= 0.01
-        assert elapsed < 5.0
+        assert elapsed >= 0.01  # audit-exempt: wall_clock_assertion -- imitate_delay timing pair: lower bound confirms the delay; performance smoke test
+        assert elapsed < 5.0  # audit-exempt: wall_clock_assertion -- imitate_delay timing pair: generously bounded performance smoke test

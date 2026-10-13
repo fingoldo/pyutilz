@@ -99,7 +99,8 @@ def scan_credential_shaped_log_args(
                 continue
             credential_names: set[str] = set()
             for a in offending:
-                assert isinstance(a, (ast.Name, ast.Attribute))  # nosec B101 - _looks_credential_shaped only accepts Name/Attribute nodes; narrows the type for the access below, not a security check
+                if not isinstance(a, (ast.Name, ast.Attribute)):  # _looks_credential_shaped only accepts Name/Attribute nodes; not a security check
+                    raise AssertionError(f"expected Name or Attribute, got {type(a).__name__}")
                 credential_names.add(a.id if isinstance(a, ast.Name) else a.attr)
             names = ", ".join(sorted(credential_names))
             findings.append(Finding(
