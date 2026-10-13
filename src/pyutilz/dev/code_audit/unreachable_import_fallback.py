@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a defensive import guard for a module already imported unconditionally --------------------
 #
@@ -146,7 +146,7 @@ def scan_unreachable_import_fallback(
             continue
         src_lines = _read_src_lines(py)
 
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Try):
                 continue
             if not _catches_import_error(node):

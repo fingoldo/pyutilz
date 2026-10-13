@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text, is_line_exempt
 
 # --- SQL-literal heuristics -----------------------------------------------
 
@@ -115,7 +115,7 @@ def _docstring_constant_ids(tree: ast.Module) -> set[int]:
     executable SQL literal.
     """
     ids: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         body = node.body
@@ -142,7 +142,7 @@ def _string_constants(tree: ast.Module) -> list[tuple[ast.expr, str]]:
     constants = _module_sql_constants(tree)
     inside_fstring: set[int] = set()
     joined: list[tuple[ast.expr, str]] = []
-    for n in ast.walk(tree):
+    for n in walk_tree(tree):
         if not isinstance(n, ast.JoinedStr):
             continue
         for part in ast.walk(n):
@@ -152,7 +152,7 @@ def _string_constants(tree: ast.Module) -> list[tuple[ast.expr, str]]:
         if text:
             joined.append((n, text))
     out: list[tuple[ast.expr, str]] = []
-    for n in ast.walk(tree):
+    for n in walk_tree(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docstring_ids and id(n) not in inside_fstring:
             out.append((n, n.value))  # noqa: PERF401 -- a comprehension loses mypy's isinstance narrowing here
     return out + joined

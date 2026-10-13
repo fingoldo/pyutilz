@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, dotted_name, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, dotted_name, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- unpicklable live-resource state without __getstate__ ----------------
 
@@ -50,7 +50,7 @@ def _last_component(dotted: str) -> str:
 def _resource_imported_names(tree: ast.Module) -> set[str]:
     """Names bound by ``from threading import Lock`` / ``from multiprocessing import Pool`` etc."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in _RESOURCE_MODULES:
             for alias in node.names:
                 names.add(alias.asname or alias.name)
@@ -145,7 +145,7 @@ def scan_unpicklable_resource_state(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         resource_names = _resource_imported_names(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
             init_fn = next(

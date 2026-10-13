@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a runtime guard whose answer is already fixed at import time ------------------------------
 #
@@ -47,7 +47,7 @@ def _all_bindings(tree: ast.Module) -> tuple[dict[str, int], set[str]]:
     """
     counts: dict[str, int] = {}
     params: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             counts[node.id] = counts.get(node.id, 0) + 1
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -80,7 +80,7 @@ def _externally_written_names(trees: dict[str, ast.Module]) -> tuple[set[str], d
     written: set[str] = set()
     subscript_keys: dict[str, set[str]] = {}
     for rel, tree in trees.items():
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             _collect_external_write(rel, node, written, subscript_keys)
     return written, subscript_keys
 
@@ -144,7 +144,7 @@ def _module_constants(tree: ast.Module) -> dict[str, object]:
                 continue
             constants[target.id] = value.value
 
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Global):
             for name in node.names:
                 constants.pop(name, None)
@@ -198,7 +198,7 @@ def scan_guard_decidable_from_constants(
             continue
         src_lines = _read_src_lines(py)
 
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.If, ast.IfExp)):
                 continue
             name = _decided_by(node.test, constants)

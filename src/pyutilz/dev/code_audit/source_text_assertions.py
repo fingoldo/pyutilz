@@ -9,7 +9,7 @@ import ast
 from typing import Iterator
 from pathlib import Path
 
-from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- tests that assert on SOURCE TEXT rather than on behaviour -----------
 #
@@ -57,7 +57,7 @@ _SOURCE_ATTRS = {"co_code", "co_consts", "co_names"}
 def _dis_aliases(tree: ast.AST) -> set[str]:
     """Local names that refer to the ``dis`` module, including ``import dis as d``."""
     names = {"dis"}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "dis":
@@ -143,7 +143,7 @@ def _source_bound_names(tree: ast.AST, dis_aliases: "set[str] | None" = None) ->
     bound: dict[str, str] = {}
     # Aliases come from the MODULE, not from this scope: `import dis as d` is a module-level statement.
     aliases = dis_aliases if dis_aliases is not None else _dis_aliases(tree)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         # AnnAssign too: `src: str = inspect.getsource(g)` is the same binding, annotated.
         if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
@@ -172,7 +172,7 @@ def _scopes(tree: ast.Module) -> Iterator[ast.AST]:
     # the OUTERMOST scope claiming it, so a sibling inner function's bindings leaked across --
     # exactly the false positive this scoping exists to prevent. Reversing the BFS order puts the
     # narrowest enclosing scope first.
-    funcs = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    funcs = [node for node in walk_tree(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     yield from reversed(funcs)
     yield tree
 

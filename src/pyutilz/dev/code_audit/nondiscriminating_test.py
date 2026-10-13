@@ -10,7 +10,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, is_line_exempt, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_line_exempt, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- test functions that cannot fail -------------------------------------
 #
@@ -171,7 +171,7 @@ def scan_nondiscriminating_test_functions(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, _FUNC_NODES) or not func.name.startswith(test_prefix):
                 continue
             reasons = _reasons(func, asserting_calls)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _line_text, _module_aliases, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _line_text, _module_aliases, _read_src_lines, _safe_parse
 
 
 def _positional_arity(func_node: ast.FunctionDef | ast.AsyncFunctionDef) -> float:
@@ -63,7 +63,7 @@ def _collect_prod_call_max(root: Path, exclude_dirs: frozenset[str]) -> dict[str
         own_module = _dotted_module_path(rel)
         aliases = _module_aliases(tree)
         module_level_defs = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             qualified = _resolve_call_qualified(node, own_module, module_level_defs, aliases)
@@ -105,9 +105,9 @@ def _find_spy_findings_in_test_file(
     flagged when their positional arity has fallen behind ``prod_call_max``."""
     findings: list[Finding] = []
     local_defs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {
-        node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node.name: node for node in walk_tree(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Call) and _is_patch_call(node)):
             continue
         if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):

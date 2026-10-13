@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import DefaultDict, List, Tuple, Union
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 _MIN_BODY_NODES = 8  # skip trivial bodies (pass, ..., a bare `return None`/`return False`/`return self._x`)
 
@@ -58,7 +58,7 @@ def _group_by_body(
         if tree is None:
             continue
         src_lines = _read_src_lines(py)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if node.name.startswith("__") and node.name.endswith("__"):

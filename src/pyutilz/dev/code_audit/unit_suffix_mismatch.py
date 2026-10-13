@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a quantity stored under one unit and read from another ------------------------------------
 #
@@ -126,7 +126,7 @@ def _target_names(node: ast.AST) -> list[str]:
 def _assigned_pairs(tree: ast.AST) -> list[tuple[str, ast.AST, int]]:
     """Every ``(target name, assigned value, line)`` triple in *tree*: assignments, annotated, augmented and keywords."""
     pairs: list[tuple[str, ast.AST, int]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign):
             pairs.extend((name, node.value, node.lineno) for target in node.targets for name in _target_names(target))
         # Annotated and augmented assignments too: typed code is where unit suffixes are most

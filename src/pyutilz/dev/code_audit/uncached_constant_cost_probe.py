@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_cached, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_cached, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
 
 # --- uncached constant-cost probe ----------------------------------------
 
@@ -99,7 +99,7 @@ def _probe_imports(tree: ast.Module) -> dict[str, str]:
     """
     probe_modules = {probe.split(".")[0] for probe, _cost in _PROBES}
     bound: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in probe_modules and node.level == 0:
             for alias in node.names:
                 bound[alias.asname or alias.name] = f"{node.module}.{alias.name}"
@@ -178,7 +178,7 @@ def scan_uncached_constant_cost_probe(
 
         probe_imports = _probe_imports(tree)
 
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if is_cached(func) or _has_module_level_memo(func) or not _takes_only_config_parameters(func):

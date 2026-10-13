@@ -6,7 +6,7 @@ import ast
 import difflib
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a record field with only one side of the contract --------------------------------------------
 #
@@ -46,7 +46,7 @@ def _collect(tree: ast.Module) -> tuple[dict[str, int], dict[str, int], dict[str
     writes: dict[str, int] = {}
     reads: dict[str, int] = {}
     plain_reads: dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         _note_write_site(node, writes)
         _note_read_site(node, reads, plain_reads)
     return writes, reads, plain_reads

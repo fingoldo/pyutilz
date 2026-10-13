@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # Default canonical-module candidates: a project designates its own single
 # source of truth for credential-shaped regexes (e.g. "secrets_scrub.py") via
@@ -65,7 +65,7 @@ def scan_duplicate_credential_regex(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "compile"):
                 continue
             if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "re"):

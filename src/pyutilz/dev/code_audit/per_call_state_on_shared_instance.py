@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- per-call state on a shared instance ---------------------------------
 
@@ -84,7 +84,7 @@ def _shared_from_stores_and_caches(trees: dict[Path, ast.Module]) -> set[str]:
     """Signals 1 and 2: classes constructed into a container subscript or inside an ``lru_cache`` factory."""
     shared: set[str] = set()
     for tree in trees.values():
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Subscript) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
@@ -124,7 +124,7 @@ def _inherit_shared_bases(trees: dict[Path, ast.Module], shared_names: set[str])
     for _ in range(4):  # bounded transitive closure; provider hierarchies here are 2-3 deep
         grew = False
         for tree in trees.values():
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if isinstance(node, ast.ClassDef) and node.name in shared_names:
                     for base in node.bases:
                         name = base.id if isinstance(base, ast.Name) else (base.attr if isinstance(base, ast.Attribute) else None)
@@ -235,7 +235,7 @@ def scan_per_call_state_on_shared_instance(
     for py, tree in trees.items():
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.ClassDef) and node.name in shared_names:
                 findings.extend(_per_call_findings_for_class(node, rel, src_lines))
     return findings

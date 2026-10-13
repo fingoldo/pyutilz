@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- unbounded or silently-exhausting retry loop --------------------------
 #
@@ -124,7 +124,7 @@ def scan_retry_loops(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True):
                 continue
             try_nodes = [n for n in ast.walk(node) if isinstance(n, ast.Try)]

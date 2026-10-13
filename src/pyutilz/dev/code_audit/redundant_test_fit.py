@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_cached, is_test_file, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_cached, is_test_file, _DEFAULT_EXCLUDE_DIRS, _is_excluded, _line_text, _read_src_lines, _safe_parse
 
 # --- redundant test computation (expensive fit re-run across test functions) -----
 #
@@ -87,7 +87,7 @@ def _iteration_bound_names(func_node: ast.FunctionDef | ast.AsyncFunctionDef) ->
 
 def _enclosing_test_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     """Every ``def test_*`` / ``async def test_*`` at module or class level (pytest discovery convention)."""
-    return [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
+    return [node for node in walk_tree(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")]
 
 
 def _call_signature(call: ast.Call) -> str | None:
@@ -117,7 +117,7 @@ def _literal_call_occurrences(tree: ast.Module) -> dict[str, list[tuple[str, int
     """``{call signature: [(test name, line), ...]}`` for helper calls with literal arguments made inside test functions."""
     cached_names = {
         node.name
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (is_cached(node) or _is_literal_data_factory(node))
     }
     # signature -> [(test_qualname, lineno), ...]

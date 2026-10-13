@@ -13,7 +13,7 @@ import tokenize
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def _docstring_lines(src: str) -> set[int]:
     except (SyntaxError, ValueError):
         return set()
     lines: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
             first = node.body[0]
             if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):

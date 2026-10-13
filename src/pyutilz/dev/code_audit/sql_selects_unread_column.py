@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
 
 # --- a SELECT list wider than the rows anyone reads --------------------------------------------
 #
@@ -201,7 +201,7 @@ def scan_sql_selects_unread_column(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             executed, cursor_names = _executed_selects(func, constants)

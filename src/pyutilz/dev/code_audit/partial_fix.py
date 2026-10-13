@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _safe_parse, split_src_lines
 
 # --- two shapes that only show up when you look ACROSS functions ----------------------------------
 #
@@ -123,7 +123,7 @@ def scan_inconsistent_filter(
         src = py.read_text(encoding="utf-8", errors="replace")
         src_lines = split_src_lines(src)
         rel = py.relative_to(root).as_posix()
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             body = ast.get_source_segment(src, fn) or ""

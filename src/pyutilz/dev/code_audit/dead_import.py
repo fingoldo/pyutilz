@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def _alias_own_lineno(alias: ast.alias, node: "ast.Import | ast.ImportFrom", src_lines: list[str], claimed: set[int]) -> int:
@@ -128,7 +128,7 @@ def _names_referenced_in_file(tree: ast.Module, skip_import_lines: set[int]) -> 
     """Every bare ``Name`` reference in ``tree``, excluding the import statements themselves
     (``skip_import_lines``) so an import doesn't count as its own usage."""
     referenced: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Name) and node.lineno not in skip_import_lines:
             referenced.add(node.id)
     # `__all__ = ["name", ...]` string-literal entries count as usage (an explicit re-export).
@@ -179,7 +179,7 @@ def _corpus_import_index(root: Path, exclude_dirs: frozenset[str]) -> "tuple[set
         if tree is None:
             continue
         names: set[str] = set()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Attribute):
                 attr_names.add(node.attr)
             elif isinstance(node, ast.ImportFrom):

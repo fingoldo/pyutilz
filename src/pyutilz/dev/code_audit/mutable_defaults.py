@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator, Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- Class A: mutable defaults ------------------------------------------
 
@@ -377,7 +377,7 @@ def scan_parameter_aliasing_mutation(root: Path,
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for param_name, local_name, lineno in _find_param_aliasing_mutation(node):
@@ -412,7 +412,7 @@ def scan_mutable_defaults(root: Path,
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             args = node.args

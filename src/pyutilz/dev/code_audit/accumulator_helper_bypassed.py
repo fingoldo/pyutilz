@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a shared accumulator that some call sites write around ------------------------------------
 #
@@ -76,8 +76,8 @@ def _module_assigned_names(tree: ast.Module) -> frozenset[str]:
 
 def _called_names(tree: ast.Module) -> set[str]:
     """Every name called anywhere in this module. A function nobody calls is not the way in."""
-    called = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-    called |= {node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+    called = {node.func.id for node in walk_tree(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    called |= {node.func.attr for node in walk_tree(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
     return called
 
 
@@ -175,7 +175,7 @@ def _owners_of_accumulators(parsed: list[tuple[str, ast.Module, list[str]]], cal
     owners: dict[str, list[tuple[str, str]]] = {}
     for rel, tree, _lines in parsed:
         module_level = _module_assigned_names(tree)
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if _is_setup(func.name) or func.name not in called:
@@ -200,7 +200,7 @@ def _bypasses_in(
     """Every site in this module that accumulates into an owned structure without its helper."""
     findings: list[Finding] = []
     module_level = _module_assigned_names(tree)
-    for func in ast.walk(tree):
+    for func in walk_tree(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) or _is_setup(func.name):
             continue
         protected = _lines_under_a_lock(func)

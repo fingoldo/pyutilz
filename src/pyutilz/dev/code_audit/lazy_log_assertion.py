@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- asserting a FORMATTED string against a lazily-formatted log record ------------------------
 #
@@ -49,7 +49,7 @@ def _format_strings(root: Path, exclude_dirs: frozenset[str]) -> tuple[set[str],
         tree = _safe_parse(py)
         if tree is None:
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             if node.func.attr not in _LOG_LEVELS or not node.args:
@@ -175,7 +175,7 @@ def scan_lazy_log_assertion(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             # `assert x in y` and the unittest spelling `self.assertIn(x, y)` state the same thing.
             expression = _assertion_expression(node)
             if expression is None:

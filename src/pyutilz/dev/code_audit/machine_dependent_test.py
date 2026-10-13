@@ -10,7 +10,7 @@ import ast
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-from ._base import Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_line_exempt, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 _FunctionDef = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
@@ -87,7 +87,7 @@ def _own_body_nodes(fn: ast.AST) -> List[ast.AST]:
 
 def _test_functions(tree: ast.Module) -> List[_FunctionDef]:
     """Every ``test_*`` function in the module, methods of ``Test*`` classes included."""
-    return [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")]
+    return [n for n in walk_tree(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test_")]
 
 
 def _elapsed_names_in(body: List[ast.AST]) -> Set[str]:
@@ -304,7 +304,7 @@ def scan_deleted_attribute_read_unconditionally(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             body = list(ast.walk(fn))

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a constructor argument another method overwrites from configuration -----------------------
 
@@ -262,7 +262,7 @@ def scan_constructor_param_overwritten(
 
         rel = py.relative_to(root).as_posix()
 
-        for cls in ast.walk(tree):
+        for cls in walk_tree(tree):
 
             if not isinstance(cls, ast.ClassDef):
 

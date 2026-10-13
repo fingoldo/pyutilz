@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 _LOG_METHODS = ("warning", "error", "exception", "critical")
 _THROTTLE_HINTS = ("throttle", "rate_limit", "ratelimit", "debounce")
@@ -175,7 +175,7 @@ def _single_shot_log_calls(tree: ast.AST) -> "dict[int, str]":
     followed by ``break``/``return`` inside a scanning loop.
     """
     marks: dict[int, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         for field in ("body", "orelse", "finalbody"):
             _mark_block(getattr(node, field, None), marks)
         for handler in getattr(node, "handlers", []) or []:

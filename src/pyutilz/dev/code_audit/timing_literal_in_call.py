@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a bare numeric literal that sets a wait, timeout or backoff at its call site ---------------
 #
@@ -60,7 +60,7 @@ def _nonzero_numbers(node: ast.AST) -> list[ast.Constant]:
 def _timing_literals_in_calls(tree: ast.AST) -> list[ast.Constant]:
     """The duration literals found in sleep/wait arguments and duration-named keyword values."""
     hits: list[ast.Constant] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         if _call_name(node) in _SLEEP_CALLS:

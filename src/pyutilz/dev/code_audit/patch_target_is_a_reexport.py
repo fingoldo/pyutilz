@@ -16,7 +16,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _module_aliases, _line_text, _read_src_lines, _safe_parse, dotted_name
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _dotted_module_path, _iter_py_files, _module_aliases, _line_text, _read_src_lines, _safe_parse, dotted_name
 
 # --- a patch aimed at a re-export, where the real call site never looks -------------------------
 #
@@ -59,7 +59,7 @@ def _patch_targets(tree: ast.Module) -> list[tuple[str, int]]:
     """
     aliases = _module_aliases(tree)
     targets: list[tuple[str, int]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
         chain = dotted_name(node.func)
@@ -100,9 +100,9 @@ def _resolve(module: str | None, level: int, package: str, is_package: bool = Tr
 
 def _reexports(tree: ast.Module, package: str, is_package: bool = True) -> dict[str, str]:
     """Names this module binds by `from X import name` rather than defining, mapped to X."""
-    defined = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    defined = {node.name for node in walk_tree(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
     imported: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
         origin = _resolve(node.module, node.level, package, is_package)
@@ -123,7 +123,7 @@ def _bare_calls(tree: ast.Module) -> set[str]:
     and a patch on the facade DOES reach that call. Counting attribute calls here reported fifteen
     correct tests in one codebase as vacuous.
     """
-    return {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    return {node.func.id for node in walk_tree(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
 
 
 def _any_calls(tree: ast.Module) -> set[str]:
@@ -132,7 +132,7 @@ def _any_calls(tree: ast.Module) -> set[str]:
     Used for the FACADE side, where either spelling means the patch lands on something real.
     """
     called: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Name):

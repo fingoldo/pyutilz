@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- an invariant asserted in prose and nowhere else -----------------------------------------------
 #
@@ -35,7 +35,7 @@ def _callers_within(tree: ast.AST) -> dict[str, set[str]]:
     indirection only (a caller's own caller is not chased further - see the docstring on the
     transitive-enforcement check below for why one hop is the deliberate stopping point)."""
     callers: dict[str, set[str]] = {}
-    for outer in ast.walk(tree):
+    for outer in walk_tree(tree):
         if not isinstance(outer, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for inner in ast.walk(outer):
@@ -110,7 +110,7 @@ def scan_unenforced_docstring_invariants(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         callers_of = _callers_within(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
             doc = ast.get_docstring(node) or ""

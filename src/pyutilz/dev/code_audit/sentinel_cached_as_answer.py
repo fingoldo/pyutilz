@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a failure stored in the cache as though it were the answer --------------------------------
 #
@@ -120,7 +120,7 @@ def _sentinel_fallback_arm(node: ast.stmt) -> "list[ast.stmt]":
 def _failure_path_scopes(tree: ast.AST) -> list[tuple[list[ast.stmt], int, str]]:
     """(scope to search, line of the construct that produced the sentinel, its description) for each failure path."""
     scopes: list[tuple[list[ast.stmt], int, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ExceptHandler):
             scopes.append((node.body, node.lineno, "the handler"))
         elif isinstance(node, ast.If):

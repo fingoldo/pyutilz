@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Any, Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- Class B: late-binding closures over loop vars ----------------------
 
@@ -13,7 +13,7 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _arg_names, _iter_py_files, _
 def _names_referenced(tree: ast.AST) -> set[str]:
     """Set of ``Name(id=...)`` strings loaded inside ``tree`` (not stored)."""
     used: set[str] = set()
-    for n in ast.walk(tree):
+    for n in walk_tree(tree):
         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
             used.add(n.id)
     return used
@@ -249,12 +249,12 @@ def _comprehension_lambda_findings(node: Any, loop_vars: set, rel: str, src_line
 def _file_closure_findings(tree: ast.AST, rel: str, src_lines: list) -> list[Finding]:
     """All late-binding closure findings for one parsed module."""
     findings: list[Finding] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, (ast.For, ast.AsyncFor)):
             loop_vars = _loop_target_names(node)
             if loop_vars:
                 findings += _loop_closure_findings(node, loop_vars, rel, src_lines)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             loop_vars = _comprehension_target_names(node)
             if loop_vars:

@@ -315,6 +315,21 @@ def _safe_parse(path: Path) -> Optional[ast.Module]:
     return tree
 
 
+def walk_tree(tree: ast.AST) -> list[ast.AST]:
+    """``list(ast.walk(tree))``, computed once per tree.
+
+    Every scanner in this package walks the same parse trees, and a full ``ast.walk`` of the corpus costs
+    about as much as the parse itself (~1.1M nodes per scanner, measured). The walk is memoised on the tree
+    object, so its lifetime is the tree's own: when ``_PARSE_CACHE`` evicts a tree, its node list goes with it.
+    The list shares the tree's nodes and holds no copies; callers must not mutate it.
+    """
+    nodes = getattr(tree, "_walk_nodes", None)
+    if nodes is None:
+        nodes = list(ast.walk(tree))
+        tree._walk_nodes = nodes  # type: ignore[attr-defined]
+    return nodes
+
+
 def _read_src_lines(path: Path) -> list[str]:
     """Read ``path`` and split it into lines the way CPython's tokenizer numbers them.
 

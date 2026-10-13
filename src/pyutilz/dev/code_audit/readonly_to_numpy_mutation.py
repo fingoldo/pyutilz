@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _own_nodes, _line_text, _read_src_lines, _safe_parse
 
 # --- in-place numpy mutation of an uncopied pandas .to_numpy() result --------
 
@@ -78,7 +78,7 @@ def scan_readonly_to_numpy_mutation(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func_node in ast.walk(tree):
+        for func_node in walk_tree(tree):
             if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             risky_names = _risky_to_numpy_names(func_node)

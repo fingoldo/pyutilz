@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a falsy in-band sentinel meeting a caller guard that tests `is None` ----------------------
 #
@@ -69,7 +69,7 @@ def _returns_none_anywhere(func: ast.AST) -> bool:
 def _is_none_guards(tree: ast.AST) -> dict[str, int]:
     """{name: line} for every `X is None` / `X is not None` guard, keyed by the name tested."""
     guards: dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
             continue
         if not isinstance(node.ops[0], (ast.Is, ast.IsNot)):
@@ -91,7 +91,7 @@ def _is_none_guards(tree: ast.AST) -> dict[str, int]:
 def _assigned_from_call(tree: ast.AST) -> dict[str, set[str]]:
     """{callee name: names it was assigned to} -- `pages = fetch_pages()` -> {"fetch_pages": {"pages"}}."""
     out: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
         callee = node.value.func
@@ -109,7 +109,7 @@ def _assigned_from_call(tree: ast.AST) -> dict[str, set[str]]:
 def _sentinel_returners_in(tree: ast.Module, rel: str) -> dict[str, tuple[str, object, int]]:
     """``{function name: (file, sentinel, line)}`` for the functions in *tree* that return a falsy sentinel from except."""
     out: dict[str, tuple[str, object, int]] = {}
-    for func in ast.walk(tree):
+    for func in walk_tree(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if _returns_none_anywhere(func):

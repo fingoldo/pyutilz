@@ -16,7 +16,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # The three idioms that rebind a name on a module object for the duration of a test.
 _PATCH_CALLS = frozenset({"setattr", "patch", "object"})
@@ -50,7 +50,7 @@ def _patched_targets(tree: ast.Module) -> list[tuple[str, str, int]]:
     resolved by a different rule, so reporting it here would be guesswork.
     """
     out: list[tuple[str, str, int]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call) or len(node.args) < 2:
             continue
         func = node.func
@@ -74,7 +74,7 @@ def _module_aliases(tree: ast.Module) -> dict[str, str]:
     real module before its file can be found.
     """
     out: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 out[alias.asname if alias.asname is not None else alias.name.split(".")[0]] = alias.name
@@ -92,7 +92,7 @@ def _references_outside_imports(tree: ast.Module, name: str) -> bool:
     module itself does. A module that only re-exports it cannot be affected by the patch at all, so
     the patch was aimed at somebody else's binding and is silently doing nothing.
     """
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Name) and node.id == name:
             return True
         if isinstance(node, ast.Attribute) and node.attr == name:

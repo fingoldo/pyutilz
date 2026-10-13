@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
@@ -64,7 +64,7 @@ def _class_attribute_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]
         if tree is None:
             continue
         _add_module_level_names(tree, names)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.ClassDef):
                 _add_class_body_names(node, names)
             elif isinstance(node, ast.Assign):
@@ -115,7 +115,7 @@ def _dynamic_attribute_classes(tree: ast.Module) -> set[str]:
     long tail of false ``getattr_unknown_attribute`` hits for its own, live fields.
     """
     dynamic: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for inner in ast.walk(node):
@@ -138,7 +138,7 @@ def _in_tree_class_names(root: Path, exclude_dirs: frozenset[str]) -> tuple[set[
         tree = _safe_parse(py)
         if tree is None:
             continue
-        classes.update(node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
+        classes.update(node.name for node in walk_tree(tree) if isinstance(node, ast.ClassDef))
         dynamic |= _dynamic_attribute_classes(tree)
     return classes, dynamic
 
@@ -161,7 +161,7 @@ def _receivers_defined_in_tree(tree: ast.Module, classes: set[str], dynamic: set
     two fresh repos were exactly that, with no true positive observed.
     """
     resolved: set[int] = set()
-    for func in ast.walk(tree):
+    for func in walk_tree(tree):
         if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
             resolved |= _function_receiver_ids(func, classes, dynamic)
     resolved |= _self_receiver_ids(tree, dynamic)
@@ -199,7 +199,7 @@ def _in_tree_bound_names(func: ast.FunctionDef | ast.AsyncFunctionDef, classes: 
 def _self_receiver_ids(tree: ast.Module, dynamic: set[str]) -> set[int]:
     """``id`` of every ``self`` Name inside a class defined in the tree that does not bind attributes dynamically."""
     ids: set[int] = set()
-    for cls in ast.walk(tree):
+    for cls in walk_tree(tree):
         if isinstance(cls, ast.ClassDef) and cls.name not in dynamic:
             ids |= {id(node) for node in ast.walk(cls) if isinstance(node, ast.Name) and node.id == "self"}
     return ids
@@ -211,7 +211,7 @@ def _module_receiver_names(tree: ast.Module) -> set[str]:
     the same provable miss as reading it off an in-tree class, since the module's globals are all
     written here."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript):
             base = node.value.value
             if isinstance(base, ast.Attribute) and base.attr == "modules":
@@ -269,7 +269,7 @@ def scan_getattr_unknown_attribute(
         rel = py.relative_to(root).as_posix()
         resolved = _receivers_defined_in_tree(tree, classes, dynamic) if require_known_receiver else set()
         module_receivers = _module_receiver_names(tree) if require_known_receiver else set()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"):
                 continue
             # Three arguments exactly: a two-argument getattr raises on a miss and is not silent.

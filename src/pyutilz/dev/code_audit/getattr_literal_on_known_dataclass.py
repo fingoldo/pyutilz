@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 
 def _dataclass_fields(tree: ast.Module) -> dict[str, set[str]]:
@@ -34,7 +34,7 @@ def _class_shapes(tree: ast.Module) -> tuple[dict[str, set[str]], dict[str, set[
     members: dict[str, set[str]] = {}
     bases: dict[str, set[str]] = {}
     decorated: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         own = {item.target.id for item in node.body if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)}
@@ -113,7 +113,7 @@ def _local_dataclass_types(func: ast.AST, known: dict[str, set[str]]) -> dict[st
 def _attribute_store_names(tree: ast.Module) -> set[str]:
     """Names assigned as attributes somewhere in one module (``anything.name = ...``)."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign):
             names.update(t.attr for t in node.targets if isinstance(t, ast.Attribute))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute):
@@ -224,7 +224,7 @@ def scan_getattr_literal_on_known_dataclass(
     for py, tree in trees.items():
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             local_types = _local_dataclass_types(func, known)

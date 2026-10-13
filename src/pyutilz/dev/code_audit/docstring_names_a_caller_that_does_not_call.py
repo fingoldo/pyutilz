@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import walk_tree, _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
 
 # --- prose naming the caller, after the caller stopped calling ---------------------------------
 #
@@ -74,7 +74,7 @@ def _call_graph(parsed: list[tuple[str, ast.Module, list[str]]]) -> tuple[dict[s
     calls_by_function: dict[str, set[str]] = {}
     called_anywhere: set[str] = set()
     for _rel, tree, _lines in parsed:
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 made = _calls_made_by(node)
                 calls_by_function.setdefault(node.name, set()).update(made)
@@ -134,7 +134,7 @@ def scan_docstring_names_a_caller_that_does_not_call(
     parsed = _parse_tree_files(root, exclude_dirs)
     calls_by_function, called_anywhere = _call_graph(parsed)
     for rel, tree, src_lines in parsed:
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if func.name not in called_anywhere:

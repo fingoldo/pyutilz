@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # LLMProvider methods whose ``max_tokens`` kwarg defaults to 0 ("provider max") --
 # see pyutilz.llm.base.LLMProvider.generate/generate_json.
@@ -30,7 +30,7 @@ def _provider_var_names(tree: ast.AST) -> set[str]:
     baselined uncapped call in ``parse.py`` stopped being reported, and nothing about the call had changed.
     """
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Assign):
             continue
         value = node.value
@@ -83,7 +83,7 @@ def scan_llm_call_missing_max_tokens_cap(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
 
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

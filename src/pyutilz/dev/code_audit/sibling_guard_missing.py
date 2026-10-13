@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import walk_tree, _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
 
 # --- one sibling missing the guard all the others open with -----------------------------------
 #
@@ -175,7 +175,7 @@ def scan_sibling_guard_missing(
         src_lines = py.read_text(encoding="utf-8", errors="replace").splitlines()
         rel = py.relative_to(root).as_posix()
 
-        for klass in ast.walk(tree):
+        for klass in walk_tree(tree):
             if not isinstance(klass, ast.ClassDef):
                 continue
             methods = [node for node in klass.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("__")]

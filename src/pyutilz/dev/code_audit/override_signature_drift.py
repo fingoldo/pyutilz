@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import walk_tree, _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
 
 # --- a base method left behind by the overrides that were all edited ---------------------------
 #
@@ -117,7 +117,7 @@ def _index_classes(root: Path, exclude_dirs: "frozenset[str]") -> "Dict[str, Opt
         if tree is None:
             continue
         rel = py.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.ClassDef):
                 index[node.name] = None if node.name in index else (rel, node)
     return index

@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- resource-acquisition calls not wrapped in `with` ----------------------
 
@@ -37,7 +37,7 @@ def _is_resource_call(call: ast.Call) -> bool:
 def _build_parent_map(tree: ast.AST) -> dict:
     """Return ``{id(child): parent_node}`` for every node in ``tree``."""
     parent_map: dict = {}
-    for parent in ast.walk(tree):
+    for parent in walk_tree(tree):
         for child in ast.iter_child_nodes(parent):
             parent_map[id(child)] = parent
     return parent_map
@@ -92,7 +92,7 @@ def scan_resource_handle_safety(
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         parent_map = _build_parent_map(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call) or not _is_resource_call(node):
                 continue
             chain = _ancestor_chain_via_parent_map(node, parent_map)

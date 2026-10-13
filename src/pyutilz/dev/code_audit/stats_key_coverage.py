@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a counter written but never initialised by the reset that owns its dict --------------------
 #
@@ -155,7 +155,7 @@ def scan_stats_key_coverage(
             continue
         rel = py.relative_to(root).as_posix()
 
-        for cls in ast.walk(tree):
+        for cls in walk_tree(tree):
             if isinstance(cls, ast.ClassDef):
                 _record_class(cls, rel, declared, declaring_method, writes)
 

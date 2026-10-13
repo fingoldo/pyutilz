@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test stub that raises, into production code that swallows -----------------------------
 #
@@ -111,7 +111,7 @@ def _reraises(handler: ast.ExceptHandler) -> bool:
 def _swallowing_calls(tree: ast.AST) -> set[str]:
     """Names called inside a broad `except` that does not re-raise, in this production module."""
     swallowed: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Try):
             continue
         if not any(_handler_is_broad(h) and not _reraises(h) for h in node.handlers):
@@ -185,7 +185,7 @@ def scan_raising_stub_swallowed(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 findings.extend(_stub_swallow_findings(func, rel, src_lines, production_swallows))
     return findings

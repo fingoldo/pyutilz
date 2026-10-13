@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, module_level_names, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, module_level_names, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # asyncio coordination primitives whose whole purpose is being SHARED across
 # concurrent callers -- one created fresh per call is a private, useless copy.
@@ -20,7 +20,7 @@ def _asyncio_bindings(tree: ast.Module, primitive_names: frozenset[str]) -> tupl
     """
     aliases: set[str] = set()
     direct: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "asyncio":
@@ -236,7 +236,7 @@ def scan_async_primitive_reinit_per_call(
         module_names = module_level_names(tree)
         module_aliases, direct_names = _asyncio_bindings(tree, primitive_names)
 
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             # Only the function's OWN body -- a nested def's primitive calls are

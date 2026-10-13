@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
+from ._base import walk_tree, _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _safe_parse
 
 # --- a test whose every assertion is inside a loop that may not run ----------------------------
 #
@@ -202,7 +202,7 @@ def scan_vacuous_loop_assertion(
         rel = py.relative_to(root).as_posix()
 
         module_constants = everywhere | _nonempty_literal_names([tree])
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             # Inlined rather than a helper returning bool: mypy needs the isinstance here to
             # narrow `func`, and a TypeGuard import only for that was dead weight vulture
             # was right to flag.

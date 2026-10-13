@@ -13,7 +13,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Optional as _Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 from .duplicate_function_body import _stripped_body, _node_count, _normalized_body
 
 # Fuzzy matching a trivial body (a short property getter, a one-line delegate) produces spurious
@@ -188,7 +188,7 @@ def _collect_entries(
         if tree is None:
             continue
         src_lines = _read_src_lines(py)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if node.name.startswith("__") and node.name.endswith("__"):

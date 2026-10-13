@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- a settings container field whose before-validator never sees the environment ----------------
 
@@ -113,7 +113,7 @@ def _decoding_disabled(cls: ast.ClassDef) -> bool:
 
 def _settings_classes(tree: ast.Module) -> list[ast.ClassDef]:
     """Classes deriving from ``BaseSettings``, directly or through another settings class in the same module."""
-    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    classes = [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]
     settings: dict[str, ast.ClassDef] = {}
     changed = True
     while changed:

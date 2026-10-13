@@ -14,7 +14,7 @@ import tokenize
 from collections import OrderedDict
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- prose that points at a symbol which does not exist ----------------------------------------
 #
@@ -53,7 +53,7 @@ def _defined_names(root: Path, exclude_dirs: frozenset[str]) -> set[str]:
         tree = _safe_parse(py)
         if tree is None:
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(node.name)
             elif isinstance(node, ast.ImportFrom):
@@ -102,7 +102,7 @@ def _comment_texts(py: Path) -> list[tuple[str, int]]:
 
     tree = _safe_parse(py)
     if tree is not None:
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 doc = ast.get_docstring(node, clean=False)
                 if doc:

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Union
 
 from ._base import (
+    walk_tree,
     Finding,
     _DEFAULT_EXCLUDE_DIRS,
     _subscript_index,
@@ -216,7 +217,7 @@ def _counter_assignments(stmts: list[ast.stmt]) -> list[tuple[ast.stmt, ast.expr
 def _module_functions(tree: ast.Module) -> dict[str, _FuncDef]:
     """Module functions and class methods by name, for the one-hop helper follow. The first definition wins."""
     out: dict[str, _FuncDef] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             out.setdefault(node.name, node)
     return out
@@ -296,7 +297,7 @@ def scan_write_counted_from_input(
         # None, so a "have I read it yet" guard could not tell the two apart.
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             findings.extend(_function_findings(fn, rel, src_lines, module_constants, helpers))

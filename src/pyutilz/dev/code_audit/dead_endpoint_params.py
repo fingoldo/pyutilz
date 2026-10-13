@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, _subscript_index
 
 # --- an HTTP endpoint parameter the handler never reads ------------------------------------------
 
@@ -106,7 +106,7 @@ def scan_dead_endpoint_parameters(
         # None, so a "have I read it yet" guard could not tell the two apart.
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or not _is_route(fn):
                 continue
             params = _request_bound_params(fn)

@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- discarded coroutine (missed await) ---------------------------------------
 #
@@ -31,7 +31,7 @@ from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _
 
 
 def _walk_module_level(tree: ast.Module) -> "Iterator[ast.AST]":
-    """Like ``ast.walk(tree)`` but never descends into a function body -- those are visited as
+    """Like ``walk_tree(tree)`` but never descends into a function body -- those are visited as
     their own scope, so descending here would double-report every finding inside one."""
     todo: list[ast.AST] = list(ast.iter_child_nodes(tree))
     while todo:
@@ -57,12 +57,12 @@ def scan_missed_await(root: Path,
         tree = _safe_parse(py)
         if tree is None:
             continue
-        async_names = {n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)}
+        async_names = {n.name for n in walk_tree(tree) if isinstance(n, ast.AsyncFunctionDef)}
         if not async_names:
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        scopes: list[ast.AST] = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        scopes: list[ast.AST] = [n for n in walk_tree(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         # Module scope counts too: a script body (or an `if __name__ == "__main__":` block) that
         # calls an async def without awaiting it exits having done nothing.
         scopes.append(tree)
@@ -214,7 +214,7 @@ def scan_sync_blocking_in_async(
             continue
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, ast.AsyncFunctionDef):
                 continue
             finder = _BlockingCallFinder()

@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- duplicate conditions (copy-paste bugs) ----------------------------------
 #
@@ -52,7 +52,7 @@ def _elif_branch_ids(tree: ast.Module) -> set[int]:
     # branch. Only start chains at chain HEADS (Ifs that are not
     # themselves the sole If inside another If's orelse).
     elif_nodes: set[int] = set()
-    for n in ast.walk(tree):
+    for n in walk_tree(tree):
         if isinstance(n, ast.If) and len(n.orelse) == 1 and isinstance(n.orelse[0], ast.If):
             elif_nodes.add(id(n.orelse[0]))
     return elif_nodes
@@ -171,7 +171,7 @@ def scan_duplicate_conditions(root: Path,
         src_lines = _read_src_lines(py)
         rel = py.relative_to(root).as_posix()
         elif_nodes = _elif_branch_ids(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.BoolOp):
                 findings.extend(_boolop_findings(node, rel, src_lines))
             elif isinstance(node, ast.If) and id(node) not in elif_nodes:

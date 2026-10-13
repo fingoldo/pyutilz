@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- default-via-or trap (wave 14) --------------------------------------
 
@@ -371,7 +371,7 @@ def _build_parent_field_map(tree: ast.AST) -> dict[int, tuple[ast.AST, str]]:
     """Map ``id(child) -> (parent_node, field_name)`` for every AST node,
     so a BoolOp can look up which field of which parent it occupies."""
     parent_map: dict[int, tuple[ast.AST, str]] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         for field_name, value in ast.iter_fields(node):
             if isinstance(value, ast.AST):
                 parent_map[id(value)] = (node, field_name)
@@ -474,7 +474,7 @@ def _module_boolean_names(tree: ast.AST) -> frozenset[str]:
     this sound in the direction that matters -- one non-boolean assignment anywhere disqualifies
     the name, so a name that is sometimes a config value is never mistaken for a flag."""
     assigned: dict[str, list[ast.AST]] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         # A parameter annotated ``bool`` or defaulting to a bool literal is a flag by declaration:
         # ``def _visit(node, guarded: bool = False)`` then ``guarded or _guard_looks_throttled(t)``
         # is boolean logic, and nothing in the OR's own operands can say so.
@@ -691,7 +691,7 @@ def scan_default_via_or_trap(root: Path,
         parent_map = _build_parent_field_map(tree)
         bool_names = _module_boolean_names(tree)
         symbols = _enclosing_symbols(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
                 continue
             # Skip ordinary logical-OR control flow (if/while/assert/ternary

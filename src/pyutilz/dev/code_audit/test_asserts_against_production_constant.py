@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, is_test_file, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- a test that checks the code against the code -----------------------------------------------
 #
@@ -34,7 +34,7 @@ _UNITTEST_ASSERT_HELPERS = frozenset({"assertEqual", "assertAlmostEqual", "asser
 def _imported_from_production(tree: ast.Module) -> set[str]:
     """Names this test module imports from somewhere other than the standard test toolkit."""
     imported: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ImportFrom) or node.module is None:
             continue
         root = node.module.split(".")[0]
@@ -130,11 +130,11 @@ def _asserted_comparisons(tree: ast.Module) -> list[tuple[ast.expr, ast.expr, in
     pairs: list[tuple[ast.expr, ast.expr, int]] = []
     # Nodes inside a `test_*` function: the unittest-helper arm applies only there.
     in_test: set[int] = set()
-    for fn in ast.walk(tree):
+    for fn in walk_tree(tree):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name.startswith("test_"):
             for sub in ast.walk(fn):
                 in_test.add(id(sub))
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assert) and isinstance(node.test, ast.Compare):
             compare = node.test
             if len(compare.ops) == 1 and isinstance(compare.ops[0], (ast.Eq, ast.NotEq)):

@@ -6,7 +6,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_table_of, _sql_text
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_table_of, _sql_text
 
 # --- a COUNT round trip that the fetch beside it already answers -------------------------------
 #
@@ -127,7 +127,7 @@ def scan_count_then_fetch_same_table(
         # Nested functions are walked as part of their parent too, so the same site is visited
         # more than once; one finding per (file, count line, fetch line, table).
         reported: set[tuple[str, int, int, str]] = set()
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             queries = _queries_in(func, constants)

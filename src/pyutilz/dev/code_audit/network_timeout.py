@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import walk_tree, Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
 
 # --- network call with no timeout= ----------------------------------------
 #
@@ -40,7 +40,7 @@ def _timeout_preconfigured_vars(tree: ast.AST) -> "set[str]":
     ``session.get(...)`` pre-configured, so flagging those would be pure noise.
     """
     out: "set[str]" = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             if any(kw.arg == "timeout" for kw in node.value.keywords):
                 for t in node.targets:
@@ -56,7 +56,7 @@ def _directly_imported_network_calls(tree: ast.AST) -> "dict[str, str]":
     callee has no receiver to key on, so resolve it back to the module it came from.
     """
     out: "dict[str, str]" = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             if node.module.split(".")[0] in _NETWORK_MODULE_HINTS:
                 for alias in node.names:
@@ -121,7 +121,7 @@ def scan_missing_network_timeout(
         preconfigured = _timeout_preconfigured_vars(tree)
         directly_imported = _directly_imported_network_calls(tree)
 
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             resolved = _resolve_network_callee(node, directly_imported)
