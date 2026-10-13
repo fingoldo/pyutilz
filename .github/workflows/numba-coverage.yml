@@ -152,7 +152,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload coverage to Codecov (numba-disabled flag)
-        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@c9c6a89d15ce265e80c5c0d0467f3d384a33adba  # v1.22.6  # pragma: allowlist secret
+        uses: fingoldo/py-ci-shared/.github/actions/upload-codecov@c7988d7d79392724bd13b3306ccc61387935dcab  # v1.22.10  # pragma: allowlist secret
         if: success()
         # The codecov CLI's coverage plugin re-runs `coverage xml` when it finds a .coverage data file, and
         # without this it reads pyproject's whole-suite fail_under=85 and logs a spurious "Coverage failure:
