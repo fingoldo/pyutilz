@@ -1,7 +1,8 @@
 """No new module-level function may go uncalled in ``src/pyutilz`` without a classification.
 
 Every classified name lives in ``uncalled_functions_ignore.py`` with a one-line reason: deprecated aliases,
-PEP 562 ``__dir__`` hooks, superseded helpers, atexit handlers, and re-exported public library API. The gate
+PEP 562 ``__dir__`` hooks, superseded helpers, and atexit handlers. Names that a package ``__init__`` re-exports are
+public library API and are exempted by the gate itself (``public_api_from_exports``), so they are not listed. The gate
 baseline holds only what remains unclassified and must only shrink.
 """
 
@@ -30,4 +31,5 @@ def test_no_new_uncalled_functions(request):
         baseline_path=_BASELINE_PATH,
         ignore=tuple(UNCALLED_FUNCTIONS_IGNORE),
         request=request,
+        public_api_from_exports=True,
     )
