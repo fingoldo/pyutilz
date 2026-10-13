@@ -151,3 +151,58 @@ class TestTheDispatchPicksTheRightDriverCall:
         execution.basic_db_execute("execute", "SELECT * FROM t WHERE a = %s", data=(7,))
 
         assert psycopg.execute.call_args.args[1] == (7,)
+
+
+class _RecordingCursor:
+    """A cursor whose fetch raises, recording whether it was closed."""
+
+    def __init__(self, fetch_error: BaseException) -> None:
+        self.description = [("a",)]
+        self._fetch_error = fetch_error
+        self.closed = False
+
+    def fetchall(self):
+        raise self._fetch_error
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestANamedCursorIsClosedWhenTheFetchRaises:
+    """Kills: moving `local_cur.close()` back below an unguarded `fetchall()`, which leaves the
+    server-side cursor (WITH HOLD) open for the life of the connection on a fetch error."""
+
+    def test_the_named_cursor_is_closed_and_the_error_propagates(self):
+        cursor = _RecordingCursor(RuntimeError("fetch blew up"))
+
+        with pytest.raises(RuntimeError, match="fetch blew up"):
+            execution._finish_execution(cursor, return_cursor=False, cursor_name="c1")
+
+        assert cursor.closed is True
+
+    def test_a_failing_close_does_not_mask_the_fetch_error(self):
+        class _BadClose(_RecordingCursor):
+            def close(self) -> None:
+                raise OSError("close failed too")
+
+        cursor = _BadClose(RuntimeError("fetch blew up"))
+
+        with pytest.raises(RuntimeError, match="fetch blew up"):
+            execution._finish_execution(cursor, return_cursor=False, cursor_name="c1")
+
+    def test_an_unnamed_cursor_is_not_closed_on_a_fetch_error(self):
+        """The shared per-thread cursor is kept alive on purpose; only a named one is closed here."""
+        cursor = _RecordingCursor(RuntimeError("fetch blew up"))
+
+        with pytest.raises(RuntimeError):
+            execution._finish_execution(cursor, return_cursor=False, cursor_name=None)
+
+        assert cursor.closed is False
+
+    def test_success_still_closes_the_named_cursor_and_returns_rows(self):
+        cursor = MagicMock(name="cursor")
+        cursor.description = [("a",)]
+        cursor.fetchall = MagicMock(return_value=[(1,), (2,)])
+
+        assert execution._finish_execution(cursor, return_cursor=False, cursor_name="c1") == [(1,), (2,)]
+        cursor.close.assert_called_once_with()

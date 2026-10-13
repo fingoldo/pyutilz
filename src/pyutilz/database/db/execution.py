@@ -163,9 +163,17 @@ def _finish_execution(local_cur: Any, return_cursor: bool, cursor_name: Optional
     # the server-side cursor leaks for the lifetime of the connection.
     if return_cursor:
         return local_cur
-    rows = local_cur.fetchall() if local_cur.description is not None else []
-    if cursor_name is not None:
-        local_cur.close()
+    rows = None
+    try:
+        rows = local_cur.fetchall() if local_cur.description is not None else []
+    finally:
+        # A fetch that raises must not leave the named server-side cursor open: close it here, log (not
+        # raise) any failure to close, and let the fetch error propagate. On success the close raises as before.
+        if cursor_name is not None:
+            if rows is None:
+                _close_local_named_cursor(cursor_name, local_cur)
+            else:
+                local_cur.close()
     return rows
 
 
