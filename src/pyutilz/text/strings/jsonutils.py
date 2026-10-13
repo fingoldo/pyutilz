@@ -262,7 +262,7 @@ def remove_json_defaults(
                 del json_obj[attr]
             else:
                 if warn_if_not_default:
-                    logger.warning("%s field not equals %s in object %s %s" % (attr, default_value, str(json_obj)[:20], obj_id))
+                    logger.warning("%s field not equals %s in object %s %s" % (attr, default_value, str(json_obj)[:20], obj_id))  # audit-exempt: unthrottled_hot_loop_log -- verbose-style diagnostic under the warn_if_not_default caller opt-in
 
 
 def _normalize_for_pg_json(obj: Any) -> Any:
@@ -405,7 +405,7 @@ def get_jsonlist_property(
             indices.append(i)
         else:
             if verbose:
-                logger.warning(f"No {property_name} field for element {elem}")
+                logger.warning(f"No {property_name} field for element {elem}")  # audit-exempt: unthrottled_hot_loop_log -- per element missing the property, only under the verbose caller opt-in
 
     if return_indices:
         return res, indices
@@ -433,7 +433,7 @@ def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[
                 new_elem[property_name] = elem[property_name]
             else:
                 if verbose:
-                    logger.warning(f"No {property_name} field for element {elem}")
+                    logger.warning(f"No {property_name} field for element {elem}")  # audit-exempt: unthrottled_hot_loop_log -- per element missing the property, only under the verbose caller opt-in
         if new_elem:
             res.append(new_elem)
             indices.append(i)

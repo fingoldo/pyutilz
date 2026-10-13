@@ -13,7 +13,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Optional as _Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 from .duplicate_function_body import _stripped_body, _node_count, _normalized_body
 
 # Fuzzy matching a trivial body (a short property getter, a one-line delegate) produces spurious
@@ -245,6 +245,8 @@ def _near_duplicate_finding(
     """Build the near-duplicate finding for two similarly sized bodies, or None for a deprecated-alias shim pair."""
     if _is_deprecated_alias_boilerplate(node_i) and _is_deprecated_alias_boilerplate(node_j):
         return None  # both are independent deprecated-alias shims -- see docstring
+    if is_line_exempt(src_j, node_j.lineno, "near_duplicate_function_body"):
+        return None
     return Finding(
         check="near_duplicate_function_body",
         severity="Low",
