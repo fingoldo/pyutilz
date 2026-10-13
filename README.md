@@ -12,6 +12,7 @@
 [![types: py.typed](https://img.shields.io/badge/types-py.typed-blue.svg)](https://peps.python.org/pep-0561/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![docs](https://github.com/fingoldo/pyutilz/actions/workflows/docs.yml/badge.svg?branch=master&event=push)](https://fingoldo.github.io/pyutilz/)
+[![CodeQL](https://github.com/fingoldo/pyutilz/actions/workflows/codeql.yml/badge.svg?branch=master&event=push)](https://github.com/fingoldo/pyutilz/actions/workflows/codeql.yml?query=branch%3Amaster)
 
 A Python utilities library covering data-frame ops, databases, web/cloud, system monitoring, parallelism, and a unified async LLM-provider interface. The core installs nine hard dependencies -- `numba`, `numpy`, `joblib`, `portalocker`, `psutil`, `pandas`, `tqdm`, `pympler` (plus `tomli` below Python 3.11) -- because `pyutilz.core.pythonlib` and `pyutilz.system.system`, the modules nearly every other subpackage imports, use them unconditionally at import time; `pyproject.toml` records the rationale per dependency. Everything heavier than that (scipy, Pillow, selenium, the cloud SDKs, the LLM SDKs, spaCy, ...) is opt-in through an extras group, so you install only the domains you actually use.
 
