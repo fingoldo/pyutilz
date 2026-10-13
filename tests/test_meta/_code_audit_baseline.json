@@ -1,5 +1,4 @@
 [
-  "assert_in_loop_first_failure_only::database/db/upsert.py::d95cc2b521af",
   "comment_names_missing_symbol::dev/code_audit/docstring_names_a_caller_that_does_not_call.py::3cc04fce23ce",
   "comment_names_missing_symbol::dev/code_audit/docstring_names_a_caller_that_does_not_call.py::8e01956b9a82",
   "comment_names_missing_symbol::dev/code_audit/docstring_names_a_caller_that_does_not_call.py::c53335e772d0",
