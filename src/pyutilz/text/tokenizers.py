@@ -257,7 +257,7 @@ class AdvancedTokenizer:
                 last_sentence_word = last_word
         return last_sentence_word
 
-    def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):
+    def tokenize_db_reviews(self, sql: str, tokens: dict, save_as: Optional[str] = None, chunk_size: int = 1000, exp_length: int = 10000, newlines=None):  # unused-ok: Legacy signature, now documented in the docstring as ignored: corpus statistics accumulate onto this instance's own coun
         """
         Streams review rows (title, body) from the database via sql in chunks of chunk_size, cleans and
         sentencizes each review's text, and feeds it to tokenize() to accumulate corpus statistics.

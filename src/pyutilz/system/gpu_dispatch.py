@@ -168,7 +168,7 @@ def _gputil_to_cuda_ids(gpus: list) -> list:
 
 
 @lru_cache(maxsize=16)
-def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:
+def _select_best_gpu_cached(strategy: str, pid: int) -> Optional[int]:  # unused-ok: Cache-key-only argument, documented in the docstring: pid is in the lru_cache key so a fork resets the memoised device s
     """Inner cached worker. ``pid`` is part of the key so a fork resets it."""
     if not is_cuda_available():
         return None

@@ -316,7 +316,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
             )
         logger.warning("OpenAI rate limit hit (HTTP 429). Retrying via tenacity loop.")
 
-    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
+    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:  # unused-ok: Override kept explicit for the same base-class hook signature: OpenAI bills reasoning inside completion_tokens, so the e
         """Return the output token count OpenAI actually bills for (completion_tokens already includes reasoning_tokens)."""
         # OpenAI bills reasoning tokens as part of output for o-series
         # (verified in API response payload's ``usage.completion_tokens``

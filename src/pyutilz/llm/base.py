@@ -654,7 +654,7 @@ class LLMProvider(ABC):
                 out[key] = getattr(self, name)
         return out
 
-    def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:
+    def _classify_batch_exception(self, exc: Exception) -> dict[str, Any] | None:  # unused-ok: Base-class hook returning None for the generic path; subclasses (GeminiProvider) inspect exc to tag safety blocks. Docum
         """Return extra fields to merge into a per-request batch error dict.
 
         Hook for provider-specific exception classification (e.g. Gemini

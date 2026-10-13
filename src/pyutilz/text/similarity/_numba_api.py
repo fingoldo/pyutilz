@@ -167,7 +167,7 @@ if HAS_NUMBA:
             pos += word_counts[i + 1]
         return buf, offsets, wc, cand_starts, n_query
 
-    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
+    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:  # unused-ok: Pure-Python fallback used when numba is absent; the signature must match the numba-accelerated version, which is the one that can actually p
         """
         Compare one query against many candidates in a single numba call.
 
@@ -202,7 +202,7 @@ if HAS_NUMBA:
             [1.0, 0.0]
         """
 
-        def __init__(
+        def __init__(  # unused-ok: Pure-Python fallback class used when numba is absent; the signature must match the numba-accelerated class it replaces.
             self,
             candidates: list[list[str]],
             cMinLenTHreshold: int = 1,
@@ -341,7 +341,7 @@ else:
         """Fallback to pure-Python version when numba is not installed."""
         return sentences_similarity(list(packed_a), list(packed_b), cMinLenTHreshold) if packed_a and packed_b else None
 
-    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:
+    def sentences_similarity_numba_batch(query_words: list, candidates: list, cMinLenTHreshold: int = 1, parallel: bool = False) -> list:  # unused-ok: Pure-Python fallback used when numba is absent; the signature must match the numba-accelerated version, which is the one
         """Fallback to pure-Python version when numba is not installed."""
         return [sentences_similarity(query_words, c, cMinLenTHreshold) for c in candidates]
 
@@ -355,7 +355,7 @@ else:
             self,
             candidates: list,
             cMinLenTHreshold: int = 1,
-            parallel: bool = False,
+            parallel: bool = False,  # unused-ok: Pure-Python fallback class used when numba is absent; the signature must match the numba-accelerated class it replaces.
             min_word_similarity: float = 0.5,
             required_coverage: Optional[float] = None,
             required_matched_words: Optional[int] = None,

@@ -72,6 +72,11 @@ def _enclosing_functions(path: Path) -> dict[tuple[int, int], str]:
     return out
 
 
+def _declared_exempt(path: Path, row: int) -> bool:
+    lines = path.read_text(encoding="utf-8").split(chr(10))
+    return 0 < row <= len(lines) and "# unused-ok:" in lines[row - 1]
+
+
 def collect_unused_parameters(root: Path) -> dict[str, str]:
     """Return ``{"path::function::param": "ARG00N <message>"}`` for every unused parameter under ``root``.
 
@@ -97,6 +102,9 @@ def collect_unused_parameters(root: Path) -> dict[str, str]:
         owners = by_file.setdefault(str(filename), _enclosing_functions(filename))
         loc = (item["location"]["row"], item["location"]["column"])
         func = owners.get(loc, "<unknown>")
+        # A reviewed exemption declared on the flagged line: # unused-ok: <reason> (the py-ci-shared marker).
+        if _declared_exempt(filename, item["location"]["row"]):
+            continue
         # The parameter name is the only backticked token in ruff's message ("Unused method argument: `x`").
         message = item["message"]
         param = message.rsplit("`", 2)[-2] if "`" in message else message

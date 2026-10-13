@@ -320,7 +320,7 @@ class _PreSerializedJson:
             self._adapted = jsonlib.loads(self._raw)
         return self._adapted
 
-    def dumps(self, obj: Any = None) -> str:
+    def dumps(self, obj: Any = None) -> str:  # unused-ok: psycopg2 Json adapter interface: psycopg2 calls dumps(obj), but this adapter wraps text that was already serialised, so
         """Return the pre-built JSON text (``obj`` is ignored -- it is what ``adapted`` parses FROM)."""
         return self._raw
 

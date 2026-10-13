@@ -128,7 +128,7 @@ def _code_identity_key(fn: Callable) -> Any:
 
 
 @lru_cache(maxsize=4096)
-def _normalized_source_by_code(fn: Callable, code_key: Any) -> str:
+def _normalized_source_by_code(fn: Callable, code_key: Any) -> str:  # unused-ok: Cache-key-only argument: the lru_cache is keyed on (fn, code_key) so a bytecode swap invalidates the entry..
     """Memoized :func:`_normalized_source`, LRU-keyed on ``(fn, code_key)``.
 
     ``code_key`` (see :func:`_code_identity_key`) is what actually makes this content-aware: if

@@ -109,7 +109,7 @@ class RequestBodyMixin:
         """
         return build_chat_messages(prompt, system, images)
 
-    def _extra_request_body(self, model: str) -> dict[str, Any]:
+    def _extra_request_body(self, model: str) -> dict[str, Any]:  # unused-ok: Base-class hook returning vanilla OpenAI-compatible behaviour (no extra fields); OpenRouter's override uses model for ro
         """Return provider-specific extra fields to merge into the request body.
 
         Subclasses override for things like vendor-specific defaults.

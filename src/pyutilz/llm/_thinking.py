@@ -172,7 +172,7 @@ def gemini_thinking_budget(thinking: bool | str | int | None, model: str) -> int
 class ThinkingControlMixin:
     """The reasoning-effort seams shared by every OpenAI-compatible provider."""
 
-    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:
+    def _thinking_request_field(self, thinking: bool | str) -> dict[str, Any] | None:  # unused-ok: Base-class hook: vanilla OpenAI-compatible upstreams have no thinking-mode field, so the default returns None; subclasse
         """Return the request-body fragment that toggles thinking mode.
 
         ``thinking`` accepts BOTH a plain bool (legacy) AND an effort

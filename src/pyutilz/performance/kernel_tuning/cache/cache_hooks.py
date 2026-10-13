@@ -58,7 +58,7 @@ class LoggerHooks:
         """Log at DEBUG that an env var forced ``choice`` for ``kernel``."""
         logger.debug("kernel_tuning_cache: %s env override -> %r", kernel, choice)
 
-    def cache_hit(self, kernel, dims, region):
+    def cache_hit(self, kernel, dims, region):  # unused-ok: TuningHooks protocol conformance; the default logger reports kernel+dims only, deliberately not the (potentially large)
         """Log at DEBUG that a cached ``region`` was found for ``kernel`` at ``dims``."""
         logger.debug("kernel_tuning_cache: %s cache hit %s", kernel, dims)
 

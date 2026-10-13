@@ -52,7 +52,7 @@ _ZERO_QUOTA = re.compile(r"\blimit:\s*0(?![\d.])")
 try:
     from google.genai.errors import ClientError as _GenaiClientError, ServerError as _GenaiServerError
 
-    def _is_retryable_genai_error(exc: BaseException) -> bool:
+    def _is_retryable_genai_error(exc: BaseException) -> bool:  # unused-ok: ImportError fallback stub for the real predicate above it: with google.genai absent there is nothing to classify, and the signature must mat
         """5xx (ServerError) always retryable; ClientError only for a 429 that can clear -- other 4xx
         (400 bad request, 401/403 auth) are permanent and must not be retried.
 
@@ -67,7 +67,7 @@ try:
         return False
 except ImportError:
 
-    def _is_retryable_genai_error(exc: BaseException) -> bool:
+    def _is_retryable_genai_error(exc: BaseException) -> bool:  # unused-ok: ImportError fallback stub for the real predicate above it: with google.genai absent there is nothing to classify, and th
         """google.genai.errors unavailable -- nothing to classify as retryable."""
         return False
 

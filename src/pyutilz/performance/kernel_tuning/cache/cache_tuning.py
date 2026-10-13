@@ -61,12 +61,12 @@ class _CacheTuningMixin(_CacheState):
 
     # ----- orchestration: env -> code_version-checked lookup -> locked sweep -> fallback -----
 
-    def get_or_tune(self, kernel_name: str, *, dims: dict, tuner: Callable,
+    def get_or_tune(self, kernel_name: str, *, dims: dict, tuner: Callable,  # unused-ok: Retained for signature stability after the sweep-locking rework and documented as such at cache_tuning.py:164; the wait is now bounded by th
                     axes: list[str], fallback, env_key: Optional[str] = None,
                     code_version: Optional[str] = None, salt: int = 0,
                     equiv_tol: Optional[float] = None,
                     hooks: "Optional[TuningHooks]" = None,
-                    once_per_process: bool = True, lock_timeout: float = 900.0,
+                    once_per_process: bool = True, lock_timeout: float = 900.0,  # unused-ok: Retained for signature stability after the sweep-locking rework and documented as such at cache_tuning.py:164; the wait
                     async_sweep: bool = False):
         """Unified dispatch collapsing the env -> lookup -> on-miss sweep ->
         persist -> re-lookup -> fallback flow.

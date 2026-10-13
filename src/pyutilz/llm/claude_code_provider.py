@@ -894,10 +894,10 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 logger.debug("Batch request %s failed: %s", request_id, e)
                 yield {"id": request_id, "error": str(e)}
 
-    def estimate_cost(
+    def estimate_cost(  # unused-ok: LLMProvider.estimate_cost interface conformance; Claude Code is billed by subscription so the cost is $0 regardless of token counts.  # unused-ok: LLMProvider.estimate_cost interface conformance; Claude Code is billed by subscription so the cost is $0 regardless of token counts.
         self,
-        input_tokens: int,
-        output_tokens: int,
+        input_tokens: int,  # unused-ok: LLMProvider.estimate_cost interface conformance; Claude Code is billed by subscription so the cost is $0 regardless of t
+        output_tokens: int,  # unused-ok: LLMProvider.estimate_cost interface conformance; Claude Code is billed by subscription so the cost is $0 regardless of t
     ) -> float:
         """Cost is $0 - included in Max subscription."""
         return 0.0

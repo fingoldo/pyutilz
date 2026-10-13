@@ -253,7 +253,7 @@ class XAIProvider(OpenAICompatibleProvider):
         if isinstance(ticks, (int, float)) and not isinstance(ticks, bool):
             self._reported_cost_usd = getattr(self, "_reported_cost_usd", 0.0) + ticks * _USD_PER_TICK
 
-    def _long_context_tier(self, model: str) -> LongContextTier:
+    def _long_context_tier(self, model: str) -> LongContextTier:  # unused-ok: Override of the base hook: every xAI model shares the one 200K tier, so the model id does not change the answer.
         """Every xAI model doubles every rate for a request whose prompt reaches 200K tokens."""
         return _LONG_CONTEXT_TIER
 

@@ -64,8 +64,8 @@ def contigous_strings_similarity(a: str, b: str) -> tuple:
     return max(best_l, best_r, best_m) / max(len(a), len(b)), root
 
 
-def normalize_sentence(
-    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: Optional[list] = None
+def normalize_sentence(  # unused-ok: Superseded public parameter, now documented in the docstring as ignored: sports club-suffix handling moved to the caller-supplied abbreviati
+    sentence: str, bSports: bool = False, replace_symbols: tuple = (".", ",", "/", "-", "«", "»"), placeholder: str = " ", abbreviations: Optional[list] = None  # unused-ok: Superseded public parameter, now documented in the docstring as ignored: sports club-suffix handling moved to the caller
 ) -> list:
     """
     bSports is accepted and ignored: sports-specific club-suffix handling moved into the

@@ -43,7 +43,7 @@ def init_vars() -> None:
     logger.debug("Session cleared")
 
 
-def connect(
+def connect(  # unused-ok: Deliberate **kwargs sink so a caller forwarding a wider settings dict is not rejected; only the m_* names are configuration this function ow
     m_proxy_user: Optional[str] = None,
     m_proxy_pass: Optional[str] = None,
     m_proxy_server: Optional[str] = None,
@@ -53,7 +53,7 @@ def connect(
     m_timeout: Optional[int] = 10,
     m_proxy_port: Optional[str] = None,
     m_proxy_type: str = "http",
-    **kwargs,
+    **kwargs,  # unused-ok: Deliberate **kwargs sink so a caller forwarding a wider settings dict is not rejected; only the m_* names are configurat
 ) -> None:
     """Reset session state and set the module-level proxy/header/timeout config from the ``m_*`` arguments (used to configure proxy credentials before fetching)."""
     _facade.init_vars()

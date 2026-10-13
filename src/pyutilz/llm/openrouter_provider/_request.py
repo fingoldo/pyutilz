@@ -235,7 +235,7 @@ class OpenRouterRequestMixin:
         """The model's catalogue record; OpenRouterProvider supplies it."""
         raise NotImplementedError
 
-    def _extra_request_body(self, model: str) -> dict[str, Any]:
+    def _extra_request_body(self, model: str) -> dict[str, Any]:  # unused-ok: Base-class hook signature; OpenRouter's routing options (provider order/ignore, model fallback list) are instance config
         """The OpenRouter fields of every request: ``provider``, ``models``, ``plugins``, ``transforms``, top-level
         ``cache_control``, then the constructor's ``extra_body`` (per-call ``extra_body`` is merged after all of these)."""
         body: dict[str, Any] = {}

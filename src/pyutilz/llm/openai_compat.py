@@ -141,7 +141,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
 
     # ── hooks for subclasses ─────────────────────────────────────────
 
-    def _get_timeout(self, model: str) -> float:
+    def _get_timeout(self, model: str) -> float:  # unused-ok: Base-class hook returning a flat 120s default; per-model timeouts are an override's job (OpenRouter keys off model).
         """Return request timeout in seconds. Override for model-specific."""
         return 120.0
 
@@ -152,7 +152,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         """
         pass
 
-    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:
+    def _compute_billed_output(self, completion_tokens: int, reasoning_tokens: int) -> int:  # unused-ok: Base-class hook: the OpenAI-family default is reasoning-included-in-completion, so only completion_tokens is billed; xAI
         """Return the number of output tokens that count toward billing.
 
         DeepSeek: reasoning ⊂ completion → return completion_tokens
@@ -160,7 +160,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         """
         return completion_tokens
 
-    def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:
+    def _track_provider_specific_usage(self, usage: dict[str, Any]) -> None:  # unused-ok: Documented no-op hook; OpenRouter's override reads usage.cost.
         """Hook for providers exposing extra usage fields beyond OpenAI's standard.
 
         Called after standard token tracking, with the raw ``usage`` dict from
@@ -170,7 +170,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         """
         return None
 
-    def _track_provider_specific_response(self, data: dict[str, Any]) -> None:
+    def _track_provider_specific_response(self, data: dict[str, Any]) -> None:  # unused-ok: Documented no-op hook; OpenRouter's override reads data for generation id / upstream provider / resolved model.
         """Hook for response-level metadata outside the ``usage`` block.
 
         Called once per response with the full decoded JSON. OpenRouter uses
@@ -278,7 +278,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
             return self._input_cost_per_1m(model)
         return float(cache_write)
 
-    def _long_context_tier(self, model: str) -> LongContextTier | None:
+    def _long_context_tier(self, model: str) -> LongContextTier | None:  # unused-ok: Base-class hook returning no tier; OpenAI's override looks the model up, xAI's applies one tier to every model.
         """The long-context tier of ``model``, None when it has none (the default).
 
         A cheap gate checked on every recorded response before ``_resolve_pricing`` is consulted, so a provider whose
