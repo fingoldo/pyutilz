@@ -296,7 +296,7 @@ repos:
   # run on demand: `pre-commit run --hook-stage manual mypy-full-manual`.
   # rev is the same full SHA as every workflow `uses:` ref and requirements-dev.txt, so a hook run and CI execute one release.
   - repo: https://github.com/fingoldo/py-ci-shared
-    rev: c9c6a89d15ce265e80c5c0d0467f3d384a33adba  # v1.22.6  # pragma: allowlist secret
+    rev: 079d5cd30e6834846beb5ec2cb41973f0a020648  # 079d5cd (1.22.9)  # pragma: allowlist secret
     hooks:
       - id: mypy-full-manual
         args: ['src/pyutilz']
