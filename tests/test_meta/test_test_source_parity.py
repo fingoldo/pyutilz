@@ -243,6 +243,7 @@ _TEST_FILES_WITHOUT_SOURCE: dict[str, str] = {
     "test_pricing_tiers_20261003": "cross-cutting: pyutilz.llm._pricing (cache-write rates, long-context tiers) through the xAI, Gemini, OpenAI, Anthropic, DeepSeek and OpenRouter providers",
     "test_providers_live_20261003": "cross-cutting regression tests from the 2026-10-03 live verification of the PROV-* fixes, replaying recorded responses through five providers",
     "test_general_audit_20260926": "cross-cutting regression tests for audits/implemented/2026-09-26/50_general.md (GEN-1..15) over nine modules; one class per finding",
+    "test_audit_exempt_marker": "cross-cutting: the inline audit-exempt marker helper in dev/code_audit/_base.py, honoured by five test-quality scanners; no single production module to pair with",
     "test_shared_gates_adopted": "meta-test running py_ci_shared gates over src/ and tests/ -- no single production module to pair with",
     "test_mypy_gate_floor": "meta-test over .pre-commit-config.yaml and mypy-full.yml -- the mypy_gate floor tracks the source-file count; no production module to pair with",
     "test_audit_rounds_countable": "meta-test over audits/ -- every finding has a disposition and rounds are filed by state, via py_ci_shared.audit_round_format; no production module to pair with",
