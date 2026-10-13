@@ -132,6 +132,7 @@ def resolve_claude_model(model: str) -> tuple[str, ClaudeModelSpec] | None:
 
 
 #: OpenRouter lookups already made, by the normalised model name; None is a name the catalogue does not list.
+_OPENROUTER_LOOKUPS_MAX_SIZE = 256
 _openrouter_specs: dict[str, tuple[str, ClaudeModelSpec] | None] = {}
 
 
@@ -181,6 +182,8 @@ def _openrouter_claude_spec(name: str) -> tuple[str, ClaudeModelSpec] | None:
         if spec is not None:
             found = (listing_id, spec)
             break
+    if len(_openrouter_specs) >= _OPENROUTER_LOOKUPS_MAX_SIZE:
+        _openrouter_specs.clear()  # bounded: one entry per distinct model name, and a clear only costs a re-lookup
     _openrouter_specs[name] = found
     return found
 
