@@ -460,7 +460,7 @@ class GeminiProvider(LLMProvider):
                 constrained to, sent as ``response_json_schema`` with ``application/json``.
         """
         self._reset_per_call_state()
-        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else None  # no ceiling substituted: the field is omitted and the route decides
         budget = self.fit_max_tokens_to_context(budget, prompt, system)
         async with self.semaphore:
             contents = build_gemini_parts(prompt, images)

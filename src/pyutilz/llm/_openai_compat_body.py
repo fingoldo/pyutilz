@@ -182,7 +182,7 @@ class RequestBodyMixin:
         C901 budget; the caller must already have awaited ``_async_prepare()``, because the
         ``max_output_tokens`` / ``context_window`` properties read here can hit the catalogue.
         """
-        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else None  # no ceiling substituted: the field is omitted and the route decides
         # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
         # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
         # (2026-08-08, autopsia pilot): a large prompt's real token count exceeded `count_tokens`'s

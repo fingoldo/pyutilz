@@ -295,7 +295,7 @@ class XAIProvider(OpenAICompatibleProvider):
         """One ``POST /responses`` with the search tools (https://docs.x.ai/docs/guides/tools/search-tools)."""
         self._reset_per_call_state()
         await self._async_prepare()
-        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else None  # no ceiling substituted: the field is omitted and the route decides
         budget = self.fit_max_tokens_to_context(budget, prompt, system)
         messages: list[dict[str, Any]] = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
         body: dict[str, Any] = {

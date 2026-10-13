@@ -693,7 +693,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         # Awaited unconditionally: BOTH the auto-budget (``max_output_tokens``) and the context clamp
         # (``context_window``) are sync properties that may hit the network on a catalogue miss.
         await self._async_prepare()
-        budget: int | None = max_tokens if max_tokens > 0 else self.max_output_tokens
+        budget: int | None = max_tokens if max_tokens > 0 else None  # no ceiling substituted: the field is omitted and the route decides
         # `fit_max_tokens_to_context`'s reserve now scales with input size (see `base.py`'s
         # `_context_reserve_tokens`), not a flat 1024-token constant - fixes a measured incident
         # (2026-08-08, autopsia pilot): a real ~23,617-token prompt was undercounted by `count_tokens` at
