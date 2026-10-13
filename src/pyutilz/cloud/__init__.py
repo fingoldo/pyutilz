@@ -1,5 +1,8 @@
 """PyUtilz cloud subpackage."""
 
+from .cloud import connect_to_s3, gcp_storage_download_blob, gcp_storage_upload_blob, get_from_s3_or_cache
+from .mailru import list_public_folder, open_public_file
+
 # Re-export all from cloud.cloud for backward compatibility
 from .cloud import *
 
@@ -13,4 +16,4 @@ from . import cloud
 # only in that context and would read as generic cloud helpers on the package.
 from . import mailru
 
-__all__ = ["cloud", "mailru"]
+__all__ = ["cloud", "mailru", "connect_to_s3", "gcp_storage_download_blob", "gcp_storage_upload_blob", "get_from_s3_or_cache", "list_public_folder", "open_public_file"]

@@ -1,5 +1,41 @@
 """PyUtilz system subpackage."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .cli_logging import setup_cli_logging
+    from .distributed import register_scraper
+    from .gpu_dispatch import cuda_memory_guard, dispatch_cpu_vs_gpu, get_shared_mem_budget_per_block, occupancy_aware_block_size, optimal_threads_per_block, reset_cache, select_best_gpu
+    from .monitoring import log_duration, monitored, timeout_wrapper
+    from .parallel import applyfunc_parallel, distribute_work, mem_map_array, parallel_run, set_tf_gpu, split_array, split_list_into_chunks, split_list_into_nchunks_indices
+    from .resilience import retry_with_backoff
+
+# Resolved on first attribute access by __getattr__ (lazy: the defining modules may need optional extras).
+_REEXPORTS = {
+    "setup_cli_logging": "cli_logging",
+    "register_scraper": "distributed",
+    "cuda_memory_guard": "gpu_dispatch",
+    "dispatch_cpu_vs_gpu": "gpu_dispatch",
+    "get_shared_mem_budget_per_block": "gpu_dispatch",
+    "occupancy_aware_block_size": "gpu_dispatch",
+    "optimal_threads_per_block": "gpu_dispatch",
+    "reset_cache": "gpu_dispatch",
+    "select_best_gpu": "gpu_dispatch",
+    "log_duration": "monitoring",
+    "monitored": "monitoring",
+    "timeout_wrapper": "monitoring",
+    "applyfunc_parallel": "parallel",
+    "distribute_work": "parallel",
+    "mem_map_array": "parallel",
+    "parallel_run": "parallel",
+    "set_tf_gpu": "parallel",
+    "split_array": "parallel",
+    "split_list_into_chunks": "parallel",
+    "split_list_into_nchunks_indices": "parallel",
+    "retry_with_backoff": "resilience",
+}
+
+
 # Re-export all from system.system for backward compatibility. system.system is comparatively
 # lightweight (psutil/platform/os-level helpers) so it stays eager -- it's what
 # core.serialization's `pyutilz.system.system.ensure_dir_exists()` and data.polarslib's
@@ -18,12 +54,19 @@ from .system import *
 # 2026-07-21 audit: `pyutilz.system.system.ensure_dir_exists`/`clean_ram` callers (core.serialization,
 # data.polarslib) were forced to have the WHOLE [system] extras stack installed just to import
 # THIS package's __init__.py, even though neither of them touches parallel/monitoring/hardware_monitor.
-__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience", "single_flight_cache", "cli_logging", "CircuitOpenError"]
+__all__ = ["system", "parallel", "monitoring", "distributed", "hardware_monitor", "UtilizationMonitor", "resilience", "single_flight_cache", "cli_logging", "CircuitOpenError", "setup_cli_logging", "register_scraper", "cuda_memory_guard", "dispatch_cpu_vs_gpu", "get_shared_mem_budget_per_block", "occupancy_aware_block_size", "optimal_threads_per_block", "reset_cache", "select_best_gpu", "log_duration", "monitored", "timeout_wrapper", "applyfunc_parallel", "distribute_work", "mem_map_array", "parallel_run", "set_tf_gpu", "split_array", "split_list_into_chunks", "split_list_into_nchunks_indices", "retry_with_backoff"]
 
 _LAZY_SUBMODULES = frozenset({"parallel", "monitoring", "hardware_monitor", "distributed", "resilience", "single_flight_cache", "cli_logging"})
 
 
 def __getattr__(name):
+    if name in _REEXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(f".{_REEXPORTS[name]}", __name__), name)
+        globals()[name] = value
+        return value
+
     # importlib.import_module (not `from . import parallel`): the latter resolves via
     # getattr(this_module, "parallel"), which re-enters THIS __getattr__ and recurses
     # infinitely since "parallel" is never a plain module attribute until cached below.

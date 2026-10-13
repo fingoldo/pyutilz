@@ -1,5 +1,8 @@
 """PyUtilz web subpackage."""
 
+from .browser import ensure_session_is_valid, find_element_by_tag_name, init
+from .graphql import beautify_gql_query, text_to_graphql
+
 # Re-export all from web.web for backward compatibility
 from .web import *
 
@@ -30,4 +33,9 @@ __all__ = [
     "ProxyConfigurationError",
     "ProxyFetchError",
     "UnsafeURLError",
+    "ensure_session_is_valid",
+    "find_element_by_tag_name",
+    "init",
+    "beautify_gql_query",
+    "text_to_graphql",
 ]

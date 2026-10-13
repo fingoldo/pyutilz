@@ -1,5 +1,25 @@
 """PyUtilz database subpackage."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .deltalakes import safe_delta_write
+    from .psycopg2_pool import close_pool, get_connection_from_pool, get_pool_dsn, managed_connection
+    from .redislib import rclose, rconnect, rexecute
+
+# Resolved on first attribute access by __getattr__ (lazy: the defining modules may need optional extras).
+_REEXPORTS = {
+    "safe_delta_write": "deltalakes",
+    "close_pool": "psycopg2_pool",
+    "get_connection_from_pool": "psycopg2_pool",
+    "get_pool_dsn": "psycopg2_pool",
+    "managed_connection": "psycopg2_pool",
+    "rclose": "redislib",
+    "rconnect": "redislib",
+    "rexecute": "redislib",
+}
+
+
 # Eagerly re-exported (stdlib-only module, no optional-dep cost) so the domain's typed errors are
 # as discoverable as pyutilz.llm's: `from pyutilz.database import DatabaseConnectionError` works.
 from .exceptions import DatabaseError, DatabaseConnectionError, SQLValidationError
@@ -13,6 +33,14 @@ __all__ = [
     "DatabaseError",
     "DatabaseConnectionError",
     "SQLValidationError",
+    "safe_delta_write",
+    "close_pool",
+    "get_connection_from_pool",
+    "get_pool_dsn",
+    "managed_connection",
+    "rclose",
+    "rconnect",
+    "rexecute",
 ]
 
 
@@ -25,6 +53,13 @@ def __getattr__(name):
     Lazy rather than an eager `from . import ...` so importing the package costs nothing until a
     submodule is actually touched (several pull optional third-party dependencies).
     """
+    if name in _REEXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(f".{_REEXPORTS[name]}", __name__), name)
+        globals()[name] = value
+        return value
+
     if name in __all__:
         import importlib
 

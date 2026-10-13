@@ -1,5 +1,23 @@
 """LLM provider implementations."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._claude_models import claude_model_listed_price
+    from ._progress import track_stream_progress
+    from .config import clear_llm_settings_cache
+    from .openai_tokens import num_tokens_from_messages, num_tokens_from_string
+
+# Resolved on first attribute access by __getattr__ (lazy: the defining modules may need optional extras).
+_REEXPORTS = {
+    "claude_model_listed_price": "_claude_models",
+    "track_stream_progress": "_progress",
+    "clear_llm_settings_cache": "config",
+    "num_tokens_from_messages": "openai_tokens",
+    "num_tokens_from_string": "openai_tokens",
+}
+
+
 from pyutilz.llm.exceptions import (
     LLMProviderError,
     ClaudeCodeToolUseError,
@@ -37,6 +55,13 @@ def _provider_lazy_imports() -> dict:
 
 def __getattr__(name: str):
     """Lazy-import so missing optional deps don't break the package."""
+    if name in _REEXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(f".{_REEXPORTS[name]}", __name__), name)
+        globals()[name] = value
+        return value
+
     import importlib
 
     if name in _LAZY_IMPORTS:
@@ -80,4 +105,9 @@ __all__ = [
     "LLMStreamInterruptedError",
     "LLMUnparseableResponseError",
     "count_tokens",
+    "claude_model_listed_price",
+    "track_stream_progress",
+    "clear_llm_settings_cache",
+    "num_tokens_from_messages",
+    "num_tokens_from_string",
 ]

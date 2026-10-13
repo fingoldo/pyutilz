@@ -12,6 +12,12 @@ resolving unchanged. Submodules:
   sysinfo  - get_system_info orchestrator (preserves the Windows os_serial fallback)
 """
 
+from ._common import decode_cpu_upgrade_method, decode_memory_type
+from .memory import show_biggest_session_objects, show_tracemalloc_snapshot
+from .misc import beep, count_app_instances, ensure_idle_devices, get_libs_versions, get_locale_settings, get_max_affordable_workers_count, get_python_info, get_script_file, get_utc_unix_timestamp, report_large_objects, tqdmu_lazy_start
+from .probing import compute_total_gpus_ram
+
+
 from ._common import *
 from .probing import *
 from .memory import *

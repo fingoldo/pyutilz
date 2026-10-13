@@ -526,6 +526,8 @@ otherwise hand-write.
 
 from __future__ import annotations
 
+from ._base import clear_parse_cache
+
 # Preserve the original flat-module import surface. These names were
 # importable as ``from pyutilz.dev.code_audit import ast`` etc. before the
 # split into a subpackage; keep them re-exported so no caller breaks.
@@ -783,6 +785,7 @@ __all__ = [
     "scan_unit_suffix_mismatch",
     "scan_unreachable_import_fallback",
     "scan_vacuous_loop_assertion",
+    "clear_parse_cache",
 ]
 
 import types as _types
