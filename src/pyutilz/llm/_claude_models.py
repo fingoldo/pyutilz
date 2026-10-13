@@ -150,8 +150,10 @@ def _listing_spec(entry: dict) -> ClaudeModelSpec | None:
     except (KeyError, TypeError, ValueError):
         return None
     top = entry.get("top_provider") or {}
-    max_output = int(top.get("max_completion_tokens") or UNKNOWN_CLAUDE_MODEL.max_output)
-    context = int(entry.get("context_length") or UNKNOWN_CLAUDE_MODEL.context_window)
+    stated_max = top.get("max_completion_tokens")
+    max_output = int(stated_max if stated_max is not None else UNKNOWN_CLAUDE_MODEL.max_output)
+    stated_context = entry.get("context_length")
+    context = int(stated_context if stated_context is not None else UNKNOWN_CLAUDE_MODEL.context_window)
     return ClaudeModelSpec(input_per_1m, output_per_1m, max_output, context)
 
 
