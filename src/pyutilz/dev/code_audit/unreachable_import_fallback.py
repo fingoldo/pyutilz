@@ -146,8 +146,17 @@ def scan_unreachable_import_fallback(
             continue
         src_lines = _read_src_lines(py)
 
+        # A try inside `if TYPE_CHECKING:` never runs, so it is a stub-import guard for the type checker, not a
+        # runtime handler that can be dead. Its import is not counted as certain above; the handler is skipped here.
+        type_only_tries = {
+            id(inner)
+            for guard in ast.walk(tree)
+            if isinstance(guard, ast.If) and _is_type_checking_guard(guard.test)
+            for stmt in guard.body
+            for inner in ast.walk(stmt)
+        }
         for node in walk_tree(tree):
-            if not isinstance(node, ast.Try):
+            if not isinstance(node, ast.Try) or id(node) in type_only_tries:
                 continue
             if not _catches_import_error(node):
                 continue

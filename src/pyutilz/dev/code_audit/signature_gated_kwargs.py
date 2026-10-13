@@ -110,7 +110,8 @@ def scan_signature_gated_kwarg_drops(
                 continue
             parameter_sets = _parameter_set_names(fn)
             for node in ast.walk(fn):
-                if not isinstance(node, ast.If) or node.orelse:
+                # A gate whose negative branch reports the drop is the fix, not the defect; a silent else is still a drop.
+                if not isinstance(node, ast.If) or _says_something(node.orelse):
                     continue
                 name = _gated_parameter(node.test, parameter_sets)
                 if not name or not _passes_the_value_on(node.body, name):

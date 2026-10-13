@@ -107,3 +107,44 @@ def call(provider):
 ''')
 
     assert scan_signature_gated_kwarg_drops(tmp_path) == []
+
+
+def test_a_silent_else_is_still_a_drop(tmp_path: Path):
+    """Positive for the negative-branch exemption: an else that neither logs nor raises leaves the drop silent."""
+    _write(
+        tmp_path,
+        "client.py",
+        _HEAD + """
+def silent_else(provider, thinking, gen_kwargs):
+    params = set(inspect.signature(provider.generate).parameters)
+    if "thinking" in params:
+        gen_kwargs["thinking"] = thinking
+    else:
+        pass
+    return gen_kwargs
+""",
+    )
+
+    findings = scan_signature_gated_kwarg_drops(tmp_path)
+
+    assert [f.check for f in findings] == ["signature_gated_kwarg_drop"]
+    assert findings[0].snippet.strip() == 'if "thinking" in params:'
+
+
+def test_a_reporting_elif_negative_branch_is_clean(tmp_path: Path):
+    """Negative for the same exemption: the reporting branch sits in an elif, which still counts as a negative branch."""
+    _write(
+        tmp_path,
+        "client.py",
+        _HEAD + """
+def elif_warned(provider, thinking, gen_kwargs, strict):
+    params = set(inspect.signature(provider.generate).parameters)
+    if "thinking" in params:
+        gen_kwargs["thinking"] = thinking
+    elif strict:
+        raise TypeError("provider takes no thinking")
+    return gen_kwargs
+""",
+    )
+
+    assert scan_signature_gated_kwarg_drops(tmp_path) == []

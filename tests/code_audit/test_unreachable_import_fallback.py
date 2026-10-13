@@ -235,3 +235,44 @@ except ImportError:
     util = None
 """)
     assert len(scan_unreachable_import_fallback(tmp_path)) == 1
+
+
+def test_unreachable_import_fallback_ignores_a_guard_inside_type_checking(tmp_path: Path):
+    """Positive for the type-only skip: a try/except inside `if TYPE_CHECKING:` never runs, so it is a stub guard,
+    not a dead runtime handler, even when its module is imported unconditionally elsewhere."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+import tiktoken
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    try:
+        import tiktoken
+    except ImportError:
+        tiktoken = None
+""",
+    )
+    assert scan_unreachable_import_fallback(tmp_path) == []
+
+
+def test_unreachable_import_fallback_flags_the_runtime_else_of_a_type_checking_guard(tmp_path: Path):
+    """Negative for the type-only skip: the else of `if TYPE_CHECKING:` does run at runtime, so its handler is still checked."""
+    _write(
+        tmp_path,
+        "mod.py",
+        """
+import tiktoken
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+else:
+    try:
+        import tiktoken
+    except ImportError:
+        tiktoken = None
+""",
+    )
+    assert len(scan_unreachable_import_fallback(tmp_path)) == 1
