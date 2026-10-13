@@ -1,4 +1,4 @@
-"""``pyutilz.database.db`` -- PostgreSQL/MySQL access layer.
+"""``pyutilz.database.db`` -- PostgreSQL/MySQL access layer.  # audit-exempt: import_cycle -- documented import-parent-as-_facade re-export idiom; plain import defers attribute lookup, enforced by test_reexport_package_idiom
 
 Historically one flat module; carved into cohesive submodules once it passed the 1000-LOC limit.
 This ``__init__`` is the FACADE: it owns the mutable module-level connection state and re-exports

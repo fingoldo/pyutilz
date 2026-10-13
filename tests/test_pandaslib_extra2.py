@@ -7,7 +7,7 @@ import numpy as np
 import os
 from unittest.mock import patch, MagicMock
 
-from pyutilz.pandaslib import (
+from pyutilz.data.pandaslib import (
     optimize_dtypes,
     read_parquet_with_pyarrow,
     showcase_df_columns,
@@ -285,7 +285,7 @@ class TestEnsureFloat32Extra:
 class TestBenchmarkParquetCompression:
     def test_parquet_benchmark_basic(self, tmp_path):
         """Lines 635-690: benchmark_dataframe_parquet_compression."""
-        from pyutilz.pandaslib import benchmark_dataframe_parquet_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_parquet_compression
         df = pd.DataFrame({"a": range(50), "b": np.random.rand(50)})
         result = benchmark_dataframe_parquet_compression(
             df, str(tmp_path), nrepeats=1,
@@ -299,7 +299,7 @@ class TestBenchmarkParquetCompression:
 
     def test_parquet_skip_config(self, tmp_path):
         """Line 648-649: skip_configs filtering."""
-        from pyutilz.pandaslib import benchmark_dataframe_parquet_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_parquet_compression
         df = pd.DataFrame({"a": [1, 2, 3]})
         result = benchmark_dataframe_parquet_compression(
             df, str(tmp_path), nrepeats=1,
@@ -312,7 +312,7 @@ class TestBenchmarkParquetCompression:
 
     def test_parquet_compression_level_exception(self, tmp_path):
         """Lines 681-682: exception in compression_level loop is caught."""
-        from pyutilz.pandaslib import benchmark_dataframe_parquet_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_parquet_compression
         df = pd.DataFrame({"a": [1, 2]})
         # max_compression_level=1 with an engine that may fail on some combos
         result = benchmark_dataframe_parquet_compression(
@@ -324,7 +324,7 @@ class TestBenchmarkParquetCompression:
 
     def test_write_parquet_method(self, tmp_path):
         """Lines 637-638, 641-642: write_method='write_parquet' branch (polars-style)."""
-        from pyutilz.pandaslib import benchmark_dataframe_parquet_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_parquet_compression
         # This will use engines=("main",) and no engine param
         # We mock measure_read_write_performance to avoid actual polars dependency
         mock_arrays = [np.array([0.1]), np.array([0.1]), np.array([1.0]), np.array([1.0])]
@@ -342,7 +342,7 @@ class TestBenchmarkPickleCompression:
     def test_pickle_benchmark(self, tmp_path):
         """Lines 694-711."""
         pytest.importorskip("zstandard")
-        from pyutilz.pandaslib import benchmark_dataframe_pickle_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_pickle_compression
         df = pd.DataFrame({"a": range(20)})
         res = []
         benchmark_dataframe_pickle_compression(res, str(tmp_path), df, nrepeats=1)
@@ -355,7 +355,7 @@ class TestBenchmarkCsvCompression:
     def test_csv_benchmark(self, tmp_path):
         """Lines 736-752."""
         pytest.importorskip("zstandard")
-        from pyutilz.pandaslib import benchmark_dataframe_csv_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_csv_compression
         df = pd.DataFrame({"a": range(20)})
         res = []
         benchmark_dataframe_csv_compression(res, str(tmp_path), df, nrepeats=1)
@@ -395,7 +395,7 @@ class TestBenchmarkOrcCompression:
     def test_orc_benchmark(self, tmp_path):
         """Lines 756-771."""
         _require_orc_timezone_database()
-        from pyutilz.pandaslib import benchmark_dataframe_orc_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_orc_compression
         df = pd.DataFrame({"a": range(20), "b": np.random.rand(20)})
         res = []
         benchmark_dataframe_orc_compression(res, str(tmp_path), df, nrepeats=1)
@@ -406,7 +406,7 @@ class TestBenchmarkOrcCompression:
 class TestBenchmarkFeatherCompression:
     def test_feather_benchmark(self, tmp_path):
         """Lines 775-790."""
-        from pyutilz.pandaslib import benchmark_dataframe_feather_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_feather_compression
         df = pd.DataFrame({"a": range(20), "b": np.random.rand(20)})
         res = []
         benchmark_dataframe_feather_compression(res, str(tmp_path), df, nrepeats=1)
@@ -417,7 +417,7 @@ class TestBenchmarkFeatherCompression:
 class TestBenchmarkDataframeCompression:
     def test_full_benchmark_mocked(self, tmp_path):
         """Lines 804-854: orchestrator function."""
-        from pyutilz.pandaslib import benchmark_dataframe_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_compression
         df = pd.DataFrame({"a": range(50), "b": np.random.rand(50)})
         result = benchmark_dataframe_compression(
             df, head=20, nrepeats=1,
@@ -431,7 +431,7 @@ class TestBenchmarkDataframeCompression:
     def test_benchmark_return_styled(self, tmp_path):
         """Line 848-852: return_styled=True attempts style.background_gradient."""
         pytest.importorskip("jinja2")  # pandas.io.formats.style requires jinja2 to even be importable
-        from pyutilz.pandaslib import benchmark_dataframe_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_compression
         df = pd.DataFrame({"a": range(50), "b": np.random.rand(50)})
         result = benchmark_dataframe_compression(
             df, head=20, nrepeats=1,
@@ -447,7 +447,7 @@ class TestBenchmarkDataframeCompression:
 
     def test_benchmark_no_head(self, tmp_path):
         """Line 806: head=None uses full df."""
-        from pyutilz.pandaslib import benchmark_dataframe_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_compression
         df = pd.DataFrame({"a": range(10)})
         result = benchmark_dataframe_compression(
             df, head=None, nrepeats=1,
@@ -460,7 +460,7 @@ class TestBenchmarkDataframeCompression:
 
     def test_benchmark_exception_in_func(self, tmp_path):
         """Lines 828-829: exception in individual benchmark function is caught."""
-        from pyutilz.pandaslib import benchmark_dataframe_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_compression
         df = pd.DataFrame({"a": range(10)})
         with patch("pyutilz.data.pandaslib.benchmark_dataframe_feather_compression", side_effect=RuntimeError("fail")):
             result = benchmark_dataframe_compression(
@@ -481,7 +481,7 @@ class TestBenchmarkDataframeCompression:
 class TestBenchmarkHdfCompression:
     def test_hdf_benchmark_mocked(self, tmp_path):
         """Lines 715-732: mock to avoid tables dependency."""
-        from pyutilz.pandaslib import benchmark_dataframe_hdf_compression
+        from pyutilz.data.pandaslib import benchmark_dataframe_hdf_compression
         mock_arrays = [np.array([0.1]), np.array([0.1]), np.array([1.0]), np.array([1.0])]
         res = []
         with patch("pyutilz.data.pandaslib.measure_read_write_performance", return_value=mock_arrays):

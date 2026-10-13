@@ -4,7 +4,7 @@ import numpy as np
 import os
 from unittest.mock import patch
 
-from pyutilz.pandaslib import (
+from pyutilz.data.pandaslib import (
     load_df,
     optimize_dtypes,
     concat_and_flush_df_list,

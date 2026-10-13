@@ -1,4 +1,4 @@
-"""``pyutilz.data.pandaslib`` -- pandas/polars dataframe utilities.
+"""``pyutilz.data.pandaslib`` -- pandas/polars dataframe utilities.  # audit-exempt: import_cycle -- documented import-parent-as-_facade re-export idiom; plain import defers attribute lookup, enforced by test_reexport_package_idiom
 
 Historically a single flat module; split into a subpackage of cohesive
 submodules (``dtypes``, ``frames``, ``io_ops``, ``benchmarks``) once it grew

@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 from typing import Optional
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- resource-acquisition calls not wrapped in `with` ----------------------
 
@@ -97,6 +97,8 @@ def scan_resource_handle_safety(
                 continue
             chain = _ancestor_chain_via_parent_map(node, parent_map)
             if _is_under_with_statement(node, chain):
+                continue
+            if is_line_exempt(src_lines, node.lineno, "resource_handle_safety"):
                 continue
             findings.append(Finding(
                 check="resource_handle_safety",

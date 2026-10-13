@@ -44,7 +44,7 @@ class TestTimeoutWrapper:
 
     def test_timeout_wrapper_executes_function(self):
         """Test that wrapped function executes correctly"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def simple_function(x):
@@ -55,7 +55,7 @@ class TestTimeoutWrapper:
 
     def test_timeout_wrapper_enforces_timeout(self):
         """Test that timeout is enforced for slow functions"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=1)
         def slow_function():
@@ -72,7 +72,7 @@ class TestTimeoutWrapper:
 
     def test_timeout_wrapper_does_not_block_fast_functions(self):
         """Test that fast functions complete before timeout"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def fast_function():
@@ -88,7 +88,7 @@ class TestTimeoutWrapper:
 
     def test_timeout_wrapper_with_arguments(self):
         """Test that wrapped function receives arguments correctly"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def function_with_args(a, b, c=3):
@@ -99,7 +99,7 @@ class TestTimeoutWrapper:
 
     def test_multiple_calls_reuse_executor(self):
         """Test that multiple calls reuse the same executor (not creating new ones)"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def _echo(x):
@@ -123,7 +123,7 @@ class TestTimeoutWrapper:
         import logging
         import re
 
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5, report_actual_duration=True)
         def timed_function():
@@ -143,7 +143,7 @@ class TestTimeoutWrapper:
         """The counterpart: with the flag off, no duration line is emitted at all."""
         import logging
 
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def quiet_function():
@@ -162,7 +162,7 @@ class TestConcurrentExecution:
 
     def test_multiple_concurrent_timeouts(self):
         """Test that multiple functions can be wrapped and executed concurrently"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
         import concurrent.futures
 
         @timeout_wrapper(timeout=5)
@@ -179,7 +179,7 @@ class TestConcurrentExecution:
 
     def test_thread_safety(self):
         """Test that timeout_wrapper is thread-safe"""
-        from pyutilz.monitoring import timeout_wrapper
+        from pyutilz.system.monitoring import timeout_wrapper
 
         @timeout_wrapper(timeout=5)
         def thread_safe_function(x):
@@ -215,7 +215,7 @@ class TestConcurrentExecution:
 ])
 def test_timeout_wrapper_parametrized(timeout_value, sleep_time, should_timeout):
     """Parametrized test for different timeout scenarios"""
-    from pyutilz.monitoring import timeout_wrapper
+    from pyutilz.system.monitoring import timeout_wrapper
 
     @timeout_wrapper(timeout=timeout_value)
     def sleepy_function():

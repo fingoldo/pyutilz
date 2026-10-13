@@ -48,7 +48,7 @@ class _CacheTuningMixin(_CacheState):
             d = r.get("max_abs_diff")
             if d is not None and d > equiv_tol:
                 caps = {k: v for k, v in r.items() if k.endswith(_AXIS_SUFFIXES)}
-                logger.warning(
+                logger.warning(  # audit-exempt: unthrottled_hot_loop_log -- each rejected region is a distinct correctness signal; throttling would hide one divergent region
                     "kernel_tuning_cache: %s region %s REJECTED -- max_abs_diff=%.3e > "
                     "equiv_tol=%.3e. A faster-but-divergent variant is a bug, not a winner; "
                     "not persisting it.", kernel_name, caps, d, equiv_tol)
@@ -76,7 +76,9 @@ class _CacheTuningMixin(_CacheState):
         to that raw string. ``code_version``: when both stored + passed are
         non-None and differ, the stale entry is bypassed. The once-per-process
         guard is keyed on (kernel, cache-path) so tests switching
-        PYUTILZ_KERNEL_CACHE_DIR re-tune. Sweeps serialize cross-process."""
+        PYUTILZ_KERNEL_CACHE_DIR re-tune. Sweeps serialize cross-process.
+        ``lock_timeout`` is accepted and ignored: the sweep claim is a non-blocking O_EXCL marker, so there
+        is no wait to bound. Kept in the signature so existing callers keep working."""
         hk = hooks if hooks is not None else _DEFAULT_HOOKS
 
         if env_key:
@@ -87,7 +89,7 @@ class _CacheTuningMixin(_CacheState):
         # guard_key computed up-front: reused both for the once-per-process sweep guard below AND the
         # once-per-process invalidation-log guard, so a kernel stuck stale (e.g. a no-op tuner that never
         # persists a fresh entry) logs the INFO invalidation banner at most once per process, not on every call.
-        guard_key = (kernel_name, self._path or id(self))
+        guard_key = (kernel_name, self._path if self._path is not None else id(self))
         # Resolve the entry ONCE and hand it to both the staleness check and the lookup: each used to
         # re-enter ``_ensure_loaded`` (a lock acquire plus dict walk) for the very same dict.
         entry = self._ensure_loaded().get("kernels", {}).get(kernel_name)

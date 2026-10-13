@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _module_sql_constants, _read_src_lines, _safe_parse, _sql_text, is_line_exempt
 
 # --- SQL-literal heuristics -----------------------------------------------
 
@@ -190,6 +190,8 @@ def scan_sql_limit_without_order_by(
             if limit_match.group(1) == "1":
                 continue
             if _ORDER_BY_RE.search(sql):
+                continue
+            if is_line_exempt(src_lines, node.lineno, "sql_limit_without_order_by"):
                 continue
             findings.append(Finding(
                 check="sql_limit_without_order_by",

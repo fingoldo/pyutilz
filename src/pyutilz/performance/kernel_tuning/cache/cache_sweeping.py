@@ -24,7 +24,7 @@ class _CacheSweepClaimMixin(_CacheState):
         """Path to the per-(kernel, code_version) INPROGRESS sweep marker. Callers must have
         already guarded on ``self._path is not None`` (in-memory caches have no marker path)."""
         assert self._path is not None, "_marker_path() requires a non-in-memory cache"
-        cv = _slug(str(code_version or _NO_CODE_VERSION), maxlen=70)
+        cv = _slug(str(code_version or _NO_CODE_VERSION), maxlen=70)  # audit-exempt: default_via_or -- empty code_version means none recorded; the sentinel is intended
         return os.path.join(_kernel_dir(self._path, kernel_name), f"{cv}.INPROGRESS")
 
     @contextlib.contextmanager
@@ -75,8 +75,8 @@ class _CacheSweepClaimMixin(_CacheState):
         # pick the same tmp (a collision would make the loser's O_EXCL fail and the degrade-path wrongly own).
         tmp = f"{marker}.tmp.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}"
         try:
-            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except OSError as e:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # audit-exempt: resource_handle_safety -- raw fd is closed in the enclosing finally block of this function
+        except OSError as e:  # audit-exempt: non_neutral_except_fallback -- cannot stage the claim marker; sweeping proceeds as owner, the documented degrade mode
             logger.debug("kernel_tuning_cache: marker tmp create failed (%s); sweeping without claim", e)
             return True  # can't stage -> behave as owner (degrade to no-singleton, never wedge)
         try:
@@ -90,17 +90,17 @@ class _CacheSweepClaimMixin(_CacheState):
             # giving the same single-winner guarantee as O_EXCL but with the content already in place.
             os.link(tmp, marker)
             return True
-        except FileExistsError:
+        except FileExistsError:  # audit-exempt: non_neutral_except_fallback -- marker already claimed by another process; False is the lock-predicate answer
             return False
-        except OSError as e:
+        except OSError as e:  # audit-exempt: non_neutral_except_fallback -- hardlinks unsupported on this filesystem; logged, falls back to the O_EXCL path
             # Hardlinks unsupported on this fs (rare): fall back to the legacy O_EXCL-then-write path,
             # which still serialises winners; the empty-marker steal window reappears only there.
             logger.debug("kernel_tuning_cache: marker link unsupported (%s); O_EXCL fallback", e)
             try:
-                fd2 = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
+                fd2 = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)  # audit-exempt: resource_handle_safety -- raw fd is closed in the enclosing finally block of this function
+            except FileExistsError:  # audit-exempt: non_neutral_except_fallback -- lost the race to another process holding the claim; False is the answer
                 return False
-            except OSError:
+            except OSError:  # audit-exempt: non_neutral_except_fallback -- cannot create the fallback marker; treated as owner, the documented degrade mode
                 return True
             try:
                 os.write(fd2, payload)

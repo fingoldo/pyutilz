@@ -6,7 +6,7 @@ SQLAlchemy-engine raw-SQL escape hatches (``select``/``execute_alchemy``/``showc
 ``explain_table``).
 """
 
-from typing import Any, Iterable, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from pyutilz.core import jsonlib
 
@@ -170,17 +170,17 @@ def _finish_execution(local_cur: Any, return_cursor: bool, cursor_name: Optional
 
 
 def basic_db_execute(
-    ex_type,
-    statement,
-    data=None,
-    auto_commit=True,
-    cursor_factory=None,
-    cursor_name=None,
-    return_cursor=False,
+    ex_type: str,
+    statement: Any,
+    data: Any = None,
+    auto_commit: bool = True,
+    cursor_factory: Any = None,
+    cursor_name: Optional[str] = None,
+    return_cursor: bool = False,
     itersize: Optional[int] = None,
     page_size: int = PAGE_SIZE,
     max_retries: int = 5,
-):
+) -> Any:
     """Runs one statement (``ex_type`` selects ``execute`` or psycopg2's batched ``execute_values``) and
     returns its rows, or the cursor itself when ``return_cursor`` is set.
 
@@ -265,15 +265,30 @@ def basic_db_execute(
     raise RuntimeError(f"basic_db_execute gave up after {max_retries} connection retries (statement={stmt_preview!r})")
 
 
-def safe_execute(statement, data=None, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: Optional[int] = None):
+def safe_execute(
+    statement: Any,
+    data: Any = None,
+    auto_commit: bool = True,
+    cursor_factory: Any = None,
+    cursor_name: Optional[str] = None,
+    return_cursor: bool = False,
+    itersize: Optional[int] = None,
+) -> Any:
     """Runs a single statement through ``basic_db_execute`` in plain ``execute`` mode, with its
     reconnect-and-retry handling; returns the rows, or the cursor when ``return_cursor`` is set."""
     return _facade.basic_db_execute("execute", statement, data, auto_commit, cursor_factory, cursor_name, return_cursor, itersize=itersize)
 
 
 def safe_execute_values(
-    statement, data, auto_commit=True, cursor_factory=None, cursor_name=None, return_cursor=False, itersize: Optional[int] = None, page_size: int = PAGE_SIZE
-):
+    statement: Any,
+    data: Any,
+    auto_commit: bool = True,
+    cursor_factory: Any = None,
+    cursor_name: Optional[str] = None,
+    return_cursor: bool = False,
+    itersize: Optional[int] = None,
+    page_size: int = PAGE_SIZE,
+) -> Any:
     """Runs a statement over many rows at once via psycopg2's ``execute_values``, sending them in
     batches of ``page_size``; otherwise behaves exactly like ``safe_execute``."""
     return _facade.basic_db_execute(
@@ -281,7 +296,7 @@ def safe_execute_values(
     )
 
 
-def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
+def fetch_db_elements(self, elements: Any, fields: Any, indices: Any = None, prefix: str = "") -> None:
     """Copies fetched rows onto ``self`` as attributes named ``<prefix><field>``.
 
     ``fields`` is a comma-separated string or a list of names; ``"*"`` resolves them from the last
@@ -316,7 +331,7 @@ def fetch_db_elements(self, elements, fields, indices=None, prefix=""):
         usable = []
         for i, field in enumerate(fields):
             if not field.isidentifier():
-                logger.warning("fetch_db_elements: skipping %r -- not a valid Python attribute name (expression or alias in the fields list?)", field)
+                logger.warning("fetch_db_elements: skipping %r -- not a valid Python attribute name (expression or alias in the fields list?)", field)  # audit-exempt: unthrottled_hot_loop_log -- per invalid field of a caller-supplied field list, bounded by its length
                 continue
             usable.append((i, field))
         for element in elements:
@@ -410,7 +425,18 @@ def _build_dml_statement(
     return sql, sql_fields_values
 
 
-def db_command(mode, table_name, where_fields=None, set_fields=None, replace_values=None, returning="*", source=None, jsonize=True, fetch_into=None, prefix=""):
+def db_command(
+    mode: str,
+    table_name: str,
+    where_fields: Any = None,
+    set_fields: Any = None,
+    replace_values: Optional[Dict[str, Any]] = None,
+    returning: Optional[str] = "*",
+    source: Optional[Dict[str, Any]] = None,
+    jsonize: bool = True,
+    fetch_into: Any = None,
+    prefix: str = "",
+) -> Any:
     """
     Executes DML commands easily, looking up sql fields in main and replacement dictionaries, optionally fetching returned values into separate class or dictionary instance[prefixed, if needed]
     This procedure is convenient when you have variables in local or global scope which names match exactly SQL table fields names. Using this sub, in your code you only mention fields names once, pass locals()
@@ -496,7 +522,7 @@ def _cast_setting_value(setting_name, typename, val):
     return val
 
 
-def read_db_settings(g, interval_minutes=10, settings_names_contains=None):
+def read_db_settings(g: Dict[str, Any], interval_minutes: int = 10, settings_names_contains: Optional[str] = None) -> None:
     """Loads the ``settings`` table into the namespace dict ``g``, keyed by setting name.
 
     Each value is cast according to the row's declared type (int/float/str/json/bool), leaving it
@@ -567,7 +593,15 @@ def _resolve_node_and_application(application):
     return node, application
 
 
-def log_to_db(message, details=None, more_details=None, level="info", append_severity=False, application=None, table_name="logs"):
+def log_to_db(
+    message: Any,
+    details: Any = None,
+    more_details: Any = None,
+    level: str = "info",
+    append_severity: bool = False,
+    application: Optional[str] = None,
+    table_name: str = "logs",
+) -> None:
     """Emits a message to the Python logger AND inserts it as a row into the ``logs`` table.
 
     ``details``/``more_details`` are appended to the logged text in brackets and stored in their own
@@ -626,7 +660,7 @@ def showcase_table(table_name: str, condition: str = "", limit: int = 5) -> obje
     # but kept for backward compatibility with warning
     if condition and not condition.strip().lower().startswith("where"):
         condition = "WHERE " + condition
-    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=_facade.conn_alchemy)  # nosec B608 - table_name validated above; condition is an accepted raw WHERE fragment
+    return pd.read_sql(f"SELECT * FROM {table_name} {condition} LIMIT {int(limit)}", con=_facade.conn_alchemy)  # nosec B608 - table_name validated above; condition is an accepted raw WHERE fragment  # audit-exempt: sql_limit_without_order_by -- generic SELECT * escape hatch: the table is a parameter, so arbitrary order is the documented contract
 
 
 def select(sql: str) -> object:

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 import re
 import math
-from typing import Any, Callable, Dict, Iterator
+from typing import Any, Callable, Dict, Iterator, Tuple
 import numpy as np
 from collections import defaultdict, deque, Counter
 
@@ -53,14 +53,14 @@ def tokenize_to_chars(source: str, is_file: bool = False) -> Iterator[str]:
         return tokenize_source(source, lambda s: s, is_file=False)
 
 
-def tokenize_to_words(source, is_file: bool = False) -> Iterator[str]:
+def tokenize_to_words(source: Any, is_file: bool = False) -> Iterator[str]:
     """
     Tokenizes source into words (sequences of letters and apostrophes) using the module's pre-compiled regex.
     """
     return tokenize_source(source, lambda s: _WORD_TOKEN_RE.findall(s), is_file=is_file)
 
 
-def get_entropy_stats(stream, model_order: int = 2) -> tuple:
+def get_entropy_stats(stream: Any, model_order: int = 2) -> Tuple[Dict[Any, Counter], Counter]:
     """
     Computes markov_model entropy stats of text
     Returns:
@@ -91,7 +91,7 @@ def entropy(stats: Counter, normalization_factor: float = 1.0) -> float:
     return abs(sum(proba / normalization_factor * math.log2(proba / normalization_factor) for proba in stats.values()))
 
 
-def entropy_rate(conditional_stats, stats) -> float:
+def entropy_rate(conditional_stats: Dict[Any, Counter], stats: Counter) -> float:
     """
     Computes the conditional (Markov) entropy rate: the prefix-count-weighted average of entropy(conditional_stats[prefix]) over all prefixes in stats.
     """

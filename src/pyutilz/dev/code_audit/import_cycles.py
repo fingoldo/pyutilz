@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import FrozenSet
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _safe_parse, _is_excluded
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _read_src_lines, _safe_parse, _is_excluded, is_line_exempt
 import logging
 
 logger = logging.getLogger(__name__)
@@ -238,12 +238,15 @@ def scan_import_cycles(
         if comp_key in deferred_cycles:
             continue
         cycle_display = " -> ".join([*comp, comp[0]])
+        # The real path, from the graph itself: a package member's file is `<name>/__init__.py`,
+        # which a dotted-name-to-path rewrite cannot produce.
+        cycle_file = module_files.get(comp[0], comp[0].replace(".", "/") + ".py")
+        if is_line_exempt(_read_src_lines(root / cycle_file), 1, "import_cycle"):
+            continue
         findings.append(Finding(
             check="import_cycle",
             severity="P1",
-            # The real path, from the graph itself: a package member's file is `<name>/__init__.py`,
-            # which a dotted-name-to-path rewrite cannot produce.
-            file=module_files.get(comp[0], comp[0].replace(".", "/") + ".py"),
+            file=cycle_file,
             line=1,
             snippet=cycle_display,
             detail=(

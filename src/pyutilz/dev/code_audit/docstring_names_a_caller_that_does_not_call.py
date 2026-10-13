@@ -10,7 +10,7 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 
 # --- prose naming the caller, after the caller stopped calling ---------------------------------
 #
-# "Called from `_flush_rows()` on every batch boundary" is the kind of sentence a reader trusts
+# "Called from `_flush_rows()` on every batch boundary" is the kind of sentence a reader trusts  # audit-exempt: comment_names_missing_symbol -- prose names a caller defined outside this tree, as an example of what docstrings get wrong
 # completely, because it is specific and it is checkable -- and nobody checks it. When `_flush_rows`
 # is refactored to go through something else, the sentence stays, and the next person reasons about
 # a call graph that has not existed for months.
@@ -37,7 +37,7 @@ from ._base import _DEFAULT_EXCLUDE_DIRS, Finding, _iter_py_files, _line_text, _
 #   than they describe the call graph.
 # * a `callers?:` form matched `caller: str` in an Args block, which is a parameter, not a claim.
 #
-# What survives is prose that can only mean one thing: `Called from `_flush_rows()``.
+# What survives is prose that can only mean one thing: `Called from `_flush_rows()``.  # audit-exempt: comment_names_missing_symbol -- prose names a caller defined outside this tree, as an example of what docstrings get wrong
 _CLAIM = re.compile(r"\b(?:called|invoked)\s+(?:from|by)\s+(?:`(?P<quoted>[A-Za-z_]\w*)(?:\(\))?`|(?P<bare>[A-Za-z_]\w*)\(\))", re.I)
 
 
@@ -120,7 +120,7 @@ def scan_docstring_names_a_caller_that_does_not_call(
 ) -> list[Finding]:
     """Find a docstring naming a caller that does not call the function it documents.
 
-    "Called from `_flush_rows()` on every batch boundary" is trusted completely, because it is
+    "Called from `_flush_rows()` on every batch boundary" is trusted completely, because it is  # audit-exempt: comment_names_missing_symbol -- prose names a caller defined outside this tree, as an example of what docstrings get wrong
     specific and checkable -- and nobody checks it. After `_flush_rows` is refactored the sentence
     stays, and the next reader reasons about a call graph that has not existed for months. It is
     worse than a comment that has merely aged: a reader who doubts the behaviour goes to

@@ -19,7 +19,7 @@ class TestRedisHandlerEmit:
     """Finding 1: emit() must not silently drop records on error."""
 
     def test_emit_error_calls_handleError(self):
-        from pyutilz.logginglib import RedisHandler
+        from pyutilz.dev.logginglib import RedisHandler
 
         rc = MagicMock()
         rc.lpush.side_effect = RuntimeError("redis down")
@@ -37,7 +37,7 @@ class TestInitializeFunctionLogNoNameError:
     """Finding 2: params/module_name must be initialised so no NameError fires."""
 
     def test_returns_dict_even_when_frame_introspection_fails(self):
-        from pyutilz.logginglib import initialize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log
 
         # Force getargvalues to blow up -> pre-fix `params` stayed unbound -> NameError.
         with patch("pyutilz.logginglib.inspect.getargvalues", side_effect=TypeError("boom")):
@@ -57,7 +57,7 @@ class TestInitializeFunctionLogUsesModuleLogger:
 
     def test_frame_getfile_failure_logs_via_module_logger(self):
         import pyutilz.logginglib as logginglib_module
-        from pyutilz.logginglib import initialize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log
 
         fake_logger = MagicMock()
         with patch.object(logginglib_module, "logger", fake_logger):
@@ -67,7 +67,7 @@ class TestInitializeFunctionLogUsesModuleLogger:
 
     def test_argvalues_failure_logs_via_module_logger(self):
         import pyutilz.logginglib as logginglib_module
-        from pyutilz.logginglib import initialize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log
 
         fake_logger = MagicMock()
         with patch.object(logginglib_module, "logger", fake_logger):
@@ -80,7 +80,7 @@ class TestClocksTimezoneAware:
     """Finding 3: timestamps must be timezone-aware (datetime.now(timezone.utc))."""
 
     def test_started_at_is_tz_aware(self):
-        from pyutilz.logginglib import _init_clocks
+        from pyutilz.dev.logginglib import _init_clocks
 
         obj = {}
         _init_clocks(obj)
@@ -92,7 +92,7 @@ class TestDebuggedNoInfiniteLoop:
     """Finding 4: debugged() must not loop into pdb forever in non-interactive envs."""
 
     def test_raises_instead_of_hanging_when_non_interactive(self):
-        from pyutilz.logginglib import debugged
+        from pyutilz.dev.logginglib import debugged
 
         calls = {"n": 0}
 
@@ -110,7 +110,7 @@ class TestDebuggedNoInfiniteLoop:
         assert calls["n"] == 1  # exactly one attempt, no retry loop
 
     def test_success_path_returns_value(self):
-        from pyutilz.logginglib import debugged
+        from pyutilz.dev.logginglib import debugged
 
         @debugged()
         def ok(x):
@@ -123,7 +123,7 @@ class TestLogLoadedRowsBadLang:
     """Finding 5: message must be bound (defaults to en) for unknown lang."""
 
     def test_unknown_lang_does_not_crash(self):
-        from pyutilz.logginglib import log_loaded_rows
+        from pyutilz.dev.logginglib import log_loaded_rows
 
         pytest.importorskip("inflect")  # en fallback message uses suffixize -> inflect
         results_log = {"results": {}}

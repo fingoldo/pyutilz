@@ -15,7 +15,7 @@ from ._common import logger
 import pyutilz.web.web as _facade
 
 
-def init_vars():
+def init_vars() -> None:
     """Reset the module-level session state (session, IP-query counter, headers, proxies, timeout) to defaults."""
     # Regression fix: the old Session (a requests.Session owns a urllib3 connection pool --
     # potentially several open keep-alive sockets) was previously just dropped here with no

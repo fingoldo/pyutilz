@@ -5,7 +5,7 @@ mutable connection state itself (``conn``/``cur``/``conn_alchemy``/credentials) 
 ``pyutilz.database.db`` facade so every submodule reads and writes ONE namespace.
 """
 
-from typing import Any, Dict, Optional, cast
+from typing import Any, Callable, Dict, Optional, Union, cast
 
 from ._common import (
     logger,
@@ -32,7 +32,7 @@ import pyutilz.database.db as _facade
 _CONNECT_RETRY_SLEEP_SECONDS = 5
 
 @compiles(Insert, "postgresql")
-def prefix_inserts(insert, compiler, **kw):
+def prefix_inserts(insert: Any, compiler: Any, **kw: Any) -> Any:
     """SQLAlchemy compilation hook making every PostgreSQL INSERT default to ``ON CONFLICT DO NOTHING``.
 
     Only applies when the statement carries no post-VALUES clause of its own, so an explicit
@@ -123,17 +123,17 @@ def _check_db_flavor(db_flavor: str) -> None:
 
 
 def connect_to_db(
-    m_db_name,
-    m_db_host,
-    m_db_port,
-    m_db_username,
-    m_db_pwd,
-    m_init_params_fn=None,
+    m_db_name: Optional[str],
+    m_db_host: Optional[str],
+    m_db_port: Any,
+    m_db_username: Optional[str],
+    m_db_pwd: Optional[str],
+    m_init_params_fn: Optional[Callable[[], Any]] = None,
     m_db_flavor: str = "postgres",
     m_db_schema: Optional[str] = None,
     m_db_sslmode: Optional[str] = None,
     max_retries: Optional[int] = None,
-):
+) -> None:
     """Connect to a Postgres or MySQL database, retrying (5s backoff) on failure.
 
     ``max_retries=None`` (default) preserves the original retry-forever behavior for
@@ -240,9 +240,10 @@ def get_cursor(cursor_type: str, cursor_factory: Any = None, cursor_name: Option
     return cur
 
 
-def mogrify(operation, parameters=None):
+def mogrify(operation: Union[str, bytes], parameters: Any = None) -> str:
     """Returns the statement as the driver would actually send it, with ``parameters`` bound and
     escaped, decoded to ``str`` -- for logging and for building a statement out of a template."""
     cursor_type = _facade.get_cursor_type(None, None)
     cur = _facade.get_cursor(cursor_type)
-    return cur.mogrify(operation, parameters).decode("utf-8")
+    mogrified: str = cur.mogrify(operation, parameters).decode("utf-8")  # cursor is Any; psycopg2 mogrify returns bytes
+    return mogrified

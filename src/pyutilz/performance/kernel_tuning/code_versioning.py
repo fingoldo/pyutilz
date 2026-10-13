@@ -87,7 +87,7 @@ def _normalized_source(fn: Callable) -> str:
     name = getattr(original, "__name__", None)
     try:
         src = textwrap.dedent(inspect.getsource(original))
-    except (OSError, TypeError) as e:
+    except (OSError, TypeError) as e:  # audit-exempt: non_neutral_except_fallback -- no source available for this callable; identity fallback is logged at debug on the next line
         logger.debug("code_versioning: no source for %r (%s); identity fallback", fn, e)
         try:
             sig = str(inspect.signature(original))
@@ -105,7 +105,7 @@ def _normalized_source(fn: Callable) -> str:
     deco_args = _decorator_call_args(target)
     target.decorator_list = []
     if target.body and isinstance(target.body[0], ast.Expr) and isinstance(target.body[0].value, ast.Constant) and isinstance(target.body[0].value.value, str):
-        target.body = target.body[1:] or [ast.Pass()]
+        target.body = target.body[1:] or [ast.Pass()]  # audit-exempt: default_via_or -- a function body cannot be empty; the Pass keeps the rewritten AST valid
     target.name = "_k_"  # name-normalize: a pure rename / module move is not a logic change
     canonical = _canonical(target)
     if deco_args:

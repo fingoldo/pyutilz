@@ -286,14 +286,14 @@ def atomic_write_bytes(target_path: str, writer_fn: Callable[[Any], None], *, fs
     freshly-renamed file with its contents only on RAM-side pages). Pass ``fsync=True`` explicitly
     when writing state that must survive a crash immediately after the call returns.
     """
-    target_dir = os.path.dirname(target_path) or "."
+    target_dir = os.path.dirname(target_path) or "."  # audit-exempt: default_via_or -- empty dirname means the current directory; the dot names the same directory
     _tmp_basename = f"{os.path.basename(target_path)}.tmp.{os.getpid()}.{_atomic_write_counter():d}.{uuid.uuid4().hex[:8]}"
     tmp_path = os.path.join(target_dir, _tmp_basename)
     # Explicit 0o600: without a mode argument the file is created 0o666 & ~umask (world-readable
     # under a typical umask), and os.replace carries that mode onto the target -- so pickled state,
     # cached API responses and scraped pages written through here would be readable by every local
     # user on a shared host. The sha256 sidecars protect integrity, not confidentiality.
-    fd = os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+    fd = os.open(tmp_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)  # audit-exempt: resource_handle_safety -- fd is adopted by os.fdopen; the failure window is documented in the comment block below
     # fd ownership: passed to os.fdopen -> the resulting BufferedWriter takes ownership and closes
     # on context exit. But if os.fdopen itself raises (rare: MemoryError during buffer alloc, or
     # an invalid-mode TypeError after a future refactor), the raw fd is never adopted and Python

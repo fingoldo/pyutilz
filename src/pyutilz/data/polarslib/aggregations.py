@@ -361,7 +361,7 @@ def _concentration_exprs(
             field_concentration_top_n = concentrations_params.get(field, concentration_top_n)
             # Validate field_concentration_top_n
             if not isinstance(field_concentration_top_n, int) or field_concentration_top_n <= 0:
-                logger.warning("Skipping field %s: invalid top_n=%s", field, field_concentration_top_n)
+                logger.warning("Skipping field %s: invalid top_n=%s", field, field_concentration_top_n)  # audit-exempt: unthrottled_hot_loop_log -- per invalid field of a caller-supplied field list, bounded by its length
                 continue
             alias = f"{fpref}{fields_remap.get(field,field)}_top{field_concentration_top_n}"
             exprs.append(af(pl.col(field)).value_counts(sort=True, normalize=True).head(field_concentration_top_n).struct.field("proportion").alias(alias))

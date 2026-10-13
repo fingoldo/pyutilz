@@ -10,7 +10,7 @@ from xml.etree.ElementTree import Element
 # camel_case_split
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import camel_case_split
+from pyutilz.text.strings import camel_case_split
 
 
 @pytest.mark.parametrize("inp,expected", [
@@ -28,7 +28,7 @@ def test_camel_case_split(inp, expected):
 # entropy helpers
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_entropy_stats, entropy, entropy_rate, compute_entropy_stats
+from pyutilz.text.strings import get_entropy_stats, entropy, entropy_rate, compute_entropy_stats
 
 
 def test_get_entropy_stats_basic():
@@ -72,7 +72,7 @@ def test_compute_entropy_stats_empty():
 # naive_entropy_rate (needs numpy)
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import naive_entropy_rate
+from pyutilz.text.strings import naive_entropy_rate
 
 
 def test_naive_entropy_rate_uniform():
@@ -89,7 +89,7 @@ def test_naive_entropy_rate_single_char():
 # stringify_dict
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import stringify_dict
+from pyutilz.text.strings import stringify_dict
 
 
 def test_stringify_dict_basic():
@@ -108,7 +108,7 @@ def test_stringify_dict_empty():
 # json_serial
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import json_serial
+from pyutilz.text.strings import json_serial
 
 
 def test_json_serial_datetime():
@@ -130,7 +130,7 @@ def test_json_serial_unsupported():
 # sub_elem
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import sub_elem
+from pyutilz.text.strings import sub_elem
 
 
 def test_sub_elem_basic():
@@ -150,7 +150,7 @@ def test_sub_elem_no_text():
 # jsonize_atrtributes
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import jsonize_atrtributes
+from pyutilz.text.strings import jsonize_atrtributes
 
 
 def test_jsonize_string():
@@ -180,7 +180,7 @@ def test_jsonize_max_recursion():
 # remove_json_attributes / leave_json_attributes
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_json_attributes, leave_json_attributes
+from pyutilz.text.strings import remove_json_attributes, leave_json_attributes
 
 
 def test_remove_json_attributes_none():
@@ -203,7 +203,7 @@ def test_leave_json_attributes_none():
 # extract_json_attribute
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import extract_json_attribute
+from pyutilz.text.strings import extract_json_attribute
 
 
 def test_extract_json_attribute_nested():
@@ -227,7 +227,7 @@ def test_extract_json_attribute_missing_key():
 # remove_json_empty_attributes
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_json_empty_attributes
+from pyutilz.text.strings import remove_json_empty_attributes
 
 
 def test_remove_json_empty_attributes_removes():
@@ -247,7 +247,7 @@ def test_remove_json_empty_attributes_keeps_nonempty():
 # remove_json_defaults
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_json_defaults
+from pyutilz.text.strings import remove_json_defaults
 
 
 def test_remove_json_defaults_removes_matching():
@@ -272,7 +272,7 @@ def test_remove_json_defaults_none_input():
 # get_jsonlist_property / get_jsonlist_properties
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_jsonlist_property, get_jsonlist_properties
+from pyutilz.text.strings import get_jsonlist_property, get_jsonlist_properties
 
 
 def test_get_jsonlist_property_dict_input():
@@ -296,7 +296,7 @@ def test_get_jsonlist_properties_basic():
 # find_between
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import find_between
+from pyutilz.text.strings import find_between
 
 
 def test_find_between_empty_start():
@@ -315,7 +315,7 @@ def test_find_between_none_input():
 # parse_tokens
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import parse_tokens
+from pyutilz.text.strings import parse_tokens
 
 
 def test_parse_tokens_chess_clocks():
@@ -331,7 +331,7 @@ def test_parse_tokens_empty():
 # underscorize_variable
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import underscorize_variable
+from pyutilz.text.strings import underscorize_variable
 
 
 @pytest.mark.parametrize("inp,expected", [
@@ -348,7 +348,7 @@ def test_underscorize_variable(inp, expected):
 # strip_characters / strip_doubled_characters
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import strip_characters, strip_doubled_characters
+from pyutilz.text.strings import strip_characters, strip_doubled_characters
 
 
 def test_strip_characters_empty_list():
@@ -367,7 +367,7 @@ def test_strip_doubled_characters_spaces():
 # rpad
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import rpad
+from pyutilz.text.strings import rpad
 
 
 def test_rpad_shorter():
@@ -382,7 +382,7 @@ def test_rpad_exact():
 # fix_duplicate_tokens
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_duplicate_tokens
+from pyutilz.text.strings import fix_duplicate_tokens
 
 
 def test_fix_duplicate_tokens_double_spaces():
@@ -397,7 +397,7 @@ def test_fix_duplicate_tokens_quadruple_dots():
 # unescape_html
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import unescape_html
+from pyutilz.text.strings import unescape_html
 
 
 def test_unescape_html_entities():
@@ -412,7 +412,7 @@ def test_unescape_html_ampersand():
 # fix_quotations
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_quotations
+from pyutilz.text.strings import fix_quotations
 
 
 def test_fix_quotations_curly():
@@ -427,7 +427,7 @@ def test_fix_quotations_none():
 # fix_spaces
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_spaces
+from pyutilz.text.strings import fix_spaces
 
 
 def test_fix_spaces_removes_space_before_comma():
@@ -442,7 +442,7 @@ def test_fix_spaces_none():
 # fix_broken_sentences
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_broken_sentences
+from pyutilz.text.strings import fix_broken_sentences
 
 
 def test_fix_broken_sentences_newline_lowercase():
@@ -459,7 +459,7 @@ def test_fix_broken_sentences_none():
 # merge_punctuation_signs
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import merge_punctuation_signs
+from pyutilz.text.strings import merge_punctuation_signs
 
 
 def test_merge_punctuation_basic():
@@ -477,7 +477,7 @@ def test_merge_punctuation_no_merge():
 # ensure_space_after_comma
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import ensure_space_after_comma
+from pyutilz.text.strings import ensure_space_after_comma
 
 
 def test_ensure_space_after_comma_inserts():
@@ -492,7 +492,7 @@ def test_ensure_space_after_comma_dot_fix():
 # suffixize (requires inflect — skip if missing)
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import suffixize
+from pyutilz.text.strings import suffixize
 
 
 def test_suffixize_plural():
@@ -504,7 +504,7 @@ def test_suffixize_plural():
 # shorten_path
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import shorten_path
+from pyutilz.text.strings import shorten_path
 
 
 def test_shorten_path_prefix():
@@ -519,7 +519,7 @@ def test_shorten_path_default():
 # slugify
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import slugify
+from pyutilz.text.strings import slugify
 
 
 def test_slugify_removes_special():
@@ -539,7 +539,7 @@ def test_slugify_no_unicode():
 # get_hash
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_hash
+from pyutilz.text.strings import get_hash
 
 
 def test_get_hash_base64():
@@ -566,7 +566,7 @@ def test_get_hash_bytes_input():
 # json_pg_dumps (needs psycopg2)
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import json_pg_dumps
+from pyutilz.text.strings import json_pg_dumps
 
 
 def test_json_pg_dumps_basic():

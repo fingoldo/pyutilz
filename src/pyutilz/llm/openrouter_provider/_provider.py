@@ -192,7 +192,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         # Captured first, before any other local exists: the inputs route_fingerprint() digests (see _route.py).
         self._route_kwargs = {name: value for name, value in locals().items() if name in _ROUTE_FINGERPRINT_ATTRS}
         settings = _pkg().get_llm_settings()
-        resolved_key = api_key or (settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None)
+        resolved_key = api_key or (settings.openrouter_api_key.get_secret_value() if settings.openrouter_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not resolved_key:
             raise ValueError("OpenRouter API key not provided. " "Set OPENROUTER_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)
@@ -404,7 +404,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         """
         try:
             catalogue = _fetch_models_catalogue()
-        except Exception as e:
+        except Exception as e:  # audit-exempt: non_neutral_except_fallback -- catalogue enrichment is optional; fail-open is the documented design and the failure is logged at debug
             # _fetch_models_catalogue() already catches and logs its own network/parse failures
             # (returning {} rather than raising), so reaching this handler means something more
             # unexpected went wrong in the surrounding plumbing -- worth a trail even though the
@@ -534,7 +534,7 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
             if self.model_name in _REASONING_CANNOT_BE_DISABLED or self._catalogue_says_reasoning_mandatory():
                 return {"reasoning": {"effort": "minimal", "exclude": True}}
             return {"reasoning": {"enabled": False}}
-        return {"reasoning": {"effort": effort or "medium"}}
+        return {"reasoning": {"effort": effort or "medium"}}  # audit-exempt: default_via_or -- empty effort means unset; medium is the intended default
 
     def _catalogue_says_reasoning_mandatory(self) -> bool:
         """True when the catalogue marks this model's reasoning ``mandatory`` (then the off switch is refused with a 400).

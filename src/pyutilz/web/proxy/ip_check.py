@@ -56,7 +56,7 @@ def parse_ip_response(text: str) -> str:
     if body.startswith("{"):
         try:
             data = _json_loads(body)
-            raw = data.get("origin") or data.get("ip")
+            raw = data.get("origin") or data.get("ip")  # audit-exempt: default_via_or -- empty origin means unset; falling back to the ip field is the intended chain
             if isinstance(raw, str) and raw:
                 return raw.split(",")[0].strip()
             # `raw` is missing/falsy/non-string (e.g. {"origin": null}, {"origin": ""}) --

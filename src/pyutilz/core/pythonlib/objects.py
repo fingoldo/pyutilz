@@ -6,6 +6,8 @@ package ``__init__`` to preserve the public import surface.
 
 # pylint: disable=unidiomatic-typecheck
 
+from typing import Dict, Iterator, List
+
 from ._common import Any, Iterable, MappingABC, Optional, Sequence, Set, Union, logger, numbers
 from .numerics import is_float, to_float
 
@@ -14,7 +16,7 @@ from .numerics import is_float, to_float
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def show_methods(obj, uppercased=False):
+def show_methods(obj: object, uppercased: bool = False) -> List[str]:
     """Lists non-dunder attribute names of `obj`.
 
     If `uppercased` is True, only names starting with an uppercase letter are kept.
@@ -34,7 +36,7 @@ def prefix_dict_elems(obj: dict, prefix: str) -> dict:
     return {(prefix + key): value for key, value in obj.items()}
 
 
-def populate_object_from_dict(obj, dct):
+def populate_object_from_dict(obj: object, dct: Dict[str, Any]) -> None:
     """Populates a class/object with properties from a dictionary."""
     for key in dct:
         setattr(obj, key, dct[key])
@@ -128,7 +130,7 @@ def _opaque_object_keys(obj: object, stringify: bool, verbose: bool, max_chars: 
     return res
 
 
-def ensure_dict_elem(obj: dict, name: str, value) -> None:
+def ensure_dict_elem(obj: dict, name: str, value: Any) -> None:
     """
     Make sure certain key exists in the dict
     """
@@ -139,7 +141,7 @@ def ensure_dict_elem(obj: dict, name: str, value) -> None:
 _GET_ATTR_UNSET = object()  # sentinel distinguishing "no default_value passed" from "caller passed default_value=None"
 
 
-def get_attr(obj: Optional[dict], attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value=None, *, _unset: object = _GET_ATTR_UNSET) -> Any:
+def get_attr(obj: Optional[dict], attr_name: str, default_value: object = _GET_ATTR_UNSET, unwanted_value: Any = None, *, _unset: object = _GET_ATTR_UNSET) -> Any:
     """
     If no default_value is supplied, missing/unwanted values fall back to [] (to prevent
     TypeError: 'NoneType' object is not iterable downstream). Passing default_value=None
@@ -230,7 +232,7 @@ def unpack_counter(cntr: list) -> list:
     return res
 
 
-def ensure_list_set_tuple(obj):
+def ensure_list_set_tuple(obj: Any) -> Any:
     """Returns `obj` unchanged if it's already a list/set/frozenset/tuple, else wraps it in a single-element list."""
     if type(obj).__name__ in ("list", "set", "frozenset", "tuple"):
         return obj
@@ -270,7 +272,7 @@ def filter_elements_by_type(obj: Union[dict, Sequence], allowed_types: tuple = (
         return [value for value in obj if isinstance(value, allowed_types)]
 
 
-def batch(iterable, n=1):
+def batch(iterable: Sequence[Any], n: int = 1) -> Iterator[Sequence[Any]]:
     """
     Batches a sequence
 

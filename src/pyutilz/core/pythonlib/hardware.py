@@ -7,7 +7,7 @@ package ``__init__`` to preserve the public import surface.
 from ._common import logger, lru_cache, os
 
 
-def is_jupyter_notebook():
+def is_jupyter_notebook() -> bool:
     """Detects whether the code is currently running inside a Jupyter notebook/JupyterLab kernel."""
     try:
         from IPython import get_ipython

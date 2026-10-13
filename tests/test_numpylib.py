@@ -5,7 +5,7 @@ Tests cover numpy utility functions for array operations.
 
 import numpy as np
 
-from pyutilz.numpylib import get_topk_indices, smart_ratios
+from pyutilz.data.numpylib import get_topk_indices, smart_ratios
 
 
 class TestGetTopKIndices:

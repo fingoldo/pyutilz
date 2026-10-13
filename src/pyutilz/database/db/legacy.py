@@ -14,7 +14,9 @@ from ._common import warnings
 import pyutilz.database.db as _facade
 
 
-def EnsurePgTableExists(sTable: str, sKeyFieldName: Optional[str] = "name", sIdFieldName: Optional[str] = "id", sAutocreateIdTypeName: Optional[str] = None):
+def EnsurePgTableExists(
+    sTable: str, sKeyFieldName: Optional[str] = "name", sIdFieldName: Optional[str] = "id", sAutocreateIdTypeName: Optional[str] = None
+) -> None:
     """Deprecated alias for :func:`ensure_pg_table_exists` -- kept for backward compatibility."""
     warnings.warn(
         "EnsurePgTableExists is deprecated and will be removed in a future release; use ensure_pg_table_exists instead.",

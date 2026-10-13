@@ -85,7 +85,7 @@ def _fetch_models_catalogue(timeout: float = 10.0) -> dict[str, dict[str, Any]]:
             resp = _pkg().httpx.get(_pkg()._MODELS_URL, timeout=timeout)
             resp.raise_for_status()
             payload = resp.json()
-            entries = payload.get("data") or payload.get("models") or []
+            entries = payload.get("data") or payload.get("models") or []  # audit-exempt: default_via_or -- empty list means no catalogue entries; both falsy branches yield an empty catalogue
             catalogue = {e["id"]: e for e in entries if isinstance(e, dict) and "id" in e}
         except Exception as exc:
             logger.warning(

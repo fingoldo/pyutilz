@@ -6,6 +6,8 @@ package ``__init__`` to preserve the public import surface.
 
 import sys
 
+from typing import Dict
+
 from ._common import Any, Optional, Sequence, inspect, logger
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -26,7 +28,7 @@ def get_or_warn(obj: dict, field: str, target: str) -> Optional[Any]:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def lookup_in_stack(variable):
+def lookup_in_stack(variable: str) -> Any:
     """Searches the call stack (innermost frame first) for a global named `variable` and returns its value.
 
     Returns None if no calling frame's globals define a truthy value for it.
@@ -76,7 +78,7 @@ def get_parent_func_args(skip_args: Sequence = ("self",)) -> dict:
     return argvals
 
 
-def store_params_in_object(obj: object, params: dict, postfix: str = "_param_"):
+def store_params_in_object(obj: object, params: Dict[str, Any], postfix: str = "_param_") -> None:
     """Useful for persisting __init__ params in the class instance.
 
     ``postfix`` defaults to ``"_param_"`` to round-trip with :func:`load_object_params_into_func`'s
@@ -89,7 +91,7 @@ def store_params_in_object(obj: object, params: dict, postfix: str = "_param_"):
         setattr(obj, param_name + postfix, param_value)
 
 
-def load_object_params_into_func(obj: object, locals: dict, postfix: str = "_param_"):  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
+def load_object_params_into_func(obj: object, locals: Dict[str, Any], postfix: str = "_param_") -> Dict[str, Any]:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Inverse of :func:`store_params_in_object`: collect ``obj``'s ``*postfix`` attributes.
 
     The collected ``{name: value}`` mapping is written into ``locals`` AND returned. Passing a

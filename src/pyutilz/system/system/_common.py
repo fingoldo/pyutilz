@@ -8,7 +8,7 @@
 # ----------------------------------------------------------------------------------------------------------------------------
 
 import logging
-from typing import Any as _Any, Optional
+from typing import Any as _Any, Dict as _Dict, List as _List, Optional, Tuple as _Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ characteristics_dict = {
 }
 
 
-def decode_memory_type(memory_type) -> str:
+def decode_memory_type(memory_type: int) -> str:
     """Decode WMI memory type code to human-readable string.
 
     Args:
@@ -215,7 +215,7 @@ def decode_cpu_upgrade_method(upgrade_method: int) -> str:
     return upgrade_method_dict.get(upgrade_method, "Unknown")
 
 
-def dict_to_tuple(d: dict):
+def dict_to_tuple(d: _Dict[str, _Any]) -> _Tuple[_Any, ...]:
     """Convert dict to sorted tuple for hashing purposes.
 
     Args:
@@ -228,12 +228,12 @@ def dict_to_tuple(d: dict):
 
 
 def get_wmi_obj_as_dict(
-    obj,
+    obj: _Any,
     exclude_pros: Optional[set] = None,
     ensure_float: Optional[set] = None,
     ensure_int: Optional[set] = None,
     decode_dict: Optional[dict] = None,
-):
+) -> _Dict[str, _Any]:
     """Convert WMI object to dictionary with type conversion.
 
     Args:
@@ -289,12 +289,12 @@ def _convert_wmi_value(prop: str, value: _Any, ensure_float: set, ensure_int: se
 
 
 def summarize_devices(
-    devices,
+    devices: _Any,
     exclude_pros: Optional[set] = None,
     ensure_float: Optional[set] = None,
     ensure_int: Optional[set] = None,
     decode_dict: Optional[dict] = None,
-):
+) -> _List[_Dict[str, _Any]]:
     """Aggregate identical hardware devices with counts.
 
     Args:

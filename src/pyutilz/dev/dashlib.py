@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 session: Any
 try:
@@ -278,7 +278,7 @@ AG_GRID_LOCALE_RU = {
 }
 
 
-def get_active_tab_var_name(tabsName: str, prefix: str = "tab"):
+def get_active_tab_var_name(tabsName: str, prefix: str = "tab") -> str:
     """Build the Flask session key used to remember the active tab id for a given tab group."""
     return prefix + "s" + tabsName + "ActiveTab"
 
@@ -402,8 +402,8 @@ def _assemble_tabs(
 
 def create_tabs(
     tabsName: str,
-    tabsList: list,
-    draw_tab_content_function,
+    tabsList: List[Any],
+    draw_tab_content_function: Callable[..., Any],
     content: str = "",
     prefix: str = "tab",
     roles_separator: str = ",",
@@ -412,7 +412,7 @@ def create_tabs(
     activeLabelClassName: Optional[str] = None,
     use_cardstyle: bool = False,
     show_loading: bool = True,
-):
+) -> Any:
     """
     Used for easy creation of tabs in Dash, including nested tabs.
     Expected tabs format: (label:str, tab_id:str, allowed_user_roles:list or str, tabClassName, labelClassName, tabTooltip)

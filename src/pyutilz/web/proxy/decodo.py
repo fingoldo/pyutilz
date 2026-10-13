@@ -329,12 +329,12 @@ class DecodoProvider(ProxyProvider):
                 try:
                     sub_r = session.get(sub_url, timeout=15)
                 except requests.RequestException as e:
-                    _log.warning("Skipping endpoint %s (%s): request failed: %s", ep_type, sub_url, e)
+                    _log.warning("Skipping endpoint %s (%s): request failed: %s", ep_type, sub_url, e)  # audit-exempt: unthrottled_hot_loop_log -- per failed endpoint of a fixed endpoint list, a handful per call
                     continue
                 if sub_r.status_code == 200:
                     result[ep_type] = sub_r.json()
                 else:
-                    _log.warning("Skipping endpoint %s (%s): status %s", ep_type, sub_url, sub_r.status_code)
+                    _log.warning("Skipping endpoint %s (%s): status %s", ep_type, sub_url, sub_r.status_code)  # audit-exempt: unthrottled_hot_loop_log -- per failed endpoint of a fixed endpoint list, a handful per call
         return result
 
     def get_traffic(

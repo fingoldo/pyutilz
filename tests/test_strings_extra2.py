@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 # jsonize_atrtributes — lines 83, 115-137
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import jsonize_atrtributes
+from pyutilz.text.strings import jsonize_atrtributes
 
 
 def test_jsonize_plain_string_no_strip():
@@ -54,7 +54,7 @@ def test_jsonize_custom_object_exception():
 # extract_json_attribute — lines 217-220
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import extract_json_attribute
+from pyutilz.text.strings import extract_json_attribute
 
 
 def test_extract_json_attribute_list_with_item_str():
@@ -67,7 +67,7 @@ def test_extract_json_attribute_list_with_item_str():
 # remove_json_empty_attributes — lines 230-231
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_json_empty_attributes
+from pyutilz.text.strings import remove_json_empty_attributes
 
 
 def test_remove_json_empty_attributes():
@@ -89,7 +89,7 @@ def test_remove_json_empty_attributes_exception():
 # remove_json_defaults — line 245
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_json_defaults
+from pyutilz.text.strings import remove_json_defaults
 
 
 def test_remove_json_defaults_warn_if_not_default():
@@ -104,7 +104,7 @@ def test_remove_json_defaults_warn_if_not_default():
 # get_jsonlist_property verbose — line 270
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_jsonlist_property
+from pyutilz.text.strings import get_jsonlist_property
 
 
 def test_get_jsonlist_property_verbose_missing():
@@ -124,7 +124,7 @@ def test_get_jsonlist_property_return_indices():
 # get_jsonlist_properties verbose — lines 291-292
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_jsonlist_properties
+from pyutilz.text.strings import get_jsonlist_properties
 
 
 def test_get_jsonlist_properties_verbose():
@@ -137,7 +137,7 @@ def test_get_jsonlist_properties_verbose():
 # read_config_file / write_config_file — lines 305-396
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import read_config_file, write_config_file
+from pyutilz.text.strings import read_config_file, write_config_file
 
 
 def test_write_and_read_config_file():
@@ -232,7 +232,7 @@ def test_write_config_file_append_mode_roundtrips_non_ascii_value():
 # parse_tokens — lines 442-443
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import parse_tokens
+from pyutilz.text.strings import parse_tokens
 
 
 def test_parse_tokens_no_end_token():
@@ -245,7 +245,7 @@ def test_parse_tokens_no_end_token():
 # make_text_from_inner_html_elements — lines 450-451
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import make_text_from_inner_html_elements
+from pyutilz.text.strings import make_text_from_inner_html_elements
 
 
 def test_make_text_from_inner_html():
@@ -260,7 +260,7 @@ def test_make_text_from_inner_html():
 # underscorize_variable — line 467
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import underscorize_variable
+from pyutilz.text.strings import underscorize_variable
 
 
 def test_underscorize_variable():
@@ -273,7 +273,7 @@ def test_underscorize_variable():
 # get_hash — lines 486, 494
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import get_hash
+from pyutilz.text.strings import get_hash
 
 
 def test_get_hash_binary():
@@ -300,7 +300,7 @@ def test_get_hash_bytes_input():
 # remove_videos — lines 534-537, 549-550
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import remove_videos
+from pyutilz.text.strings import remove_videos
 
 
 def test_remove_videos_basic():
@@ -322,7 +322,7 @@ def test_remove_videos_none():
 # fix_html — line 579
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_html
+from pyutilz.text.strings import fix_html
 
 
 def test_fix_html():
@@ -334,7 +334,7 @@ def test_fix_html():
 # fix_broken_sentences — lines 645-689, 696-698
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_broken_sentences
+from pyutilz.text.strings import fix_broken_sentences
 
 
 def test_fix_broken_sentences_newline_before_capital():
@@ -373,7 +373,7 @@ def test_fix_broken_sentences_ends_with_letter():
 # fix_missed_space_between_sentences — lines 720-732
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import fix_missed_space_between_sentences
+from pyutilz.text.strings import fix_missed_space_between_sentences
 
 
 def test_fix_missed_space_between_sentences():
@@ -416,7 +416,7 @@ def test_fix_missed_space_between_sentences():
 # tokenize_to_chars with is_file — line 975
 # ---------------------------------------------------------------------------
 
-from pyutilz.strings import tokenize_to_chars, tokenize_to_words
+from pyutilz.text.strings import tokenize_to_chars, tokenize_to_words
 
 
 def test_tokenize_to_chars_file():

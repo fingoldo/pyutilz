@@ -48,7 +48,7 @@ def ensure_bytes_converted(obj: dict) -> dict:
             try:
                 obj[field] = value.decode("UTF-8")
             except Exception:
-                logger.warning("Error when decoding byte property %s: %r", field, value)
+                logger.warning("Error when decoding byte property %s: %r", field, value)  # audit-exempt: unthrottled_hot_loop_log -- per undecodable byte field of one image, bounded by the field count
                 del obj[field]
         elif isinstance(value, dict):
             ensure_bytes_converted(value)
@@ -78,7 +78,7 @@ def _decode_exif(exifdata: Any, skip_unknown_exif_tags: bool, orig_img: Any) -> 
             try:
                 tag_value = tag_value.decode("UTF-8")
             except Exception:
-                logger.warning(
+                logger.warning(  # audit-exempt: unthrottled_hot_loop_log -- per undecodable tag of one image, bounded by the tag count
                     "Error when decoding byte property %s: %s in image %s",
                     tag,
                     tag_value,
@@ -125,7 +125,7 @@ def _build_image_response(width: int, height: int, image_bytes: bytes, filesize:
 
 
 def get_image_properties(
-    img,
+    img: Any,  # path (str) or an already-opened PIL image
     skip_unknown_exif_tags: bool = True,
     filesize: Optional[int] = None,
     allow_truncated: bool = False,
@@ -169,7 +169,7 @@ def get_image_properties(
         if filesize is None:
             filesize = getsize(img)
         try:
-            img = PIL.Image.open(img)
+            img = PIL.Image.open(img)  # audit-exempt: resource_handle_safety -- handle ownership is tracked in opened_here and closed on the exit path
             opened_here = True
         except Exception as e:
             logger.exception(e)

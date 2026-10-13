@@ -4,7 +4,7 @@ import os
 import tempfile
 import hashlib
 import logging
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 FileLock: Any
@@ -32,7 +32,7 @@ def is_local_path(path: str) -> bool:
     return False
 
 
-def safe_delta_write(path: str, delta_op_func, *, lock_timeout: int = 1200, lock_suffix=".lock"):
+def safe_delta_write(path: str, delta_op_func: Callable[[], Any], *, lock_timeout: int = 1200, lock_suffix: str = ".lock") -> Any:
     """
     Wraps any Delta Lake operation (write_deltalake, merge+execute) with local file locking.
 

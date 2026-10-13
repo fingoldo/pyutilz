@@ -42,7 +42,7 @@ rc: Optional[redis.Redis] = None
 # upper bound of the random pause between Redis retries.
 _REDIS_RETRY_JITTER_SECONDS = 1
 
-def rconnect (redis_host:str, redis_port:int, redis_db_name:Union[int,str], redis_db_pwd:str, decode_responses:bool=True):
+def rconnect(redis_host: str, redis_port: int, redis_db_name: Union[int, str], redis_db_pwd: str, decode_responses: bool = True) -> Any:
     """
     Create a Redis connection with the given credentials, store it as the module-level global ``rc``, and return it.
 

@@ -48,7 +48,7 @@ def _gcp_storage_bucket(bucket_name, acc_file):
     return storage_client.bucket(bucket_name)
 
 
-def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name, acc_file):
+def gcp_storage_upload_blob(bucket_name: str, source_file_name: str, destination_blob_name: str, acc_file: str) -> None:
     """Upload a local file to a GCS bucket using a service-account JSON key file."""
     bucket = _gcp_storage_bucket(bucket_name, acc_file)
     blob = bucket.blob(destination_blob_name)
@@ -57,7 +57,7 @@ def gcp_storage_upload_blob(bucket_name, source_file_name, destination_blob_name
     logger.info("File %s uploaded to %s.", source_file_name, destination_blob_name)
 
 
-def gcp_storage_download_blob(bucket_name, source_blob_name, destination_file_name, acc_file):
+def gcp_storage_download_blob(bucket_name: str, source_blob_name: str, destination_file_name: str, acc_file: str) -> None:
     """Download a blob from a GCS bucket to a local file using a service-account JSON key file."""
     bucket = _gcp_storage_bucket(bucket_name, acc_file)
 
@@ -126,7 +126,7 @@ def s3_file_exists(key: str, bucket: str) -> bool:
     else:
         return True
 
-def get_from_s3_or_cache(local_object_path:str,s3_object_path:str,temp_dir:str):
+def get_from_s3_or_cache(local_object_path: str, s3_object_path: str, temp_dir: str) -> None:
     """
     Gets an object from s3 or local filesystem (including zipped version).
     If not found even on s3, reports and starts waiting cycle until expected object is uploaded.

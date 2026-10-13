@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------------------------------------------------------
 
 from typing import Any as _Any
-from typing import Optional, Sequence, Union
+from typing import Iterator as _Iterator, Optional, Sequence, Union
 
 import locale
 import sys as _sys
@@ -41,7 +41,7 @@ from datetime import timezone, datetime
 # interval between load checks while waiting for idle devices.
 _IDLE_POLL_SECONDS = 1
 
-def run_from_ipython():
+def run_from_ipython() -> bool:
     """Return True if the current process is running inside an IPython/Jupyter session, False otherwise."""
     try:
         return bool(__IPYTHON__)  # type: ignore[name-defined]  # IPython-injected global, only exists inside an IPython/Jupyter session
@@ -54,7 +54,7 @@ def run_from_ipython():
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def tqdmu(*args, **kwargs):
+def tqdmu(*args: _Any, **kwargs: _Any) -> _Any:
     """Create a tqdm progress bar, using the notebook widget variant (``tqdm_notebook``) when running under IPython/Jupyter and falling back to the plain console bar otherwise."""
 
     if run_from_ipython():
@@ -67,7 +67,7 @@ def tqdmu(*args, **kwargs):
         return tqdm.tqdm(*args, **kwargs)
 
 
-def tqdmu_lazy_start(iterable, *, min_total: int = 2, **kwargs):
+def tqdmu_lazy_start(iterable: _Any, *, min_total: int = 2, **kwargs: _Any) -> _Iterator[_Any]:
     """Drop-in for ``tqdmu(iterable, **kwargs)`` that starts the elapsed
     timer at the FIRST iteration, not at bar construction.
 
@@ -190,7 +190,7 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
     return res
 
 
-def get_max_affordable_workers_count(reservedCores=1):
+def get_max_affordable_workers_count(reservedCores: int = 1) -> int:
     """Return the number of physical CPU cores available for parallel workers, reserving ``reservedCores`` for other use (minimum 1)."""
     import psutil
 
@@ -201,7 +201,7 @@ def get_max_affordable_workers_count(reservedCores=1):
     return n
 
 
-def count_app_instances(processname=None, cmdline=None):
+def count_app_instances(processname: Optional[str] = None, cmdline: Optional[str] = None) -> int:
     """Count currently running processes matching the given name and/or command-line substring.
 
     Args:
@@ -242,7 +242,7 @@ def get_script_file(file: Optional[str] = __file__) -> str:
     return os.path.basename(file or __file__)
 
 
-def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None, namespace: Optional[dict] = None):
+def report_large_objects(min_size_mb: int = 200, initial_memory_snapshot: Optional[tracemalloc.Snapshot] = None, namespace: Optional[dict] = None) -> None:
     """Log any module-level global object whose deep size exceeds ``min_size_mb``.
 
     ``namespace`` is the mapping to scan; it defaults to the CALLER's module globals. A bare
@@ -417,7 +417,7 @@ def ensure_idle_devices(
     min_gpu_free_ram_gb: float = 1.0,
     gpu_ids: Optional[list] = None,
     max_wait_seconds: Optional[float] = None,
-):
+) -> bool:
     """Ensure CPU and GPU devices are idle before running benchmarks.
 
     Monitors system resources and waits until all conditions are met for the specified
@@ -475,7 +475,7 @@ def ensure_idle_devices(
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_utc_unix_timestamp():
+def get_utc_unix_timestamp() -> int:
     """Return the current UTC time as a Unix timestamp (integer seconds since epoch)."""
     return int(datetime.now(tz=timezone.utc).timestamp())
 
@@ -526,7 +526,7 @@ def get_locale_settings(locale_name: str = "", only_fields: Optional[tuple] = No
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def beep():
+def beep() -> None:
     """Play a short audible beep on Windows via ``winsound``; silently does nothing if unavailable."""
     frequency = 2500  # Set Frequency To 2500 Hertz
     duration = 1000  # Set Duration To 1000 ms == 1 second

@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 # ensure_installed — lines 55, 58-64
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import ensure_installed
+from pyutilz.core.pythonlib import ensure_installed
 
 
 def test_ensure_installed_single_string():
@@ -79,7 +79,7 @@ def test_ensure_installed_none():
 # flatten_keys_to_set — lines 138, 143-151
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import flatten_keys_to_set
+from pyutilz.core.pythonlib import flatten_keys_to_set
 
 
 def test_flatten_keys_to_set_number_no_stringify():
@@ -127,7 +127,7 @@ def test_flatten_keys_to_set_custom_obj_no_stringify_verbose():
 # get_attr — lines 171, 174
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import get_attr
+from pyutilz.core.pythonlib import get_attr
 
 
 def test_get_attr_obj_is_unwanted():
@@ -146,7 +146,7 @@ def test_get_attr_result_is_unwanted():
 # integer_digits / float_distinct_digits_percent — lines 320-327
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import float_distinct_digits_percent
+from pyutilz.core.pythonlib import float_distinct_digits_percent
 
 
 def test_float_distinct_digits_percent():
@@ -158,7 +158,7 @@ def test_float_distinct_digits_percent():
 # read_timezoned_ts — lines 440-441
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import read_timezoned_ts
+from pyutilz.core.pythonlib import read_timezoned_ts
 
 
 def test_read_timezoned_ts_has_minus():
@@ -176,7 +176,7 @@ def test_read_timezoned_ts_with_timezone():
 # imitate_delay — lines 482-484, 488
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import imitate_delay
+from pyutilz.core.pythonlib import imitate_delay
 
 
 def test_imitate_delay_force_no_last_call():
@@ -213,7 +213,7 @@ def test_imitate_delay_min_ge_max():
 # datetime_to_utc_timestamp — lines 505-507
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import datetime_to_utc_timestamp
+from pyutilz.core.pythonlib import datetime_to_utc_timestamp
 
 
 def test_datetime_to_utc_timestamp():
@@ -226,7 +226,7 @@ def test_datetime_to_utc_timestamp():
 # lookup_in_stack — lines 549-555
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import lookup_in_stack
+from pyutilz.core.pythonlib import lookup_in_stack
 
 _STACK_TEST_VAR = "found_it"
 
@@ -245,7 +245,7 @@ def test_lookup_in_stack_missing():
 # get_parent_func_args — lines 561-566
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import get_parent_func_args
+from pyutilz.core.pythonlib import get_parent_func_args
 
 
 def test_get_parent_func_args():
@@ -293,7 +293,7 @@ def test_get_parent_func_args_many_params_reflects_reassigned_values():
 # store_params_in_object / load_object_params_into_func — lines 571-584
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import store_params_in_object, load_object_params_into_func
+from pyutilz.core.pythonlib import store_params_in_object, load_object_params_into_func
 
 
 def test_store_params_in_object():
@@ -348,7 +348,7 @@ def test_store_and_load_round_trip_with_defaults():
 # get_partitioned_filepath — lines 636-658 (actually 592-605)
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import get_partitioned_filepath
+from pyutilz.core.pythonlib import get_partitioned_filepath
 
 
 def test_get_partitioned_filepath():
@@ -366,7 +366,7 @@ def test_get_partitioned_filepath_special_char():
 # ObjectsDumper / ObjectsLoader — lines 694-721, 737-739, 743-747
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import ObjectsDumper, ObjectsLoader
+from pyutilz.core.pythonlib import ObjectsDumper, ObjectsLoader
 
 
 def test_objects_dumper_and_loader():
@@ -426,7 +426,7 @@ def test_objects_processor_with_namespace():
 # HashableDict — line 792
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import HashableDict
+from pyutilz.core.pythonlib import HashableDict
 
 
 def test_hashable_dict():
@@ -440,7 +440,7 @@ def test_hashable_dict():
 # suppress_stdout_stderr — lines 808-812 (actually 815-826)
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import suppress_stdout_stderr
+from pyutilz.core.pythonlib import suppress_stdout_stderr
 
 
 def test_suppress_stdout_stderr():
@@ -462,7 +462,7 @@ def test_suppress_stdout_stderr():
 # is_jupyter_notebook — lines 836-840
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import is_jupyter_notebook
+from pyutilz.core.pythonlib import is_jupyter_notebook
 
 
 def test_is_jupyter_notebook():
@@ -475,7 +475,7 @@ def test_is_jupyter_notebook():
 # is_cuda_available — lines 852-853
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import is_cuda_available
+from pyutilz.core.pythonlib import is_cuda_available
 
 
 def test_is_cuda_available():
@@ -488,7 +488,7 @@ def test_is_cuda_available():
 # check_cpu_flag — lines 865-870
 # ---------------------------------------------------------------------------
 
-from pyutilz.pythonlib import check_cpu_flag
+from pyutilz.core.pythonlib import check_cpu_flag
 
 
 def test_check_cpu_flag():
@@ -532,7 +532,7 @@ def test_get_attr_survives_reload_of_its_own_module():
     import importlib
 
     from pyutilz.core import pythonlib as pythonlib_module
-    from pyutilz.pythonlib import get_attr as get_attr_before_reload
+    from pyutilz.core.pythonlib import get_attr as get_attr_before_reload
 
     importlib.reload(pythonlib_module)
 
@@ -540,7 +540,7 @@ def test_get_attr_survives_reload_of_its_own_module():
 
 
 def test_keys_changed_enough_default_key_contains_does_not_crash():
-    from pyutilz.pythonlib import keys_changed_enough
+    from pyutilz.core.pythonlib import keys_changed_enough
 
     # key_contains=None (the function's own default) used to raise
     # TypeError: 'in <string>' requires string as left operand, not NoneType
@@ -572,7 +572,7 @@ def test_float_distinct_digits_percent_rounding_carry_counts_the_rendered_digits
 
 
 def test_hashable_dict_mixed_key_types_does_not_crash():
-    from pyutilz.pythonlib import HashableDict
+    from pyutilz.core.pythonlib import HashableDict
 
     # sorted() on raw (key, value) tuples raised TypeError comparing str vs int keys.
     d = HashableDict({1: "a", "b": 2})
@@ -580,13 +580,13 @@ def test_hashable_dict_mixed_key_types_does_not_crash():
 
 
 def test_hashable_dict_hash_is_order_independent():
-    from pyutilz.pythonlib import HashableDict
+    from pyutilz.core.pythonlib import HashableDict
 
     assert hash(HashableDict({"a": 1, "b": 2})) == hash(HashableDict({"b": 2, "a": 1}))
 
 
 def test_open_safe_shelve_roundtrips_across_separate_with_blocks():
-    from pyutilz.pythonlib import open_safe_shelve
+    from pyutilz.core.pythonlib import open_safe_shelve
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "shelvedb")
@@ -600,7 +600,7 @@ def test_open_safe_shelve_roundtrips_across_separate_with_blocks():
 
 
 def test_open_safe_shelve_closes_db_even_if_body_raises():
-    from pyutilz.pythonlib import open_safe_shelve
+    from pyutilz.core.pythonlib import open_safe_shelve
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "shelvedb2")
@@ -637,7 +637,7 @@ class TestLoadFile:
     def test_joblib_roundtrip(self, tmp_path):
         import joblib
 
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         payload = {"a": 1, "b": [2, 3]}
         path = tmp_path / "obj.joblib"
@@ -648,7 +648,7 @@ class TestLoadFile:
     def test_pckl_is_read_as_a_dataframe_by_default(self, tmp_path):
         pd = pytest.importorskip("pandas")
 
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         df = pd.DataFrame({"x": [1, 2, 3]})
         path = tmp_path / "frame.pckl"
@@ -659,7 +659,7 @@ class TestLoadFile:
         pd.testing.assert_frame_equal(loaded, df)
 
     def test_pckl_with_unpickle_to_pd_false_uses_the_safe_loader(self, tmp_path):
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         path = tmp_path / "obj.pckl"
         with patch("pyutilz.core.safe_pickle.safe_load", return_value="SENTINEL") as mock_safe_load:
@@ -670,14 +670,14 @@ class TestLoadFile:
     def test_extension_matching_is_case_insensitive(self, tmp_path):
         import joblib
 
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         path = tmp_path / "obj.JOBLIB"
         joblib.dump([1, 2], path)
         assert load_file(str(path)) == [1, 2]
 
     def test_missing_file_raises_filenotfound(self, tmp_path):
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         with pytest.raises(FileNotFoundError):
             load_file(str(tmp_path / "nope.joblib"))
@@ -685,7 +685,7 @@ class TestLoadFile:
     def test_unsupported_extension_raises_instead_of_returning_none(self, tmp_path):
         """Falling off the end used to return None, which the caller only discovered far away as
         an AttributeError on None."""
-        from pyutilz.pythonlib import load_file
+        from pyutilz.core.pythonlib import load_file
 
         path = tmp_path / "data.csv"
         path.write_text("a,b\n1,2\n", encoding="utf-8")

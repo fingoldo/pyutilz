@@ -4,13 +4,15 @@ A tiny cooperative scheduler on top of one Postgres table: create it, poll for a
 (``for update skip locked``), heartbeat progress, and finalize the result.
 """
 
+from typing import Any, Dict
+
 from ._common import sql, Json
 
 # See the PROJECT IDIOM comment in connection.py.
 import pyutilz.database.db as _facade
 
 
-def regjobs_create_table(table_name: str = "regular_jobs"):
+def regjobs_create_table(table_name: str = "regular_jobs") -> None:
     """Creates the jobs table backing this scheduler: one row per job, holding its schedule
     (``interval_minutes``, ``singleton``, ``ping_timeout_minutes``) and its run state (owner node,
     start/ping/finish timestamps and the jsonb results)."""
@@ -36,7 +38,7 @@ create table {table_name} (
     """).format(table_name=sql.Identifier(table_name)))
 
 
-def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs"):
+def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs") -> Any:
     """Claims the named job for ``taken_by`` if it is due, returning its name (a one-row result) or an
     empty result when it is not.
 
@@ -87,7 +89,7 @@ def regjobs_poll(job_name: str, taken_by: str, table_name: str = "regular_jobs")
     )
 
 
-def _regjobs_update(job_name: str, result: dict, table_name: str, *, ts_column: str, result_column: str):
+def _regjobs_update(job_name: str, result: Dict[str, Any], table_name: str, *, ts_column: str, result_column: str) -> Any:
     """Shared UPDATE shape behind regjobs_progress/regjobs_finalize: stamp ``ts_column`` with the
     current UTC time and store ``result`` into ``result_column`` for the row named ``job_name``."""
     return _facade.safe_execute(
@@ -99,13 +101,13 @@ def _regjobs_update(job_name: str, result: dict, table_name: str, *, ts_column: 
     )
 
 
-def regjobs_progress(job_name: str, result: dict, table_name: str = "regular_jobs"):
+def regjobs_progress(job_name: str, result: Dict[str, Any], table_name: str = "regular_jobs") -> Any:
     """Heartbeats a running job: refreshes ``last_ping_at`` and stores ``result`` as its interim
     ``last_result``, which is what keeps a singleton's claim from being judged timed out."""
     return _regjobs_update(job_name, result, table_name, ts_column="last_ping_at", result_column="last_result")
 
 
-def regjobs_finalize(job_name: str, result: dict, table_name: str = "regular_jobs"):
+def regjobs_finalize(job_name: str, result: Dict[str, Any], table_name: str = "regular_jobs") -> Any:
     """Marks a job as completed: stamps ``finished_at`` and stores ``result`` as its final result, from
     which the next ``regjobs_poll`` measures the job's interval."""
     return _regjobs_update(job_name, result, table_name, ts_column="finished_at", result_column="result")

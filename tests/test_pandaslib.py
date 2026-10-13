@@ -7,7 +7,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from pyutilz.pandaslib import (
+from pyutilz.data.pandaslib import (
     optimize_dtypes,
     remove_stale_columns,
     concat_and_flush_df_list,
@@ -454,7 +454,7 @@ class TestSubpackageFacadeParity:
 
     def test_lazy_alias_resolves_to_same_object(self):
         import pyutilz.data.pandaslib as facade
-        from pyutilz.pandaslib import optimize_dtypes as aliased
+        from pyutilz.data.pandaslib import optimize_dtypes as aliased
         assert aliased is facade.optimize_dtypes
 
     def test_submodule_names_do_not_leak_into_facade_dir(self):

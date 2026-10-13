@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 # init_logging — lines 54-90
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import init_logging
+from pyutilz.dev.logginglib import init_logging
 
 
 def test_init_logging_forced_filename(tmp_path):
@@ -35,7 +35,7 @@ def test_init_logging_with_file(tmp_path, monkeypatch):
 # initialize_function_log — lines 109-110, 120-121
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import initialize_function_log
+from pyutilz.dev.logginglib import initialize_function_log
 
 
 def test_initialize_function_log():
@@ -55,7 +55,7 @@ def test_initialize_function_log_explicit_only():
 # _init_clocks / _stop_clocks — lines 145, 152-153
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import _init_clocks, _stop_clocks
+from pyutilz.dev.logginglib import _init_clocks, _stop_clocks
 
 
 def test_init_and_stop_clocks():
@@ -80,7 +80,7 @@ def test_stop_clocks_negative_duration():
 # _message — line 152-153
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import _message
+from pyutilz.dev.logginglib import _message
 
 # Need logger to be set for _message to work
 import pyutilz.dev.logginglib as _logginglib_mod
@@ -119,7 +119,7 @@ def test_message_empty():
 # finalize_function_log — lines 171, 176-177, 183
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import finalize_function_log
+from pyutilz.dev.logginglib import finalize_function_log
 
 
 def test_finalize_function_log_no_db():
@@ -145,7 +145,7 @@ def test_finalize_function_log_verbose(capsys):
 # log_result / log_results — lines 190, 197
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import log_result, log_results
+from pyutilz.dev.logginglib import log_result, log_results
 
 
 def test_log_result():
@@ -169,7 +169,7 @@ def test_log_results():
 # log_activity — line 210
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import log_activity
+from pyutilz.dev.logginglib import log_activity
 
 
 def test_log_activity():
@@ -195,7 +195,7 @@ def test_log_activity_close_previous():
 # log_loaded_rows — lines 216-236
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import log_loaded_rows
+from pyutilz.dev.logginglib import log_loaded_rows
 
 
 def test_log_loaded_rows_en():
@@ -248,7 +248,7 @@ def test_log_loaded_rows_defaults_to_en_with_no_reports_language_anywhere():
 # logged decorator — lines 251, 270-276
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import logged
+from pyutilz.dev.logginglib import logged
 
 
 def test_logged_decorator():
@@ -303,7 +303,7 @@ def test_logged_decorator_explicit_only():
 # RedisHandler — lines 301-314
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import RedisHandler
+from pyutilz.dev.logginglib import RedisHandler
 
 
 def test_redis_handler_init():
@@ -353,7 +353,7 @@ def test_redis_handler_emit_exception():
 # debugged decorator — lines 327-329
 # ---------------------------------------------------------------------------
 
-from pyutilz.logginglib import debugged
+from pyutilz.dev.logginglib import debugged
 
 
 def test_debugged_no_exception():

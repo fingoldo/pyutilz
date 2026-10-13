@@ -163,7 +163,7 @@ class _OccurrenceVisitor(ast.NodeVisitor):
         was_target = self.in_assign_target
         self.in_assign_target = True
         try:
-            targets = getattr(node, "targets", None) or [node.target]
+            targets = getattr(node, "targets", None) or [node.target]  # audit-exempt: default_via_or -- AnnAssign carries target, not targets; the falsy case means the single target
             for target in targets:
                 self.visit(target)
         finally:

@@ -30,7 +30,7 @@ def _is_guarded(name: str, function_source: str, module_source: str) -> bool:
     """Whether emptiness of ``name`` is established in this function, or in the module around it.
 
     The module-level fallback is not laziness: a private helper is routinely guarded by its only
-    caller (`scope()` refuses on an empty stem list before it ever reaches `_covers()`), and
+    caller (`scope()` refuses on an empty stem list before it ever reaches `_covers()`), and  # audit-exempt: comment_names_missing_symbol -- prose names a caller that guards the helper, not a pointer into this tree
     flagging the helper would be a false positive on correct code.
     """
     patterns = [re.compile(t.format(v=r"\b" + re.escape(name) + r"\b")) for t in _GUARD_TEMPLATES]

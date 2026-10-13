@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 import psutil
-from typing import Optional
+from typing import Any as _Any, Optional, Tuple as _Tuple
 import os, subprocess  # nosec B404 - used only to invoke the fixed trusted "pylspci" binary below with a hardcoded argv, no shell/user input
 
 
@@ -34,7 +34,7 @@ from .probing import _resolve_binary  # absolute-path resolution for spawned pro
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def ensure_dir_exists(directory: str):
+def ensure_dir_exists(directory: str) -> bool:
     """Create ``directory`` (and any missing parents) if it doesn't already exist. Return True if it already existed, False if it was just created.
 
     Uses ``exist_ok=True`` rather than a separate exists-check-then-create (TOCTOU race): with
@@ -49,7 +49,7 @@ def ensure_dir_exists(directory: str):
     return existed
 
 
-def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, required_filesystem=None):
+def get_max_singledisk_free_space_gb(disk_partitions: Optional[list] = None, required_filesystem: Optional[str] = None) -> _Tuple[float, float, _Any, float, float]:
     """
     Highest amount of free disk space on a single disk drive
     """

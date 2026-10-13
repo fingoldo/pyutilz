@@ -294,7 +294,7 @@ def sweep_backend_crossover(
             # Without a (numeric) reference output there is nothing to gate candidates against, so every
             # candidate would record a fabricated max_abs_diff of 0.0 and a divergent-but-faster
             # backend could be persisted as a tuned decision. Skip the size instead.
-            logger.warning("sweep %s=%s: reference variant %r raised (%s) -> size skipped (no equivalence gate possible)", primary_axis, size, ref, exc)
+            logger.warning("sweep %s=%s: reference variant %r raised (%s) -> size skipped (no equivalence gate possible)", primary_axis, size, ref, exc)  # audit-exempt: unthrottled_hot_loop_log -- each skipped size is a distinct equivalence failure the sweep must report
             continue
         best_name, best_ms, best_diff = None, float("inf"), 0.0
         # Pass 1: warm up + equivalence-gate; survivors go into the timed rank.

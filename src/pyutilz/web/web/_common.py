@@ -68,7 +68,7 @@ def _redact_headers(headers_dict: Optional[dict]) -> Optional[dict]:
     return {k: ("***" if k.lower() in _SENSITIVE_HEADER_NAMES else v) for k, v in headers_dict.items()}
 
 
-def report_params(url, proxies, params, data, json, headers_to_use, timeout):
+def report_params(url: str, proxies: Any, params: Any, data: Any, json: Any, headers_to_use: Any, timeout: Any) -> None:
     """Log a request's url/proxies/params/data/json/headers/timeout at INFO level, for debugging a fetch.
 
     Proxy credentials and sensitive headers (Authorization/Cookie/etc.) are redacted before

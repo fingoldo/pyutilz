@@ -24,7 +24,7 @@ from numba import njit
 
 
 @njit
-def set_numba_random_seed(random_seed: int):
+def set_numba_random_seed(random_seed: int) -> None:
     """Set random seed for numpy random number generator in numba context.
 
     Note: This function requires a seed value. For convenience with None defaults,
@@ -33,7 +33,7 @@ def set_numba_random_seed(random_seed: int):
     np.random.seed(random_seed)  # noqa: NPY002 -- this is a @njit kernel; np.random.Generator is not nopython-mode compatible, same as mlframe's identical numba-interop exception
 
 
-def set_random_seed(random_seed: Optional[int] = None):
+def set_random_seed(random_seed: Optional[int] = None) -> None:
     """Convenience wrapper that handles None defaults before calling numba function."""
     if random_seed is None:
         random_seed = 42
@@ -70,7 +70,7 @@ def python_dict_2_numba_dict(python_dict: dict, numba_dict: Optional[numba.typed
 
 
 @njit()
-def _generate_combinations_recursive_njit_core(sequence, r):
+def _generate_combinations_recursive_njit_core(sequence: np.ndarray, r: int) -> np.ndarray:
     """Recursive core of generate_combinations_recursive_njit; assumes r >= 0 (validated by the caller)."""
     if r == 0:
         return np.empty((1, 0), dtype=sequence.dtype)
@@ -93,7 +93,7 @@ def _generate_combinations_recursive_njit_core(sequence, r):
 
 
 @njit(cache=True)
-def generate_combinations_recursive_njit(sequence, r):
+def generate_combinations_recursive_njit(sequence: np.ndarray, r: int) -> np.ndarray:
     """Replacement of itertools combinations function.
     Call generate_combinations_recursive_njit(sequence, r)[::-1] for the same effect as combinations(sequence, r).
 
@@ -107,4 +107,5 @@ def generate_combinations_recursive_njit(sequence, r):
     """
     if r < 0:
         raise ValueError("generate_combinations_recursive_njit: r must be >= 0")
-    return _generate_combinations_recursive_njit_core(sequence, r)
+    result: np.ndarray = _generate_combinations_recursive_njit_core(sequence, r)  # njit-wrapped core is typed Any by mypy
+    return result

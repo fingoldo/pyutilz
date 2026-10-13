@@ -5,7 +5,7 @@ import ast
 import re
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- credential-shaped value reaching a logger call ------------------------
 #
@@ -95,7 +95,7 @@ def scan_credential_shaped_log_args(
             # Redaction-hint check spans a small window around the call (helper redaction often
             # happens on the line(s) just before the log call, assigning a redacted copy).
             window = "\n".join(src_lines[max(0, node.lineno - 4) : node.lineno])
-            if _REDACT_HINT_RE.search(window):
+            if _REDACT_HINT_RE.search(window) or is_line_exempt(src_lines, node.lineno, "credential_shaped_log_arg"):
                 continue
             credential_names: set[str] = set()
             for a in offending:

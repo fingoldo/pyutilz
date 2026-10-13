@@ -592,7 +592,7 @@ class OpenAICompatibleProvider(RequestBodyMixin, _reasoning.ReasoningCaptureMixi
         # _CACHE_HIT_COST pricing table unreachable dead code and silently over-reporting cost by
         # treating every cache-hit token as a full-price cache-miss.
         prompt_details = usage.get("prompt_tokens_details") or {}
-        cache_hit = usage.get("prompt_cache_hit_tokens") or prompt_details.get("cached_tokens", 0) or 0
+        cache_hit = usage.get("prompt_cache_hit_tokens") or prompt_details.get("cached_tokens", 0) or 0  # audit-exempt: default_via_or -- every falsy branch resolves to the same 0; a caller-supplied 0 cannot change
         details = usage.get("completion_tokens_details", {}) or {}
         reasoning_tok = details.get("reasoning_tokens", 0) or 0
         # Cache writes: chat completions nests them under prompt_tokens_details (OpenRouter, verified live), the

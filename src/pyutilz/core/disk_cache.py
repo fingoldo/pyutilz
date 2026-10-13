@@ -60,7 +60,7 @@ class _KeyLockEntry:
     __slots__ = ("lock", "refcount")
 
     def __init__(self) -> None:
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # audit-exempt: unpicklable_resource_state -- _KeyLockEntry is never pickled: DiskCache.__getstate__ drops _key_locks
         self.refcount = 0
 
 logger = logging.getLogger(__name__)

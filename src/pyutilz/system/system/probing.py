@@ -83,7 +83,7 @@ def _resolve_binary(name: str) -> str:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_cpu_info():
+def get_cpu_info() -> Optional[dict]:
     """Get CPU information using py-cpuinfo with filtered output.
 
     Returns:
@@ -108,7 +108,7 @@ def get_cpu_info():
     return sort_dict_by_key(cpu_info)
 
 
-def get_wmi_cpuinfo() -> Optional[dict]:
+def get_wmi_cpuinfo() -> Optional[_List[dict]]:
     """Get CPU information via Windows WMI.
 
     Returns:
@@ -122,7 +122,7 @@ def get_wmi_cpuinfo() -> Optional[dict]:
 
     try:
         c = wmi.WMI()
-        return summarize_devices(  # type: ignore[no-any-return]  # wmi is Windows-only and ships no stubs, so summarize_devices over its objects is Any
+        return summarize_devices(  # wmi is Windows-only and ships no stubs, so summarize_devices over its objects is Any
             c.Win32_Processor(),
             exclude_pros=set(
                 "CreationClassName SystemCreationClassName DeviceID SystemName ProcessorId SerialNumber Status StatusInfo LoadPercentage AssetTag Description".split()
@@ -133,7 +133,7 @@ def get_wmi_cpuinfo() -> Optional[dict]:
         return None
 
 
-def get_lscpu_info():
+def get_lscpu_info() -> Optional[dict]:
     """Get lscpu information as a dictionary (Linux only).
 
     Returns:
@@ -172,7 +172,7 @@ def get_lscpu_info():
     return sort_dict_by_key(lscpu_dict)
 
 
-def get_linux_board_info():
+def get_linux_board_info() -> dict:
     """Get motherboard information from /sys/devices (Linux only).
 
     Returns:
@@ -328,7 +328,7 @@ def parse_dmidecode_info(
     return [{"item": dict(k), "Count": v} for k, v in Counter(state.summary).items()]
 
 
-def summarize_system_info():
+def summarize_system_info() -> Optional[dict]:
     """Get comprehensive system info via WMI (Windows only).
 
     Returns:
@@ -413,7 +413,7 @@ def get_nix_cpu_sockets_number() -> int:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def check_huge_pages_linux():
+def check_huge_pages_linux() -> bool:
     """Check if huge pages are enabled on Linux.
 
     Returns:
@@ -430,7 +430,7 @@ def check_huge_pages_linux():
     return False
 
 
-def check_large_pages_windows():
+def check_large_pages_windows() -> bool:
     """Check if large pages are supported on Windows.
 
     Returns:
@@ -443,13 +443,13 @@ def check_large_pages_windows():
         GetLargePageMinimum = ctypes.windll.kernel32.GetLargePageMinimum  # type: ignore[attr-defined]  # Windows-only: ctypes.windll / ctypes.WinDLL are absent on the Linux CI runner, where this same line is a genuine attr-defined
         GetLargePageMinimum.restype = ctypes.c_size_t
         large_page_size = GetLargePageMinimum()
-        return large_page_size > 0
+        return bool(large_page_size > 0)
     except Exception as e:
         logger.warning("Error checking large pages: %s", e)
     return False
 
 
-def check_huge_pages_macos():
+def check_huge_pages_macos() -> bool:
     """Check if transparent huge pages are managed by macOS.
 
     Returns:
@@ -489,7 +489,7 @@ def check_large_pages_support() -> Optional[bool]:
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_linux_power_plan():
+def get_linux_power_plan() -> Optional[_List[str]]:
     """Get CPU frequency scaling governor on Linux.
 
     Returns:
@@ -509,7 +509,7 @@ def get_linux_power_plan():
         return None
 
 
-def get_macos_power_plan():
+def get_macos_power_plan() -> Optional[dict]:
     """Get power plan settings on macOS.
 
     Returns:
@@ -525,7 +525,7 @@ def get_macos_power_plan():
         return None
 
 
-def get_windows_power_plan_cmd():
+def get_windows_power_plan_cmd() -> Optional[dict]:
     """Get active power plan using powercfg command (Windows fallback).
 
     Returns:
@@ -552,7 +552,7 @@ def get_windows_power_plan_cmd():
         return None
 
 
-def get_windows_power_plan():
+def get_windows_power_plan() -> Optional[dict]:
     """Get active power plan via WMI (Windows only).
 
     Returns:
@@ -582,6 +582,7 @@ def get_power_plan() -> Optional[dict]:
         dict: Platform-specific power plan information
     """
     current_system = platform.system()
+    power_plan: _Any
     if current_system == "Windows":
         power_plan = get_windows_power_plan()
     elif current_system == "Darwin":
@@ -700,7 +701,7 @@ def _strip_nvidia_gpu_stats(gpu: dict) -> None:
 def get_nvidia_smi_info(
     include_ids: bool = False,
     include_stats: bool = True,
-):
+) -> Optional[dict]:
     """Get GPU information from nvidia-smi (NVIDIA GPUs only).
 
     Args:
@@ -756,9 +757,9 @@ def get_nvidia_smi_info(
     if "gpu" in res:
         res["gpu"] = [sort_dict_by_key(gpu) for gpu in res["gpu"]]
 
-    res = remove_nas(res)
+    cleaned: Optional[dict] = remove_nas(res)
 
-    return res
+    return cleaned
 
 
 def get_gpu_cuda_capabilities(device_id: int = 0, cu_device_token: str = "CU_DEVICE_ATTRIBUTE_") -> Optional[dict]:  # nosec B107 - "CU_DEVICE_ATTRIBUTE_" is a CUDA enum-name prefix used to strip it from numba's enums attribute names, not a credential
@@ -880,7 +881,7 @@ def get_gpuutil_gpu_info(attrs: Union[str, list] = "name,memoryTotal,memoryFree,
             # One bad GPU's attribute read must not silently truncate the whole result --
             # compute_total_gpus_ram() sums this list directly, so a partial list would
             # silently undercount capacity with no signal anything was skipped.
-            logger.exception("get_gpuutil_gpu_info: skipping a GPU after an attribute-read error (%s)", e)
+            logger.exception("get_gpuutil_gpu_info: skipping a GPU after an attribute-read error (%s)", e)  # audit-exempt: unthrottled_hot_loop_log -- one per GPU that fails enumeration, bounded by the GPU count
 
     if len(devices) < len(gpus):
         logger.warning("get_gpuutil_gpu_info: only %d of %d detected GPU(s) were successfully enumerated", len(devices), len(gpus))

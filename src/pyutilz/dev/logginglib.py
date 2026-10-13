@@ -9,7 +9,7 @@
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Any, Dict, List, Optional, Sized
+from typing import Any, Callable, Dict, List, Optional, Sized
 
 from datetime import datetime, timezone
 from os.path import sep, basename
@@ -79,7 +79,7 @@ def _log_filename(caller_name: str) -> str:
 
 def init_logging(
     custom_logger: Optional[logging.Logger] = None,
-    level=logging.INFO,
+    level: int = logging.INFO,
     default_caller_name: str = "app.py",
     format: str = (  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
         "%(asctime)s - %(levelname)s - %(processName)s[%(process)d]-%(threadName)s[%(thread)d]"
@@ -88,7 +88,7 @@ def init_logging(
     log_to_file: bool = True,
     maxBytes: int = 5_000_000,
     forced_filename: Optional[str] = None,
-):
+) -> logging.Logger:
     """Configure the root logger with file (rotating) and stream handlers.
 
     Args:
@@ -279,7 +279,7 @@ def finalize_function_log(results_log: dict, db_path: Optional[str] = None, verb
     return results_log
 
 
-def log_result(results_log: dict, key: str, value, verbose: bool = True) -> None:
+def log_result(results_log: dict, key: str, value: Any, verbose: bool = True) -> None:
     """Store ``value`` under ``key`` in ``results_log["results"]``, optionally logging a message."""
     results_log["results"][key] = value
     if verbose:
@@ -313,7 +313,9 @@ def log_activity(results_log: dict, activity_name: str, verbose: bool = True) ->
     return last_activity_duration
 
 
-def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False):
+def log_loaded_rows(
+    obj: Sized, source: str, source_type: str = "db_table", results_log: Optional[dict] = None, lang: Optional[str] = None, verbose: bool = False
+) -> None:
     """Record the number of rows loaded from ``source`` into ``results_log["results"]["loaded"]``.
 
     Optionally logs a human-readable (English or Russian) message about how many rows were loaded.
@@ -331,7 +333,7 @@ def log_loaded_rows(obj: Sized, source: str, source_type: str = "db_table", resu
         # getting "en" unless a caller monkeypatched this specific module's `reports_language`
         # attribute. lookup_in_stack() walks the actual call stack's frame globals, so a caller
         # that defines its own module-level `reports_language = "ru"` is now correctly found.
-        lang = lookup_in_stack("reports_language") or "en"
+        lang = lookup_in_stack("reports_language") or "en"  # audit-exempt: default_via_or -- empty language means unset; the en default is intended
 
     sources = {
         "db_table": {"en": "DB table", "ru": "таблицы БД"},
@@ -453,7 +455,9 @@ def _record_session(results_log: dict, kwargs: dict) -> None:
                 results_log["session"][var] = _redact_credential_shaped_value(kwargs[var])
 
 
-def logged(db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True):
+def logged(
+    db_path: Optional[str] = None, explicit_only: bool = False, allowed_types: tuple = (numbers.Number, str), include_node_ip: bool = True
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator factory that logs a function call's parameters, timing, and result.
 
     Builds a ``results_log`` dict (injected into the decorated function's kwargs if not
@@ -537,7 +541,7 @@ class RedisHandler(Handler):
             self.handleError(record)
 
 
-def debugged(max_retries: int = 3):
+def debugged(max_retries: int = 3) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator that drops into pdb on exception, then retries the call.
 
     In a non-interactive environment (no TTY on stdin) pdb would hang or

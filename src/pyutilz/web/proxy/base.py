@@ -310,7 +310,7 @@ class ProxyProvider(ABC):
 
     def __init__(self, config: ProxyConfig, *, health_tracker: Optional[PortHealthTracker] = None) -> None:
         self.config = config
-        self.health = health_tracker or PortHealthTracker()
+        self.health = health_tracker if health_tracker is not None else PortHealthTracker()
 
     @abstractmethod
     def proxy_url(self, port_offset: Optional[int] = None) -> str:

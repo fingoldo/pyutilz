@@ -34,7 +34,7 @@ def spacy_sent_tokenize(text: str) -> list:
     return list(nlp(text).sents)
 
 
-def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]"):  # nosec B107 - "[[VIDEOID:" is a text placeholder marker delimiting embedded video references, not a credential
+def remove_videos(text: str, token: Optional[str] = "[[VIDEOID:", token2: Optional[str] = "]]") -> str:  # nosec B107 - "[[VIDEOID:" is a text placeholder marker delimiting embedded video references, not a credential
     """Strip every ``token...token2`` embedded video-reference span (e.g. ``[[VIDEOID:...]]``) out of ``text``."""
     if text:
         token = token if token is not None else "[[VIDEOID:"
@@ -90,7 +90,7 @@ def fix_html(text: Optional[str], common_linebreak: Optional[str] = "\n") -> Opt
     return text.strip()
 
 
-def parse_html(text: str, sep=". ") -> str:
+def parse_html(text: str, sep: str = ". ") -> str:
     """Strip HTML markup from ``text``, joining the extracted text nodes with ``sep``. Returns "" for null input."""
     from bs4 import BeautifulSoup
 

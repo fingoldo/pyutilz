@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # db.__init__ facade re-exports every public name below.
 # ----------------------------------------------------------------------------------------------------------------------------
 
-from typing import Optional
+from typing import Any, List, Optional, Tuple
 import warnings
 
 from pyutilz.core import jsonlib
@@ -63,7 +63,7 @@ def validate_sql_qualified_identifier(identifier: str) -> str:
     return identifier
 
 
-def construct_templates_and_values(mode, fields, replace_values, source, jsonize):
+def construct_templates_and_values(mode: str, fields: Any, replace_values: Any, source: Any, jsonize: bool) -> Tuple[List[Any], List[str]]:
     """
     Helper sub to assist filling correct templates in db_command sub, based on mode passed.
     """
@@ -95,7 +95,7 @@ def construct_templates_and_values(mode, fields, replace_values, source, jsonize
     return values, templates
 
 
-def u(str_val, symb="'"):
+def u(str_val: Optional[str], symb: str = "'") -> str:
     """
     Quotes str_val as a SQL string literal with symb (doubling any embedded symb to escape it), or returns "null" if str_val is None.
 
@@ -114,7 +114,7 @@ def u(str_val, symb="'"):
     return symb + str_val.replace(symb, symb * 2) + symb
 
 
-def nu(str_val, symb="'"):
+def nu(str_val: Optional[str], symb: str = "'") -> str:
     """
     Like u(), but also returns "null" for an empty string (not just None).
     """

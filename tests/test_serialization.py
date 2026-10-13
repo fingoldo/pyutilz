@@ -6,7 +6,7 @@ Tests cover serialize/unserialize with various formats and str_to_class utility.
 import pytest
 import pickle
 
-from pyutilz.serialization import serialize, unserialize, str_to_class
+from pyutilz.core.serialization import serialize, unserialize, str_to_class
 from pyutilz.core.safe_pickle import PickleVerificationError
 
 

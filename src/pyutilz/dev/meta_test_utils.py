@@ -245,7 +245,7 @@ def capture_signature(obj: object) -> str:
     """
     try:
         sig = inspect.signature(obj)  # type: ignore[arg-type]  # obj is intentionally untyped object; non-callables are caught below and yield "<no-signature>"
-    except (ValueError, TypeError, RuntimeError):
+    except (ValueError, TypeError, RuntimeError):  # audit-exempt: non_neutral_except_fallback -- placeholder for an uninspectable callable, shown in the output rather than substituted as a measurement
         return "<no-signature>"
     params = []
     for name, p in sig.parameters.items():
@@ -334,7 +334,7 @@ def capture_module_surface(mod: object) -> dict[str, str]:
             continue
         try:
             obj = getattr(mod, name)
-        except Exception:
+        except Exception:  # audit-exempt: non_neutral_except_fallback -- placeholder for an attribute that cannot be read at import time, reported by name
             out[name] = "<inaccessible-at-import-time>"
             continue
         if inspect.ismodule(obj):
@@ -780,7 +780,7 @@ def _is_a_commit_this_repo_has(cite: str, repo_root: Path) -> bool:
         done = subprocess.run(  # nosec B603 B607 - fixed argv, no shell, `cite` validated as hex above
             ["git", "cat-file", "-e", f"{cite}^{{commit}}"], cwd=repo_root, capture_output=True, timeout=15, check=False
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # audit-exempt: non_neutral_except_fallback -- git unavailable means the commit cannot be verified; False is the honest answer to the predicate
         return False
     return done.returncode == 0
 

@@ -147,7 +147,7 @@ def _coverage_gate_passes(
 def _warn_if_oversized(N_a: int, N_b: int) -> None:
     """Log a warning when either sentence exceeds SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD tokens."""
     if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
-        logger.warning(
+        logger.warning(  # audit-exempt: credential_shaped_log_arg -- logs the integer token threshold constant, not a credential
             "sentences_similarity called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
             "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
             N_a,

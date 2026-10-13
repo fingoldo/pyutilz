@@ -4,10 +4,12 @@ Split out of the historical flat ``pyutilz.core.pythonlib`` module; re-exported 
 package ``__init__`` to preserve the public import surface.
 """
 
+from typing import Iterable, Union
+
 from ._common import importlib, logger, subprocess, sys
 
 
-def ensure_installed(packages, sep: str = " ") -> None:
+def ensure_installed(packages: Union[str, Iterable[str]], sep: str = " ") -> None:
     """Installs any packages from `packages` that are not importable yet, via pip.
 
     `packages` can be a single package name, a `sep`-separated string of names, or an
@@ -26,7 +28,7 @@ def ensure_installed(packages, sep: str = " ") -> None:
             import_name = known_abbreviations.get(pkg, pkg)
             try:
                 found = importlib.util.find_spec(import_name) is not None
-            except Exception as e:
+            except Exception as e:  # audit-exempt: non_neutral_except_fallback -- find_spec raising means not installed; found=False errs toward installing, as documented above
                 # find_spec raises ModuleNotFoundError for a DOTTED name whose parent is missing
                 # ("nosuch.child"). Outside the try that aborted the whole call at the CHECK stage,
                 # so none of the earlier packages got installed -- against this function's

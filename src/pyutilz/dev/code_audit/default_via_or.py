@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- default-via-or trap (wave 14) --------------------------------------
 
@@ -711,7 +711,7 @@ def scan_default_via_or_trap(root: Path,
             for position in range(len(node.values) - 1):
                 rhs = node.values[position + 1]
                 lhs = node.values[position]
-                if _pair_is_exempt(lhs, rhs):
+                if _pair_is_exempt(lhs, rhs) or is_line_exempt(src_lines, node.lineno, "default_via_or"):
                     continue
                 # Also skip when the LHS is wrapped in a non-mutating expression
                 # whose first inner Call is documented-safe (e.g. `int(os.cpu_count() or 1)`,

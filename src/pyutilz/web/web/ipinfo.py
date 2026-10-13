@@ -87,14 +87,14 @@ def get_external_ip(
         except ssl.SSLCertVerificationError:  # noqa: PERF203 -- per-iteration fault isolation is intentional (skip this provider, try the next)
             pass
         except Exception as e:
-            logger.exception(e)
+            logger.exception(e)  # audit-exempt: unthrottled_hot_loop_log -- one per failed provider attempt, bounded by the provider list
         else:
             if resp.status == http.HTTPStatus.OK:
                 res = resp.read().decode("utf8").strip()
                 if "." in res or ":" in res:
                     return res  # type: ignore[no-any-return]  # resp comes from an untyped pooled-HTTP helper, so .read() is Any
                 else:
-                    logger.warning("Weird IP address received from provider %s: %s", source, res)
+                    logger.warning("Weird IP address received from provider %s: %s", source, res)  # audit-exempt: unthrottled_hot_loop_log -- one per provider response, bounded by the provider list
     return None
 
 
@@ -160,7 +160,7 @@ def get_country_by_ip(ip: Optional[str] = None, providers: Optional[Sequence[dic
             country_code=code.strip().upper(),
             country_name=name.strip(),
             continent=continent.strip() if isinstance(continent, str) else "",
-            ip=str(data.get("ip") or data.get("query") or ip or ""),
+            ip=str(data.get("ip") or data.get("query") or ip or ""),  # audit-exempt: default_via_or -- empty field means unset; the next field in the chain is the intended fallback
             provider=url.split("/")[2],
         )
     return None

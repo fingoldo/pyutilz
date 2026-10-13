@@ -14,7 +14,7 @@ import tokenize
 from collections import OrderedDict
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- prose that points at a symbol which does not exist ----------------------------------------
 #
@@ -157,8 +157,10 @@ def scan_comment_names_missing_symbol(
                 name = match.group(1)
                 if name in known or name in reported:
                     continue
-                reported.add(name)
                 cite_line = _citation_line(line, text, match.start())
+                if is_line_exempt(src_lines, cite_line, "comment_names_missing_symbol"):
+                    continue
+                reported.add(name)
                 findings.append(
                     Finding(
                         check="comment_names_missing_symbol",

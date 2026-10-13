@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 # Normal Imports
 # ----------------------------------------------------------------------------------------------------------------------------
 
+from typing import Any
+
 import numpy as np
 
 
@@ -100,7 +102,7 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     return result
 
 
-def div0(a, b, na_fill=np.nan):
+def div0(a: Any, b: Any, na_fill: float = np.nan) -> Any:
     """a / b, divide by 0 -> `fill`
     div0( [-1, 0, 1], 0, fill=np.nan) -> [nan nan nan]
     div0( 1, 0, fill=np.inf ) -> inf
@@ -122,7 +124,7 @@ def div0(a, b, na_fill=np.nan):
         return c
 
 
-def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_fill=np.nan) -> np.ndarray:
+def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_fill: float = np.nan) -> np.ndarray:
     """Returns (a-b)/(b + span_correction), guarding only against an exactly-zero or non-finite
     denominator (via :func:`div0`).
 
@@ -133,4 +135,4 @@ def smart_ratios(a: np.ndarray, b: np.ndarray, span_correction: float = 0.0, na_
     ``a``/``b``) to dampen that, matching whatever numeric-stability margin your use case needs.
     """
 
-    return np.asarray(div0(a - b, b + span_correction, na_fill=na_fill))  # np.asarray(): div0 is unannotated, so its result is Any
+    return np.asarray(div0(a - b, b + span_correction, na_fill=na_fill))  # np.asarray(): div0 returns Any, so its result is Any

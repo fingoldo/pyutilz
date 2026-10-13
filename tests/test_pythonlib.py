@@ -15,7 +15,7 @@ class TestObjectsLoader:
 
     def test_loads_objects_when_rewrite_existing_false(self, tmp_path):
         """Test that objects ARE loaded when rewrite_existing=False (indentation bug fix)"""
-        from pyutilz.pythonlib import ObjectsLoader
+        from pyutilz.core.pythonlib import ObjectsLoader
 
         # Create test data
         test_data = {"key1": "value1", "key2": "value2"}
@@ -38,7 +38,7 @@ class TestObjectsLoader:
 
     def test_skips_existing_non_empty_objects(self, tmp_path):
         """Test that existing non-empty objects are NOT overwritten"""
-        from pyutilz.pythonlib import ObjectsLoader
+        from pyutilz.core.pythonlib import ObjectsLoader
 
         test_data = {"new": "data"}
         test_file = tmp_path / "test_obj.pkl"
@@ -60,7 +60,7 @@ class TestObjectsLoader:
 
     def test_overwrites_when_rewrite_existing_true(self, tmp_path):
         """Test that objects ARE overwritten when rewrite_existing=True"""
-        from pyutilz.pythonlib import ObjectsLoader
+        from pyutilz.core.pythonlib import ObjectsLoader
 
         new_data = {"new": "data"}
         test_file = tmp_path / "test_obj.pkl"
@@ -83,7 +83,7 @@ class TestEnsureListSetTuple:
 
     def test_recognizes_tuple_correctly(self):
         """Test that 'tuple' (not 'tuple`') is recognized (line 229 typo fix)"""
-        from pyutilz.pythonlib import ensure_list_set_tuple
+        from pyutilz.core.pythonlib import ensure_list_set_tuple
 
         # Tuple should be recognized
         result = ensure_list_set_tuple((1, 2, 3))
@@ -91,14 +91,14 @@ class TestEnsureListSetTuple:
 
     def test_recognizes_list(self):
         """Test that list is recognized"""
-        from pyutilz.pythonlib import ensure_list_set_tuple
+        from pyutilz.core.pythonlib import ensure_list_set_tuple
 
         result = ensure_list_set_tuple([1, 2, 3])
         assert result == [1, 2, 3]
 
     def test_recognizes_set(self):
         """Test that set is recognized"""
-        from pyutilz.pythonlib import ensure_list_set_tuple
+        from pyutilz.core.pythonlib import ensure_list_set_tuple
 
         input_set = {1, 2, 3}
         result = ensure_list_set_tuple(input_set)
@@ -106,7 +106,7 @@ class TestEnsureListSetTuple:
 
     def test_wraps_non_sequence_in_list(self):
         """Test that non-sequence objects are wrapped in list"""
-        from pyutilz.pythonlib import ensure_list_set_tuple
+        from pyutilz.core.pythonlib import ensure_list_set_tuple
 
         result = ensure_list_set_tuple(42)
         assert result == [42]
@@ -120,7 +120,7 @@ class TestGetAttr:
 
     def test_mutable_default_not_shared(self):
         """Test that default value is not shared between calls (mutable default bug)"""
-        from pyutilz.pythonlib import get_attr
+        from pyutilz.core.pythonlib import get_attr
 
         obj1 = {}
         obj2 = {}
@@ -138,7 +138,7 @@ class TestGetAttr:
 
     def test_returns_existing_value(self):
         """Test that existing values are returned"""
-        from pyutilz.pythonlib import get_attr
+        from pyutilz.core.pythonlib import get_attr
 
         obj = {"key": "value"}
         result = get_attr(obj, "key", default_value=[])
@@ -147,7 +147,7 @@ class TestGetAttr:
 
     def test_returns_custom_default(self):
         """Test that custom default value is returned"""
-        from pyutilz.pythonlib import get_attr
+        from pyutilz.core.pythonlib import get_attr
 
         obj = {}
         custom_default = ["custom"]
@@ -167,7 +167,7 @@ class TestGetAttr:
 ])
 def test_ensure_list_set_tuple_parametrized(input_obj, expected_type):
     """Parametrized test for different input types"""
-    from pyutilz.pythonlib import ensure_list_set_tuple
+    from pyutilz.core.pythonlib import ensure_list_set_tuple
 
     result = ensure_list_set_tuple(input_obj)
 
@@ -188,7 +188,7 @@ class TestDictUtilities:
 
     def test_sort_dict_by_value(self):
         """Test sorting dict by values"""
-        from pyutilz.pythonlib import sort_dict_by_value
+        from pyutilz.core.pythonlib import sort_dict_by_value
 
         dct = {"a": 3, "b": 1, "c": 2}
         result = sort_dict_by_value(dct)
@@ -199,7 +199,7 @@ class TestDictUtilities:
 
     def test_sort_dict_by_value_reverse(self):
         """Test sorting dict by values descending"""
-        from pyutilz.pythonlib import sort_dict_by_value
+        from pyutilz.core.pythonlib import sort_dict_by_value
 
         dct = {"a": 3, "b": 1, "c": 2}
         result = sort_dict_by_value(dct, reverse=True)
@@ -209,7 +209,7 @@ class TestDictUtilities:
 
     def test_sort_dict_by_key(self):
         """Test sorting dict by keys"""
-        from pyutilz.pythonlib import sort_dict_by_key
+        from pyutilz.core.pythonlib import sort_dict_by_key
 
         dct = {"c": 1, "a": 2, "b": 3}
         result = sort_dict_by_key(dct)
@@ -219,7 +219,7 @@ class TestDictUtilities:
 
     def test_prefix_dict_elems(self):
         """Test prefixing dictionary keys"""
-        from pyutilz.pythonlib import prefix_dict_elems
+        from pyutilz.core.pythonlib import prefix_dict_elems
 
         dct = {"key1": "val1", "key2": "val2"}
         result = prefix_dict_elems(dct, "prefix_")
@@ -232,7 +232,7 @@ class TestNumberUtilities:
 
     def test_is_float_valid(self):
         """Test is_float with valid float strings"""
-        from pyutilz.pythonlib import is_float
+        from pyutilz.core.pythonlib import is_float
 
         assert is_float("3.14") is True
         assert is_float("42.0") is True
@@ -241,7 +241,7 @@ class TestNumberUtilities:
 
     def test_is_float_invalid(self):
         """Test is_float with invalid strings"""
-        from pyutilz.pythonlib import is_float
+        from pyutilz.core.pythonlib import is_float
 
         assert is_float("not a number") is False
         assert is_float("abc") is False
@@ -249,7 +249,7 @@ class TestNumberUtilities:
 
     def test_is_float_integer(self):
         """Test is_float with integer strings"""
-        from pyutilz.pythonlib import is_float
+        from pyutilz.core.pythonlib import is_float
 
         # Integer strings should also return True
         assert is_float("42") is True
@@ -257,7 +257,7 @@ class TestNumberUtilities:
 
     def test_to_float(self):
         """Test to_float conversion"""
-        from pyutilz.pythonlib import to_float
+        from pyutilz.core.pythonlib import to_float
 
         assert to_float("3.14") == 3.14
         assert to_float("42") == 42.0
@@ -265,7 +265,7 @@ class TestNumberUtilities:
 
     def test_integer_digits(self):
         """Test extracting unique digits from integer"""
-        from pyutilz.pythonlib import integer_digits
+        from pyutilz.core.pythonlib import integer_digits
 
         # Returns (count, digits_set)
         count, digits = integer_digits(12345)
@@ -286,7 +286,7 @@ class TestListUtilities:
 
     def test_list_is_non_increasing_true(self):
         """Test non-increasing list detection"""
-        from pyutilz.pythonlib import list_is_non_increasing
+        from pyutilz.core.pythonlib import list_is_non_increasing
 
         assert list_is_non_increasing([5, 4, 3, 2, 1]) is True
         assert list_is_non_increasing([5, 5, 3, 3, 1]) is True
@@ -294,14 +294,14 @@ class TestListUtilities:
 
     def test_list_is_non_increasing_false(self):
         """Test increasing list"""
-        from pyutilz.pythonlib import list_is_non_increasing
+        from pyutilz.core.pythonlib import list_is_non_increasing
 
         assert list_is_non_increasing([1, 2, 3]) is False
         assert list_is_non_increasing([1, 3, 2]) is False
 
     def test_list_is_non_decreasing_true(self):
         """Test non-decreasing list detection"""
-        from pyutilz.pythonlib import list_is_non_decreasing
+        from pyutilz.core.pythonlib import list_is_non_decreasing
 
         assert list_is_non_decreasing([1, 2, 3, 4, 5]) is True
         assert list_is_non_decreasing([1, 1, 2, 2, 3]) is True
@@ -309,14 +309,14 @@ class TestListUtilities:
 
     def test_list_is_non_decreasing_false(self):
         """Test decreasing list"""
-        from pyutilz.pythonlib import list_is_non_decreasing
+        from pyutilz.core.pythonlib import list_is_non_decreasing
 
         assert list_is_non_decreasing([5, 4, 3]) is False
         assert list_is_non_decreasing([1, 3, 2]) is False
 
     def test_batch(self):
         """Test batching iterable"""
-        from pyutilz.pythonlib import batch
+        from pyutilz.core.pythonlib import batch
 
         data = [1, 2, 3, 4, 5, 6, 7, 8, 9]
         batches = list(batch(data, n=3))
@@ -328,7 +328,7 @@ class TestListUtilities:
 
     def test_anyof_elements_in_string(self):
         """Test checking if any element is in string"""
-        from pyutilz.pythonlib import anyof_elements_in_string
+        from pyutilz.core.pythonlib import anyof_elements_in_string
 
         assert anyof_elements_in_string(["foo", "bar"], "this is a foobar") is True
         assert anyof_elements_in_string(["xxx", "yyy"], "this is a foobar") is False
@@ -340,7 +340,7 @@ class TestDateTimeUtilities:
 
     def test_get_utc_unix_ts_seconds(self):
         """Test getting UTC Unix timestamp in seconds"""
-        from pyutilz.pythonlib import get_utc_unix_ts_seconds
+        from pyutilz.core.pythonlib import get_utc_unix_ts_seconds
         import time
 
         ts = get_utc_unix_ts_seconds()
@@ -351,7 +351,7 @@ class TestDateTimeUtilities:
 
     def test_get_utc_unix_ts_milliseconds(self):
         """Test getting UTC Unix timestamp in milliseconds"""
-        from pyutilz.pythonlib import get_utc_unix_ts_milliseconds
+        from pyutilz.core.pythonlib import get_utc_unix_ts_milliseconds
         import time
 
         ts_ms = get_utc_unix_ts_milliseconds()
@@ -362,7 +362,7 @@ class TestDateTimeUtilities:
 
     def test_datetime_to_unix_ts(self):
         """Test converting datetime to Unix timestamp"""
-        from pyutilz.pythonlib import datetime_to_unix_ts
+        from pyutilz.core.pythonlib import datetime_to_unix_ts
         from datetime import datetime
 
         # Known timestamp: 2020-01-01 00:00:00 UTC = 1577836800
@@ -379,7 +379,7 @@ class TestFilteringUtilities:
 
     def test_filter_elements_by_type_dict(self):
         """Test filtering dict elements by type"""
-        from pyutilz.pythonlib import filter_elements_by_type
+        from pyutilz.core.pythonlib import filter_elements_by_type
         import numbers
 
         data = {"a": 1, "b": "text", "c": [1, 2], "d": 3.14}
@@ -390,7 +390,7 @@ class TestFilteringUtilities:
 
     def test_filter_elements_by_type_list(self):
         """Test filtering list elements by type"""
-        from pyutilz.pythonlib import filter_elements_by_type
+        from pyutilz.core.pythonlib import filter_elements_by_type
 
         data = [1, "text", [1, 2], 3.14, None]
         result = filter_elements_by_type(data, allowed_types=(int, str, float))
@@ -410,7 +410,7 @@ class TestFilteringUtilities:
         returned a list of local variable NAMES instead of the filtered locals dict
         on every Python 3.13+ call. Pinned with a real (non-dict) Mapping, not a mock."""
         from collections.abc import Mapping
-        from pyutilz.pythonlib import filter_elements_by_type
+        from pyutilz.core.pythonlib import filter_elements_by_type
 
         class _FakeFrameLocalsProxy(Mapping):
             """Minimal non-dict Mapping, mirroring FrameLocalsProxy's shape."""
@@ -444,7 +444,7 @@ class TestObjectOperations:
 
     def test_populate_object_from_dict(self):
         """Test populating object from dict"""
-        from pyutilz.pythonlib import populate_object_from_dict
+        from pyutilz.core.pythonlib import populate_object_from_dict
 
         class TestObj:
             pass
@@ -460,7 +460,7 @@ class TestObjectOperations:
 
     def test_flatten_keys_to_dict(self):
         """Test flattening object keys to dict"""
-        from pyutilz.pythonlib import flatten_keys_to_dict
+        from pyutilz.core.pythonlib import flatten_keys_to_dict
 
         class TestObj:
             attr1 = "value1"
@@ -475,7 +475,7 @@ class TestObjectOperations:
 
     def test_ensure_dict_elem(self):
         """Test ensuring dict element exists"""
-        from pyutilz.pythonlib import ensure_dict_elem
+        from pyutilz.core.pythonlib import ensure_dict_elem
 
         dct = {}
         ensure_dict_elem(dct, "test_key", "default_value")
@@ -493,7 +493,7 @@ class TestFloatOperations:
 
     def test_float_distinct_digits_percent(self):
         """Test calculating distinct digits percentage"""
-        from pyutilz.pythonlib import float_distinct_digits_percent
+        from pyutilz.core.pythonlib import float_distinct_digits_percent
 
         result = float_distinct_digits_percent(11.882, precision=3)
         assert isinstance(result, float)
@@ -501,7 +501,7 @@ class TestFloatOperations:
 
     def test_count_trailing_zeros(self):
         """Test counting trailing zeros"""
-        from pyutilz.pythonlib import count_trailing_zeros
+        from pyutilz.core.pythonlib import count_trailing_zeros
 
         result = count_trailing_zeros(1.30e-6, precision=8)
         assert isinstance(result, int)
@@ -513,7 +513,7 @@ class TestTimeOperations:
 
     def test_utc_to_local(self):
         """Test UTC to local time conversion"""
-        from pyutilz.pythonlib import utc_to_local
+        from pyutilz.core.pythonlib import utc_to_local
         from datetime import datetime, timezone
 
         utc_dt = datetime.now(timezone.utc)
@@ -523,7 +523,7 @@ class TestTimeOperations:
 
     def test_weekofmonth(self):
         """Test getting week of month"""
-        from pyutilz.pythonlib import weekofmonth
+        from pyutilz.core.pythonlib import weekofmonth
         from datetime import date
 
         test_date = date(2024, 1, 15)
@@ -538,7 +538,7 @@ class TestDelayFunctions:
 
     def test_imitate_delay_zero(self):
         """Test with zero delay"""
-        from pyutilz.pythonlib import imitate_delay
+        from pyutilz.core.pythonlib import imitate_delay
         import time
 
         # perf_counter, not time(): the wall clock is not monotonic and can step under NTP, and on
@@ -555,7 +555,7 @@ class TestDelayFunctions:
 
     def test_imitate_delay_small(self):
         """Test with small delay"""
-        from pyutilz.pythonlib import imitate_delay
+        from pyutilz.core.pythonlib import imitate_delay
         import time
 
         # perf_counter, not time(): the 0.01s lower bound below is finer than the wall clock's tick

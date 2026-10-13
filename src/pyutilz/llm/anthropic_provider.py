@@ -244,7 +244,7 @@ class AnthropicProvider(LLMProvider):
         """``cache_ttl``: lifetime of the system-prompt cache entry, ``"5m"`` (writes billed 1.25x input) or ``"1h"``
         (writes billed 2x input, worth it when the same system prompt is reused over more than five minutes)."""
         settings = get_llm_settings()
-        self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)
+        self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not self.api_key:
             raise ValueError("Anthropic API key not provided. Set ANTHROPIC_API_KEY in .env or pass api_key=")
         if cache_ttl not in ("5m", "1h"):

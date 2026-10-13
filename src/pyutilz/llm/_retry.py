@@ -41,7 +41,7 @@ if MAX_RETRY_ATTEMPTS < 0:
     MAX_RETRY_ATTEMPTS = _DEFAULT_MAX_RETRY_ATTEMPTS
 
 
-def log_retry(retry_state) -> None:
+def log_retry(retry_state: Any) -> None:
     """Log a warning before each retry sleep, escalating severity."""
     exc = retry_state.outcome.exception()
     wait = retry_state.next_action.sleep if retry_state.next_action else 0

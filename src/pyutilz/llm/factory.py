@@ -143,7 +143,7 @@ def get_llm_provider(
     Raises:
         ValueError: If provider name is unknown.
     """
-    settings = settings or get_llm_settings()
+    settings = settings if settings is not None else get_llm_settings()
     name = provider_name.lower()
 
     # Resolve aliases

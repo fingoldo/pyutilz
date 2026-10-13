@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import DefaultDict, List, Tuple, Union
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 _MIN_BODY_NODES = 8  # skip trivial bodies (pass, ..., a bare `return None`/`return False`/`return self._x`)
 
@@ -82,7 +82,7 @@ def scan_duplicate_function_body(
     across the tree (any file, any name) -- copy-pasted logic instead of one shared
     definition every call site imports.
 
-    Confirmed in the wild during this session: a `_need_cuda()` helper (checks real CUDA
+    Confirmed in the wild during this session: a `_need_cuda()` helper (checks real CUDA  # audit-exempt: comment_names_missing_symbol -- prose names a helper whose defect the comment describes, defined outside this tree
     device availability, not just that ``cupy`` is importable) got its exact body pasted
     into a dozen-plus test files instead of living once in a shared conftest.py -- each
     copy now silently drifts independently the moment one gets updated (a bug fix, a new
@@ -124,6 +124,8 @@ def scan_duplicate_function_body(
         first_rel = first_path.relative_to(root).as_posix()
         for py, node, src_lines in occurrences[1:]:
             rel = py.relative_to(root).as_posix()
+            if is_line_exempt(src_lines, node.lineno, "duplicate_function_body"):
+                continue
             findings.append(Finding(
                 check="duplicate_function_body",
                 severity="P2",

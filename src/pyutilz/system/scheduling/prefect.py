@@ -149,7 +149,7 @@ def wait_for_absense_of_tasks(
     sleep_seconds: int = 10,
     max_retries: int = 60,
     logger: Optional[logging.Logger] = None,
-):
+) -> bool:
     """Wait until no flow run carrying ALL of ``labels`` (default ``{"ml", "gpu"}``) is running.
 
     Sleeps ``sleep_seconds`` at most ``max_retries`` times; the state is re-checked after each

@@ -129,4 +129,4 @@ def urlopen_checked(
     # nosec B310 - the call above raises UnsafeURLError unless the scheme is allowed, and the opener
     # re-checks each redirect target; this is the one audited urlopen call bandit cannot see the
     # guard through.
-    return opener.open(target, timeout=timeout)  # nosec B310
+    return opener.open(target, timeout=timeout)  # nosec B310  # audit-exempt: resource_handle_safety -- returns the handle as its public API; the caller owns closing it

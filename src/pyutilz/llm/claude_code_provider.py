@@ -814,7 +814,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 shutil.rmtree(child_cwd, ignore_errors=True)
 
             if returncode != 0:
-                error_msg = stderr or stdout or "Unknown error"
+                error_msg = stderr or stdout or "Unknown error"  # audit-exempt: default_via_or -- empty stderr means no stderr text; falling through to stdout is intended
                 raise RuntimeError(f"Claude CLI failed (code {returncode}): {error_msg}")
 
             return stdout.strip()  # type: ignore[no-any-return]  # stdout comes from an asyncio subprocess pipe read decoded through an untyped helper
@@ -975,7 +975,7 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             # Previously silently fell through to a best-effort parse of empty/garbage stdout on
             # failure -- the caller had no way to tell "no limit info in the output" apart from
             # "the CLI itself failed" (found 2026-07-09: stderr was captured but never read).
-            raise NotImplementedError(f"claude /status exited with code {proc.returncode}: {(stderr or b'').decode(errors='replace').strip() or '(no stderr)'}")
+            raise NotImplementedError(f"claude /status exited with code {proc.returncode}: {(stderr or b'').decode(errors='replace').strip() or '(no stderr)'}")  # audit-exempt: default_via_or -- empty stderr means no stderr text; the placeholder is intended
         text = (stdout or b"").decode(errors="replace")
 
         # Best-effort parse of common markers; CLI output format isn't

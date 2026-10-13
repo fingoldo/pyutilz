@@ -45,7 +45,7 @@ def _cleanup_temp_dirs():
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one dir failing to clean shouldn't skip the rest)
-            logger.warning("Failed to cleanup temp directory %s: %s", temp_dir, e)
+            logger.warning("Failed to cleanup temp directory %s: %s", temp_dir, e)  # audit-exempt: unthrottled_hot_loop_log -- one warning per temp directory that fails to clean up, bounded by directories created
 import contextlib
 
 import os
@@ -97,7 +97,7 @@ def split_list_into_nchunks_indices(the_list: list, nchunks: int) -> Iterator[tu
         raise ValueError(f"split_list_into_nchunks_indices: nchunks must be >= 1, got {nchunks}")
     # More chunks than items would make step == 0, silently yielding nchunks-1 empty bands and one
     # band holding the whole list -- a silent collapse of parallelism with no diagnostic.
-    nchunks = min(nchunks, total_length) or 1
+    nchunks = max(1, min(nchunks, total_length))
     step = total_length // nchunks
     for chunk in range(nchunks):
         if chunk == nchunks - 1:
@@ -176,7 +176,7 @@ def cpu_count_physical(fallback: int = 1) -> int:
 
 def parallel_run(
     jobslist: Sequence, n_jobs: int = -1, backend: Optional[str] = None, max_nbytes: int = 50_000, prefer_real_cores: bool = True, verbose: int = 0, **parallel_kwargs
-):
+) -> Any:
     """Runs function in parallel using the joblib package with flexible backend (including Dask)."""
     if n_jobs <= 0 and prefer_real_cores:
         n_jobs = cpu_count_physical()
@@ -193,8 +193,8 @@ def applyfunc_parallel(
     n_jobs: Optional[int] = None,
     return_dataframe: bool = True,
     logical: bool = False,
-    initializer=None,
-    initargs=(),
+    initializer: Optional[Callable[..., Any]] = None,
+    initargs: Sequence[Any] = (),
     use_threads: bool = False,
     n_cores: Optional[int] = None,
 ) -> Union[list, pd.DataFrame]:
@@ -223,10 +223,7 @@ def applyfunc_parallel(
     if n_jobs is None:
         detected = psutil.cpu_count(logical=logical)
         n_jobs = max(1, min(detected if detected and detected > 0 else 1, len(iterable)))
-    try:
-        fname = func.__name__
-    except Exception:
-        fname = "function"
+    fname = getattr(func, "__name__", "function")
 
     logger.info("Applying of %s started, n_jobs=%s, nchunks=%s...", fname, n_jobs, len(iterable))
 
@@ -254,7 +251,7 @@ def applyfunc_parallel(
     return res
 
 
-def set_tf_gpu(gpu: int):
+def set_tf_gpu(gpu: int) -> None:
     """Restrict TensorFlow's visible GPUs to a single physical device, selected by index."""
     import tensorflow as tf
 

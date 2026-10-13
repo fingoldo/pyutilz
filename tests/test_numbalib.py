@@ -25,7 +25,7 @@ class TestSetNumbaRandomSeed:
         """Test that @njit function accepts integer seed (no None check)"""
         from numba import njit
 
-        from pyutilz.numbalib import set_numba_random_seed
+        from pyutilz.data.numbalib import set_numba_random_seed
 
         @njit
         def _draw():
@@ -40,7 +40,7 @@ class TestSetNumbaRandomSeed:
 
     def test_sets_random_state_without_error(self):
         """Test that setting seed works without error (nopython mode fix)"""
-        from pyutilz.numbalib import set_numba_random_seed
+        from pyutilz.data.numbalib import set_numba_random_seed
 
         # Should work with integer seed (was broken with None in nopython mode)
         try:
@@ -63,7 +63,7 @@ class TestSetNumbaRandomSeed:
         """
         from numba import njit
 
-        from pyutilz.numbalib import set_numba_random_seed
+        from pyutilz.data.numbalib import set_numba_random_seed
 
         @njit
         def _draw():
@@ -83,7 +83,7 @@ class TestSetRandomSeed:
         """Test that wrapper handles None default value"""
         from numba import njit
 
-        from pyutilz.numbalib import set_random_seed
+        from pyutilz.data.numbalib import set_random_seed
 
         @njit
         def _draw():
@@ -101,7 +101,7 @@ class TestSetRandomSeed:
         """Test that wrapper accepts integer seed"""
         from numba import njit
 
-        from pyutilz.numbalib import set_random_seed
+        from pyutilz.data.numbalib import set_random_seed
 
         @njit
         def _draw():
@@ -119,7 +119,7 @@ class TestSetRandomSeed:
         Draws observed via an @njit consumer -- see that test's docstring for why."""
         from numba import njit
 
-        from pyutilz.numbalib import set_random_seed
+        from pyutilz.data.numbalib import set_random_seed
 
         @njit
         def _draw():
@@ -137,7 +137,7 @@ class TestArr2Str:
 
     def test_converts_array_to_string(self):
         """Test that array is converted to string"""
-        from pyutilz.numbalib import arr2str
+        from pyutilz.data.numbalib import arr2str
 
         arr = [1, 2, 3, 4, 5]
         result = arr2str(arr)
@@ -158,7 +158,7 @@ class TestArr2Str:
         """
         import time
 
-        from pyutilz.numbalib import arr2str
+        from pyutilz.data.numbalib import arr2str
 
         def best_of(n, repeats=5):
             arr = list(range(n))
@@ -180,7 +180,7 @@ class TestArr2Str:
 
     def test_no_njit_decorator(self):
         """Test that arr2str is NOT compiled with @njit (removed for performance)"""
-        from pyutilz.numbalib import arr2str
+        from pyutilz.data.numbalib import arr2str
 
         # Check function is not a Numba compiled function
         # Numba functions have special attributes
@@ -188,7 +188,7 @@ class TestArr2Str:
 
     def test_handles_different_types(self):
         """Test conversion of different element types"""
-        from pyutilz.numbalib import arr2str
+        from pyutilz.data.numbalib import arr2str
 
         # Integers
         assert isinstance(arr2str([1, 2, 3]), str)
@@ -205,7 +205,7 @@ class TestPythonDict2NumbaDict:
 
     def test_mutable_default_not_shared(self):
         """Test that default numba_dict is not shared between calls"""
-        from pyutilz.numbalib import python_dict_2_numba_dict
+        from pyutilz.data.numbalib import python_dict_2_numba_dict
         import numba
 
         python_dict1 = {"a": 1, "b": 2}
@@ -228,7 +228,7 @@ class TestPythonDict2NumbaDict:
 
     def test_returns_numba_dict(self):
         """Test that function returns numba.typed.Dict"""
-        from pyutilz.numbalib import python_dict_2_numba_dict
+        from pyutilz.data.numbalib import python_dict_2_numba_dict
         import numba
 
         python_dict = {"x": 10, "y": 20}
@@ -240,7 +240,7 @@ class TestPythonDict2NumbaDict:
 
     def test_explicit_none_default(self):
         """Test that passing numba_dict=None explicitly (Optional[...] annotation) still works"""
-        from pyutilz.numbalib import python_dict_2_numba_dict
+        from pyutilz.data.numbalib import python_dict_2_numba_dict
         import numba
 
         python_dict = {"p": 1, "q": 2}
@@ -252,7 +252,7 @@ class TestPythonDict2NumbaDict:
 
     def test_accepts_existing_numba_dict(self):
         """Test that function can accept existing numba_dict parameter"""
-        from pyutilz.numbalib import python_dict_2_numba_dict
+        from pyutilz.data.numbalib import python_dict_2_numba_dict
         import numba
 
         # Create existing numba dict
@@ -272,7 +272,7 @@ class TestPythonDict2NumbaDict:
 @pytest.mark.parametrize("seed_value", [0, 42, 123, 999, 12345])
 def test_random_seed_parametrized(seed_value):
     """Parametrized test for different seed values"""
-    from pyutilz.numbalib import set_numba_random_seed
+    from pyutilz.data.numbalib import set_numba_random_seed
 
     # Should work with any positive integer seed
     try:

@@ -104,7 +104,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         behaviour) instead of failing the call at once. Off by default, because an unattended batch job otherwise
         hangs with nothing but a repeating warning to show for it."""
         settings = get_llm_settings()
-        resolved_key = api_key or (settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None)
+        resolved_key = api_key or (settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not resolved_key:
             raise ValueError("DeepSeek API key not provided. " "Set DEEPSEEK_API_KEY in .env or pass api_key=")
         super().__init__(api_key=resolved_key, model=model, max_concurrent=max_concurrent)

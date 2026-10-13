@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 _LOG_METHODS = ("warning", "error", "exception", "critical")
 _THROTTLE_HINTS = ("throttle", "rate_limit", "ratelimit", "debounce")
@@ -244,7 +244,8 @@ def _visit_if_aware(
     # loop is the ONLY one enclosing it (at depth 2+ the outer loop still re-enters it per item).
     shot = single_shot.get(id(node))
     single_shot_here = shot == "hard" or (shot == "break" and loop_depth == 1)
-    if method is not None and loop_depth > 0 and not guarded and not single_shot_here:
+    exempt = isinstance(node, ast.Call) and is_line_exempt(src_lines, node.lineno, "unthrottled_hot_loop_log")
+    if method is not None and loop_depth > 0 and not guarded and not single_shot_here and not exempt:
         findings.append(_hot_loop_log_finding(node, method, loop_depth, rel, src_lines))
     if isinstance(node, (ast.For, ast.AsyncFor)):
         _visit_for_loop(node, loop_depth, guarded, findings, rel, src_lines, single_shot)

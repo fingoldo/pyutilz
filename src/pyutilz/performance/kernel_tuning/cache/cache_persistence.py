@@ -219,7 +219,7 @@ class _CachePersistenceMixin(_CacheState):
         ts = (entry.get("tuned_utc") or "") if isinstance(entry, dict) else ""
         try:
             mtime = os.path.getmtime(path)
-        except OSError:
+        except OSError:  # audit-exempt: non_neutral_except_fallback -- file vanished between listing and stat; mtime 0.0 sorts it oldest, which is the intent
             mtime = 0.0
         return (ts, mtime)
 
@@ -272,7 +272,7 @@ class _CachePersistenceMixin(_CacheState):
         """
         if self._in_memory or self._path is None:
             return
-        cv = entry.get("code_version") or _NO_CODE_VERSION
+        cv = entry.get("code_version") or _NO_CODE_VERSION  # audit-exempt: default_via_or -- empty code_version means none recorded; the sentinel is intended
         salt = entry.get("salt", 0)
         ts = time.time()
         fname = f"{_slug(str(cv), maxlen=70)}.{int(salt)}.{os.getpid()}.{int(ts * 1000)}.{random.randrange(1 << 24):x}.json"  # nosec B311 - unique cache-record filename suffix to avoid collisions between concurrent writers, not security/cryptographic use
@@ -381,7 +381,8 @@ class _CachePersistenceMixin(_CacheState):
         with self._lock:
             if self._loaded is not None:
                 return self._loaded
-            self._loaded = self._load() or {
+            loaded_state = self._load()
+            self._loaded = loaded_state if loaded_state is not None else {
                 "schema_version": SCHEMA_VERSION,
                 "hw_fingerprint": "in_memory" if self._in_memory else hw_fingerprint(),
                 "kernels": {},

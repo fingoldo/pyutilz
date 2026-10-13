@@ -4,7 +4,7 @@ Jupyter notebook initialization utilities
 import logging
 import os
 import sys
-from typing import Any
+from typing import Any, Dict
 
 import psutil
 
@@ -38,7 +38,7 @@ except ImportError:
             """No-op fallback used when IPython.display is unavailable; returns data unchanged."""
             return data
 
-def setup_polars_config():
+def setup_polars_config() -> None:
     """Setup Polars threading and memory configuration.
 
     ``POLARS_MAX_THREADS`` is read by polars ONCE, at import; setting it afterwards has no effect on
@@ -68,7 +68,7 @@ def _run_magic(ipython, line: str) -> None:
     ipython.magic(line)
 
 
-def setup_jupyter_display():
+def setup_jupyter_display() -> None:
     """Setup Jupyter notebook display options"""
     try:
         display(HTML("<style>.container { width:100% !important; }</style>"))
@@ -76,7 +76,7 @@ def setup_jupyter_display():
     except Exception as e:
         print(f"[!] Display setup failed: {e}")
 
-def load_jupyter_extensions():
+def load_jupyter_extensions() -> None:
     """Load common Jupyter extensions using IPython API"""
     ipython = get_ipython()
     if not ipython:
@@ -115,7 +115,7 @@ def load_jupyter_extensions():
         print(f"[!] Failed to load: {[f[0] for f in failed]}")
         logger.warning("notebook_init: could not load IPython extensions: %s", failed)
 
-def import_common_packages():
+def import_common_packages() -> Dict[str, Any]:
     """Import common packages and return them"""
     packages = {}
 
@@ -151,7 +151,7 @@ def import_common_packages():
 
     return packages
 
-def load_jupyter_extensions_minimal():
+def load_jupyter_extensions_minimal() -> None:
     """Load only built-in IPython extensions"""
     ipython = get_ipython()
     if not ipython:
@@ -166,7 +166,7 @@ def load_jupyter_extensions_minimal():
     except Exception as e:
         print(f"[!] Failed to load autoreload: {e}")
 
-def init_notebook(include_imports=True, inject_globals=False, use_simple_extensions=True):
+def init_notebook(include_imports: bool = True, inject_globals: bool = False, use_simple_extensions: bool = True) -> Dict[str, Any]:
     """
     Complete notebook initialization
 
@@ -214,7 +214,7 @@ def init_notebook(include_imports=True, inject_globals=False, use_simple_extensi
         return {}
 
 # For %run -m compatibility
-def main():
+def main() -> Dict[str, Any]:
     """Main function for command-line execution"""
     packages = init_notebook(include_imports=True, inject_globals=True)
     return packages

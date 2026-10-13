@@ -119,7 +119,7 @@ def _add_sentinel_column(tmp_df: pd.DataFrame, filename: str, sentinel_field: st
     # Use local copy to avoid mutation persisting across files
     current_sentinel = sentinel_field
     while current_sentinel in tmp_df:
-        logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")
+        logger.warning(f"Sentinel field {current_sentinel} was already in the frame {filename}")  # audit-exempt: unthrottled_hot_loop_log -- per sentinel collision, which is typically zero or one per call
         current_sentinel += "1"
 
     fname_part = filename.split(sep)[-1]

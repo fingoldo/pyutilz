@@ -180,7 +180,7 @@ def shorten_path(path: str, prefix: str = "", prefix_replacement: str = "", defa
     return None
 
 
-def slugify(value, allow_unicode: bool = True, lowercase: bool = False) -> str:
+def slugify(value: str, allow_unicode: bool = True, lowercase: bool = False) -> str:
     """
     Taken from https://github.com/django/django/blob/master/django/utils/text.py
     Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated

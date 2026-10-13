@@ -48,7 +48,7 @@ def get_new_smartproxy(
     delay: int = 5,
     proxy_port: Optional[int] = None,
     proxy_type: str = "http",
-    verbose=False,
+    verbose: bool = False,
     max_wait_seconds: Optional[float] = None,
 ) -> dict:
     """Pick a proxy (random port within ``[proxy_min_port, proxy_max_port]`` unless ``proxy_port`` is fixed) that hasn't been touched recently per ``last_used_dict``/``failed_dict``.
@@ -93,7 +93,7 @@ def get_new_smartproxy(
         policies = ((failed_dict, min_failed_idle_interval_minutes), (last_used_dict, min_idle_interval_minutes))
         if not _is_on_cooldown(proxy_key, now_time, policies, verbose, proxy_server, proxy_port):
             if verbose:
-                logger.info("Got new proxy: %s:%s", proxy_server, proxy_port)
+                logger.info("Got new proxy: %s:%s", proxy_server, proxy_port)  # audit-exempt: credential_shaped_log_arg -- logs a proxy host and port, not a credential
             return proxies
         n = n + 1
         if n > warn_after_n_failures:
@@ -138,7 +138,7 @@ def _is_on_cooldown(
             # min_idle_interval_minutes (default 0) handed a just-blocked exit IP straight back.
             if (now_time - dict_to_check[proxy_key]).total_seconds() / 60 < min_interval:
                 if verbose:
-                    logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)
+                    logger.info("Skipping proxy %s:%s, touched recently", proxy_server, proxy_port)  # audit-exempt: credential_shaped_log_arg -- logs a proxy host and port, not a credential
                 return True
     return False
 

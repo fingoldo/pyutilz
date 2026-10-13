@@ -7,6 +7,8 @@ Split out of the historical flat ``pyutilz.data.pandaslib`` module; re-exported
 from the package ``__init__`` to preserve the public import surface.
 """
 
+from typing import Dict
+
 from ._common import (
     Any,
     List,
@@ -43,7 +45,15 @@ from .dtypes import get_df_memory_consumption
 from .frames import remove_constant_columns
 
 
-def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: str, read_params: dict, write_method: str, write_params: dict, nrepeats: int):
+def measure_read_write_performance(
+    df: pd.DataFrame,
+    fname: str,
+    read_method: str,
+    read_params: Dict[str, Any],
+    write_method: str,
+    write_params: Dict[str, Any],
+    nrepeats: int,
+) -> List[np.ndarray]:
     """Write & read ``df`` to/from ``fname`` ``nrepeats`` times using the given pandas methods.
 
     Returns 4 ``np.ndarray`` arrays (read_times, write_times, read_sizes, write_sizes),
@@ -73,7 +83,9 @@ def measure_read_write_performance(df: pd.DataFrame, fname: str, read_method: st
     return [np.array(arr) for arr in (read_times, write_times, read_sizes, write_sizes)]
 
 
-def pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes):
+def pack_benchmark_results(
+    res: List[List[Any]], config: str, read_times: np.ndarray, write_times: np.ndarray, read_sizes: np.ndarray, write_sizes: np.ndarray
+) -> None:
     """Append a summary row (config name + mean/std of each timing/size array) to ``res`` in place."""
     res.append([config, *list(chain(*[(np.mean(arr), np.std(arr)) for arr in (read_times, write_times, read_sizes, write_sizes)]))])
 
@@ -142,7 +154,7 @@ def benchmark_dataframe_parquet_compression(
 
                     _facade.pack_benchmark_results(res, config, read_times, write_times, read_sizes, write_sizes)
                 except Exception:
-                    logger.warning(f"Skipping config {config}")
+                    logger.warning(f"Skipping config {config}")  # audit-exempt: unthrottled_hot_loop_log -- per skipped config in a benchmark sweep of a few dozen configs
 
     return pd.DataFrame(
         res,
@@ -193,14 +205,14 @@ def _standard_method_compression_sweep(file_format: str, read_method: str, write
         yield (compr, read_method, dict(compression={"method": compr}), write_method, dict(compression={"method": compr}, **write_params_extra))
 
 
-def benchmark_dataframe_pickle_compression(res, temp_folder, df, nrepeats):
+def benchmark_dataframe_pickle_compression(res: List[Any], temp_folder: str, df: pd.DataFrame, nrepeats: int) -> None:
     """Benchmark pickle read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "pickle"
     sweep = _standard_method_compression_sweep(file_format, "read_pickle", "to_pickle", extra_write_params={"protocol": -1})
     _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 
-def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
+def benchmark_dataframe_hdf_compression(res: List[Any], temp_folder: str, df: pd.DataFrame, nrepeats: int) -> None:
     """Benchmark HDF5 read/write across compression libraries (zlib/lzo/bzip2/blosc) and compression levels, appending each config's results to ``res`` in place."""
     file_format = "hdf"
 
@@ -213,19 +225,19 @@ def benchmark_dataframe_hdf_compression(res, temp_folder, df, nrepeats):
     _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep())
 
 
-def benchmark_dataframe_csv_compression(res, temp_folder, df, nrepeats):
+def benchmark_dataframe_csv_compression(res: List[Any], temp_folder: str, df: pd.DataFrame, nrepeats: int) -> None:
     """Benchmark CSV read/write across compression methods (zip/gzip/bz2/zstd/xz/tar), appending each config's results to ``res`` in place."""
     file_format = "csv"
     sweep = _standard_method_compression_sweep(file_format, "read_csv", "to_csv")
     _run_compression_sweep(res, temp_folder, df, nrepeats, file_format, sweep)
 
 
-def benchmark_dataframe_orc_compression(res, temp_folder, df, nrepeats):
+def benchmark_dataframe_orc_compression(res: List[Any], temp_folder: str, df: pd.DataFrame, nrepeats: int) -> None:
     """Benchmark ORC read/write (single default config), appending the results to ``res`` in place."""
     _run_compression_sweep(res, temp_folder, df, nrepeats, "orc", [("", "read_orc", dict(), "to_orc", dict())])
 
 
-def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
+def benchmark_dataframe_feather_compression(res: List[Any], temp_folder: str, df: pd.DataFrame, nrepeats: int) -> None:
     """Benchmark feather read/write (single default config), appending the results to ``res`` in place."""
     _run_compression_sweep(res, temp_folder, df, nrepeats, "feather", [("", "read_feather", dict(), "to_feather", dict())])
 
@@ -233,13 +245,13 @@ def benchmark_dataframe_feather_compression(res, temp_folder, df, nrepeats):
 def benchmark_dataframe_compression(
     df: pd.DataFrame,
     head: int = 100_000,
-    benchmark_dir_path=None,
+    benchmark_dir_path: Optional[str] = None,
     nrepeats: int = 10,
-    sort_by="mean_write_size",
+    sort_by: str = "mean_write_size",
     return_styled: bool = True,
     should_clean_temp_folder: bool = True,
     verbose: bool = True,
-):
+) -> Any:
     """Tries various formats & compressiom methods on a part of your dataframe, reports write, read data size & durations."""
     warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 

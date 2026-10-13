@@ -80,7 +80,7 @@ if HAS_NUMBA:
         if N_a < 1 or N_b < 1:
             return None
         if N_a > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD or N_b > SENTENCES_SIMILARITY_SAFE_TOKEN_THRESHOLD:
-            logger.warning(
+            logger.warning(  # audit-exempt: credential_shaped_log_arg -- logs the integer token threshold constant, not a credential
                 "sentences_similarity_numba called with N_a=%d, N_b=%d tokens, exceeding the safe threshold of %d. "
                 "The greedy matching pass is O(w_min * N_a * N_b); expect quadratic-ish slowdown on long inputs.",
                 N_a,

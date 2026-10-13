@@ -144,7 +144,7 @@ def init(**params) -> None:
 
     globals().update(params)
 
-def close_browser():
+def close_browser() -> None:
     """Closes the active Selenium browser instance if any, swallowing errors, and clears the module-level `browser` reference."""
     global browser
     try:
@@ -179,7 +179,7 @@ def browser_get(path:str)->None:
         else:
             raise(e)
 
-def find_chrome_executable():
+def find_chrome_executable() -> Optional[str]:
     """fix find_chrome_executable for x86 Windows"""
     candidates = set()
     for item in map(os.environ.get, ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")):
@@ -512,7 +512,7 @@ def _navigate_home(page: str) -> bool:
         except Exception as e:  # noqa: PERF203 -- per-attempt retry loop; the try/except IS the retry mechanism
             ste = str(e)
             if "not reachable" in ste or "no such window" in ste:
-                logger.warning("Restarting Selenium instance")
+                logger.warning("Restarting Selenium instance")  # audit-exempt: unthrottled_hot_loop_log -- driver restart is itself bounded by the retry loop around it
                 # On the "no such window" half the driver process is typically still alive;
                 # overwriting the handle directly orphaned a chromedriver on every restart.
                 close_browser()
@@ -562,7 +562,7 @@ def _submit_credentials(keys: Any) -> bool:
     except Exception as e:  # nosec B110 - best-effort password-field lookup/entry; if elem_pwd stays None it is explicitly checked and logged as an error two lines below
         logger.debug("find_element_by_name password attempt failed: %s", e)
     if elem_pwd is None:
-        logger.error("Could not login to %s: elem_pwd %s not located.", target, password_input_name)
+        logger.error("Could not login to %s: elem_pwd %s not located.", target, password_input_name)  # audit-exempt: credential_shaped_log_arg -- password_input_name is the NAME of a form field, not its value
         return False
 
     pythonlib.imitate_delay(min_delay_seconds=0, max_delay_seconds=3, b_force=True)
@@ -673,7 +673,7 @@ def _restart_for_missing_cookie(
 def LoginAndGetCookies(
     default_headers: bool = True,
     seconds_to_sleep_on_error: int = 60,
-    restart_on_no_cookie=False,
+    restart_on_no_cookie: bool = False,
     _restart_attempt: int = 0,
     _max_restart_attempts: int = 50,
 ) -> bool:

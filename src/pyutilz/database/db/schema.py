@@ -66,7 +66,7 @@ def ensure_pg_table_exists(
     # m_db_schema sets the search_path AND is stored on the facade, so a table living in "myschema"
     # was reported absent by a hard-coded "public" probe -- and the CREATE TABLE that followed then
     # failed with DuplicateTable, which basic_db_execute swallows as a warning.
-    exists = _facade.check_if_pg_table_exists(table, schema_name=getattr(_facade, "db_schema", None) or "public")
+    exists = _facade.check_if_pg_table_exists(table, schema_name=getattr(_facade, "db_schema", None) or "public")  # audit-exempt: default_via_or -- empty schema name means unset; the Postgres default is intended
     if exists is None:
         # The probe did not come back at all. Creating the table now would run a CREATE against a
         # database we could not even query -- and DuplicateTable is swallowed as a warning further
@@ -155,7 +155,9 @@ def read_table_into_dict_reversed(
                 dict_enums[the_id] = key
 
 
-def read_unique_table_field(table_name: str, field_name: str, container: Union[set, dict], clear: bool = True, placeholder_value=None) -> Union[set, dict]:
+def read_unique_table_field(
+    table_name: str, field_name: str, container: Union[set, dict], clear: bool = True, placeholder_value: Any = None
+) -> Union[set, dict]:
     """Loads the distinct values of one table column into ``container`` and returns it.
 
     A set receives the values themselves; a dict receives them as keys, each mapped to
@@ -296,7 +298,7 @@ def _as_utc_datetime(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
 
-def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: int = 0):
+def create_postgres_range_partitions(table_name: str, from_date: date, to_date: date, partition_size: str, bigint_degree: Optional[int] = 0) -> None:
     """Creates one range partition of ``table_name`` per period between ``from_date`` and ``to_date``.
 
     ``partition_size`` is the period granularity (``day``/``week``/``month``/``year``) and each
@@ -330,7 +332,7 @@ def delete_postgres_range_partitions(table_name: str, from_date: date, to_date: 
         _facade.safe_execute(cmd)
 
 
-def enable_tables_sizes_approximation():
+def enable_tables_sizes_approximation() -> None:
     """
     Example usage after the function is created:
 

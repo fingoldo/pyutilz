@@ -491,7 +491,7 @@ def classify_column_types(df: Optional[pd.DataFrame] = None, col: Optional[str] 
     return col_is_boolean, col_is_object, col_is_datetime, col_is_categorical, col_is_numeric
 
 
-def get_df_memory_consumption(df, max_cols: int = 0, deep: bool = True) -> float:
+def get_df_memory_consumption(df: Any, max_cols: int = 0, deep: bool = True) -> float:
     """
     Returns RAM occupied by a pandas or polars dataframe in bytes.
 

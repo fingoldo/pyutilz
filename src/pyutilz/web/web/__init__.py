@@ -1,4 +1,4 @@
-"""Web scraping helpers: proxy rotation, session/header management, retrying URL fetches and parallel/streaming downloads.
+"""Web scraping helpers: proxy rotation, session/header management, retrying URL fetches and parallel/streaming downloads.  # audit-exempt: import_cycle -- documented import-parent-as-_facade re-export idiom; plain import defers attribute lookup, enforced by test_reexport_package_idiom
 
 Historically one flat 1030-LOC module; carved into cohesive submodules once it passed the
 1000-LOC limit, with the entire original surface (public AND private names alike) re-exported

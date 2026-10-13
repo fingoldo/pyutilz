@@ -241,7 +241,7 @@ def discover_tuners(package: str, warn_on_import_fail: bool = True) -> dict:
             collected += 1
         except Exception as e:  # noqa: PERF203 -- per-iteration fault isolation is intentional (one broken module shouldn't stop the walk)
             if warn_on_import_fail:
-                logger.warning("Failed to import %r: %s", modname, e)
+                logger.warning("Failed to import %r: %s", modname, e)  # audit-exempt: unthrottled_hot_loop_log -- one warning per broken tuner module, bounded by the module count
             # Continue; don't let one broken module stop the walk.
 
     logger.debug("Discovered %s tuner specs from %s modules", len(_REGISTRY), collected)
@@ -331,7 +331,7 @@ def retune_all(
         for model_name, device_ids in gpu_groups.items():
             device_id = _pick_least_loaded_device(device_ids, idle_wait_tries, idle_wait_sec)
             if device_id is None:
-                logger.warning("No available device for %s; skipping %s", model_name, kernel_name)
+                logger.warning("No available device for %s; skipping %s", model_name, kernel_name)  # audit-exempt: unthrottled_hot_loop_log -- one warning per kernel on device exhaustion, bounded by the kernel count
                 continue
             code_version = compute_code_version(*spec.variant_fns, extra_fns=spec.extra_fns, salt=spec.salt)
             results[(model_name, kernel_name)] = _run_spec_tuning(

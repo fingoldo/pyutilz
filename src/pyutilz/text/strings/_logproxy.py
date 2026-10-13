@@ -28,7 +28,8 @@ class _FacadeLoggerProxy:
         """Returns the current `logger` attribute of `pyutilz.text.strings`, falling back to a plain named logger if unset."""
         import pyutilz.text.strings as _pkg  # lazy: avoids import cycle at submodule load time
 
-        return getattr(_pkg, "logger", None) or logging.getLogger("pyutilz.text.strings")
+        logger = getattr(_pkg, "logger", None)
+        return logger if logger is not None else logging.getLogger("pyutilz.text.strings")
 
     def __getattr__(self, name):
         return getattr(self._resolve(), name)

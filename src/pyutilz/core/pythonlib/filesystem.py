@@ -25,14 +25,14 @@ from ._common import (
     shelve,
     sys,
 )
-from typing import Literal
+from typing import Any, Iterator, Literal
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Filesystem
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def get_partitioned_filepath(fname: str, depth: int = 2, replace_char="_"):
+def get_partitioned_filepath(fname: str, depth: int = 2, replace_char: str = "_") -> str:
     """Returns optimized filepath derived from the first N (depth) chars of the filename, to view them manually in a more optimized form
     Instead of an enormously huge chunk of files in a single dir.
     Chars are lowercased and replaced with a safe symbol if needed, to stcik to the names allowed by a filesystem.
@@ -76,7 +76,7 @@ def ensure_valid_filename(name: str, max_length: int = 255) -> str:
     )
 
 
-def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs):
+def load_file(fpath: str, unpickle_to_pd: bool = True, **kwargs: Any) -> Any:
     """
     Load plicked object, dataframe, Catboost model, based on file presence and name.
     """
@@ -177,7 +177,7 @@ class ObjectsAndFilesProcessor:
                 nprocessed += 1
             else:
                 if verbose:
-                    logger.warning("Skipped object %s.", obj_name)
+                    logger.warning("Skipped object %s.", obj_name)  # audit-exempt: unthrottled_hot_loop_log -- verbose-only notice, one line per skipped object of one walk
         return nprocessed
 
     def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
@@ -273,7 +273,9 @@ class HashableDict(dict):
 
 
 @contextlib.contextmanager
-def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol=None, writeback=False, timeout: int = 10):
+def open_safe_shelve(
+    db_path: str, flag: Literal["r", "w", "c", "n"] = "c", protocol: Optional[int] = None, writeback: bool = False, timeout: int = 10
+) -> Iterator[shelve.Shelf]:
     """Context manager opening `db_path` as a shelve db, guarded by a file lock to prevent concurrent access.
 
     On exit, closes/syncs the shelve database, then flushes the lock file and fsyncs it to disk
@@ -281,7 +283,7 @@ def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", prot
     """
 
     with portalocker.Lock(f"{db_path}.lock", "wb", timeout=timeout) as fh:
-        db = shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)
+        db = shelve.open(db_path, flag=flag, protocol=protocol, writeback=writeback)  # nosec B301 - db_path is caller-supplied (this context manager's whole purpose is a locked local shelve db)  # audit-exempt: resource_handle_safety -- the @contextmanager finally block closes the shelve
         try:
             yield db
         finally:
@@ -295,7 +297,7 @@ def open_safe_shelve(db_path: str, flag: Literal["r", "w", "c", "n"] = "c", prot
 
 
 @contextmanager
-def suppress_stdout_stderr():
+def suppress_stdout_stderr() -> Iterator[None]:
     """Context manager that redirects stdout and stderr to os.devnull for the duration of the block, restoring them afterwards."""
     with open(os.devnull, "w", encoding="utf-8") as devnull:
         old_stdout = sys.stdout

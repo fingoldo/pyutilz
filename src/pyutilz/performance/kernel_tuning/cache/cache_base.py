@@ -44,7 +44,7 @@ def _slug(s: str, maxlen: int = 40) -> str:
     s = re.sub(r"\(R\)|\(TM\)|\bCPU\b|\bGPU\b|@.*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s+", "-", s.strip())
     s = re.sub(r"[^A-Za-z0-9._-]+", "", s)
-    return s.strip("-._").lower()[:maxlen] or "unknown"
+    return s.strip("-._").lower()[:maxlen] or "unknown"  # audit-exempt: default_via_or -- empty slug means unnamed; unknown is the intended default
 
 
 @lru_cache(maxsize=1)
@@ -167,7 +167,7 @@ def _gpu_slug_and_cc() -> tuple[str, str]:
         summary = _gpu_summary_cached(dev_id)
         if summary is None:
             return (_GPU_NONE, "") if _gpu_device_count() == 0 else (_GPU_UNKNOWN, "")
-        name = summary.get("name") or "unknown"
+        name = summary.get("name") or "unknown"  # audit-exempt: default_via_or -- empty name means unnamed; unknown is the intended default
         cc = f"{int(summary.get('cc_major', 0))}.{int(summary.get('cc_minor', 0))}"
         return (_slug(name), cc)
     except Exception as e:

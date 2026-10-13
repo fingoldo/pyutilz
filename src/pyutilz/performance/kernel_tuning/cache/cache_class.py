@@ -67,7 +67,7 @@ def register_default_cache(path: str) -> bool:
         fac._DEFAULT_CACHE = c
         logger.debug("kernel_tuning_cache: registered %d default kernels from %s", len(payload.get("kernels", {})), path)
         return True
-    except FileNotFoundError:
+    except FileNotFoundError:  # audit-exempt: non_neutral_except_fallback -- no default cache file means nothing to register; False is the documented return value
         logger.debug("kernel_tuning_cache: no default cache at %s", path)
         fac._DEFAULT_CACHE = None
         return False
@@ -123,7 +123,7 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
         # arg) is interpreted as that directory if a caller passes one. The
         # once-per-process guard + sweep markers key off this path, so it stays a
         # stable per-cache identity. None for in-memory caches.
-        self._path = None if in_memory else (path or host_cache_dir())
+        self._path = None if in_memory else (path or host_cache_dir())  # audit-exempt: default_via_or -- empty path means unset: the host cache directory is the intended default
         # The kernels whose legacy monolith has already been migrated this
         # process (one-time split per host dir).
         self._migrated = False
@@ -215,7 +215,7 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
         entry: dict = {
             "axes": list(axes),
             "regions": regions,
-            "tuned_utc": tuned_utc or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+            "tuned_utc": tuned_utc or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),  # audit-exempt: default_via_or -- empty tuned_utc means unset: the current time is the intended default
         }
         if code_version is not None:
             entry["code_version"] = code_version
@@ -385,10 +385,10 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
             # Clear the once-per-process sweep guard so a subsequent get_or_tune
             # can actually re-tune this kernel (B11) instead of short-circuiting
             # to the fallback because "we already swept it this process".
-            _TUNED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
+            _TUNED_THIS_PROCESS.discard((kernel_name, self._path if self._path is not None else id(self)))
             # Same for the once-per-process invalidation-log guard: an explicit evict is a fresh start,
             # so a future staleness detection for this kernel should log again.
-            _INVALIDATION_LOGGED_THIS_PROCESS.discard((kernel_name, self._path or id(self)))
+            _INVALIDATION_LOGGED_THIS_PROCESS.discard((kernel_name, self._path if self._path is not None else id(self)))
             present = kernel_name in loaded.get("kernels", {})
             self._invalidate_plan(kernel_name)
             if present:
@@ -424,4 +424,4 @@ class KernelTuningCache(_CachePersistenceMixin, _CacheSweepClaimMixin, _CacheTun
                 return {"matched": True, "region_index": i, "region": payload, "reason": f"region {i} matched"}
             if first_reason is None:
                 first_reason = f"region 0 rejected: {why}"
-        return {"matched": False, "region_index": None, "region": None, "reason": first_reason or f"no region matched dims {dims}"}
+        return {"matched": False, "region_index": None, "region": None, "reason": first_reason or f"no region matched dims {dims}"}  # audit-exempt: default_via_or -- empty reason means no reason; the dims message is the intended default

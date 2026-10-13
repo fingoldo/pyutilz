@@ -24,7 +24,7 @@ def _asyncio_bindings(tree: ast.Module, primitive_names: frozenset[str]) -> tupl
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "asyncio":
-                    aliases.add(alias.asname or "asyncio")
+                    aliases.add(alias.asname if alias.asname is not None else "asyncio")
         elif isinstance(node, ast.ImportFrom) and node.module == "asyncio" and not node.level:
             for alias in node.names:
                 if alias.name in primitive_names:

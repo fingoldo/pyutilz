@@ -96,7 +96,7 @@ def get_session_token(username: Optional[str] = None, password: Optional[str] = 
     return None
 
 
-def simplify_types(obj: dict, sep=",") -> dict:
+def simplify_types(obj: dict, sep: str = ",") -> dict:
     """FM does not accept fields that are lists & dicts easily.
 
     Returns a NEW dict; ``obj`` is left untouched. ``obj.copy()`` used to copy only the iteration

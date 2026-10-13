@@ -118,11 +118,11 @@ def _fill_config_section(config: Any, section: str, values: dict, variables: lis
 
             config[section][var] = val
         else:
-            logger.warning("No variable %s" % var)
+            logger.warning("No variable %s" % var)  # audit-exempt: unthrottled_hot_loop_log -- one per missing variable in one config file, bounded by the file size
 
 
 def write_config_file(
-    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode="append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
+    file: str, object: dict, section: Optional[str] = "MAIN", variables: Any = None, encryption: Optional[str] = "xor", mode: str = "append"  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
 ) -> Optional[bool]:
     """Write values from ``object`` into an INI-style config file under ``section``.
 

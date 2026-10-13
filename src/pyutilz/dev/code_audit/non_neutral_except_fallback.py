@@ -6,7 +6,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- non-neutral literal substituted by a silent except handler ----------
 #
@@ -279,7 +279,7 @@ def scan_non_neutral_except_fallback(
         for try_node in [n for n in ast.walk(tree) if isinstance(n, _try_types)]:
             for handler in try_node.handlers:
                 desc = _flagged_substitution(handler, try_node.body, audible_log_methods, audible_functions)
-                if desc is None:
+                if desc is None or is_line_exempt(src_lines, handler.lineno, "non_neutral_except_fallback"):
                     continue
                 findings.append(
                     Finding(

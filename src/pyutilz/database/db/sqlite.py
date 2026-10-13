@@ -45,7 +45,9 @@ def ensure_db_tables_created(conn: sqlite3.Connection, cursor: sqlite3.Cursor, s
         return False
 
 
-def insert_sqllite_data(table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: sqlite3.Cursor, conn: sqlite3.Connection, verbose: int = 1):
+def insert_sqllite_data(
+    table_name: str, data: Iterable[Dict[str, Any]], columns: Iterable, cursor: sqlite3.Cursor, conn: sqlite3.Connection, verbose: int = 1
+) -> int:
     """Самый быстрый способ для массовых вставок"""
 
     # Regression fix: `columns` is iterated 3 separate times below (validate, build

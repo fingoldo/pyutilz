@@ -14,7 +14,7 @@ class TestFunctionLog:
 
     def test_initialize_function_log(self):
         """Test initializing function log"""
-        from pyutilz.logginglib import initialize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log
 
         log = initialize_function_log(explicit_only=False)
 
@@ -28,7 +28,7 @@ class TestFunctionLog:
 
     def test_initialize_function_log_explicit_only(self):
         """Test with explicit_only flag"""
-        from pyutilz.logginglib import initialize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log
 
         log = initialize_function_log(explicit_only=True)
 
@@ -36,7 +36,7 @@ class TestFunctionLog:
 
     def test_log_result(self):
         """Test logging single result"""
-        from pyutilz.logginglib import initialize_function_log, log_result
+        from pyutilz.dev.logginglib import initialize_function_log, log_result
 
         log = initialize_function_log()
         log_result(log, "test_key", 42, verbose=False)
@@ -50,7 +50,7 @@ class TestFunctionLog:
 
     def test_log_results(self):
         """Test logging multiple results"""
-        from pyutilz.logginglib import initialize_function_log, log_results
+        from pyutilz.dev.logginglib import initialize_function_log, log_results
 
         log = initialize_function_log()
         results = {"key1": "value1", "key2": 123}
@@ -63,7 +63,7 @@ class TestFunctionLog:
 
     def test_finalize_function_log(self):
         """Test finalizing function log"""
-        from pyutilz.logginglib import initialize_function_log, finalize_function_log
+        from pyutilz.dev.logginglib import initialize_function_log, finalize_function_log
 
         log = initialize_function_log()
         log["test"] = "data"
@@ -79,7 +79,7 @@ class TestLoggingActivities:
 
     def test_log_activity(self):
         """Test logging activity"""
-        from pyutilz.logginglib import initialize_function_log, log_activity
+        from pyutilz.dev.logginglib import initialize_function_log, log_activity
         import time
 
         log = initialize_function_log()
@@ -104,7 +104,7 @@ class TestLoggingActivities:
         ``suffixize()`` -> ``inflect``, so ``lang="ru"`` exercises the full function body
         without it -- see test_log_loaded_rows_english_message for the inflect-gated half.
         """
-        from pyutilz.logginglib import initialize_function_log, log_loaded_rows
+        from pyutilz.dev.logginglib import initialize_function_log, log_loaded_rows
 
         log = initialize_function_log()
         log_loaded_rows(["a", "b", "c"], source="my_table", source_type="db_table", results_log=log, lang="ru", verbose=False)
@@ -120,7 +120,7 @@ class TestLoggingActivities:
         """results_log=None must not raise: the function substitutes its own {"results": {}}."""
         import logging
 
-        from pyutilz.logginglib import log_loaded_rows
+        from pyutilz.dev.logginglib import log_loaded_rows
 
         with caplog.at_level(logging.INFO, logger="pyutilz.dev.logginglib"):
             log_loaded_rows([1, 2], source="t", source_type="db_table", results_log=None, lang="ru", verbose=True)
@@ -131,7 +131,7 @@ class TestLoggingActivities:
         assert any("2" in m and "t" in m for m in messages), messages
 
     def test_log_loaded_rows_rejects_unknown_source_type(self):
-        from pyutilz.logginglib import log_loaded_rows
+        from pyutilz.dev.logginglib import log_loaded_rows
 
         with pytest.raises(AssertionError):
             log_loaded_rows([1], source="t", source_type="carrier_pigeon", lang="ru", verbose=False)
@@ -147,7 +147,7 @@ class TestLoggingActivities:
 
         import logging
 
-        from pyutilz.logginglib import initialize_function_log, log_loaded_rows
+        from pyutilz.dev.logginglib import initialize_function_log, log_loaded_rows
 
         log = initialize_function_log()
         with caplog.at_level(logging.INFO):
@@ -166,7 +166,7 @@ class TestLoggingDecorators:
 
     def test_logged_decorator(self):
         """Test @logged decorator"""
-        from pyutilz.logginglib import logged
+        from pyutilz.dev.logginglib import logged
 
         @logged(db_path=None)
         def sample_function(x, y, results_log=None):
@@ -177,7 +177,7 @@ class TestLoggingDecorators:
 
     def test_debugged_decorator(self):
         """Test @debugged decorator"""
-        from pyutilz.logginglib import debugged
+        from pyutilz.dev.logginglib import debugged
 
         @debugged()
         def sample_function(x):
@@ -216,7 +216,7 @@ class TestInitLogging:
         Paired with the file case below: asserting only "does not crash" leaves the two modes
         indistinguishable, so a file handler leaking into console mode (or vice versa) passes.
         """
-        from pyutilz.logginglib import init_logging
+        from pyutilz.dev.logginglib import init_logging
 
         returned = init_logging(log_to_file=False, level=logging.INFO)
 
@@ -233,7 +233,7 @@ class TestInitLogging:
         the trailing ``.py`` is swapped for ``.log`` and a name without it simply gains ``.log``.
         """
         from pyutilz.dev.logginglib import _log_filename
-        from pyutilz.logginglib import init_logging
+        from pyutilz.dev.logginglib import init_logging
 
         forced = str(tmp_path / "test.py")
         expected = Path(_log_filename(forced))
@@ -257,7 +257,7 @@ class TestEdgeCases:
 
     def test_log_result_with_none(self):
         """Test logging None value"""
-        from pyutilz.logginglib import initialize_function_log, log_result
+        from pyutilz.dev.logginglib import initialize_function_log, log_result
 
         log = initialize_function_log()
         log_result(log, "none_key", None, verbose=False)
@@ -269,7 +269,7 @@ class TestEdgeCases:
 
     def test_log_results_empty_dict(self):
         """Test logging empty results"""
-        from pyutilz.logginglib import initialize_function_log, log_results
+        from pyutilz.dev.logginglib import initialize_function_log, log_results
 
         log = initialize_function_log()
         log_results(log, {}, verbose=False)

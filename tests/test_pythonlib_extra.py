@@ -11,7 +11,7 @@ from datetime import date, datetime
 
 class TestShowMethods:
     def test_basic(self):
-        from pyutilz.pythonlib import show_methods
+        from pyutilz.core.pythonlib import show_methods
 
         class Foo:
             def bar(self): ...
@@ -26,7 +26,7 @@ class TestShowMethods:
         assert "__dunder__" not in result
 
     def test_uppercased_filter(self):
-        from pyutilz.pythonlib import show_methods
+        from pyutilz.core.pythonlib import show_methods
 
         class Foo:
             def lower(self): ...
@@ -37,7 +37,7 @@ class TestShowMethods:
         assert "lower" not in result
 
     def test_empty_object(self):
-        from pyutilz.pythonlib import show_methods
+        from pyutilz.core.pythonlib import show_methods
 
         result = show_methods(object())
         assert isinstance(result, list)
@@ -49,22 +49,22 @@ class TestShowMethods:
 
 class TestKeysChangedEnough:
     def test_change_above_threshold(self):
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"b": 180}, {"b": 200}, min_change_percent=10.0, key_contains="b") is True
 
     def test_change_below_threshold(self):
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"b": 195}, {"b": 200}, min_change_percent=10.0, key_contains="b") is False
 
     def test_prev_zero_returns_true(self):
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x") is True
 
     def test_key_filter(self):
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         # "a" changed a lot but key_contains="b" so ignored
         assert keys_changed_enough({"a": 999, "b": 200}, {"a": 1, "b": 200}, min_change_percent=10.0, key_contains="b") is False
@@ -73,7 +73,7 @@ class TestKeysChangedEnough:
         """Regression: dividing by un-abs'd prev_value made `change` negative for a negative
         baseline, so `change >= min_change_percent` was always False no matter how large the
         real swing was."""
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"a": 200}, {"a": -100}, min_change_percent=10.0) is True
         assert keys_changed_enough({"a": -200}, {"a": -100}, min_change_percent=10.0) is True
@@ -81,12 +81,12 @@ class TestKeysChangedEnough:
     def test_zero_to_zero_is_not_changed(self):
         """Regression: the prev_value==0.0 branch returned True unconditionally, so a value
         that stayed at exactly 0 was always reported as "changed enough"."""
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"x": 0}, {"x": 0}, min_change_percent=1.0, key_contains="x") is False
 
     def test_zero_to_nonzero_is_changed(self):
-        from pyutilz.pythonlib import keys_changed_enough
+        from pyutilz.core.pythonlib import keys_changed_enough
 
         assert keys_changed_enough({"x": 5}, {"x": 0}, min_change_percent=1.0, key_contains="x") is True
 
@@ -97,12 +97,12 @@ class TestKeysChangedEnough:
 
 class TestUnpackCounter:
     def test_basic(self):
-        from pyutilz.pythonlib import unpack_counter
+        from pyutilz.core.pythonlib import unpack_counter
 
         assert unpack_counter([("a", 3), ("b", 2)]) == ["a", "b"]
 
     def test_empty(self):
-        from pyutilz.pythonlib import unpack_counter
+        from pyutilz.core.pythonlib import unpack_counter
 
         assert unpack_counter([]) == []
 
@@ -113,27 +113,27 @@ class TestUnpackCounter:
 
 class TestFlattenKeysToSet:
     def test_dict(self):
-        from pyutilz.pythonlib import flatten_keys_to_set
+        from pyutilz.core.pythonlib import flatten_keys_to_set
 
         result = flatten_keys_to_set({"a": 1, "b": 2})
         assert "a:1" in result
         assert "b:2" in result
 
     def test_nested(self):
-        from pyutilz.pythonlib import flatten_keys_to_set
+        from pyutilz.core.pythonlib import flatten_keys_to_set
 
         result = flatten_keys_to_set({"outer": {"inner": 5}})
         assert "inner:5" in result
 
     def test_list_of_strings(self):
-        from pyutilz.pythonlib import flatten_keys_to_set
+        from pyutilz.core.pythonlib import flatten_keys_to_set
 
         result = flatten_keys_to_set(["hello", "world"])
         assert "hello" in result
         assert "world" in result
 
     def test_no_merge_symbol(self):
-        from pyutilz.pythonlib import flatten_keys_to_set
+        from pyutilz.core.pythonlib import flatten_keys_to_set
 
         # Use numeric value (non-iterable) so both key and value are added separately
         result = flatten_keys_to_set({"k": 7}, dict_merge_symbol=None)
@@ -141,7 +141,7 @@ class TestFlattenKeysToSet:
         assert "7" in result
 
     def test_number_stringify(self):
-        from pyutilz.pythonlib import flatten_keys_to_set
+        from pyutilz.core.pythonlib import flatten_keys_to_set
 
         result = flatten_keys_to_set(42, stringify=True)
         assert "42" in result
@@ -153,12 +153,12 @@ class TestFlattenKeysToSet:
 
 class TestGetOrWarn:
     def test_field_present(self):
-        from pyutilz.pythonlib import get_or_warn
+        from pyutilz.core.pythonlib import get_or_warn
 
         assert get_or_warn({"x": 10}, "x", "test") == 10
 
     def test_field_missing(self):
-        from pyutilz.pythonlib import get_or_warn
+        from pyutilz.core.pythonlib import get_or_warn
 
         assert get_or_warn({"x": 10}, "y", "test") is None
 
@@ -169,19 +169,19 @@ class TestGetOrWarn:
 
 class TestGetPartitionedFilepath:
     def test_alpha(self):
-        from pyutilz.pythonlib import get_partitioned_filepath
+        from pyutilz.core.pythonlib import get_partitioned_filepath
 
         result = get_partitioned_filepath("hello.txt", depth=2)
         assert result == os.sep.join(["h", "e"]) + os.sep
 
     def test_special_chars_replaced(self):
-        from pyutilz.pythonlib import get_partitioned_filepath
+        from pyutilz.core.pythonlib import get_partitioned_filepath
 
         result = get_partitioned_filepath("!@file", depth=2)
         assert result == os.sep.join(["_", "_"]) + os.sep
 
     def test_depth_1(self):
-        from pyutilz.pythonlib import get_partitioned_filepath
+        from pyutilz.core.pythonlib import get_partitioned_filepath
 
         result = get_partitioned_filepath("abc", depth=1)
         assert result == "a" + os.sep
@@ -198,19 +198,19 @@ class TestEnsureValidFilename:
         ("COM1.txt", "_.txt"),
     ])
     def test_cases(self, inp, expected_substr):
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         result = ensure_valid_filename(inp)
         assert result == expected_substr
 
     def test_control_chars(self):
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         for i in range(32):
             assert ensure_valid_filename(chr(i)) == "_"
 
     def test_max_length(self):
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         result = ensure_valid_filename("a" * 500, max_length=10)
         assert len(result) == 10
@@ -222,7 +222,7 @@ class TestEnsureValidFilename:
         """Regression-coverage (2026-07-21 audit round 2, MEDIUM): the Windows
         reserved-device-name regex was entirely untested for a BARE name (no extension) --
         only ``"COM1.txt"`` (with an extension) was ever exercised."""
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         assert ensure_valid_filename(reserved_name) == "_"
 
@@ -230,7 +230,7 @@ class TestEnsureValidFilename:
         "con", "nul", "aux", "prn", "com1", "lpt1",
     ])
     def test_reserved_device_names_are_case_insensitive(self, reserved_name_lower):
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         assert ensure_valid_filename(reserved_name_lower) == "_"
 
@@ -241,7 +241,7 @@ class TestEnsureValidFilename:
     def test_names_that_merely_resemble_reserved_names_pass_through_unchanged(self, passthrough_name):
         """The documented negative-lookahead boundary: these must NOT be replaced, unlike a bare
         reserved name or one followed by a dot (e.g. "COM1.txt")."""
-        from pyutilz.pythonlib import ensure_valid_filename
+        from pyutilz.core.pythonlib import ensure_valid_filename
 
         assert ensure_valid_filename(passthrough_name) == passthrough_name
 
@@ -258,7 +258,7 @@ class TestGetHumanReadableSetSize:
         (500, "500"),
     ])
     def test_sizes(self, size, expected):
-        from pyutilz.pythonlib import get_human_readable_set_size
+        from pyutilz.core.pythonlib import get_human_readable_set_size
 
         assert get_human_readable_set_size(size) == expected
 
@@ -269,7 +269,7 @@ class TestGetHumanReadableSetSize:
 
 class TestSuppressStdoutStderr:
     def test_suppresses_output(self, capsys):
-        from pyutilz.pythonlib import suppress_stdout_stderr
+        from pyutilz.core.pythonlib import suppress_stdout_stderr
 
         with suppress_stdout_stderr():
             print("should not appear")
@@ -281,7 +281,7 @@ class TestSuppressStdoutStderr:
         assert "visible" in captured.out
 
     def test_restores_on_exception(self):
-        from pyutilz.pythonlib import suppress_stdout_stderr
+        from pyutilz.core.pythonlib import suppress_stdout_stderr
 
         old_stdout = sys.stdout
         try:
@@ -298,7 +298,7 @@ class TestSuppressStdoutStderr:
 
 class TestIsJupyterNotebook:
     def test_not_in_notebook(self):
-        from pyutilz.pythonlib import is_jupyter_notebook
+        from pyutilz.core.pythonlib import is_jupyter_notebook
 
         assert is_jupyter_notebook() is False
 
@@ -309,7 +309,7 @@ class TestIsJupyterNotebook:
 
 class TestIsCudaAvailable:
     def test_returns_bool(self):
-        from pyutilz.pythonlib import is_cuda_available
+        from pyutilz.core.pythonlib import is_cuda_available
 
         assert isinstance(is_cuda_available(), bool)
 
@@ -320,19 +320,19 @@ class TestIsCudaAvailable:
 
 class TestReadTimezonedTs:
     def test_removes_colon_from_tz(self):
-        from pyutilz.pythonlib import read_timezoned_ts
+        from pyutilz.core.pythonlib import read_timezoned_ts
 
         result = read_timezoned_ts("2020-02-20T11:54:00.000-07:00")
         assert result == "2020-02-20T11:54:00.000-0700"
 
     def test_positive_offset(self):
-        from pyutilz.pythonlib import read_timezoned_ts
+        from pyutilz.core.pythonlib import read_timezoned_ts
 
         result = read_timezoned_ts("2020-02-20T11:54:00.000+05:30")
         assert result == "2020-02-20T11:54:00.000+0530"
 
     def test_no_timezone(self):
-        from pyutilz.pythonlib import read_timezoned_ts
+        from pyutilz.core.pythonlib import read_timezoned_ts
 
         # String with no +/- should return as-is
         # Note: the function splits on - which exists in dates, so this tests the len<2 branch
@@ -348,20 +348,20 @@ class TestReadTimezonedTs:
 
 class TestUtcTs2Locstr:
     def test_empty_input(self):
-        from pyutilz.pythonlib import utc_ts_2_locstr
+        from pyutilz.core.pythonlib import utc_ts_2_locstr
 
         assert utc_ts_2_locstr(None) == ""
         assert utc_ts_2_locstr("") == ""
 
     def test_formats_date(self):
-        from pyutilz.pythonlib import utc_ts_2_locstr
+        from pyutilz.core.pythonlib import utc_ts_2_locstr
 
         result = utc_ts_2_locstr("2021-09-22T15:14:34.532707")
         assert "2021" in result
         assert "09" in result
 
     def test_with_dst(self):
-        from pyutilz.pythonlib import utc_ts_2_locstr
+        from pyutilz.core.pythonlib import utc_ts_2_locstr
 
         result = utc_ts_2_locstr("2021-09-22T15:14:34.532707", dst=60)
         assert "мин" in result
@@ -373,14 +373,14 @@ class TestUtcTs2Locstr:
 
 class TestAge:
     def test_known_age(self):
-        from pyutilz.pythonlib import age
+        from pyutilz.core.pythonlib import age
 
         today = date.today()
         dob = date(today.year - 30, today.month, today.day)
         assert age(dob) == 30
 
     def test_birthday_not_yet(self):
-        from pyutilz.pythonlib import age
+        from pyutilz.core.pythonlib import age
 
         today = date.today()
         # Birthday is tomorrow (roughly)
@@ -412,7 +412,7 @@ class TestWeekofmonthExtra:
         # 7-day buckets starting at day 1: days 1-7 -> week 1, 8-14 -> week 2, etc.
         # (regression test for the off-by-one bug where day 7/14/21/28 were bucketed
         # into the *next* week instead of closing out the current 7-day bucket)
-        from pyutilz.pythonlib import weekofmonth
+        from pyutilz.core.pythonlib import weekofmonth
 
         assert weekofmonth(date(2024, 1, day)) == expected
 
@@ -430,14 +430,14 @@ class TestIsFloatExtra:
         ("nan", True),
     ])
     def test_edge_cases(self, val, expected):
-        from pyutilz.pythonlib import is_float
+        from pyutilz.core.pythonlib import is_float
 
         assert is_float(val) is expected
 
 
 class TestToFloatExtra:
     def test_comma_separated(self):
-        from pyutilz.pythonlib import to_float
+        from pyutilz.core.pythonlib import to_float
 
         assert to_float("1,000") == 1000.0
         assert to_float("1,234.5") == 1234.5
@@ -450,21 +450,21 @@ class TestCountTrailingZerosExtra:
         (1.23000, 5, 3),
     ])
     def test_cases(self, number, precision, expected):
-        from pyutilz.pythonlib import count_trailing_zeros
+        from pyutilz.core.pythonlib import count_trailing_zeros
 
         assert count_trailing_zeros(number, precision=precision) == expected
 
 
 class TestBatchExtra:
     def test_uneven(self):
-        from pyutilz.pythonlib import batch
+        from pyutilz.core.pythonlib import batch
 
         result = list(batch([1, 2, 3, 4, 5], n=2))
         assert len(result) == 3
         assert list(result[-1]) == [5]
 
     def test_n_larger_than_list(self):
-        from pyutilz.pythonlib import batch
+        from pyutilz.core.pythonlib import batch
 
         result = list(batch([1, 2], n=10))
         assert len(result) == 1
@@ -473,7 +473,7 @@ class TestBatchExtra:
 
 class TestEnsureDictElemExtra:
     def test_does_not_overwrite(self):
-        from pyutilz.pythonlib import ensure_dict_elem
+        from pyutilz.core.pythonlib import ensure_dict_elem
 
         d = {"k": "original"}
         ensure_dict_elem(d, "k", "new")
@@ -482,7 +482,7 @@ class TestEnsureDictElemExtra:
 
 class TestSortDictByKeyExtra:
     def test_reverse(self):
-        from pyutilz.pythonlib import sort_dict_by_key
+        from pyutilz.core.pythonlib import sort_dict_by_key
 
         result = sort_dict_by_key({"a": 1, "c": 2, "b": 3}, reverse=True)
         assert list(result.keys()) == ["c", "b", "a"]
@@ -490,13 +490,13 @@ class TestSortDictByKeyExtra:
 
 class TestFlattenKeysToDict:
     def test_nested_dict(self):
-        from pyutilz.pythonlib import flatten_keys_to_dict
+        from pyutilz.core.pythonlib import flatten_keys_to_dict
 
         result = flatten_keys_to_dict({"a": {"b": 1, "c": {"d": 2}}})
         assert result == {"b": 1, "d": 2}
 
     def test_list_of_dicts(self):
-        from pyutilz.pythonlib import flatten_keys_to_dict
+        from pyutilz.core.pythonlib import flatten_keys_to_dict
 
         result = flatten_keys_to_dict([{"x": 1}, {"y": 2}])
         assert result == {"x": 1, "y": 2}
@@ -504,7 +504,7 @@ class TestFlattenKeysToDict:
 
 class TestPopulateObjectFromDictExtra:
     def test_overwrites(self):
-        from pyutilz.pythonlib import populate_object_from_dict
+        from pyutilz.core.pythonlib import populate_object_from_dict
 
         class Obj:
             x = 0
@@ -517,19 +517,19 @@ class TestPopulateObjectFromDictExtra:
 
 class TestFilterElementsByTypeExtra:
     def test_empty_dict(self):
-        from pyutilz.pythonlib import filter_elements_by_type
+        from pyutilz.core.pythonlib import filter_elements_by_type
 
         assert filter_elements_by_type({}, allowed_types=(int,)) == {}
 
     def test_empty_list(self):
-        from pyutilz.pythonlib import filter_elements_by_type
+        from pyutilz.core.pythonlib import filter_elements_by_type
 
         assert filter_elements_by_type([], allowed_types=(int,)) == []
 
 
 class TestImitatedelayExtra:
     def test_returns_datetime(self):
-        from pyutilz.pythonlib import imitate_delay
+        from pyutilz.core.pythonlib import imitate_delay
 
         result = imitate_delay(0, 0)
         assert isinstance(result, datetime)

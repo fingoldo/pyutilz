@@ -61,7 +61,7 @@ def _dis_aliases(tree: ast.AST) -> set[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "dis":
-                    names.add(alias.asname or "dis")
+                    names.add(alias.asname if alias.asname is not None else "dis")
     return names
 
 
@@ -79,7 +79,7 @@ def _reads_source(node: ast.AST, dis_aliases: "set[str] | None" = None) -> str |
                 return f"{name}()"
             if name in _DISASSEMBLERS and isinstance(func, ast.Attribute):
                 mod = func.value
-                if isinstance(mod, ast.Name) and mod.id in (dis_aliases or {"dis"}):
+                if isinstance(mod, ast.Name) and mod.id in (dis_aliases if dis_aliases is not None else {"dis"}):
                     return f"dis.{name}()"
         if isinstance(sub, ast.Attribute) and sub.attr in _SOURCE_ATTRS:
             return sub.attr

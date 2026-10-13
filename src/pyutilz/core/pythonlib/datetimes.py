@@ -13,7 +13,7 @@ from ._common import Optional, date, datetime, logger, time, timezone
 # ----------------------------------------------------------------------------------------------------------------------------
 
 
-def utc_to_local(utc_dt):
+def utc_to_local(utc_dt: datetime) -> datetime:
     """Converts a naive UTC datetime to a timezone-aware datetime in the local system timezone."""
     return utc_dt.replace(tzinfo=timezone.utc).astimezone(tz=None)
 
@@ -22,8 +22,8 @@ def utc_ts_2_locstr(
     inp_dt: str,
     dst: Optional[int] = None,
     dst_names: Optional[dict] = None,
-    input_date_format="%Y-%m-%dT%H:%M:%S.%f",
-    output_date_format="%Y-%m-%d %H:%M:%S",
+    input_date_format: str = "%Y-%m-%dT%H:%M:%S.%f",
+    output_date_format: str = "%Y-%m-%d %H:%M:%S",
 ) -> str:
     """
     Format UTC timestamp & optionally calculate time passed
@@ -61,7 +61,7 @@ def utc_ts_2_locstr(
 _TZ_OFFSET_RE = re.compile(r"([+-]\d{2}):(\d{2})$")
 
 
-def read_timezoned_ts(inp):
+def read_timezoned_ts(inp: str) -> str:
     """Drop the colon from a trailing timezone offset; a string without one is returned unchanged.
 
     >>> read_timezoned_ts('2020-02-20T11:54:00.000-07:00')
@@ -72,7 +72,7 @@ def read_timezoned_ts(inp):
     return _TZ_OFFSET_RE.sub(r"\1\2", inp)
 
 
-def datetime_to_unix_ts(dt):
+def datetime_to_unix_ts(dt: datetime) -> int:
     """Converts a naive datetime (treated as UTC) into a whole-second Unix timestamp."""
     from datetime import datetime
 
@@ -128,12 +128,12 @@ def imitate_delay(
     return datetime.now(timezone.utc).replace(tzinfo=None)  # return value feeds back into this function's own last_call_ts (naive-UTC contract, see tests); must stay naive
 
 
-def weekofmonth(date: date):
+def weekofmonth(date: date) -> int:
     """Returns the 1-based week-of-month number for `date` (7-day buckets starting at day 1)."""
     return (date.day - 1) // 7 + 1
 
 
-def datetime_to_utc_timestamp(dt):
+def datetime_to_utc_timestamp(dt: datetime) -> int:
     """Converts a datetime object to UTC timestamp
 
     naive datetime will be considered UTC.

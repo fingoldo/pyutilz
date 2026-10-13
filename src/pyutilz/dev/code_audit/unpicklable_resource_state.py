@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from ._base import Finding, dotted_name, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse
+from ._base import Finding, dotted_name, _DEFAULT_EXCLUDE_DIRS, _iter_py_files, _line_text, _read_src_lines, _safe_parse, is_line_exempt
 
 # --- unpicklable live-resource state without __getstate__ ----------------
 
@@ -160,6 +160,8 @@ def scan_unpicklable_resource_state(
             if _class_defines_getstate(node):
                 continue
             for attr, assign_node in hits:
+                if is_line_exempt(src_lines, assign_node.lineno, "unpicklable_resource_state"):
+                    continue
                 findings.append(Finding(
                     check="unpicklable_resource_state",
                     severity="P2",
