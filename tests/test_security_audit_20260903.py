@@ -168,6 +168,7 @@ class TestRedactSecretsQuotedKeys:
         from pyutilz.text.secrets_scrub import redact_secrets
 
         out = redact_secrets(text)
+        assert leaked, "the parametrised case names no secret to check"
         for secret in leaked:
             assert secret not in out, out
 
@@ -249,7 +250,9 @@ class TestResponseSizeCap:
             assert client.get_json("https://example.org/big", "tag") is None
         # The client's documented negative caching still writes an entry; what must never happen is
         # the over-cap body itself landing in it.
-        for entry in tmp_path.rglob("*.json"):
+        entries = list(tmp_path.rglob("*.json"))
+        assert entries, "the client wrote no cache entry to inspect"
+        for entry in entries:
             assert b"xxxx" not in entry.read_bytes()
 
     def test_declared_content_length_is_refused_up_front(self, tmp_path):
@@ -310,10 +313,8 @@ class TestBinaryResolution:
                 continue
             argv = node.args[0]
             elements = argv.elts if isinstance(argv, ast.List) else [argv]
-            for element in elements[:1]:
-                assert not (
-                    isinstance(element, ast.Constant) and any(name in str(element.value) for name in bare_names)
-                ), f"{module_name}:{node.lineno} spawns a bare executable name; use _resolve_binary()"
+            spawned = [e for e in elements[:1] if isinstance(e, ast.Constant) and any(name in str(e.value) for name in bare_names)]
+            assert not spawned, f"{module_name}:{node.lineno} spawns a bare executable name; use _resolve_binary()"
 
 
 # ---------------------------------------------------------------------------

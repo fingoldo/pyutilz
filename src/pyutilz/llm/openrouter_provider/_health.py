@@ -584,17 +584,17 @@ def list_openrouter_models(
 
     Example:
         >>> # cheapest healthy Claude variant under $1/1M input
-        >>> rows = list_openrouter_models(
+        >>> rows = list_openrouter_models(  # doctest: +SKIP
         ...     name_contains="claude",
         ...     max_input_per_1m=1.0,
         ...     sort_by="uptime",
         ... )
-        >>> top = rows[0]
-        >>> print(top["id"], top["health"]["best_uptime_30m"],
+        >>> top = rows[0]  # doctest: +SKIP
+        >>> print(top["id"], top["health"]["best_uptime_30m"],  # doctest: +SKIP
         ...       top["health"]["best_latency_p50_ms"], "ms p50")
 
         >>> # priciest-but-still-under-$1/1M-output model per provider
-        >>> rows = list_openrouter_models(
+        >>> rows = list_openrouter_models(  # doctest: +SKIP
         ...     max_output_per_1m=1.0,
         ...     return_only_healthy=False,
         ...     group_by_provider=1,

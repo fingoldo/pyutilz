@@ -357,7 +357,7 @@ class AdvancedTokenizer:
         import pickle, gzip  # nosec B403 - pickle is only used below to load back this class's own dump_tokens() output; the actual pickle.load() call at line 243 already carries a nosec B301 justification for the same trust assumption
 
         with gzip.open(f"{name}.pickle", "rb") as handle:
-            whole = pickle.load(handle)  # nosec B301 - round-trip of this class's own dump_tokens() output; name is caller-supplied, same trust level as the write side
+            whole = pickle.load(handle)  # deserialize-ok: reads back this class's own dump_tokens() output at a caller-named path, same trust as the writer  # nosec B301 - round-trip of this class's own dump_tokens() output; name is caller-supplied, same trust level as the write side
 
         for var in vars:
             if var in whole:

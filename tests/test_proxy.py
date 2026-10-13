@@ -339,6 +339,7 @@ class TestIpCheckUrls:
         assert len(IP_CHECK_URLS) >= 2
 
     def test_all_https(self):
+        assert IP_CHECK_URLS, "no IP check URLs configured"
         for url in IP_CHECK_URLS:
             assert url.startswith("https://")
 

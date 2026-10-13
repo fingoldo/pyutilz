@@ -6,6 +6,7 @@ import datetime as _dt
 import errno
 import hashlib
 from pyutilz.core import jsonlib
+from pyutilz.core.env_flag import env_flag
 import logging
 import os
 import re
@@ -124,7 +125,7 @@ def _gpu_opted_out() -> bool:
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     if cvd is not None and cvd.strip() in ("", "-1", "NoDevFiles"):
         return True
-    if os.environ.get("PYUTILZ_DISABLE_GPU", "").strip() == "1":
+    if env_flag("PYUTILZ_DISABLE_GPU"):
         return True
     return any(_predicate_holds(predicate) for predicate in _GPU_OPT_OUT_PREDICATES)
 
@@ -283,7 +284,7 @@ def _read_hw_fingerprint_from_disk(selector: Optional[str] = None) -> Optional[s
 
     ``PYUTILZ_HW_FP_REFRESH=1`` forces a recompute even on a fresh entry (a driver or GPU swap does not change the file by itself).
     """
-    if os.environ.get("PYUTILZ_HW_FP_REFRESH", "").strip() == "1":
+    if env_flag("PYUTILZ_HW_FP_REFRESH"):
         return None
     path = _hw_fp_path()
     if path is None:

@@ -1,13 +1,21 @@
 """Tests for pyutilz.dev.freevar_analysis: AST free-variable analysis for planning safe
 function/method extraction (monolith splits)."""
 
+import ast
 import importlib
+import inspect
+import io
 import textwrap
+import tokenize
 
 import pytest
 
 from pyutilz.dev import freevar_analysis as fva
 from pyutilz.dev.freevar_analysis import analyze_range, format_report, _main
+
+
+def _comments(text):
+    return [tok.string for tok in tokenize.generate_tokens(io.StringIO(text).readline) if tok.type == tokenize.COMMENT]
 
 
 def _write(tmp_path, src):
@@ -195,19 +203,22 @@ def _write_splittable(tmp_path, text=_SPLITTABLE):
     return src
 
 
-def test_split_moves_the_range_and_leaves_a_named_reexport(tmp_path):
-    src = _write_splittable(tmp_path)
-    target = tmp_path / "big_extra.py"
+def test_split_moves_the_range_and_leaves_a_named_reexport(tmp_path, monkeypatch):
+    pkg = tmp_path / "reexportpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
 
-    moved = fva.split_out_module(src, target, "move_a", "move_b")
+    moved = fva.split_out_module(src, pkg / "big_extra.py", "move_a", "move_b")
 
     assert sorted(moved) == ["move_a", "move_b"]
-    rest, new = src.read_text(encoding="utf-8"), target.read_text(encoding="utf-8")
-    assert "def move_a" not in rest and "def move_b" not in rest
-    assert "def keep_me" in rest, "an untouched definition must stay put"
-    assert "from .big_extra import (" in rest
-    assert "move_a as move_a," in rest, "the `as` form is what re-exports rather than merely imports"
-    assert "def move_a" in new and "def move_b" in new
+    monkeypatch.syspath_prepend(str(tmp_path))
+    rest = importlib.import_module("reexportpkg.big")
+    new = importlib.import_module("reexportpkg.big_extra")
+    assert rest.move_a is new.move_a and rest.move_b is new.move_b, "the moved names must be re-exported, as the same objects"
+    assert new.move_a.__module__ == "reexportpkg.big_extra", "a moved definition must live in the new module"
+    assert rest.keep_me.__module__ == "reexportpkg.big", "an untouched definition must stay put"
 
 
 def test_the_comment_between_definitions_travels_with_them(tmp_path):
@@ -218,8 +229,8 @@ def test_the_comment_between_definitions_travels_with_them(tmp_path):
 
     fva.split_out_module(src, target, "move_a", "move_b")
 
-    assert "the whole reason" in target.read_text(encoding="utf-8")
-    assert "the whole reason" not in src.read_text(encoding="utf-8")
+    assert any("the whole reason" in c for c in _comments(target.read_text(encoding="utf-8")))
+    assert not any("the whole reason" in c for c in _comments(src.read_text(encoding="utf-8")))
 
 
 def test_a_move_that_would_leave_a_read_name_behind_is_refused(tmp_path):
@@ -248,17 +259,26 @@ def test_dry_run_checks_everything_and_writes_nothing(tmp_path):
     assert not target.exists()
 
 
-def test_every_moved_body_is_byte_identical_after_the_move(tmp_path):
-    """The property the whole tool exists for: a split is a MOVE, never an edit."""
-    src = _write_splittable(tmp_path)
-    target = tmp_path / "big_extra.py"
-    before = fva._top_level_bodies(src.read_text(encoding="utf-8"))
+def test_every_moved_body_is_identical_after_the_move(tmp_path, monkeypatch):
+    """The property the whole tool exists for: a split is a MOVE, never an edit.
 
-    fva.split_out_module(src, target, "move_a", "move_b")
+    Checked by signature and by calling both copies on the same inputs, so the layout of the source file is free to change."""
+    pkg = tmp_path / "bodypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    before = importlib.import_module("bodypkg.big")
+    calls = {"move_a": ({"b": 1, "a": 2},), "move_b": ("/x/y/z.txt",)}
+    expected = {name: getattr(before, name)(*args) for name, args in calls.items()}
 
-    after = fva._top_level_bodies(target.read_text(encoding="utf-8"))
-    for name in ("move_a", "move_b"):
-        assert after[name] == before[name]
+    fva.split_out_module(src, pkg / "big_extra.py", "move_a", "move_b")
+
+    after = importlib.import_module("bodypkg.big_extra")
+    for name, args in calls.items():
+        assert inspect.signature(getattr(after, name)) == inspect.signature(getattr(before, name))
+        assert getattr(after, name)(*args) == expected[name]
 
 
 def test_the_split_module_still_imports_and_behaves(tmp_path, monkeypatch):
@@ -300,21 +320,25 @@ def test_the_future_import_is_not_duplicated_into_the_new_module(tmp_path):
     fva.split_out_module(src, target, "move_a", "move_b")
 
     text = target.read_text(encoding="utf-8")
-    assert text.count("from __future__ import annotations") == 1
+    futures = [n for n in ast.parse(text).body if isinstance(n, ast.ImportFrom) and n.module == "__future__"]
+    assert [a.name for n in futures for a in n.names] == ["annotations"]
     compile(text, str(target), "exec")
 
 
-def test_back_import_is_written_for_a_name_defined_above_the_split_point(tmp_path):
+def test_back_import_is_written_for_a_name_defined_above_the_split_point(tmp_path, monkeypatch):
     """`CONSTANT` sits above the split point, so by the time the new module loads, the source has already
     executed that line and the import resolves. The splitter writes it rather than refusing."""
-    src = _write_splittable(tmp_path)
-    target = tmp_path / "big_extra.py"
+    pkg = tmp_path / "backimportpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    src = pkg / "big.py"
+    src.write_text(_SPLITTABLE, encoding="utf-8")
 
-    fva.split_out_module(src, target, "keep_me", "keep_me", back_import_ok=True)
+    fva.split_out_module(src, pkg / "big_extra.py", "keep_me", "keep_me", back_import_ok=True)
 
-    text = target.read_text(encoding="utf-8")
-    assert "from .big import (\n    CONSTANT,\n)" in text
-    compile(text, str(target), "exec")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = importlib.import_module("backimportpkg.big")
+    assert module.keep_me(1) == 4, "the moved function must resolve CONSTANT through the written back import"
 
 
 def test_back_import_still_refuses_a_name_defined_below_the_split_point(tmp_path):

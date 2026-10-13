@@ -167,30 +167,30 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
     """
     Extracts (if possible) ONE attribute from a dict of dicts and lists
 
-    >>>extract_json_attribute( {'category': {'uid': '531770282580668418', 'prefLabel': 'Web, Mobile & Software Dev'}, 'subcategories': [{'uid': '531770282589057031', 'prefLabel': 'QA & Testing'}], 'oservice': {'uid': '1313512633755545600', 'prefLabel': 'Manual Testing'}},'prefLabel')
-    {'category': 'Web, Mobile & Software Dev','subcategories': ['QA & Testing'],'oservice': 'Manual Testing'}
+    >>> extract_json_attribute( {'category': {'uid': '531770282580668418', 'prefLabel': 'Web, Mobile & Software Dev'}, 'subcategories': [{'uid': '531770282589057031', 'prefLabel': 'QA & Testing'}], 'oservice': {'uid': '1313512633755545600', 'prefLabel': 'Manual Testing'}},'prefLabel')
+    {'category': 'Web, Mobile & Software Dev', 'subcategories': ['QA & Testing'], 'oservice': 'Manual Testing'}
 
-    >>>extract_json_attribute({'category': {'uid': '531770282580668422', 'prefLabel': 'Sales & Marketing'}, 'subcategories': [{'uid': '531770282597445634', 'prefLabel': 'Lead Generation'}], 'oservice': {'uid': '1017484851352698936', 'prefLabel': 'Lead Generation'}},'prefLabel')
-    {'category': 'Sales & Marketing','subcategories': ['Lead Generation'],'oservice': 'Lead Generation'}
+    >>> extract_json_attribute({'category': {'uid': '531770282580668422', 'prefLabel': 'Sales & Marketing'}, 'subcategories': [{'uid': '531770282597445634', 'prefLabel': 'Lead Generation'}], 'oservice': {'uid': '1017484851352698936', 'prefLabel': 'Lead Generation'}},'prefLabel')
+    {'category': 'Sales & Marketing', 'subcategories': ['Lead Generation'], 'oservice': 'Lead Generation'}
 
-    >>>extract_json_attribute([{'parentSkillUid': None,
-          'freeText': None,
-          'skillType': 3,
-          'uid': '1052162208894341126',
-          'highlighted': False,
-          'prettyName': 'Music Video'},
-         {'parentSkillUid': None,
-          'freeText': None,
-          'skillType': 3,
-          'uid': '1031626793248342016',
-          'highlighted': False,
-          'prettyName': 'Videography'},
-         {'parentSkillUid': None,
-          'freeText': None,
-          'skillType': 3,
-          'uid': '1031626793223176192',
-          'highlighted': False,
-          'prettyName': 'Video Editing'}],'prettyName')
+    >>> extract_json_attribute([{'parentSkillUid': None,
+    ... 'freeText': None,
+    ... 'skillType': 3,
+    ... 'uid': '1052162208894341126',
+    ... 'highlighted': False,
+    ... 'prettyName': 'Music Video'},
+    ... {'parentSkillUid': None,
+    ... 'freeText': None,
+    ... 'skillType': 3,
+    ... 'uid': '1031626793248342016',
+    ... 'highlighted': False,
+    ... 'prettyName': 'Videography'},
+    ... {'parentSkillUid': None,
+    ... 'freeText': None,
+    ... 'skillType': 3,
+    ... 'uid': '1031626793223176192',
+    ... 'highlighted': False,
+    ... 'prettyName': 'Video Editing'}],'prettyName')
     ['Music Video', 'Videography', 'Video Editing']
 
     """
@@ -384,7 +384,7 @@ def get_jsonlist_property(
     data: Iterable, property_name: str, return_indices: Optional[bool] = False, verbose: Optional[bool] = False
 ) -> Union[Any, list, tuple]:
     """
-    >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
+    >>> get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]
 
     For dict ``data``, there is no positional-index concept (a dict lookup has no "position"),
@@ -415,7 +415,7 @@ def get_jsonlist_property(
 
 def get_jsonlist_properties(data: list, property_names: list, verbose: Optional[bool] = False, return_indices: Optional[bool] = True) -> Union[list, tuple]:
     """
-    >>>get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
+    >>> get_jsonlist_property([dict(id=4,name='John'),dict(id=12,name='Jane')],'id')
     [4, 12]
 
     Note: unlike the singular ``get_jsonlist_property`` (which defaults ``return_indices=False`` and

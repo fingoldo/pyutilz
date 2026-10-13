@@ -127,9 +127,12 @@ def test_f07_high_entropy_patterns_do_not_backtrack_catastrophically() -> None:
     # count is a statement about the runner (a cold container, a shared runner, an emulated arch).
     def _redaction_seconds(run_length: int) -> float:
         payload = "sk-" + "A" * run_length + " " + "x" * run_length
-        t0 = time.perf_counter()
-        redact_secrets(payload)
-        return time.perf_counter() - t0
+        samples = []
+        for _ in range(5):
+            t0 = time.perf_counter()
+            redact_secrets(payload)
+            samples.append(time.perf_counter() - t0)
+        return min(samples)
 
     small = _redaction_seconds(2500)
     large = _redaction_seconds(20000)

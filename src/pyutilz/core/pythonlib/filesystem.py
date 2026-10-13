@@ -201,7 +201,7 @@ class ObjectsDumper(ObjectsAndFilesProcessor):
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
 
-    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
+    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:  # unused-ok: interface conformance -- the base processor passes verbose and the caller logs the skip; the override has no own logging
         """Dumps `container[obj_name]` to `file_name` via `process_fcn`, if the object is truthy and (rewrite_existing or the file doesn't already exist).
 
         True when the dump happened, False otherwise -- ``process_objects`` counts the True results.
@@ -230,7 +230,7 @@ class ObjectsLoader(ObjectsAndFilesProcessor):
         self.process_kwargs = process_kwargs
         self.rewrite_existing = rewrite_existing
 
-    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:
+    def _process_object(self, container: dict, obj_name: str, file_name: str, verbose: bool = True) -> bool:  # unused-ok: interface conformance -- the base processor passes verbose and the caller logs the skip; the override has no own logging
         """Loads `file_name` via `process_fcn` into `container[obj_name]` if the file exists and the target is either absent, empty, or rewrite_existing is set.
 
         True when the load happened, False otherwise -- ``process_objects`` counts the True results.

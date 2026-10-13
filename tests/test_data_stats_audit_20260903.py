@@ -194,6 +194,7 @@ class TestBenchmarkResultAssemblyF04:
         df = pd.DataFrame({"a": range(30), "b": np.random.rand(30)})
         res = benchmark_dataframe_compression(df, head=0, nrepeats=1, return_styled=False, verbose=False)
         assert "parquet-pyarrow-snappy" in res.index
+        assert len(res.columns) > 0, "the compression benchmark produced no columns"
         for column in res.columns:
             assert pd.api.types.is_numeric_dtype(res[column]), f"{column} is not numeric: {res[column].tolist()}"
 

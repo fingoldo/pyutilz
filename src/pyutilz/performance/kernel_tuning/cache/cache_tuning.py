@@ -11,6 +11,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from pyutilz.core.env_flag import env_flag
 from pyutilz.dev.logginglib import ONCE, log_throttle
 
 from ._common import _CacheState, _facade, logger
@@ -119,7 +120,7 @@ class _CacheTuningMixin(_CacheState):
                 # spawn a duplicate async sweep / duplicate synchronous sweep-claim attempt.
                 _TUNED_THIS_PROCESS.add(guard_key)
 
-        _sweep_disabled = os.environ.get("PYUTILZ_KERNEL_DISABLE_SWEEP", "").strip() not in ("", "0", "false", "False")
+        _sweep_disabled = env_flag("PYUTILZ_KERNEL_DISABLE_SWEEP")
 
         # ASYNC sweep (opt-in via async_sweep=True; the FIT-TIME path -- TunerSpec.choose + hot-path dispatchers pass
         # it). The CPU-vs-GPU sweep is EXPENSIVE (hundreds of seconds) and must NEVER run synchronously inside a

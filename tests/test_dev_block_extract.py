@@ -1,5 +1,6 @@
 """Tests for pyutilz.dev.block_extract: planning and applying statement-range extraction with exact data flow."""
 
+import importlib
 import importlib.util
 import sys
 import textwrap
@@ -205,10 +206,16 @@ def test_rename_in_function_rewrites_locals_to_attributes(tmp_path, monkeypatch)
             return _a_pre_recipes
         """)
     n = rename_in_function(p, "f", {"_a_pre_recipes": "recipes.a"})
-    src = p.read_text()
-    assert n == 4 and "recipes.a = {}  # registry of family a" in src and "dict(_a_pre_recipes=i)" in src
-    assert "def other(_a_pre_recipes):" in src  # other functions untouched
-    assert _import(p, "renamed_m", monkeypatch).f(3) == (3, {0: {"_a_pre_recipes": 0}, 1: {"_a_pre_recipes": 1}, 2: {"_a_pre_recipes": 2}})
+    assert n == 4
+    pkg = tmp_path / "renamedpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    p.replace(pkg / "m.py")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    mod = importlib.import_module("renamedpkg.m")
+    assert "_a_pre_recipes" not in mod.f.__code__.co_varnames, "the local must no longer exist as a variable"
+    assert mod.other.__code__.co_varnames[0] == "_a_pre_recipes"  # other functions untouched
+    assert mod.f(3) == (3, {0: {"_a_pre_recipes": 0}, 1: {"_a_pre_recipes": 1}, 2: {"_a_pre_recipes": 2}})
 
 
 def test_rename_refuses_closures_fstrings_and_params(tmp_path):

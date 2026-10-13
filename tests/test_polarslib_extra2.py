@@ -449,9 +449,10 @@ class TestCreateTsFeaturesPolars:
         )
         assert isinstance(result, pl.DataFrame)
         # Numeric cols should be Float32
-        for c in result.columns:
-            if result[c].dtype.is_float():
-                assert result[c].dtype == pl.Float32
+        float_columns = [c for c in result.columns if result[c].dtype.is_float()]
+        assert float_columns, "no float output columns to check the dtype of"
+        for c in float_columns:
+            assert result[c].dtype == pl.Float32
 
     def test_clean_memory_false(self, mock_clean):
         # line 599: skip clean_ram

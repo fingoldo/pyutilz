@@ -568,8 +568,9 @@ class TestSentenceSimilarityIndex:
         query = ["A", "D"]
         r_seq = idx_seq.query(query)
         r_par = idx_par.query(query)
-        for i in range(len(candidates)):
-            assert r_seq[i] == pytest.approx(r_par[i], abs=1e-10)
+        assert len(r_seq) == len(r_par) == len(candidates) > 0
+        for got, expected in zip(r_seq, r_par):
+            assert got == pytest.approx(expected, abs=1e-10)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -930,6 +931,7 @@ class TestCoverageGate:
         direct = [sentences_similarity_numba(query, c, required_coverage=0.66, coverage_side="max") for c in candidates]
         # Unconditional: `zip` below would silently compare nothing if the index returned a short list.
         assert len(indexed) == len(candidates), f"index returned {len(indexed)} results for {len(candidates)} candidates"
+        assert len(indexed) == len(direct) == len(candidates) > 0
         for i, (got, expected) in enumerate(zip(indexed, direct)):
             if expected is None:
                 assert got is None, f"candidate {i}"
@@ -970,6 +972,7 @@ class TestStopWordsAffectBaseScore:
         indexed = idx.query(["SOME", "NAUSEA"])
         assert indexed[0] == 1.0
         direct = [sentences_similarity_numba(["SOME", "NAUSEA"], c, stop_words=self._STOP) for c in candidates]
+        assert len(indexed) == len(direct) == len(candidates) > 0
         for got, expected in zip(indexed, direct):
             assert got == pytest.approx(expected, abs=1e-10)
 

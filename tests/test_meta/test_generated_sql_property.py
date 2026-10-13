@@ -137,17 +137,17 @@ def assert_sql_invariants(sql: str, context: str, *, expect_conflict_target: boo
     for tree in trees:
         assert not isinstance(tree, exp.Command), f"{context}: statement did not parse as SQL, sqlglot fell back to a raw Command\nSQL: {sql}"
 
-        for update in tree.find_all(exp.Update):
-            assert update.args.get("where") is not None, f"{context}: UPDATE with no WHERE clause -- this rewrites EVERY row of the table\nSQL: {sql}"
-        for delete in tree.find_all(exp.Delete):
-            assert delete.args.get("where") is not None, f"{context}: DELETE with no WHERE clause -- this empties the table\nSQL: {sql}"
+        unfiltered_updates = [u for u in tree.find_all(exp.Update) if u.args.get("where") is None]
+        assert not unfiltered_updates, f"{context}: UPDATE with no WHERE clause -- this rewrites EVERY row of the table\nSQL: {sql}"
+        unfiltered_deletes = [d for d in tree.find_all(exp.Delete) if d.args.get("where") is None]
+        assert not unfiltered_deletes, f"{context}: DELETE with no WHERE clause -- this empties the table\nSQL: {sql}"
 
         for insert in tree.find_all(exp.Insert):
             schema = insert.this
             if isinstance(schema, exp.Schema):
                 assert schema.expressions, f"{context}: INSERT with an empty column list -- invalid SQL\nSQL: {sql}"
-        for select in tree.find_all(exp.Select):
-            assert select.expressions, f"{context}: SELECT with an empty projection -- invalid SQL\nSQL: {sql}"
+        empty_projections = [s for s in tree.find_all(exp.Select) if not s.expressions]
+        assert not empty_projections, f"{context}: SELECT with an empty projection -- invalid SQL\nSQL: {sql}"
 
     if expect_conflict_target:
         conflicts = [oc for tree in trees for oc in tree.find_all(exp.OnConflict)]

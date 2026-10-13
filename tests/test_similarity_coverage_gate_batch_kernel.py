@@ -61,6 +61,7 @@ class TestBatchWithMatchesKernelCorrectness:
         idx = SentenceSimilarityIndex(CANDIDATES, parallel=True, **kw)
         got = idx.query(QUERY)
         expected = _reference(QUERY, CANDIDATES, **kw)
+        assert len(got) == len(expected) == len(CANDIDATES) > 0
         for g, e in zip(got, expected):
             assert (g is None) == (e is None)
             if e is not None:
@@ -71,6 +72,7 @@ class TestBatchWithMatchesKernelCorrectness:
         idx = SentenceSimilarityIndex(CANDIDATES, parallel=True, **kw)
         got = idx.query(QUERY)
         expected = _reference(QUERY, CANDIDATES, **kw)
+        assert len(got) == len(expected) == len(CANDIDATES) > 0
         for g, e in zip(got, expected):
             assert (g is None) == (e is None)
             if e is not None:
@@ -82,6 +84,7 @@ class TestBatchWithMatchesKernelCorrectness:
         idx_par = SentenceSimilarityIndex(CANDIDATES, parallel=True, **kw)
         seq = idx_seq.query(QUERY)
         par = idx_par.query(QUERY)
+        assert len(seq) == len(par) == len(CANDIDATES) > 0
         for s, p in zip(seq, par):
             assert (s is None) == (p is None)
             if s is not None:
@@ -106,8 +109,10 @@ class TestBatchWithMatchesKernelScalesBeyondPurePythonLoop:
         rng_words = ["ALPHA", "BETA", "GAMMA", "DELTA", "HEADACHE", "SEVERE", "PATIENT", "MILD", "PAIN", "NAUSEA"]
         candidates = [[rng_words[(i + j) % len(rng_words)] for j in range((i % 4) + 1)] for i in range(3000)]
         idx = SentenceSimilarityIndex(candidates, parallel=True, required_coverage=0.5, coverage_side="max")
-        idx.query(QUERY)  # warm up numba JIT compilation, excluded from the timed call below
-        start = time.perf_counter()
-        idx.query(QUERY)
-        elapsed = time.perf_counter() - start
-        assert elapsed < 5.0, f"coverage-gated batch query over 3000 candidates took {elapsed:.2f}s, expected well under 5s"  # audit-exempt: wall_clock_assertion -- 3000-candidate coverage-gated batch query, bound far above the regression guarded
+        idx.query(QUERY)  # warm up numba JIT compilation, excluded from the timed calls below
+        elapsed = []
+        for _ in range(3):
+            start = time.perf_counter()
+            idx.query(QUERY)
+            elapsed.append(time.perf_counter() - start)
+        assert min(elapsed) < 5.0, f"coverage-gated batch query over 3000 candidates took {min(elapsed):.2f}s best of 3, expected well under 5s"

@@ -171,7 +171,8 @@ class XAIProvider(OpenAICompatibleProvider):
         ``x_search`` tools: the chat-completions ``search_parameters`` block this used to send was retired on
         2026-01-12 and now answers ``410 Gone``, which failed every call made with the option on. The model decides
         when to search, so ``"on"`` can no longer force a search. ``live_search_max_sources`` has no counterpart in
-        the tools API and is ignored with a warning; citations are always returned, into ``last_citations``.
+        the tools API and is ignored with a warning. Citations land in ``last_citations`` unless ``return_citations=False``,
+        which leaves it empty.
         """
         settings = get_llm_settings()
         resolved_key = api_key or (settings.xai_api_key.get_secret_value() if settings.xai_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
@@ -318,6 +319,12 @@ class XAIProvider(OpenAICompatibleProvider):
             data = parse_response_envelope(resp, self._provider_name)
         return self._unwrap_responses_output(data)
 
+    def _citations_for(self, citations: Any, annotations: list[Any]) -> list[Any]:
+        """The citation list to expose: the body's own ``citations`` when present, else the inline annotations; empty when disabled."""
+        if not self._return_citations:
+            return []
+        return citations if isinstance(citations, list) else annotations
+
     def _unwrap_responses_output(self, data: dict[str, Any]) -> str:
         """Answer text, usage and citations out of a Responses API body."""
         self._track_provider_specific_response(data)
@@ -354,8 +361,7 @@ class XAIProvider(OpenAICompatibleProvider):
                 if isinstance(part, dict) and part.get("type") == "output_text" and isinstance(part.get("text"), str):
                     texts.append(part["text"])
                     annotations.extend(part.get("annotations") or [])
-        citations = data.get("citations")
-        self.last_citations = citations if isinstance(citations, list) else annotations
+        self.last_citations = self._citations_for(data.get("citations"), annotations)
         self._last_finish_reason = data.get("status")
         text = "".join(texts)
         if data.get("status") == "incomplete":

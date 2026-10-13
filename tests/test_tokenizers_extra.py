@@ -111,14 +111,16 @@ class TestMorphemeLengthCap:
         tok = _make_real_tokenizer()
         pathological = "a" * 2000
 
-        start = time.perf_counter()
-        tok.tokenize(pathological + ".")
-        elapsed = time.perf_counter() - start
+        elapsed = []
+        for _ in range(3):
+            start = time.perf_counter()
+            tok.tokenize(pathological + ".")
+            elapsed.append(time.perf_counter() - start)
 
         # 5s, not 1s: the repro measured ~1.4s at n=800 for the CUBIC implementation, so a
         # capped/linear one finishes in milliseconds; 5s is still two orders of magnitude below
         # the regression it guards against and far enough above scheduler noise on a loaded box.
-        assert elapsed < 5.0, f"tokenize() took {elapsed:.3f}s for a 2000-char word -- morpheme-length cap not applied"  # audit-exempt: wall_clock_assertion -- cubic-tokenizer repro: performance smoke test, bound far above the regression guarded
+        assert min(elapsed) < 5.0, f"tokenize() took {min(elapsed):.3f}s best of 3 for a 2000-char word -- morpheme-length cap not applied"
 
     def test_ordinary_word_longer_than_morpheme_cap_still_gets_whole_word_stats(self):
         """A normal word longer than MAX_MORPHEME_LENGTH (8) but shorter than MAX_WORD_LENGTH

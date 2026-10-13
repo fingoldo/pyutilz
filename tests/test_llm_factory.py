@@ -25,6 +25,7 @@ class TestAliases:
         assert _ALIASES[alias] == canonical
 
     def test_all_aliases_point_to_valid_constructors(self):
+        assert _ALIASES, "the alias table is empty"
         for alias, canonical in _ALIASES.items():
             assert canonical in _PROVIDER_MODULES, f"Alias '{alias}' → '{canonical}' has no constructor"
 

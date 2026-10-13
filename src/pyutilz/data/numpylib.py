@@ -40,10 +40,10 @@ def get_topk_indices(arr: np.ndarray, k: int = 1, axis: int = -1, highest: bool 
     "nothing was rankable here" apart from a real winner.
 
     >>> arr = np.array([2., 0., 3.], dtype=np.float32)
-    >>> get_topk_indices(arr, k=2, highest=True)
-    array([2, 0], dtype=int64)
-    >>> get_topk_indices(arr, k=2, highest=False)
-    array([1, 0], dtype=int64)
+    >>> get_topk_indices(arr, k=2, highest=True).tolist()
+    [2, 0]
+    >>> get_topk_indices(arr, k=2, highest=False).tolist()
+    [1, 0]
     """
     arr = np.asarray(arr)
     n = arr.shape[axis]

@@ -4,6 +4,7 @@ One test (or one parametrised group) per behavioural finding, named after the fi
 Every test here was verified to FAIL against the pre-fix code and to pass after the fix.
 """
 
+import ast
 import locale
 import logging
 import os
@@ -213,7 +214,8 @@ def test_f06_citation_with_call_parens_resolves_without_removesuffix(tmp_path: P
     """
     from pyutilz.dev import meta_test_utils as mtu
 
-    assert not hasattr(str, "removesuffix") or "text.removesuffix(" not in Path(mtu.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(Path(mtu.__file__).read_text(encoding="utf-8"))
+    assert not hasattr(str, "removesuffix") or not any(isinstance(n, ast.Attribute) and n.attr == "removesuffix" for n in ast.walk(tree))
     (tmp_path / "m.py").write_text("def my_function():\n    return 1\n", encoding="utf-8")
     mtu.clear_repo_scan_caches()
     assert mtu._names_a_repo_symbol("my_function()", tmp_path) is True

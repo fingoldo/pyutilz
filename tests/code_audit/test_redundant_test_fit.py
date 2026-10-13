@@ -257,7 +257,9 @@ def test_facade_reexports_are_same_objects():
     assert facade.main is _main
     # Every scanner in the registry is the facade-level attribute of the same name -- see
     # test_registry_and_facade_are_in_bijection for the full both-ways invariant.
-    for fn in facade.get_scanners().values():
+    scanners = facade.get_scanners()
+    assert scanners, "the registry exposes no scanners"
+    for fn in scanners.values():
         assert callable(fn)
         assert getattr(facade, _scanner_function(fn).__name__, None) is _scanner_function(fn)
 

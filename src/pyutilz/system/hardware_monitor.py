@@ -40,7 +40,8 @@ class UtilizationMonitor:
         >>> # ... run your code ...
         >>> monitor.stop()
         >>> avg_util = monitor.get_average_utilization()
-        >>> print(f"Average CPU load: {avg_util['cpu_utilizaton_percent']}%")
+        >>> bool(avg_util['cpu_utilizaton_percent'] >= 0)
+        True
     """
 
     def __init__(

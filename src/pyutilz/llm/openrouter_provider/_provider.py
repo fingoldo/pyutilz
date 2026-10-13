@@ -80,14 +80,14 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
 
     Common usage:
 
-    >>> p = OpenRouterProvider(model="anthropic/claude-sonnet-4.6")
-    >>> txt = await p.generate("hello")
-    >>> p.get_session_cost()["actual_cost_usd"]   # authoritative billed cost
+    >>> p = OpenRouterProvider(model="anthropic/claude-sonnet-4.6")  # doctest: +SKIP
+    >>> txt = await p.generate("hello")  # doctest: +SKIP
+    >>> p.get_session_cost()["actual_cost_usd"]   # authoritative billed cost  # doctest: +SKIP
 
     Routing example — prefer Anthropic, fall back to OpenAI; if both fail,
     fall back across models entirely:
 
-    >>> p = OpenRouterProvider(
+    >>> p = OpenRouterProvider(  # doctest: +SKIP
     ...     model="anthropic/claude-sonnet-4.6",
     ...     provider_order=("anthropic", "openai"),
     ...     provider_sort="throughput",
@@ -759,8 +759,8 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         Convenience for ad-hoc inspection / logging — pulls every ``last_*``
         attribute into one dict so you don't fish for them individually:
 
-            >>> await p.generate("hello")
-            >>> p.last_call_summary()
+            >>> await p.generate("hello")  # doctest: +SKIP
+            >>> p.last_call_summary()  # doctest: +SKIP
             {
                 'generation_id': 'gen-abc123',
                 'upstream_provider': 'Anthropic',

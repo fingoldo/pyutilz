@@ -79,6 +79,7 @@ def test_path_lock_entries_are_reclaimed_after_use(tmp_path):
 
     # And every payload actually landed correctly (the refcounted rewrite didn't break the
     # underlying atomic-write-plus-sidecar contract).
+    assert paths, "no payloads were written"
     for i, path in enumerate(paths):
         assert safe_load(path) == {"i": i}
 

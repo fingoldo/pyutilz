@@ -316,10 +316,10 @@ def merge_punctuation_signs(sent: List[str]) -> List[str]:
 
 def ensure_space_after_comma(text: str) -> str:
     """
-    >>>ensure_space_after_comma('Awesome. In love with this,really great coverage and stays on perfectly.')
+    >>> ensure_space_after_comma('Awesome. In love with this,really great coverage and stays on perfectly.')
     'Awesome. In love with this, really great coverage and stays on perfectly.'
 
-    >>>ensure_space_after_comma("They are just a tiny bit fatter than standard but will fit in most devices,."
+    >>> ensure_space_after_comma("They are just a tiny bit fatter than standard but will fit in most devices,.")
     'They are just a tiny bit fatter than standard but will fit in most devices.'
 
     also eliminates comma if after it goes not a space not a letter/a number
@@ -359,7 +359,7 @@ def clean_description(text: str, newlines: Optional[str] = None) -> str:
 
 def get_ascii_emojies() -> dict:
     """
-    >>>get_ascii_emojies()
+    >>> get_ascii_emojies()
     {'</3': '💔',
      '<3': '❤️',
      ':D': '😀',
@@ -413,7 +413,7 @@ def _strip_tilda_bullets(text: str) -> str:
 
 def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[bool] = False) -> str:
     """
-    >>>sentencize_text("Not sure what to make of the included love note, it did make me smile though :)")
+    >>> sentencize_text("Not sure what to make of the included love note, it did make me smile though :)")
     'Not sure what to make of the included love note, it did make me smile though :)'
     """
 
@@ -455,8 +455,8 @@ def sentencize_text(text: str, desc: Optional[str] = None, verbose: Optional[boo
 def suffixize(noun: str, qty: int) -> str:
     """Puts a word into correct singular/plural form according to the qty.
 
-    >>>suffixize('job',2)
-    jobs
+    >>> suffixize('job',2)
+    'jobs'
     """
     global inflect_engine
 

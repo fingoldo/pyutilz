@@ -156,7 +156,7 @@ def strip_doubled_characters(text: str, char_list: Sequence) -> str:
 
 def rpad(txt: str, n: int = 0, symbol: str = ".") -> str:
     """
-    >>>rpad("abc",5,".")
+    >>> rpad("abc",5,".")
     'abc..'
     """
     return txt.ljust(n, symbol)
@@ -206,7 +206,7 @@ def slugify(value: str, allow_unicode: bool = True, lowercase: bool = False) -> 
 def camel_case_split(str: str) -> list:  # noqa: A002 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     """Splits camelcased sentence into individual words.
 
-    >>>camel_case_split("ThisIsInCamelCase")
+    >>> camel_case_split("ThisIsInCamelCase")
     ['This', 'Is', 'In', 'Camel', 'Case']
 
     >>> camel_case_split("")

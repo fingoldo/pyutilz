@@ -452,8 +452,9 @@ def showcase_df_columns(
 class FeatureNamer:
     """
     Used to save RAM when building dataframes from dicts with big feature names, by renaming them to small consecutive numbers
-    >>>fname=FeatureNamer();fname('abc');fname('abcd');fname('abc'),fname.rev(0)
-    (0, 'abc')
+    >>> fname = FeatureNamer()
+    >>> fname('abc'), fname('abcd'), fname('abc'), fname.rev(0)
+    (0, 1, 0, 'abc')
     """
 
     def __init__(self, initial_values: Optional[Sequence] = None):

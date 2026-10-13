@@ -421,9 +421,10 @@ def test_or9_recorded_live_results_support_the_fallback() -> None:
     data = jsonlib.loads((Path(__file__).resolve().parents[2] / "audits" / "implemented" / "2026-09-26" / "or9_live_results.json").read_text(encoding="utf-8"))
     mandatory = {r["model"] for r in data["results"] if r["variant"] == "enabled_false" and r["http_status"] == 400}
     assert len(mandatory) >= 3
-    for r in data["results"]:
-        if r["model"] in mandatory:
-            assert (r["http_status"] == 400) == (r["variant"] in ("effort_none", "enabled_false")), r
+    checked = [r for r in data["results"] if r["model"] in mandatory]
+    assert checked, "no recorded result for any mandatory-reasoning model"
+    for r in checked:
+        assert (r["http_status"] == 400) == (r["variant"] in ("effort_none", "enabled_false")), r
 
 
 # ── OR-10: strict json_schema ──────────────────────────────────────────────────────────────────────────────────────

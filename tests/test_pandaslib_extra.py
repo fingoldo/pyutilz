@@ -312,10 +312,9 @@ class TestRemoveConstantColumnsPrewarm:
 
         remove_constant_columns(df, prewarm_size=prewarm_size)
 
-        for i in range(n_true_const):
-            assert f"true_const_{i}" not in df.columns
-        for i in range(n_false_positive):
-            assert f"tricky_{i}" in df.columns
+        assert n_true_const > 0 and n_false_positive > 0, "the fixture must contain both kinds of candidate column"
+        assert not [c for c in df.columns if c.startswith("true_const_")], "a truly constant column survived pruning"
+        assert all(f"tricky_{i}" in df.columns for i in range(n_false_positive)), "a varying-in-tail column was pruned"
         assert "var" in df.columns
         assert len(df.columns) == n_false_positive + 1
 

@@ -240,7 +240,9 @@ def test_cli_list_checks_prints_the_catalogue_and_marks_opt_ins(capsys):
 
     assert main(["--list-checks"]) == 0
     out = capsys.readouterr().out
-    for name in get_scanners():
+    scanners = get_scanners()
+    assert scanners and OPT_IN_ONLY, "the scanner catalogue or the opt-in set is empty"
+    for name in scanners:
         assert name in out, f"{name} missing from --list-checks output"
     for name in OPT_IN_ONLY:
         assert f"{name} (OPT-IN)" in out

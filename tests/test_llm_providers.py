@@ -66,6 +66,7 @@ class TestFactory:
         assert len(_PROVIDER_MODULES) >= 5
 
     def test_aliases_resolve(self):
+        assert _ALIASES, "the alias table is empty"
         for alias, canonical in _ALIASES.items():
             assert canonical in _PROVIDER_MODULES, f"Alias '{alias}' → '{canonical}' not found"
 

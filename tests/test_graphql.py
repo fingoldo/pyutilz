@@ -41,7 +41,9 @@ class TestBeautifyGqlQuery:
     def test_strips_whitespace(self):
         query = "  query {  \n   field   \n  }  "
         result = beautify_gql_query(query)
-        for line in result.split("\n"):
+        lines = result.split("\n")
+        assert lines, "beautify_gql_query returned an empty query"
+        for line in lines:
             assert line == line.strip()
 
     def test_removes_comment_only_lines(self):

@@ -235,6 +235,7 @@ from pyutilz.core.disk_cache import _HASH_VERSION, hash_array_summary
 def test_f05_fused_kernel_matches_numpy(arr):
     ref = _numpy_col_reductions(arr, tuple(range(arr.ndim - 1)))
     got = column_sum_min_max(arr)
+    assert len(ref) == len(got) > 0
     for r, g in zip(ref, got):
         assert np.allclose(r, g, equal_nan=True)
 
@@ -243,6 +244,7 @@ def test_f05_nan_is_propagated_like_numpy():
     arr = np.array([[1.0, 2.0], [np.nan, 4.0]])
     ref = _numpy_col_reductions(arr, (0,))
     got = column_sum_min_max(arr)
+    assert len(ref) == len(got) > 0
     for r, g in zip(ref, got):
         assert np.array_equal(r, g, equal_nan=True)
 
@@ -251,6 +253,7 @@ def test_f05_unsupported_dtype_falls_back_to_numpy():
     arr = np.array([[1 + 2j, 3 + 0j], [5 - 1j, 0 + 0j]])
     got = column_sum_min_max(arr)
     ref = _numpy_col_reductions(arr, (0,))
+    assert len(ref) == len(got) > 0
     for r, g in zip(ref, got):
         assert np.allclose(np.real(r), np.real(g))
 

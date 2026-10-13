@@ -63,12 +63,13 @@ class TestTimeoutWrapper:
             return "should not reach here"
 
         # Should return None when timeout occurs (decorator catches TimeoutError)
-        start = time.perf_counter()
-        result = slow_function()
-        elapsed = time.perf_counter() - start
-
-        assert result is None, "Should return None on timeout"
-        assert elapsed < 2.0, f"Should timeout around 1s, took {elapsed:.2f}s"  # audit-exempt: wall_clock_assertion -- performance smoke test: timeout-wrapper bound, generous against the ~1s timeout
+        elapsed = []
+        for _ in range(3):
+            start = time.perf_counter()
+            result = slow_function()
+            elapsed.append(time.perf_counter() - start)
+            assert result is None, "Should return None on timeout"
+        assert min(elapsed) < 2.0, f"Should timeout around 1s, best of 3 took {min(elapsed):.2f}s"
 
     def test_timeout_wrapper_does_not_block_fast_functions(self):
         """Test that fast functions complete before timeout"""
@@ -79,12 +80,14 @@ class TestTimeoutWrapper:
             time.sleep(0.1)
             return "completed"
 
-        start = time.perf_counter()
-        result = fast_function()
-        elapsed = time.perf_counter() - start
-
-        assert result == "completed"
-        assert elapsed < 1.0  # Should complete quickly, not wait for full timeout  # audit-exempt: wall_clock_assertion -- performance smoke test: completes quickly rather than waiting out the full timeout
+        elapsed = []
+        for _ in range(3):
+            start = time.perf_counter()
+            result = fast_function()
+            elapsed.append(time.perf_counter() - start)
+            assert result == "completed"
+        # Should complete quickly, not wait for full timeout: best of 3 runs must beat a fraction of the 5s timeout.
+        assert min(elapsed) < 1.0, f"best of 3 runs took {min(elapsed):.2f}s"
 
     def test_timeout_wrapper_with_arguments(self):
         """Test that wrapped function receives arguments correctly"""

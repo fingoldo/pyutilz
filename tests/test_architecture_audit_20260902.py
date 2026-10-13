@@ -75,6 +75,7 @@ def test_every_llm_exception_type_is_reachable_from_the_facade():
     from pyutilz.llm import exceptions
 
     declared = [name for name, obj in vars(exceptions).items() if isinstance(obj, type) and issubclass(obj, BaseException)]
+    assert declared, "the llm exceptions module declares no exception classes"
     for name in declared:
         assert getattr(L, name) is getattr(exceptions, name), name
         assert name in L.__all__, f"{name} missing from pyutilz.llm.__all__"
@@ -127,9 +128,11 @@ def test_truncation_error_is_caught_by_the_domain_root_at_runtime():
 def test_database_domain_has_a_catchable_root():
     from pyutilz.database import exceptions
 
-    for name, obj in vars(exceptions).items():
-        if isinstance(obj, type) and issubclass(obj, BaseException) and obj is not exceptions.DatabaseError:
-            assert issubclass(obj, exceptions.DatabaseError), name
+    subclasses = {name: obj for name, obj in vars(exceptions).items()
+                  if isinstance(obj, type) and issubclass(obj, BaseException) and obj is not exceptions.DatabaseError}
+    assert subclasses, "the database exceptions module declares no exception subclasses"
+    for name, obj in subclasses.items():
+        assert issubclass(obj, exceptions.DatabaseError), name
     assert issubclass(exceptions.DatabaseConnectionError, RuntimeError)
     assert issubclass(exceptions.SQLValidationError, ValueError)
 
@@ -137,9 +140,11 @@ def test_database_domain_has_a_catchable_root():
 def test_web_domain_has_a_catchable_root():
     from pyutilz.web import exceptions
 
-    for name, obj in vars(exceptions).items():
-        if isinstance(obj, type) and issubclass(obj, BaseException) and obj is not exceptions.WebError:
-            assert issubclass(obj, exceptions.WebError), name
+    subclasses = {name: obj for name, obj in vars(exceptions).items()
+                  if isinstance(obj, type) and issubclass(obj, BaseException) and obj is not exceptions.WebError}
+    assert subclasses, "the web exceptions module declares no exception subclasses"
+    for name, obj in subclasses.items():
+        assert issubclass(obj, exceptions.WebError), name
     assert issubclass(exceptions.ProxyFetchError, RuntimeError)
     assert issubclass(exceptions.UnsafeURLError, ValueError)
     # url_guard's historic promise: NOT an OSError, so retry-on-transient-network logic skips it.
@@ -221,9 +226,8 @@ def test_core_openai_shim_does_not_import_llm_at_module_level():
     for node in tree.body:  # module level only
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith("pyutilz.llm"), ast.dump(node)
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                assert not alias.name.startswith("pyutilz.llm"), alias.name
+    plain_imports = [alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names]
+    assert not [name for name in plain_imports if name.startswith("pyutilz.llm")], plain_imports
 
 
 def test_kernel_tuning_discovery_has_no_downstream_project_default():

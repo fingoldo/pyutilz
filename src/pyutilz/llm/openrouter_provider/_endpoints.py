@@ -61,8 +61,8 @@ class OpenRouterEndpointsMixin:
         requires the API key but is NOT charged against credits. Use as
         a "free ping" before kicking off a long batch:
 
-        >>> health = await p.check_model_health()
-        >>> print(health["best_uptime_30m"], "uptime,",
+        >>> health = await p.check_model_health()  # doctest: +SKIP
+        >>> print(health["best_uptime_30m"], "uptime,",  # doctest: +SKIP
         ...       len(health["endpoints"]), "upstreams")
 
         Args:

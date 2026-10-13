@@ -354,8 +354,11 @@ def _write_prompt(proc: "subprocess.Popen", prompt: str) -> None:
     """Write the prompt to the child's stdin and close it; a child that already exited is tolerated."""
     try:
         assert proc.stdin is not None  # guaranteed by stdin=subprocess.PIPE above
-        proc.stdin.write(prompt)
-        proc.stdin.close()
+        try:
+            proc.stdin.write(prompt)
+        finally:
+            # Close on every path: a write that raises something other than BrokenPipeError must not leave the child waiting on stdin.
+            proc.stdin.close()
     except BrokenPipeError:
         pass
 

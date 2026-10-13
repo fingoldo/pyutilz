@@ -65,8 +65,10 @@ class S3Backend(RemoteBackend):
                 try:
                     from botocore.config import Config
 
-                    connect_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT", "3") or 3)  # audit-exempt: default_via_or -- empty env var means unset: float of empty string would raise, the default is intended
-                    read_t = float(os.environ.get("PYUTILZ_KERNEL_REMOTE_READ_TIMEOUT", "5") or 5)  # audit-exempt: default_via_or -- empty env var means unset: float of empty string would raise, the default is intended
+                    connect_raw = os.environ.get("PYUTILZ_KERNEL_REMOTE_CONNECT_TIMEOUT", "").strip()
+                    read_raw = os.environ.get("PYUTILZ_KERNEL_REMOTE_READ_TIMEOUT", "").strip()
+                    connect_t = float(connect_raw) if connect_raw else 3.0  # an empty value means unset: float("") would raise
+                    read_t = float(read_raw) if read_raw else 5.0
                     cfg = Config(connect_timeout=connect_t, read_timeout=read_t, retries={"max_attempts": 1})
                     self._client = boto3.client("s3", config=cfg)
                 except Exception:

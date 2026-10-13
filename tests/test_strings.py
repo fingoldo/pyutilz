@@ -83,6 +83,7 @@ class TestTokenizeSource:
         result = list(tokenize_source(str(test_file), simple_tokenizer, is_file=True, strip=True))
 
         # Should be stripped (no leading/trailing spaces)
+        assert result, "tokenize_source yielded no tokens for the file"
         for token in result:
             assert token == token.strip()
 

@@ -147,6 +147,7 @@ class TestSweepBackendCrossover:
             [10, 100], self._inp, "n", reference="numpy", repeats=2,
         )
         # both produce the same value -> winner is a valid eligible backend.
+        assert regions, "the backend sweep returned no regions"
         for r in regions:
             assert r["backend_choice"] in ("numpy", "equiv")
             assert r.get("max_abs_diff", 0.0) < 1e-6

@@ -110,7 +110,8 @@ def get_llm_settings(env_file: Union[str, _Unset, None] = _UNSET_ENV_FILE) -> "L
     different from the cached one bypasses the TTL and reloads.
     """
     if env_file is _UNSET_ENV_FILE:
-        env_file = os.environ.get("PYUTILZ_LLM_ENV_FILE") or None
+        raw_env_file = os.environ.get("PYUTILZ_LLM_ENV_FILE", "").strip()
+        env_file = raw_env_file if raw_env_file else None
     global _cached_settings, _cached_settings_at, _cached_env_file
     now = time.monotonic()
     with _settings_lock:

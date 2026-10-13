@@ -135,7 +135,10 @@ def test_cli_writes_and_checks_the_generated_file(tmp_path, capsys):
     out = tmp_path / "gen.py"
     target = f"{__name__}:_Selector"
     assert main([target, "--name", "SelectorConfig", "-o", str(out)]) == 0
-    assert "class SelectorConfig" in out.read_text(encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("generated_selector_config", out)
+    generated = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generated)
+    assert isinstance(getattr(generated, "SelectorConfig", None), type), "the written file must define SelectorConfig"
     assert main([target, "--name", "SelectorConfig", "-o", str(out), "--check"]) == 0
     out.write_text(out.read_text(encoding="utf-8") + "\n# stale\n", encoding="utf-8")
     assert main([target, "--name", "SelectorConfig", "-o", str(out), "--check"]) == 1

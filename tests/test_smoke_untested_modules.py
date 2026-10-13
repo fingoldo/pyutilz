@@ -58,8 +58,8 @@ def test_module_imports_and_exposes_at_least_one_public_symbol(
     public = [n for n in dir(mod) if not n.startswith("_")]
     assert public, f"{module_path} imports but exposes no public symbols — " f"either delete the file or add real content"
 
-    for name in expected_symbols:
-        assert hasattr(mod, name), f"{module_path}: expected public symbol {name!r} not found " f"(was the module renamed or refactored?)"
+    missing = [name for name in expected_symbols if not hasattr(mod, name)]
+    assert not missing, f"{module_path}: expected public symbol(s) {missing!r} not found (was the module renamed or refactored?)"
 
 
 def test_module_aliases_resolve_for_smoke_set():

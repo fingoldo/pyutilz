@@ -5,7 +5,9 @@ finding described as broken, so a revert fails here rather than silently reappea
 """
 
 import ast
+import io
 import re
+import tokenize
 import subprocess  # nosec B404 - runs py_ci_shared's pin check with a fixed argv, no shell
 import sys
 from pathlib import Path
@@ -27,10 +29,10 @@ def test_f01_no_batch_stamped_type_ignore_justification():
     them (numpy `.nbytes` arithmetic, a locally-built set). Every remaining ignore names its own cause.
     """
     stamped = [
-        f"{path.relative_to(SRC_ROOT).as_posix()}:{i}"
+        f"{path.relative_to(SRC_ROOT).as_posix()}:{tok.start[0]}"
         for path in SRC_ROOT.rglob("*.py")
-        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if "untyped upstream source (json/external lib/dynamic attr)" in line
+        for tok in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline)
+        if tok.type == tokenize.COMMENT and "untyped upstream source (json/external lib/dynamic attr)" in tok.string
     ]
     assert stamped == [], f"batch-stamped type-ignore justification is back at: {stamped}"  # audit-exempt: source_text_assertion -- regression guard scanning src for a banned justification string; reading source is its job
 

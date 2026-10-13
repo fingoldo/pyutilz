@@ -551,6 +551,7 @@ class TestGen13Lpt:
         work, idx = distribute_work([1, 1, 1, 1, 4], n_jobs=2)
         assert max(sum(w) for w in work) == 4
         assert sorted(sum(idx, [])) == [0, 1, 2, 3, 4]
+        assert work and len(work) == len(idx), "distribute_work returned no workers"
         for w_items, w_idx in zip(work, idx):
             assert w_idx == sorted(w_idx)
             assert w_items == [[1, 1, 1, 1, 4][i] for i in w_idx]

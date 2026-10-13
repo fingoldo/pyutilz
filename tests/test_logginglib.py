@@ -249,7 +249,7 @@ class TestInitLogging:
         logging.getLogger("pyutilz.tests.init_logging_file").warning("marker-9f3a")
         for handler in file_handlers:
             handler.flush()
-        assert "marker-9f3a" in expected.read_text(encoding="utf-8")
+        assert b"marker-9f3a" in expected.read_bytes()
 
 
 class TestEdgeCases:

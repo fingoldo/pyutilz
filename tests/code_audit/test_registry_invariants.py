@@ -55,6 +55,7 @@ def test_finding_rejects_a_severity_outside_the_vocabulary():
     which is how a ``severity="Medium"`` made one scanner's entire output invisible (F09)."""
     from pyutilz.dev.code_audit._base import SEVERITIES
 
+    assert SEVERITIES, "the severity vocabulary is empty"
     for severity in SEVERITIES:
         assert Finding(check="c", severity=severity, file="f.py", line=1, snippet="", detail="d").severity == severity
     with pytest.raises(ValueError):

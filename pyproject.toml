@@ -779,3 +779,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 warn_return_any = true
 no_implicit_optional = true
+
+# Secret shapes for py_ci_shared.tracked_secret_shapes (pre-commit hook and tests/test_meta). detect-secrets has no bearer-header
+# detector, and the repo handles bearer tokens (see the 2026-09-02 security audit, LoginAndGetCookies). A deliberate fake carries
+# `pragma: allowlist secret` on its line.
+[tool.py_ci_shared.secret_shapes]
+bearer_token = { pattern = "[Bb]earer [A-Za-z0-9._~+/-]{32,}=*", min_length = 40, note = "a bearer token literal: revoke it, git history is not rewritten" }
