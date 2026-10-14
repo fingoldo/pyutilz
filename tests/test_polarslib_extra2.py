@@ -238,7 +238,8 @@ class TestBuildAggregateFeaturesAdvanced:
             othersvals_at_extremums=True,
             engine="cpu",
         )
-        assert any("at_" in str(e) for e in exprs)
+        # Check the output columns: the expression's repr is polars-internal and differs between versions, the names do not.
+        assert any("_at_" in column for column in df.select(exprs).columns)
 
     def test_othersvals_with_basic_and_other_fields(self):
         # lines 395-398: othersvals_basic_fields and othersvals_other_fields

@@ -210,7 +210,7 @@ def _apply_exclusions(
     )
 
 
-def _boolean_feature_exprs(af: Callable, fpref: str, boolean_fields: list, fields_remap: dict) -> list:
+def _boolean_feature_exprs(af: Callable, fpref: str, boolean_fields: list, fields_remap: dict, dtype: Any) -> list:
     """Mean expressions for the boolean columns, plus their Lempel-Ziv ratio on AVX2 CPUs."""
     exprs: list = []
     if boolean_fields:
@@ -222,7 +222,10 @@ def _boolean_feature_exprs(af: Callable, fpref: str, boolean_fields: list, field
             import polars_ds as pds
 
             exprs.extend(
-                [pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_lziv") for field in boolean_fields]
+                [
+                    pds.query_lempel_ziv(af(pl.col(field)), as_ratio=True).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_lziv")
+                    for field in boolean_fields
+                ]
             )
     return exprs
 
@@ -241,7 +244,7 @@ def _peak_feature_exprs(af: Callable, fpref: str, numerical_fields: list, fields
 
         exprs.extend(
             [
-                pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
+                pds.query_lempel_ziv(getattr(af(pl.col(field)), func)(), as_ratio=True).cast(dtype).alias(f"{fpref}{fields_remap.get(field,field)}_{func}_lziv")
                 for field in numerical_fields
                 for func in ["peak_min", "peak_max"]
             ]
@@ -612,7 +615,7 @@ def _filter_value_feature_exprs(
     unnest: list = []
     rules: list = []
     exprs.append(af(cs.first()).len().alias(f"{fpref}nrecs"))
-    exprs.extend(_boolean_feature_exprs(af, fpref, boolean_fields, fields_remap))
+    exprs.extend(_boolean_feature_exprs(af, fpref, boolean_fields, fields_remap, dtype))
 
     if add_peaks_stats:
         exprs.extend(_peak_feature_exprs(af, fpref, numerical_fields, fields_remap, dtype))
