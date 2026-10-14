@@ -695,7 +695,7 @@ if HAS_NUMBA:
         return results, matched_sim_a_all, matched_sim_b_flat
 
     @nb.njit(parallel=True, cache=True)
-    def _sentences_similarity_batch_with_matches_parallel(buf, offsets, word_counts, cand_starts, n_candidates, query_n, cMinLenTHreshold):
+    def _sentences_similarity_batch_with_matches_parallel(buf, offsets, word_counts, cand_starts, n_candidates, query_n, cMinLenTHreshold):  # audit-exempt: near_duplicate_function_body -- deliberate prange twin of the serial core; the docstring requires a byte-identical body because cache=True cannot cache a closure-generated kernel
         """`nb.prange`-parallel twin of `_sentences_similarity_batch_with_matches_core` - the batched
         "with-matches" kernel the coverage gate needs at scale (`SentenceSimilarityIndex.query`'s
         coverage-active path previously fell back to a pure-Python per-candidate loop calling the same
