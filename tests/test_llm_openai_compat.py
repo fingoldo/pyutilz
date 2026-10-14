@@ -623,22 +623,22 @@ class TestStrictJsonSchema:
         assert body["response_format"]["type"] == "json_schema"
         assert out == {"relation": "CAUSES"}
 class TestContextClamp:
-    """The auto-selected output budget must fit the context window, or the upstream rejects the whole
-    request with HTTP 400 before generating anything (llama-3.3-70b: 128k output cap, 131k window)."""
+    """An explicit output budget must fit the context window, or the upstream rejects the whole request with
+    HTTP 400 before generating anything (llama-3.3-70b: 128k output cap, 131k window). An unset budget is not
+    sent at all (see test_llm_unset_max_tokens_is_omitted.py): the route chooses the limit."""
 
     class _WideOutputProvider(_TestProvider):
         _max_tokens_map = {"wide-model": 128_000}
         _context_window_map = {"wide-model": 131_072}
 
     @pytest.mark.asyncio
-    async def test_auto_budget_is_clamped_into_the_window(self):
+    async def test_unset_budget_is_omitted_not_clamped(self):
         p = self._WideOutputProvider(api_key="k", model="wide-model")
         p._client = AsyncMock()
         p._client.post = AsyncMock(return_value=_mock_response())
-        await p.generate("x " * 8000)  # max_tokens omitted => provider max (128k) would overflow
+        await p.generate("x " * 8000)
         body = p._client.post.call_args.kwargs.get("json") or p._client.post.call_args[1].get("json")
-        assert body["max_tokens"] < 128_000
-        assert body["max_tokens"] > 0
+        assert "max_tokens" not in body
 
     @pytest.mark.asyncio
     async def test_explicit_impossible_budget_is_also_clamped(self):
