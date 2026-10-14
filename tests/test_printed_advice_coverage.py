@@ -7,6 +7,7 @@ advising message, or a key whose message moved or was removed, fails the meta te
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -54,7 +55,10 @@ def test_openai_missing_key_names_pass_api_key():
 
 def test_every_printed_advice_has_a_test():
     """The gate fails on an advising message with no entry, a stale entry, or an entry naming no test; each named test must exist."""
-    pytest.importorskip("py_ci_shared.printed_advice", reason="py-ci-shared is needed to scan for printed advice")
+    # py-ci-shared requires python>=3.9 and the requirements marker skips it on the 3.8 legs, so skip there explicitly;
+    # on 3.9+ a missing install still fails the import instead of silently dropping the gate.
+    if sys.version_info < (3, 9):
+        pytest.skip("py-ci-shared requires python>=3.9")
     from py_ci_shared.printed_advice import assert_printed_advice_registered
 
     source_files = sorted(p for p in (REPO_ROOT / "src" / "pyutilz").rglob("*.py") if "__pycache__" not in p.parts)
