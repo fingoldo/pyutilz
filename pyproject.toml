@@ -118,7 +118,7 @@ pandas = [
     # found 2026-07-21 audit: `pip install pyutilz[pandas]` alone could not import
     # `pyutilz.data.pandaslib`. Declaring it here (rather than a lazy-import refactor of the
     # hub) matches how this project already resolves this bug class elsewhere in this file.
-    "polars>=0.19",
+    "polars>=1.0",
     # pandas itself hard-requires python-dateutil at import time (its own real pip dependency) --
     # declared explicitly rather than relying on that transitive pull, matching the project's
     # existing convention for pandas' other hard transitive deps (see numpy's note above).
@@ -133,14 +133,10 @@ pandas = [
     # (2026-09-02 packaging audit).
 ]
 polars = [
-    # Bumped from the stale 0.18.0 floor (2026-07-21 audit): data/polarslib.py uses
-    # `polars.selectors` and the `.group_by()`/`.group_by_dynamic()` methods. Confirmed via
-    # Polars' own upgrade guide that `groupby` was renamed/deprecated in favor of `group_by`
-    # starting in the 0.19.0 release (https://docs.pola.rs/releases/upgrade/0.19/) -- 0.18.0
-    # predates that rename and would raise AttributeError on `.group_by`. The `polars.selectors`
-    # submodule likewise postdates 0.18; no network access to pin its exact introducing patch
-    # version, so the floor is set to the confirmed 0.19.0 minor rather than guessing a patch.
-    "polars>=0.19",
+    # Floor raised to 1.0 (2026-10-15): the polars floor matrix showed that the code calls LazyFrame.collect_schema
+    # (added in polars 1.0) and pl.len, and that polars 1.0.0 is the lowest release where the polars-facing tests pass
+    # (checked on the full set: 189 passed). Earlier releases on the 0.19 and 0.20 lines raise AttributeError on these calls.
+    "polars>=1.0",
     # numpy moved to core [project.dependencies] (transitively required by numba, itself core) --
     # data/polarslib.py unconditionally imports numpy too; modern polars treats numpy as an
     # optional extra of its own, so this would otherwise have been an undeclared dependency

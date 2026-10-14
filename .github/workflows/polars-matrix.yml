@@ -1,6 +1,6 @@
 # Polars-version matrix for the polars-facing tests.
 #
-# pyproject.toml declares `polars>=0.19` for the polars extra and has no upper cap, and there is no lock file to read a floor from. The legs are:
+# pyproject.toml declares `polars>=1.0` for the polars extra and has no upper cap, and there is no lock file to read a floor from. The legs are:
 # the declared floor, the newest release of the floor's series, and the newest release overall (scripts/ci_version_matrix.py). Each leg runs the
 # tests that touch polars, once a day and whenever the dependency declarations change, so a polars release is seen on its first day.
 #
@@ -45,11 +45,11 @@ jobs:
           python-version: "3.12"
 
       - name: Resolve the legs
-        # The declared floor (polars>=0.19 in pyproject's polars extra), the newest release of its series and the newest overall.
+        # The declared floor (polars>=1.0 in pyproject's polars extra), the newest release of its series and the newest overall.
         id: plan
         run: |
           python -m pip install packaging
-          python scripts/ci_version_matrix.py plan --package polars --floor 0.19 --python 3.11 --github-output "$GITHUB_OUTPUT"
+          python scripts/ci_version_matrix.py plan --package polars --floor 1.0 --python 3.11 --github-output "$GITHUB_OUTPUT"
 
   test:
     name: polars ${{ matrix.label }} on py${{ matrix.python-version }}

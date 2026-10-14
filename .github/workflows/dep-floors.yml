@@ -1,6 +1,6 @@
 name: dependency floors
 
-# Every dependency floor in pyproject.toml (`pandas>=1.5`, `polars>=0.19`, ...) is a claim that pyutilz works with that version. Nothing tested
+# Every dependency floor in pyproject.toml (`pandas>=1.5`, `polars>=1.0`, ...) is a claim that pyutilz works with that version. Nothing tested
 # that claim: every CI install resolves the NEWEST compatible release, so a floor that no longer installs, no longer imports, or dropped an API
 # pyutilz still calls is invisible until a user with an older environment hits it. `uv pip install --resolution=lowest-direct` resolves each
 # DIRECT dependency to its declared floor while letting transitive ones float, which is exactly what the floors assert.
