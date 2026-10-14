@@ -34,11 +34,15 @@ PROSE_FILES = ("README.md", "CONTRIBUTING.md", "TESTING.md", "CHANGELOG.md")
 # platform default.
 _JOBS_EXEMPT_FROM_TIMEOUT: frozenset[str] = frozenset()
 
-# No workflow step in this repo is allowed to be advisory: the advisory lint bundle is
-# a SEPARATE workflow (lint-advisory.yml, excluded from ci-required's needs) rather than
-# a ``continue-on-error`` step inside a blocking job. An empty allowlist therefore means
-# "any continue-on-error appearing in a blocking workflow is a finding".
-_REVIEWED_ADVISORY_STEPS: set[str] = set()
+# A ``continue-on-error`` job or step must be named here with the reason it may never block. The three below are
+# the matrix and floor jobs, which report and do not gate: the CVE audit runs over the installed environment because
+# pyutilz has no lock file; the floors job measures how many declared floors are optimistic before it can gate;
+# pydoclint reports 86 open docstring findings that are to be fixed in the code, not added to a baseline.
+_REVIEWED_ADVISORY_STEPS: set[str] = {
+    "known CVEs in the installed extras (advisory)",  # dep-floors.yml: pip-audit over the installed extras (no lock file to audit).
+    "install + smoke at declared floors",  # dep-floors.yml: lowest-direct resolution, measures optimistic floors before it can gate.
+    "pydoclint (advisory)",  # pydoclint.yml: 86 open docstring findings to fix in the code, not to baseline.
+}
 
 # py-ci-shared stays OUT of [project] metadata (a git+https direct reference makes the distribution unpublishable on
 # PyPI), so the pyproject assertion below allows no exemption and a git URL reappearing there fails immediately.

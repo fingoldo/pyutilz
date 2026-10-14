@@ -785,3 +785,12 @@ no_implicit_optional = true
 # `pragma: allowlist secret` on its line.
 [tool.py_ci_shared.secret_shapes]
 bearer_token = { pattern = "[Bb]earer [A-Za-z0-9._~+/-]{32,}=*", min_length = 40, note = "a bearer token literal: revoke it, git history is not rewritten" }
+
+# pydoclint (docstring-vs-signature consistency, run as `pydoclint --style=google src/pyutilz` by .github/workflows/pydoclint.yml).
+# Mirrors mlframe's [tool.pydoclint]: the stock defaults flag every terse docstring that omits a repeated type hint or a Raises section,
+# which is this codebase's documented style (no restated types, Raises only where it adds information).
+[tool.pydoclint]
+arg-type-hints-in-docstring = false  # types already live in the signature.
+check-return-types = false           # ditto for return types.
+skip-checking-raises = true          # a Raises section is not required for every raise statement.
+check-class-attributes = false       # ditto for dataclass/NamedTuple attribute docs.

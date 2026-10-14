@@ -1,0 +1,106 @@
+name: dependency floors
+
+# Every dependency floor in pyproject.toml (`pandas>=1.5`, `polars>=0.19`, ...) is a claim that pyutilz works with that version. Nothing tested
+# that claim: every CI install resolves the NEWEST compatible release, so a floor that no longer installs, no longer imports, or dropped an API
+# pyutilz still calls is invisible until a user with an older environment hits it. `uv pip install --resolution=lowest-direct` resolves each
+# DIRECT dependency to its declared floor while letting transitive ones float, which is exactly what the floors assert.
+#
+# Weekly rather than per-push: floors move only when someone edits pyproject.toml, and a full lowest resolution can drag in old wheels that
+# need building from source.
+#
+# Non-blocking by design (`continue-on-error`), for now: the job exists first to measure how many floors are optimistic.
+
+on:
+  schedule:
+    # Monday 05:23 UTC. Off the hour: GitHub queues scheduled workflows account-wide.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    # Only when the declared dependency set itself changes -- that is the only edit that can move a floor.
+    paths:
+      - "pyproject.toml"
+      - ".github/workflows/dep-floors.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dep-floors-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # pyutilz has no lock file, so there is no locked graph to export and audit the way mlframe does. This audits the environment that the
+  # extras install instead: the resolved versions on a fresh runner, which is what a user who installs the same extras gets today. It is a
+  # weaker check than auditing a lock, and it is advisory for the same reason the floors job is.
+  audit:
+    name: known CVEs in the installed extras (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the extras the tests use
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[pandas,polars,system,database]"
+
+      - name: pip-audit the installed environment
+        run: |
+          python -m pip install --disable-pip-version-check "pip-audit>=2.7"
+          python -m pip_audit --progress-spinner off
+
+  lowest-direct:
+    name: install + smoke at declared floors
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          # The oldest supported interpreter (requires-python = ">=3.8"), since that is where the oldest dependency releases still have wheels;
+          # a floor that only resolves on a newer interpreter is not really a floor.
+          python-version: "3.8"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Resolve every direct dependency to its floor
+        run: |
+          uv pip install --system --resolution=lowest-direct -e ".[pandas,polars,system,database]"
+          uv pip install --system --resolution=lowest-direct pytest pytest-timeout pytest-xdist
+          uv pip list
+
+      - name: Import smoke
+        run: |
+          python -c "import pyutilz; print('pyutilz', pyutilz.__version__)"
+          python -c "import pyutilz.core.pythonlib, pyutilz.data.pandaslib, pyutilz.data.polarslib; print('import OK')"
+
+      # A representative slice rather than the full suite: the question here is "do the floors work at all", not "is the suite green on old
+      # versions", and the latter would cost hours weekly.
+      - name: Fast test subset
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          pytest tests/test_core_jsonlib.py tests/test_pandaslib.py tests/test_polarslib.py \
+            -m "not gpu" \
+            -n auto \
+            --no-cov \
+            -p no:randomly \
+            --timeout=900 \
+            --timeout-method=signal \
+            --durations=200

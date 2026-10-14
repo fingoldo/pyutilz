@@ -1,0 +1,49 @@
+name: pydoclint
+
+# Docstring-vs-signature consistency (params, returns, raises, yields) over src/pyutilz. The configuration lives in [tool.pydoclint] of
+# pyproject.toml, and the same invocation runs locally.
+#
+# Advisory for now: the check reports 86 findings on master (DOC101/103/201/301/404 and similar), and making it blocking would fail every push on
+# known debt. Each finding is to be fixed in the code, not added to a baseline; once the count is zero, drop `continue-on-error`.
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  pydoclint:
+    name: pydoclint (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install pydoclint
+        run: python -m pip install "pydoclint==0.9.1"
+
+      - name: Check docstrings against signatures
+        run: pydoclint --style=google src/pyutilz

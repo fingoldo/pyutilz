@@ -1,0 +1,155 @@
+# Polars-version matrix for the polars-facing tests.
+#
+# pyproject.toml declares `polars>=0.19` for the polars extra and has no upper cap, and there is no lock file to read a floor from. The legs are:
+# the declared floor, the newest release of the floor's series, and the newest release overall (scripts/ci_version_matrix.py). Each leg runs the
+# tests that touch polars, once a day and whenever the dependency declarations change, so a polars release is seen on its first day.
+#
+# The badge is published to the `polars.json` file on the `badges` branch, so badge updates stay out of master's history.
+
+name: polars-matrix
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  push:
+    branches: [master]
+    paths:
+      - "pyproject.toml"
+      - "scripts/ci_version_matrix.py"
+      - ".github/workflows/polars-matrix.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: choose the polars versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve the legs
+        # The declared floor (polars>=0.19 in pyproject's polars extra), the newest release of its series and the newest overall.
+        id: plan
+        run: |
+          python -m pip install packaging
+          python scripts/ci_version_matrix.py plan --package polars --floor 0.19 --python 3.12 --github-output "$GITHUB_OUTPUT"
+
+  test:
+    name: polars ${{ matrix.label }} on py${{ matrix.python-version }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: "1"
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install pyutilz with the polars-facing extras and the test tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[polars,pandas,system,database,dev]"
+
+      - name: Pin polars to ${{ matrix.version }}
+        # numpy stays below 2.5 on every leg: the pinned polars must still import against the numpy the tests were written for.
+        env:
+          POLARS_VERSION: ${{ matrix.version }}
+        run: |
+          pip install "polars==${POLARS_VERSION}" "numpy<2.5"
+
+      - name: Show installed versions
+        run: |
+          python -c "import polars; print('polars', polars.__version__)"
+          python -c "import pandas; print('pandas', pandas.__version__)"
+          python -c "import numpy; print('numpy', numpy.__version__)"
+
+      - name: Polars-facing tests
+        # Timing-ratio tests are left out: on a shared runner their ratios measure the neighbouring workers.
+        run: |
+          pytest tests/test_polarslib.py tests/test_polarslib_extra.py tests/test_polarslib_extra2.py \
+            tests/test_pandaslib_extra.py tests/test_data_domain_extra.py \
+            tests/test_data_stats_audit_20260902.py tests/test_data_stats_audit_20260903.py \
+            --no-cov \
+            -p no:randomly \
+            -n auto \
+            --timeout=900 \
+            -v
+
+  badge:
+    name: update the polars badge
+    needs: [plan, test]
+    if: ${{ always() && github.ref == 'refs/heads/master' && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Publish the badge document to the badges branch
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          RESULT: ${{ needs.test.result }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          python -m pip install packaging
+          python scripts/ci_version_matrix.py badge --package polars --legs "$MATRIX" --result "$RESULT" --out "$RUNNER_TEMP/polars.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git ls-remote --exit-code --heads "$remote" badges > /dev/null; then
+            git fetch --depth=1 "$remote" badges
+            git checkout -B badges FETCH_HEAD
+          else
+            git checkout --orphan badges
+            git rm -rf --quiet .
+          fi
+          cp "$RUNNER_TEMP/polars.json" polars.json
+          git add polars.json
+          if git diff --cached --quiet; then
+            echo "badge unchanged"
+            exit 0
+          fi
+          git commit -m "polars badge: $RESULT"
+          git push "$remote" HEAD:badges

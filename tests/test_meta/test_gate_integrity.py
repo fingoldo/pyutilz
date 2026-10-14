@@ -87,6 +87,7 @@ _DECLARED_NARROWINGS = {
     "pyproject::[tool.coverage.report]::fail_under": "The coverage ratchet, measured 84.87% on 2026-09-02 and set at 82 to absorb the Windows/Linux platform delta. Raise it when coverage rises.",
     "ci.yml::test::Run tests with coverage::run::-m=not gpu": "CI runners have no GPU; the gpu-marked tests run on the local GPU machine instead.",
     "ci.yml::test::Run tests with coverage::run::--cov-fail-under=85": "The CI half of the same ratchet; test_ci_coverage_gate_matches_pyproject below asserts the two numbers stay equal rather than trusting this note.",
+    "dep-floors.yml::lowest-direct::Fast test subset::run::-m=not gpu": "The floors job runs a representative slice of three test files to check that the declared floors import and work; the GPU-marked tests need a GPU runner, which this job does not have.",
 }
 
 # Tools whose exit code alone cannot certify that they ran to completion, mapped to the
@@ -110,6 +111,9 @@ _DECLARED_DIFFERENT_EXTRAS = {
     "ci.yml::all,dev": "deptry's own install: the dependency-drift scan has to see every declared extra, or it reports each unseen one as unused.",
     "pip-audit.yml::all": "The advisory scan audits what `pip install pyutilz[all]` resolves; it runs no tests, so it needs neither [dev] nor ci.yml's narrower set.",
     "docs.yml::docs": "mkdocs builds prose; it imports no runtime extra, and installing them would add minutes to every docs run.",
+    "dep-floors.yml::database,pandas,polars,system": "The floors job imports and tests only pandas, polars and the system and database helpers; llm, nlp, cloud, speedups and dev add install time to a non-blocking job without exercising any floor.",
+    "pandas-matrix.yml::database,dev,pandas,polars,system": "The pandas matrix runs only the pandas-facing tests, which import the pandas, polars, system and database helpers; llm, nlp, cloud and speedups are not imported by them.",
+    "polars-matrix.yml::database,dev,pandas,polars,system": "The polars matrix runs only the polars-facing tests, which import the same helpers as the pandas matrix; llm, nlp, cloud and speedups are not imported by them.",
 }
 
 _EXTRAS_INSTALL_RE = re.compile(r"""pip install (?:--system )?-e ["']?\.\[([a-z0-9,_-]+)\]["']?""")
