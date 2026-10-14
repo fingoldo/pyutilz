@@ -102,6 +102,11 @@ def load_object_params_into_func(obj: object, locals: Dict[str, Any], postfix: s
         params = load_object_params_into_func(obj, {})
         alpha = params.get("alpha", alpha)
 
+    Args:
+        obj: Object whose ``*postfix`` attributes are collected; None yields an empty mapping.
+        locals: Mapping that receives each collected ``{name: value}`` pair.
+        postfix: Suffix that marks the parameter attributes on ``obj``.
+
     Returns:
         dict: the ``{stripped_attr_name: value}`` pairs found on ``obj`` (empty when ``obj`` is None).
     """

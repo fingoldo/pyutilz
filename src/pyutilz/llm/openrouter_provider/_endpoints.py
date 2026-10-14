@@ -43,6 +43,9 @@ class OpenRouterEndpointsMixin:
 
         Args:
             model: Defaults to ``self.model_name``.
+
+        Returns:
+            The ``data`` dict from the response, or an empty dict if the payload has no dict under ``data``.
         """
         target = model or self.model_name
         resp = await self._client.get(f"/parameters/{target}")

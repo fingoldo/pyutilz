@@ -63,9 +63,14 @@ def tokenize_to_words(source: Any, is_file: bool = False) -> Iterator[str]:
 def get_entropy_stats(stream: Any, model_order: int = 2) -> Tuple[Dict[Any, Counter], Counter]:
     """
     Computes markov_model entropy stats of text
+
+    Args:
+        stream: Iterable of tokens (e.g. characters) to model.
+        model_order: Length of the prefix (n-1) used by the Markov model.
+
     Returns:
+        conditional_stats is a dictionary mapping (n−1)-character prefixes to a Counter; that Counter maps each possible nth character to the number of times this character followed the (n−1)-character prefix.
         stats is a Counter that matches each key in model to its total number of occurrences
-        model is a dictionary mapping (n−1)-character prefixes to a Counter; that Counter maps each possible nth character to the number of times this character followed the (n−1)-character prefix.
     """
     conditional_stats: Dict[Any, Counter] = defaultdict(Counter)
     stats: Counter = Counter()
@@ -101,6 +106,11 @@ def entropy_rate(conditional_stats: Dict[Any, Counter], stats: Counter) -> float
 def compute_entropy_stats(text: str, order: int = 0) -> tuple:
     """
     Tokenizes text into characters and computes an order-th order Markov model's raw entropy and entropy rate.
+
+    Args:
+        text: Input text to analyse.
+        order: Markov model order (length of the conditioning prefix).
+
     Returns:
         (sample_raw_entropy, sample_entropy_rate), or (None, None) if no stats could be gathered.
     """

@@ -175,6 +175,9 @@ def get_libs_versions(libs: Union[Sequence, str] = "numpy pandas numba", sep: st
     Args:
         libs: Space-separated string (or sequence) of module names to check.
         sep: Separator used to split ``libs`` when it is a string.
+
+    Returns:
+        Dict mapping each module name that imported and exposed ``__version__`` to that version string.
     """
     if isinstance(libs, str):
         libs = libs.split(sep)
@@ -208,6 +211,9 @@ def count_app_instances(processname: Optional[str] = None, cmdline: Optional[str
     Args:
         processname: If given, only count processes whose name equals this exactly.
         cmdline: If given, only count processes whose command line contains this string.
+
+    Returns:
+        Number of matching running processes.
     """
     import psutil
 

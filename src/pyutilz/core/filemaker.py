@@ -34,6 +34,11 @@ def init(m_filemaker_url: str, m_filemaker_username: str, m_filemaker_password: 
 
     Must be called once before any other function; subsequent calls re-authenticate.
 
+    Args:
+        m_filemaker_url: Base URL of the FileMaker server.
+        m_filemaker_username: Account name used to authenticate.
+        m_filemaker_password: Password for the account.
+
     Raises:
         RuntimeError: no session token could be obtained. The token was previously discarded, so
             a failed init() returned normally while ``web.connect``'s Basic-auth headers stayed in

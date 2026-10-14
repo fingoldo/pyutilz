@@ -40,6 +40,9 @@ def load_df(fpath: str, tail: int) -> pd.DataFrame:
     Args:
         fpath: path to the pickled dataframe file.
         tail: if a positive int, the dataframe is truncated to its last ``tail`` rows; falsy/None leaves it untouched.
+
+    Returns:
+        the loaded dataframe, truncated to its last ``tail`` rows when ``tail`` is a positive int.
     """
     logger.info("Loading data from file %s...", fpath)
 

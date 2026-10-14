@@ -341,12 +341,17 @@ def safe_dump(obj: Any, path: str, *, protocol: int = pickle.HIGHEST_PROTOCOL) -
 
 
 class _HashingWriter:
-    """File-like ``write`` wrapper feeding every byte written into a sha256 as well."""
+    """File-like ``write`` wrapper feeding every byte written into a sha256 as well.
+
+    Wraps binary file ``f``.
+
+    Args:
+        f: Binary file object that every ``write`` is forwarded to.
+    """
 
     __slots__ = ("_f", "_h")
 
     def __init__(self, f: Any) -> None:
-        """Wrap binary file ``f``."""
         self._f = f
         self._h = hashlib.sha256()
 

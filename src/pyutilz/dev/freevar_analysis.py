@@ -128,10 +128,17 @@ class FreeVarReport:
 
 
 class _OccurrenceVisitor(ast.NodeVisitor):
-    """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier."""
+    """Records every ``Name`` occurrence within ``[start_line, end_line]`` into ``occurrences``, keyed by identifier.
+
+    Starts outside any statement and outside an assignment target, recording into ``occurrences``.
+
+    Args:
+        start_line: first line of the range to record.
+        end_line: last line of the range to record.
+        occurrences: dict that collects the recorded occurrences, keyed by identifier.
+    """
 
     def __init__(self, start_line: int, end_line: int, occurrences: dict) -> None:
-        """Start outside any statement and outside an assignment target, recording into ``occurrences``."""
         self.start_line = start_line
         self.end_line = end_line
         self.occurrences = occurrences

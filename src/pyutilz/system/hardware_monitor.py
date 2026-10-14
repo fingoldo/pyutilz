@@ -42,6 +42,12 @@ class UtilizationMonitor:
         >>> avg_util = monitor.get_average_utilization()
         >>> bool(avg_util['cpu_utilizaton_percent'] >= 0)
         True
+
+    Initialize the utilization monitor.
+
+    Args:
+        sleep_interval_seconds: Sampling interval (default 1.0 second)
+        gpu_ids: List of GPU IDs to monitor (empty = all GPUs)
     """
 
     def __init__(
@@ -49,12 +55,6 @@ class UtilizationMonitor:
         sleep_interval_seconds: float = 1.0,
         gpu_ids: Optional[list] = None,
     ):
-        """Initialize the utilization monitor.
-
-        Args:
-            sleep_interval_seconds: Sampling interval (default 1.0 second)
-            gpu_ids: List of GPU IDs to monitor (empty = all GPUs)
-        """
         if gpu_ids is None:
             gpu_ids = []
         self.cpu_utilizaton: _List[_Any] = []

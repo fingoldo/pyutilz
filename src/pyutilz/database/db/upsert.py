@@ -299,17 +299,33 @@ def build_upsert_query(
     Inserts new records or Updates fields in a Postgres table
     Optionally saves data into History table after comparing Hash field of the new and old record.
 
-    Params:
-    timestamp_check_fields: when element was last checked (queried from source)
-    timestamp_update_fields: when element was last updated (queried from source and found changed)
-    default_timestamp: the SQL expression written for every timestamp_check_field in the insert's
-        select list (default ``now()``).
-
     WARNING: ``default_timestamp``, ``custom_onconflict`` and the values of
     ``on_conflict_update_values`` are spliced verbatim into the generated statement (raw SQL
     fragments, unvalidated). They must NEVER be built from external/user-controlled input; only
     pass trusted, hard-coded or internally-constructed expressions. Every other argument is
     validated as a SQL identifier.
+
+    Args:
+        fields_names: Names of the columns written by the insert, in order.
+        table_name: Target table.
+        conflict_fields: Columns that form the ON CONFLICT key (default ``["id"]``).
+        fields_types: Mapping of field name to its SQL type, used when building the VALUES cast list.
+        skip_fields: Fields left out of the insert column list.
+        timestamp_check_fields: when element was last checked (queried from source)
+        timestamp_update_fields: when element was last updated (queried from source and found changed)
+        on_conflict_update_fields: Fields overwritten with the excluded row's values on conflict.
+        on_conflict_update_values: Mapping of field name to the raw SQL expression used instead of the excluded value on conflict.
+        custom_onconflict: Raw ON CONFLICT clause that replaces the generated one.
+        returning_fields: Columns for the RETURNING clause; replaced by the history-comparison fields when history_table_name is set.
+        history_table_name: Optional history table that receives changed rows.
+        history_fields: Fields copied into the history table.
+        history_fields_aliases: Mapping of history field name to the column name used in the history table.
+        hash_fields: Fields whose hash is compared between new and old records to detect a change. A bare str names a single field.
+        default_timestamp: the SQL expression written for every timestamp_check_field in the insert's
+            select list (default ``now()``).
+
+    Returns:
+        The SQL statement text, with the ``%s`` placeholder for the VALUES list.
     """
     conflict_fields = ["id"] if conflict_fields is None else conflict_fields
     fields_types = {} if fields_types is None else fields_types

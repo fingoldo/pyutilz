@@ -138,7 +138,7 @@ class ObjectsAndFilesProcessor:
 
         Args:
             objects_names: list of object names to be populated. If it's a string, names_sep parameter is used to split it.
-            If empty, all keys are processed.
+                If empty, all keys are processed.
             container: dictionary to be populated with objects names as keys, objects as values.
             names_sep: objects names separator.
             path: relative or absolute directory where the files are located.

@@ -65,6 +65,14 @@ def serialize(obj: Any, fname: Optional[Union[str, io.IOBase]] = None, compressi
     ``fname`` may be a path or ANY writable file object (duck-typed on ``.write``), which includes
     ``tempfile.NamedTemporaryFile`` -- not an ``io.IOBase`` subclass, so it used to be rejected.
 
+    Args:
+        obj: The object to pickle.
+        fname: Destination path or writable file object. None returns the bytes instead.
+        compression: zlib compression level (-1..9), or None to store the raw pickle.
+
+    Returns:
+        True after writing to ``fname``; the serialized bytes when ``fname`` is None.
+
     Raises:
         TypeError: ``fname`` is neither a path nor a writable file object.
         Exception: re-raised after logging when serialization/writing fails -- matching

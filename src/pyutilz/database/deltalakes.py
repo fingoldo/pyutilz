@@ -36,13 +36,16 @@ def safe_delta_write(path: str, delta_op_func: Callable[[], Any], *, lock_timeou
     """
     Wraps any Delta Lake operation (write_deltalake, merge+execute) with local file locking.
 
-    Parameters:
-        path (str): Delta table path.
-        delta_op_func (callable): A function that performs the actual Delta operation.
-        lock_timeout (int): How many seconds to wait for the lock before skipping.
-        lock_suffix (str): Suffix for the lock filename.
+    Args:
+        path: Delta table path.
+        delta_op_func: A function that performs the actual Delta operation.
+        lock_timeout: How many seconds to wait for the lock before skipping.
+        lock_suffix: Suffix for the lock filename.
 
-        Usage Examples
+    Returns:
+        Whatever ``delta_op_func`` returns.
+
+    Examples:
         🔁 For .merge().when_not_matched_insert_all().execute():
 
         def merge_ads_static():

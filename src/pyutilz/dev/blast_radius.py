@@ -73,12 +73,22 @@ def records_snapshot(tables: Mapping[str, Iterable[Mapping[str, Any]]], key_fiel
 
 
 class Change:
-    """One row that differs between two snapshots."""
+    """One row that differs between two snapshots.
+
+    One row: its table, key, kind of change, the changed columns, and both versions.
+
+    Args:
+        table: name of the table the row belongs to.
+        key: primary-key tuple identifying the row.
+        kind: kind of change (added, removed or changed).
+        columns: names of the columns that differ.
+        before: row contents in the earlier snapshot, or None if the row was added.
+        after: row contents in the later snapshot, or None if the row was removed.
+    """
 
     __slots__ = ("after", "before", "columns", "key", "kind", "table")
 
     def __init__(self, table: str, key: Key, kind: str, columns: Set[str], before: Optional[Dict[str, Any]], after: Optional[Dict[str, Any]]) -> None:
-        """One row: its table, key, kind of change, the changed columns, and both versions."""
         self.table, self.key, self.kind, self.columns, self.before, self.after = table, key, kind, columns, before, after
 
     def __repr__(self) -> str:

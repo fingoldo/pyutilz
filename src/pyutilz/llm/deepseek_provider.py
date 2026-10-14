@@ -82,7 +82,18 @@ def deepseek_price_multiplier(when: datetime | None = None) -> float:
 
 
 class DeepSeekProvider(OpenAICompatibleProvider):
-    """DeepSeek provider via OpenAI-compatible chat/completions API."""
+    """DeepSeek provider via OpenAI-compatible chat/completions API.
+
+    ``wait_on_insufficient_balance``: on HTTP 402 keep retrying until the account is topped up (the old
+    behaviour) instead of failing the call at once. Off by default, because an unattended batch job otherwise
+    hangs with nothing but a repeating warning to show for it.
+
+    Args:
+        api_key: API key; falls back to ``DEEPSEEK_API_KEY`` from settings when empty.
+        model: Model name; unknown names get the current generation's limits.
+        max_concurrent: Maximum number of requests in flight at once.
+        wait_on_insufficient_balance: See the description above.
+    """
 
     _base_url = "https://api.deepseek.com"
     _provider_name = "DeepSeek"
@@ -100,9 +111,6 @@ class DeepSeekProvider(OpenAICompatibleProvider):
         max_concurrent: int = 10,
         wait_on_insufficient_balance: bool = False,
     ):
-        """``wait_on_insufficient_balance``: on HTTP 402 keep retrying until the account is topped up (the old
-        behaviour) instead of failing the call at once. Off by default, because an unattended batch job otherwise
-        hangs with nothing but a repeating warning to show for it."""
         settings = get_llm_settings()
         resolved_key = api_key or (settings.deepseek_api_key.get_secret_value() if settings.deepseek_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not resolved_key:

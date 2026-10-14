@@ -183,6 +183,19 @@ class CircuitBreaker:
       - OPEN: too many consecutive failures, reject immediately
       - HALF_OPEN: testing whether the service recovered
 
+    ``half_open_successes_to_close`` is the number of CONSECUTIVE successes that close the
+    circuit again. Its former name, ``half_open_max_calls``, promised an admission cap this
+    class never had -- nothing limits how many callers enter the half-open state, so 200 threads
+    arriving at the recovery boundary are all admitted to the still-recovering service. The old
+    keyword still works and is treated as the success count it always was.
+
+    Args:
+        name: name of the protected operation, used in logs.
+        failure_threshold: number of consecutive failures that opens the circuit.
+        recovery_timeout_sec: seconds the circuit stays open before a half-open trial is allowed.
+        half_open_successes_to_close: number of consecutive successes in the half-open state that close the circuit.
+        half_open_max_calls: deprecated alias of ``half_open_successes_to_close``; overrides it when given.
+
     Example::
 
         cb = CircuitBreaker("order_placement", failure_threshold=5)
@@ -199,12 +212,6 @@ class CircuitBreaker:
         half_open_successes_to_close: int = 3,
         half_open_max_calls: Optional[int] = None,
     ):
-        """``half_open_successes_to_close`` is the number of CONSECUTIVE successes that close the
-        circuit again. Its former name, ``half_open_max_calls``, promised an admission cap this
-        class never had -- nothing limits how many callers enter the half-open state, so 200 threads
-        arriving at the recovery boundary are all admitted to the still-recovering service. The old
-        keyword still works and is treated as the success count it always was.
-        """
         if half_open_max_calls is not None:
             logger.warning(
                 "CircuitBreaker(%s): `half_open_max_calls` is a deprecated alias of "

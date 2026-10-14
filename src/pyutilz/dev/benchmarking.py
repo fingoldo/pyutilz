@@ -533,10 +533,16 @@ class _DominanceTracker:
 
     On every axis with a smaller neighbour the same variant must (1) win by at least ``ratio`` over EVERY rival, (2) with the slowest rival already costing
     ``min_ms`` and (3) with its lead not shrinking over the last two steps of that axis (so a rival that is flat or catching up - the approach to a crossover -
-    is never skipped past). Two measured points on an axis are needed to see a trend; a neighbour that was itself skipped carries its trend with it."""
+    is never skipped past). Two measured points on an axis are needed to see a trend; a neighbour that was itself skipped carries its trend with it.
+
+    Sets the dominance thresholds.
+
+    Args:
+        ratio: Required lead over every rival.
+        min_ms: Rival cost below which skipping is not worth it.
+    """
 
     def __init__(self, ratio: float, min_ms: float) -> None:
-        """Set the dominance thresholds; ``ratio`` is the required lead over every rival, ``min_ms`` the rival cost below which skipping is not worth it."""
         self.ratio = ratio
         self.min_ms = min_ms
         self._cells: dict = {}  # (axis-index tuple, residency) -> (winner, {variant: ms}) when measured, (winner, None) when skipped

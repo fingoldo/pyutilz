@@ -93,6 +93,18 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
     ...     provider_sort="throughput",
     ...     models_fallback=("openai/gpt-4o", "google/gemini-2.0-flash"),
     ... )
+
+    See the class and module docstrings; the routing/request options are documented in the README's OpenRouter section.
+
+    ``provider_require_parameters``:
+    None (default) = automatic, True/False = always / never. Automatic sends
+    ``require_parameters: true`` when the request carries ``response_format`` or asks the model to reason AND the
+    catalogue lists every parameter in the body for the model, so the answer never silently loses the constraint
+    (``_request.auto_require_parameters``). ``provider_max_price`` / ``provider_preferred_*`` / ``extra_body`` take a
+    mapping or a tuple of pairs (hashable, for the factory cache). ``pdf_engine`` (``"mistral-ocr"``,
+    ``"cloudflare-ai"``, ``"native"``) attaches the file-parser plugin. ``transforms=("middle-out",)`` lets OpenRouter
+    compress an over-long prompt, which DROPS content. ``system_cache_control`` sends the system prompt as a
+    ``cache_control`` breakpoint. ``extra_body`` is merged into every request (``seed``, ``user``, ``stop``, ...).
     """
 
     _base_url = "https://openrouter.ai/api/v1"
@@ -178,17 +190,6 @@ class OpenRouterProvider(OpenRouterAccountingMixin, OpenRouterEndpointsMixin, Op
         system_cache_control: bool = False,
         extra_body: Any = None,
     ):
-        """See the class and module docstrings; the routing/request options are documented in the README's OpenRouter section.
-
-        ``provider_require_parameters``: None (default) = automatic, True/False = always / never. Automatic sends
-        ``require_parameters: true`` when the request carries ``response_format`` or asks the model to reason AND the
-        catalogue lists every parameter in the body for the model, so the answer never silently loses the constraint
-        (``_request.auto_require_parameters``). ``provider_max_price`` / ``provider_preferred_*`` / ``extra_body`` take a
-        mapping or a tuple of pairs (hashable, for the factory cache). ``pdf_engine`` (``"mistral-ocr"``,
-        ``"cloudflare-ai"``, ``"native"``) attaches the file-parser plugin. ``transforms=("middle-out",)`` lets OpenRouter
-        compress an over-long prompt, which DROPS content. ``system_cache_control`` sends the system prompt as a
-        ``cache_control`` breakpoint. ``extra_body`` is merged into every request (``seed``, ``user``, ``stop``, ...).
-        """
         # Captured first, before any other local exists: the inputs route_fingerprint() digests (see _route.py).
         self._route_kwargs = {name: value for name, value in locals().items() if name in _ROUTE_FINGERPRINT_ATTRS}
         settings = _pkg().get_llm_settings()

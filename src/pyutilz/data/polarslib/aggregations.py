@@ -738,6 +738,45 @@ def build_aggregate_features_polars(
     weighted/EWM aggregates, categorical concentrations, peaks/lziv, polars-ds stats, correlations, linregs, etc.),
     optionally split by ``subgroups`` filters.
 
+    Args:
+        df: Polars DataFrame the feature expressions are built against; used to expand default field lists.
+        boolean_fields: Boolean columns to aggregate. None selects all Boolean columns.
+        numerical_fields: Numeric columns for the numeric aggregates. None selects all numeric columns.
+        categorical_fields: Categorical/string columns for n-unique and concentration features. None selects them by dtype.
+        ts_diff_fields: Datetime columns whose successive time differences are aggregated. None selects all Datetime columns.
+        exclude_fields: Columns removed from every field group, and from the othersvals and weighting selectors.
+        weighting_fields: Columns used as weights for the weighted-mean aggregates.
+        subgroups: Mapping of filter field to a list of values. One feature set is built per value, filtered to that value.
+            An empty filter field means no filter.
+        numaggs: Basic aggregations (for example mean, std) applied to each numerical field.
+        quantiles: Quantiles computed for each numerical field.
+        tds_quantiles: Quantiles of the time-difference fields.
+        engine: ``"cpu"`` or ``"gpu"``. The GPU engine skips the CPU-only feature group.
+        dtype: Dtype the aggregated values are cast to.
+        fields_remap: Mapping that renames fields inside the generated column names.
+        nans_filler: Value substituted for NaN/Inf results of the weighted and time-difference aggregates.
+        concentration_top_n: Number of top categories for the concentration features. 0 disables them.
+        concentrations_params: Per-field overrides of ``concentration_top_n``, keyed by field name.
+        add_peaks_stats: Whether to add peak statistics for the numerical fields.
+        custom_expressions: Extra polars expressions appended to the feature list.
+        othersvals_at_extremums: Whether to add the values of other fields observed at each field's extremum.
+        othersvals_basic_fields: Fields for which other-field values are taken. None means all.
+        othersvals_other_fields: Fields whose values are taken at the extremums. None means all other columns.
+        othersvals_excluded_fields: Fields never taken as other-field values.
+        ewm_spans: Spans for the exponentially weighted aggregates.
+        ewm_timestamp: Timestamp column for the time-weighted EWM. Used together with ``ewm_time_half_lifes``.
+        ewm_time_half_lifes: Half-lives for the time-weighted EWM.
+        ewm_basic_funcs: EWM statistics computed per span. Defaults to ``ewm_mean`` and ``ewm_std``.
+        ewm_final_funcs: Aggregations applied to each EWM series. Defaults to ``mean``.
+        pds_params: Parameters for the polars-ds statistics (``lag``, ``n_maxima``, ``n_lags``).
+        pds_numaggs: polars-ds statistics computed per field.
+        corr_methods: Correlation methods applied to each pair in ``corr_fields``.
+        corr_fields: Mapping of x field name to y field name for pairwise correlations.
+        pds_fields: Numerical fields for the polars-ds statistics. None means ``numerical_fields``.
+        linreg_fields: Numerical fields for the linear-regression features. None means ``numerical_fields``.
+        linreg_timestamp_field: Optional time column for time-based linear regression.
+        use_parametrized_pds_features: Whether to add the parametrized polars-ds features.
+
     Returns:
         A tuple ``(feature_expressions, columns_to_unnest, unnest_rules)`` to be passed to a ``group_by(...).agg(...)``
         call followed by ``.with_columns(columns_to_unnest).unnest(unnest_rules)``.

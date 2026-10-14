@@ -27,6 +27,12 @@ def _iter_target_chain(node: ast.AST) -> Optional[str]:
     for complex expressions (call results, comprehensions, etc.) that
     we can't statically associate with a mutation site.
 
+    Args:
+        node: The AST expression being iterated.
+
+    Returns:
+        The dotted chain (e.g. ``"self._cache"``), or None when the expression is opaque.
+
     Examples:
         ``self._cache`` -> ``"self._cache"``
         ``d`` -> ``"d"``

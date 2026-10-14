@@ -191,7 +191,17 @@ def _generate_retry_policy() -> dict[str, Any]:
 
 
 class AnthropicProvider(LLMProvider):
-    """Anthropic Claude provider with async support and retry logic."""
+    """Anthropic Claude provider with async support and retry logic.
+
+    ``cache_ttl``: lifetime of the system-prompt cache entry, ``"5m"`` (writes billed 1.25x input) or ``"1h"``
+    (writes billed 2x input, worth it when the same system prompt is reused over more than five minutes).
+
+    Args:
+        api_key: Anthropic API key; falls back to the ``ANTHROPIC_API_KEY`` setting when not given.
+        model: Claude model identifier used for requests.
+        max_concurrent: maximum number of requests in flight at once.
+        cache_ttl: system-prompt cache lifetime, ``"5m"`` or ``"1h"``.
+    """
 
     _provider_name = "Anthropic"
 
@@ -241,8 +251,6 @@ class AnthropicProvider(LLMProvider):
         max_concurrent: int = 5,
         cache_ttl: str = "5m",
     ):
-        """``cache_ttl``: lifetime of the system-prompt cache entry, ``"5m"`` (writes billed 1.25x input) or ``"1h"``
-        (writes billed 2x input, worth it when the same system prompt is reused over more than five minutes)."""
         settings = get_llm_settings()
         self.api_key = api_key or (settings.anthropic_api_key.get_secret_value() if settings.anthropic_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not self.api_key:
@@ -346,16 +354,6 @@ class AnthropicProvider(LLMProvider):
             max_tokens: Output-token ceiling; 0 means "derive it", and any value is clamped
                 to what the model's context leaves after the prompt. Above
                 ``_STREAMING_THRESHOLD_TOKENS`` the request is streamed.
-            images: URLs or ``data:`` URIs to show the model, in Anthropic's own block shape --
-                NOT the OpenAI ``image_url`` form, which this API rejects with a 400. Absent or
-                empty, the request body is byte-identical to the text-only one it has always sent.
-
-                This parameter was missing while `LLMProvider.generate_json` already forwarded
-                `images` to `generate`, so on any deployment configured for Anthropic a posting
-                with a picture attachment raised ``TypeError: generate() got an unexpected keyword
-                argument 'images'`` -- the whole evaluation, not just the picture. Found by a live
-                integration test on 2026-09-04; no unit test could see it, because the parameter's
-                absence is exactly what the mocks were modelled on.
             thinking: Reasoning toggle. ``False`` (default) keeps the
                 previous behaviour exactly. ``True`` turns it on at the model's
                 default depth; an effort string ("minimal"/"low"/"medium"/"high"/
@@ -366,6 +364,16 @@ class AnthropicProvider(LLMProvider):
                 forwards it to providers whose signature declares it, so every
                 Anthropic call ran without reasoning regardless of the setting,
                 including the ones whose docstrings claimed to be disabling it.
+            images: URLs or ``data:`` URIs to show the model, in Anthropic's own block shape --
+                NOT the OpenAI ``image_url`` form, which this API rejects with a 400. Absent or
+                empty, the request body is byte-identical to the text-only one it has always sent.
+
+                This parameter was missing while `LLMProvider.generate_json` already forwarded
+                `images` to `generate`, so on any deployment configured for Anthropic a posting
+                with a picture attachment raised ``TypeError: generate() got an unexpected keyword
+                argument 'images'`` -- the whole evaluation, not just the picture. Found by a live
+                integration test on 2026-09-04; no unit test could see it, because the parameter's
+                absence is exactly what the mocks were modelled on.
             json_schema: A JSON schema (bare, or OpenAI's ``{"name", "strict", "schema"}`` wrapper) the answer must
                 conform to, sent as ``output_config.format`` on models that support structured outputs. On any
                 other model it is not sent and a warning says so.
@@ -373,6 +381,9 @@ class AnthropicProvider(LLMProvider):
         Raises:
             LLMTruncationError: ``stop_reason`` was ``max_tokens`` or ``model_context_window_exceeded``.
             LLMRefusalError: ``stop_reason`` was ``refusal``; ``details["stop_details"]`` carries the category.
+
+        Returns:
+            the text of the model's answer.
         """
         self._reset_per_call_state()
         if max_tokens <= 0:

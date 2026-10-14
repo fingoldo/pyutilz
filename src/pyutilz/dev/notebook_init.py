@@ -171,9 +171,9 @@ def init_notebook(include_imports: bool = True, inject_globals: bool = False, us
     Complete notebook initialization
 
     Args:
-        include_imports (bool): Whether to import common packages
-        inject_globals (bool): Whether to inject packages into global namespace
-        use_simple_extensions (bool): Use simple extension loading method
+        include_imports: Whether to import common packages
+        inject_globals: Whether to inject packages into global namespace
+        use_simple_extensions: Use simple extension loading method
 
     Returns:
         dict: Dictionary of imported packages if include_imports=True

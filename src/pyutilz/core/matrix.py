@@ -50,6 +50,9 @@ class CsrIndPtrConstructor:
             dtype: dtype of the resulting matrix's data array.
             clear_source: if True, empty the internal buffers after building, leaving the
                 instance reusable for the next matrix.
+
+        Returns:
+            The built scipy csr_matrix.
         """
         if len(self.indices) != self.indptr[-1]:
             # Elements were added since the last add_row(): indptr's final boundary excludes them,
@@ -91,6 +94,9 @@ class CsrRowColConstructor:
             dtype: dtype of the resulting matrix's data array.
             clear_source: if True, empty the internal buffers after building, leaving the
                 instance reusable for the next matrix.
+
+        Returns:
+            The built scipy csr_matrix.
         """
         from scipy.sparse import csr_matrix
 

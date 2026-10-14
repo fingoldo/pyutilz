@@ -728,8 +728,12 @@ class LLMProvider(ABC):
         entry rather than aborting the whole batch. Provider-specific error
         classification is delegated to ``_classify_batch_exception``.
 
+        Args:
+            requests: Request dicts, each with a ``prompt`` and optional ``id``, ``system``,
+                ``temperature``, ``max_tokens`` and provider-specific keys.
+
         Yields:
-            Response dicts with ``id`` and either ``result`` or ``error``. On success, also
+            dict[str, Any]: Response dicts with ``id`` and either ``result`` or ``error``. On success, also
             includes this request's own ``usage``/``tool_calls``/``citations``/``finish_reason``
             (etc., provider-dependent) metadata -- captured within this request's own task, so
             it is NOT subject to the cross-task "last_*" attribute race (see ``PerCallAttr``).
@@ -817,6 +821,9 @@ class LLMProvider(ABC):
         don't publish a balance endpoint for regular (non-admin) keys.
         Concrete providers override when their API exposes it.
 
+        Returns:
+            dict: The balance snapshot with the common keys listed above (the base class never returns).
+
         Raises:
             NotImplementedError: provider doesn't expose balance via API.
         """
@@ -839,6 +846,9 @@ class LLMProvider(ABC):
             ``rate_limit``      — requests-per-interval shape
             ``is_free_tier``
             ``raw``             — provider's full raw response
+
+        Returns:
+            dict: The rate-limit and quota snapshot with the common keys listed above (the base class never returns).
 
         Raises:
             NotImplementedError: provider doesn't expose this via API.

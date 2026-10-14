@@ -122,6 +122,9 @@ def download_to_file(
         exit_codes: HTTP statuses that fail immediately without retrying.
         retry_jitter_seconds: Upper bound of the random backoff slept between failed attempts (the sleep is
             ``retry_jitter_seconds * random()``). The default of 10.0 is the historical behaviour.
+
+    Returns:
+        True when ``filename`` holds the requested content, False otherwise.
     """
     if not rewrite_existing and os.path.exists(filename):
         logger.debug("Skipping download of %s: %s already exists and rewrite_existing=False", url, filename)

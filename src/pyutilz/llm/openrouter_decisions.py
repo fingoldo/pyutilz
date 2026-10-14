@@ -58,10 +58,18 @@ class OpenRouterDecisionsError(LLMProviderError, RuntimeError):
     """A failed decisions call: an HTTP error with OpenRouter's ``{"error": {"code", "message"}}`` envelope, or a bad body.
 
     Rooted at ``LLMProviderError`` (with ``RuntimeError`` kept for existing callers) so the domain root catches it.
+
+    Keeps the HTTP status, the envelope's ``code``, the raw body and the server's ``Retry-After`` next to the message.
+
+    Args:
+        message: human-readable error message.
+        status_code: HTTP status code of the failed response, if any.
+        code: ``code`` value from the OpenRouter error envelope, if any.
+        raw: raw response body, if any.
+        retry_after_s: ``Retry-After`` value from the server, in seconds, if any.
     """
 
     def __init__(self, message: str, *, status_code: Optional[int] = None, code: Any = None, raw: Any = None, retry_after_s: Optional[float] = None) -> None:
-        """Keep the HTTP status, the envelope's ``code``, the raw body and the server's ``Retry-After`` next to the message."""
         super().__init__(message)
         self.status_code = status_code
         self.code = code
@@ -373,6 +381,17 @@ class OpenRouterDecisionsClient:
 
     ``total_cost_usd`` sums reported ``usage.cost``; ``unreported_cost_calls`` counts successful calls whose
     response carried no cost, so a missing bill never reads as a free one.
+
+    Resolves the key and prepares the HTTP clients; ``retry_wait`` defaults to the shared LLM backoff.
+
+    Args:
+        api_key: OpenRouter API key; falls back to ``openrouter_api_key`` from the pyutilz LLM settings.
+        base_url: base URL of the OpenRouter API.
+        transport: sync httpx transport, injected by tests.
+        async_transport: async httpx transport, injected by tests.
+        timeout: request timeout in seconds.
+        max_attempts: maximum number of attempts per call, including the first; must be at least 1.
+        retry_wait: tenacity wait strategy between retries; defaults to the shared LLM backoff.
     """
 
     def __init__(
@@ -386,7 +405,6 @@ class OpenRouterDecisionsClient:
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         retry_wait: Optional[wait_base] = None,
     ) -> None:
-        """Resolve the key and prepare the HTTP clients; ``retry_wait`` defaults to the shared LLM backoff."""
         key = _resolve_api_key(api_key)
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")

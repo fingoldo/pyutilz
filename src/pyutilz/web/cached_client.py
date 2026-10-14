@@ -59,6 +59,21 @@ class CachedHttpClient:
     per external service, or one per test) don't contend on a shared lock or collide on cache
     keys. Thread-safe: the per-host throttle is guarded by a lock, so many threads can safely
     share one instance.
+
+    Args:
+        cache_dir: root directory for cache entries (one JSON file per URL+tag).
+        user_agent: sent as the ``User-Agent`` header on every request.
+        min_interval: minimum seconds between two requests to the same host.
+        offline_env_var: name of an environment variable that, when truthy
+            (``1``/``true``/``yes``, case-insensitive), makes :meth:`offline` return True --
+            only the cache may be consulted, a cache miss returns ``None`` instead of dialing
+            out. Pass ``None`` to disable offline mode entirely (always live).
+        allowed_schemes: forwarded to :func:`pyutilz.web.url_guard.urlopen_checked` -- rejects
+            any URL whose scheme isn't in this set before a socket is opened.
+        max_bytes: reject (and do not cache) any response body larger than this many bytes;
+            ``None`` disables the cap and restores the historical unbounded read. Defaults to
+            ``DEFAULT_MAX_RESPONSE_BYTES``, comfortably above any JSON/text API payload this
+            client is meant for.
     """
 
     def __init__(
@@ -71,22 +86,6 @@ class CachedHttpClient:
         allowed_schemes: FrozenSet[str] = ALLOWED_SCHEMES,
         max_bytes: Optional[int] = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
-        """
-        Args:
-            cache_dir: root directory for cache entries (one JSON file per URL+tag).
-            user_agent: sent as the ``User-Agent`` header on every request.
-            min_interval: minimum seconds between two requests to the same host.
-            offline_env_var: name of an environment variable that, when truthy
-                (``1``/``true``/``yes``, case-insensitive), makes :meth:`offline` return True --
-                only the cache may be consulted, a cache miss returns ``None`` instead of dialing
-                out. Pass ``None`` to disable offline mode entirely (always live).
-            allowed_schemes: forwarded to :func:`pyutilz.web.url_guard.urlopen_checked` -- rejects
-                any URL whose scheme isn't in this set before a socket is opened.
-            max_bytes: reject (and do not cache) any response body larger than this many bytes;
-                ``None`` disables the cap and restores the historical unbounded read. Defaults to
-                ``DEFAULT_MAX_RESPONSE_BYTES``, comfortably above any JSON/text API payload this
-                client is meant for.
-        """
         self.cache_dir = cache_dir
         self.user_agent = user_agent
         self.min_interval = min_interval

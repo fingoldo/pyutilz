@@ -303,6 +303,17 @@ def showcase_df_columns(
     - uninformative_features: columns where, after dropping all rare values, only 1 unique
       value remains. The dict value is the fraction of non-dominant rows (i.e. 1 - dominant_count/total).
 
+    Args:
+        df: pandas or polars DataFrame to describe.
+        cols: columns to describe. If None or empty, all columns of ``df`` are used.
+        excluded_cols: column names to skip.
+        max_vars: maximum number of value-count rows printed per column.
+        dropna: whether null values are excluded from the value counts.
+        use_markdown: whether the value counts are rendered as markdown tables.
+        use_print: whether the output is printed; an explicit False suppresses all stdout.
+        max_cat_uniq_qty: only columns with at most this many unique values are checked for rare categories.
+        max_unique_percent: share of total rows at or below which a value is flagged as rare.
+
     Returns:
         (rare_categories, uninformative_features) -- both dicts keyed by column name.
 

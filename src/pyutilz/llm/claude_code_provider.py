@@ -358,6 +358,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
                 adaptively (every model behind the CLI's aliases but haiku) an effort string goes to ``--effort``; on a
                 budget-thinking model it goes to MAX_THINKING_TOKENS with the Anthropic API provider's budgets. False
                 sends MAX_THINKING_TOKENS=0. None leaves the CLI default.
+
+        Returns:
+            The generated text, with a JSON code fence stripped when ``json_mode`` is set.
         """
         if images:
             # Recursed rather than inlined so the temporary files stay on disk for the WHOLE call:
@@ -841,6 +844,9 @@ class ClaudeCodeProvider(_reasoning.ReasoningCaptureMixin, LLMProvider):
             thinking: forwarded to ``generate``, which sends it to the CLI as MAX_THINKING_TOKENS.
             json_schema: accepted for the shared signature and NOT enforced: the CLI's ``--json-schema`` is not
                 usable here (PROV-32), so the output is parsed as plain JSON and a warning says so.
+
+        Returns:
+            The parsed JSON object produced by the model.
         """
         if json_schema is not None:
             logger.warning("%s cannot constrain output to a JSON schema; json_schema is ignored and the answer is parsed as plain JSON.", type(self).__name__)

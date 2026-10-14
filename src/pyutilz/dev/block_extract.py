@@ -59,10 +59,12 @@ _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 
 
 class _Events(ast.NodeVisitor):
-    """Name loads/stores in evaluation order: ``(line, kind, name)`` with kind ``"load"``/``"store"``."""
+    """Name loads/stores in evaluation order: ``(line, kind, name)`` with kind ``"load"``/``"store"``.
+
+    Starts with no events.
+    """
 
     def __init__(self) -> None:
-        """Start with no events."""
         self.events: list = []
 
     def _add(self, line: int, kind: str, name: str) -> None:

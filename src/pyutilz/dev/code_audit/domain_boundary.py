@@ -115,6 +115,9 @@ def scan_domain_vocabulary_leak(
             NOT apply to ``boundary_symbol_missing``, which is always P1: a manifest naming a symbol
             that no longer exists makes the boundary pass by vacuity, so it must stay loud however
             advisory the leak check itself is configured to be.
+
+    Returns:
+        The ``Finding`` objects for leaked vocabulary and missing boundary symbols; an empty list when unconfigured.
     """
     pattern = _term_pattern(vocabulary)
     if pattern is None or not boundary:

@@ -458,6 +458,9 @@ class GeminiProvider(LLMProvider):
                 default. See `gemini_thinking_config`.
             json_schema: A JSON schema (bare, or OpenAI's ``{"name", "strict", "schema"}`` wrapper) the answer is
                 constrained to, sent as ``response_json_schema`` with ``application/json``.
+
+        Returns:
+            the text of the model's answer.
         """
         self._reset_per_call_state()
         budget: int | None = max_tokens if max_tokens > 0 else None  # no ceiling substituted: the field is omitted and the route decides

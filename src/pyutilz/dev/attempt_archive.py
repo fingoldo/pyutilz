@@ -140,10 +140,14 @@ class DirectoryContentStore:
 
     The write goes to a temporary file in the same directory and is renamed into place, so a reader never
     sees half a file. Any OS error is logged and yields ``None``.
+
+    Stores texts under ``root``, created on first write.
+
+    Args:
+        root: Directory that holds the ``<sha256>.txt`` files.
     """
 
     def __init__(self, root: Union[str, Path]) -> None:
-        """Store texts under ``root``, created on first write."""
         self.root = Path(root)
 
     def path_for(self, digest: str) -> Path:
@@ -185,10 +189,14 @@ class CallableContentStore:
 
     For a SQL table: ``fn`` runs ``INSERT ... ON CONFLICT (hash) DO NOTHING``. If it raises, the failure is
     logged and ``None`` is returned, so the caller never records a digest for text that was not stored.
+
+    Stores texts through ``fn(digest, text)``, sync or async.
+
+    Args:
+        fn: Writer called as ``fn(digest, text)``; may be a plain function or a coroutine function.
     """
 
     def __init__(self, fn: Callable[[str, str], Any]) -> None:
-        """Store texts through ``fn(digest, text)``, sync or async."""
         self.fn = fn
 
     async def put(self, text: str) -> Optional[str]:
@@ -205,10 +213,15 @@ class CallableContentStore:
 
 
 class JsonlAttemptSink:
-    """Append one JSON line per attempt to ``path``. Never raises; a failed write is logged and counted."""
+    """Append one JSON line per attempt to ``path``. Never raises; a failed write is logged and counted.
+
+    Appends attempts to ``path``, counting lines written and dropped.
+
+    Args:
+        path: File that receives one JSON line per attempt.
+    """
 
     def __init__(self, path: Union[str, Path]) -> None:
-        """Append attempts to ``path``, counting lines written and dropped."""
         self.path = Path(path)
         self.written = 0
         self.dropped = 0
@@ -356,10 +369,19 @@ def _error_text(exc: BaseException) -> str:
 
 
 class _Archiver:
-    """The state one :func:`archive_provider` installation shares between ``generate`` and ``generate_stream``."""
+    """The state one :func:`archive_provider` installation shares between ``generate`` and ``generate_stream``.
+
+    Shares one attempt counter between a provider's ``generate`` and ``generate_stream``.
+
+    Args:
+        provider: The provider whose ``generate`` and ``generate_stream`` calls are archived.
+        store: Content store that receives the response texts.
+        sink: Attempt sink that receives one record per attempt.
+        is_truncated: Predicate that tells whether a response was truncated.
+        fetch_stats: If True, also fetch the upstream's own timing record per attempt.
+    """
 
     def __init__(self, provider: Any, store: Any, sink: Any, is_truncated: Callable[[Dict[str, Any]], bool], fetch_stats: bool = False) -> None:
-        """Share one attempt counter between a provider's ``generate`` and ``generate_stream``."""
         self.provider = provider
         self.store = store
         self.sink = sink

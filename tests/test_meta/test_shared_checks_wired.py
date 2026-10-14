@@ -39,9 +39,8 @@ _JOBS_EXEMPT_FROM_TIMEOUT: frozenset[str] = frozenset()
 # pyutilz has no lock file; the floors job measures how many declared floors are optimistic before it can gate;
 # pydoclint reports 86 open docstring findings that are to be fixed in the code, not added to a baseline.
 _REVIEWED_ADVISORY_STEPS: set[str] = {
-    "known CVEs in the installed extras (advisory)",  # dep-floors.yml: pip-audit over the installed extras (no lock file to audit).
+    "known CVEs in the locked graph (advisory)",  # dep-floors.yml: pip-audit over the graph resolved from pyproject (no lock file).
     "install + smoke at declared floors",  # dep-floors.yml: lowest-direct resolution, measures optimistic floors before it can gate.
-    "pydoclint (advisory)",  # pydoclint.yml: 86 open docstring findings to fix in the code, not to baseline.
 }
 
 # py-ci-shared stays OUT of [project] metadata (a git+https direct reference makes the distribution unpublishable on

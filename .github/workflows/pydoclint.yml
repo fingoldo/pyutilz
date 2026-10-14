@@ -3,8 +3,7 @@ name: pydoclint
 # Docstring-vs-signature consistency (params, returns, raises, yields) over src/pyutilz. The configuration lives in [tool.pydoclint] of
 # pyproject.toml, and the same invocation runs locally.
 #
-# Advisory for now: the check reports 86 findings on master (DOC101/103/201/301/404 and similar), and making it blocking would fail every push on
-# known debt. Each finding is to be fixed in the code, not added to a baseline; once the count is zero, drop `continue-on-error`.
+# Blocking: pydoclint reports every docstring-versus-signature mismatch in src/pyutilz, and the count is zero.
 
 on:
   push:
@@ -26,10 +25,9 @@ permissions:
 
 jobs:
   pydoclint:
-    name: pydoclint (advisory)
+    name: pydoclint
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

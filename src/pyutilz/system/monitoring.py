@@ -501,9 +501,12 @@ def log_duration(threshold: float = 1.0, logger_name: Optional[str] = None, max_
     Also logs the arguments passed to the function, truncating large ones for readability.
 
     Args:
-        threshold (float): Time in seconds above which to log (default: 1.0).
-        logger_name (str): Optional logger name; if None, uses the caller's module logger.
-        max_arg_size (int): Max characters in repr() before truncating (default: 1000).
+        threshold: Time in seconds above which to log (default: 1.0).
+        logger_name: Optional logger name; if None, uses the caller's module logger.
+        max_arg_size: Max characters in repr() before truncating (default: 1000).
+
+    Returns:
+        A decorator that wraps the target function and returns the wrapped function.
     """
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         """Wraps func so its execution time (and args/kwargs, if it exceeds threshold) is logged."""

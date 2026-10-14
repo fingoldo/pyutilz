@@ -60,6 +60,13 @@ def split_list_into_chunks(the_list: list, chunk_size: int) -> Iterator[list]:
     >>> list(split_list_into_chunks(list(range(10)),3))
     [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
 
+    Args:
+        the_list: list to split.
+        chunk_size: maximum number of items per chunk.
+
+    Yields:
+        list: Successive slices of ``the_list``, each holding at most ``chunk_size`` items.
+
     Raises:
         ValueError: ``chunk_size < 1``. A negative size used to yield NOTHING at all, so the caller
             silently processed no data; the sibling ``split_list_into_nchunks_indices`` already
@@ -76,6 +83,13 @@ def split_list_into_chunks_indices(the_list: list, chunk_size: int) -> Iterator[
 
     >>> list(split_list_into_chunks_indices(list(range(10)), 3))
     [(0, 3), (3, 6), (6, 9), (9, 10)]
+
+    Args:
+        the_list: list whose indices are split.
+        chunk_size: maximum number of items per chunk.
+
+    Yields:
+        tuple: ``(left, right)`` index pair bounding each chunk; ``right`` is exclusive.
 
     Raises:
         ValueError: ``chunk_size < 1``, same contract as the value-returning sibling.
@@ -114,6 +128,13 @@ def split_array(arr: Sized, step: int) -> list:
     Returns list of (a,b) tuples of array split into chunks using certain step size.
     >>> split_array(np.random.uniform(0,1,5477),step=1000)
     [(0, 1000), (1000, 2000), (2000, 3000), (3000, 4000), (4000, 5000), (5000, 5477)]
+
+    Args:
+        arr: array-like whose length is split.
+        step: number of items per chunk.
+
+    Returns:
+        List of ``(left, right)`` index tuples covering ``arr``.
 
     Raises:
         ValueError: ``step < 1`` (was an ``assert``, which ``python -O`` strips, leaving an infinite loop for step 0).

@@ -282,6 +282,13 @@ def batch(iterable: Sequence[Any], n: int = 1) -> Iterator[Sequence[Any]]:
     [6, 7, 8]
     [9]
 
+    Args:
+        iterable: sequence to split into consecutive slices.
+        n: maximum length of each batch.
+
+    Yields:
+        Sequence[Any]: consecutive slices of ``iterable``, each of length ``n`` except possibly the last.
+
     Raises:
         ValueError: ``n < 1`` (a negative ``n`` used to yield nothing at all), the same contract as
             ``pyutilz.system.parallel.split_list_into_chunks``.

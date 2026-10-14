@@ -181,6 +181,9 @@ def analyze_run(repo: str, run_id: str, conclusion: str | None = "failure") -> C
         conclusion: only fetch logs for jobs with this conclusion (default "failure", the common
             case: passing jobs rarely need triage and their logs are the bulk of the volume).
             Pass None to fetch every job regardless of conclusion.
+
+    Returns:
+        The CIReport holding the warnings found in each fetched job log, plus any fetch errors.
     """
     report = CIReport(run_id=run_id, repo=repo)
     job_ids = _list_job_ids(repo, run_id, conclusion)

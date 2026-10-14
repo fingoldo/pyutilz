@@ -423,6 +423,19 @@ def create_tabs(
     without the overlay a slow tab shows the PREVIOUS tab's content under the new tab's header,
     which reads as finished rather than pending. Pass False to opt out.
 
+    Args:
+        tabsName: name of the tab group; it keys the session entry that remembers the active tab and the component ids.
+        tabsList: tab specifications, each ``(label, tab_id, allowed_user_roles, ...)``; an empty list renders nothing.
+        draw_tab_content_function: callable receiving the active tab's id and returning that tab's body.
+        content: children placed inside every ``dbc.Tab`` of the group.
+        prefix: string prepended to tab ids and component ids.
+        roles_separator: separator used to split ``allowed_user_roles`` when it is given as a string.
+        tabsClassName: CSS class applied to the tab bar.
+        contentClassName: CSS class applied to the content container.
+        activeLabelClassName: CSS class added to the label of the active tab.
+        use_cardstyle: wrap the tab bar and content in a ``dbc.Card``.
+        show_loading: wrap the content area in a ``dcc.Loading`` overlay.
+
     Returns:
         A ``dbc.Container`` with the tab bar and the active tab's body, or ``None`` on any of three
         no-render paths, each logged at DEBUG: ``tabsList`` is empty, the current user is not

@@ -135,7 +135,24 @@ _USD_PER_TICK = 1e-10
 
 
 class XAIProvider(OpenAICompatibleProvider):
-    """xAI Grok provider via OpenAI-compatible chat/completions API."""
+    """xAI Grok provider via OpenAI-compatible chat/completions API.
+
+    ``live_search``: let the model search the web and X while answering. ``True``, ``"on"`` or ``"auto"``
+    enable it, ``False`` / ``"off"`` do not. It runs through the Responses API's server-side ``web_search`` and
+    ``x_search`` tools: the chat-completions ``search_parameters`` block this used to send was retired on
+    2026-01-12 and now answers ``410 Gone``, which failed every call made with the option on. The model decides
+    when to search, so ``"on"`` can no longer force a search. ``live_search_max_sources`` has no counterpart in
+    the tools API and is ignored with a warning. Citations land in ``last_citations`` unless ``return_citations=False``,
+    which leaves it empty.
+
+    Args:
+        api_key: API key; falls back to ``XAI_API_KEY`` from settings when empty.
+        model: Model name.
+        max_concurrent: Maximum number of requests in flight at once.
+        live_search: See the description above.
+        live_search_max_sources: Ignored with a warning when set (no counterpart in the tools API).
+        return_citations: Whether to capture citations into ``last_citations``.
+    """
 
     _base_url = "https://api.x.ai/v1"
     _provider_name = "xAI"
@@ -166,14 +183,6 @@ class XAIProvider(OpenAICompatibleProvider):
         live_search_max_sources: int | None = None,
         return_citations: bool = True,
     ):
-        """``live_search``: let the model search the web and X while answering. ``True``, ``"on"`` or ``"auto"``
-        enable it, ``False`` / ``"off"`` do not. It runs through the Responses API's server-side ``web_search`` and
-        ``x_search`` tools: the chat-completions ``search_parameters`` block this used to send was retired on
-        2026-01-12 and now answers ``410 Gone``, which failed every call made with the option on. The model decides
-        when to search, so ``"on"`` can no longer force a search. ``live_search_max_sources`` has no counterpart in
-        the tools API and is ignored with a warning. Citations land in ``last_citations`` unless ``return_citations=False``,
-        which leaves it empty.
-        """
         settings = get_llm_settings()
         resolved_key = api_key or (settings.xai_api_key.get_secret_value() if settings.xai_api_key else None)  # audit-exempt: default_via_or -- empty api_key means unset; the settings secret is the intended fallback
         if not resolved_key:

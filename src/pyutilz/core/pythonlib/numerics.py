@@ -54,6 +54,9 @@ def to_float(string: Any) -> float:
 def integer_digits(n: int) -> Tuple[int, set]:
     """Counts the digits of a non-negative integer `n` and collects the set of distinct digit values it contains.
 
+    Args:
+        n: non-negative integer whose digits are counted.
+
     Returns:
         Tuple of (total digit count, set of distinct digits).
     """

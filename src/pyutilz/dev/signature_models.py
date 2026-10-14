@@ -49,12 +49,20 @@ logger = logging.getLogger(__name__)
 
 
 class SignatureParameter:
-    """One parameter of the target signature: its name, resolved annotation (``Any`` when absent) and default (``inspect.Parameter.empty`` when required)."""
+    """One parameter of the target signature: its name, resolved annotation (``Any`` when absent) and default (``inspect.Parameter.empty`` when required).
+
+    Stores the parameter facts; ``annotated`` records whether the source declared an annotation at all.
+
+    Args:
+        name: parameter name as it appears in the signature.
+        annotation: resolved annotation (``Any`` when absent).
+        default: default value (``inspect.Parameter.empty`` when required).
+        annotated: whether the source declared an annotation at all.
+    """
 
     __slots__ = ("annotated", "annotation", "default", "name")
 
     def __init__(self, name: str, annotation: Any, default: Any, annotated: bool) -> None:
-        """Store the parameter facts; ``annotated`` records whether the source declared an annotation at all."""
         self.name = name
         self.annotation = annotation
         self.default = default
