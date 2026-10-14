@@ -4,6 +4,7 @@
 # LOGGING
 # ----------------------------------------------------------------------------------------------------------------------------
 
+import importlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,31 +40,31 @@ from pyutilz.text.strings import (
 )
 from collections import defaultdict
 
-# Lazy import spacy to avoid Python 3.14 Pydantic compatibility issues
-spacy = None
+# spacy and nltk are optional (the [nlp] extra) and heavy: spacy pulls in thinc and torch, about 12 s at import time. They are
+# imported on first use, so importing pyutilz.text.tokenizers (reached through pyutilz.text's re-export chain) costs nothing,
+# and a caller that never touches AdvancedTokenizer does not need either package. The Python 3.14 Pydantic issue spacy once had is
+# also why its import stays deferred.
 nlp = None
 
 # See webtext.py: pinned for the API-stability snapshot because ``nlp`` is bound lazily, so its
 # observed kind depends on whether spaCy is installed and on what ran earlier in the process.
 __lazy_globals__ = frozenset({"nlp"})
 
-try:
-    import spacy as _spacy
-    spacy = _spacy
-except Exception as e:  # nosec B110 - optional dependency probe; module must still be importable when spacy is absent/incompatible (e.g. Python 3.14 Pydantic issue noted above), and AdvancedTokenizer already fails loudly later if spacy is actually needed but unset
-    logger.debug("spacy unavailable or incompatible, AdvancedTokenizer will fail if used: %s", e)
 
-# nltk lives under the optional [nlp] extra, same as spacy above -- a module-level hard import
-# forced any caller of pyutilz.text.tokenizers (reached transitively via pyutilz.text's
-# re-export chain) to have nltk installed, even when they never touch AdvancedTokenizer's
-# sentence/word tokenization. Found 2026-07-09: broke pyutilz's own CI on the py3.9 leg, which
-# doesn't install [nlp]. AdvancedTokenizer fails loudly later if nltk is actually needed but unset.
-nltk = None
-try:
-    import nltk as _nltk
-    nltk = _nltk
-except Exception as e:  # nosec B110 - optional dependency probe, mirrors the spacy guard above
-    logger.debug("nltk unavailable, AdvancedTokenizer will fail if used: %s", e)
+def _optional_module(name: str) -> Any:
+    """Import an optional dependency on first use; None when it is absent or incompatible."""
+    try:
+        return importlib.import_module(name)
+    except Exception as e:  # nosec B110 - optional dependency probe: the caller raises a clear ImportError when it needs this module
+        logger.debug("%s unavailable or incompatible: %s", name, e)
+        return None
+
+
+def __getattr__(name: str) -> Any:
+    """Expose ``spacy`` and ``nltk`` as module attributes, imported on first access (PEP 562)."""
+    if name in ("spacy", "nltk"):
+        return _optional_module(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 vars = "NUM_AS_SEPARATE_WORD,NUM_OCCS,NUM_FIRSTLETTER_CAPITAL,NUM_ALLLETTERS_CAPITAL,INWORD_ABSOLUTE_POSITION,INWORD_RELATIVE_POSITION,NUM_FIRSTWORD_INSENTENCE,NUM_LASTWORD_INSENTENCE,INSENTENCE_ABSOLUTE_POSITION,INSENTENCE_RELATIVE_POSITION,NUM_PREV_WORDS,NUM_PREV_SENTENCE_WORDS".split(  # noqa: A001 -- public API (pyutilz.__init__ alias), signature tracked by tests/test_meta/test_api_stability.py
     ","
 )
@@ -109,8 +110,9 @@ class AdvancedTokenizer:
         global nlp
 
         if nlp is None:
+            spacy = _optional_module("spacy")
             if spacy is None:
-                raise ImportError("AdvancedTokenizer requires spacy, which failed to import (see earlier debug log for the reason)")
+                raise ImportError("AdvancedTokenizer requires spacy, which could not be imported (see the debug log for the reason)")
             nlp = spacy.load(language_model)
 
         self.NUM_AS_SEPARATE_WORD = defaultdict(int)
@@ -210,8 +212,9 @@ class AdvancedTokenizer:
         counts, capitalization, in-word/in-sentence positions, first/last-word-in-sentence counts, and
         preceding-word/preceding-sentence-word co-occurrence) into this instance's stat dicts.
         """
+        nltk = _optional_module("nltk")
         if nltk is None:
-            raise ImportError("AdvancedTokenizer.tokenize requires nltk, which failed to import (see earlier debug log for the reason)")
+            raise ImportError("AdvancedTokenizer.tokenize requires nltk, which could not be imported (see the debug log for the reason)")
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # 1) get full list of unique genuine words along with their frequencies. we know that genuine words should not contain punctuation (except -)
