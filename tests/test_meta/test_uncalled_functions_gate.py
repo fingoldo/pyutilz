@@ -8,7 +8,10 @@ baseline holds only what remains unclassified and must only shrink.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from .uncalled_functions_ignore import UNCALLED_FUNCTIONS_IGNORE
 
@@ -23,6 +26,10 @@ def _production_files() -> list[Path]:
 
 def test_no_new_uncalled_functions(request):
     # py_ci_shared is imported inside the test: conftest forbids a module-level import of it.
+    # It requires python>=3.9 and the requirements marker skips it on the 3.8 legs, so skip there explicitly;
+    # on 3.9+ a missing install still fails the import.
+    if sys.version_info < (3, 9):
+        pytest.skip("py-ci-shared requires python>=3.9")
     from py_ci_shared.uncalled_functions import assert_no_new_uncalled_function
 
     assert_no_new_uncalled_function(
