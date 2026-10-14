@@ -5,7 +5,7 @@ generation from a table, and the JSON-column optimization advisor. Everything he
 through the facade's ``safe_execute``, so it carries no connection state of its own.
 """
 
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 from ._common import (
     logger,
@@ -381,7 +381,7 @@ def _json_field_path(table_field: str, path: str) -> str:
     return table_field + "->" + path
 
 
-def _value_distribution(vals) -> tuple[bool, Any, int, int]:
+def _value_distribution(vals) -> Tuple[bool, Any, int, int]:
     """``(has_none, most_frequent_value, its_count, total_count)`` over ``(value, count)`` rows."""
     has_none = False
     max_occurences = -1

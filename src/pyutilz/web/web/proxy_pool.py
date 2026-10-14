@@ -8,7 +8,7 @@ by ordinary import machinery.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 from ._common import joblib_hash, logger
 
@@ -126,7 +126,7 @@ def _pick_port(fixed_port: Optional[int], proxy_min_port: int, proxy_max_port: i
 def _is_on_cooldown(
     proxy_key: str,
     now_time: datetime,
-    policies: tuple[tuple[Optional[dict], float], ...],
+    policies: Tuple[Tuple[Optional[dict], float], ...],
     verbose: bool,
     proxy_server: str,
     proxy_port: int,

@@ -16,7 +16,7 @@ from ._common import (
     pl,
     explode_keeping_empty_as_null,
 )
-from typing import Callable, List, Literal
+from typing import Callable, List, Literal, Tuple
 from .columns import apply_agg_func_safe, cast_f64_to_f32, clean_numeric
 
 # PROJECT IDIOM for a re-export package's submodules (see also pyutilz/data/pandaslib/frames.py and
@@ -554,7 +554,7 @@ def _cpu_only_exprs(
 
 def _ewm_defaults(
     ewm_spans: Optional[list], ewm_time_half_lifes: Optional[list], ewm_basic_funcs: Optional[list], ewm_final_funcs: Optional[list]
-) -> tuple[list, list, list, list]:
+) -> Tuple[list, list, list, list]:
     """Replace each falsy EWM list argument with its default (empty spans/half-lifes, mean/std and mean funcs)."""
     if not ewm_spans:
         ewm_spans = []
@@ -606,7 +606,7 @@ def _filter_value_feature_exprs(
     linreg_timestamp_field: Optional[str],
     concentration_top_n: int,
     concentrations_params: dict,
-) -> tuple[list, list, list]:
+) -> Tuple[list, list, list]:
     """Feature expressions, unnest columns and unnest rules for one subgroup filter value (``af`` applies its filter)."""
     exprs: list = []
     unnest: list = []

@@ -6,7 +6,7 @@
 
 from ._logproxy import logger
 
-from typing import Any, Dict, Iterable, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple, Union
 import math
 import re
 
@@ -204,7 +204,7 @@ def extract_json_attribute(json_obj: Optional[Union[dict, list]], attribute: Uni
     return elems  # type: ignore[no-any-return]  # elems is built from arbitrary decoded JSON
 
 
-def _first_present_attribute(elem: Any, attribute: list) -> tuple[bool, Any]:
+def _first_present_attribute(elem: Any, attribute: list) -> Tuple[bool, Any]:
     """Return ``(True, value)`` for the first non-null attribute of ``elem`` in priority order, else ``(False, None)``."""
     for next_attribute in attribute:
         if next_attribute in elem and elem[next_attribute] is not None:

@@ -7,7 +7,7 @@ so pulling it in at module scope would impose that on every consumer of ``pyutil
 
 import http
 import os
-from typing import TYPE_CHECKING, Callable, List, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, List, Optional, Sequence, Tuple
 
 # Imported for the ``Optional[requests.Response]`` annotation only -- the actual GET goes through
 # ``_facade.requests`` so that patching ``pyutilz.web.web.requests`` is honoured here.
@@ -158,7 +158,7 @@ def _try_attempt(
     chunk_size: int,
     headers: dict,
     exit_codes: tuple,
-) -> tuple[bool, Optional[Exception]]:
+) -> Tuple[bool, Optional[Exception]]:
     """``(result, None)`` from :func:`_download_attempt`, or ``(False, error)`` when it raised."""
     try:
         return _download_attempt(url, filename, timeout, chunk_size, headers, exit_codes), None
