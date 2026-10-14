@@ -49,7 +49,7 @@ jobs:
         id: plan
         run: |
           python -m pip install packaging
-          python scripts/ci_version_matrix.py plan --package pandas --floor 1.5 --python 3.12 --github-output "$GITHUB_OUTPUT"
+          python scripts/ci_version_matrix.py plan --package pandas --floor 1.5 --python 3.11 --github-output "$GITHUB_OUTPUT"
 
   test:
     name: pandas ${{ matrix.label }} on py${{ matrix.python-version }}
@@ -81,6 +81,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[pandas,polars,system,database,dev]"
+          pip install -r requirements-dev.txt
 
       - name: Pin pandas to ${{ matrix.version }}
         # numpy stays below 2.5 on every leg: the pinned pandas must still import against the numpy the tests were written for.

@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 from typing import Any, Callable, List, Optional, Tuple
 
 try:
-    from flask import session  # public re-export; the render path imports it again locally
+    from flask import session  # type: ignore[import-not-found, unused-ignore]  # public re-export; the render path imports it again locally
 except ImportError:  # optional extra 'dash': absent in a core-only install
-    session = None  # type: ignore[assignment]
+    # Both codes stay: the import-not-found code fires where flask is absent (a core-only install), the no-redef code where mypy sees
+    # the flask import bound and the fallback assigns the same name (flask installed, as on the mypy CI leg).
+    session = None  # type: ignore[assignment, no-redef]
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Inits
