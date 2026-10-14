@@ -20,15 +20,12 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ci_version_matrix.py
 def ci_version_matrix():
     spec = importlib.util.spec_from_file_location("ci_version_matrix", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    # The script's dataclass looks its module up in sys.modules while the class is being built, so register it first.
-    sys.modules[spec.name] = module
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        # The script's dataclass looks its module up in sys.modules while the class is being built, so register it first;
+        # setitem undoes the registration at teardown.
+        mp.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
-    except BaseException:
-        del sys.modules[spec.name]
-        raise
-    yield module
-    sys.modules.pop(spec.name, None)
+        yield module
 
 
 def _versions(*texts: str) -> list[Version]:
