@@ -110,9 +110,10 @@ class AdvancedTokenizer:
         global nlp
 
         if nlp is None:
-            spacy = _optional_module("spacy")
-            if spacy is None:
-                raise ImportError("AdvancedTokenizer requires spacy, which could not be imported (see the debug log for the reason)")
+            try:
+                import spacy
+            except Exception as e:  # nosec B110 - re-raised below with a message naming the extra
+                raise ImportError("AdvancedTokenizer requires spacy (the [nlp] extra), which could not be imported") from e
             nlp = spacy.load(language_model)
 
         self.NUM_AS_SEPARATE_WORD = defaultdict(int)
@@ -212,9 +213,10 @@ class AdvancedTokenizer:
         counts, capitalization, in-word/in-sentence positions, first/last-word-in-sentence counts, and
         preceding-word/preceding-sentence-word co-occurrence) into this instance's stat dicts.
         """
-        nltk = _optional_module("nltk")
-        if nltk is None:
-            raise ImportError("AdvancedTokenizer.tokenize requires nltk, which could not be imported (see the debug log for the reason)")
+        try:
+            import nltk
+        except Exception as e:  # nosec B110 - re-raised below with a message naming the extra
+            raise ImportError("AdvancedTokenizer.tokenize requires nltk (the [nlp] extra), which could not be imported") from e
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # --------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # 1) get full list of unique genuine words along with their frequencies. we know that genuine words should not contain punctuation (except -)
