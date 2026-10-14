@@ -111,7 +111,6 @@ _DECLARED_DIFFERENT_EXTRAS = {
     "ci.yml::all,dev": "deptry's own install: the dependency-drift scan has to see every declared extra, or it reports each unseen one as unused.",
     "pip-audit.yml::all": "The advisory scan audits what `pip install pyutilz[all]` resolves; it runs no tests, so it needs neither [dev] nor ci.yml's narrower set.",
     "docs.yml::docs": "mkdocs builds prose; it imports no runtime extra, and installing them would add minutes to every docs run.",
-    "dep-floors.yml::database,pandas,polars,system": "The floors job imports and tests only pandas, polars and the system and database helpers; llm, nlp, cloud, speedups and dev add install time to a non-blocking job without exercising any floor.",
     "pandas-matrix.yml::database,dev,pandas,polars,system": "The pandas matrix runs only the pandas-facing tests, which import the pandas, polars, system and database helpers; llm, nlp, cloud and speedups are not imported by them.",
     "polars-matrix.yml::database,dev,pandas,polars,system": "The polars matrix runs only the polars-facing tests, which import the same helpers as the pandas matrix; llm, nlp, cloud and speedups are not imported by them.",
 }
