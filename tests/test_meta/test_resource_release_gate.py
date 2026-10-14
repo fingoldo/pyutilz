@@ -7,7 +7,10 @@ They are exempt by file, with the reason recorded here; every other module is he
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "pyutilz"
@@ -34,6 +37,10 @@ def _production_files() -> list[Path]:
 
 def test_resources_are_released_on_every_path():
     # py_ci_shared is imported inside the test: conftest forbids a module-level import of it.
+    # It requires python>=3.9 and the requirements marker skips it on the 3.8 legs, so skip there explicitly;
+    # on 3.9+ a missing install still fails the import.
+    if sys.version_info < (3, 9):
+        pytest.skip("py-ci-shared requires python>=3.9")
     from py_ci_shared.resource_release_paths import assert_released_on_every_path
 
     exempt = [SRC_ROOT / rel for rel in _REVIEWED_EXEMPT]
